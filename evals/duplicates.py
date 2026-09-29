@@ -25,8 +25,10 @@ from codebase_rag.types_defs import (
     DuplicatesConfig,
     DuplicatesReport,
     PropertyDict,
+    PropertyParams,
     PropertyValue,
     ResultRow,
+    ResultScalar,
 )
 
 from . import constants as ec
@@ -64,7 +66,7 @@ class _GraphRows:
         self._nodes = nodes
 
     def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]:
         prefix = str((params or {}).get(cs.KEY_PROJECT_PREFIX) or "")
         if query == cq.CYPHER_DUPLICATE_FINGERPRINTS:
@@ -93,7 +95,8 @@ def _in_scope(label: str, props: PropertyDict, prefix: str) -> bool:
 def _row(label: str, props: PropertyDict) -> ResultRow:
     row: ResultRow = {cs.KEY_LABEL: label}
     for key in _ROW_KEYS:
-        row[key] = props.get(key)  # type: ignore[assignment]
+        value = props.get(key)
+        row[key] = list[ResultScalar](value) if isinstance(value, list) else value
     return row
 
 

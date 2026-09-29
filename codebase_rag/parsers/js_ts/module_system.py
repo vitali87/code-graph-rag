@@ -443,10 +443,7 @@ class JsTsModuleSystemMixin:
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in cs.JS_TS_LANGUAGES:
-            return
-
-        language_obj = queries[language].get(cs.QUERY_LANGUAGE)
+        language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
             return
 
@@ -502,10 +499,8 @@ class JsTsModuleSystemMixin:
             export_functions = captures.get(cs.CAPTURE_EXPORT_FUNCTION, [])
 
             for export_name, export_function in zip(export_names, export_functions):
-                if (
-                    export_name.text
-                    and export_function
-                    and (function_name := safe_decode_text(export_name))
+                if export_name.text and (
+                    function_name := safe_decode_text(export_name)
                 ):
                     self._ingest_export_function(
                         export_function,

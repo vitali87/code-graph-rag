@@ -31,12 +31,12 @@ from __future__ import annotations
 import importlib
 import types
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Protocol
 
 from .. import constants as cs
 from .. import exceptions as ex
 from ..exceptions import ReadOnlyQueryError
-from ..types_defs import BatchParams, BatchWrapper, PropertyValue
+from ..types_defs import BatchParams, BatchWrapper, PropertyValue, ResultValue
 
 
 # The parts of the driver this module uses, typed here rather than taken
@@ -49,7 +49,7 @@ from ..types_defs import BatchParams, BatchWrapper, PropertyValue
 # by name (`importlib`), so the checker sees these protocols in both
 # environments, with or without the extra, and needs no ignore directive.
 class _Record(Protocol):
-    def values(self) -> list[PropertyValue]: ...
+    def values(self) -> list[ResultValue]: ...
 
 
 # One EXPLAIN plan node as the driver returns it: nested dicts and lists of
@@ -76,7 +76,7 @@ class _Session(Protocol):
     def run(
         self,
         query: str,
-        parameters: Mapping[str, PropertyValue | Sequence[BatchParams]] | None = None,
+        parameters: Mapping[str, PropertyValue] | BatchWrapper | None = None,
     ) -> _Result: ...
 
     def close(self) -> None: ...
@@ -104,7 +104,7 @@ class Neo4jCursor:
 
     def __init__(self, session: _Session) -> None:
         self._session = session
-        self._rows: list[tuple[PropertyValue, ...]] = []
+        self._rows: list[tuple[ResultValue, ...]] = []
         self._keys: list[str] = []
 
     def execute(
@@ -120,9 +120,9 @@ class Neo4jCursor:
         # `UNWIND $batch AS row` idiom wants. A bare sequence would have
         # no name to bind to, so it is rejected rather than guessed at.
         if params is None:
-            parameters: dict[str, Any] = {}
+            parameters: Mapping[str, PropertyValue] | BatchWrapper = {}
         elif isinstance(params, dict):
-            parameters = dict(params)
+            parameters = params
         else:
             raise TypeError(
                 "Neo4j parameters must be a mapping; "
@@ -141,7 +141,7 @@ class Neo4jCursor:
     def description(self) -> Sequence[_Column] | None:
         return [_Column(k) for k in self._keys] if self._keys else None
 
-    def fetchall(self) -> list[tuple[PropertyValue, ...]]:
+    def fetchall(self) -> list[tuple[ResultValue, ...]]:
         return self._rows
 
     def close(self) -> None:

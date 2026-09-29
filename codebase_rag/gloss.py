@@ -36,7 +36,7 @@ import hashlib
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import NamedTuple, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -44,6 +44,11 @@ from . import graph_query
 from .gloss_anchor import SourceReader, TextAnchor, text_anchor
 from .graph_query import QueryFn, SymbolRow
 from .types_defs import PropertyDict, ResultRow
+
+if TYPE_CHECKING:
+    # Annotation-only: TypeIs reaches `typing` in 3.13, and the checker reads
+    # typing_extensions from its bundled stubs, so nothing imports it at runtime.
+    from typing_extensions import TypeIs
 
 WriteFn = Callable[[str, PropertyDict | None], None]
 
@@ -135,7 +140,7 @@ def resolve_one(
     )
 
 
-def _is_refusal(value: object) -> bool:
+def _is_refusal(value: SymbolRow | GlossRefusal) -> TypeIs[GlossRefusal]:
     return isinstance(value, dict) and cs.DICT_KEY_ERROR in value
 
 
@@ -274,18 +279,18 @@ def write_gloss(
         )
     subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
-        return subject  # type: ignore[return-value]
-    subject_row: SymbolRow = subject  # type: ignore[assignment]
+        return subject
+    subject_row: SymbolRow = subject
     mentioned: list[SymbolRow] = []
     for name in _split_mentions(mentions):
         found = resolve_one(fetch_all, project_name, name)
         if _is_refusal(found):
-            refusal: GlossRefusal = found  # type: ignore[assignment]
+            refusal: GlossRefusal = found
             refusal[cs.DICT_KEY_ERROR] = cs.MCP_GLOSS_MENTION_REFUSED.format(
                 name=name, error=refusal[cs.DICT_KEY_ERROR]
             )
             return refusal
-        mentioned.append(found)  # type: ignore[arg-type]
+        mentioned.append(found)
 
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
@@ -340,7 +345,7 @@ def glosses_for(
     """
     subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
-        refusal: GlossRefusal = subject  # type: ignore[assignment]
+        refusal: GlossRefusal = subject
         # A name that matches nothing may still be one notes were written
         # against: the definition is gone and the notes are LOST or
         # AMBIGUOUS. They are returned with the refusal so the orphaning is
@@ -361,7 +366,7 @@ def glosses_for(
             if orphaned:
                 refusal[cs.KEY_ORPHANED] = orphaned
         return refusal
-    subject_row: SymbolRow = subject  # type: ignore[assignment]
+    subject_row: SymbolRow = subject
     params: PropertyDict = {cs.KEY_QN: subject_row["qualified_name"]}
     return GlossesResult(
         target=subject_row,

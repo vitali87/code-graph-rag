@@ -531,8 +531,10 @@ class CSharpTypeInferenceEngine:
         """
         key = (module_qn, caller_qn, call_node.start_byte, call_node.end_byte)
         cached = self._call_memo.get(key, _MISSING)
-        if cached is not _MISSING:
-            return None if cached is _IN_PROGRESS else cached  # type: ignore[return-value]
+        if cached is _IN_PROGRESS:
+            return None
+        if not isinstance(cached, _Sentinel):
+            return cached
         self._call_memo[key] = _IN_PROGRESS
         result = self._resolve_csharp_method_call(
             call_node, local_var_types, module_qn, caller_qn

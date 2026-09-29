@@ -8,6 +8,14 @@ from ... import constants as cs
 from ...language_spec import decode_node_text
 
 
+def _identifier_texts(node: Node) -> list[bytes]:
+    return [
+        text
+        for child in node.named_children
+        if child.type == cs.TS_IDENTIFIER and (text := child.text)
+    ]
+
+
 def dart_get_name(node: Node) -> str | None:
     # The single source of truth for Dart declaration names; language_spec's
     # DART_FQN_SPEC delegates here. Most Dart declarations expose a `name`
@@ -19,16 +27,16 @@ def dart_get_name(node: Node) -> str | None:
     # CLASS identifier, which would collapse every named constructor into a
     # duplicate of the default one.
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
-        ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
-        if ids:
-            return decode_node_text(ids[-1].text)
+        texts = _identifier_texts(node)
+        if texts:
+            return decode_node_text(texts[-1])
         return None
     name_node = node.child_by_field_name(cs.FIELD_NAME)
     if name_node and name_node.text:
         return decode_node_text(name_node.text)
-    ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
-    if ids:
-        return decode_node_text(ids[-1].text)
+    texts = _identifier_texts(node)
+    if texts:
+        return decode_node_text(texts[-1])
     return None
 
 

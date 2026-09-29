@@ -21,6 +21,7 @@ from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import cypher_queries as cq
+from . import exceptions as ex
 from . import logs as ls
 from .analyzers import FindingAnalyzer
 from .ast_cache import BoundedASTCache
@@ -91,6 +92,7 @@ from .parsers.java_lombok import (
     overlay_identity,
 )
 from .parsers.parameter_nodes import PendingParameterType
+from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -107,6 +109,7 @@ from .types_defs import (
     PendingMacroCall,
     PendingTypeFact,
     PropertyDict,
+    PropertyParams,
     ReingestReport,
     ResultRow,
     ResultValue,
@@ -2858,7 +2861,7 @@ class GraphUpdater:
             )
         )
 
-    def _requeue_parameter_types(self, project_params: PropertyDict) -> None:
+    def _requeue_parameter_types(self, project_params: PropertyParams) -> None:
         # OF_TYPE for the Parameter nodes of files this run does not re-parse:
         # their owners never re-emit them, so the pending list is rebuilt from
         # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
@@ -2907,7 +2910,7 @@ class GraphUpdater:
                 )
             )
 
-    def _requeue_field_types(self, project_params: PropertyDict) -> None:
+    def _requeue_field_types(self, project_params: PropertyParams) -> None:
         # The Field counterpart of _requeue_parameter_types, keyed on the FILE
         # for the same reason: a Field whose file is being re-parsed this run
         # is re-emitted by ingest and queues its own type; one whose file is
@@ -2940,6 +2943,15 @@ class GraphUpdater:
                 PendingFieldType(qn, self._recorded_module_qn(path), type_name, path)
             )
 
+    def _graph_rows(self, query: str, params: PropertyParams | None) -> list[ResultRow]:
+        # A write-only sink (the protobuf exporter) has no graph to read, and
+        # every caller already handles a failed read with its safe answer.
+        if not isinstance(self.ingestor, QueryProtocol):
+            raise TypeError(
+                ex.INGESTOR_NOT_QUERYABLE.format(kind=type(self.ingestor).__name__)
+            )
+        return self.ingestor.fetch_all(query, params)
+
     def _registered_project_names(self) -> list[str]:
         """Every project the graph holds, longest name first, read once per
         run. Degrades to this project alone, which keeps the prefix rule."""
@@ -2947,7 +2959,7 @@ class GraphUpdater:
             return self._registered_projects
         names: set[str] = {self.project_name}
         try:
-            rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+            rows = self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
             self._registry_unread = True
@@ -3766,7 +3778,7 @@ class GraphUpdater:
         A failed read marks every file fully known: nothing extra is offered."""
         known: dict[str, set[str]] = {}
         try:
-            rows = self.ingestor.fetch_all(
+            rows = self._graph_rows(
                 cq.CYPHER_DELTA_DEFINITIONS,
                 {
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
@@ -6024,8 +6036,13 @@ class GraphUpdater:
             ):
                 continue
             language = lang_config.language
-            parser = self.queries[language].get(cs.KEY_PARSER)
-            if not parser:
+            # `parsers` and `queries` arrive separately; a language one lacks
+            # is left to the per-file path rather than aborting the run.
+            language_queries = self.queries.get(language)
+            if language_queries is None:
+                continue
+            parser = language_queries.get(cs.KEY_PARSER)
+            if parser is None:
                 continue
             tree = parse_with_preproc_recovery(parser, file_bytes, language)
             root_node = tree.root_node
@@ -6488,7 +6505,7 @@ class GraphUpdater:
         return self._container_kinds_from_rows(rows)
 
     @staticmethod
-    def _container_kinds_from_rows(rows: object) -> set[str]:
+    def _container_kinds_from_rows(rows: list[ResultRow]) -> set[str]:
         """Container labels out of `CYPHER_CONTAINER_KIND` rows.
 
         Shared by both readers of that query rather than restated in each:
@@ -6501,7 +6518,7 @@ class GraphUpdater:
         (CodeRabbit, PR #1835).
         """
         recorded: set[str] = set()
-        for row in rows or ():  # type: ignore[union-attr]
+        for row in rows:
             raw = row.get(cs.KEY_LABELS) if isinstance(row, dict) else None
             # Narrowed to a list of str before the membership test: a result
             # scalar is a union wide enough that `in` is not defined on every
@@ -6518,7 +6535,7 @@ class GraphUpdater:
             )
         return recorded
 
-    def _package_ness_changed(self, structure: object, rel: str) -> bool:
+    def _package_ness_changed(self, structure: StructureProcessor, rel: str) -> bool:
         """Whether this directory's kind on DISK differs from the recorded one.
 
         Read-only: `is_package_dir` stats the filesystem and emits nothing.
@@ -6530,7 +6547,7 @@ class GraphUpdater:
         directory = self.repo_path / rel if rel != "." else self.repo_path
         if not directory.is_dir():
             return False
-        is_package_now = bool(structure.is_package_dir(directory))  # type: ignore[attr-defined]
+        is_package_now = structure.is_package_dir(directory)
         # The graph's record first; the map only when it cannot answer. See
         # `_recorded_container_kinds` for why the map alone is wrong on a
         # fresh updater.
@@ -6543,7 +6560,7 @@ class GraphUpdater:
         if recorded:
             was_package = cs.NodeLabel.PACKAGE.value in recorded
         else:
-            was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
+            was_package = bool(structure.structural_elements.get(Path(rel)))
         return is_package_now != was_package
 
     def _uncontained_dirs(self, present: dict[str, Path]) -> tuple[set[str], set[str]]:
@@ -7583,9 +7600,7 @@ class GraphUpdater:
         veto the sweep.
         """
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path}
-            )
+            rows = self._graph_rows(cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path})
         except Exception:
             # Unreadable ownership is unknown ownership: never delete a
             # globally merged key on a failed read, and never let the
@@ -7655,7 +7670,7 @@ class GraphUpdater:
                 verify_stored_ids,
             )
 
-            logger.info(ls.PASS_4_EMBEDDINGS)
+            logger.info(ls.PASS_5_EMBEDDINGS)
 
             results = self.ingestor.fetch_all(
                 cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}

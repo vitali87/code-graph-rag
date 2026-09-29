@@ -81,15 +81,17 @@ class UniXcoder(nn.Module):
         return tokens_ids
 
     def decode(self, source_ids: torch.Tensor) -> list[list[str]]:
-        predictions = []
+        predictions: list[list[str]] = []
         for x in source_ids:
-            prediction = []
+            prediction: list[str] = []
             for y in x:
                 t = y.cpu().numpy()
                 t = list(t)
                 if 0 in t:
                     t = t[: t.index(0)]
                 text = self.tokenizer.decode(t, clean_up_tokenization_spaces=False)
+                # One sequence decodes to one string; only a batch is a list.
+                assert isinstance(text, str)
                 prediction.append(text)
             predictions.append(prediction)
         return predictions
