@@ -790,3 +790,12 @@ AGENTIC_DEFAULT_SAMPLE = 40
 AGENTIC_QA_TIMEOUT_S = 300
 AGENTIC_RESULTS_FILE = "agentic_qa{suffix}.json"
 AGENTIC_RECORDS_FILE = "agentic_qa{suffix}_records.jsonl"
+
+# First-tool eval (issue #2359).
+FIRST_TOOL_TABLE_TITLE = "First tool call per structural question"
+FIRST_TOOL_COL_QUESTION = "Question"
+FIRST_TOOL_COL_TOOL = "First tool"
+FIRST_TOOL_COL_GRAPH_FIRST = "Graph first"
+FIRST_TOOL_NO_TOOL = "(none)"
+FIRST_TOOL_PASS = "yes"
+FIRST_TOOL_MISS = "no"
