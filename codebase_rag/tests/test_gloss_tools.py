@@ -1367,6 +1367,41 @@ class TestPropertyDescriptors:
         again = gloss.glosses_for(graph.fetch_all, P, f"{STORE}.x#setter")
         assert [g["target_qn"] for g in again[cs.KEY_ORPHANED]] == [gone]  # type: ignore[typeddict-item]
 
+    def test_a_note_on_a_moved_member_is_reachable_through_its_descriptor(
+        self,
+    ) -> None:
+        """The setter moves from `x@16` to `x@20` and its note could not be
+        re-bound (LOST). The descriptor now resolves to `x@20`, and the read
+        must still list the note left on `x@16` (bot review)."""
+        graph = FakeGraph()
+        stored = gloss.write_gloss(
+            graph.fetch_all,
+            graph.execute_write,
+            P,
+            f"{STORE}.x#setter",
+            "validates before storing",
+            "invariant",
+        )
+        assert not gloss._is_refusal(stored), stored
+        old, new = f"{STORE}.x@16", f"{STORE}.x@20"
+        del graph.nodes[old]
+        graph.nodes[new] = _node(
+            "Method", new, "app.py", 20, 21, decorators=["@x.setter"]
+        )
+        graph.annotates = {(g, qn) for g, qn in graph.annotates if qn != old}
+        graph.glosses[stored["qualified_name"]][cs.KEY_ANCHOR_STATE] = (  # type: ignore[index]
+            cs.GlossAnchorState.LOST.value
+        )
+        result = gloss.glosses_for(graph.fetch_all, P, f"{STORE}.x#setter")
+        assert not gloss._is_refusal(result), result
+        assert result["target"]["qualified_name"] == new  # type: ignore[typeddict-item]
+        assert result["annotating"] == []  # type: ignore[typeddict-item]
+        orphaned = result[cs.KEY_ORPHANED]  # type: ignore[typeddict-item]
+        assert [g["target_qn"] for g in orphaned] == [old]
+        # A plain (non-descriptor) read carries no orphan list.
+        plain = gloss.glosses_for(graph.fetch_all, P, new)
+        assert cs.KEY_ORPHANED not in plain
+
     def test_a_note_written_on_the_setter_is_filed_on_it(self) -> None:
         graph = FakeGraph()
         stored = gloss.write_gloss(

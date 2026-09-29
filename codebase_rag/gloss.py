@@ -36,7 +36,7 @@ import hashlib
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, NotRequired, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -83,6 +83,10 @@ class GlossesResult(TypedDict):
     target: SymbolRow
     annotating: list[GlossRow]
     mentioning: list[GlossRow]
+    # A descriptor target (`x#setter`) that resolves to a member which moved
+    # (`x@16` -> `x@20`): the notes left unattached on the property's
+    # variants are listed here rather than lost behind the stable name.
+    orphaned: NotRequired[list[GlossRow]]
 
 
 def _prefix(project_name: str) -> str:
@@ -219,21 +223,32 @@ def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[Glo
     descriptor target (`Store.x#setter`) was filed on the member's
     `x@<line>` name, so when the base still resolves the search covers
     every variant of it rather than the literal target (bot review)."""
-    params: PropertyDict = {
-        cs.KEY_PROJECT_NAME: project_name,
-        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-    }
     base, descriptor = _split_descriptor(target)
     natural = resolve_one(fetch_all, project_name, base) if descriptor else None
     if natural is not None and not _is_refusal(natural):
-        natural_row: SymbolRow = natural
-        qn = natural_row["qualified_name"].split(cs.DUP_QN_MARKER, 1)[0]
-        params[cs.KEY_QN] = qn
-        params[cs.KEY_VARIANT_PREFIX] = _variant_prefix(qn)
-        return _sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ORPHANED_UNDER, params))
-    params[cs.KEY_QN] = target
-    params[cs.KEY_SUFFIX] = f"{cs.SEPARATOR_DOT}{target}"
+        return _orphaned_under(fetch_all, project_name, natural["qualified_name"])
+    params: PropertyDict = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_QN: target,
+        cs.KEY_SUFFIX: f"{cs.SEPARATOR_DOT}{target}",
+    }
     return _sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ORPHANED_ON, params))
+
+
+def _orphaned_under(
+    fetch_all: QueryFn, project_name: str, qualified_name: str
+) -> list[GlossRow]:
+    """The unattached notes on the definition `qualified_name` names or on
+    any of its `name@<line>` variants."""
+    qn = qualified_name.split(cs.DUP_QN_MARKER, 1)[0]
+    params: PropertyDict = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_QN: qn,
+        cs.KEY_VARIANT_PREFIX: _variant_prefix(qn),
+    }
+    return _sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ORPHANED_UNDER, params))
 
 
 def _is_refusal(value: SymbolRow | GlossRefusal) -> TypeIs[GlossRefusal]:
@@ -454,8 +469,19 @@ def glosses_for(
         return refusal
     subject_row: SymbolRow = subject
     params: PropertyDict = {cs.KEY_QN: subject_row["qualified_name"]}
-    return GlossesResult(
+    result = GlossesResult(
         target=subject_row,
         annotating=_sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ANNOTATING, params)),
         mentioning=_sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_MENTIONING, params)),
     )
+    # A descriptor names a member whose `x@<line>` name shifts: a note filed
+    # on the member's old name that the repair could not re-bind (LOST or
+    # AMBIGUOUS) is reachable only through the stable descriptor, so it is
+    # listed with the member the descriptor now resolves to.
+    if _split_descriptor(target)[1] is not None:
+        orphaned = _orphaned_under(
+            fetch_all, project_name, subject_row["qualified_name"]
+        )
+        if orphaned:
+            result[cs.KEY_ORPHANED] = orphaned
+    return result
