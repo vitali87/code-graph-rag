@@ -71,6 +71,7 @@ class EventType(StrEnum):
     MODIFIED = "modified"
     CREATED = "created"
     DELETED = "deleted"
+    MOVED = "moved"
 
 
 REALTIME_LOGGER_FORMAT = (
@@ -83,6 +84,8 @@ REALTIME_LOGGER_FORMAT = (
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
+ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
+LOGURU_DEFAULT_HANDLER_ID = 0
 
 # Debounce settings for realtime watcher
 DEFAULT_DEBOUNCE_SECONDS = 5
@@ -107,6 +110,11 @@ SEPARATOR_COMMA_SPACE = ", "
 PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
 
 REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
+# Receiver chains longer than this many hops stay unresolved. Every call in a
+# chain re-reads its whole receiver, so resolving an n-hop chain cost O(n^2):
+# a 20 KB file of `.m()` hops took minutes and gigabytes (#2262). Hand-written
+# fluent chains are far shorter.
+MAX_RECEIVER_CHAIN_HOPS = 64
 REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 
 DEFAULT_NAME = "Unknown"
@@ -173,6 +181,15 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 # re-parses it with the delete-before-reparse a KNOWN file gets (issue #1983).
 HASH_CACHE_UNREADABLE = "unreadable"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+# Present while an EXPOSES cleanup the last run skipped (its project registry
+# was unreadable) is still owed; the in-sync fast path refuses until a batch
+# run has done it (issue #2193).
+EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
+# Present while an orphan prune the last run cut short is still owed: a path
+# read failed, or the project registry was unreadable and rows whose owner it
+# could not establish were left (issue #1985). Unchanged files would otherwise
+# take the in-sync fast path, which never prunes, and keep those rows forever.
+PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and
@@ -181,6 +198,11 @@ DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # only the CLI --exclude flags do, so without this the sync check cannot tell
 # that the eligible set moved (issue #1606).
 EXCLUSION_STATE_FILENAME = ".cgr-exclusion-state.json"
+# Each project's own stamp inside the exclusion state file, keyed by project
+# name. The top-level keys stay the LAST run's stamp, which is what the
+# repository-wide hash cache belongs to; this map is what lets every project
+# indexed from one tree read its own scope back (issue #1987).
+EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"

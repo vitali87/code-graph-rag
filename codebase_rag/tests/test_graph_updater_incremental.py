@@ -1035,7 +1035,11 @@ class TestCrashBetweenCacheSaveAndFlush:
         # against unfixed code simply because no delete was ever issued.
         ghost = (py_project / "gone").resolve().as_posix()
 
-        def _fetch_all(query: str) -> list[dict[str, str]]:
+        # Takes `params` like the real `fetch_all`: the registry read passes
+        # them, and a raise there now stops the module delete (issue #1985).
+        def _fetch_all(
+            query: str, params: dict[str, str] | None = None
+        ) -> list[dict[str, str]]:
             if query == cs.CYPHER_ALL_FOLDER_PATHS:
                 return [{cs.KEY_PATH: "gone", "absolute_path": ghost}]
             return []

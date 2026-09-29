@@ -27,10 +27,6 @@ OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"
 )
-LITELLM_NO_ENDPOINT = (
-    "LiteLLM provider requires endpoint. "
-    "Set ORCHESTRATOR_ENDPOINT or CYPHER_ENDPOINT in .env file."
-)
 LITELLM_NOT_RUNNING = (
     "LiteLLM proxy server not responding at {endpoint}. "
     "Make sure LiteLLM proxy is running and API key is valid."
@@ -39,6 +35,9 @@ UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {availab
 
 # Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
+
+# Input errors
+JSON_TOO_DEEP = "JSON nesting exceeds the decoder's recursion limit"
 
 # OpenAI-compatible embedding errors
 OPENAI_EMBEDDING_HTTP_ERROR = (
@@ -63,9 +62,34 @@ MODEL_FORMAT_INVALID = (
 )
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
+MODEL_ROLE_HALF_CONFIGURED = (
+    "{set_var}={value} is set but {missing_var} is not. "
+    "Set both {role}_PROVIDER and {role}_MODEL, or neither to use the local "
+    "Ollama default."
+)
 MODEL_ID_UNKNOWN = "Unknown {provider} model {model_id!r}. Did you mean {suggestions}?"
 MODEL_ID_UNKNOWN_NO_MATCH = (
     "Unknown {provider} model {model_id!r}. Known {provider} models: {known}"
+)
+
+# Vector store errors
+QDRANT_VECTOR_DIM_MISMATCH = (
+    "Qdrant collection '{collection}' has vector dimension {dim}, expected "
+    "{expected}. Set QDRANT_VECTOR_DIM to the embedding model's output size, "
+    "or re-index with --clean to rebuild the collection with the new size."
+)
+
+QDRANT_API_KEY_OVER_HTTP = (
+    "QDRANT_API_KEY is set but QDRANT_URL uses plain http, which would send the "
+    "key unencrypted. Use an https:// QDRANT_URL, or set "
+    "QDRANT_ALLOW_INSECURE_API_KEY=true if the connection is protected another "
+    "way (for example, it never leaves the machine)."
+)
+
+EMBEDDING_DIM_MISMATCH = (
+    "The embedding model produced {dim}-dimensional vectors, but the {backend} "
+    "collection holds {expected}-dimensional ones. Set {setting} to the "
+    "embedding model's output size and re-index with --clean."
 )
 
 # Graph loading errors
@@ -92,6 +116,19 @@ LLM_DISALLOWED_PROCEDURE = (
     "MAGE allowlist. Query rejected: {query}"
 )
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
+READ_ONLY_UNKNOWN_OPERATOR = (
+    "Refused to run a generated query: the database plans the operation "
+    "'{operator}', which is not known to be read-only. Query rejected: {query}"
+)
+READ_ONLY_UNREADABLE_PLAN = (
+    "Refused to run a generated query: the database returned no plan that "
+    "could be checked for writes. Query rejected: {query}"
+)
+READ_ONLY_PROCEDURE = (
+    "Refused to run a generated query: the database plans a CALL to "
+    "procedure '{name}', which is outside the read-only allowlist. "
+    "Query rejected: {query}"
+)
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 LLM_INIT_RESEARCH = "Failed to initialize research sub-agent: {error}"
 
@@ -103,6 +140,9 @@ AUTH_INCOMPLETE = (
     "Either provide both or neither."
 )
 
+# Graph reads (used with raise)
+INGESTOR_NOT_QUERYABLE = "{kind} has no graph to read."
+
 # Access control errors (used with raise)
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
@@ -110,3 +150,7 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 # Exception classes
 class LLMGenerationError(Exception):
     pass
+
+
+class ReadOnlyQueryError(Exception):
+    """An untrusted query would write, so it was never executed."""

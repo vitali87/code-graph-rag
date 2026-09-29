@@ -110,9 +110,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        lang_queries = queries[language]
-
-        language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
+        language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
             return
 
@@ -171,9 +169,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        lang_queries = queries[language]
-
-        language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
+        language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
             return
 
@@ -182,7 +178,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 language_obj,
                 root_node,
                 module_qn,
-                lang_queries.get(cs.QUERY_CONFIG),
+                queries[language].get(cs.QUERY_CONFIG),
                 language,
             )
         except Exception as e:
@@ -357,7 +353,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config,
         language: cs.SupportedLanguage,
     ) -> None:
-        if not method_name_node.text or not method_func_node:
+        if not method_name_node.text:
             return
 
         method_name = safe_decode_text(method_name_node)
@@ -528,7 +524,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
     ) -> None:
         for method_name, arrow_function in zip(method_names, arrow_functions):
-            if not method_name.text or not arrow_function:
+            if not method_name.text:
                 continue
 
             function_name = safe_decode_text(method_name)
@@ -594,7 +590,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
     ) -> None:
         for member_expr, function_node in zip(member_exprs, function_nodes):
-            if not member_expr.text or not function_node:
+            if not member_expr.text:
                 continue
 
             member_text = safe_decode_with_fallback(member_expr)

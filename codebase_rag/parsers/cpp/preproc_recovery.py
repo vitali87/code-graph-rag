@@ -90,15 +90,22 @@ def _unbalanced_leaf_branches(lines: list[bytes]) -> list[tuple[int, int]]:
         else:
             has_nested, branches, current = stack.pop()
             branches.append((current[0], index - 1))
-            if has_nested[0]:
-                continue
-            for start, end in branches:
-                if start > end:
-                    continue
-                delta = sum(_code_brace_delta(lines[i]) for i in range(start, end + 1))
-                if delta != 0:
-                    candidates.append((start, end))
+            if not has_nested[0]:
+                candidates.extend(_brace_unbalanced(lines, branches))
     return candidates
+
+
+def _brace_unbalanced(
+    lines: list[bytes], branches: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    # The non-empty branches of one leaf conditional whose code braces do not
+    # net to zero.
+    return [
+        (start, end)
+        for start, end in branches
+        if start <= end
+        and sum(_code_brace_delta(lines[i]) for i in range(start, end + 1)) != 0
+    ]
 
 
 def _blank(lines: list[bytes], ranges: list[tuple[int, int]]) -> bytes:

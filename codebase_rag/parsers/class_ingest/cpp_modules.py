@@ -160,23 +160,30 @@ def find_cpp_exported_classes(root_node: Node) -> list[Node]:
 
     while stack:
         node = stack.pop()
-        if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
-            node_text = decode_node_stripped(node)
-
-            if node_text.startswith(cs.CPP_EXPORT_PREFIXES):
-                found = False
-                for child in node.children:
-                    if child.type == cs.TS_ERROR and child.text:
-                        error_text = safe_decode_text(child)
-                        if error_text in cs.CPP_EXPORTED_CLASS_KEYWORDS:
-                            exported_class_nodes.append(node)
-                            found = True
-                            break
-                if not found and (
-                    cs.CPP_EXPORT_CLASS_PREFIX in node_text
-                    or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
-                ):
-                    exported_class_nodes.append(node)
+        if (
+            node.type == cs.CppNodeType.FUNCTION_DEFINITION
+            and _is_exported_class_definition(node)
+        ):
+            exported_class_nodes.append(node)
         stack.extend(node.children)
 
     return exported_class_nodes
+
+
+def _is_exported_class_definition(node: Node) -> bool:
+    # `export class Foo {...}` mis-parses as a function definition: the
+    # class keyword lands in an ERROR child, or survives only in the text.
+    node_text = decode_node_stripped(node)
+    if not node_text.startswith(cs.CPP_EXPORT_PREFIXES):
+        return False
+    if any(
+        child.type == cs.TS_ERROR
+        and child.text
+        and safe_decode_text(child) in cs.CPP_EXPORTED_CLASS_KEYWORDS
+        for child in node.children
+    ):
+        return True
+    return (
+        cs.CPP_EXPORT_CLASS_PREFIX in node_text
+        or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
+    )
