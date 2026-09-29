@@ -2079,13 +2079,17 @@ def _build_duplicates_table(
     )
     table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN)
     table.add_column(cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW)
+    # The title names the project, so each member drops that prefix: at pipe
+    # width the column otherwise showed nothing else (issue #2397). Only the
+    # dotted prefix goes, so `projx.mod` under `proj` keeps its name.
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     for number, group in enumerate(groups, start=1):
         for at, member in enumerate(group["members"]):
             table.add_row(
                 _duplicates_group_cell(number, group, root_path) if at == 0 else "",
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
-                member["qualified_name"],
+                member["qualified_name"].removeprefix(prefix),
                 _duplicates_location_cell(member, root_path),
             )
         table.add_section()
