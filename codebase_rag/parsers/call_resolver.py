@@ -899,6 +899,8 @@ class CallResolver:
                 return hit
             if hit := self._dup_variant_scope_candidate(scope, call_name, language):
                 return hit
+            if hit := self._own_body_scoped_name(scope, call_name):
+                return hit
             if cs.SEPARATOR_DOT not in scope:
                 return None
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
@@ -906,12 +908,44 @@ class CallResolver:
                 return None
             scope = parent
 
+    def _own_body_scoped_name(
+        self, scope: str, call_name: str
+    ) -> tuple[str, str] | None:
+        # A JS/TS named function expression's name is in scope inside its own
+        # body, the one place a bare call can reach it by that name (issue
+        # #2402). Answered from the caller's scope chain, ahead of the
+        # module-keyed cache, since callers elsewhere must not see it. The
+        # natural qn is what the same-module probe used to return, so the
+        # `@line` variants fan out exactly as they did.
+        if not self.function_registry.is_body_scoped_name(scope):
+            return None
+        natural = qn_markers.natural_qn(scope)
+        if natural.rsplit(cs.SEPARATOR_DOT, 1)[-1] != call_name:
+            return None
+        target = natural if natural in self.function_registry else scope
+        return self.function_registry[target], target
+
+    def _name_hidden_in_body(self, qualified_name: str) -> bool:
+        # A JS/TS function expression's own name, which only its body can call
+        # (issue #2402). A same-named definition beside it (an `@line`
+        # variant) keeps the name bound, so the variant group stays nameable
+        # and fans out as before.
+        registry = self.function_registry
+        if not registry.is_body_scoped_name(qualified_name):
+            return False
+        return all(
+            registry.is_body_scoped_name(variant)
+            for variant in registry.variants(qn_markers.natural_qn(qualified_name))
+        )
+
     def _scope_candidate(
         self, scope: str, call_name: str, language: cs.SupportedLanguage | None
     ) -> tuple[str, str] | None:
         candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-        if candidate in self.function_registry and self._bare_call_allowed(
-            language, candidate
+        if (
+            candidate in self.function_registry
+            and self._bare_call_allowed(language, candidate)
+            and not self._name_hidden_in_body(candidate)
         ):
             return self.function_registry[candidate], candidate
         return None
@@ -1651,7 +1685,7 @@ class CallResolver:
         # name. (The instantiation eval caught `from evals import GraphData;
         # GraphData()` being resolved to codebase_rag's own GraphData class.)
         if cs.SEPARATOR_DOT not in call_name and self._is_external_import(
-            call_name, module_qn
+            call_name, module_qn, call.language
         ):
             self._remember_cacheable(cache_key, None)
             return True, None
@@ -1853,7 +1887,12 @@ class CallResolver:
         bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
         return not (bare_imports and object_name in bare_imports)
 
-    def _is_external_import(self, call_name: str, module_qn: str) -> bool:
+    def _is_external_import(
+        self,
+        call_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> bool:
         # True when call_name is imported in module_qn from a module outside the
         # project. First-party imports are written either project-prefixed
         # (`from proj.w import X`) or bare (`from utils.helpers import X`, where
@@ -1903,7 +1942,12 @@ class CallResolver:
         # judged here. Rust/C++ record relative or `::`-separated targets
         # (`super::b::helper`) that never carry the project prefix and rely on
         # the trie fallback to resolve, so they must not be mistaken external.
-        if cs.SEPARATOR_DOT not in target or cs.SEPARATOR_DOUBLE_COLON in target:
+        # A JS/TS target is judged dot-free too: every relative specifier was
+        # rewritten to a project qn at import time, so a bare package name
+        # left as written (`require('http-errors')`) is external (#2402).
+        if cs.SEPARATOR_DOUBLE_COLON in target or (
+            cs.SEPARATOR_DOT not in target and language not in cs.JS_TS_LANGUAGES
+        ):
             return False
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
@@ -2937,6 +2981,10 @@ class CallResolver:
             # A Rust block-local item that took the module's own flat qn.
             # It is in scope for its block alone (issue #1061).
             return None
+        if self._name_hidden_in_body(same_module_func_qn):
+            # A JS/TS function expression flattened to the module's qn; its
+            # name is in scope inside its own body alone (issue #2402).
+            return None
         if same_module_func_qn in self.function_registry:
             logger.debug(
                 ls.CALL_SAME_MODULE, call_name=call_name, qn=same_module_func_qn
@@ -3042,6 +3090,14 @@ class CallResolver:
                 qn
                 for qn in possible_matches
                 if self.function_registry[qn] == cs.NodeLabel.CLASS.value
+            ]
+        if search_name == call_name:
+            # A bare name never reaches a function expression whose own name
+            # only its body sees (issue #2402). A member access keeps the
+            # match: `req.host` reads the getter express defines as
+            # `defineGetter(req, 'host', function host () {...})`.
+            possible_matches = [
+                qn for qn in possible_matches if not self._name_hidden_in_body(qn)
             ]
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need

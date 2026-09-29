@@ -1402,6 +1402,15 @@ class FunctionIngestMixin:
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).
             func_props[cs.KEY_IS_MACRO] = True
+        # A JS/TS function expression whose name only its own body can call:
+        # bare-name resolution skips it everywhere else (issue #2402), and the
+        # persisted property lets an incremental run's rehydrated registry
+        # skip it too (the is_macro pattern).
+        if language in cs.JS_TS_LANGUAGES and js_ts_utils.name_is_body_scoped(
+            func_node
+        ):
+            func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
+            self.function_registry.mark_body_scoped_name(resolution.qualified_name)
         logger.info(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )

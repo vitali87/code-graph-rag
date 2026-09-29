@@ -27,6 +27,7 @@ class FunctionRegistryTrie:
         "_properties",
         "_property_names",
         "_abstracts",
+        "_body_scoped_names",
         "_callable_params",
     )
 
@@ -45,6 +46,7 @@ class FunctionRegistryTrie:
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         self._abstracts: set[QualifiedName] = set()
+        self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
 
     def mark_callable_params(
@@ -71,6 +73,12 @@ class FunctionRegistryTrie:
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._abstracts
+
+    def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None:
+        self._body_scoped_names.add(qualified_name)
+
+    def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._body_scoped_names
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
@@ -160,6 +168,7 @@ class FunctionRegistryTrie:
             ):
                 self._property_names.discard(simple_name)
         self._abstracts.discard(qualified_name)
+        self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 
         self._invalidate_ending_with_cache(simple_name)

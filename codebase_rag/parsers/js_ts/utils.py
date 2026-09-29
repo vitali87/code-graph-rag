@@ -193,6 +193,78 @@ def _value_binding_name(node: Node) -> str | None:
     return safe_decode_text(name_node)
 
 
+def name_is_body_scoped(func_node: Node) -> bool:
+    # A named function expression binds its own name inside its body alone;
+    # code elsewhere reaches it through whatever the VALUE is stored under.
+    # Where that is the same name (`var f = function f`, `exports.f =
+    # function f`) a lookup by the name still lands on a real binding. The
+    # module's own export (`module.exports = function f`) is bound by each
+    # importer under a name of its choosing, commonly `f`, so it keeps its
+    # name too. What is left, a value stored under another name or none (a
+    # callback argument, a return value, `var g = function f`), has a name
+    # nothing outside its body can call (issue #2402).
+    if func_node.type not in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
+        return False
+    name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None:
+        return False
+    value, holder = func_node, func_node.parent
+    while holder is not None and holder.type in _BINDING_WRAPPER_TYPES:
+        value, holder = holder, holder.parent
+    if holder is None:
+        return True
+    if _holds_module_export(holder, value):
+        return False
+    return safe_decode_text(name_node) != _stored_under_name(holder, value)
+
+
+def _holds_module_export(holder: Node, value: Node) -> bool:
+    # `export default (function f () {})`, `module.exports = ...`, and the
+    # `module.exports = exports = ...` chain's inner link.
+    if holder.type == cs.TS_EXPORT_STATEMENT:
+        return True
+    target = _assignment_target(holder, value)
+    if target is None:
+        return False
+    if target.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(target) == cs.JS_EXPORTS_KEYWORD
+    if target.type != cs.TS_MEMBER_EXPRESSION:
+        return False
+    owner = target.child_by_field_name(cs.FIELD_OBJECT)
+    member = target.child_by_field_name(cs.FIELD_PROPERTY)
+    return (
+        owner is not None
+        and member is not None
+        and safe_decode_text(owner) == cs.JS_MODULE_KEYWORD
+        and safe_decode_text(member) == cs.JS_EXPORTS_KEYWORD
+    )
+
+
+def _assignment_target(holder: Node, value: Node) -> Node | None:
+    if (
+        holder.type != cs.TS_JS_ASSIGNMENT_EXPRESSION
+        or holder.child_by_field_name(cs.FIELD_RIGHT) != value
+    ):
+        return None
+    return holder.child_by_field_name(cs.FIELD_LEFT)
+
+
+def _stored_under_name(holder: Node, value: Node) -> str | None:
+    # The name `holder` stores `value` under: an object key, an assignment
+    # target (its property, for `a.b = ...`), or a declarator / class field.
+    if holder.type == cs.TS_PY_PAIR:
+        key = holder.child_by_field_name(cs.FIELD_KEY)
+        if key is None or holder.child_by_field_name(cs.FIELD_VALUE) != value:
+            return None
+        return safe_decode_text(key)
+    if holder.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        target = _assignment_target(holder, value)
+        if target is not None and target.type == cs.TS_MEMBER_EXPRESSION:
+            target = target.child_by_field_name(cs.FIELD_PROPERTY)
+        return safe_decode_text(target) if target is not None else None
+    return _value_binding_name(value)
+
+
 def class_binding_name(class_node: Node) -> str | None:
     # An anonymous CLASS EXPRESSION (`static Proxy = class {...}`,
     # `const Proxy = class {...}`) has no `name` field. Recover the field /
