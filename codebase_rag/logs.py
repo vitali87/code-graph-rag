@@ -973,6 +973,10 @@ INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+DEPENDENCIES_RESYNC = (
+    "A dependency manifest changed; rebuilding the external dependencies of "
+    "'{project}' from every manifest"
+)
 REINGEST_MODULE_PATHS_UNKNOWN = (
     "Re-ingest aborted: the graph's module paths could not be read, so the "
     "module qns already taken are unknown"

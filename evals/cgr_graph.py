@@ -86,6 +86,9 @@ class _CapturingIngestor:
 
 _MODULE_LABEL = cs.NodeLabel.MODULE.value
 _EXTERNAL_MODULE_LABEL = cs.NodeLabel.EXTERNAL_MODULE.value
+_EXTERNAL_PACKAGE_LABEL = cs.NodeLabel.EXTERNAL_PACKAGE.value
+_PROJECT_LABEL = cs.NodeLabel.PROJECT.value
+_DEPENDS_ON_EXTERNAL = cs.RelationshipType.DEPENDS_ON_EXTERNAL.value
 _FILE_LABEL = cs.NodeLabel.FILE.value
 _FOLDER_LABEL = cs.NodeLabel.FOLDER.value
 _PACKAGE_LABEL = cs.NodeLabel.PACKAGE.value
@@ -1309,6 +1312,18 @@ class _StatefulIngestor:
                 )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
+            case cs.CYPHER_DELETE_PROJECT_DEPENDENCIES:
+                self._delete_project_dependencies(
+                    params.get(cs.KEY_PROJECT_NAME) if params else None
+                )
+            case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES:
+                self._detach_delete(
+                    {
+                        node
+                        for node in self.nodes
+                        if node[0] == _EXTERNAL_PACKAGE_LABEL and not self._in.get(node)
+                    }
+                )
             case _:
                 return None
 
@@ -1400,6 +1415,17 @@ class _StatefulIngestor:
                     if child not in doomed:
                         frontier.append(child)
         self._detach_delete(doomed)
+
+    def _delete_project_dependencies(self, project_name: PropertyValue) -> None:
+        project = (_PROJECT_LABEL, project_name)
+        for edge in [
+            edge
+            for edge in self._out.get(project, set())
+            if edge[2] == _DEPENDS_ON_EXTERNAL and edge[3] == _EXTERNAL_PACKAGE_LABEL
+        ]:
+            self.edge_props.pop(edge, None)
+            self._out[project].discard(edge)
+            self._in.get((edge[3], edge[4]), set()).discard(edge)
 
     def _delete_orphan_external_modules(self) -> None:
         doomed = {
