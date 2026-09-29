@@ -215,3 +215,91 @@ class TestFormatMissingApiKeyErrors:
         msg = format_missing_api_key_errors("OpenAI")
         assert "OPENAI_API_KEY" in msg
         assert "OpenAI" in msg
+
+
+def _load_config_from_dotenv(
+    tmp_path, line: str, unset: str, check: str = ""
+) -> subprocess.CompletedProcess[str]:
+    (tmp_path / ".env").write_text(f"{line}\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.pop(unset, None)
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from codebase_rag.config import AppConfig, ModelConfig; "
+            f"AppConfig(); {check}print('loaded')",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
+# Derived from the table, so a provider added to it is covered too (#2194).
+@pytest.mark.parametrize(
+    ("provider", "env_var"),
+    [(provider, info["env_var"]) for provider, info in API_KEY_INFO.items()],
+)
+def test_a_provider_key_in_dotenv_loads_and_satisfies_the_gate(
+    tmp_path, provider: str, env_var: str
+) -> None:
+    # The missing-key message tells the user to put exactly this line in
+    # `.env`; doing so made every command fail with `extra_forbidden`.
+    result = _load_config_from_dotenv(
+        tmp_path,
+        f"{env_var}=dotenv-secret",
+        env_var,
+        check=(
+            f"ModelConfig(provider={str(provider)!r}, model_id='m')"
+            ".validate_api_key(); "
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "loaded" in result.stdout
+
+
+def test_a_projects_own_dotenv_key_does_not_stop_start_up(tmp_path) -> None:
+    # cgr reads `.env` from the project it is run in, whose own keys are not
+    # cgr settings; a Rust project's `CRATES_API_TOKEN` failed start-up with
+    # `extra_forbidden` and printed the token in the error.
+    result = _load_config_from_dotenv(
+        tmp_path, "CRATES_API_TOKEN=project-secret", "CRATES_API_TOKEN"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "loaded" in result.stdout
+    assert "project-secret" not in result.stderr
+
+
+def test_an_invalid_value_for_a_declared_setting_in_dotenv_is_still_refused(
+    tmp_path,
+) -> None:
+    # Ignoring keys cgr does not own must not loosen the settings it does own.
+    result = _load_config_from_dotenv(
+        tmp_path, "MEMGRAPH_PORT=not-a-port", "MEMGRAPH_PORT"
+    )
+
+    assert result.returncode != 0
+    assert "MEMGRAPH_PORT" in result.stderr
+    assert "int_parsing" in result.stderr
+
+
+def test_an_ignored_dotenv_key_does_not_become_a_setting(tmp_path) -> None:
+    result = _load_config_from_dotenv(
+        tmp_path,
+        "CRATES_API_TOKEN=project-secret",
+        "CRATES_API_TOKEN",
+        check=(
+            "c = AppConfig(); "
+            "assert not hasattr(c, 'CRATES_API_TOKEN'), 'extra kept'; "
+            "assert not c.model_extra, c.model_extra; "
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "loaded" in result.stdout

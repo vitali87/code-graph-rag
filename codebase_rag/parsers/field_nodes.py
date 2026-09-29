@@ -1064,7 +1064,7 @@ def emit_field_type_edges(
             ingestor.ensure_relationship_batch(
                 source,
                 cs.RelationshipType.OF_TYPE,
-                (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn),
+                (resolver.label_for(target_qn), cs.KEY_QUALIFIED_NAME, target_qn),
             )
             emitted += 1
     # Emptied like the sibling passes: a reused updater (watch mode) would

@@ -27,10 +27,10 @@ from .dead_code import (
     _rust_test_fn_spans,
     _rust_test_modules_from_nodes,
 )
-from .types_defs import PropertyDict, ResultRow
+from .types_defs import PropertyDict, PropertyParams, ResultRow
 from .utils.source_extraction import extract_source_lines
 
-QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
+QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _DEFINITION_LABELS = frozenset(
     {
