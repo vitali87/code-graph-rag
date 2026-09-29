@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Coroutine
 from fnmatch import fnmatch
@@ -1010,17 +1011,24 @@ def index(
         parsers, queries = load_parsers()
         from .graph_updater import GraphUpdater
 
-        updater = GraphUpdater(
-            ingestor=ingestor,
-            repo_path=repo_to_index,
-            parsers=parsers,
-            queries=queries,
-            unignore_paths=unignore_paths,
-            exclude_paths=exclude_paths,
-            capture=capture_config,
-        )
-
-        updater.run()
+        # The output is a fresh snapshot, not a graph that persists between
+        # runs, so the sync state lives in a throwaway directory: a previous
+        # run's state must never make this one incremental (it wrote a
+        # Project-only index for an unchanged repo), and this run must not
+        # leave state telling the next sync its live graph is current
+        # (issue #2401).
+        with tempfile.TemporaryDirectory(prefix=cs.INDEX_STATE_DIR_PREFIX) as state:
+            updater = GraphUpdater(
+                ingestor=ingestor,
+                repo_path=repo_to_index,
+                parsers=parsers,
+                queries=queries,
+                unignore_paths=unignore_paths,
+                exclude_paths=exclude_paths,
+                capture=capture_config,
+                state_dir=Path(state),
+            )
+            updater.run(force=True)
         manifest_path = write_manifest(
             Path(output_proto_dir),
             indexed_source,
