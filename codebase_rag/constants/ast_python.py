@@ -83,6 +83,10 @@ PY_TYPING_UNION = "Union"
 # The first parameter of a method that names the instance or class; a
 # signature change keeps it in place and never remaps it.
 PY_RECEIVER_NAMES = frozenset({"self", "cls"})
+# A method reached through the class rather than an instance passes its
+# receiver explicitly: `type(obj).f(obj, a)`, `obj.__class__.f(obj, a)`.
+PY_TYPE_BUILTIN = "type"
+PY_CLASS_ATTRIBUTE = "__class__"
 TS_PY_SUBSCRIPT = "subscript"
 # The `subscript` node's index field (`os.environ["K"]` -> the `"K"` string).
 TS_PY_FIELD_SUBSCRIPT = "subscript"
