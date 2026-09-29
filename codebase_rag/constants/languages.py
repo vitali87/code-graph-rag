@@ -410,6 +410,16 @@ class TreeSitterModule(StrEnum):
 DIR_BIN = "bin"
 DIR_SRC = "src"
 
+# Default-excluded directory names that hold first-party, committed source as
+# often as build output: Dart's `bin/` entry point, npm and gem executables, a
+# Go package `out`, a JS `env` module. A directory with one of these names is
+# indexed when git tracks files in it; untracked or ignored output under the
+# same name is still skipped (issue #2406).
+TRACKED_SOURCE_DIR_NAMES = frozenset(
+    {"bin", "coverage", "env", "obj", "out", "target", "temp", "tmp"}
+)
+GIT_LS_FILES_TIMEOUT_S = 30
+
 # Patterns detected at repo root and offered as exclude candidates (user picks which)
 IGNORE_PATTERNS = frozenset(
     {

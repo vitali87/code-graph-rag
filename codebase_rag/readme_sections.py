@@ -16,7 +16,9 @@ from loguru import logger
 from . import cli_help as ch
 from .constants import (
     ENCODING_UTF8,
+    IGNORE_PATTERNS,
     LANGUAGE_METADATA,
+    TRACKED_SOURCE_DIR_NAMES,
     LanguageStatus,
     SupportedLanguage,
 )
@@ -312,6 +314,27 @@ def format_latest_news(news_path: Path, limit: int = 3) -> str:
     return "\n".join(bullets[:count])
 
 
+def format_default_exclusions() -> str:
+    """The built-in directory exclusions, generated so the page cannot drift.
+
+    The page said only "such as `.git`, `node_modules`, `__pycache__`,
+    `dist`, `build`, and similar", so a user could not tell why a directory
+    of their own was missing from the graph (issue #2406).
+    """
+    rows = [
+        "| Directory name | Excluded |",
+        "|---|---|",
+    ]
+    for name in sorted(IGNORE_PATTERNS, key=str.lower):
+        when = (
+            "unless git tracks files in it"
+            if name in TRACKED_SOURCE_DIR_NAMES
+            else "always"
+        )
+        rows.append(f"| `{name}` | {when} |")
+    return "\n".join(rows)
+
+
 def generate_all_sections(project_root: Path) -> dict[str, str]:
     makefile_commands = extract_makefile_commands(project_root / "Makefile")
     node_schemas = extract_node_schemas()
@@ -331,4 +354,5 @@ def generate_all_sections(project_root: Path) -> dict[str, str]:
             deps, committed_dependency_summaries(project_root / DEPENDENCIES_DOC)
         ),
         "latest_news": format_latest_news(project_root / "NEWS.md"),
+        "default_exclusions": format_default_exclusions(),
     }

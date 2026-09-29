@@ -45,7 +45,65 @@ to establish it and logs why.
 
 ## Default Exclusions
 
-Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.
+Code-Graph-RAG automatically excludes common non-source directories. A name
+matches a directory at any depth. Cargo's `src/bin/` is always indexed.
+
+Some of these names hold first-party, committed source as often as build
+output: Dart's `bin/main.dart` entry point, npm and gem executables, a Go
+package called `out`, a JavaScript `env` module. A directory with one of those
+names is indexed when git tracks files in it, and the run log names each one
+it keeps. Untracked or `.gitignore`d output under the same name is still
+skipped, and an explicit exclude (`.cgrignore` or `--exclude`) still wins.
+
+<!-- SECTION:default_exclusions -->
+| Directory name | Excluded |
+|---|---|
+| `.cache` | always |
+| `.claude` | always |
+| `.cxx` | always |
+| `.dart_tool` | always |
+| `.eclipse` | always |
+| `.eggs` | always |
+| `.env` | always |
+| `.git` | always |
+| `.gradle` | always |
+| `.hg` | always |
+| `.idea` | always |
+| `.maven` | always |
+| `.mypy_cache` | always |
+| `.nox` | always |
+| `.npm` | always |
+| `.nyc_output` | always |
+| `.pnpm-store` | always |
+| `.pytest_cache` | always |
+| `.qdrant_code_embeddings` | always |
+| `.ruff_cache` | always |
+| `.svn` | always |
+| `.tmp` | always |
+| `.tox` | always |
+| `.venv` | always |
+| `.vs` | always |
+| `.vscode` | always |
+| `.yarn` | always |
+| `__pycache__` | always |
+| `bin` | unless git tracks files in it |
+| `bower_components` | always |
+| `build` | always |
+| `coverage` | unless git tracks files in it |
+| `dist` | always |
+| `env` | unless git tracks files in it |
+| `htmlcov` | always |
+| `node_modules` | always |
+| `obj` | unless git tracks files in it |
+| `out` | unless git tracks files in it |
+| `Pods` | always |
+| `site-packages` | always |
+| `target` | unless git tracks files in it |
+| `temp` | unless git tracks files in it |
+| `tmp` | unless git tracks files in it |
+| `vendor` | always |
+| `venv` | always |
+<!-- /SECTION:default_exclusions -->
 
 Individual files are also skipped by how their **name ends**, covering build
 output and editor leftovers (`.pyc`, `.pyo`, `.o`, `.a`, `.so`, `.dll`,

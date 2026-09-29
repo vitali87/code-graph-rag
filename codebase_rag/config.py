@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -629,8 +630,56 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     negations = cgr.unignore | git.unignore
     return CgrignorePatterns(
         exclude=cgr.exclude | (git.exclude - negations),
-        unignore=negations,
+        unignore=negations | _tracked_source_dirs(repo_path),
     )
+
+
+_TRACKED_SOURCE_LOGGED: set[tuple[Path, frozenset[str]]] = set()
+
+
+def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
+    """Anchored un-ignores for tracked directories with ambiguous names.
+
+    A default exclusion matches a directory NAME at any depth, and `bin`,
+    `out`, `env` and the like hold committed first-party source as often as
+    build output: a Dart project's only entry point is `bin/main.dart`. Each
+    such directory git tracks files in is rescued by its own anchored path,
+    so an untracked `tools/bin/` beside a tracked root `bin/` stays excluded,
+    and an explicit exclude still wins as for any `!` line (issue #2406).
+    Outside a git checkout, or if git cannot answer, nothing is rescued.
+    """
+    try:
+        listing = subprocess.run(
+            [cs.SHELL_CMD_GIT, "ls-files", "-z"],
+            cwd=repo_path,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LS_FILES_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    if listing.returncode != 0:
+        return frozenset()
+    rescued: set[str] = set()
+    for entry in listing.stdout.split("\0"):
+        parts = entry.split(cs.SEPARATOR_SLASH)[:-1]
+        for index, part in enumerate(parts):
+            if part in cs.TRACKED_SOURCE_DIR_NAMES:
+                anchored = cs.SEPARATOR_SLASH.join(parts[: index + 1])
+                rescued.add(f"{cs.SEPARATOR_SLASH}{anchored}{cs.SEPARATOR_SLASH}")
+    kept = frozenset(rescued)
+    # Logged once per repository and set: several entry points load the
+    # patterns in one run.
+    if kept and (repo_path, kept) not in _TRACKED_SOURCE_LOGGED:
+        _TRACKED_SOURCE_LOGGED.add((repo_path, kept))
+        logger.info(
+            logs.TRACKED_SOURCE_DIRS_KEPT.format(
+                dirs=", ".join(sorted(p.strip(cs.SEPARATOR_SLASH) + "/" for p in kept))
+            )
+        )
+    return kept
 
 
 CGR_INSTRUCTIONS_FILENAME = ".cgr.md"

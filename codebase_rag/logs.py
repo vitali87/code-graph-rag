@@ -257,6 +257,10 @@ GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
 
 # Ignore pattern logs
+TRACKED_SOURCE_DIRS_KEPT = (
+    "Indexing git-tracked source under default-excluded directory names: {dirs} "
+    "(add them to .cgrignore to skip them)"
+)
 CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
