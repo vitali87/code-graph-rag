@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import os
 import sys
 import tempfile
@@ -8,15 +9,22 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from http.client import HTTPMessage
-from typing import IO
+from typing import IO, Protocol
 
 import mgclient
 from loguru import logger
 
 from .. import constants as root_cs
 from . import constants as cs
+
+if sys.platform == "win32":
+    import _winapi
+    import ctypes
+
+    # The standard library's msvcrt module wraps the UCRT, not msvcrt.dll.
+    import msvcrt
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
@@ -56,27 +64,124 @@ _DIRECT_OPENER = urllib.request.build_opener(
 _NATIVE_STDERR_LOCK = threading.Lock()
 
 
+class _CRuntime(Protocol):
+    # A C runtime's descriptor table. POSIX has one per process, the kernel's;
+    # on Windows each C runtime DLL keeps its own, so fd 2 in one is not fd 2
+    # in another.
+    def dup(self, fd: int) -> int: ...
+
+    def dup2(self, fd: int, fd2: int) -> None: ...
+
+    def close(self, fd: int) -> None: ...
+
+    def open_file(self, file: IO[bytes]) -> int: ...
+
+
+class _PythonCRuntime:
+    # The one behind Python's os module.
+    def dup(self, fd: int) -> int:
+        return os.dup(fd)
+
+    def dup2(self, fd: int, fd2: int) -> None:
+        os.dup2(fd, fd2)
+
+    def close(self, fd: int) -> None:
+        os.close(fd)
+
+    def open_file(self, file: IO[bytes]) -> int:
+        return os.dup(file.fileno())
+
+
+_PYTHON_C_RUNTIME = _PythonCRuntime()
+
+
+def _c_runtime_result(result: int) -> int:
+    if result == -1:
+        raise OSError(cs.ERR_C_RUNTIME_CALL_FAILED)
+    return result
+
+
+if sys.platform == "win32":
+
+    class _MsvcrtCRuntime:
+        # mgclient's perror() and fprintf(stderr) go through msvcrt.dll there,
+        # to msvcrt.dll's fd 2, which os.dup2 on the UCRT's fd 2 never reaches.
+        def __init__(self, crt: ctypes.CDLL) -> None:
+            crt._open_osfhandle.argtypes = (ctypes.c_ssize_t, ctypes.c_int)
+            self._crt = crt
+
+        def dup(self, fd: int) -> int:
+            return _c_runtime_result(self._crt._dup(fd))
+
+        def dup2(self, fd: int, fd2: int) -> None:
+            # msvcrt.dll fully buffers stderr whenever fd 2 is not a console,
+            # as the capture file is not. Flushing before fd 2 moves sends
+            # each message to the file fd 2 named when it was printed.
+            self._crt.fflush(None)
+            _c_runtime_result(self._crt._dup2(fd, fd2))
+
+        def close(self, fd: int) -> None:
+            _c_runtime_result(self._crt._close(fd))
+
+        def open_file(self, file: IO[bytes]) -> int:
+            # A descriptor closes its handle with it, so this one gets its own
+            # handle rather than sharing the one Python's descriptor closes.
+            process = _winapi.GetCurrentProcess()
+            handle = _winapi.DuplicateHandle(
+                process,
+                msvcrt.get_osfhandle(file.fileno()),
+                process,
+                0,
+                False,
+                _winapi.DUPLICATE_SAME_ACCESS,
+            )
+            fd = self._crt._open_osfhandle(handle, os.O_BINARY)
+            if fd == -1:
+                _winapi.CloseHandle(handle)
+            return _c_runtime_result(fd)
+
+
+@functools.cache
+def _mgclient_own_c_runtimes() -> tuple[_CRuntime, ...]:
+    # The C runtimes besides Python's that mgclient prints through.
+    if sys.platform != "win32":
+        return ()
+    return (_MsvcrtCRuntime(ctypes.CDLL(cs.MGCLIENT_WINDOWS_C_RUNTIME)),)
+
+
+@contextmanager
+def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
+    try:
+        saved = runtime.dup(cs.NATIVE_STDERR_FD)
+    except OSError:
+        # With fd 2 closed there is no terminal to keep clean.
+        yield
+        return
+    try:
+        target = runtime.open_file(capture)
+        try:
+            runtime.dup2(target, cs.NATIVE_STDERR_FD)
+        finally:
+            runtime.close(target)
+        yield
+    finally:
+        runtime.dup2(saved, cs.NATIVE_STDERR_FD)
+        runtime.close(saved)
+
+
 @contextmanager
 def _mgclient_stderr_to_debug_log() -> Iterator[None]:
     with _NATIVE_STDERR_LOCK, tempfile.TemporaryFile() as capture:
-        try:
-            saved = os.dup(cs.NATIVE_STDERR_FD)
-        except OSError:
-            saved = None
-        if saved is None:
-            # With fd 2 closed there is no terminal to keep clean.
-            yield
-            return
         # Text Python still buffers for the terminal belongs there, not in
         # the capture.
         if sys.stderr is not None:
             sys.stderr.flush()
         try:
-            os.dup2(capture.fileno(), cs.NATIVE_STDERR_FD)
-            yield
+            with ExitStack() as redirects:
+                for runtime in (_PYTHON_C_RUNTIME, *_mgclient_own_c_runtimes()):
+                    redirects.enter_context(_stderr_into(runtime, capture))
+                yield
         finally:
-            os.dup2(saved, cs.NATIVE_STDERR_FD)
-            os.close(saved)
             # Kept rather than dropped, for whoever is chasing a Memgraph that
             # never answers; the probe's own result is what reports it.
             capture.seek(0)
