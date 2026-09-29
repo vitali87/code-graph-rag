@@ -58,8 +58,12 @@ class _FakeTTY(io.StringIO):
         return True
 
 
-def _render(monkeypatch: pytest.MonkeyPatch, file: io.StringIO) -> str:
-    monkeypatch.setattr(cli.app_context, "console", terminal_aware_console(file=file))
+def _render(
+    monkeypatch: pytest.MonkeyPatch, file: io.StringIO, width: int = 200
+) -> str:
+    console = terminal_aware_console(file=file)
+    console.width = width
+    monkeypatch.setattr(cli.app_context, "console", console)
     cli._emit_duplicates(
         GROUPS,
         cs.DuplicatesFormat.TABLE,
@@ -122,3 +126,24 @@ def test_a_member_outside_the_project_keeps_its_full_name() -> None:
 
     assert f"{PROJECT}x.mod.f" in buffer.getvalue()
     assert f"{PROJECT}.mod.g" not in buffer.getvalue()
+
+
+def _column(out: str, index: int) -> str:
+    """One table column's body cells, joined in row order."""
+    return "".join(
+        line.split("│")[index].strip()
+        for line in out.splitlines()
+        if line.startswith("│")
+    )
+
+
+def test_long_names_are_folded_not_cut_at_pipe_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # At 80 columns every Member and Location cell ended in an ellipsis, so
+    # a redirected report never named the function (issue #2397, comment).
+    out = _render(monkeypatch, io.StringIO(), width=80)
+
+    assert "…" not in out
+    assert "tests.test_arguments.test_good_defaults_for_nargs" in _column(out, 4)
+    assert "tests/test_arguments.py:985-986" in _column(out, 5)

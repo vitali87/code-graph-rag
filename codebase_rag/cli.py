@@ -2077,8 +2077,13 @@ def _build_duplicates_table(
     table.add_column(
         cs.CLI_DUPLICATES_COL_SIMILARITY, style=cs.Color.YELLOW, justify="right"
     )
-    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN)
-    table.add_column(cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW)
+    # Folded, not ellipsised: a qualified name or path has no space to wrap
+    # at, so at pipe width every cell ended in "…" and never named the
+    # function (issue #2397).
+    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN, overflow="fold")
+    table.add_column(
+        cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW, overflow="fold"
+    )
     # The title names the project, so each member drops that prefix: at pipe
     # width the column otherwise showed nothing else (issue #2397). Only the
     # dotted prefix goes, so `projx.mod` under `proj` keeps its name.
