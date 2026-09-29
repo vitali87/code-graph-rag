@@ -1019,7 +1019,8 @@ RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
 # `CYPHER_DELETE_MODULE` walks them so the capture equals the delete -- the
 # relation list must be kept in step with that query's, or the re-ingest
 # deletes nodes the capture never saw and the restore cannot put them back
-# (HAS_FIELD was added to the delete by #1899 and missed here: CodeRabbit),
+# (HAS_FIELD was added to the delete by #1899 and missed here: CodeRabbit;
+# HAS_VARIANT likewise by #1807, and a test now pins the two lists equal),
 # plus
 # the File nodes at those paths and the containers above them (a package
 # indicator appearing or vanishing flips the directory's node kind).
@@ -1029,7 +1030,7 @@ WHERE (n:{NodeLabel.MODULE.value} AND n.path IN $paths
             OR n.qualified_name STARTS WITH $project_prefix))
    OR ((n:{NodeLabel.FILE.value} OR n:{NodeLabel.FOLDER.value}
         OR n:{NodeLabel.PACKAGE.value}) AND n.absolute_path IN $absolute_paths)
-MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c)
+MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*0..]->(c)
 WITH DISTINCT c"""
 CYPHER_CHECK_SCOPE_NODES = f"""{_CHECK_SCOPE}
 RETURN labels(c)[0] AS label, properties(c) AS props"""
