@@ -511,7 +511,8 @@ def build_node_props_query(label: str, id_key: str) -> str:
     return f"MATCH (n:{label} {{{id_key}: $id}}) RETURN properties(n) AS props"
 
 
-_PROPERTY_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# ASCII-only: `\w` alone would also accept non-ASCII letters and digits.
+_PROPERTY_KEY = re.compile(r"[A-Za-z_]\w*", re.ASCII)
 
 
 def build_remove_node_keys_query(label: str, id_key: str, keys: Iterable[str]) -> str:

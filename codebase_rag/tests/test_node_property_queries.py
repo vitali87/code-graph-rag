@@ -17,9 +17,12 @@ def test_the_removal_names_each_key_once_in_sorted_order() -> None:
     assert query == ("MATCH (n:Function {qualified_name: $id}) REMOVE n.`a_1`, n.`b`")
 
 
-@pytest.mark.parametrize("key", ["", "1st", "a-b", "a`b", "x y", "n.m"])
+@pytest.mark.parametrize(
+    "key", ["", "1st", "a-b", "a`b", "x y", "n.m", "caf\u00e9", "x\u0661"]
+)
 def test_a_key_that_is_not_a_plain_identifier_is_refused(key: str) -> None:
     """A property name cannot be a Cypher parameter, so it is spliced into
-    the query; anything but an identifier would change the statement."""
+    the query; anything but an identifier would change the statement. Only
+    ASCII identifiers pass: a non-ASCII letter or digit is refused too."""
     with pytest.raises(ValueError, match="not a property name"):
         build_remove_node_keys_query("File", "path", [key])
