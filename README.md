@@ -45,7 +45,17 @@
 Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="demo">
+  <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
+</p>
+<p align="center">
+  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+</p>
+
+<p align="center">
+  <b>2. Ask:</b> <code>cgr start</code> answers questions and edits code, grounded in that graph
+</p>
+<p align="center">
+  <img src="./assets/demo.gif" alt="cgr agent answering questions about the indexed repository">
 </p>
 
 ## Latest News 🔥
