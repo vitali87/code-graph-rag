@@ -4991,7 +4991,7 @@ class ImportProcessor:
             uri = dart_extract_uri(import_node)
             if not uri:
                 continue
-            if full_name := dart_resolve_import(uri, module_qn, self.project_name):
+            if full_name := dart_resolve_import(uri, module_qn):
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)

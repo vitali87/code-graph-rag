@@ -45,7 +45,7 @@ class MakeCommand(NamedTuple):
     description: str
 
 
-MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):.*?## (.+)$")
+MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):(?:(?!## ).)*## (.+)$")
 
 
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:

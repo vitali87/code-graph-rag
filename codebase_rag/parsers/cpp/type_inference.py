@@ -16,9 +16,7 @@ class CppTypeInferenceEngine:
     # type identifier.
     __slots__ = ()
 
-    def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
-    ) -> dict[str, str]:
+    def build_local_variable_type_map(self, caller_node: Node) -> dict[str, str]:
         decls: list[tuple[str, str]] = []
         if declarator := self._function_declarator(caller_node):
             self._collect_parameters(declarator, decls)
