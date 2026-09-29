@@ -457,6 +457,10 @@ TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
 )
 TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
 TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
+TOOL_QUERY_REPAIRING = (
+    "[Tool:QueryGraph] The database rejected the query ({error}); "
+    "asking for a corrected one"
+)
 TOOL_QUERY_TIMEOUT = (
     "[Tool:QueryGraph] Query exceeded {timeout:.1f}s and was cancelled: {query}"
 )

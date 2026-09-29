@@ -116,6 +116,27 @@ def _created_count(results: Sequence[ResultRow]) -> int:
     return total
 
 
+def is_query_rejection(error: BaseException) -> bool:
+    """Whether the engine refused the query itself, not the connection.
+
+    A rejected query (a syntax or type error such as sorting on a list) can
+    be fixed by asking for a different query; an unreachable server or a
+    failed login cannot, so those must not trigger a regeneration. In
+    mgclient, `OperationalError` (connection) subclasses `DatabaseError`;
+    in neo4j, `AuthError` subclasses `ClientError` (issue #2361).
+    """
+    if isinstance(error, mgclient.DatabaseError):
+        return not isinstance(error, mgclient.OperationalError)
+    try:
+        from neo4j.exceptions import (  # ty: ignore[unresolved-import]
+            AuthError,
+            ClientError,
+        )
+    except ImportError:
+        return False
+    return isinstance(error, ClientError) and not isinstance(error, AuthError)
+
+
 def _log_failed_calls(
     from_label: str,
     to_label: str,

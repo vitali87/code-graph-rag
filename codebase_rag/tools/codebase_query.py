@@ -29,6 +29,7 @@ from ..constants import (
 )
 from ..schemas import QueryGraphData
 from ..services import ReadOnlyQueryProtocol
+from ..services.graph_service import is_query_rejection
 from ..services.llm import CypherGenerator
 from ..types_defs import ResultRow
 from ..utils.token_utils import truncate_results_by_tokens
@@ -840,6 +841,36 @@ def create_query_tool(
     if console is None:
         console = Console(width=None, stderr=True, force_terminal=True)
 
+    def scope_refusal(cypher_query: str) -> QueryGraphData | None:
+        # BEFORE execution. A query returning no qualified name yields
+        # rows the filter cannot attribute, so it keeps them, and
+        # answering a SCOPED request with those would ignore the scope
+        # silently. The guard reads only the generated Cypher, so
+        # nothing required it to wait for results -- and running first
+        # meant an unscopable request still performed a cross-project
+        # read against the shared graph. The rows never reached the
+        # caller, but the database served them, which is the part a
+        # caller can neither see nor undo.
+        if project_name is None or (
+            evidence := requires_project_evidence(cypher_query, project_name)
+        ):
+            return None
+        message = unscopeable_message(evidence, project_name)
+        # `error` as well as `summary`: MCP callers distinguish a
+        # refusal from a genuine empty result by the error key.
+        return QueryGraphData(
+            query_used=cypher_query,
+            results=[],
+            summary=message,
+            error=message,
+        )
+
+    async def fetch(cypher_query: str) -> list[ResultRow]:
+        return await asyncio.wait_for(
+            asyncio.to_thread(ingestor.fetch_read_only, cypher_query),
+            timeout=settings.QUERY_TIMEOUT_S,
+        )
+
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
     ) -> QueryGraphData:
@@ -847,33 +878,23 @@ def create_query_tool(
         cypher_query = QUERY_NOT_AVAILABLE
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
-
-            # BEFORE execution. A query returning no qualified name yields
-            # rows the filter cannot attribute, so it keeps them, and
-            # answering a SCOPED request with those would ignore the scope
-            # silently. The guard reads only the generated Cypher, so
-            # nothing required it to wait for results -- and running first
-            # meant an unscopable request still performed a cross-project
-            # read against the shared graph. The rows never reached the
-            # caller, but the database served them, which is the part a
-            # caller can neither see nor undo.
-            if project_name is not None and not (
-                evidence := requires_project_evidence(cypher_query, project_name)
-            ):
-                message = unscopeable_message(evidence, project_name)
-                # `error` as well as `summary`: MCP callers distinguish a
-                # refusal from a genuine empty result by the error key.
-                return QueryGraphData(
-                    query_used=cypher_query,
-                    results=[],
-                    summary=message,
-                    error=message,
+            if refusal := scope_refusal(cypher_query):
+                return refusal
+            try:
+                results = await fetch(cypher_query)
+            except Exception as e:
+                # One regeneration, fed the engine's own error, for a query
+                # the engine refused (issue #2361). Anything else, such as a
+                # timeout or a lost connection, is not the query's fault.
+                if not is_query_rejection(e):
+                    raise
+                logger.warning(ls.TOOL_QUERY_REPAIRING.format(error=e))
+                cypher_query = await cypher_gen.repair(
+                    natural_language_query, cypher_query, str(e)
                 )
-
-            results = await asyncio.wait_for(
-                asyncio.to_thread(ingestor.fetch_read_only, cypher_query),
-                timeout=settings.QUERY_TIMEOUT_S,
-            )
+                if refusal := scope_refusal(cypher_query):
+                    return refusal
+                results = await fetch(cypher_query)
 
             # Before the row cap and the token truncation, so a scoped query
             # spends its budget on rows the caller can actually use rather
