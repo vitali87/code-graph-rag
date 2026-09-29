@@ -50,10 +50,12 @@ matches a directory at any depth. Cargo's `src/bin/` is always indexed.
 
 Some of these names hold first-party, committed source as often as build
 output: Dart's `bin/main.dart` entry point, npm and gem executables, a Go
-package called `out`, a JavaScript `env` module. A directory with one of those
-names is indexed when git tracks files in it, and the run log names each one
-it keeps. Untracked or `.gitignore`d output under the same name is still
-skipped, and an explicit exclude (`.cgrignore` or `--exclude`) still wins.
+package called `out`, a JavaScript `env` module. The files git tracks under a
+directory with one of those names are indexed, and the run log names each
+directory they are in. Everything else under the same name is still skipped:
+an untracked `bin/generated.js` beside a tracked `bin/main.dart`, a
+`.gitignore`d build folder, an untracked `tools/bin/`. An explicit exclude
+(`.cgrignore` or `--exclude`) still wins.
 
 <!-- SECTION:default_exclusions -->
 | Directory name | Excluded |
@@ -86,21 +88,21 @@ skipped, and an explicit exclude (`.cgrignore` or `--exclude`) still wins.
 | `.vscode` | always |
 | `.yarn` | always |
 | `__pycache__` | always |
-| `bin` | unless git tracks files in it |
+| `bin` | except the files git tracks in it |
 | `bower_components` | always |
 | `build` | always |
-| `coverage` | unless git tracks files in it |
+| `coverage` | except the files git tracks in it |
 | `dist` | always |
-| `env` | unless git tracks files in it |
+| `env` | except the files git tracks in it |
 | `htmlcov` | always |
 | `node_modules` | always |
-| `obj` | unless git tracks files in it |
-| `out` | unless git tracks files in it |
+| `obj` | except the files git tracks in it |
+| `out` | except the files git tracks in it |
 | `Pods` | always |
 | `site-packages` | always |
-| `target` | unless git tracks files in it |
-| `temp` | unless git tracks files in it |
-| `tmp` | unless git tracks files in it |
+| `target` | except the files git tracks in it |
+| `temp` | except the files git tracks in it |
+| `tmp` | except the files git tracks in it |
 | `vendor` | always |
 | `venv` | always |
 <!-- /SECTION:default_exclusions -->

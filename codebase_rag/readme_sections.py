@@ -327,7 +327,7 @@ def format_default_exclusions() -> str:
     ]
     for name in sorted(IGNORE_PATTERNS, key=str.lower):
         when = (
-            "unless git tracks files in it"
+            "except the files git tracks in it"
             if name in TRACKED_SOURCE_DIR_NAMES
             else "always"
         )

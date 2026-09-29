@@ -412,9 +412,9 @@ DIR_SRC = "src"
 
 # Default-excluded directory names that hold first-party, committed source as
 # often as build output: Dart's `bin/` entry point, npm and gem executables, a
-# Go package `out`, a JS `env` module. A directory with one of these names is
-# indexed when git tracks files in it; untracked or ignored output under the
-# same name is still skipped (issue #2406).
+# Go package `out`, a JS `env` module. The files git tracks under a directory
+# with one of these names are indexed; untracked or ignored output under the
+# same name, even beside tracked files, is still skipped (issue #2406).
 TRACKED_SOURCE_DIR_NAMES = frozenset(
     {"bin", "coverage", "env", "obj", "out", "target", "temp", "tmp"}
 )

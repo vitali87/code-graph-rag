@@ -643,10 +643,12 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     A default exclusion matches a directory NAME at any depth, and `bin`,
     `out`, `env` and the like hold committed first-party source as often as
     build output: a Dart project's only entry point is `bin/main.dart`. Each
-    such directory git tracks files in is rescued by its own anchored path,
-    so an untracked `tools/bin/` beside a tracked root `bin/` stays excluded,
-    and an explicit exclude still wins as for any `!` line (issue #2406).
-    Outside a git checkout, or if git cannot answer, nothing is rescued.
+    tracked file under such a directory is rescued by its own anchored path,
+    not the directory: a directory-level `!` would let untracked build output
+    written beside the tracked source (`bin/generated.js`) through as well
+    (review of PR 2490). An untracked `tools/bin/` stays excluded too, and an
+    explicit exclude still wins as for any `!` line (issue #2406). Outside a
+    git checkout, or if git cannot answer, nothing is rescued.
     """
     try:
         listing = subprocess.run(
@@ -663,23 +665,25 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     if listing.returncode != 0:
         return frozenset()
     rescued: set[str] = set()
+    dirs: set[str] = set()
     for entry in listing.stdout.split("\0"):
-        parts = entry.split(cs.SEPARATOR_SLASH)[:-1]
-        for index, part in enumerate(parts):
+        parts = entry.split(cs.SEPARATOR_SLASH)
+        for index, part in enumerate(parts[:-1]):
             if part in cs.TRACKED_SOURCE_DIR_NAMES:
-                anchored = cs.SEPARATOR_SLASH.join(parts[: index + 1])
-                rescued.add(f"{cs.SEPARATOR_SLASH}{anchored}{cs.SEPARATOR_SLASH}")
-    kept = frozenset(rescued)
+                rescued.add(f"{cs.SEPARATOR_SLASH}{entry}")
+                dirs.add(cs.SEPARATOR_SLASH.join(parts[: index + 1]))
+                break
+    kept_dirs = frozenset(dirs)
     # Logged once per repository and set: several entry points load the
     # patterns in one run.
-    if kept and (repo_path, kept) not in _TRACKED_SOURCE_LOGGED:
-        _TRACKED_SOURCE_LOGGED.add((repo_path, kept))
+    if kept_dirs and (repo_path, kept_dirs) not in _TRACKED_SOURCE_LOGGED:
+        _TRACKED_SOURCE_LOGGED.add((repo_path, kept_dirs))
         logger.info(
             logs.TRACKED_SOURCE_DIRS_KEPT.format(
-                dirs=", ".join(sorted(p.strip(cs.SEPARATOR_SLASH) + "/" for p in kept))
+                dirs=", ".join(f"{d}/" for d in sorted(kept_dirs))
             )
         )
-    return kept
+    return frozenset(rescued)
 
 
 CGR_INSTRUCTIONS_FILENAME = ".cgr.md"

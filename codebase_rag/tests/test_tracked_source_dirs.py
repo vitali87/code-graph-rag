@@ -21,6 +21,7 @@ from codebase_rag.config import CGRIGNORE_FILENAME, load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import git_env
+from codebase_rag.utils.path_utils import is_eligible_rel_file
 from evals.cgr_graph import _StatefulIngestor
 
 TRACKED = {
@@ -133,3 +134,29 @@ def test_outside_git_the_defaults_apply_as_before(tmp_path: Path) -> None:
 
     assert load_ignore_patterns(repo).unignore == frozenset()
     assert "bin/main.dart" not in _indexed_paths(repo)
+
+
+def test_an_untracked_file_beside_tracked_source_stays_excluded(defex: Path) -> None:
+    # The rescue is for what git tracks, not for the whole directory: build
+    # output written next to `bin/main.dart` is still output (review of
+    # PR 2490).
+    for rel in ("bin/generated.js", "src/env/local.js"):
+        (defex / rel).write_text("export const X = 1;\n")
+
+    indexed = _indexed_paths(defex)
+
+    assert not {"bin/generated.js", "src/env/local.js"} & indexed
+    assert {"bin/main.dart", "src/env/index.js"} <= indexed
+
+
+def test_the_watcher_draws_the_same_line(defex: Path) -> None:
+    # The watcher decides one path at a time with the same predicate.
+    patterns = load_ignore_patterns(defex)
+
+    def eligible(rel: str) -> bool:
+        return is_eligible_rel_file(
+            rel, patterns.exclude or None, patterns.unignore or None
+        )
+
+    assert eligible("bin/main.dart")
+    assert not eligible("bin/generated.js")
