@@ -33,7 +33,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-from tree_sitter import Parser
+from tree_sitter import Node, Parser
 
 from .. import constants as cs
 from .. import graph_query
@@ -108,6 +108,21 @@ class SignatureChanger:
         allow_heuristic: bool,
     ) -> tuple[SignatureReport, list[_Edit]]:
         """Everything the change touches, and the edits that do it."""
+        report, edits, _patcher = self._plan(qn, new_params, mapping, allow_heuristic)
+        return report, edits
+
+    def _plan(
+        self,
+        qn: str,
+        new_params: Sequence[str],
+        mapping: Mapping[str, str] | None,
+        allow_heuristic: bool,
+    ) -> tuple[SignatureReport, list[_Edit], Patcher]:
+        """`plan`, plus the patcher holding the bytes every edit was read from.
+
+        `_stage` splices the edits into those same bytes: a file re-read from
+        disk after planning may have moved under the recorded offsets.
+        """
         patcher = Patcher(self.repo_root, parsers=self._parsers)
         members = hierarchy(self.fetch_all, self.project, qn)
         headers = [self._header(member, patcher) for member in members]
@@ -188,7 +203,7 @@ class SignatureChanger:
                 count=sum(1 for s in sites if s.kind == _CALL), skipped=len(unmapped)
             ),
         )
-        return report, edits
+        return report, edits, patcher
 
     def _header(self, qn: str, patcher: Patcher) -> _Header:
         definition = graph_query.definition(self.fetch_all, self.project, qn, None)
@@ -301,13 +316,14 @@ class SignatureChanger:
                 if None in key[:3] or key not in seen:
                     seen.add(key)
                     self._consider(
-                        row, old, allow_heuristic, patcher, candidates, unmapped
+                        row, header, old, allow_heuristic, patcher, candidates, unmapped
                     )
         return candidates
 
     def _consider(
         self,
         row: graph_query.CallSiteRow,
+        header: _Header,
         old: Sequence[ParamSpec],
         allow_heuristic: bool,
         patcher: Patcher,
@@ -315,7 +331,9 @@ class SignatureChanger:
         unmapped: list[UnmappedSite],
     ) -> None:
         try:
-            candidates.append(self._candidate(row, old, allow_heuristic, patcher))
+            candidates.append(
+                self._candidate(row, header, old, allow_heuristic, patcher)
+            )
         except _Unmapped as skip:
             unmapped.append(
                 UnmappedSite(
@@ -330,6 +348,7 @@ class SignatureChanger:
     def _candidate(
         self,
         row: graph_query.CallSiteRow,
+        header: _Header,
         old: Sequence[ParamSpec],
         allow_heuristic: bool,
         patcher: Patcher,
@@ -368,6 +387,13 @@ class SignatureChanger:
             raise _Unmapped(
                 cs.SIGNATURE_SITE_UNREADABLE.format(text=_text(args or call, source))
             )
+        if _binds_its_receiver(header) and _passes_receiver(call, source, header.qn):
+            # `Base.f(obj, a)` passes `self` as its first argument: binding
+            # it to the first declared parameter would shift every value
+            # one slot. Left as written rather than guessed at.
+            raise _Unmapped(
+                cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(text=_text(call, source))
+            )
         bound = _bind_arguments(args, source, old)
         site = SignatureSite(_CALL, path, line, col, row["qualified_name"], resolution)
         return _Candidate(
@@ -377,15 +403,20 @@ class SignatureChanger:
     # -- staging and applying --
 
     def _stage(
-        self, edits: Iterable[_Edit]
+        self, edits: Iterable[_Edit], planned: Patcher
     ) -> tuple[EditTransaction, dict[str, object], list[str]]:
-        """Patch every edit into a transaction; nothing touches the tree."""
-        patcher = Patcher(self.repo_root, parsers=self._parsers)
+        """Patch every edit into a transaction; nothing touches the tree.
+
+        The edits are spliced into the bytes `plan` read (`planned` holds
+        them), never into a fresh read: their offsets were measured there.
+        A file that changed on disk since is refused, since the transaction
+        would otherwise record the new bytes as the baseline it overwrites.
+        """
         tx = EditTransaction(self.repo_root)
         try:
             for edit in edits:
-                patcher.replace_span(edit.path, edit.span, edit.text)
-            results = patcher.stage_into(tx)
+                planned.replace_span(edit.path, edit.span, edit.text)
+            results = planned.stage_into(tx)
         except PatcherError as error:
             # A plan the patcher cannot apply (an overlap the folding did
             # not foresee) is a refusal, never a traceback past the tool.
@@ -393,6 +424,18 @@ class SignatureChanger:
             raise SignatureRefused(
                 cs.SIGNATURE_STAGE_FAILED.format(error=error)
             ) from error
+        changed = [
+            staged.path
+            for staged in tx.staged
+            if staged.before != planned.source(staged.path)
+        ]
+        if changed:
+            tx.rollback()
+            raise SignatureRefused(
+                cs.SIGNATURE_SOURCE_CHANGED.format(
+                    files=cs.SEPARATOR_COMMA_SPACE.join(changed)
+                )
+            )
         broken = [key for key, result in results.items() if result.parses is False]
         return tx, dict(results), broken
 
@@ -404,8 +447,8 @@ class SignatureChanger:
         allow_heuristic: bool,
     ) -> SignatureReport:
         """Plan and stage, return the diff, and leave the tree untouched."""
-        report, edits = self.plan(qn, new_params, mapping, allow_heuristic)
-        tx, results, broken = self._stage(edits)
+        report, edits, planned = self._plan(qn, new_params, mapping, allow_heuristic)
+        tx, results, broken = self._stage(edits, planned)
         try:
             diff = tx.diff()
         finally:
@@ -427,8 +470,8 @@ class SignatureChanger:
         allow_heuristic: bool,
     ) -> SignatureReport:
         """Plan, patch, verify and commit; the tree is untouched on failure."""
-        report, edits = self.plan(qn, new_params, mapping, allow_heuristic)
-        tx, results, broken = self._stage(edits)
+        report, edits, planned = self._plan(qn, new_params, mapping, allow_heuristic)
+        tx, results, broken = self._stage(edits, planned)
         if broken:
             tx.rollback()
             return report._replace(
@@ -455,6 +498,56 @@ class SignatureChanger:
                 reingest=self.reingest,
             )
         return report
+
+
+def _binds_its_receiver(header: _Header) -> bool:
+    """An instance method: called through an instance, `self` is implicit.
+
+    A classmethod's `cls` binds through the class too (`Base.make(1)`), so
+    only an instance method's sites can pass the receiver explicitly.
+    """
+    if header.receiver is None:
+        return False
+    # `self: Base` names its receiver before the annotation.
+    name = header.receiver.partition(cs.CHAR_COLON)[0].strip()
+    return name != cs.PY_KEYWORD_CLS
+
+
+def _passes_receiver(call: Node, source: bytes, method_qn: str) -> bool:
+    """Whether the call reaches the method through a class, not an instance.
+
+    `Base.f(obj, a)`, `cls.f(obj, a)`, `type(obj).f(obj, a)` and
+    `obj.__class__.f(obj, a)` all pass the receiver as the first argument.
+    The tree cannot tell a class from an instance by name alone, so a name
+    counts as a class when it is the method's own class or is spelled the
+    way PEP 8 spells classes (`CapWords`, not `ALL_CAPS`). Erring towards a
+    class leaves an instance call unmapped, which costs a hand edit; erring
+    the other way shifts every argument one slot.
+    """
+    function = call.child_by_field_name(cs.FIELD_FUNCTION)
+    target = (
+        function.child_by_field_name(cs.FIELD_OBJECT)
+        if function is not None and function.type == cs.TS_PY_ATTRIBUTE
+        else None
+    )
+    if target is None:
+        return False
+    if target.type == cs.TS_PY_CALL:
+        callee = target.child_by_field_name(cs.FIELD_FUNCTION)
+        return callee is not None and _text(callee, source) == cs.PY_TYPE_BUILTIN
+    if target.type == cs.TS_PY_ATTRIBUTE:
+        attribute = target.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        name = _text(attribute, source) if attribute is not None else ""
+    elif target.type == cs.TS_PY_IDENTIFIER:
+        name = _text(target, source)
+    else:
+        return False
+    owner = method_qn.rsplit(cs.SEPARATOR_DOT, 2)
+    return (
+        name in (cs.PY_KEYWORD_CLS, cs.PY_CLASS_ATTRIBUTE)
+        or (len(owner) == 3 and name == owner[1])
+        or (name[:1].isupper() and not name.isupper())
+    )
 
 
 def change_signature(
