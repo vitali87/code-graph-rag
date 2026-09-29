@@ -177,6 +177,10 @@ CONTEXT_TOKEN_COUNT_AUTH_FAILED = (
 NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
+EMBEDDINGS_INTERRUPTED = (
+    "Semantic embedding generation interrupted; the graph is saved without the"
+    " remaining embeddings, which the next sync that finds a code change generates"
+)
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
 EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in vector store"

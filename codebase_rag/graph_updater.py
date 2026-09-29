@@ -1259,6 +1259,7 @@ class GraphUpdater:
         self.skip_embeddings = (
             settings.SKIP_EMBEDDINGS if skip_embeddings is None else skip_embeddings
         )
+        self._embeddings_interrupted = False
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
@@ -2015,6 +2016,7 @@ class GraphUpdater:
         # report, so a stale True describes a run that did real work as
         # already in sync (#1620).
         self.skipped_because_in_sync = False
+        self._embeddings_interrupted = False
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -2224,6 +2226,8 @@ class GraphUpdater:
         self._generate_semantic_embeddings()
 
         self._commit_run_state()
+        if self._embeddings_interrupted:
+            raise ex.EmbeddingsInterrupted
 
     def _clear_python_inference_caches(self) -> None:
         py_engine = self.factory.type_inference._python_type_inference
@@ -7710,8 +7714,28 @@ class GraphUpdater:
             get_embedding_cache().save()
             close_qdrant_client()
 
+        except KeyboardInterrupt:
+            self._stop_interrupted_embeddings()
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+
+    def _stop_interrupted_embeddings(self) -> None:
+        """Hold a Ctrl+C in the embeddings pass until `run` has committed.
+
+        The graph writes are flushed before this pass, so letting the
+        interrupt escape here would only skip `_commit_run_state`: with no
+        hash cache the next sync re-parses the whole repository, and after
+        `--clean` there is not even the old cache to fall back on. The next
+        sync that re-indexes embeds every function again, so saving the
+        embedding cache lets it reuse the vectors this pass already computed.
+        """
+        from .embedder import get_embedding_cache
+        from .vector_store import close_qdrant_client
+
+        logger.warning(ls.EMBEDDINGS_INTERRUPTED)
+        get_embedding_cache().save()
+        close_qdrant_client()
+        self._embeddings_interrupted = True
 
     def _reconcile_embeddings(
         self,

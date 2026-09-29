@@ -154,3 +154,12 @@ class LLMGenerationError(Exception):
 
 class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
+
+
+class EmbeddingsInterrupted(KeyboardInterrupt):
+    """Ctrl+C stopped the embeddings pass of a run that has already committed.
+
+    A `KeyboardInterrupt`, so a caller that does not look for it still stops
+    where it would have; one that does can finish its own bookkeeping first,
+    because the graph and the hash cache are already saved.
+    """
