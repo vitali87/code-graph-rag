@@ -12,7 +12,7 @@ from loguru import logger
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import API_KEY_INFO, settings
+from .config import API_KEY_INFO, normalised_credential, settings
 from .utils.dependencies import has_torch, has_transformers
 
 
@@ -107,8 +107,10 @@ def clear_embedding_cache() -> None:
 
 def _openai_client() -> httpx.Client:
     headers: dict[str, str] = {}
-    api_key = settings.OPENAI_EMBEDDING_API_KEY or os.environ.get(
-        API_KEY_INFO[cs.Provider.OPENAI]["env_var"]
+    api_key = normalised_credential(
+        settings.OPENAI_EMBEDDING_API_KEY
+    ) or normalised_credential(
+        os.environ.get(API_KEY_INFO[cs.Provider.OPENAI]["env_var"])
     )
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -229,6 +231,13 @@ if has_torch() and has_transformers():
         device = _select_device()
         if device != cs.EmbeddingDevice.CPU:
             model = model.to(device)
+        if device == cs.EmbeddingDevice.MPS:
+            # The weight upload is the first copy on the MPS stream, before
+            # any batch and so before `_sync_after_batch` ever runs. Draining
+            # it here keeps a copy that parks on the stream from surfacing
+            # later inside the first batch's transfers, and pins a wedge at
+            # load to this one point ahead of any store write (issue #2218).
+            torch.mps.synchronize()
         return model
 
     def _unixcoder_embed_code(code: str, max_length: int | None) -> list[float]:
