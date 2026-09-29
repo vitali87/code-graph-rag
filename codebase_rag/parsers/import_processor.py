@@ -1204,7 +1204,7 @@ class ImportProcessor:
     def __del__(self) -> None:
         try:
             save_persistent_cache()
-        except Exception:
+        except Exception:  # noqa: S110 - a destructor must not raise
             pass
 
     @staticmethod
@@ -3909,7 +3909,7 @@ class ImportProcessor:
                 cs.IMPORTED_NAME_WILDCARD,
             )
             return
-        imported_name = resolved_path.split(cs.SEPARATOR_DOT)[-1]
+        imported_name = resolved_path.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
         self.import_mapping[module_qn][imported_name] = resolved_path
         self._record_import_site(module_qn, imported_name, import_node, imported_name)
         logger.debug(
@@ -5042,7 +5042,9 @@ class ImportProcessor:
         module_path: str,
         assigned_name: str | None,
     ) -> None:
-        local_name = assigned_name or module_path.split(cs.SEPARATOR_DOT)[-1]
+        local_name = (
+            assigned_name or module_path.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
+        )
         resolved = self._resolve_lua_module_path(module_path, module_qn)
         self.import_mapping[module_qn][local_name] = resolved
         self._record_import_site(module_qn, local_name, call_node, module_path)

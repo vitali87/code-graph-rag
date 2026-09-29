@@ -789,7 +789,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                     captures.get("comprehension", []),
                     captures.get("for_stmt", []),
                 )
-            except Exception:
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
 
         assignments: list[Node] = []
@@ -1462,7 +1462,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 captures = cursor.captures(node)
                 return_nodes.extend(captures.get("return_stmt", []))
                 return
-            except Exception:
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
         stack: list[Node] = [node]
         while stack:

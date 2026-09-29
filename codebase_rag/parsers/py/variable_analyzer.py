@@ -386,7 +386,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                         assign_node, local_var_types, module_qn
                     )
                 return
-            except Exception:
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
         stack: list[ASTNode] = [node]
         while stack:
