@@ -125,7 +125,6 @@ class TestCodeChangeEventHandlerDebounce:
 
         patched = cs.IGNORE_PATTERNS - {"tmp"}
         monkeypatch.setattr(cs, "IGNORE_PATTERNS", patched)
-        monkeypatch.setattr("realtime_updater.IGNORE_PATTERNS", patched)
 
     @pytest.fixture
     def mock_ingestor(self) -> MockQueryIngestor:
@@ -418,7 +417,6 @@ class TestTimerFactoryContract:
 
         patched = cs.IGNORE_PATTERNS - {"tmp"}
         monkeypatch.setattr(cs, "IGNORE_PATTERNS", patched)
-        monkeypatch.setattr("realtime_updater.IGNORE_PATTERNS", patched)
 
     @pytest.fixture
     def mock_ingestor(self) -> MockQueryIngestor:
@@ -541,7 +539,6 @@ class TestDebounceIntegration:
 
         patched = cs.IGNORE_PATTERNS - {"tmp"}
         monkeypatch.setattr(cs, "IGNORE_PATTERNS", patched)
-        monkeypatch.setattr("realtime_updater.IGNORE_PATTERNS", patched)
 
     @pytest.fixture
     def mock_ingestor(self) -> MockQueryIngestor:

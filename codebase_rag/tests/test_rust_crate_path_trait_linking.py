@@ -3194,7 +3194,6 @@ def test_watch_reparse_recommits_inline_mod_map(
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "foo.rs")))
@@ -3405,7 +3404,6 @@ def test_watch_touch_cannot_flip_mod_key_arbitration(
     assert (f"{base}.a.b.c.gb", f"{base}.gamma.helper") in calls, calls
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "b.rs")))
@@ -3467,7 +3465,6 @@ def test_watch_delete_of_mod_rs_drops_its_import_state(
     assert updater.factory.import_processor.import_mapping.get(key), "not committed"
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     mod_rs = project / "src" / "a" / "mod.rs"
     mod_rs.unlink()
@@ -3515,7 +3512,6 @@ def test_python_sibling_edit_keeps_rust_import_state(
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     # Edge-level assertions are unavailable here: the shared-prefix
     # registration sweep (issue #1025) deregisters foo.rs's inline-mod
@@ -3567,7 +3563,6 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
     assert mapping == {"helper": f"{base}.beta.helper"}, mapping
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     inner_rs = project / "src" / "foo" / "inner.rs"
     inner_rs.parent.mkdir(parents=True, exist_ok=True)
@@ -3635,7 +3630,6 @@ def test_watch_touch_of_mod_rs_beside_same_stem_rs_keeps_sibling_state(
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "mod.rs")))
@@ -3689,7 +3683,6 @@ def test_watch_delete_of_disambiguated_mod_rs_drops_its_writer(
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     mod_rs = project / "src" / "a" / "mod.rs"
     mod_rs.unlink()
@@ -4467,7 +4460,6 @@ def test_watch_create_refreshes_rust_path_caches(
     assert (f"{base}.a.top", f"{base}.beta.helper") in calls, calls
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     gamma2 = project / "src" / "gamma2.rs"
     gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
@@ -4669,7 +4661,6 @@ def test_watch_storm_delete_and_restore_of_entry_keeps_sibling_maps(
     )
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     lib_rs = project / "src" / "lib.rs"
     lib_rs.unlink()
@@ -4725,7 +4716,6 @@ def test_watch_create_during_entry_absence_keeps_sibling_maps(
     )
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     lib_rs = project / "src" / "lib.rs"
     lib_rs.unlink()
@@ -4884,7 +4874,6 @@ def test_touching_one_entry_keeps_the_siblings_declarations(
     )
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     lib_rs = project / "src" / "lib.rs"
     lib_rs.unlink()
@@ -5004,7 +4993,6 @@ def test_entry_modify_racing_its_own_deletion_keeps_declarations(
     )
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     lib_rs = project / "src" / "lib.rs"
     handler.dispatch(FileModifiedEvent(str(lib_rs)))
@@ -5169,7 +5157,6 @@ def test_manifest_repoint_evicts_the_dead_explicit_stem(
     }
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     (project / "Cargo.toml").write_text(
         '[package]\nname = "rs_repoint"\nversion = "0.1.0"\n\n'
@@ -5280,7 +5267,6 @@ def test_watch_reparse_recomputes_edges_through_fresh_resolutions(
     assert (f"{base}.q.ay", f"{base}.lib.helper") in calls, calls
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     (project / "src" / "q.rs").write_text(
         "use crate::alt::helper;\n\npub fn ay() {\n    helper()\n}\n",
@@ -5382,7 +5368,6 @@ def test_watch_create_of_second_implementer_drops_sole_impl_edge(
     assert (f"{base}.caller.go", f"{base}.a.A.m") in calls, calls
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     b_rs = project / "src" / "b.rs"
     b_rs.write_text(
@@ -5802,7 +5787,6 @@ def test_watch_modify_of_build_script_refreshes_its_declarations(
     }
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     (project / "build.rs").write_text(
         "pub trait Cfg {\n"
@@ -5915,7 +5899,6 @@ def test_watch_modify_of_a_module_named_build_stays_a_module(
     )
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     handler.dispatch(FileModifiedEvent(str(project / "src" / "build.rs")))
     handler.dispatch(FileModifiedEvent(str(project / "src" / "q.rs")))
@@ -6014,7 +5997,6 @@ def test_watch_modify_standing_in_for_a_coalesced_create_updates_listing(
     base = "rs_watch_coalesced_create.src"
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     gamma2 = project / "src" / "gamma2.rs"
     gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
@@ -6093,7 +6075,6 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     gamma2 = project / "src" / "gamma2.rs"
     gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")

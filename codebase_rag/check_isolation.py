@@ -29,13 +29,23 @@ nodes and relationships until `flush_all` -- so a run that raises after its
 first write leaves its partial parse queued, and the restore's own flush
 would commit it right after the deletes meant to remove it, writing a
 failed parse into the graph this flag exists to protect.
+
+Two limits the store sets, and what covers each. The store offers no
+transaction spanning several writes, so the restore's deletes and its
+re-creation commit separately and a failure between them leaves the graph
+partial; the caller sets the project's persistent incomplete-run marker
+before the check writes and clears it only once everything is put back, so
+readers refuse and the next full update repairs (#1679). And which shared
+node the check created is inferred from the snapshot taken at capture, so,
+like every command that writes the graph, the check assumes no other writer
+runs between the capture and the restore.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -121,6 +131,16 @@ def _edge_key(
     return (source, rel, target, repr(sorted(props.items(), key=lambda kv: kv[0])))
 
 
+def _props(raw: object) -> PropertyDict | None:
+    """A row's property map as the batch API takes it, or None for no map.
+
+    A result map is typed wider than a property map (its lists may mix
+    scalars), but it is the graph's own property set read back, so it is
+    written back as it was read.
+    """
+    return cast(PropertyDict, dict(raw)) if isinstance(raw, dict) else None
+
+
 def _discard_pending(store: GraphStore) -> None:
     """Drop writes the store has buffered but not yet flushed.
 
@@ -138,7 +158,7 @@ def _discard_pending(store: GraphStore) -> None:
     if groups is not None:
         groups.clear()
     if getattr(store, "_rel_count", None) is not None:
-        store._rel_count = 0  # type: ignore[attr-defined]
+        setattr(store, "_rel_count", 0)
 
 
 class IsolationGuard:
@@ -173,10 +193,10 @@ class IsolationGuard:
         params = self._params()
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_NODES, params):
             label = row.get(cs.KEY_LABEL)
-            props = row.get(cs.KEY_PROPS)
-            if not isinstance(label, str) or not isinstance(props, dict):
+            props = _props(row.get(cs.KEY_PROPS))
+            if not isinstance(label, str) or props is None:
                 continue
-            self._nodes.append((label, dict(props)))
+            self._nodes.append((label, props))
             if label in _PATH_NODE_DELETES:
                 self._path_nodes.add((label, str(props.get(cs.KEY_ABSOLUTE_PATH))))
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_EDGES, params):
@@ -187,8 +207,8 @@ class IsolationGuard:
         # the re-parse re-emitted gets its own properties back (#1718).
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SHARED_NODES):
             label = row.get(cs.KEY_LABEL)
-            props = row.get(cs.KEY_PROPS)
-            if not isinstance(label, str) or not isinstance(props, dict):
+            props = _props(row.get(cs.KEY_PROPS))
+            if not isinstance(label, str) or props is None:
                 continue
             self._shared_before[(label, props.get(cs.KEY_QUALIFIED_NAME))] = dict(props)
             if row.get(cs.KEY_INBOUND) == 0:
@@ -202,15 +222,14 @@ class IsolationGuard:
         far = _node_spec(far_label, row, prefix=cs.FAR_END_PREFIX)
         if not isinstance(rel, str) or near is None or far is None:
             return
-        raw_props = row.get(cs.KEY_PROPS)
-        props: PropertyDict = dict(raw_props) if isinstance(raw_props, dict) else {}
+        props: PropertyDict = _props(row.get(cs.KEY_PROPS)) or {}
         source, target = (near, far) if row.get(cs.KEY_OUTGOING) else (far, near)
         self._edges.setdefault(
             _edge_key(source, rel, target, props), (source, rel, target, props)
         )
-        far_props = row.get(cs.KEY_FAR_PROPS)
-        if isinstance(far_props, dict):
-            self._far_nodes.setdefault(far, dict(far_props))
+        far_props = _props(row.get(cs.KEY_FAR_PROPS))
+        if far_props is not None:
+            self._far_nodes.setdefault(far, far_props)
         if far_label in _FINDING_LABELS:
             self._finding_qns.add(str(far[2]))
 
@@ -275,6 +294,11 @@ class IsolationGuard:
                     cs.KEY_PATH: key,
                     cs.KEY_PROJECT_NAME: self._project_name,
                     cs.KEY_PROJECT_PREFIX: self._project_name + cs.SEPARATOR_DOT,
+                    # The query takes the nested projects as a parameter (a
+                    # missing one is a Cypher error) and also reads them from
+                    # the graph's Project nodes, so an empty list still spares
+                    # them (issue #1985).
+                    cs.KEY_NESTED_PROJECTS: [],
                 },
             )
         self._delete_new_path_nodes(params)
@@ -376,9 +400,9 @@ class IsolationGuard:
         # the other kind of a flipped container.
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_NODES, params):
             label = row.get(cs.KEY_LABEL)
-            props = row.get(cs.KEY_PROPS)
+            props = _props(row.get(cs.KEY_PROPS))
             delete = _PATH_NODE_DELETES.get(str(label))
-            if delete is None or not isinstance(props, dict):
+            if delete is None or props is None:
                 continue
             absolute = props.get(cs.KEY_ABSOLUTE_PATH)
             if (str(label), str(absolute)) in self._path_nodes:
