@@ -106,7 +106,7 @@ STACK_AUTH_VARIABLES = {
 }
 STACK_AUTH_ENV_VARS = (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD, ENV_QDRANT_API_KEY)
 # A bind on these publishes on every address of this machine.
-WILDCARD_BIND_HOSTS = ("0.0.0.0", "::")  # noqa: S104 - matched against, never bound to
+WILDCARD_BIND_HOSTS = ("0.0.0.0", "::")  # noqa: S104 - matched against and never bound to
 # A data endpoint: unlike /readyz, it needs the key once one is set.
 QDRANT_DATA_PROBE_PATH = "/collections"
 # An alias update with no actions: it needs write access and changes nothing.

@@ -45,7 +45,7 @@ def _publishes_on_all_interfaces(mapping: object) -> bool:
             for key, value in mapping.items()
             if key == "host_ip"
         ]
-        return not declared or declared[0] in ("", "0.0.0.0", "::")  # noqa: S104 - matched against, never bound to
+        return not declared or declared[0] in ("", "0.0.0.0", "::")  # noqa: S104 - matched against and never bound to
     if not isinstance(mapping, str):
         return False
     text = mapping.strip()
@@ -57,7 +57,7 @@ def _publishes_on_all_interfaces(mapping: object) -> bool:
     # before it can be recognised as one.
     if host_ip.startswith("[") and host_ip.endswith("]"):
         host_ip = host_ip[1:-1]
-    return host_ip in ("0.0.0.0", "::", "*")  # noqa: S104 - matched against, never bound to
+    return host_ip in ("0.0.0.0", "::", "*")  # noqa: S104 - matched against and never bound to
 
 
 def _memgraph_credentials() -> tuple[str, str] | None:
