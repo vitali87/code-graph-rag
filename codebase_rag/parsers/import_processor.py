@@ -1396,7 +1396,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.SCALA:
                     self._parse_scala_imports(captures, module_qn)
                 case _:
-                    self._parse_generic_imports(captures, module_qn, lang_config)
+                    self._parse_generic_imports(captures, lang_config)
 
             logger.debug(
                 ls.IMP_PARSED_COUNT,
@@ -4968,9 +4968,7 @@ class ImportProcessor:
                 self._record_import_site(module_qn, local_name, node, path_str)
                 return
 
-    def _parse_generic_imports(
-        self, captures: dict, module_qn: str, lang_config: LanguageSpec
-    ) -> None:
+    def _parse_generic_imports(self, captures: dict, lang_config: LanguageSpec) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             logger.debug(
                 ls.IMP_GENERIC,
