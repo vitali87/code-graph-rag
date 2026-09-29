@@ -62,12 +62,9 @@ def test_help_command_works() -> None:
 
 
 def test_import_cli_module() -> None:
-    try:
-        from codebase_rag import cli
+    from codebase_rag import cli
 
-        assert hasattr(cli, "app"), "CLI module missing app attribute"
-    except ImportError as e:
-        pytest.fail(f"Failed to import cli module: {e}")
+    assert hasattr(cli, "app"), "CLI module missing app attribute"
 
 
 def test_version_flag() -> None:
@@ -87,8 +84,13 @@ def test_version_flag() -> None:
         assert result.returncode == 0, (
             f"{flag} exited with code {result.returncode}: {result.stderr}"
         )
-        expected = cs.CLI_MSG_VERSION.format(
-            package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)
+        expected = "\n".join(
+            [
+                cs.CLI_MSG_VERSION.format(
+                    package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)
+                ),
+                cs.CLI_MSG_CREDITS.format(url=cs.CREDITS_URL),
+            ]
         )
         assert result.stdout.strip() == expected, (
             f"{flag} output did not match expected format: {repr(result.stdout)}"
@@ -457,3 +459,24 @@ def test_every_command_name_has_a_registry_entry() -> None:
     # CLI_COMMANDS feeds the generated command tables (README, help); a
     # CLICommandName member missing from it silently drops the command there.
     assert set(ch.CLI_COMMANDS) == set(ch.CLICommandName)
+
+
+def test_every_registered_command_is_named_in_the_enum() -> None:
+    """The enum must cover what the APP registers, not just what the table
+    repeats back.
+
+    `test_every_command_name_has_a_registry_entry` compares the table with
+    the enum, so a command missing from BOTH is invisible to it --
+    `verify-index` and `diff-index` were registered in `cli.py` and absent
+    from each, and the generated overview claimed to list every top-level
+    command while omitting them (Copilot, #1929).
+    """
+    registered = {
+        command.name for command in app.registered_commands if command.name is not None
+    }
+    # The fixture guard: a typer version that stops exposing names here
+    # would make the assertion below vacuous.
+    assert len(registered) > 1, registered
+    assert registered <= {member.value for member in ch.CLICommandName}, sorted(
+        registered - {member.value for member in ch.CLICommandName}
+    )

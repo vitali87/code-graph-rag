@@ -17,7 +17,7 @@ class GraphCodeIndex(_message.Message):
     def __init__(self, nodes: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., relationships: _Optional[_Iterable[_Union[Relationship, _Mapping]]] = ...) -> None: ...
 
 class Node(_message.Message):
-    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section", "pattern", "code_smell", "security_issue", "gloss", "parameter", "field")
+    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section", "pattern", "code_smell", "security_issue", "gloss", "parameter", "field", "enum_variant")
     PROJECT_FIELD_NUMBER: _ClassVar[int]
     PACKAGE_FIELD_NUMBER: _ClassVar[int]
     FOLDER_FIELD_NUMBER: _ClassVar[int]
@@ -42,6 +42,7 @@ class Node(_message.Message):
     GLOSS_FIELD_NUMBER: _ClassVar[int]
     PARAMETER_FIELD_NUMBER: _ClassVar[int]
     FIELD_FIELD_NUMBER: _ClassVar[int]
+    ENUM_VARIANT_FIELD_NUMBER: _ClassVar[int]
     project: Project
     package: Package
     folder: Folder
@@ -66,7 +67,8 @@ class Node(_message.Message):
     gloss: Gloss
     parameter: Parameter
     field: Field
-    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ..., pattern: _Optional[_Union[Pattern, _Mapping]] = ..., code_smell: _Optional[_Union[CodeSmell, _Mapping]] = ..., security_issue: _Optional[_Union[SecurityIssue, _Mapping]] = ..., gloss: _Optional[_Union[Gloss, _Mapping]] = ..., parameter: _Optional[_Union[Parameter, _Mapping]] = ..., field: _Optional[_Union[Field, _Mapping]] = ...) -> None: ...
+    enum_variant: EnumVariant
+    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ..., pattern: _Optional[_Union[Pattern, _Mapping]] = ..., code_smell: _Optional[_Union[CodeSmell, _Mapping]] = ..., security_issue: _Optional[_Union[SecurityIssue, _Mapping]] = ..., gloss: _Optional[_Union[Gloss, _Mapping]] = ..., parameter: _Optional[_Union[Parameter, _Mapping]] = ..., field: _Optional[_Union[Field, _Mapping]] = ..., enum_variant: _Optional[_Union[EnumVariant, _Mapping]] = ...) -> None: ...
 
 class Relationship(_message.Message):
     __slots__ = ("type", "source_id", "target_id", "properties", "source_label", "target_label")
@@ -107,6 +109,7 @@ class Relationship(_message.Message):
         HAS_PARAMETER: _ClassVar[Relationship.RelationshipType]
         OF_TYPE: _ClassVar[Relationship.RelationshipType]
         HAS_FIELD: _ClassVar[Relationship.RelationshipType]
+        HAS_VARIANT: _ClassVar[Relationship.RelationshipType]
     RELATIONSHIP_TYPE_UNSPECIFIED: Relationship.RelationshipType
     CONTAINS_PACKAGE: Relationship.RelationshipType
     CONTAINS_FOLDER: Relationship.RelationshipType
@@ -142,6 +145,7 @@ class Relationship(_message.Message):
     HAS_PARAMETER: Relationship.RelationshipType
     OF_TYPE: Relationship.RelationshipType
     HAS_FIELD: Relationship.RelationshipType
+    HAS_VARIANT: Relationship.RelationshipType
     TYPE_FIELD_NUMBER: _ClassVar[int]
     SOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_ID_FIELD_NUMBER: _ClassVar[int]
@@ -388,6 +392,26 @@ class Field(_message.Message):
     docstring: str
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., modifiers: _Optional[_Iterable[str]] = ..., is_static: bool = ..., docstring: _Optional[str] = ...) -> None: ...
 
+class EnumVariant(_message.Message):
+    __slots__ = ("qualified_name", "name", "path", "start_line", "start_col", "index", "value", "docstring")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    START_COL_FIELD_NUMBER: _ClassVar[int]
+    INDEX_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    DOCSTRING_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    path: str
+    start_line: int
+    start_col: int
+    index: int
+    value: str
+    docstring: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., index: _Optional[int] = ..., value: _Optional[str] = ..., docstring: _Optional[str] = ...) -> None: ...
+
 class Resource(_message.Message):
     __slots__ = ("qualified_name", "name", "kind")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -471,7 +495,7 @@ class Method(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Class(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "namespace")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
@@ -479,6 +503,7 @@ class Class(_message.Message):
     END_LINE_FIELD_NUMBER: _ClassVar[int]
     DECORATORS_FIELD_NUMBER: _ClassVar[int]
     IS_EXPORTED_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
@@ -486,31 +511,36 @@ class Class(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ...) -> None: ...
+    namespace: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., namespace: _Optional[str] = ...) -> None: ...
 
 class Interface(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path")
+    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
     absolute_path: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ...) -> None: ...
+    namespace: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ...) -> None: ...
 
 class Enum(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path")
+    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
     absolute_path: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ...) -> None: ...
+    namespace: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ...) -> None: ...
 
 class Type(_message.Message):
     __slots__ = ("qualified_name", "name")

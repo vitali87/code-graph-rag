@@ -48,6 +48,10 @@ COMMAND_SPAWN_FAILED = "Failed to spawn '{segment}' (executable: {executable}): 
 # Code retrieval errors
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
 CODE_MISSING_LOCATION = "Graph entry is missing location data."
+CODE_STALE_PROJECT_ROOT = (
+    "Project '{project}' was indexed at '{root}', which no longer exists; "
+    "re-index the project to read its source."
+)
 CODE_SOURCE_FILE_MISSING = (
     "Source file not found on disk for '{path}' "
     "(checked the stored absolute path and the current project root)."

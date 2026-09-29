@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from codebase_rag import constants as cs
+from codebase_rag.types_defs import PropertyParams, ResultRow
 
 from . import constants as ec
 from .cgr_graph import _capture
@@ -271,13 +272,15 @@ class _AdjacencyIngestor:
         self._degrees = degrees
         self._highest = highest
 
-    def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
+    def fetch_all(
+        self, query: str, params: PropertyParams | None = None
+    ) -> list[ResultRow]:
         return [
             {"node_id": node_id, "degree": degree}
             for node_id, degree in self._degrees.items()
         ]
 
-    def execute_write(self, query: str, params: dict | None = None) -> None:
+    def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         return None
 
 

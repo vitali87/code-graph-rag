@@ -2,10 +2,12 @@
 # type is known (local from `new`, parameter, field, `this`) binds to that
 # type's method, including inherited methods and overload arity.
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.parsers.csharp.type_inference import CSharpTypeInferenceEngine
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
@@ -38,6 +40,140 @@ public class App { public void Run() { var w = new Widget(); w.Area(); } }
     assert any(t.endswith("N.Widget.Area") for t in _call_targets(mock_ingestor)), (
         _call_targets(mock_ingestor)
     )
+
+
+def test_alias_qualified_type_receiver_keeps_namespace_identity(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Zeta.cs").write_text(
+        """
+namespace Zeta;
+public class Widget {
+    public Widget(int n) {}
+    public static void AliasS() {}
+    public static void DottedS() {}
+    public static void GlobalS() {}
+    public static void MissingQualifiedDecoy() {}
+}
+public class GenericWidget<T> {
+    public static void GenericS() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "Other.cs").write_text(
+        """
+namespace Other;
+public class Widget {
+    public Widget(int n) {}
+    public static void AliasS() {}
+    public static void DottedOnlyInOther() {}
+    public static void GlobalS() {}
+    public static void DottedQualifiedMissDecoy() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "OtherZeta.cs").write_text(
+        """
+namespace Other.Zeta;
+public class Widget {
+    public static void ShadowS() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using Z = Zeta;
+using Zeta = Other;
+namespace App;
+public class Q {
+    public void RunAlias() {
+        var w = new Z::Widget(1);
+        Z::Widget.AliasS();
+    }
+    public void RunDotted() {
+        var w = new Z.Widget(2);
+        Z.Widget.DottedS();
+    }
+    public void RunGlobal() {
+        var w = new global::Zeta.Widget(3);
+        global::Zeta.Widget.GlobalS();
+    }
+    public void RunGeneric() {
+        Z::GenericWidget<int>.GenericS();
+    }
+    public void RunDottedMissing() {
+        Z.Widget.DottedQualifiedMissDecoy();
+    }
+    public void RunMissing() {
+        Missing::MissingQualifiedDecoy();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+    }
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        source.endswith("Q.RunAlias") and target.endswith("Zeta.Widget")
+        for source, target in instantiates
+    ), instantiates
+    assert any(
+        source.endswith("Q.RunDotted") and target.endswith("Zeta.Widget")
+        for source, target in instantiates
+    ), instantiates
+    assert any(
+        source.endswith("Q.RunGlobal") and target.endswith("Zeta.Widget")
+        for source, target in instantiates
+    ), instantiates
+    assert any(
+        source.endswith("Q.RunAlias") and target.endswith("Zeta.Widget.AliasS")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunDotted") and target.endswith("Zeta.Widget.DottedS")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunGlobal") and target.endswith("Zeta.Widget.GlobalS")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunGeneric")
+        and target.endswith("Zeta.GenericWidget.GenericS")
+        for source, target in calls
+    ), calls
+    assert not any(
+        source.endswith("Q.RunDottedMissing")
+        and target.endswith("Other.Widget.DottedQualifiedMissDecoy")
+        for source, target in calls
+    ), calls
+    assert not any(target.endswith("Other.Widget") for _, target in instantiates), (
+        instantiates
+    )
+    assert not any(
+        target.endswith("Other.Zeta.Widget") for _, target in instantiates
+    ), instantiates
+    assert not any(
+        target.endswith("Other.Widget.AliasS")
+        or target.endswith("Other.Widget.DottedS")
+        or target.endswith("Other.Widget.GlobalS")
+        for _, target in calls
+    ), calls
+    assert not any(
+        source.endswith("Q.RunMissing")
+        and target.endswith("Zeta.Widget.MissingQualifiedDecoy")
+        for source, target in calls
+    ), calls
 
 
 def test_parameter_typed_receiver_resolves(
@@ -272,6 +408,65 @@ public class App { public void Run() { Helpers.Log(); } }
     )
 
 
+def test_generic_outer_nested_type_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Nested.cs").write_text(
+        """
+namespace N;
+public class Outer<T> {
+    public class Inner {
+        public static void Ping() {}
+        public static void QualifiedArgument() {}
+    }
+}
+public class App {
+    public void Run() {
+        N.Outer<int>.Inner.Ping();
+        N.Outer<System.Collections.Generic.List<int>>.Inner.QualifiedArgument();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert any(
+        t.endswith("N.Outer.Inner.Ping") for t in _call_targets(mock_ingestor)
+    ), _call_targets(mock_ingestor)
+    assert any(
+        t.endswith("N.Outer.Inner.QualifiedArgument")
+        for t in _call_targets(mock_ingestor)
+    ), _call_targets(mock_ingestor)
+
+
+def test_local_value_shadows_dotted_type_receiver(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Shadow.cs").write_text(
+        """
+using Lib = AliasLib;
+namespace AliasLib { public class Widget { public static void Ping() {} } }
+namespace N {
+    public class Widget { public void Ping() {} }
+    public class Holder { public N.Widget Widget; }
+    public class App { public void Run(Holder Lib) { Lib.Widget.Ping(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        source.endswith("N.App.Run(Holder)") and target.endswith("N.Widget.Ping")
+        for source, target in calls
+    ), calls
+    assert not any(target.endswith("Lib.Widget.Ping") for _, target in calls), calls
+
+
 def test_overload_resolves_by_arity(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -448,3 +643,79 @@ public class App {
 
     targets = _call_targets(mock_ingestor)
     assert any("CastTwinB" in t and t.endswith("N.Opt.M") for t in targets), targets
+
+
+def test_alias_qualified_receiver_of_a_verbatim_or_nested_type(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # A verbatim identifier (`@event`) opens with the duplicate marker's
+    # character, and a nested type of a generic outer keeps its `.Inner`
+    # once the type arguments are stripped (bot review on #2025).
+    (csharp_project / "Zeta.cs").write_text(
+        """
+namespace Zeta;
+public class @event {
+    public static void Fire() {}
+}
+public class Outer<T> {
+    public class Inner {
+        public static void NestedS() {}
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using Z = Zeta;
+namespace App;
+public class Q {
+    public void RunVerbatim() {
+        Z.@event.Fire();
+    }
+    public void RunNested() {
+        Z::Outer<int>.Inner.NestedS();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        source.endswith("Q.RunVerbatim") and target.endswith("@event.Fire")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunNested") and target.endswith("Outer.Inner.NestedS")
+        for source, target in calls
+    ), calls
+
+
+@pytest.mark.parametrize(
+    ("candidate_qn", "matches"),
+    [
+        ("proj.Zeta.@event", True),
+        ("proj.Zeta.@event@12", True),
+        ("proj.Zeta.@event@12_5", True),
+        ("proj.Other.@event", False),
+    ],
+)
+def test_qualified_match_keeps_a_verbatim_identifier(
+    candidate_qn: str, matches: bool
+) -> None:
+    # `@event` opens with the duplicate marker's character; only a numeric
+    # suffix is the marker, so the verbatim name must survive (bot review).
+    engine = SimpleNamespace(module_qn_to_file_path={}, project_name="proj")
+    assert (
+        CSharpTypeInferenceEngine._csharp_qualified_qn_matches(
+            engine,  # type: ignore[arg-type]
+            candidate_qn,
+            "Zeta.@event",
+            "proj.App",
+        )
+        is matches
+    )
