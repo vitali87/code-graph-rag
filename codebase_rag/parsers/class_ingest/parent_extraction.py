@@ -753,30 +753,65 @@ def extract_implemented_interfaces(
 
     # TypeScript `class C implements I, J` lives in class_heritage >
     # implements_clause (no `interfaces` field), holding type_identifiers.
-    if class_heritage := find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
-        if implements_clause := find_child_by_type(
-            class_heritage, cs.TS_IMPLEMENTS_CLAUSE
-        ):
-            for child in implements_clause.children:
-                if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
-                    if name := safe_decode_text(child):
-                        implemented_interfaces.append(resolve_to_qn(name, module_qn))
+    _extend_ts_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
 
     # PHP `class C implements I, J` is a class_interface_clause of `name` nodes.
+    _extend_php_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
+
+    # Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+    _extend_dart_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
+
+    return implemented_interfaces
+
+
+def _extend_ts_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
+    class_heritage = find_child_by_type(class_node, cs.TS_CLASS_HERITAGE)
+    if not class_heritage:
+        return
+    implements_clause = find_child_by_type(class_heritage, cs.TS_IMPLEMENTS_CLAUSE)
+    if not implements_clause:
+        return
+    for child in implements_clause.children:
+        if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
+            if name := safe_decode_text(child):
+                interface_list.append(resolve_to_qn(name, module_qn))
+
+
+def _extend_php_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
     if php_impl := find_child_by_type(class_node, cs.TS_PHP_CLASS_INTERFACE_CLAUSE):
         for child in php_impl.children:
             if name := php_base_simple_name(child):
-                implemented_interfaces.append(resolve_to_qn(name, module_qn))
+                interface_list.append(resolve_to_qn(name, module_qn))
 
-    # Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+
+def _extend_dart_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
     if dart_impl := find_child_by_type(class_node, cs.TS_DART_INTERFACES):
         for child in dart_impl.named_children:
             if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
                 name := safe_decode_text(child)
             ):
-                implemented_interfaces.append(resolve_to_qn(name, module_qn))
-
-    return implemented_interfaces
+                interface_list.append(resolve_to_qn(name, module_qn))
 
 
 def extract_java_interface_names(

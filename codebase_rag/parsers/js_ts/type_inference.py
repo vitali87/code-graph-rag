@@ -227,16 +227,7 @@ class JsTypeInferenceEngine:
 
     def _type_from_type_node(self, node: ASTNode, module_qn: str) -> str | None:
         if node.type == cs.TS_UNION_TYPE:
-            # `User | null` names a single concrete member; wider unions are
-            # not a receiver type.
-            members = [
-                child
-                for child in node.named_children
-                if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
-            ]
-            if len(members) == 1:
-                return self._type_from_type_node(members[0], module_qn)
-            return None
+            return self._union_member_type(node, module_qn)
         if node.type == cs.TS_ARRAY_TYPE:
             inner = next(iter(node.named_children), None)
             element = self._type_from_type_node(inner, module_qn) if inner else None
@@ -250,6 +241,18 @@ class JsTypeInferenceEngine:
             return self._resolve_js_class_name(name, module_qn) or name
         if node.type == cs.TS_NESTED_TYPE_IDENTIFIER:
             return safe_decode_text(node)
+        return None
+
+    def _union_member_type(self, node: ASTNode, module_qn: str) -> str | None:
+        # `User | null` names a single concrete member; wider unions are
+        # not a receiver type.
+        members = [
+            child
+            for child in node.named_children
+            if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        if len(members) == 1:
+            return self._type_from_type_node(members[0], module_qn)
         return None
 
     def _generic_type(self, node: ASTNode, module_qn: str) -> str | None:
