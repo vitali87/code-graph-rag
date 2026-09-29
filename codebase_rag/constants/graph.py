@@ -1059,6 +1059,7 @@ KEY_MOVED_FROM = "moved_from"
 # off `target_qn`; a note written before this property existed falls back to
 # the longest registered project name that prefixes its `target_qn`.
 KEY_PROJECT = "project"
+KEY_PROJECT_NAMES = "project_names"
 KEY_CANDIDATE_QNS = "candidate_qns"
 KEY_HASHES = "hashes"
 # Prefix on every anchor hash. A Gloss written before this format existed

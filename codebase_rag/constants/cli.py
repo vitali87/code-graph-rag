@@ -163,6 +163,12 @@ CLI_STATS_TOTAL_NODES = "Total Nodes"
 CLI_STATS_TOTAL_RELS = "Total Relationships"
 CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
+CLI_STATS_SCOPE = "Scoped to: {projects}"
+CLI_STATS_PER_PROJECT_TITLE = "Per project:"
+CLI_STATS_PER_PROJECT_ROW = (
+    "  {project}: {nodes:,} nodes / {relationships:,} relationships"
+)
+CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"

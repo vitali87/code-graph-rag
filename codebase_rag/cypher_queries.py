@@ -416,6 +416,48 @@ RETURN type(r) AS type, count(*) AS count
 ORDER BY count DESC
 """
 
+# What a project owns is what deleting it removes: its containment tree and
+# everything the containers define (the same walk as CYPHER_DELETE_PROJECT).
+# That covers File and Folder nodes, which have no qualified name to match a
+# prefix against, and leaves out shared nodes (ExternalPackage, Resource)
+# another project may hold too. Relationships count when they START at an
+# owned node (issue #2391).
+_CYPHER_STATS_OWNED_NODES = """
+MATCH (p:Project) WHERE p.name IN $project_names
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT n
+"""
+CYPHER_STATS_PROJECT_NODE_COUNTS = (
+    _CYPHER_STATS_OWNED_NODES
+    + """RETURN labels(n) AS labels, count(*) AS count
+ORDER BY count DESC
+"""
+)
+CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS = (
+    _CYPHER_STATS_OWNED_NODES
+    + """MATCH (n)-[r]->()
+RETURN type(r) AS type, count(r) AS count
+ORDER BY count DESC
+"""
+)
+# One row per project, so unscoped totals over a shared graph can be
+# attributed; the same ownership walk as above, grouped by project.
+CYPHER_STATS_PER_PROJECT = """
+MATCH (p:Project)
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH p, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT p, n
+OPTIONAL MATCH (n)-[r]->()
+WITH p, n, count(r) AS outgoing
+RETURN p.name AS project, count(n) AS nodes, sum(outgoing) AS relationships
+ORDER BY project
+"""
+
 
 # Dead-code fetch queries. Reachability itself runs client-side in
 # codebase_rag/dead_code.py: the previous single-query formulation expanded
