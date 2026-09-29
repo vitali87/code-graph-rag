@@ -37,14 +37,16 @@ def _write(root: Path, files: dict[str, str]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _updater(store: _StatefulIngestor, repo: Path) -> GraphUpdater:
+def _updater(
+    store: _StatefulIngestor, repo: Path, project: str = PROJECT
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
         repo_path=repo,
         parsers=parsers,
         queries=queries,
-        project_name=PROJECT,
+        project_name=project,
     )
 
 
@@ -177,3 +179,41 @@ def test_reingest_of_an_edited_manifest_drops_the_removed_dependency(
 
     assert "requests" not in _dependencies(store)
     assert _dependencies(store) == _dependencies(_fresh(tmp_path, repo))
+
+
+def test_another_projects_dependencies_and_shared_packages_survive(
+    tmp_path: Path,
+) -> None:
+    store, repo = _synced_repo(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    _write(other, {"requirements.txt": "requests==2.31.0\n"})
+    _updater(store, other, "other").run(force=True)
+    _write(repo, {"requirements.txt": "flask>=3.0\n"})
+
+    _updater(store, repo).run(force=False)
+
+    assert "requests" not in _dependencies(store)
+    assert (
+        cs.NodeLabel.PROJECT,
+        "other",
+        cs.RelationshipType.DEPENDS_ON_EXTERNAL,
+        cs.NodeLabel.EXTERNAL_PACKAGE,
+        "requests",
+    ) in {edge[:5] for edge in store.keyed_edges}
+    assert "requests" in _packages(store)
+
+
+def test_a_lookalike_of_a_manifest_does_not_trigger_a_resync(
+    tmp_path: Path,
+) -> None:
+    store, repo = _synced_repo(tmp_path)
+    _write(repo, {"requirements-dev.txt": "pytest\n"})
+    _updater(store, repo).run(force=False)
+    store.issued.clear()
+    _write(repo, {"requirements-dev.txt": "pytest\nruff\n"})
+
+    _updater(store, repo).run(force=False)
+
+    assert cs.CYPHER_DELETE_PROJECT_DEPENDENCIES not in store.issued
+    assert len(_dependencies(store)) == 6
