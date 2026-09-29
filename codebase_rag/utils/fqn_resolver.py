@@ -14,6 +14,31 @@ if TYPE_CHECKING:
     from ..language_spec import FQNSpec
 
 
+def scoped_name_parts(
+    start: Node | None, fqn_config: FQNSpec, module_qn: str, file_path: Path | None
+) -> list[str]:
+    """Names of the scope nodes from `start` outwards, outermost first.
+
+    `start` is the first node considered: a definition's parent, or a scope
+    node whose own name is wanted. The spec's `fold_scopes` may drop names
+    the module already spells (a C# namespace mirroring the directory,
+    issue #1629). Every walk that builds a qualified name goes through here,
+    so the graph, the recovered-orphan path and `get_function_source` agree.
+    """
+    typed: list[tuple[str, str]] = []
+    current = start
+    while current is not None:
+        if current.type in fqn_config.scope_node_types and (
+            name := fqn_config.get_name(current)
+        ):
+            typed.append((current.type, name))
+        current = current.parent
+    typed.reverse()
+    if fqn_config.fold_scopes is None:
+        return [name for _node_type, name in typed]
+    return fqn_config.fold_scopes(typed, module_qn, file_path)
+
+
 def resolve_fqn_from_ast(
     func_node: Node,
     file_path: Path,
@@ -25,19 +50,10 @@ def resolve_fqn_from_ast(
         func_name = fqn_config.get_name(func_node)
         if not func_name:
             return None
-        parts = [func_name]
-        current = func_node.parent
-        while current:
-            if current.type in fqn_config.scope_node_types:
-                if scope_name := fqn_config.get_name(current):
-                    parts.append(scope_name)
-            current = current.parent
-
-        parts.reverse()
-
         module_parts = fqn_config.file_to_module_parts(file_path, repo_root)
-        full_parts = [project_name] + module_parts + parts
-        return SEPARATOR_DOT.join(full_parts)
+        module_qn = SEPARATOR_DOT.join([project_name, *module_parts])
+        parts = scoped_name_parts(func_node.parent, fqn_config, module_qn, file_path)
+        return SEPARATOR_DOT.join([module_qn, *parts, func_name])
 
     except Exception as e:
         logger.debug(ls.FQN_RESOLVE_FAILED, path=file_path, error=e)

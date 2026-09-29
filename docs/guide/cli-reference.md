@@ -18,6 +18,39 @@ cgr help daemon logs
 
 `cgr COMMAND --help` displays the same command-specific information.
 
+## Command Overview
+
+Every top-level command, from the CLI's own help registry:
+
+<!-- SECTION:cli_commands -->
+| Command | Description |
+|-------|-----------|
+| `cgr start` | Open the code assistant for a repository or workspace |
+| `cgr optimize` | Run a language-focused code optimisation session |
+| `cgr mcp-server` | Serve cgr tools over stdio or HTTP |
+| `cgr index` | Write an offline protobuf index for a repository |
+| `cgr export` | Export the shared graph database to JSON |
+| `cgr graph-loader` | Summarise an exported graph JSON file |
+| `cgr stats` | Show graph node and relationship counts |
+| `cgr dead-code` | Report code that appears unreachable from known entry points |
+| `cgr duplicates` | Report structurally duplicated functions and methods |
+| `cgr delete-project` | Delete one project without changing other indexed projects |
+| `cgr language` | Manage language grammars and parser metadata |
+| `cgr daemon` | Manage the shared Memgraph and Qdrant stack |
+| `cgr trace` | Ingest runtime call traces as dynamic CALLS edges |
+| `cgr edits` | Show or undo recorded edit transactions (multi-file edits applied through cgr). |
+| `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
+| `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
+| `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites. |
+| `cgr workspace` | Manage named groups of repositories |
+| `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
+| `cgr status` | Show stack state and the last sync time for each project |
+| `cgr doctor` | Check dependencies, services, and configuration |
+| `cgr help` | Show help for a command |
+| `cgr verify-index` | Verify a protobuf index against its provenance manifest |
+| `cgr diff-index` | Structural diff between two protobuf index snapshots |
+<!-- /SECTION:cli_commands -->
+
 ## Core Commands
 
 ### `cgr start`
@@ -145,10 +178,11 @@ cgr language remove-language <language-name>
 
 ## Makefile Commands
 
+<!-- SECTION:makefile_commands -->
 | Command | Description |
-|---------|-------------|
-| `make help` | Show help message |
-| `make all` | Install everything for full development environment |
+|-------|-----------|
+| `make help` | Show this help message |
+| `make all` | Install everything for full development environment (deps, grammars, hooks, tests) |
 | `make install` | Install project dependencies with full language support |
 | `make python` | Install project dependencies for Python only |
 | `make dev` | Setup development environment (install deps + pre-commit hooks) |
@@ -156,7 +190,7 @@ cgr language remove-language <language-name>
 | `make test-parallel` | Run unit tests in parallel (fast, no Docker) |
 | `make test-integration` | Run integration tests (requires Docker) |
 | `make test-all` | Run all tests including integration and e2e (requires Docker) |
-| `make test-parallel-all` | Run all tests in parallel (requires Docker) |
+| `make test-parallel-all` | Run all tests in parallel including integration and e2e (requires Docker) |
 | `make clean` | Clean up build artifacts and cache |
 | `make build-grammars` | Build grammar submodules |
 | `make watch` | Watch repository for changes and update graph in real-time |
@@ -165,4 +199,7 @@ cgr language remove-language <language-name>
 | `make format` | Run ruff format |
 | `make typecheck` | Run type checking with ty |
 | `make check` | Run all checks: lint, typecheck, test |
-| `make pre-commit` | Run all pre-commit checks locally |
+| `make release` | Build, verify, and publish the current pyproject version to PyPI, then tag and create a GitHub Release |
+| `make jvm-agent` | Build the JVM runtime tracing agent (requires JDK 24+) |
+| `make pre-commit` | Run all pre-commit checks locally (comprehensive test before commit) |
+<!-- /SECTION:makefile_commands -->

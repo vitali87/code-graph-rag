@@ -38,9 +38,11 @@ Exit 0 when every check passes, 1 otherwise, printing EVERY reason found.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import quote
 
 REPO = "vitali87/code-graph-rag"
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
@@ -523,6 +525,77 @@ def is_real_review(body: str, author: str) -> bool:
     return any(marker in lowered for marker in REVIEW_VERDICT_MARKERS)
 
 
+# The commit a review names, in either form bots write it: a bare 40-hex
+# sha after "last reviewed commit", or a commit URL. Both appear in the
+# wild, and `CLAUDE.md`'s own extraction snippet greps for the URL form.
+_ANCHOR_PATTERNS = (
+    # Most specific first, and the order is load-bearing. A body may carry
+    # BOTH an explicit label and a commit URL, and a bot that links the
+    # head's diff while stating an older reviewed commit would otherwise
+    # read as fresh -- the very bug this check exists to catch, restored
+    # through pattern ordering alone (CodeRabbit, #1936).
+    re.compile(r"last reviewed commit[^0-9a-f]{0,20}([0-9a-f]{40})", re.I),
+    # CodeRabbit's review details: "... between <from> and <to>." The END
+    # of the range is the commit reviewed; the start is the base or the
+    # previous review, and reading it would call a stale review fresh.
+    re.compile(r"between\s+`?[0-9a-f]{40}`?\s+and\s+`?([0-9a-f]{40})\b", re.I),
+    re.compile(r"reviewed[^.\n]{0,40}?\b([0-9a-f]{40})\b", re.I),
+    re.compile(r"commit/([0-9a-f]{40})", re.I),
+)
+
+
+def review_anchor(body: str) -> str:
+    """The 40-hex commit a review artifact says it reviewed, or "".
+
+    Compares the SHA itself, never a proxy. A rebase preserves commit
+    subjects and changes SHAs, so matching a subject reports every rebased
+    branch as freshly reviewed (nearly merged #1779 on exactly that).
+    """
+    for pattern in _ANCHOR_PATTERNS:
+        found = pattern.search(body)
+        if found:
+            return found.group(1).lower()
+    return ""
+
+
+def stale_review_reason(real_reviews: list[tuple[str, str]], head: str) -> str | None:
+    """Why the reviews present do not cover `head`, or None if one does.
+
+    The gate verified that a review EXISTS and that a trusted account
+    wrote it, but never that it reviewed the commit about to merge, so a
+    stale review and a fresh one were indistinguishable (issue #1936).
+
+    Fails closed on an unparseable anchor: a verdict that names no commit
+    cannot be shown to be current, and failing open there would restore
+    the bug for any bot that changes its wording.
+
+    Returns None when `head` is unknown. Staleness is then undeterminable,
+    and other reasons already cover a PR whose head could not be read;
+    inventing one here would report a review stale that may be current.
+
+    One artifact naming the head is enough, whatever earlier ones say:
+    bots re-score in place and post repeatedly, so requiring every
+    artifact to be current would report every re-reviewed PR as stale.
+    """
+    if not head or not real_reviews:
+        return None
+    anchors = [review_anchor(body) for body, _author in real_reviews]
+    if head.lower() in anchors:
+        return None
+    named = [a for a in anchors if a]
+    if not named:
+        return (
+            "no review artifact names the commit it reviewed, so none can be "
+            f"shown to cover the head {head[:8]} (anchor absent, failing closed)"
+        )
+    return (
+        f"review artifact anchors to {named[-1][:8]}, not the head {head[:8]}, "
+        "so it did not review the current commit; re-trigger the review "
+        "(an empty commit moves the head without changing the tree, and bots "
+        "re-score in place, so this reads stale until the re-review lands)"
+    )
+
+
 def _author_login(artifact: dict[str, Any]) -> str:
     """The login that wrote a comment or review, across both payload shapes.
 
@@ -756,6 +829,136 @@ def classic_required_contexts(protection: dict[str, Any]) -> list[str]:
     return [str(c) for c in contexts] if isinstance(contexts, list) else []
 
 
+def required_app_bindings(
+    rules: list[Any], protection: dict[str, Any]
+) -> dict[str, set[int]]:
+    """Context name -> the Apps a required check must be posted by (#2131).
+
+    Both layers can bind a required check to one GitHub App: classic
+    protection through `required_status_checks.checks[].app_id`, a ruleset
+    through `required_status_checks[].integration_id`. GitHub then accepts
+    only that App's run of the name. No id, or -1 ("any source"), leaves the
+    name unbound, so it is absent here and judged by name alone as before.
+    """
+    bound: dict[str, set[int]] = {}
+
+    def add(name: object, app: object) -> None:
+        if (
+            isinstance(name, str)
+            and isinstance(app, int)
+            and not isinstance(app, bool)
+            and app > 0
+        ):
+            bound.setdefault(name, set()).add(app)
+
+    classic = protection.get("required_status_checks")
+    if isinstance(classic, dict):
+        for entry in classic.get("checks") or []:
+            if isinstance(entry, dict):
+                add(entry.get("context"), entry.get("app_id"))
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        for entry in (rule.get("parameters") or {}).get("required_status_checks") or []:
+            if isinstance(entry, dict):
+                add(entry.get("context"), entry.get("integration_id"))
+    return bound
+
+
+def head_check_runs(head: str, name: str) -> list[dict[str, Any]] | None:
+    """The check runs named `name` at `head`, with the App that posted each.
+
+    The rollup `gh pr view` returns carries no provider for a check run, so
+    a binding cannot be judged from it. None when the call fails or returns
+    something else: unread is not the same as "no run".
+    """
+    # Paginated: `per_page` caps at 100, and the bound App's run can sit on
+    # a later page, which a first-page read reports as absent (bot review).
+    pages = _page_stream(
+        _gh_stdout_or_empty(
+            "api",
+            "--paginate",
+            f"repos/{REPO}/commits/{head}/check-runs"
+            f"?check_name={quote(name)}&per_page=100",
+        )
+    )
+    if not pages:
+        return None
+    runs: list[dict[str, Any]] = []
+    for page in pages:
+        found = page.get("check_runs")
+        if not isinstance(found, list):
+            return None
+        runs.extend(run for run in found if isinstance(run, dict))
+    return runs
+
+
+def _page_stream(raw: str) -> list[dict[str, Any]] | None:
+    """Each page of a `gh api --paginate` response, or None if any is unread.
+
+    Without `--jq` the pages arrive as concatenated JSON objects. A page that
+    does not decode leaves the answer unknown, not shorter: a run on it may
+    be the one being looked for.
+    """
+    decoder = json.JSONDecoder()
+    pages: list[dict[str, Any]] = []
+    index = 0
+    while True:
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            return pages
+        try:
+            page, index = decoder.raw_decode(raw, index)
+        except ValueError:
+            return None
+        if not isinstance(page, dict):
+            return None
+        pages.append(page)
+
+
+def _app_id(run: dict[str, Any]) -> object:
+    app = run.get("app")
+    return app.get("id") if isinstance(app, dict) else None
+
+
+def app_binding_reasons(
+    name: str, apps: set[int], runs: list[dict[str, Any]] | None
+) -> list[str]:
+    """Why `name`, required from `apps`, is not satisfied by those Apps' runs.
+
+    A same-name run from a DIFFERENT App satisfies the name-only checks
+    above while GitHub refuses the merge, so only the bound App's latest run
+    counts (#2131).
+    """
+    if runs is None:
+        return [
+            f"'{name}' is required from App(s) {sorted(apps)}, but the head's "
+            "check runs could not be read, so which App posted it is unverified"
+        ]
+    reasons: list[str] = []
+    for app in sorted(apps):
+        own = [run for run in runs if _app_id(run) == app]
+        if not own:
+            others = sorted({str(_app_id(run)) for run in runs})
+            reasons.append(
+                f"'{name}' is required from App {app}, but no check run of that "
+                "name at the head comes from it"
+                + (f" (posted by App(s) {', '.join(others)})" if others else "")
+            )
+            continue
+        # By creation: a queued re-run has no `started_at` yet, so ordering
+        # on it let an older success outrank the pending run (bot review).
+        latest = max(own, key=lambda run: str(run.get("created_at") or ""))
+        if str(latest.get("status") or "").lower() != "completed":
+            reasons.append(f"'{name}' from App {app} has not concluded")
+            continue
+        outcome = str(latest.get("conclusion") or "").upper()
+        if outcome not in NON_FAILING_CONCLUSIONS:
+            reasons.append(f"'{name}' from App {app} concluded {outcome}")
+    return reasons
+
+
 def effective_entries(
     rollup: list[dict[str, object]], name: str
 ) -> list[dict[str, object]]:
@@ -801,6 +1004,24 @@ def entry_outcome(entry: dict[str, object]) -> str:
     status is unfinished forever (bot review on PR #1968).
     """
     return str(entry.get("conclusion") or entry.get("state") or "").upper()
+
+
+def without_bound_check_runs(
+    rollup: list[dict[str, object]], bound: set[str]
+) -> list[dict[str, object]]:
+    """`rollup` minus the check runs of App-bound names.
+
+    The rollup names no App, so its latest check run of a bound name may be
+    another App's, and a foreign red run would outvote the bound App's green
+    one (bot review on PR #2155). `app_binding_reasons` judges those runs
+    with their App; a same-name commit status stays, since GitHub requires
+    it to pass as well.
+    """
+    return [
+        entry
+        for entry in rollup
+        if not (context_name(entry) in bound and entry.get("__typename") == "CheckRun")
+    ]
 
 
 def classic_context_reasons(name: str, rollup: list[dict[str, object]]) -> list[str]:
@@ -1048,6 +1269,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
                 "taken on trust here (issue #1944)"
             )
 
+    bindings = required_app_bindings(rules, protection)
+    judged = without_bound_check_runs(rollup, set(bindings))
+
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
     if missing:
         reasons.append(
@@ -1055,22 +1279,33 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
         )
     else:
-        for entry in rollup:
+        for entry in judged:
             if context_name(entry) != REQUIRED_CONTEXT:
                 continue
-            if not is_concluded(entry):
+            # By shape: once a bound name's check runs are filtered out, what
+            # remains can be a same-name commit status, which has no
+            # `conclusion` and would otherwise read as never finished.
+            if not entry_finished(entry):
                 reasons.append(f"'{REQUIRED_CONTEXT}' has not concluded")
-            elif str(entry.get("conclusion", "")).upper() != "SUCCESS":
-                reasons.append(
-                    f"'{REQUIRED_CONTEXT}' concluded {entry.get('conclusion')}"
-                )
+            elif (outcome := entry_outcome(entry)) != "SUCCESS":
+                reasons.append(f"'{REQUIRED_CONTEXT}' concluded {outcome}")
 
     # Contexts the CLASSIC layer requires are enforced exactly like the
     # ruleset's, and a PR missing one is refused the same way.
     for name in classic_contexts:
         if name == REQUIRED_CONTEXT:
             continue
-        reasons.extend(classic_context_reasons(name, rollup))
+        if name in bindings and not any(
+            context_name(entry) == name for entry in judged
+        ):
+            # Only check runs carry the name; the binding below judges them.
+            continue
+        reasons.extend(classic_context_reasons(name, judged))
+
+    # A binding to one App narrows what satisfies a name further. Read only
+    # for a name that has one, so an unbound repo makes no extra call.
+    for name, apps in sorted(bindings.items()):
+        reasons.extend(app_binding_reasons(name, apps, head_check_runs(head, name)))
 
     absent_jobs = missing_aggregated_jobs(rollup)
     if absent_jobs:
@@ -1098,6 +1333,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         )
     else:
         caveats.extend(review_execution_caveats(real_reviews))
+        stale = stale_review_reason(real_reviews, head)
+        if stale:
+            reasons.append(stale)
 
     caveats.extend(unrequired_failure_caveat(rollup, frozenset(classic_contexts)))
 
