@@ -52,8 +52,9 @@ The controls and remaining risks are described below.
 ## Trust boundaries and threat model
 
 The main data flows are repository files into parsers and stores; retrieved
-content and questions into agents and configured providers; tool requests back
-to the host; and MCP requests from clients into the server. Release automation
+content and questions into agents and configured providers; research queries
+out to the configured web-search backend (DuckDuckGo by default, or Serpdive);
+tool requests back to the host; and MCP requests from clients into the server. Release automation
 is a separate trust boundary between project changes and distributed artifacts.
 
 | Threat | Existing protection | Remaining risk and operator action |
@@ -115,7 +116,22 @@ semantic facts these modes add.
 
 The order matters: deleting the file while the stack is up achieves nothing, because the running containers keep their old bindings and a later start sees a healthy stack and returns before it would re-render anything. To keep local edits instead, add a `127.0.0.1:` prefix to each published port by hand, then run `cgr daemon down` and `cgr daemon up` to RECREATE the containers. Docker fixes a container's published ports when it is created, so an edited file does not rebind anything until the containers are replaced; `docker restart` is not enough.
 
-Setting `CGR_STACK_BIND_HOST` widens the bind deliberately (for example to `0.0.0.0` to reach the stack from another machine). The bundled Memgraph Bolt, Memgraph Lab, and Qdrant services are UNAUTHENTICATED, so a wider bind, or a stale compose file, exposes the stores without credentials to hosts that can reach those ports. Treat graphs, vectors, exports and backups with the same confidentiality as the code itself. Loopback binding does not prevent access by other local users or processes.
+Setting `CGR_STACK_BIND_HOST` widens the bind deliberately (for example to `0.0.0.0` to reach the stack from another machine). The bundled Memgraph Bolt, Memgraph Lab, and Qdrant services are UNAUTHENTICATED unless you turn authentication on as described below, so a wider bind, or a stale compose file, exposes the stores without credentials to hosts that can reach those ports. Treat graphs, vectors, exports and backups with the same confidentiality as the code itself. Loopback binding does not prevent access by other local users or processes.
+
+#### Turning on authentication
+
+`cgr daemon up` passes credentials from your settings (the environment or `.env`) to the containers it creates:
+
+- **Memgraph:** set both `MEMGRAPH_USERNAME` and `MEMGRAPH_PASSWORD`. They reach the container as `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD`, and Memgraph creates that user when it starts. From then on every connection must log in, including Memgraph Lab, which asks for the credentials by hand. A username without a password is not passed, because Memgraph turns nothing on for it. The user is stored in the `memgraph_data` volume, so unsetting the variables later does not turn authentication off, and changing `MEMGRAPH_PASSWORD` does not change the stored password. To change it, log in and run `SET PASSWORD FOR <user> TO '<new password>';`, then update `MEMGRAPH_PASSWORD` to match. Until the two match, `cgr daemon up` stops with an error saying Memgraph rejects the configured login. To turn authentication off, unset both variables, recreate the stack, then log in and run `DROP USER <user>;`; with no users left, Memgraph accepts connections without credentials again.
+- **Qdrant:** set `QDRANT_API_KEY` and point `QDRANT_URL` at the bundled Qdrant, for example `http://localhost:6333`. When `QDRANT_URL` names the port and an address that Compose publishes the bundled Qdrant on (as `docker compose config` resolves it, so `CGR_STACK_BIND_HOST` and `QDRANT_HTTP_PORT` count wherever they are set), the key reaches the container as `QDRANT__SERVICE__API_KEY`, and every data request needs it, while the `/healthz`, `/livez` and `/readyz` probes stay open. Qdrant does not store the key, so unsetting it and recreating the stack turns authentication off. The bundled stack serves plain `http://`, and code-graph-rag refuses to send a key over plain http unless `QDRANT_ALLOW_INSECURE_API_KEY=true`. Set that only while the ports stay on `127.0.0.1`: over a wider bind the key crosses the network unencrypted. A key for another server, such as Qdrant Cloud or another Qdrant on this machine, is never copied into the local container or sent to it; with `QDRANT_URL` pointing elsewhere, the bundled Qdrant runs without a key, as before.
+
+Containers take these values when they are created, so after setting or changing them run `cgr daemon down` and then `cgr daemon up`. A stack that is already running keeps its old configuration. `cgr daemon up`, `cgr daemon restart` and `cgr start`, whether they find the stack already up or have just started it, stop with an error when a running Memgraph or Qdrant still accepts connections without the configured credentials, or when the running Qdrant does not accept the configured key for writes, because it was started with a different key or knows this one only as its read-only key, instead of carrying on with a stack that does not enforce the settings. A stack they find running, fully or in part, with a service that accepts connections without the credentials is refused before anything is started and left as it is. Any open service found once `docker compose up` has run is therefore one they started, and they stop it (`docker compose stop` for that service, which keeps its container and data), so a failed start never leaves an open store running. The one exception is a service that was running but not answering yet when they checked: if its container is still the one `docker compose ps` listed before `docker compose up`, it is refused but left running, like a stack found already up. When Compose cannot list the containers, the service is stopped. That includes a start that fails or is interrupted before this check, while `docker compose up` runs or while they wait for the services to become ready; the original error is still reported. A service that does not answer yet is asked again for up to 15 seconds, so one that is still initialising is checked too. A protected service is never stopped: neither one that is only slow to start, nor a Qdrant that rejects the configured key, which another key protects. With a Qdrant key configured, they first ask Compose where it publishes Qdrant, so another service on the default port is never checked in its place. `cgr daemon down` keeps the data volumes, so recreating the stack clears the error without losing the graph or the vectors. The check that the running Qdrant accepts the key for writes sends it over plain http, so like the app it runs only with `QDRANT_ALLOW_INSECURE_API_KEY=true`.
+
+Before starting the stack, `cgr daemon up` asks `docker compose config` what each container would receive and refuses to start if that differs from these settings, or if it cannot tell because that command fails. Three things cause a difference:
+
+- **A compose file rendered before this support.** It lacks the `environment` entries that pass the values through. Re-render it with the same three steps as above, or list `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD` under the `memgraph` service's `environment`, and `QDRANT__SERVICE__API_KEY` under the `qdrant` service's, by hand.
+- **A value written into the compose file.** It takes precedence over the settings.
+- **An `.env` file next to the compose file.** Compose reads it for any of these variables missing from its environment.
 
 ### External providers and data transmission
 
@@ -181,6 +197,19 @@ The CLI can run commands and edit files. Default shell execution uses an
 allowlist, dangerous-pattern checks and approval checks; file tools validate
 paths against the target project root. YOLO mode relaxes approval and allowlist
 checks, while destructive-path screening remains.
+
+Graph queries written by the model are treated as untrusted and must stay
+read-only. They are screened as text first: write keywords outside string
+literals, and any `CALL` to a procedure outside the read-only allowlist, even
+one hidden behind backticks or comments. The engine's own planner then
+decides: the query is planned with `EXPLAIN` first and runs only if every
+operator in the plan is on a list of known read-only operators and every
+procedure it calls is allowed. Anything else, including an operator the list
+has never seen or a plan that cannot be read, is refused before it runs. On Neo4j the query also runs in a READ access-mode session,
+but the driver documents that mode as routing rather than access control, so
+it is not relied on. For defence in depth on a shared or networked database,
+connect with a user that has no write privileges for querying. Ingestion and
+other built-in writes use fixed queries and are not affected.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,

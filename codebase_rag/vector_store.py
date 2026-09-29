@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import atexit
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, Required, TypedDict, cast
 from urllib.parse import urlsplit
 
 from loguru import logger
 
+from . import exceptions as ex
 from . import logs as ls
 from .config import settings
-from .constants import PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME, VectorStoreBackend
+from .constants import (
+    PAYLOAD_NODE_ID,
+    PAYLOAD_QUALIFIED_NAME,
+    QDRANT_INSECURE_URL_SCHEME,
+    VECTOR_DIM_SETTINGS,
+    VectorStoreBackend,
+)
 from .utils.dependencies import has_pymilvus, has_qdrant_client
 
 _RETRIEVE_BATCH_SIZE = 1000
@@ -147,7 +154,7 @@ def _ensure_client_backend(backend: VectorStoreBackend) -> None:
         close_vector_store_client()
 
 
-def get_qdrant_client() -> Any:
+def get_qdrant_client(validate: bool = True) -> Any:
     global _CLIENT, _CLIENT_BACKEND
     if QdrantClient is None:
         raise RuntimeError("qdrant-client is not installed")
@@ -155,28 +162,85 @@ def get_qdrant_client() -> Any:
     _ensure_client_backend(VectorStoreBackend.QDRANT)
     if _CLIENT is None:
         if settings.QDRANT_URL:
-            _CLIENT = QdrantClient(url=settings.QDRANT_URL)
+            client = QdrantClient(
+                url=settings.QDRANT_URL, api_key=_qdrant_api_key(settings.QDRANT_URL)
+            )
         else:
             try:
-                _CLIENT = QdrantClient(path=settings.QDRANT_DB_PATH)
+                client = QdrantClient(path=settings.QDRANT_DB_PATH)
             except Exception as e:
                 logger.error(
                     ls.QDRANT_LOCK_ERROR.format(path=settings.QDRANT_DB_PATH, error=e)
                 )
                 raise
+        try:
+            _ensure_qdrant_collection(client, validate)
+        except Exception:
+            # Close and do not cache: a cached client would skip validation
+            # on the next call, and embedded Qdrant keeps its folder locked.
+            client.close()
+            raise
+        _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.QDRANT
-        if not _CLIENT.collection_exists(settings.QDRANT_COLLECTION_NAME):
-            _CLIENT.create_collection(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
-                ),
-            )
     return _CLIENT
 
 
-def _milvus_client_kwargs() -> dict[str, str]:
-    kwargs = {"uri": settings.MILVUS_URI}
+def _qdrant_api_key(url: str) -> str | None:
+    api_key = settings.QDRANT_API_KEY or None
+    if (
+        api_key
+        and urlsplit(url).scheme == QDRANT_INSECURE_URL_SCHEME
+        and not settings.QDRANT_ALLOW_INSECURE_API_KEY
+    ):
+        raise ValueError(ex.QDRANT_API_KEY_OVER_HTTP)
+    return api_key
+
+
+def _ensure_qdrant_collection(client: Any, validate: bool) -> None:
+    if not client.collection_exists(settings.QDRANT_COLLECTION_NAME):
+        client.create_collection(
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            vectors_config=VectorParams(
+                size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
+            ),
+        )
+        return
+    if validate:
+        _validate_qdrant_collection(client)
+
+
+def _validate_qdrant_collection(client: Any) -> None:
+    # A collection left by a different embedding provider keeps its old
+    # vector size; without this check the mismatch only surfaces as an
+    # opaque upsert error after the whole graph has been parsed.
+    info = client.get_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
+    # Named-vector collections (a dict) are not created by this module, so
+    # only the single unnamed-vector layout, which carries an int `size`, is
+    # checked. Read by attribute rather than isinstance(VectorParams), which
+    # is not a class when qdrant-client is absent or stubbed.
+    size = getattr(info.config.params.vectors, "size", None)
+    if not isinstance(size, int):
+        return
+    if size != settings.QDRANT_VECTOR_DIM:
+        raise ValueError(
+            ex.QDRANT_VECTOR_DIM_MISMATCH.format(
+                collection=settings.QDRANT_COLLECTION_NAME,
+                dim=size,
+                expected=settings.QDRANT_VECTOR_DIM,
+            )
+        )
+
+
+# Typed per key so the unpacked call is checked against the client's own
+# parameters; a plain dict[str, str] could be any of them, `timeout` included.
+class _MilvusClientKwargs(TypedDict, total=False):
+    uri: Required[str]
+    token: str
+    db_name: str
+
+
+def _milvus_client_kwargs() -> _MilvusClientKwargs:
+    kwargs = _MilvusClientKwargs(uri=settings.MILVUS_URI)
     if settings.MILVUS_TOKEN:
         kwargs["token"] = settings.MILVUS_TOKEN
     if settings.MILVUS_DB_NAME:
@@ -184,9 +248,10 @@ def _milvus_client_kwargs() -> dict[str, str]:
     return kwargs
 
 
-def _ensure_milvus_collection(client: Any) -> None:
+def _ensure_milvus_collection(client: Any, validate: bool = True) -> None:
     if client.has_collection(collection_name=settings.MILVUS_COLLECTION_NAME):
-        _validate_milvus_collection(client)
+        if validate:
+            _validate_milvus_collection(client)
         return
 
     schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
@@ -250,16 +315,23 @@ def _validate_milvus_collection(client: Any) -> None:
         )
 
 
-def get_milvus_client() -> Any:
+def get_milvus_client(validate: bool = True) -> Any:
     global _CLIENT, _CLIENT_BACKEND
     if MilvusClient is None:
         raise RuntimeError("pymilvus is not installed")
 
     _ensure_client_backend(VectorStoreBackend.MILVUS)
     if _CLIENT is None:
-        _CLIENT = MilvusClient(**_milvus_client_kwargs())
+        client = MilvusClient(**_milvus_client_kwargs())
+        try:
+            _ensure_milvus_collection(client, validate)
+        except Exception:
+            # Close and do not cache, as for Qdrant: a cached client would
+            # skip validation on every later call.
+            client.close()
+            raise
+        _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.MILVUS
-        _ensure_milvus_collection(_CLIENT)
     return _CLIENT
 
 
@@ -366,15 +438,23 @@ class QdrantVectorStore:
         # rebuild reassigns; stale points crowd out live hits and can map
         # onto unrelated nodes, so the whole collection must go. Failures
         # propagate: a swallowed error would let clean report success while
-        # the stale points survive.
-        client = get_qdrant_client()
-        client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
-        client.create_collection(
-            collection_name=settings.QDRANT_COLLECTION_NAME,
-            vectors_config=VectorParams(
-                size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
-            ),
-        )
+        # the stale points survive. Validation is skipped because dropping a
+        # collection with the wrong vector size is how a user recovers from it.
+        client = get_qdrant_client(validate=False)
+        try:
+            client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
+            client.create_collection(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
+                ),
+            )
+        except Exception:
+            # The client was cached unvalidated; if the rebuild failed the
+            # collection may still be the wrong size (or gone), so the next
+            # caller must open and validate afresh rather than reuse it.
+            close_vector_store_client()
+            raise
         logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
@@ -466,10 +546,16 @@ class MilvusVectorStore:
         _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
-        # Failures propagate; see QdrantVectorStore.clear_all_embeddings.
-        client = get_milvus_client()
-        client.drop_collection(settings.MILVUS_COLLECTION_NAME)
-        _ensure_milvus_collection(client)
+        # Failures propagate, and validation is skipped so a collection of the
+        # wrong vector size can be dropped; see
+        # QdrantVectorStore.clear_all_embeddings.
+        client = get_milvus_client(validate=False)
+        try:
+            client.drop_collection(settings.MILVUS_COLLECTION_NAME)
+            _ensure_milvus_collection(client)
+        except Exception:
+            close_vector_store_client()
+            raise
         logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
@@ -570,6 +656,31 @@ def _uses_milvus_lite_30_cosine_distance() -> bool:
     return lite_version.startswith("3.0")
 
 
+def _configured_vector_dim(backend: VectorStoreBackend) -> int:
+    if backend == VectorStoreBackend.MILVUS:
+        return settings.MILVUS_VECTOR_DIM
+    return settings.QDRANT_VECTOR_DIM
+
+
+def _check_vector_dims(
+    backend: VectorStoreBackend, vectors: Iterable[list[float]]
+) -> None:
+    # A model whose output size differs from the collection's fails every
+    # write with an opaque backend error, which the batch wrapper swallows
+    # one batch at a time; raising here names the setting to change once.
+    expected = _configured_vector_dim(backend)
+    for vector in vectors:
+        if len(vector) != expected:
+            raise ValueError(
+                ex.EMBEDDING_DIM_MISMATCH.format(
+                    dim=len(vector),
+                    backend=backend,
+                    expected=expected,
+                    setting=VECTOR_DIM_SETTINGS[backend],
+                )
+            )
+
+
 def store_embedding(node_id: int, embedding: list[float], qualified_name: str) -> None:
     store_embedding_batch([(node_id, embedding, qualified_name)])
 
@@ -578,6 +689,7 @@ def store_embedding_batch(points: Sequence[tuple[int, list[float], str]]) -> int
     vector_store = _get_vector_store()
     if vector_store is None:
         return 0
+    _check_vector_dims(vector_store.backend, (emb for _, emb, _ in points))
     return vector_store.store_embedding_batch(points)
 
 
@@ -610,4 +722,5 @@ def search_embeddings(
     vector_store = _get_vector_store()
     if vector_store is None:
         return []
+    _check_vector_dims(vector_store.backend, (query_embedding,))
     return vector_store.search_embeddings(query_embedding, top_k=top_k, project=project)

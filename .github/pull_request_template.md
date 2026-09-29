@@ -4,6 +4,10 @@
 
 -
 
+## Demo
+
+<!-- A user-visible change shows itself working, before and after: a VHS GIF for a terminal change, a screenshot for a graph, browser or docs change. Attach it with `gh pr create --attach <file>` or `gh pr edit <n> --attach <file>` (or drag it in here); do not commit it. With nothing user-visible, replace this with one line: "No user-visible change: <why>". See CONTRIBUTING.md, "Show the change". -->
+
 ## Type of Change
 
 <!-- Check all that apply. -->
@@ -35,4 +39,4 @@
 - [ ] All pre-commit checks pass (`make pre-commit`)
 - [ ] No hardcoded strings in non-config/non-constants files
 - [ ] No `# type: ignore`, `cast()`, `Any`, or `object` type hints
-- [ ] No new comments or docstrings (code should be self-documenting)
+- [ ] New comments and docstrings explain *why*, not *what* (see [Comment Policy](https://github.com/vitali87/code-graph-rag/blob/main/CONTRIBUTING.md#comment-policy))

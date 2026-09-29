@@ -210,3 +210,9 @@ TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
 GUARD_INHERITED_METHOD = "_inherited_method_guard"
 GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
+# Java type inference and call resolution recurse once per step of a call
+# chain and once per nesting level of call arguments; generated code reaches
+# hundreds of either. Past this depth a step is left untyped rather than
+# letting a RecursionError discard the whole method's variable types.
+GUARD_JAVA_INFERENCE_DEPTH = "_java_inference_depth_guard"
+JAVA_MAX_INFERENCE_DEPTH = 64

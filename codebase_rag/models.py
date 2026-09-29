@@ -79,6 +79,13 @@ class FQNSpec(NamedTuple):
     function_node_types: frozenset[str]
     get_name: Callable[["Node"], str | None]
     file_to_module_parts: Callable[[Path, Path], list[str]]
+    # The scope names a definition sits under, as (node type, name) pairs
+    # outermost first, folded against the module holding it: C# drops a
+    # namespace run the module's directory already spells (issue #1629).
+    # None keeps every scope name.
+    fold_scopes: (
+        Callable[[list[tuple[str, str]], str, Path | None], list[str]] | None
+    ) = None
 
 
 @dataclass(frozen=True)

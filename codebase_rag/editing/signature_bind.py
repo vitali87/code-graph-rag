@@ -361,8 +361,9 @@ def _value_at_site(
     """
     if source is not None and source.literal is not None:
         return source.literal, None
-    if source is not None and source.index in bound:
-        binding = bound[source.index]
+    index = source.index if source is not None else None
+    binding = bound.get(index) if index is not None else None
+    if binding is not None:
         return binding.text, binding
     if spec.has_default:
         return None
