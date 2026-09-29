@@ -267,6 +267,7 @@ def _pre_chat_sync(
     exclude: list[str] | None,
     capture: list[str] | None,
     no_embeddings: bool,
+    assume_yes: bool = False,
 ) -> tuple[Callable[[], None], str]:
     # The sync to run before the chat opens: every workspace repo when a
     # workspace is active, else just the target repo.
@@ -279,6 +280,7 @@ def _pre_chat_sync(
         exclude,
         capture=capture,
         skip_embeddings=no_embeddings or None,
+        assume_yes=assume_yes,
     )
     return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
         name=workspace_config.name, count=len(workspace_config.repos)
@@ -432,6 +434,7 @@ def _sync_workspace(
     exclude: list[str] | None,
     capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
+    assume_yes: bool = False,
 ) -> None:
     total = len(config.repos)
     if total == 0:
@@ -467,6 +470,7 @@ def _sync_workspace(
             interactive_setup=False,
             capture=capture,
             skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
         )
 
 
@@ -573,6 +577,38 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
+def _project_owner_refusal(
+    ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
+) -> str | None:
+    """Why a sync must not replace what another repository indexed (#2411).
+
+    A derived name carries a hash of its path, so only a chosen one can
+    collide; the sync would delete the other repository's modules as stale
+    and leave that repository's hash cache describing code no longer there.
+    Refused rather than asked: the chat's own sync runs behind a status bar.
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
+        logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
+        return None
+    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+    if not isinstance(owner, str) or not owner or not repo.is_dir():
+        return None
+    if Path(owner).resolve() == repo.resolve():
+        return None
+    if assume_yes:
+        logger.warning(
+            ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
+        )
+        return None
+    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
+        project_name=project_name, root=owner
+    )
+
+
 def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
     return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
 
@@ -644,6 +680,13 @@ def _run_graph_sync(
         unignore_paths = cgrignore.unignore or None
 
     elapsed = time.monotonic()
+    if not clean:
+        # On its own connection: exiting inside the sync's would report the
+        # refusal as a failed session.
+        with connect_memgraph(batch_size) as ingestor:
+            refusal = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
+        if refusal is not None:
+            _exit_with_error(refusal)
     with connect_memgraph(batch_size) as ingestor:
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
@@ -925,11 +968,13 @@ def start(
                 interactive_setup=interactive_setup,
                 capture=capture,
                 skip_embeddings=no_embeddings or None,
+                assume_yes=yes,
             ),
             effective_batch_size,
             exclude,
             capture,
             no_embeddings,
+            assume_yes=yes,
         )
 
     active_projects = _start_active_projects(

@@ -50,6 +50,10 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
+    "Error: project '{project_name}' already indexes {root}. Choose another "
+    "--project-name, or pass --yes to replace it with this repository."
+)
 CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
 CLI_ERR_STARTUP = "Startup Error: {error}"
 CLI_ERR_CONFIG = "Configuration Error: {error}"

@@ -995,6 +995,17 @@ HASH_CACHE_ORPHANED = (
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+MG_PROJECT_ROOT_READ_FAILED = (
+    "Could not read which repository the project was indexed from: {error}"
+)
+PROJECT_OWNER_REPLACED = (
+    "Project '{project_name}' indexed {root}; --yes given, replacing it with "
+    "this repository."
+)
+HASH_CACHE_OTHER_ROOT = (
+    "Project '{project}' in the graph was last indexed from {root}, not this "
+    "repository; discarding the hash cache and rebuilding fully."
+)
 HASH_CACHE_DISCARD_FAILED = (
     "Could not discard the orphaned cache file {path} ({error}); this run "
     "ignores it and rebuilds fully, so nothing is lost, but the stale file is "
