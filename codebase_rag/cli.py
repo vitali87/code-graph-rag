@@ -416,6 +416,21 @@ def _launch_session(
         )
 
 
+def _refuse_unsupported_workspace_update(
+    clean: bool, output: str | None, interactive_setup: bool
+) -> None:
+    # Each is defined for one repository: `--clean` wipes the graph before
+    # that repository's sync, `-o` writes that sync's result, and the setup
+    # prompt asks about that repository's directories.
+    for option, given in (
+        (cs.CLI_OPT_CLEAN, clean),
+        (cs.CLI_OPT_OUTPUT, output is not None),
+        (cs.CLI_OPT_INTERACTIVE_SETUP, interactive_setup),
+    ):
+        if given:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_OPTION.format(option=option))
+
+
 def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
     if workspace is None:
         return None
@@ -615,6 +630,16 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _is_home_or_root(repo: Path) -> bool:
+    """Whether a sync of `repo` would crawl a whole home directory or disk.
+
+    `--repo-path` defaults to the current directory, so a sync started from
+    `$HOME` indexed every file under it and wrote sync state there (#2418).
+    """
+    resolved = repo.resolve()
+    return resolved == Path.home().resolve() or resolved == resolved.parent
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -630,6 +655,9 @@ def _run_graph_sync(
 ) -> None:
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
+
+    if not assume_yes and _is_home_or_root(repo):
+        _exit_with_error(cs.CLI_ERR_SYNC_HOME_OR_ROOT.format(path=repo.resolve()))
 
     if clean:
         _import_vector_store()
@@ -876,6 +904,10 @@ def start(
     if output and not update_graph:
         _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
 
+    workspace_config = _load_workspace_or_exit(workspace)
+    if update_graph and workspace_config is not None:
+        _refuse_unsupported_workspace_update(clean, output, interactive_setup)
+
     if not no_start_stack:
         _maybe_start_stack()
 
@@ -892,6 +924,20 @@ def start(
     if not ask_agent and not update_graph:
         app_context.console.print(_create_configuration_table(target_repo_path))
 
+    if update_graph and workspace_config is not None:
+        # The workspace's repositories, each under its own name: the set the
+        # chat's own sync uses. `--repo-path`, defaulting to the current
+        # directory, is not one of them (#2418).
+        _sync_workspace(
+            workspace_config,
+            effective_batch_size,
+            exclude,
+            capture=capture,
+            skip_embeddings=no_embeddings or None,
+        )
+        _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        return
+
     if update_graph:
         _start_update_graph(
             resolved_repo,
@@ -907,8 +953,6 @@ def start(
             assume_yes=yes,
         )
         return
-
-    workspace_config = _load_workspace_or_exit(workspace)
 
     sync_task: Callable[[], None] | None = None
     sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH

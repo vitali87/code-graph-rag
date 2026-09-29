@@ -43,6 +43,19 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
+CLI_OPT_CLEAN = "--clean"
+CLI_OPT_OUTPUT = "--output"
+CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
+CLI_ERR_WORKSPACE_UPDATE_OPTION = (
+    "Error: {option} applies to one repository and cannot be combined with "
+    "--workspace --update-graph. Run it with --repo-path <repository> instead."
+)
+CLI_ERR_SYNC_HOME_OR_ROOT = (
+    "Error: refusing to index {path}: it is your home directory or the "
+    "filesystem root, so every file under it would enter the graph and sync "
+    "state would be written there. Pass --repo-path <repository>, or --yes "
+    "to index it anyway."
+)
 CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
 CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
     "Error: --output-format json requires --ask-agent/-a; "
