@@ -34,6 +34,17 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
+def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
+    # `export function f() {}` captures the declaration itself; its name is
+    # its own `name` field.
+    if not export_function:
+        return None
+    name_node = export_function.child_by_field_name(cs.FIELD_NAME)
+    if not name_node or not name_node.text:
+        return None
+    return safe_decode_text(name_node)
+
+
 class JsTsModuleSystemMixin:
     __slots__ = ("_processed_imports", "_pending_direct_module_exports")
     ingestor: IngestorProtocol
@@ -432,10 +443,7 @@ class JsTsModuleSystemMixin:
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in cs.JS_TS_LANGUAGES:
-            return
-
-        language_obj = queries[language].get(cs.QUERY_LANGUAGE)
+        language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
             return
 
@@ -475,6 +483,47 @@ class JsTsModuleSystemMixin:
             except Exception as e:
                 logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
 
+    def _ingest_es6_export_query(
+        self,
+        root_node: ASTNode,
+        lang_query: Language,
+        query_text: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> None:
+        try:
+            cleaned_query = textwrap.dedent(query_text).strip()
+            query = get_cached_query(lang_query, cleaned_query)
+            captures = sorted_captures(QueryCursor(query), root_node)
+            export_names = captures.get(cs.CAPTURE_EXPORT_NAME, [])
+            export_functions = captures.get(cs.CAPTURE_EXPORT_FUNCTION, [])
+
+            for export_name, export_function in zip(export_names, export_functions):
+                if export_name.text and (
+                    function_name := safe_decode_text(export_name)
+                ):
+                    self._ingest_export_function(
+                        export_function,
+                        function_name,
+                        module_qn,
+                        cs.JS_EXPORT_TYPE_ES6_FUNCTION,
+                        language,
+                    )
+
+            if export_names:
+                return
+            for export_function in export_functions:
+                if function_name := _es6_declaration_name(export_function):
+                    self._ingest_export_function(
+                        export_function,
+                        function_name,
+                        module_qn,
+                        cs.JS_EXPORT_TYPE_ES6_FUNCTION_DECL,
+                        language,
+                    )
+        except Exception as e:
+            logger.debug(ls.JS_ES6_EXPORTS_QUERY_FAILED, error=e)
+
     def _ingest_es6_exports(
         self,
         root_node: ASTNode,
@@ -489,46 +538,9 @@ class JsTsModuleSystemMixin:
                 cs.JS_ES6_EXPORT_CONST_QUERY,
                 cs.JS_ES6_EXPORT_FUNCTION_QUERY,
             ]:
-                try:
-                    cleaned_query = textwrap.dedent(query_text).strip()
-                    query = get_cached_query(lang_query, cleaned_query)
-                    cursor = QueryCursor(query)
-                    captures = sorted_captures(cursor, root_node)
-
-                    export_names = captures.get(cs.CAPTURE_EXPORT_NAME, [])
-                    export_functions = captures.get(cs.CAPTURE_EXPORT_FUNCTION, [])
-
-                    for export_name, export_function in zip(
-                        export_names, export_functions
-                    ):
-                        if export_name.text and export_function:
-                            if function_name := safe_decode_text(export_name):
-                                self._ingest_export_function(
-                                    export_function,
-                                    function_name,
-                                    module_qn,
-                                    cs.JS_EXPORT_TYPE_ES6_FUNCTION,
-                                    language,
-                                )
-
-                    if not export_names:
-                        for export_function in export_functions:
-                            if export_function:
-                                if name_node := export_function.child_by_field_name(
-                                    cs.FIELD_NAME
-                                ):
-                                    if name_node.text:
-                                        if function_name := safe_decode_text(name_node):
-                                            self._ingest_export_function(
-                                                export_function,
-                                                function_name,
-                                                module_qn,
-                                                cs.JS_EXPORT_TYPE_ES6_FUNCTION_DECL,
-                                                language,
-                                            )
-
-                except Exception as e:
-                    logger.debug(ls.JS_ES6_EXPORTS_QUERY_FAILED, error=e)
+                self._ingest_es6_export_query(
+                    root_node, lang_query, query_text, module_qn, language
+                )
 
         except Exception as e:
             logger.debug(ls.JS_ES6_EXPORTS_DETECT_FAILED, error=e)

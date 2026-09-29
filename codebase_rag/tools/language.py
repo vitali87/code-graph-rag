@@ -183,6 +183,30 @@ def _extract_semantic_categories(node_types_json: list[dict]) -> dict[str, list[
     return categories
 
 
+def _subtype_bucket(
+    subtype_lower: str,
+    functions: list[str],
+    classes: list[str],
+    calls: list[str],
+    modules: list[str],
+) -> list[str] | None:
+    # First keyword family that claims the subtype, in priority order.
+    if (
+        any(kw in subtype_lower for kw in cs.LANG_FUNCTION_KEYWORDS)
+        and cs.LANG_CALL_KEYWORD_EXCLUDE not in subtype_lower
+    ):
+        return functions
+    if any(kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS) and all(
+        kw not in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
+    ):
+        return classes
+    if any(kw in subtype_lower for kw in cs.LANG_CALL_KEYWORDS):
+        return calls
+    if any(kw in subtype_lower for kw in cs.LANG_MODULE_KEYWORDS):
+        return modules
+    return None
+
+
 def _categorize_node_types(
     semantic_categories: dict[str, list[str]], node_types: list[dict]
 ) -> NodeCategories:
@@ -193,21 +217,11 @@ def _categorize_node_types(
 
     for subtypes in semantic_categories.values():
         for subtype in subtypes:
-            subtype_lower = subtype.lower()
-
-            if (
-                any(kw in subtype_lower for kw in cs.LANG_FUNCTION_KEYWORDS)
-                and cs.LANG_CALL_KEYWORD_EXCLUDE not in subtype_lower
-            ):
-                functions.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS) and all(
-                kw not in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
-            ):
-                classes.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_CALL_KEYWORDS):
-                calls.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_MODULE_KEYWORDS):
-                modules.append(subtype)
+            bucket = _subtype_bucket(
+                subtype.lower(), functions, classes, calls, modules
+            )
+            if bucket is not None:
+                bucket.append(subtype)
 
     root_nodes = [
         node["type"]
@@ -224,26 +238,23 @@ def _categorize_node_types(
     )
 
 
+def _collect_type_names(obj: dict | list, out: set[str]) -> None:
+    # Every string `type` value anywhere in a node-types.json structure.
+    children = obj.values() if isinstance(obj, dict) else obj
+    if isinstance(obj, dict) and isinstance(obj.get("type"), str):
+        out.add(obj["type"])
+    for child in children:
+        if isinstance(child, dict | list):
+            _collect_type_names(child, out)
+
+
 def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
     try:
         with open(node_types_path, encoding="utf-8") as f:
             node_types = json.load(f)
 
         all_node_names: set[str] = set()
-
-        def extract_types(obj: dict | list) -> None:
-            if isinstance(obj, dict):
-                if "type" in obj and isinstance(obj["type"], str):
-                    all_node_names.add(obj["type"])
-                for value in obj.values():
-                    if isinstance(value, dict | list):
-                        extract_types(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    if isinstance(item, dict | list):
-                        extract_types(item)
-
-        extract_types(node_types)
+        _collect_type_names(node_types, all_node_names)
 
         semantic_categories = _extract_semantic_categories(node_types)
 
@@ -606,6 +617,7 @@ def _show_review_hints() -> None:
     no_args_is_help=True,
 )
 def cli() -> None:
+    # A click group: the subcommands registered on it do the work.
     pass
 
 
@@ -666,35 +678,32 @@ def add_grammar(
 
     assert language_name is not None
 
-    if node_types_path := _find_node_types_path(grammar_path, language_name):
-        if categories := _parse_node_types_file(node_types_path):
-            functions = categories.functions
-            classes = categories.classes
-            modules = categories.modules
-            calls = categories.calls
-        else:
-            functions = [cs.LANG_FALLBACK_METHOD_NODE]
-            classes = list(cs.LANG_DEFAULT_CLASS_NODES)
-            modules = list(cs.LANG_DEFAULT_MODULE_NODES)
-            calls = list(cs.LANG_DEFAULT_CALL_NODES)
-    else:
-        click.echo(cs.LANG_ERR_NODE_TYPES_WARNING.format(name=language_name))
-        categories = _prompt_for_node_categories()
-        functions = categories.functions
-        classes = categories.classes
-        modules = categories.modules
-        calls = categories.calls
-
+    categories = _resolve_node_categories(grammar_path, language_name)
     new_language_spec = LanguageSpec(
         language=language_name,
         file_extensions=tuple(file_extension),
-        function_node_types=tuple(functions),
-        class_node_types=tuple(classes),
-        module_node_types=tuple(modules),
-        call_node_types=tuple(calls),
+        function_node_types=tuple(categories.functions),
+        class_node_types=tuple(categories.classes),
+        module_node_types=tuple(categories.modules),
+        call_node_types=tuple(categories.calls),
     )
 
     _update_config_file(language_name, new_language_spec)
+
+
+def _resolve_node_categories(grammar_path: str, language_name: str) -> NodeCategories:
+    node_types_path = _find_node_types_path(grammar_path, language_name)
+    if not node_types_path:
+        click.echo(cs.LANG_ERR_NODE_TYPES_WARNING.format(name=language_name))
+        return _prompt_for_node_categories()
+    if categories := _parse_node_types_file(node_types_path):
+        return categories
+    return NodeCategories(
+        functions=[cs.LANG_FALLBACK_METHOD_NODE],
+        classes=list(cs.LANG_DEFAULT_CLASS_NODES),
+        modules=list(cs.LANG_DEFAULT_MODULE_NODES),
+        calls=list(cs.LANG_DEFAULT_CALL_NODES),
+    )
 
 
 @cli.command(help=ch.CMD_LANGUAGE_LIST, short_help=ch.CMD_LANGUAGE_LIST)

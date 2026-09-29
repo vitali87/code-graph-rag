@@ -1,5 +1,5 @@
 ---
-description: "Graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs, and enables natural language querying, editing, and optimisation."
+description: "Graph-based RAG system that parses multi-language codebases with Tree-sitter and compiler-grade frontends, builds knowledge graphs, and enables natural language querying, editing, and optimisation."
 ---
 
 # Code-Graph-RAG
@@ -7,17 +7,27 @@ description: "Graph-based RAG system that parses multi-language codebases with T
 **The ultimate RAG for your monorepo.** Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Code-Graph-RAG Demo">
+  <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
+</p>
+<p align="center">
+  <img src="assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+</p>
+
+<p align="center">
+  <b>2. Ask:</b> <code>cgr start</code> answers questions and edits code, grounded in that graph
+</p>
+<p align="center">
+  <img src="assets/demo.gif" alt="Code-Graph-RAG agent answering questions about the indexed repository">
 </p>
 
 ## What is Code-Graph-RAG?
 
-Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that analyses multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs in Memgraph, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
+Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that analyses multi-language codebases using Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds comprehensive knowledge graphs in Memgraph, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
 ## Key Features
 
 - **Multi-Language Support** for Python, TypeScript, JavaScript, Rust, Java, C++, Go, Lua, and more
-- **Tree-sitter Parsing** for robust, language-agnostic AST analysis
+- **Tree-sitter Parsing** for robust, language-agnostic AST analysis, with optional compiler-grade frontends (libclang, `go/types`, Roslyn, `javac`, Jedi) and [dynamic tracing](guide/dynamic-tracing.md) layered on top
 - **Knowledge Graph Storage** using Memgraph for interconnected codebase structure
 - **Natural Language Querying** to ask questions about your code in plain English
 - **AI-Powered Cypher Generation** with Google Gemini, OpenAI, and Ollama support
