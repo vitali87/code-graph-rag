@@ -200,6 +200,37 @@ _PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
 _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 
+def _flush_embedding_batch(
+    pending: list[tuple[int, str, str]],
+    expected_ids: set[int],
+    embed_code_batch: Callable[[list[str]], list[list[float]]],
+    store_embedding_batch: Callable[[list[tuple[int, list[float], str]]], int],
+) -> int:
+    # Embeds and stores the pending batch, then empties it in place so the
+    # caller keeps appending to the same list.
+    if not pending:
+        return 0
+    snippets = [item[2] for item in pending]
+    try:
+        embeddings = embed_code_batch(snippets)
+    except Exception as e:
+        logger.warning(
+            ls.EMBEDDING_BATCH_COMPUTE_FAILED,
+            count=len(pending),
+            error=e,
+        )
+        pending.clear()
+        return 0
+    points: list[tuple[int, list[float], str]] = [
+        (node_id, emb, qname) for (node_id, qname, _), emb in zip(pending, embeddings)
+    ]
+    for node_id, _qname, _src in pending:
+        expected_ids.add(node_id)
+    stored = store_embedding_batch(points)
+    pending.clear()
+    return stored
+
+
 def _log_embedding_progress(embedded_count: int, total: int) -> None:
     if (
         embedded_count > 0
@@ -7642,29 +7673,9 @@ class GraphUpdater:
             flush_at = settings.QDRANT_BATCH_SIZE
 
             def flush() -> int:
-                nonlocal pending
-                if not pending:
-                    return 0
-                snippets = [item[2] for item in pending]
-                try:
-                    embeddings = embed_code_batch(snippets)
-                except Exception as e:
-                    logger.warning(
-                        ls.EMBEDDING_BATCH_COMPUTE_FAILED,
-                        count=len(pending),
-                        error=e,
-                    )
-                    pending = []
-                    return 0
-                points: list[tuple[int, list[float], str]] = [
-                    (node_id, emb, qname)
-                    for (node_id, qname, _), emb in zip(pending, embeddings)
-                ]
-                for node_id, _qname, _src in pending:
-                    expected_ids.add(node_id)
-                stored = store_embedding_batch(points)
-                pending = []
-                return stored
+                return _flush_embedding_batch(
+                    pending, expected_ids, embed_code_batch, store_embedding_batch
+                )
 
             for row in results:
                 candidate = self._embedding_candidate(row)
