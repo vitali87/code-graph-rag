@@ -13,6 +13,13 @@ from .types_defs import (
     SimpleNameLookup,
     TrieNode,
 )
+from .utils import qn_markers
+
+
+def _variant_position(qualified_name: QualifiedName) -> tuple[int, int]:
+    # Every bucket entry past the head carries a marker; the fallback only
+    # keeps the sort key total.
+    return qn_markers.marker_position(qualified_name) or (0, -1)
 
 
 class FunctionRegistryTrie:
@@ -94,6 +101,29 @@ class FunctionRegistryTrie:
         if variant not in bucket:
             bucket.append(variant)
         return variant
+
+    def restore_variant(self, qualified_name: QualifiedName) -> None:
+        """Rejoin a `@line` variant read back from the graph to its natural qn.
+
+        Parsing records the bucket as `register_unique_qn` mints the name, but
+        an incremental run reads the definitions of files it did not re-parse
+        back from the graph instead. Without the bucket `variants` answered
+        the natural qn alone there, so a re-parsed caller bound one target
+        where a clean index fans out to every same-named definition (issue
+        #2403). A name without a trailing marker is not a variant.
+        """
+        natural = qn_markers.natural_qn(qualified_name)
+        if natural == qualified_name:
+            return
+        bucket = self._duplicates.setdefault(natural, [natural])
+        if qualified_name in bucket:
+            return
+        bucket.append(qualified_name)
+        # Graph rows arrive in no fixed order. Parsing mints variants in
+        # document order and readers take the head as the natural qn, so keep
+        # it first and the rest by position: the list then reads the same
+        # whichever files this run happened to re-parse.
+        bucket[1:] = sorted(bucket[1:], key=_variant_position)
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])

@@ -3093,6 +3093,11 @@ class GraphUpdater:
         except ValueError:
             return False
         self.function_registry[qn] = node_type
+        # A `@line` variant rejoins its natural qn's duplicate list: a call
+        # into the name fans out to every same-named definition, and one read
+        # back as a plain entry left the incremental graph with a single edge
+        # where a clean index has one per definition (issue #2403).
+        self.function_registry.restore_variant(qn)
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
