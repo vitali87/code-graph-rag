@@ -201,10 +201,18 @@ class MemgraphIngestor:
         ] = defaultdict(list)
 
     def __enter__(self) -> MemgraphIngestor:
-        logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = self._create_connection()
+        logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
+        try:
+            self.conn = self._create_connection()
+        except Exception as e:
+            # The driver's error does not say where it tried to connect, and
+            # the line that did is DEBUG now (issue #2398).
+            logger.error(
+                ls.MG_CONNECT_FAILED.format(host=self._host, port=self._port, error=e)
+            )
+            raise
         self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
-        logger.info(ls.MG_CONNECTED)
+        logger.debug(ls.MG_CONNECTED)
         return self
 
     def __exit__(
@@ -231,7 +239,7 @@ class MemgraphIngestor:
                 self._executor = None
             if self.conn:
                 self.conn.close()
-                logger.info(ls.MG_DISCONNECTED)
+                logger.debug(ls.MG_DISCONNECTED)
             # Sessions handed to flush workers are closed by those
             # workers; the pooled driver behind them is owned here and
             # would otherwise leak its connection pool for the life of
@@ -626,7 +634,7 @@ class MemgraphIngestor:
     ) -> tuple[int, int, set[str], Exception | None]:
         # Each label group on its own connection; a failed label keeps its
         # buffered nodes for a retry, and the first failure is re-raised.
-        logger.info(
+        logger.debug(
             ls.MG_PARALLEL_FLUSH_NODES.format(
                 count=len(nodes_by_label),
                 workers=settings.FLUSH_THREAD_POOL_SIZE,
@@ -768,7 +776,7 @@ class MemgraphIngestor:
     ) -> tuple[int, int, Exception | None]:
         # Each pattern group on its own connection; every group still runs
         # when one fails, and the first failure is re-raised by the caller.
-        logger.info(
+        logger.debug(
             ls.MG_PARALLEL_FLUSH_RELS.format(
                 count=len(self._rel_groups),
                 workers=settings.FLUSH_THREAD_POOL_SIZE,
@@ -815,10 +823,10 @@ class MemgraphIngestor:
         return total_attempted, total_successful, first_error
 
     def flush_all(self) -> None:
-        logger.info(ls.MG_FLUSH_START)
+        logger.debug(ls.MG_FLUSH_START)
         self.flush_nodes()
         self.flush_relationships()
-        logger.info(ls.MG_FLUSH_COMPLETE)
+        logger.debug(ls.MG_FLUSH_COMPLETE)
 
     def fetch_all(
         self, query: str, params: PropertyParams | None = None

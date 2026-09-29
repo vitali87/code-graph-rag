@@ -8,6 +8,7 @@ ENSURING_PROJECT = "Ensuring Project: {name}"
 
 # Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
+STRUCTURE_IDENTIFIED = "Identified {packages} packages and {folders} folders"
 PASS_2_FILES = (
     "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
 )
@@ -373,6 +374,7 @@ SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 # Memgraph logs
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
+MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."

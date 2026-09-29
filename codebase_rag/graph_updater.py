@@ -2078,7 +2078,12 @@ class GraphUpdater:
         # nodes, so a read after it could not tell a new package from an old
         # one (issue #1570).
         self._packages_before_run = None if force else self._package_paths()
-        self.factory.structure_processor.identify_structure()
+        structure = self.factory.structure_processor.identify_structure()
+        logger.info(
+            ls.STRUCTURE_IDENTIFIED.format(
+                packages=structure.packages, folders=structure.folders
+            )
+        )
 
         # Cleared here, not only in _run_cpp_frontend: in HYBRID that method
         # runs AFTER Pass 2, so its reset is too late for a REUSED updater
