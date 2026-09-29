@@ -311,6 +311,15 @@ SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
 SHELL_CMD_XARGS = "xargs"
 SHELL_CMD_FIND = "find"
 
+# Git for Windows keeps the POSIX tools the allowlist names (find, sort, ls,
+# head, ...) here; the executor puts it first on a Windows PATH.
+SHELL_WINDOWS_GIT_USR_BIN = r"C:\Program Files\Git\usr\bin"
+# POSIX tool names Windows ships a DIFFERENT program under, in its own system
+# directory: find.exe searches text for a string and sort.exe takes /-flags.
+# Neither understands the POSIX invocation the agent writes (issue #2359).
+SHELL_WINDOWS_NAMESAKES = frozenset({"find", "sort"})
+SHELL_WINDOWS_SYSTEM_ROOT_ENV = "SystemRoot"
+
 # Allowlisted commands that are general-purpose program launchers: each can be
 # steered into running a program the allowlist never vetted. Under `--yolo` the
 # allowlist is bypassed wholesale, so these are blocked outright there rather

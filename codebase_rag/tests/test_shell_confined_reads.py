@@ -9,15 +9,23 @@ refused whatever they answered.
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic_ai import ApprovalRequired
 
+from codebase_rag import constants as cs
 from codebase_rag import prompts
 from codebase_rag.tools import tool_descriptions as td
-from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
+from codebase_rag.tools.shell_command import (
+    ShellCommander,
+    _is_windows_namesake,
+    _pipeline_env,
+    create_shell_command_tool,
+)
 
 
 @pytest.fixture
@@ -27,6 +35,34 @@ def project(tmp_path: Path) -> Path:
     (root / "pkg" / "mod.py").write_text("def run():\n    return 1\n")
     (root / "README.md").write_text("# demo\nline two\n")
     return root
+
+
+@pytest.fixture
+def spawned(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """The pipelines that reached the process layer, which is stubbed out.
+
+    These tests guard the approval decision, not which programs the host
+    has: the CI runners carry no ripgrep, and on Windows `find` can be
+    System32's find.exe. Everything above the spawn (the prompt, the
+    refusals, the executor's own safety checks) runs for real.
+    """
+    pipelines: list[list[str]] = []
+
+    async def record(
+        _commander: ShellCommander, segments: list[str]
+    ) -> tuple[int, bytes, bytes]:
+        pipelines.append(segments)
+        return 0, b"", b""
+
+    monkeypatch.setattr(ShellCommander, "_execute_pipeline", record)
+    return pipelines
+
+
+@pytest.fixture
+def no_git_for_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a Windows runner the executor would put the real Git usr\bin first
+    # on PATH, and its tools would answer before the stand-ins below.
+    monkeypatch.setattr(cs, "SHELL_WINDOWS_GIT_USR_BIN", str(tmp_path / "no-git"))
 
 
 def _tool(project: Path):
@@ -39,23 +75,35 @@ def _unapproved() -> MagicMock:
     return ctx
 
 
+def _stand_in_program(directory: Path, name: str) -> None:
+    # Found by shutil.which on every host: an executable bare name for POSIX,
+    # a PATHEXT extension for Windows. Never run.
+    directory.mkdir(parents=True, exist_ok=True)
+    for filename in (name, f"{name}.exe"):
+        program = directory / filename
+        program.write_text("")
+        program.chmod(0o755)
+
+
 @pytest.mark.parametrize(
-    "command",
+    ("command", "pipeline"),
     [
-        "ls pkg",
-        "rg -n run pkg",
-        "head -1 README.md",
-        "wc -l README.md",
-        "cat pkg/mod.py | wc -l",
-        "find pkg -name '*.py'",
+        ("ls pkg", ["ls pkg"]),
+        ("rg -n run pkg", ["rg -n run pkg"]),
+        ("head -1 README.md", ["head -1 README.md"]),
+        ("wc -l README.md", ["wc -l README.md"]),
+        ("cat pkg/mod.py | wc -l", ["cat pkg/mod.py", "wc -l"]),
+        ("find pkg -name '*.py'", ["find pkg -name '*.py'"]),
     ],
 )
 async def test_a_confined_read_runs_without_a_prompt(
-    project: Path, command: str
+    project: Path, spawned: list[list[str]], command: str, pipeline: list[str]
 ) -> None:
+    # An unapproved context: reaching execution at all means no prompt.
     result = await _tool(project).function(_unapproved(), command)
 
     assert result.return_code == 0, result.stderr
+    assert spawned == [pipeline]
 
 
 @pytest.mark.parametrize(
@@ -71,23 +119,31 @@ async def test_a_confined_read_runs_without_a_prompt(
         "git log -1",
     ],
 )
-async def test_anything_else_still_asks(project: Path, command: str) -> None:
+async def test_anything_else_still_asks(
+    project: Path, spawned: list[list[str]], command: str
+) -> None:
     # Negative: absolute paths, traversal, symlink following, write forms,
-    # redirects, mutating find, writes and git keep the prompt.
+    # redirects, mutating find, writes and git keep the prompt, and nothing
+    # runs before it is answered.
     with pytest.raises(ApprovalRequired):
         await _tool(project).function(_unapproved(), command)
 
+    assert spawned == []
+
 
 async def test_a_command_the_allowlist_rejects_is_refused_without_a_prompt(
-    project: Path,
+    project: Path, spawned: list[list[str]]
 ) -> None:
     result = await _tool(project).function(_unapproved(), "grep -rn run pkg")
 
     assert result.return_code != 0
     assert "rg" in result.stderr
+    assert spawned == []
 
 
-async def test_a_refused_command_is_refused_even_when_approved(project: Path) -> None:
+async def test_a_refused_command_is_refused_even_when_approved(
+    project: Path, spawned: list[list[str]]
+) -> None:
     # Negative: approval never widens the allowlist.
     ctx = MagicMock()
     ctx.tool_call_approved = True
@@ -96,6 +152,96 @@ async def test_a_refused_command_is_refused_even_when_approved(project: Path) ->
 
     assert result.return_code != 0
     assert "allowlist" in result.stderr
+    assert spawned == []
+
+
+@pytest.mark.usefixtures("no_git_for_windows")
+async def test_a_read_whose_program_is_missing_says_so_plainly(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: a host without ripgrep. The description steers the agent to
+    # `rg`, so its absence must come back as a sentence the agent can act on,
+    # not a spawn error and not a prompt. The spawn is real; PATH is emptied
+    # so no host's rg can answer.
+    empty = tmp_path / "bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+
+    result = await _tool(project).function(_unapproved(), "rg -n run pkg")
+
+    assert result.return_code == cs.SHELL_RETURN_CODE_ERROR
+    assert "'rg' is not installed" in result.stderr, result.stderr
+    assert "rg -n run pkg" in result.stderr, result.stderr
+
+
+@pytest.mark.usefixtures("no_git_for_windows")
+async def test_a_windows_namesake_is_named_not_run(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: on the Windows runner `find` resolved to System32's find.exe,
+    # which answered `find pkg -name '*.py'` with `File not found - *.py`. A
+    # stand-in system directory reproduces that resolution on any host.
+    windows = tmp_path / "Windows"
+    _stand_in_program(windows / "System32", "find")
+    monkeypatch.setenv(cs.SHELL_WINDOWS_SYSTEM_ROOT_ENV, str(windows))
+    monkeypatch.setenv("PATH", str(windows / "System32"))
+
+    result = await _tool(project).function(_unapproved(), "find pkg -name '*.py'")
+
+    assert result.return_code == cs.SHELL_RETURN_CODE_ERROR
+    assert "the Windows program" in result.stderr, result.stderr
+    assert "POSIX 'find'" in result.stderr, result.stderr
+
+
+def test_only_a_posix_name_from_the_windows_directory_is_a_namesake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: Git's find, a System32 program with no POSIX namesake, and a
+    # host with no Windows directory at all all run as before.
+    windows = tmp_path / "Windows"
+    system32 = windows / "System32"
+    git_find = tmp_path / "Git" / "usr" / "bin" / "find.exe"
+    monkeypatch.setenv(cs.SHELL_WINDOWS_SYSTEM_ROOT_ENV, str(windows))
+
+    assert _is_windows_namesake("find", str(system32 / "find.exe"))
+    assert _is_windows_namesake("sort", str(system32 / "sort.exe"))
+    assert not _is_windows_namesake("find", str(git_find))
+    assert not _is_windows_namesake("where", str(system32 / "where.exe"))
+
+    monkeypatch.delenv(cs.SHELL_WINDOWS_SYSTEM_ROOT_ENV)
+    assert not _is_windows_namesake("find", str(system32 / "find.exe"))
+
+
+def test_git_posix_tools_come_first_on_a_windows_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The runner's PATH already held Git's usr\bin, but after System32, so
+    # the old "prepend unless present" left find.exe winning.
+    system32 = tmp_path / "System32"
+    git_usr_bin = tmp_path / "Git" / "usr" / "bin"
+    system32.mkdir()
+    git_usr_bin.mkdir(parents=True)
+    monkeypatch.setattr(cs, "SHELL_WINDOWS_GIT_USR_BIN", str(git_usr_bin))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(system32), str(git_usr_bin)]))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert _pipeline_env()["PATH"].split(os.pathsep) == [
+        str(git_usr_bin),
+        str(system32),
+    ]
+
+
+def test_a_path_without_git_for_windows_is_left_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: no Git install (or not Windows at all) changes nothing.
+    system32 = tmp_path / "System32"
+    system32.mkdir()
+    monkeypatch.setattr(cs, "SHELL_WINDOWS_GIT_USR_BIN", str(tmp_path / "no-git"))
+    monkeypatch.setenv("PATH", str(system32))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert _pipeline_env()["PATH"] == str(system32)
 
 
 def test_the_shell_description_sends_structure_to_the_graph() -> None:

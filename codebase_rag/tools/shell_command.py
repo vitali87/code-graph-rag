@@ -1583,11 +1583,33 @@ def _segment_requires_approval(segment: str) -> bool | None:
 
 def _pipeline_env() -> dict[str, str]:
     env = os.environ.copy()
-    if sys.platform == "win32":
-        git_bin = r"C:\Program Files\Git\usr\bin"
-        if os.path.isdir(git_bin) and git_bin not in env["PATH"]:
-            env["PATH"] = f"{git_bin};{env['PATH']}"
+    git_bin = cs.SHELL_WINDOWS_GIT_USR_BIN
+    if sys.platform == "win32" and os.path.isdir(git_bin):
+        # First, not merely present: System32 usually precedes Git's usr\bin
+        # on PATH, and its find.exe and sort.exe answer to the POSIX names
+        # (issue #2359, the Windows runner).
+        wanted = os.path.normcase(os.path.normpath(git_bin))
+        others = [
+            entry
+            for entry in env["PATH"].split(os.pathsep)
+            if os.path.normcase(os.path.normpath(entry)) != wanted
+        ]
+        env["PATH"] = os.pathsep.join([git_bin, *others])
     return env
+
+
+def _is_windows_namesake(cmd: str, executable: str) -> bool:
+    """Whether `executable` is Windows' own program of a POSIX tool's name.
+
+    Running it for the POSIX tool the agent meant fails in a way nothing
+    explains (`find pkg -name '*.py'` gave `File not found - *.py`), so the
+    executor names the clash instead (issue #2359). Read from os.environ,
+    whose lookups ignore case on Windows, unlike a copy of it.
+    """
+    system_root = os.environ.get(cs.SHELL_WINDOWS_SYSTEM_ROOT_ENV)
+    if cmd not in cs.SHELL_WINDOWS_NAMESAKES or not system_root:
+        return False
+    return Path(executable).resolve().is_relative_to(Path(system_root).resolve())
 
 
 def _group_should_run(operator: str | None, last_return_code: int) -> bool:
@@ -1616,9 +1638,14 @@ class ShellCommander:
         self, segment: str, env: dict[str, str], pipe_stdin: bool
     ) -> asyncio.subprocess.Process:
         cmd_parts = shlex.split(segment)
-        executable = shutil.which(cmd_parts[0], path=env["PATH"])
-        if not executable:
-            executable = cmd_parts[0]
+        resolved = shutil.which(cmd_parts[0], path=env["PATH"])
+        if resolved and _is_windows_namesake(cmd_parts[0], resolved):
+            raise RuntimeError(
+                te.COMMAND_WINDOWS_NAMESAKE.format(
+                    cmd=cmd_parts[0], executable=resolved, segment=segment
+                )
+            )
+        executable = resolved or cmd_parts[0]
 
         try:
             return await asyncio.create_subprocess_exec(
@@ -1634,9 +1661,15 @@ class ShellCommander:
             # A bare str(OSError) hides WHICH segment failed to spawn, so
             # an intermittent runner failure surfaces as an opaque -1
             # (issue #902). Name the segment and the resolved executable.
+            template = te.COMMAND_SPAWN_FAILED
+            if resolved is None and isinstance(e, FileNotFoundError):
+                # Nothing on PATH answers to the name. The description
+                # steers the agent to `rg`, which many hosts lack, so say
+                # it is missing rather than that a spawn failed (#2359).
+                template = te.COMMAND_NOT_INSTALLED
             raise RuntimeError(
-                te.COMMAND_SPAWN_FAILED.format(
-                    segment=segment, executable=executable, error=e
+                template.format(
+                    cmd=cmd_parts[0], segment=segment, executable=executable, error=e
                 )
             ) from e
 

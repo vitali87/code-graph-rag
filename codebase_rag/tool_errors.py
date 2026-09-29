@@ -44,6 +44,15 @@ NONINTERACTIVE_OPTION_CARRIED_INPUT = (
 )
 COMMAND_INVALID_SYNTAX = "Invalid command syntax: {segment}"
 COMMAND_SPAWN_FAILED = "Failed to spawn '{segment}' (executable: {executable}): {error}"
+COMMAND_NOT_INSTALLED = (
+    "'{cmd}' is not installed on this machine (not found on PATH), so "
+    "'{segment}' did not run ({error}). Use the graph and file tools instead."
+)
+COMMAND_WINDOWS_NAMESAKE = (
+    "'{cmd}' here is {executable}, the Windows program of that name, not the "
+    "POSIX '{cmd}', so '{segment}' did not run. Git for Windows provides the "
+    "POSIX tools; otherwise use the graph and file tools."
+)
 
 # Code retrieval errors
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
