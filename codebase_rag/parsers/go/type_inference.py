@@ -137,9 +137,7 @@ class GoTypeInferenceEngine:
             return self._name_from_callee(inner)
         return None
 
-    def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
-    ) -> dict[str, str]:
+    def build_local_variable_type_map(self, caller_node: Node) -> dict[str, str]:
         var_types: dict[str, str] = {}
         self._collect_receiver(caller_node, var_types)
         self._collect_parameters(caller_node, var_types)

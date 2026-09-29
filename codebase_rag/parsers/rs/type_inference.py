@@ -27,9 +27,7 @@ class RustTypeInferenceEngine:
     # engine (which has the return-type map).
     __slots__ = ()
 
-    def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
-    ) -> dict[str, str]:
+    def build_local_variable_type_map(self, caller_node: Node) -> dict[str, str]:
         var_types: dict[str, str] = {}
         self._collect_parameters(caller_node, var_types)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):

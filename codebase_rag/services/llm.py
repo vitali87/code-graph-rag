@@ -105,7 +105,7 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
+_VARLEN_PATTERN = re.compile(r"\[[^\]*]*\*([^\]]*)\]")
 # Runs on masked text, where comments are spaces and backtick identifiers
 # are bare, so `CALL /*x*/ `mg.x`()` is seen as `CALL mg.x()`. Whitespace
 # around the dots is legal Cypher and removed before the allowlist check.
