@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -240,6 +241,18 @@ def _global_options(
     if quiet:
         logger.remove()
         logger.add(lambda msg: app_context.console.print(msg, end=""), level="ERROR")
+    else:
+        _default_log_level_to_info()
+
+
+def _default_log_level_to_info() -> None:
+    if cs.ENV_LOGURU_LEVEL in os.environ:
+        return
+    try:
+        logger.remove(cs.LOGURU_DEFAULT_HANDLER_ID)
+    except ValueError:
+        return
+    logger.add(sys.stderr, level=cs.LOG_LEVEL_INFO, backtrace=False, diagnose=False)
 
 
 def _info(msg: str) -> None:

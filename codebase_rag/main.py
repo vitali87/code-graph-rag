@@ -439,7 +439,14 @@ def _rich_log_sink(message: object) -> None:
 
 def _setup_common_initialization(repo_path: str) -> Path:
     logger.remove()
-    logger.add(_rich_log_sink, format=cs.LOG_FORMAT, colorize=False)
+    logger.add(
+        _rich_log_sink,
+        format=cs.LOG_FORMAT,
+        colorize=False,
+        backtrace=False,
+        diagnose=False,
+        level=os.environ.get(cs.ENV_LOGURU_LEVEL, cs.LOG_LEVEL_INFO),
+    )
 
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / cs.TMP_DIR
