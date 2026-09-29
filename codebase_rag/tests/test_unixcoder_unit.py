@@ -339,6 +339,7 @@ class TestDecode:
         # prediction, and must not be passed off as one.
         instance = self._make()
         instance.tokenizer.decode.side_effect = lambda ids, **_kw: ["a", "b"]
+        source_ids = torch.tensor([[[5, 6]]])
 
         with pytest.raises(AssertionError):
-            instance.decode(torch.tensor([[[5, 6]]]))
+            instance.decode(source_ids)
