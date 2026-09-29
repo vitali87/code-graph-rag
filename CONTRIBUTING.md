@@ -57,7 +57,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
    - Follow the existing code style and patterns
    - Add tests: this is project policy, not a suggestion. New functionality must come with tests that exercise it, and bug fixes must include a regression test that fails without the fix
    - Update documentation if needed
-   - Do not add inline comments (see Comment Policy below)
+   - Add a comment only where it explains why, not what (see Comment Policy below)
 
 4. **Test Your Changes**:
    - Run the existing tests to ensure nothing is broken
