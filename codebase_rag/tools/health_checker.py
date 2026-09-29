@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 from loguru import logger
 
 from .. import constants as cs
@@ -15,6 +16,10 @@ from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
+
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception type is bound once here.
+_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
 
 
 @contextmanager
@@ -31,7 +36,10 @@ def _backend_connection() -> Iterator[ConnectionProtocol]:
     leak a whole driver per health check.
     """
     ingestor = MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        username=settings.MEMGRAPH_USERNAME,
+        password=settings.MEMGRAPH_PASSWORD,
     )
     conn = ingestor._create_connection()
     try:
@@ -60,13 +68,12 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     # Accumulated rather than returned as differently-shaped tuples: this
     # is a variadic `except` argument, not a fixed-arity value, and the
     # list makes that intent explicit (python:S8495).
-    types: list[type[BaseException]] = [mgclient.Error]
+    types: list[type[BaseException]] = [_MgclientError]
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        # Imported by name, as `services.neo4j_driver` does, so the check
+        # reads the same with or without the extra installed.
         try:
-            from neo4j.exceptions import (  # ty: ignore[unresolved-import]
-                AuthError,
-                DriverError,
-            )
+            neo4j_exceptions = importlib.import_module(cs.NEO4J_EXCEPTIONS_MODULE)
         except ImportError:  # pragma: no cover - depends on extras
             pass
         else:
@@ -77,7 +84,7 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
             # query failure and must NOT be reported as a connectivity
             # problem, so it deliberately falls through to the generic
             # branch.
-            types += [DriverError, AuthError]
+            types += [neo4j_exceptions.DriverError, neo4j_exceptions.AuthError]
     return tuple(types)
 
 
@@ -202,13 +209,24 @@ class HealthChecker:
         missing key is named by the variable the runtime reads
         (issue #1910).
         """
-        config = (
-            settings.active_orchestrator_config
-            if role == cs.ModelRole.ORCHESTRATOR
-            else settings.active_cypher_config
-        )
+        role_name = cs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value)
+        try:
+            config = (
+                settings.active_orchestrator_config
+                if role == cs.ModelRole.ORCHESTRATOR
+                else settings.active_cypher_config
+            )
+        except ValueError as e:
+            # A half-configured role is refused by `cgr start` too; doctor
+            # reports it as a failed check instead of crashing on it.
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
+                passed=False,
+                message=cs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
+                error=str(e),
+            )
         label = {
-            "role": cs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value),
+            "role": role_name,
             "provider": config.provider,
             "model": config.model_id,
         }

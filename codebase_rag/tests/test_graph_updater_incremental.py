@@ -1035,7 +1035,11 @@ class TestCrashBetweenCacheSaveAndFlush:
         # against unfixed code simply because no delete was ever issued.
         ghost = (py_project / "gone").resolve().as_posix()
 
-        def _fetch_all(query: str) -> list[dict[str, str]]:
+        # Takes `params` like the real `fetch_all`: the registry read passes
+        # them, and a raise there now stops the module delete (issue #1985).
+        def _fetch_all(
+            query: str, params: dict[str, str] | None = None
+        ) -> list[dict[str, str]]:
             if query == cs.CYPHER_ALL_FOLDER_PATHS:
                 return [{cs.KEY_PATH: "gone", "absolute_path": ghost}]
             return []
@@ -1476,6 +1480,37 @@ class TestFastPathInSync:
             exclude_paths=exclusions,
         )
         assert updater2._is_already_in_sync() is True
+
+    def test_a_named_project_keeps_the_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The stamp records `named` for readers; the sync comparison left
+        it in the stored side only, so a project given with --project-name
+        never matched its own stamp and skipped the fast path on every sync
+        (issue #1981). Exercised through `run()`: the second run skips as
+        in sync and reads no module paths, and a changed scope on the same
+        named project still runs the full pass."""
+        parsers, queries = load_parsers()
+
+        def make_named_updater(exclusions: frozenset[str]) -> GraphUpdater:
+            return GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=py_project,
+                parsers=parsers,
+                queries=queries,
+                project_name="proj",
+                exclude_paths=exclusions,
+            )
+
+        make_named_updater(frozenset()).run()
+        mock_ingestor.reset_mock()
+        second = make_named_updater(frozenset())
+        second.run()
+        assert second.skipped_because_in_sync is True
+        assert _module_path_queries(mock_ingestor) == 0
+        changed = make_named_updater(frozenset({"module_a.py"}))
+        changed.run()
+        assert changed.skipped_because_in_sync is False
 
     def test_newly_excluded_file_leaves_the_index(
         self, excludable_project: Path, mock_ingestor: MagicMock

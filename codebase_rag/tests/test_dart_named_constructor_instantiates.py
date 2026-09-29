@@ -123,7 +123,7 @@ def test_a_reparsed_file_forgets_a_constructor_that_became_a_factory(
     root = tmp_path / "proj"
     updater, store = _index(root, V1)
     (root / "lib" / "box.dart").write_text(V2, encoding="utf-8")
-    store.edges.clear()
+    store.reset_edges()
     updater.reingest([root / "lib" / "box.dart"])
     assert (
         "proj.lib.box.Box.of" not in updater.factory.type_inference.dart_constructor_qns
@@ -137,7 +137,7 @@ def test_twin_classes_take_the_overload_stamp(tmp_path: Path) -> None:
     _updater, store = _index(tmp_path / "proj", TWINS)
     stamps = {
         str(t): props.get(cs.KEY_RESOLUTION)
-        for (_sl, s, k, _tl, t), props in store.edge_props.items()
+        for (_sl, s, k, _tl, t, _site), props in store.edge_props.items()
         if k == "INSTANTIATES" and str(s) == "proj.lib.box.viaNamed"
     }
     assert len(stamps) == 2, stamps

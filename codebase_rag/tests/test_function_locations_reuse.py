@@ -163,3 +163,44 @@ def test_setdefault_keeps_the_existing_record() -> None:
     locations[("m", 4, 18)] = first
     assert locations.setdefault(("m", 4, 18), second) is first
     assert locations[("m", 4, 18)] is first
+
+
+def test_update_from_pairs_records_the_module_index() -> None:
+    # dict.update also takes an iterable of key/value pairs; the override has
+    # to accept every form the base does, and index each record it writes.
+    from codebase_rag.types_defs import FunctionLocation, FunctionLocations
+
+    locations = FunctionLocations()
+    location = FunctionLocation(
+        label="Function", qualified_name="m.f", container_qn=None
+    )
+    locations.update([(("m", 2, 0), location)])
+    assert locations[("m", 2, 0)] is location
+    locations.drop_module("m")
+    assert ("m", 2, 0) not in locations
+
+
+def test_update_from_mapping_records_the_module_index() -> None:
+    from codebase_rag.types_defs import FunctionLocation, FunctionLocations
+
+    locations = FunctionLocations()
+    location = FunctionLocation(
+        label="Function", qualified_name="m.f", container_qn=None
+    )
+    locations.update({("m", 2, 0): location})
+    locations.drop_module("m")
+    assert ("m", 2, 0) not in locations
+
+
+def test_update_rejects_a_malformed_pair_without_writing() -> None:
+    # Negative: an entry that is not a key/value pair must fail as dict.update
+    # does, before any earlier entry reaches the map or its index.
+    from codebase_rag.types_defs import FunctionLocation, FunctionLocations
+
+    locations = FunctionLocations()
+    location = FunctionLocation(
+        label="Function", qualified_name="m.f", container_qn=None
+    )
+    with pytest.raises(ValueError):
+        locations.update([(("m", 2, 0), location), (("m", 3, 0),)])
+    assert len(locations) == 0

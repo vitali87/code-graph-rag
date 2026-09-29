@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
+from ..utils import qn_markers
 
 if TYPE_CHECKING:
     from .records import FramePoint
@@ -80,11 +81,7 @@ class ResolutionStats:
 
 def _natural_qualified_name(qualified_name: str) -> str:
     """Strip the duplicate-definition marker (``qn@line`` or ``qn@line_col``)."""
-    base, _, suffix = qualified_name.rpartition(cs.DUP_QN_MARKER)
-    if not base:
-        return qualified_name
-    plain = suffix.replace(cs.DUP_QN_COLUMN_MARKER, "")
-    return base if plain.isdigit() else qualified_name
+    return qn_markers.strip_dup_marker(qualified_name)
 
 
 class FrameResolver:

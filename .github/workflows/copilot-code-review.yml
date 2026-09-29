@@ -1,0 +1,55 @@
+name: "Copilot Setup Steps"
+
+# Copilot's agentic code review needs a runner to start before its timeout, and
+# it reads this file to decide which one and how to prepare it. Without it the
+# review degrades to "Lite" with a "couldn't run its full agentic review"
+# warning on the PR. Takes precedence over copilot-setup-steps.yml for review.
+#
+# Only steps/permissions/runs-on/services/snapshot/timeout-minutes are honoured,
+# and the job MUST stay named copilot-setup-steps or Copilot ignores the file.
+# Ubuntu and Windows runners only; macOS is not supported.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-code-review.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-code-review.yml
+
+permissions: read-all
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      # Extras, not just the dev group: the grammars live in treesitter-full and
+      # the fixtures need the test extra. Without them the parser tests skip
+      # rather than fail, so a reviewer checking "would this fail without the
+      # fix?" gets a green that means nothing. The extra set is kept identical
+      # to ci.yml's Unit Tests job, so a reviewer running a targeted test sees
+      # what CI sees; semantic, milvus and neo4j gate real imports, and
+      # omitting them turns their coverage into silent skips.
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev

@@ -1,0 +1,90 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the problem before prescribing an implementation. Search
+        existing issues before submitting a new request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe who is affected, what they are trying to do, and why the current behavior is insufficient.
+      placeholder: |
+        As a ...
+        I need ...
+        Because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or user experience you would like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or other solutions you considered and why they are insufficient.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: Use cases and examples
+      description: Provide realistic examples, commands, workflows, or users that would benefit.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Expected outcome
+      description: What would need to be true for this feature to be considered complete?
+      placeholder: |
+        - Users can ...
+        - The command or API returns ...
+        - Existing behavior remains ...
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area affected
+      options:
+        - Graph indexing
+        - Graph querying
+        - Parsers and language support
+        - Agent or retrieval behavior
+        - CLI or developer experience
+        - Documentation
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add screenshots, references, related issues, or links to prior art.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: This request describes a user problem or valuable outcome.
+          required: true

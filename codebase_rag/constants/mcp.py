@@ -19,6 +19,12 @@ class MCPToolName(StrEnum):
     OVERRIDES = "overrides"
     IMPORTERS = "importers"
     TESTS_REACHING = "tests_reaching"
+    # Cross-service edges as questions (issue #1603): the endpoints a project
+    # exposes, the call sites in any project that reach one, and the remote
+    # dependencies a project has through the network.
+    ENDPOINTS = "endpoints"
+    ENDPOINT_CALLERS = "endpoint_callers"
+    REMOTE_DEPENDENCIES = "remote_dependencies"
     # Graph-driven edit operations (issue #1532).
     RENAME = "rename"
     QUERY_CODE_GRAPH = "query_code_graph"
@@ -49,6 +55,10 @@ class MCPTransport(StrEnum):
 
 class MCPEnvVar(StrEnum):
     TARGET_REPO_PATH = "TARGET_REPO_PATH"
+    # The workspace the server scopes to (issue #1494); an MCP client's
+    # launch config has an environment and no flags, so the option has an
+    # environment form too.
+    MCP_WORKSPACE = "MCP_WORKSPACE"
     CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
     PWD = "PWD"
 
@@ -170,6 +180,25 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
+# A workspace narrows the choice to its own projects (issue #1494). This is
+# an allow-list on top of the graph check, never a substitute: a name in the
+# workspace that is not indexed is still refused as unknown.
+MCP_PROJECT_OUTSIDE_WORKSPACE = (
+    "Project {project!r} is not in workspace {workspace!r}. Workspace projects: {known}"
+)
+MCP_NAME_OUTSIDE_WORKSPACE = (
+    "{name!r} belongs to no project of workspace {workspace!r}. Workspace "
+    "projects: {known}"
+)
+MCP_WORKSPACE_SOURCE_UNPROVEN = (
+    "{name!r} belongs to project {project!r} of workspace {workspace!r}, but the "
+    "graph does not show that project indexed from the workspace's checkout; "
+    "re-index it from there to read its source"
+)
+MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
+    "Workspace {workspace!r} holds {count} projects and none is rooted at this "
+    "server's directory; pass `project` (one of: {known})"
+)
 MCP_GLOSS_TARGET_NOT_FOUND = "No definition matches {target!r} in project {project!r}."
 MCP_GLOSS_TARGET_AMBIGUOUS = (
     "{target!r} names {count} definitions; pass one of the qualified names "

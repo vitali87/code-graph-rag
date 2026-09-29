@@ -186,12 +186,20 @@ class TestSchemaAloneIsInsufficient:
         on -- `additionalProperties: false` at the root and absent below it --
         which is the property under test. `test_the_real_schema_is_still_root_only`
         checks the live document when it is reachable.
+
+        The root keys come from `VENDOR_ROOT_KEYS` rather than being listed
+        again here. Spelling them out a second time let this copy drift from
+        the validator's own set: it named only `reviews`, so it rejected every
+        other valid root key -- `tone_instructions` among them -- and a config
+        the shipped validator accepts failed these tests. Deriving them keeps
+        the reduction honest about the one thing it is not trying to pin.
         """
         pytest.importorskip("jsonschema")
         return {
             "type": "object",
             "additionalProperties": False,
             "properties": {
+                **dict.fromkeys(sorted(VENDOR_ROOT_KEYS), {}),
                 "reviews": {
                     "type": "object",
                     "properties": {
@@ -214,7 +222,7 @@ class TestSchemaAloneIsInsufficient:
                             },
                         },
                     },
-                }
+                },
             },
         }
 

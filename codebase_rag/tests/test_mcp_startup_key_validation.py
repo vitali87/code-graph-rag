@@ -21,14 +21,11 @@ def _local_config() -> ModelConfig:
     return ModelConfig(provider="ollama", model_id="llama3.2", api_key=None)
 
 
-# Every provider env var `validate_api_key` treats as an exemption. Kept here
-# rather than inlined so a new provider added to that map and not to this list
-# reopens the hole loudly, via the guard test below, instead of silently.
-_EXEMPTING_ENV_KEYS = (
-    cs.ENV_ANTHROPIC_API_KEY,
-    cs.ENV_AZURE_API_KEY,
-    cs.ENV_MINIMAX_API_KEY,
-)
+# Every provider env var `validate_api_key` treats as an exemption, read from
+# the one map the validator itself consults (#1913). Derived rather than
+# hand-listed: a new provider reaching that map is cleared here the day it is
+# added, and the guard below proves each entry really does exempt.
+_EXEMPTING_ENV_KEYS = tuple(PROVIDER_ENV_KEYS.values())
 
 
 def _isolated_env(tmp_path: Path) -> Any:
@@ -60,35 +57,67 @@ def _isolated_env(tmp_path: Path) -> Any:
     return patch.dict(os.environ, kept, clear=True)
 
 
-def test_the_exemption_list_covers_every_provider_env_key() -> None:
-    """The list above must not drift from the validator's own map.
+def test_the_exemption_list_covers_every_provider_env_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every variable the validator exempts on must be one this file clears.
 
-    Without this, a provider added to `validate_api_key` and not here would
-    re-introduce exactly the ambient-state dependency #1871 was about, and
-    every test in this file would keep passing on a machine without that
-    provider's key set.
+    Behavioural rather than a source scan. The previous guard read
+    `validate_api_key`'s source for `cs.ENV_*_API_KEY` literals; #1913 moved
+    that lookup to `API_KEY_INFO`, the scan found nothing, and the guard fired
+    on its own sanity check. Asking the validator what it does survives any
+    further change in how it finds the name.
+
+    Without this, a provider the validator exempts and this file does not clear
+    re-introduces exactly the ambient-state dependency #1871 was about: on a
+    machine holding that provider's key, every test below would take the
+    exemption and assert nothing.
     """
     # Reads the validator's own map rather than grepping its source: the map
     # moved to module level when `cgr doctor` began reading it, which made a
     # source scan see nothing while the exemptions still applied (#1910).
-    referenced = {
-        name
-        for name in dir(cs)
-        if name.startswith("ENV_")
-        and name.endswith("_API_KEY")
-        and getattr(cs, name) in set(PROVIDER_ENV_KEYS.values())
-    }
-    assert referenced, (
-        "fixture guard: found no provider env keys in PROVIDER_ENV_KEYS, so "
-        "this test cannot detect drift"
+    assert PROVIDER_ENV_KEYS, (
+        "fixture guard: PROVIDER_ENV_KEYS is empty, so this test cannot detect drift"
     )
-    covered = {
-        name for name in dir(cs) if getattr(cs, name, None) in _EXEMPTING_ENV_KEYS
-    }
-    assert referenced <= covered, (
-        "validate_api_key exempts provider env keys this file does not clear, "
-        f"so those tests depend on ambient state: {sorted(referenced - covered)}"
-    )
+    for provider, env_var in PROVIDER_ENV_KEYS.items():
+        monkeypatch.setenv(env_var, "ambient-key")
+        try:
+            ModelConfig(provider=provider, model_id="m").validate_api_key()
+        except ValueError as exc:
+            # NOT skipped. A listed provider that stops exempting on its own
+            # variable is the regression this guard exists for; treating it as
+            # "nothing to clear" would let the guard pass while the premise
+            # underneath every test below quietly changed.
+            pytest.fail(
+                f"{env_var} is set, yet {provider} still took the missing-key "
+                f"branch: {exc}"
+            )
+        finally:
+            monkeypatch.delenv(env_var, raising=False)
+        assert env_var in _EXEMPTING_ENV_KEYS, (
+            f"{env_var} exempts {provider} from the missing-key branch but is "
+            "not cleared by _isolated_env, so these tests depend on ambient state"
+        )
+
+
+def test_the_isolation_helper_clears_what_it_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """And the list is actually applied. A correct list that the helper does
+    not use would pass the guard above and still leak.
+
+    Every listed key, not just the first: the helper filters one mapping, and a
+    filter that misses one entry leaks exactly the provider whose key the
+    developer's machine happens to hold. `monkeypatch.setenv` rather than a
+    bare `os.environ[...] =` so a real value already in the process is put
+    back on teardown.
+    """
+    for key in _EXEMPTING_ENV_KEYS:
+        monkeypatch.setenv(key, "ambient-key")
+
+    with _isolated_env(tmp_path):
+        for key in _EXEMPTING_ENV_KEYS:
+            assert key not in os.environ, key
 
 
 class TestStartupKeyValidation:

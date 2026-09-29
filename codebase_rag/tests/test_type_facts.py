@@ -339,6 +339,15 @@ def test_resolver_prefers_imports_then_scope_then_unique_suffix() -> None:
     assert resolver.resolve("int", "p.app") is None
 
 
+def test_resolver_names_the_label_a_resolved_type_is_registered_under() -> None:
+    resolver = _resolver(
+        {"p.models.Item": NodeType.CLASS, "p.models.Shape": NodeType.INTERFACE},
+        {},
+    )
+    assert resolver.label_for("p.models.Item") == cs.NodeLabel.CLASS.value
+    assert resolver.label_for("p.models.Shape") == cs.NodeLabel.INTERFACE.value
+
+
 def test_type_reference_names_accept_unicode_identifiers() -> None:
     # Python allows `class Δ`; an annotation naming it must be a candidate.
     assert type_reference_names("Optional[Δ]") == ["Optional", "Δ"]
@@ -494,3 +503,32 @@ def test_protobuf_export_carries_the_annotations(tmp_path: Path) -> None:
     (node,) = index.nodes
     assert node.function.return_type == "list[Item]"
     assert list(node.function.param_types) == ["int", ""]
+
+
+def test_java_varargs_type_survives_a_modifier_or_annotation() -> None:
+    """`final String... xs`: the spread's first named child is `modifiers`,
+    which is not the element type (issue #1964). The unmodified form cannot
+    go red on this, so each fixture carries a modifier or an annotation --
+    one varargs per method, as Java requires (bot review on PR #1973)."""
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.type_facts import extract_type_facts
+
+    parsers, _ = load_parsers()
+
+    def param_types(method_source: str) -> list[str] | None:
+        tree = parsers[cs.SupportedLanguage.JAVA].parse(
+            f"class C {{ {method_source} }}".encode()
+        )
+
+        def walk(node):  # noqa: ANN001, ANN202
+            yield node
+            for child in node.children:
+                yield from walk(child)
+
+        method = next(n for n in walk(tree.root_node) if n.type == "method_declaration")
+        return extract_type_facts(method, cs.SupportedLanguage.JAVA).param_types
+
+    assert param_types("void m(final String... xs) {}") == ["String..."]
+    assert param_types("void m(@NonNull java.util.List<String>... ys) {}") == [
+        "java.util.List<String>..."
+    ]

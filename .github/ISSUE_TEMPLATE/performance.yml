@@ -1,0 +1,45 @@
+name: Performance report
+description: Report slow, resource-intensive, or regressed behavior.
+title: "[Performance]: "
+labels:
+  - performance
+
+body:
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: Describe the repository, input size, command, and operation being measured.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Performance impact
+      description: Describe the observed delay, CPU, memory, or other impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Measurements and baseline
+      description: Include timings, resource measurements, comparison versions, and how you measured them.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "Example: v1.2.0 or abc1234"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add profiles, logs, configuration, or related issues.
