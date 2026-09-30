@@ -342,6 +342,10 @@ HELP_REPO_PATH_RETRIEVAL = "Repository to open. Defaults to the current director
 HELP_REPO_PATH_INDEX = "Repository to index. Defaults to the current directory."
 HELP_REPO_PATH_OPTIMIZE = "Repository to optimise. Defaults to the current directory."
 HELP_REPO_PATH_WATCH = "Repository to watch."
+HELP_PROJECT_NAME_WATCH = (
+    "Project name to store in the graph. Defaults to the name "
+    "`cgr start --repo-path` gives the same repository, so both update one project."
+)
 HELP_VERSION = "Show the version and exit."
 HELP_QUIET = "Suppress progress, banners, and informational logs."
 
