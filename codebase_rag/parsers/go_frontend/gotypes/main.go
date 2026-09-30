@@ -11,6 +11,14 @@
 // variable (a method-value or func-value binding) resolves to a *types.Var,
 // not a *types.Func, so it is left to tree-sitter -- never a wrong edge.
 //
+// Packages load WITH their tests (issue #2571): a `_test.go` file is compiled
+// only into a test variant, so without them every test file stayed on the
+// name heuristics. go/packages then returns each tested package up to four
+// times (`p`, `p [p.test]` holding p's files plus its internal tests,
+// `p_test [p.test]` for an external test package, and the generated `p.test`
+// main), and a file's facts are taken from the first variant that holds it:
+// plain packages first, so a non-test file answers exactly as without tests.
+//
 // Columns are 0-based BYTE offsets on both the call-site and target sides, to
 // match tree-sitter's start_point: go/token reports 1-based byte columns, so
 // every emitted column is Column-1. Facts are emitted only from packages that
@@ -22,11 +30,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -88,6 +98,10 @@ type collector struct {
 	out        *payload
 	namedTypes []typeEntry
 	interfaces []typeEntry
+	// Files and type declarations already answered by an earlier variant of
+	// the same package; a later variant adds only what it alone holds.
+	seenFiles map[string]bool
+	seenTypes map[string]bool
 }
 
 func main() {
@@ -104,12 +118,17 @@ func main() {
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports |
 			packages.NeedDeps,
 		Dir:   root,
-		Tests: false,
+		Tests: true,
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
 		os.Exit(1)
 	}
+	// A test variant's ID carries the test binary in brackets (`p [p.test]`)
+	// while its PkgPath does not; the plain package's ID IS its PkgPath.
+	sort.SliceStable(pkgs, func(i, j int) bool {
+		return pkgs[i].ID == pkgs[i].PkgPath && pkgs[j].ID != pkgs[j].PkgPath
+	})
 	mainPaths := map[string]bool{}
 	for _, pkg := range pkgs {
 		if pkg.PkgPath != "" {
@@ -125,6 +144,8 @@ func main() {
 			Externals:  []externalFact{},
 			Implements: []implementsFact{},
 		},
+		seenFiles: map[string]bool{},
+		seenTypes: map[string]bool{},
 	}
 	for _, pkg := range pkgs {
 		col.collectPackage(pkg)
@@ -140,8 +161,13 @@ func (c *collector) collectPackage(pkg *packages.Package) {
 	if pkg.TypesInfo == nil || len(pkg.Errors) > 0 {
 		return
 	}
+	fset := pkg.Fset
 	for _, file := range pkg.Syntax {
-		fset := pkg.Fset
+		name := fset.File(file.Pos()).Name()
+		if c.seenFiles[name] {
+			continue
+		}
+		c.seenFiles[name] = true
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -182,6 +208,13 @@ func (c *collector) gatherTypes(pkg *packages.Package) {
 		if !ok {
 			continue
 		}
+		// Each test variant re-declares every type of its package; the pass
+		// pairs a type once, from the variant that first held it.
+		key := fmt.Sprintf("%s:%d:%d", rel, line, col)
+		if c.seenTypes[key] {
+			continue
+		}
+		c.seenTypes[key] = true
 		entry := typeEntry{named: named, rel: rel, line: line, col: col, name: obj.Name()}
 		if iface, ok := named.Underlying().(*types.Interface); ok {
 			if iface.NumMethods() > 0 {
