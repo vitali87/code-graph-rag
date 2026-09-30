@@ -218,6 +218,7 @@ CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS = (
 CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
 CLI_DEADCODE_COL_KIND = "Kind"
 CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
+CLI_DEADCODE_COL_PATH = "Path"
 CLI_DEADCODE_COL_LINES = "Lines"
 CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."

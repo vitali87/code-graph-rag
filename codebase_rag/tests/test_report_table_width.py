@@ -3,7 +3,8 @@
 With no terminal to fit (an ``--output`` file, a pipe, a CI job) Rich laid
 the table out at ``$COLUMNS`` or 80 columns and cut each long qualified name
 with an ellipsis, so every javapoet row read the same and the saved report
-depended on who ran it.
+depended on who ran it. The dead-code table also names each candidate's
+file now, under the same width rules.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from codebase_rag.types_defs import DeadCodeRow, DuplicateGroup, DuplicateMember
 
 PROJECT = "javapoet__43e4498c"
 PKG = f"{PROJECT}.src.main.java.com.squareup.javapoet"
+MAIN_DIR = "src/main/java/com/squareup/javapoet"
 ELLIPSIS = "…"
 
 # Rows that share a long prefix: cut at 80 columns they all read alike.
@@ -39,11 +41,13 @@ SPACED_NAME = (
 )
 
 
-def _dead(qn: str, line: int) -> DeadCodeRow:
+def _dead(qn: str, line: int, path: str | None = None) -> DeadCodeRow:
+    top_level_class = qn.removeprefix(f"{PKG}.").split(".", 1)[0]
     return DeadCodeRow(
         label="Method",
         name=qn.rsplit(".", 1)[-1],
         qualified_name=qn,
+        path=path or f"{MAIN_DIR}/{top_level_class}.java",
         start_line=line,
         end_line=line + 2,
     )
@@ -52,6 +56,7 @@ def _dead(qn: str, line: int) -> DeadCodeRow:
 DEAD_ROWS = [
     _dead(qn, line) for line, qn in enumerate([*DEAD_NAMES, SPACED_NAME], start=100)
 ]
+DEAD_PATHS = sorted({row["path"] for row in DEAD_ROWS})
 
 
 def _member(qn: str, path: str, line: int) -> DuplicateMember:
@@ -142,8 +147,8 @@ class TestAFileOrPipeGetsWholeNames:
 
         text = report.read_text(encoding=cs.ENCODING_UTF8)
         assert ELLIPSIS not in text
-        for qn in [*DEAD_NAMES, SPACED_NAME]:
-            assert _on_one_line(qn, text), qn
+        for value in [*DEAD_NAMES, SPACED_NAME, *DEAD_PATHS]:
+            assert _on_one_line(value, text), value
 
     def test_piped_dead_code_keeps_each_name_whole_on_one_line(
         self, capsys: pytest.CaptureFixture[str]
@@ -152,8 +157,8 @@ class TestAFileOrPipeGetsWholeNames:
 
         out = capsys.readouterr().out
         assert ELLIPSIS not in out
-        for qn in [*DEAD_NAMES, SPACED_NAME]:
-            assert _on_one_line(qn, out), qn
+        for value in [*DEAD_NAMES, SPACED_NAME, *DEAD_PATHS]:
+            assert _on_one_line(value, out), value
 
     def test_duplicates_output_file_keeps_members_and_locations_whole(
         self, tmp_path: Path
@@ -211,19 +216,25 @@ def _widest(out: str) -> int:
     return max(cell_len(line) for line in out.splitlines())
 
 
-def test_a_narrow_terminal_folds_dead_code_names_instead_of_cutting_them(
+def _assert_names_and_paths_fold_whole(out: str, rows: list[DeadCodeRow]) -> None:
+    names, paths = _column(out, 2), _column(out, 3)
+    for row in rows:
+        assert row["qualified_name"] in names, row["qualified_name"]
+        assert row["path"] in paths, row["path"]
+
+
+def test_a_narrow_terminal_folds_dead_code_names_and_paths_instead_of_cutting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     console = _terminal(60)
     monkeypatch.setattr(cli.app_context, "console", console)
+    rows = [_dead(qn, 7) for qn in DEAD_NAMES]
 
-    _emit_dead_code(None, [_dead(qn, 7) for qn in DEAD_NAMES])
+    _emit_dead_code(None, rows)
 
     out = _terminal_output(console)
     assert ELLIPSIS not in out
-    names = _column(out, 2)
-    for qn in DEAD_NAMES:
-        assert qn in names, qn
+    _assert_names_and_paths_fold_whole(out, rows)
 
 
 # Negative: what must not change.
@@ -251,14 +262,13 @@ def test_an_explicit_columns_still_sets_a_file_report_width(
     # file; the names fold inside it rather than losing their ends.
     monkeypatch.setenv(cs.ENV_COLUMNS, "70")
     report = tmp_path / "dead.txt"
+    rows = [_dead(qn, 7) for qn in DEAD_NAMES]
 
-    _emit_dead_code(report, [_dead(qn, 7) for qn in DEAD_NAMES])
+    _emit_dead_code(report, rows)
 
     text = report.read_text(encoding=cs.ENCODING_UTF8)
     assert _widest(text) <= 70
-    names = _column(text, 2)
-    for qn in DEAD_NAMES:
-        assert qn in names, qn
+    _assert_names_and_paths_fold_whole(text, rows)
 
 
 def test_an_explicit_columns_still_sets_the_piped_table_width(
@@ -276,7 +286,10 @@ def test_an_explicit_columns_still_sets_the_piped_table_width(
 def test_a_report_that_already_fits_is_written_as_before(tmp_path: Path) -> None:
     # A narrow table is not stretched, re-laid out or padded: the file holds
     # exactly what Rich renders for it at its old 80 columns.
-    rows = [_dead("proj.mod.orphan", 5), _dead("proj.mod.Thing.stale", 20)]
+    rows = [
+        _dead("proj.mod.orphan", 5, "mod.py"),
+        _dead("proj.mod.Thing.stale", 20, "mod.py"),
+    ]
     report = tmp_path / "dead.txt"
     expected = io.StringIO()
     Console(file=expected, width=80).print(cli._build_dead_code_table(rows, "proj"))
@@ -287,33 +300,18 @@ def test_a_report_that_already_fits_is_written_as_before(tmp_path: Path) -> None
 
 
 @pytest.mark.usefixtures("app_console")
-class TestJsonIsUnchanged:
-    def test_dead_code_json_on_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:
-        cli._emit_dead_code(DEAD_ROWS, cs.DeadCodeFormat.JSON, None, PROJECT)
+def test_duplicates_json_file_is_unchanged(tmp_path: Path) -> None:
+    # The dead-code JSON gains `path` (test_dead_code_json_path.py); the
+    # duplicates envelope, which already had it, is written exactly as before.
+    report = tmp_path / "dups.json"
 
-        assert capsys.readouterr().out == json.dumps(DEAD_ROWS, indent=2) + "\n"
+    cli._emit_duplicates(GROUPS, cs.DuplicatesFormat.JSON, report, PROJECT)
 
-    def test_dead_code_json_file(self, tmp_path: Path) -> None:
-        report = tmp_path / "dead.json"
-
-        cli._emit_dead_code(DEAD_ROWS, cs.DeadCodeFormat.JSON, report, PROJECT)
-
-        assert report.read_text(encoding=cs.ENCODING_UTF8) == json.dumps(
-            DEAD_ROWS, indent=2
-        )
-
-    def test_duplicates_json_file(self, tmp_path: Path) -> None:
-        report = tmp_path / "dups.json"
-
-        cli._emit_duplicates(GROUPS, cs.DuplicatesFormat.JSON, report, PROJECT)
-
-        payload = json.loads(report.read_text(encoding=cs.ENCODING_UTF8))
-        assert payload[cs.KEY_DUPLICATE_GROUPS] == GROUPS
-        assert report.read_text(encoding=cs.ENCODING_UTF8) == json.dumps(
-            {
-                cs.KEY_DUPLICATE_GROUPS: GROUPS,
-                cs.KEY_SKIPPED_SYMBOLS: 0,
-                cs.KEY_TRUNCATED: False,
-            },
-            indent=2,
-        )
+    assert report.read_text(encoding=cs.ENCODING_UTF8) == json.dumps(
+        {
+            cs.KEY_DUPLICATE_GROUPS: GROUPS,
+            cs.KEY_SKIPPED_SYMBOLS: 0,
+            cs.KEY_TRUNCATED: False,
+        },
+        indent=2,
+    )

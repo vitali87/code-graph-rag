@@ -1881,6 +1881,7 @@ def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
         label=str(row.get(cs.KEY_LABEL, "")),
         name=str(row.get(cs.KEY_NAME, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
+        path=str(row.get(cs.KEY_PATH) or ""),
         start_line=int(start) if isinstance(start, int | float) else 0,
         end_line=int(end) if isinstance(end, int | float) else 0,
     )
@@ -1927,11 +1928,14 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     table.add_column(
         cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN, overflow="fold"
     )
+    # Lines mean nothing without the file they are in (issue #2561).
+    table.add_column(cs.CLI_DEADCODE_COL_PATH, style=cs.Color.YELLOW, overflow="fold")
     table.add_column(cs.CLI_DEADCODE_COL_LINES, style=cs.Color.YELLOW, justify="right")
     for row in candidates:
         table.add_row(
             row["label"],
             row["qualified_name"],
+            row["path"],
             cs.CLI_DEADCODE_LINE_RANGE.format(
                 start=row["start_line"], end=row["end_line"]
             ),
