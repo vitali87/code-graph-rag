@@ -1099,7 +1099,6 @@ class _PruneTally:
     """What `_prune_orphan_nodes` leaves for after its per-label sweeps."""
 
     registry_skipped: int = 0
-    legacy_file_keys: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _reindexed_keys(changed_entries: list[tuple[Path, str, bool, bytes]]) -> list[str]:
@@ -4011,7 +4010,14 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return set()
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_PACKAGE_PATHS)
+            # Scoped: every sync read every project's Packages (issue #2405).
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_PACKAGE_PATHS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                },
+            )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
             return None
@@ -7447,15 +7453,35 @@ class GraphUpdater:
         tally = _PruneTally()
 
         repo_abs = self.repo_path.resolve().as_posix()
-        prune_specs: list[tuple[str, str, str]] = [
-            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
+        # Scoped to this repository or project: unscoped, the reads pulled
+        # every node of every project in the shared graph on each sync with
+        # changes (issue #2405). The rows they no longer return were all
+        # skipped below anyway, as outside the repository or not owned.
+        repo_scope = self._repo_scope_params(repo_abs)
+        project_scope: PropertyParams = {
+            cs.KEY_PROJECT_NAME: self.project_name,
+            cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+        }
+        prune_specs: list[tuple[str, PropertyParams, str, str]] = [
+            (cs.CYPHER_REPO_FILE_PATHS, repo_scope, cs.CYPHER_DELETE_FILE, "File"),
             (
-                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL,
+                cs.CYPHER_PROJECT_PRUNABLE_MODULES,
+                project_scope,
                 cs.CYPHER_DELETE_MODULE,
                 "Module",
             ),
-            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
-            (cs.CYPHER_ALL_PACKAGE_PATHS, cs.CYPHER_DELETE_PACKAGE, "Package"),
+            (
+                cs.CYPHER_REPO_FOLDER_PATHS,
+                repo_scope,
+                cs.CYPHER_DELETE_FOLDER,
+                "Folder",
+            ),
+            (
+                cs.CYPHER_PROJECT_PACKAGE_PATHS,
+                project_scope,
+                cs.CYPHER_DELETE_PACKAGE,
+                "Package",
+            ),
         ]
         # A directory is represented by exactly one of Folder and Package,
         # decided by identify_structure this run; the node of the other kind
@@ -7467,9 +7493,9 @@ class GraphUpdater:
         }
 
         read_failed = False
-        for query_all, delete_query, label in prune_specs:
+        for query_all, scope, delete_query, label in prune_specs:
             try:
-                rows = self.ingestor.fetch_all(query_all)
+                rows = self.ingestor.fetch_all(query_all, scope)
             except Exception:
                 # A graph that cannot be read cannot be pruned safely; the
                 # next healthy run sweeps whatever this one left behind.
@@ -7491,7 +7517,7 @@ class GraphUpdater:
             # for the next healthy run.
             return
 
-        total_pruned += self._sweep_legacy_file_identities(tally.legacy_file_keys)
+        total_pruned += self._sweep_legacy_file_identities()
 
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.
@@ -7544,9 +7570,7 @@ class GraphUpdater:
         qn = r.get("qualified_name", "")
         # Component-aware containment: a bare prefix test would also
         # match a sibling root such as <repo>-old (issue #897).
-        if self._outside_repo_row(
-            path, abs_path, label, repo_abs, tally.legacy_file_keys
-        ):
+        if self._outside_repo_row(abs_path, repo_abs):
             return None
         # The root directory's own node is qualified as exactly the
         # project name, with no dot: testing only the dotted prefix
@@ -7571,31 +7595,16 @@ class GraphUpdater:
         key = self._stale_orphan_key(path, abs_path, label, packages_now)
         return None if key is None else (path, key)
 
-    def _outside_repo_row(
-        self,
-        path: str,
-        abs_path: ResultValue | None,
-        label: str,
-        repo_abs: str,
-        legacy_file_keys: list[tuple[str, str]],
-    ) -> bool:
+    @staticmethod
+    def _outside_repo_row(abs_path: ResultValue | None, repo_abs: str) -> bool:
         """Whether a row's absolute path lies outside this repository."""
-        if isinstance(abs_path, str) and not (
+        return isinstance(abs_path, str) and not (
             abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
-        ):
-            # An out-of-repo File key the containment gate would leak
-            # forever: legacy pre-GHSA-85gg nodes were keyed on a
-            # symlink's dereferenced TARGET. A key that disagrees with
-            # the identity derivable from the relative path is such a
-            # record; one that agrees is a file under a symlinked
-            # ancestor directory, legitimate under the current scheme
-            # (issue #1156).
-            if label == "File" and abs_path != (
-                cached_file_identity_posix(self.repo_path / path)
-            ):
-                legacy_file_keys.append((path, abs_path))
-            return True
-        return False
+        )
+
+    @staticmethod
+    def _repo_scope_params(repo_abs: str) -> PropertyParams:
+        return {cs.KEY_REPO_ROOT: repo_abs, cs.KEY_REPO_PREFIX: repo_abs + "/"}
 
     def _stale_orphan_key(
         self,
@@ -7645,19 +7654,55 @@ class GraphUpdater:
                     ingestor.execute_write(delete_query, {cs.KEY_PATH: orphan_key})
         return len(orphans)
 
-    def _sweep_legacy_file_identities(self, candidates: list[tuple[str, str]]) -> int:
+    def _sweep_legacy_file_identities(self) -> int:
         """Delete legacy target-resolved File records, sparing shared keys.
 
-        File nodes MERGE globally on absolute_path, so the stale key can be
-        the very node another project legitimately owns (its repo contains
-        the old link's target); any container from outside this repository
-        vetoes the delete (issue #1156).
+        Legacy pre-GHSA-85gg File nodes were keyed on an external symlink's
+        dereferenced TARGET, outside the repository, where the containment
+        gate would leak them forever. A key that disagrees with the identity
+        derivable from the relative path is such a record; one that agrees
+        is a file under a symlinked ancestor directory, legitimate under the
+        current scheme (issue #1156). File nodes MERGE globally on
+        absolute_path, so the stale key can be the very node another project
+        legitimately owns (its repo contains the old link's target); any
+        container from outside this repository vetoes the delete.
+
+        Candidates are only out-of-repo Files this project's own containers
+        hold, and their containers are read in one query. Every other
+        project's File used to be a candidate, each vetoed after its own
+        round trip: 5,697 of them for a one-line edit (issue #2405).
         """
         if not isinstance(self.ingestor, QueryProtocol):
             return 0
+        repo_abs = self.repo_path.resolve().as_posix()
+        try:
+            rows = self._graph_rows(
+                cs.CYPHER_PROJECT_OUTSIDE_FILE_KEYS,
+                {
+                    **self._repo_scope_params(repo_abs),
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="legacy File identities")
+            return 0
+        candidates = [
+            (path, abs_path)
+            for row in rows
+            if isinstance(path := row.get(cs.KEY_PATH), str)
+            and path
+            and isinstance(abs_path := row.get(cs.KEY_ABSOLUTE_PATH), str)
+            and abs_path
+            and abs_path != cached_file_identity_posix(self.repo_path / path)
+        ]
+        if not candidates:
+            return 0
+        owned = self._file_keys_owned_only_by_this_project(
+            [abs_path for _path, abs_path in candidates], repo_abs
+        )
         swept = 0
         for path, abs_path in candidates:
-            if not self._file_key_owned_only_by_this_project(abs_path):
+            if abs_path not in owned:
                 continue
             logger.debug(ls.PRUNE_DELETING, label="File", path=path)
             self.ingestor.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
@@ -7666,25 +7711,35 @@ class GraphUpdater:
             logger.info(ls.PRUNE_LEGACY_IDENTITIES, count=swept)
         return swept
 
-    def _file_key_owned_only_by_this_project(self, abs_path: str) -> bool:
-        """Positive attribution: every container is this project's, and at
-        least one exists. A sibling project's node can share both the key
-        and the relative path (issue #897), and a node whose containers are
-        missing or unreadable offers no evidence of sole ownership, so both
-        veto the sweep.
+    def _file_keys_owned_only_by_this_project(
+        self, keys: list[str], repo_abs: str
+    ) -> set[str]:
+        """The keys whose every container is this project's, with at least
+        one. A sibling project's node can share both the key and the relative
+        path (issue #897), and a node whose containers are missing or
+        unreadable offers no evidence of sole ownership, so both veto the
+        sweep.
         """
         try:
-            rows = self._graph_rows(cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path})
+            rows = self._graph_rows(
+                cs.CYPHER_FILE_CONTAINERS, {cs.CYPHER_PARAM_PATHS: keys}
+            )
         except Exception:
             # Unreadable ownership is unknown ownership: never delete a
             # globally merged key on a failed read, and never let the
             # failure escape mid-update.
             logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
-            return False
-        repo_abs = self.repo_path.resolve().as_posix()
-        if not all(self._container_is_ours(row, repo_abs) for row in rows):
-            return False
-        return bool(rows)
+            return set()
+        containers: dict[str, list[ResultRow]] = {}
+        for row in rows:
+            key = row.get(cs.KEY_FILE_KEY)
+            if isinstance(key, str):
+                containers.setdefault(key, []).append(row)
+        return {
+            key
+            for key, found in containers.items()
+            if all(self._container_is_ours(row, repo_abs) for row in found)
+        }
 
     def _container_is_ours(self, row: ResultRow, repo_abs: str) -> bool:
         """Whether one container row proves THIS project's ownership.
