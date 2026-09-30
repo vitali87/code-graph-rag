@@ -130,6 +130,7 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
    never reaches, minus anything matching an `--exclude` glob.
 
 First-class functions matter for accuracy: a callback stored in an object, an
-inline arrow handed to `useMutation`/`.forEach`/`new Promise`, or a function
-passed as an argument is recorded as a `REFERENCES` edge so it stays reachable
-rather than being reported as dead.
+inline arrow handed to `useMutation`/`.forEach`/`new Promise`, a function
+passed as an argument, or a Java method reference (`Acc::add`, `this::m`,
+`Acc::new`) is recorded as a `REFERENCES` edge so it stays reachable rather
+than being reported as dead.

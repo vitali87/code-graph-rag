@@ -16,6 +16,12 @@ TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
 
 TS_JAVA_CAST_EXPRESSION = "cast_expression"
 
+# `Type::m`, `expr::m`, `this::m`, `super::m`, `Type::new` (issue #2546). The
+# grammar gives the node no fields: the receiver is its first child and the
+# referenced name its last, the `new` keyword token for a constructor reference.
+TS_JAVA_METHOD_REFERENCE = "method_reference"
+TS_JAVA_NEW_KEYWORD = "new"
+
 # Java tree-sitter node types
 TS_FORMAL_PARAMETER = "formal_parameter"
 TS_SPREAD_PARAMETER = "spread_parameter"
