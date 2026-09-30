@@ -16,6 +16,7 @@ import re
 from tree_sitter import Node, Parser, Tree
 
 from ... import constants as cs
+from .trailing_annotation import retry_without_trailing_annotations
 
 _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
 # a line holding nothing but an ALL_CAPS identifier: a scope-marker macro
@@ -233,6 +234,12 @@ def parse_with_preproc_recovery(
     if language not in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
         return tree
     tree, source_bytes = _retry_without_macro_markers(parser, tree, source_bytes)
+    # tree-sitter-c keeps a trailing `LOCKS_REQUIRED(mu)` inside the
+    # function_declarator of a definition; the C++ grammar splits there.
+    if language == cs.SupportedLanguage.CPP:
+        tree, source_bytes = retry_without_trailing_annotations(
+            parser, tree, source_bytes
+        )
     worst = _max_error_span(tree.root_node)
     total_lines = source_bytes.count(_CHAR_NEWLINE) + 1
     # local errors recover fine through query matching; only a collapse
