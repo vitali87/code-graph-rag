@@ -1,0 +1,43 @@
+[2m# before (main 75e57b6): hand-written option tables[0m
+[1;32muser@host[0m:[1;34m~/code-graph-rag[0m$ python docdrift.py docs/guide/cli-reference.md start index export mcp-server dead-code duplicates optimize
+cgr start       21 options in --help, [31m13 missing[0m from the reference table: --no-confirm --no-instructions --project-name --exclude --capture --interactive-setup --ask-agent --output-format --no-start-stack --no-sync --no-embeddings --projects --workspace
+cgr index        6 options in --help, [31m6 missing[0m from the reference table: --repo-path --output-proto-dir --split-index --exclude --capture --interactive-setup
+cgr export       3 options in --help, [31m3 missing[0m from the reference table: --output --json --batch-size
+cgr mcp-server   4 options in --help, [31m4 missing[0m from the reference table: --transport --host --port --workspace
+cgr dead-code   11 options in --help, [31m2 missing[0m from the reference table: --min-resolution --endpoint-roots
+cgr duplicates   9 options in --help, [31m1 missing[0m from the reference table: --open
+cgr optimize     7 options in --help, [31m3 missing[0m from the reference table: --cypher --no-confirm --no-instructions
+[1;32muser@host[0m:[1;34m~/code-graph-rag[0m$ sed -n '/^### .cgr index/,/^### /p' docs/guide/cli-reference.md
+### `cgr index`
+
+Index a repository to protobuf for offline use.
+
+```bash
+cgr index -o ./index-output --repo-path ./my-project
+```
+
+### `cgr doctor`
+[1;32muser@host[0m:[1;34m~/code-graph-rag[0m$ grep -o '.cgr diff[a-z-]*. treats[^:]*' docs/architecture/graph-schema.md
+`cgr diff` treats these properties as location, not structure
+[2m# after (this branch): tables generated from each command's Click parameters[0m
+[1;32muser@host[0m:[1;34m~/code-graph-rag[0m$ python docdrift.py docs/guide/cli-reference.md start index export mcp-server dead-code duplicates optimize
+cgr start       21 options in --help, [32mall 21 in the reference table[0m
+cgr index        6 options in --help, [32mall 6 in the reference table[0m
+cgr export       3 options in --help, [32mall 3 in the reference table[0m
+cgr mcp-server   4 options in --help, [32mall 4 in the reference table[0m
+cgr dead-code   11 options in --help, [32mall 11 in the reference table[0m
+cgr duplicates   9 options in --help, [32mall 9 in the reference table[0m
+cgr optimize     7 options in --help, [32mall 7 in the reference table[0m
+[1;32muser@host[0m:[1;34m~/code-graph-rag[0m$ sed -n '/SECTION:cli_options_index/,/SECTION:cli_options_index/p' docs/guide/cli-reference.md
+<!-- SECTION:cli_options_index -->
+| Option | Description |
+|------|-----------|
+| `--repo-path` | Repository to index. Defaults to the current directory. |
+| `--output-proto-dir`, `-o` | Write protobuf index files under DIRECTORY. [required] |
+| `--split-index` | Write separate nodes.bin and relationships.bin files. |
+| `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
+| `--capture` | Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE override. Repeatable; later values override CGR_CAPTURE. |
+| `--interactive-setup` | Choose which detected directories remain included. |
+<!-- /SECTION:cli_options_index -->
+[1;32muser@host[0m:[1;34m~/code-graph-rag[0m$ grep -o '.cgr diff[a-z-]*. treats[^:]*' docs/architecture/graph-schema.md
+`cgr diff-index` treats these properties as location, not structure
