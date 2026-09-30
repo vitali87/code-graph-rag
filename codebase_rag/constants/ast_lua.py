@@ -44,3 +44,40 @@ IMPORT_IMPORT = "import"
 # Lua `...` in a parameter list: occupies the trailing variadic slot and
 # binds no simple name (issue #1365).
 TS_LUA_VARARG_EXPRESSION = "vararg_expression"
+
+# Assignment targets that name the function assigned to them: `f = function`,
+# `T.f = function`, and `T["f"] = function`, which is the same binding as
+# `T.f` when the key is a Lua name (issue #2578).
+LUA_NAMING_ASSIGNMENT_TARGETS = (
+    TS_DOT_INDEX_EXPRESSION,
+    TS_LUA_IDENTIFIER,
+    TS_LUA_BRACKET_INDEX_EXPRESSION,
+)
+# Words a Lua name cannot be (Lua 5.4 manual, section 3.1): a string key
+# spelling one (`t["end"]`) has no dotted form to mirror.
+LUA_RESERVED_WORDS = frozenset(
+    {
+        "and",
+        "break",
+        "do",
+        "else",
+        "elseif",
+        "end",
+        "false",
+        "for",
+        "function",
+        "goto",
+        "if",
+        "in",
+        "local",
+        "nil",
+        "not",
+        "or",
+        "repeat",
+        "return",
+        "then",
+        "true",
+        "until",
+        "while",
+    }
+)

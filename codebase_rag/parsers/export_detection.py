@@ -4,6 +4,8 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .cpp import utils as cpp_utils
+from .lua import utils as lua_utils
+from .utils import safe_decode_text
 
 # Once inside a function body the declaration is a local, not a module-level
 # export, so an `export` ancestor beyond this boundary must not count.
@@ -63,6 +65,8 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return cpp_utils.is_exported(node)
         case cs.SupportedLanguage.DART:
             return _dart_exported(node, name)
+        case cs.SupportedLanguage.LUA:
+            return _lua_exported(node, name)
         case _:
             return False
 
@@ -343,3 +347,101 @@ def _rust_macro_exported(node: Node) -> bool:
             return True
         prev = prev.prev_named_sibling
     return False
+
+
+_LUA_FUNCTION_TYPES = frozenset(cs.SPEC_LUA_FUNCTION_TYPES)
+# 1-slot memo of the last chunk's returned names, as `_last_script_scan`:
+# a file's functions are resolved one after another.
+_last_lua_returns: tuple[Node, frozenset[str]] | None = None
+
+
+def _lua_exported(node: Node, name: str) -> bool:
+    # A Lua module's API is the value its chunk returns, since `require`
+    # hands exactly that to the caller: `return M` exposes every `M.x` and
+    # `M:x`, `return named` that function, and `return { f = function ...
+    # end, g = local_fn }` each entry (issue #2578). A function the value
+    # does not reach is visible only inside the file.
+    if lua_utils.is_module_return_value(node):
+        return True
+    root = node
+    nested = False
+    while root.parent is not None:
+        root = root.parent
+        nested = nested or root.type in _LUA_FUNCTION_TYPES
+    returned = _lua_returned_names(root)
+    # A key no name spells (`M["a.b"] = function`) leaves the function
+    # nameless, but it is still a member of the table it is stored in.
+    if (
+        (target := lua_utils.bracket_assignment_target(node)) is not None
+        and (table := lua_utils.bracket_table_path(target))
+        and any(
+            table == exported or _lua_is_member(table, exported)
+            for exported in returned
+        )
+    ):
+        return True
+    binding = _lua_binding_name(node, name)
+    if not binding:
+        return False
+    for exported in returned:
+        if _lua_is_member(binding, exported):
+            return True
+        if binding != exported:
+            continue
+        # A table path names the same table from anywhere, but a bare name
+        # is a variable: a `local function f` inside a function is not the
+        # chunk's `f`, and a key of a table nobody holds binds no variable.
+        if cs.SEPARATOR_DOT in exported or not (
+            nested or lua_utils.is_field_value(node)
+        ):
+            return True
+    return False
+
+
+def _lua_is_member(path: str, table: str) -> bool:
+    return path.startswith(
+        (f"{table}{cs.SEPARATOR_DOT}", f"{table}{cs.LUA_METHOD_SEPARATOR}")
+    )
+
+
+def _lua_binding_name(node: Node, name: str) -> str | None:
+    # The unified FQN path passes a declaration's LAST segment (`clamp` for
+    # `function M.clamp()`), while the returned table is matched on the
+    # whole target, so a declaration's name is read off the node itself.
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    return safe_decode_text(name_node) if name_node is not None else name
+
+
+def _lua_returned_names(chunk: Node) -> frozenset[str]:
+    global _last_lua_returns
+    if _last_lua_returns is not None and _last_lua_returns[0] == chunk:
+        return _last_lua_returns[1]
+    names: set[str] = set()
+    for statement in chunk.children:
+        if statement.type != cs.TS_RETURN_STATEMENT:
+            continue
+        for values in statement.children:
+            if lua_utils.is_chunk_return_list(values):
+                for value in values.named_children:
+                    _collect_lua_value_names(value, names)
+    result = frozenset(names)
+    _last_lua_returns = (chunk, result)
+    return result
+
+
+def _collect_lua_value_names(value: Node, names: set[str]) -> None:
+    # The variables and table paths a returned value hands out: `M`,
+    # `M.sub`, `M["sub"]`, and those held by a returned table's entries.
+    match value.type:
+        case cs.TS_LUA_IDENTIFIER | cs.TS_DOT_INDEX_EXPRESSION:
+            if text := safe_decode_text(value):
+                names.add(text)
+        case cs.TS_LUA_BRACKET_INDEX_EXPRESSION:
+            if path := lua_utils.bracket_key_path(value):
+                names.add(path)
+        case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_LUA_TABLE_CONSTRUCTOR:
+            for child in value.named_children:
+                _collect_lua_value_names(child, names)
+        case cs.TS_LUA_FIELD:
+            if (entry := value.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                _collect_lua_value_names(entry, names)
