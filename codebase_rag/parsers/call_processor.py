@@ -2492,6 +2492,11 @@ class CallProcessor:
             ):
                 return None
             func_name = cpp_utils.extract_function_name(func_node)
+            # The definition pass names a macro-split C definition from its
+            # `type` field (issue #2528); without the same name here its body
+            # is skipped and every call in it is lost.
+            if not func_name and language == cs.SupportedLanguage.C:
+                func_name = cpp_utils.c_macro_split_function_name(func_node)
         else:
             func_name = self._get_node_name(func_node)
         if not func_name and language in _JS_TS_LANGUAGES:
