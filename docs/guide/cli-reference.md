@@ -70,7 +70,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--batch-size` | Override Memgraph flush batch size |
 | `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
 | `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
-| `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
+| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there and the nodes they reach. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
 
 ### `cgr export`
 

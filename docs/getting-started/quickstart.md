@@ -76,7 +76,7 @@ cgr start --repo-path /path/to/your/repo \
 
 ## Step 3: Export Graph Data
 
-**Export during graph update:**
+**Export during graph update** (this repository's project only):
 
 ```bash
 cgr start --repo-path /path/to/repo --update-graph -o my_graph.json

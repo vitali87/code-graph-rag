@@ -8,11 +8,15 @@ Export the knowledge graph, or chosen projects in it, to JSON for programmatic a
 
 ## Export Commands
 
-**Export during graph update:**
+**Export one repository's graph while syncing it:**
 
 ```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
+
+The file holds only that repository's project, scoped the way
+`cgr export --project-name` scopes it (below), even when the shared graph
+holds other projects.
 
 **Export the whole shared graph (every indexed project):**
 
