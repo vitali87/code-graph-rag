@@ -158,7 +158,8 @@ def test_a_workspace_saved_with_a_dotted_name_is_not_synced(
     )
 
     assert result.exit_code == 1, result.output
-    assert "acme.web" in result.output and "acme_web" in result.output
+    assert "acme.web" in result.output
+    assert "acme_web" in result.output
     sync.assert_not_called()
 
 
@@ -188,7 +189,8 @@ def test_a_workspace_of_plain_names_still_syncs(
 def test_the_refusal_suggests_a_usable_name(name: str, suggestion: str) -> None:
     error = project_name_error(name)
 
-    assert error is not None and f"'{suggestion}'" in error
+    assert error is not None
+    assert f"'{suggestion}'" in error
 
 
 @pytest.mark.parametrize("name", ["acme", "acme_web", "my-repo__4bd9a922"])
