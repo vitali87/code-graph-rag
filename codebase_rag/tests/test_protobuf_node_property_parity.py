@@ -98,13 +98,6 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "absolute_path",
             "anchor_hash",
             "is_macro",
-            # `is_object_member` (issue #2435) is read back only by an
-            # incremental run's registry rehydration. A graph round-tripped
-            # through protobuf loses it, so a scoped re-ingest against an
-            # IMPORTED graph may again bind a bare call by name to an object
-            # literal's function value in an unchanged file until that file
-            # is next parsed; exporting it needs protoc, which #1490 carries.
-            "is_object_member",
             "modifiers",
             "name_start_col",
             "name_start_line",

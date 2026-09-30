@@ -21,9 +21,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,
@@ -460,3 +462,38 @@ def test_import_bound_call_keeps_the_whole_group(
         f"{x}.parse",
         f"{x}.parse@2",
     }
+
+
+def _exported_functions(root: Path, tmp_path: Path) -> dict[str, bool]:
+    out = tmp_path / "export"
+    out.mkdir()
+    ingestor = ProtobufFileIngestor(str(out), split_index=False)
+    parsers, queries = load_parsers()
+    GraphUpdater(ingestor, root, parsers, queries).run()
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / cs.PROTOBUF_INDEX_FILE).read_bytes())
+    return {
+        node.function.qualified_name: node.function.is_object_member
+        for node in index.nodes
+        if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) == "function"
+    }
+
+
+def test_the_mark_survives_a_protobuf_export(temp_repo: Path, tmp_path: Path) -> None:
+    # The export is the graph's portable form; a reader rebuilding the
+    # registry from it needs the mark to tell a key's value from a binding.
+    _write(temp_repo, {"a.ts": _ISSUE_REPRO})
+    exported = _exported_functions(temp_repo, tmp_path)
+
+    members = {qn for qn, marked in exported.items() if qn.endswith(".delay")}
+    assert members, exported
+    assert all(exported[qn] for qn in members), exported
+
+
+def test_a_real_binding_exports_unmarked(temp_repo: Path, tmp_path: Path) -> None:
+    _write(temp_repo, {"a.ts": _ISSUE_REPRO})
+    exported = _exported_functions(temp_repo, tmp_path)
+
+    runs = [qn for qn in exported if qn.endswith(".run")]
+    assert runs, exported
+    assert not any(exported[qn] for qn in runs), exported
