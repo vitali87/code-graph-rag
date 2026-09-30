@@ -68,7 +68,8 @@ def test_a_second_index_of_an_unchanged_repo_is_complete(
     _index(repo, tmp_path / "out-2")
 
     first = _graph(tmp_path / "out-1")
-    assert first[0] > 1 and first[1] > 0
+    assert first[0] > 1
+    assert first[1] > 0
     assert _graph(tmp_path / "out-2") == first
 
 
