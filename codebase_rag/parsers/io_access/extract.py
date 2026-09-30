@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 from tree_sitter import Node
 
@@ -9,6 +9,7 @@ from ... import constants as cs
 from ..utils import cpp_declarator_name
 from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
 from .descriptor import LanguageDescriptor
+from .models import RenderedText
 
 # Definition nodes whose BODY is a separate scope but whose HEADER (default arg
 # values, annotations, base classes, decorators) executes in the enclosing scope at
@@ -229,6 +230,52 @@ def python_locally_assigned_names(scope_node: Node) -> set[str]:
     return names
 
 
+def python_names_bound_by(node: Node) -> set[str]:
+    """The plain names this one node binds, whatever the binding form.
+
+    Assignment-like targets, comprehension variables, parameters of a def
+    or lambda, def/class names and import aliases. Counting these over a
+    whole module tells a name bound once from one bound again somewhere.
+    """
+    if (target := _binding_target(node)) is not None:
+        return _binding_identifiers(target)
+    if node.type == cs.TS_PY_FOR_IN_CLAUSE:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        return _binding_identifiers(left) if left is not None else set()
+    if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
+        names = _python_parameter_names(node)
+        name = node.child_by_field_name(cs.TS_FIELD_NAME)
+        if name is not None and name.text is not None:
+            names.add(name.text.decode(cs.ENCODING_UTF8))
+        return names
+    if node.type == cs.TS_PY_LAMBDA:
+        params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+        lambda_names: set[str] = set()
+        for param in params.named_children if params is not None else ():
+            lambda_names |= _python_parameter_bindings(param)
+        return lambda_names
+    if node.type in (cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT):
+        return _python_import_bindings(node)
+    return set()
+
+
+def _python_import_bindings(node: Node) -> set[str]:
+    # `import a.b` binds `a`, `from m import b` binds `b`, and an alias binds
+    # the alias; the `module_name` of a from-import binds nothing.
+    names: set[str] = set()
+    plain_import = node.type == cs.TS_PY_IMPORT_STATEMENT
+    for imported in node.children_by_field_name(cs.TS_FIELD_NAME):
+        if imported.type == cs.TS_PY_ALIASED_IMPORT:
+            bound = imported.child_by_field_name(cs.FIELD_ALIAS)
+        elif imported.named_children:
+            bound = imported.named_children[0 if plain_import else -1]
+        else:
+            bound = None
+        if bound is not None and bound.text is not None:
+            names.add(bound.text.decode(cs.ENCODING_UTF8))
+    return names
+
+
 def definition_header_nodes(node: Node) -> list[Node]:
     # The parts of a nested definition that execute in the ENCLOSING scope at
     # definition time: default arg values, return/parameter annotations, base
@@ -425,6 +472,8 @@ def match_normalised[T](
 # `?` / `#` change where urlparse cuts query and fragment.
 _URL_STRUCTURE_DELIMITERS = "/?#"
 OPAQUE_PLACEHOLDER = "{*}"
+# `{`, the expression, `}` (`${`, ..., `}` in a JS template).
+_BARE_SUBSTITUTION_CHILDREN = 3
 
 # Go fmt verbs (`%d`, `%-8.2f`, `%v`, `%[2]s`, `%[3]*.[2]*[1]f`, ...); `%%`
 # is a literal percent. One charset covers every spec character (flags,
@@ -497,46 +546,85 @@ def format_call_target(
     )
 
 
-def _template_literal(arg: Node, content_type: str, substitution_type: str) -> str:
+def placeholder(expression: str) -> str:
+    """A non-literal URL part as a `{expr}` placeholder.
+
+    An expression containing a path or URL-parse delimiter would fabricate
+    segment structure, so it collapses to the opaque `{*}`.
+    """
+    if any(delim in expression for delim in _URL_STRUCTURE_DELIMITERS):
+        return OPAQUE_PLACEHOLDER
+    return f"{{{expression}}}"
+
+
+def _folded_constant(part: Node, constants: Mapping[str, str] | None) -> str | None:
+    # `${BASE}` / `{BASE}` over a module-level string constant is literal
+    # text the reader can see (issue #2521). Only a bare name between the
+    # delimiters folds: a conversion, format spec or `=` (`{BASE!r}`,
+    # `{BASE:>9}`, `{BASE=}`) changes the text.
+    if not constants or len(part.children) != _BARE_SUBSTITUTION_CHILDREN:
+        return None
+    children = part.named_children
+    if len(children) != 1 or children[0].type != cs.TS_PY_IDENTIFIER:
+        return None
+    name = children[0].text
+    return constants.get(name.decode(cs.ENCODING_UTF8)) if name else None
+
+
+def _template_parts(
+    arg: Node,
+    content_type: str,
+    substitution_type: str,
+    constants: Mapping[str, str] | None,
+) -> RenderedText:
     # A JS/TS template literal: fragments stay verbatim and each
     # `${expr}` substitution renders as a `{expr}` placeholder, mirroring
     # the Python f-string treatment (issue #884). An escape sequence is
     # literal text like any fragment, so it both survives into the identity
-    # and counts as identity (issue #944); a template with NO literal text at
-    # all carries no identity and stays dynamic.
+    # and counts as identity (issue #944).
     parts: list[str] = []
-    has_content = False
+    literal = False
+    static = True
     for child in arg.named_children:
         if child.text is None:
             continue
         if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE):
-            has_content = True
+            literal = True
             parts.append(child.text.decode(cs.ENCODING_UTF8))
         elif child.type == substitution_type:
-            inner = child.text.decode(cs.ENCODING_UTF8)[2:-1]
-            safe = not any(delim in inner for delim in _URL_STRUCTURE_DELIMITERS)
-            parts.append(f"{{{inner}}}" if safe else OPAQUE_PLACEHOLDER)
-    if not has_content:
-        return DYNAMIC_TARGET
-    return "".join(parts)
+            folded = _folded_constant(child, constants)
+            if folded is not None:
+                literal = True
+                parts.append(folded)
+            else:
+                static = False
+                parts.append(placeholder(child.text.decode(cs.ENCODING_UTF8)[2:-1]))
+    return RenderedText("".join(parts), literal, static)
 
 
-def _joined_string_parts(arg: Node, content_type: str) -> str:
+def _joined_string_parts(
+    arg: Node, content_type: str, constants: Mapping[str, str] | None
+) -> RenderedText:
     parts: list[str] = []
-    has_content = False
+    literal = False
+    static = True
     for child in arg.named_children:
         if child.text is None:
             continue
         if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE):
-            has_content = True
+            literal = True
             parts.append(child.text.decode(cs.ENCODING_UTF8))
         elif child.type == cs.TS_PY_INTERPOLATION:
+            folded = _folded_constant(child, constants)
+            if folded is not None:
+                literal = True
+                parts.append(folded)
+                continue
+            static = False
             text = child.text.decode(cs.ENCODING_UTF8)
             safe = not any(delim in text for delim in _URL_STRUCTURE_DELIMITERS)
             parts.append(text if safe else OPAQUE_PLACEHOLDER)
-    if not has_content:
-        return DYNAMIC_TARGET
-    return "".join(parts)
+    return RenderedText("".join(parts), literal, static)
 
 
 def _childless_string_text(text: str) -> str:
@@ -555,6 +643,45 @@ def _childless_string_text(text: str) -> str:
     return DYNAMIC_TARGET
 
 
+def string_parts(
+    arg: Node,
+    string_type: str,
+    content_type: str,
+    *,
+    template_type: str | None = None,
+    substitution_type: str | None = None,
+    constants: Mapping[str, str] | None = None,
+) -> RenderedText | None:
+    """A string or template literal rendered as identity text.
+
+    None when ``arg`` is not a string node. ``constants`` folds a bare
+    module-constant substitution into literal text.
+    """
+    if (
+        template_type is not None
+        and substitution_type is not None
+        and arg.type == template_type
+    ):
+        return _template_parts(arg, content_type, substitution_type, constants)
+    if arg.type != string_type:
+        return None
+    if not arg.children and arg.text is not None:
+        text = _childless_string_text(arg.text.decode(cs.ENCODING_UTF8))
+        literal = text != DYNAMIC_TARGET
+        return RenderedText(text if literal else "", literal, True)
+    # An f-string is a `string` node whose content is split around
+    # `interpolation` children; keep every fragment and render each
+    # interpolation as its literal `{expr}` source so the identity stays a
+    # placeholder-marked whole rather than a truncated prefix (issue #876).
+    # An escape sequence IS literal text (issue #944), and in the grammars
+    # that expose it as a sibling of the fragments it is joined back in as
+    # written, so raw and interpreted spellings of one path render alike (as
+    # they already did in Python). An expression containing a path or
+    # URL-parse delimiter would fabricate segment structure, so it collapses
+    # to `{*}`.
+    return _joined_string_parts(arg, content_type, constants)
+
+
 def string_literal(
     arg: Node | None,
     string_type: str = cs.TS_PY_STRING,
@@ -565,28 +692,16 @@ def string_literal(
 ) -> str:
     if arg is None:
         return DYNAMIC_TARGET
-    if (
-        template_type is not None
-        and substitution_type is not None
-        and arg.type == template_type
-    ):
-        return _template_literal(arg, content_type, substitution_type)
-    if arg.type != string_type:
+    rendered = string_parts(
+        arg,
+        string_type,
+        content_type,
+        template_type=template_type,
+        substitution_type=substitution_type,
+    )
+    if rendered is None or not rendered.literal:
         return DYNAMIC_TARGET
-    if not arg.children and arg.text is not None:
-        return _childless_string_text(arg.text.decode(cs.ENCODING_UTF8))
-    # An f-string is a `string` node whose content is split around
-    # `interpolation` children; keep every fragment and render each
-    # interpolation as its literal `{expr}` source so the identity stays a
-    # placeholder-marked whole rather than a truncated prefix (issue #876).
-    # Placeholders alone carry no identity, so a string with no literal text
-    # stays dynamic; an escape sequence IS literal text (issue #944), and in
-    # the grammars that expose it as a sibling of the fragments it is joined
-    # back in as written, so raw and interpreted spellings of one path render
-    # alike (as they already did in Python). An expression containing a path
-    # or URL-parse delimiter
-    # would fabricate segment structure, so it collapses to `{*}`.
-    return _joined_string_parts(arg, content_type)
+    return rendered.text
 
 
 def iter_token_tree_calls(
@@ -907,6 +1022,42 @@ def positional_arg_node(
     return None
 
 
+def target_arg_node(
+    call_node: Node,
+    arg_index: int | None,
+    arg_keyword: str | None = None,
+    *,
+    keyword_arg_type: str | None = cs.TS_PY_KEYWORD_ARGUMENT,
+    wrapper_type: str | None = None,
+) -> Node | None:
+    """The argument expression a sink reads its target from, if present."""
+    if arg_index is None and arg_keyword is None:
+        return None
+    args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    if args is None:
+        return None
+    # A C# named argument (`path: "x"`) is matched by name FIRST: named args can be
+    # reordered, so they must not count toward the positional index.
+    if arg_keyword is not None and wrapper_type is not None:
+        named = _wrapper_keyword_value(args, arg_keyword, wrapper_type)
+        if named is not None:
+            return named
+    # Exclude keyword args, comment nodes (tree-sitter keeps comments as named
+    # children), and C# named-argument wrappers so the positional index maps to the
+    # real positional argument.
+    positional = [
+        c
+        for c in args.named_children
+        if c.type not in (keyword_arg_type, cs.TS_COMMENT)
+        and _wrapper_arg_name(c, wrapper_type) is None
+    ]
+    if arg_index is not None and arg_index < len(positional):
+        return unwrap_argument(positional[arg_index], wrapper_type)
+    if arg_keyword is not None:
+        return keyword_value(args, arg_keyword)
+    return None
+
+
 def literal_target(
     call_node: Node,
     arg_index: int | None,
@@ -919,46 +1070,16 @@ def literal_target(
     template_type: str | None = None,
     substitution_type: str | None = None,
 ) -> str:
-    if arg_index is None and arg_keyword is None:
-        return DYNAMIC_TARGET
-    args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-    if args is None:
-        return DYNAMIC_TARGET
-    # A C# named argument (`path: "x"`) is matched by name FIRST: named args can be
-    # reordered, so they must not count toward the positional index.
-    if arg_keyword is not None and wrapper_type is not None:
-        named = _wrapper_keyword_value(args, arg_keyword, wrapper_type)
-        if named is not None:
-            return string_literal(
-                named,
-                string_type,
-                content_type,
-                template_type=template_type,
-                substitution_type=substitution_type,
-            )
-    # Exclude keyword args, comment nodes (tree-sitter keeps comments as named
-    # children), and C# named-argument wrappers so the positional index maps to the
-    # real positional argument.
-    positional = [
-        c
-        for c in args.named_children
-        if c.type not in (keyword_arg_type, cs.TS_COMMENT)
-        and _wrapper_arg_name(c, wrapper_type) is None
-    ]
-    if arg_index is not None and arg_index < len(positional):
-        return string_literal(
-            unwrap_argument(positional[arg_index], wrapper_type),
-            string_type,
-            content_type,
-            template_type=template_type,
-            substitution_type=substitution_type,
-        )
-    if arg_keyword is not None:
-        return string_literal(
-            keyword_value(args, arg_keyword),
-            string_type,
-            content_type,
-            template_type=template_type,
-            substitution_type=substitution_type,
-        )
-    return DYNAMIC_TARGET
+    return string_literal(
+        target_arg_node(
+            call_node,
+            arg_index,
+            arg_keyword,
+            keyword_arg_type=keyword_arg_type,
+            wrapper_type=wrapper_type,
+        ),
+        string_type,
+        content_type,
+        template_type=template_type,
+        substitution_type=substitution_type,
+    )
