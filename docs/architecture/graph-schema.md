@@ -27,7 +27,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
-| Resource | `{qualified_name: string, name: string, kind: string}` |
+| Resource | `{qualified_name: string, name: string, kind: string, project: string?}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
 | Pattern | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
 | CodeSmell | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
@@ -64,6 +64,8 @@ The knowledge graph uses a unified schema across all supported languages.
 | Module | IMPLEMENTS_MODULE | ModuleImplementation |
 | Class, Interface, Function | INHERITS | Class, Interface, Function, ExternalModule |
 | Class, Enum | IMPLEMENTS | Interface, Class, Enum, ExternalModule |
+| Interface | INHERITS | Type |
+| Class | IMPLEMENTS | Type |
 | Method, Function | OVERRIDES | Method |
 | Function, Method | RETURNS | Class, Interface, Enum, Type, Union |
 | Function, Method | ACCEPTS | Class, Interface, Enum, Type, Union |

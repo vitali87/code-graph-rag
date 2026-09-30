@@ -175,6 +175,13 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "ModuleInterface": frozenset({"absolute_path", "module_type"}),
     "ModuleImplementation": frozenset({"absolute_path", "module_type"}),
+    # `project` (issue #2536) was written on ENDPOINT resources long before it
+    # was declared; declaring it made doctor stop flagging it, and made this
+    # existing absence visible. An imported graph loses it, and the endpoint
+    # linker then treats each endpoint as a legacy row that a URL naming any
+    # host may resolve to, not only the project the host names. Exporting it
+    # needs a proto field plus regenerated bindings, which #1490 carries.
+    "Resource": frozenset({"project"}),
 }
 
 
