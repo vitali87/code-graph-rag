@@ -125,8 +125,10 @@ async def test_anything_else_still_asks(
     # Negative: absolute paths, traversal, symlink following, write forms,
     # redirects, mutating find, writes and git keep the prompt, and nothing
     # runs before it is answered.
+    tool = _tool(project)
+    ctx = _unapproved()
     with pytest.raises(ApprovalRequired):
-        await _tool(project).function(_unapproved(), command)
+        await tool.function(ctx, command)
 
     assert spawned == []
 
@@ -247,7 +249,8 @@ def test_a_path_without_git_for_windows_is_left_alone(
 def test_the_shell_description_sends_structure_to_the_graph() -> None:
     description = td.SHELL_COMMAND
     assert td.AgenticToolName.QUERY_GRAPH in description
-    assert "grep" in description and "rg" in description
+    assert "grep" in description
+    assert "rg" in description
 
 
 def test_the_prompt_routes_structural_questions_to_the_graph() -> None:
