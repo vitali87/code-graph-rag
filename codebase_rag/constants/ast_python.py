@@ -157,6 +157,28 @@ PY_KEYWORD_CLS = "cls"
 # symbol, while a dunder (__x__) is public API invoked by the runtime.
 PY_NAME_UNDERSCORE = "_"
 PY_NAME_DUNDER = "__"
+# `enum` classes whose subclasses are enums (issue #2583), as a base resolves
+# through the module's imports: `from enum import IntFlag as F` and
+# `import enum as e; e.Flag` both land here.
+PY_ENUM_BASE_QNS: frozenset[str] = frozenset(
+    {
+        "enum.Enum",
+        "enum.IntEnum",
+        "enum.StrEnum",
+        "enum.Flag",
+        "enum.IntFlag",
+        "enum.ReprEnum",
+    }
+)
+# The class attribute naming what the enum machinery must NOT turn into
+# members: a list of names, or one string of names split on commas/spaces.
+PY_ENUM_IGNORE_ATTR = "_ignore_"
+# Callables whose result is a descriptor or an explicit non-member, so an
+# enum body assignment of their call stays a plain attribute. `member()` is
+# the opposite wrapper and is deliberately absent.
+PY_ENUM_NON_MEMBER_CALLEES: frozenset[str] = frozenset(
+    {"property", "cached_property", "staticmethod", "classmethod", "nonmember"}
+)
 # typing.Protocol base name and the conventional XxxProtocol class suffix
 # used to map a Protocol to its concrete implementer.
 PY_PROTOCOL = "Protocol"

@@ -144,6 +144,10 @@ TS_DART_OPTIONAL_FORMAL_PARAMETERS = "optional_formal_parameters"
 TS_DART_CLASS_DEFINITION = "class_definition"
 TS_DART_MIXIN_DECLARATION = "mixin_declaration"
 TS_DART_ENUM_DECLARATION = "enum_declaration"
+# An enum's constants (issue #2583), plain or enhanced: `earth(1.0)` is still
+# one `enum_constant`; constructors, fields and methods are other body nodes.
+TS_DART_ENUM_BODY = "enum_body"
+TS_DART_ENUM_CONSTANT = "enum_constant"
 TS_DART_EXTENSION_DECLARATION = "extension_declaration"
 TS_DART_EXTENSION_TYPE_DECLARATION = "extension_type_declaration"
 

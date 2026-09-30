@@ -103,6 +103,11 @@ TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 
 TS_PROPERTY_IDENTIFIER = "property_identifier"
+# A TypeScript enum's members (issue #2583): the body holds each bare member
+# as a `property_identifier` child and each `Name = value` member as an
+# `enum_assignment` with `name` and `value` fields.
+TS_JS_ENUM_BODY = "enum_body"
+TS_JS_ENUM_ASSIGNMENT = "enum_assignment"
 # `[expr]` as an object-literal / class-member key.
 TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
 # The `(a, b = 1, ...rest)` parameter list of a function.
