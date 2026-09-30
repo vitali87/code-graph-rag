@@ -252,7 +252,12 @@ class MemgraphIngestor:
     ) -> None:
         try:
             if exc_type:
-                logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                if issubclass(exc_type, Exception):
+                    logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                else:
+                    # Ctrl+C or a cancelled task: the user stopped the run,
+                    # and a traceback here read as a crash.
+                    logger.warning(ls.MG_INTERRUPTED)
                 # Best-effort flush: persist buffered nodes/relationships even when
                 # an exception occurred. Catch broad Exception so a secondary flush
                 # failure never masks the original.

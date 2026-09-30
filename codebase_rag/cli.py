@@ -29,6 +29,7 @@ from . import (
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
+from . import exceptions as ex
 from . import logs as ls
 from .capture import CaptureSelection, resolve_capture, split_spec
 from .cli_runtime import app_context, connect_memgraph, style
@@ -679,11 +680,19 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        updater.run()
+        interrupted: ex.EmbeddingsInterrupted | None = None
+        try:
+            updater.run()
+        except ex.EmbeddingsInterrupted as stop:
+            # Raised only after the run committed, so the graph is whole and
+            # the sync is recorded like any other; the interrupt then ends
+            # the command outside the connection, which would otherwise log
+            # it as a failed write.
+            interrupted = stop
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
 
-        if output:
+        if output and interrupted is None:
             _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
             if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
@@ -704,6 +713,8 @@ def _run_graph_sync(
                 cs.StyleModifier.NONE,
             )
         )
+    if interrupted is not None:
+        raise interrupted
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
