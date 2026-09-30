@@ -9,10 +9,11 @@ and ``| grep`` pipeline (issue #2397).
 
 from __future__ import annotations
 
-from typing import IO
+from typing import IO, Unpack
 
-from rich.console import Console, JustifyMethod, OverflowMethod, RenderableType
-from rich.style import Style
+from rich.console import Console, RenderableType
+
+from ..types_defs import ConsolePrintOptions
 
 
 class TerminalAwareConsole(Console):
@@ -29,20 +30,8 @@ class TerminalAwareConsole(Console):
     def print(
         self,
         *objects: RenderableType,
-        sep: str = " ",
-        end: str = "\n",
-        style: str | Style | None = None,
-        justify: JustifyMethod | None = None,
-        overflow: OverflowMethod | None = None,
-        no_wrap: bool | None = None,
-        emoji: bool | None = None,
-        markup: bool | None = None,
-        highlight: bool | None = None,
-        width: int | None = None,
-        height: int | None = None,
-        crop: bool = True,
         soft_wrap: bool | None = None,
-        new_line_start: bool = False,
+        **options: Unpack[ConsolePrintOptions],
     ) -> None:
         if (
             soft_wrap is None
@@ -50,23 +39,7 @@ class TerminalAwareConsole(Console):
             and all(isinstance(obj, str) for obj in objects)
         ):
             soft_wrap = True
-        super().print(
-            *objects,
-            sep=sep,
-            end=end,
-            style=style,
-            justify=justify,
-            overflow=overflow,
-            no_wrap=no_wrap,
-            emoji=emoji,
-            markup=markup,
-            highlight=highlight,
-            width=width,
-            height=height,
-            crop=crop,
-            soft_wrap=soft_wrap,
-            new_line_start=new_line_start,
-        )
+        super().print(*objects, soft_wrap=soft_wrap, **options)
 
 
 def terminal_aware_console(
