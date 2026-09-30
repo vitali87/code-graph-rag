@@ -19,7 +19,7 @@ from loguru import logger
 from .. import constants as root_cs
 from . import constants as cs
 
-if sys.platform == "win32":
+if sys.platform == "win32":  # pragma: no cover - platform
     import _winapi
     import ctypes
 
@@ -101,7 +101,7 @@ def _c_runtime_result(result: int) -> int:
     return result
 
 
-if sys.platform == "win32":
+if sys.platform == "win32":  # pragma: no cover - platform
 
     class _MsvcrtCRuntime:
         # mgclient's perror() and fprintf(stderr) go through msvcrt.dll there,
@@ -146,7 +146,9 @@ def _mgclient_own_c_runtimes() -> tuple[_CRuntime, ...]:
     # The C runtimes besides Python's that mgclient prints through.
     if sys.platform != "win32":
         return ()
-    return (_MsvcrtCRuntime(ctypes.CDLL(cs.MGCLIENT_WINDOWS_C_RUNTIME)),)
+    return (  # pragma: no cover - platform
+        _MsvcrtCRuntime(ctypes.CDLL(cs.MGCLIENT_WINDOWS_C_RUNTIME)),
+    )
 
 
 @contextmanager

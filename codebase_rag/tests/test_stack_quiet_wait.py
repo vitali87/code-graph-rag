@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import itertools
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -499,3 +500,14 @@ def test_mgclient_has_a_c_runtime_of_its_own_only_on_windows() -> None:
     expected = 1 if sys.platform == "win32" else 0
 
     assert len(health._mgclient_own_c_runtimes()) == expected
+
+
+def test_a_failed_c_runtime_call_raises_instead_of_returning_minus_one() -> None:
+    # The C runtime signals failure with -1 rather than raising, so a swap on
+    # a descriptor it refused must stop before stderr is pointed anywhere.
+    with pytest.raises(OSError, match=re.escape(cs.ERR_C_RUNTIME_CALL_FAILED)):
+        health._c_runtime_result(-1)
+
+
+def test_a_successful_c_runtime_call_returns_its_descriptor() -> None:
+    assert health._c_runtime_result(7) == 7
