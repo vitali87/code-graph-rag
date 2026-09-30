@@ -14,15 +14,18 @@ names, the same way from a clean index and from an incremental one.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from tree_sitter import Parser
 
 import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.types_defs import LanguageQueries
 from evals.cgr_graph import _StatefulIngestor
 
 PLAIN_SOURCE = (
@@ -78,7 +81,10 @@ PAIR_RELS = (
 )
 
 
-def _parsers() -> tuple[dict, dict]:
+def _parsers() -> tuple[
+    Mapping[cs.SupportedLanguage, Parser],
+    Mapping[cs.SupportedLanguage, LanguageQueries],
+]:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CSHARP not in parsers:
         pytest.skip("c_sharp parser not available")
@@ -95,7 +101,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
 def _run(store: _StatefulIngestor, root: Path, force: bool) -> None:
     parsers, queries = _parsers()
     GraphUpdater(
-        ingestor=store,  # type: ignore[arg-type]
+        ingestor=store,
         repo_path=root,
         parsers=parsers,
         queries=queries,
