@@ -1,0 +1,24 @@
+[2m# before (main): installed cgr, run in my own project with a clean tree[0m
+[1;32muser@host[0m:[1;34m~/myproject[0m$ git status --short; echo "(clean)"
+(clean)
+[1;32muser@host[0m:[1;34m~/myproject[0m$ cgr language add-grammar julia > /tmp/add.log 2>&1; echo "exit status: $?"
+exit status: 0
+[1;32muser@host[0m:[1;34m~/myproject[0m$ grep -E 'Adding submodule|Error|FALLBACK' /tmp/add.log | cut -c1-118
+Adding submodule: https://github.com/tree-sitter/tree-sitter-julia
+2026-09-29 21:52:38.707 | ERROR    | codebase_rag.tools.language:_update_config_file:344 - Error updating config file:
+Error: Error updating config file: [Errno 2] No such file or directory: 'codebase_rag/language_spec.py'
+FALLBACK: Please manually add the following entry to 'LANGUAGE_SPECS' in 'codebase_rag/language_spec.py':
+[1;32muser@host[0m:[1;34m~/myproject[0m$ git status --short
+A  .gitmodules
+A  grammars/tree-sitter-julia
+[2m# after (this branch): same install, same kind of project[0m
+[1;32muser@host[0m:[1;34m~/myproject[0m$ git status --short; echo "(clean)"
+(clean)
+[1;32muser@host[0m:[1;34m~/myproject[0m$ cgr language add-grammar julia; echo "exit status: $?"
+[31mError: 'cgr language add-grammar' modifies a code-graph-rag source checkout, and this cgr is installed at /tmp/claude-0/-home-user-code-graph-rag/dd42d47f-4f95-5a22-a9f9-0f48aea95613/scratchpad/d2422/after/site-packages/codebase_rag, outside any checkout. Nothing was changed.
+To add or remove a grammar, clone https://github.com/vitali87/code-graph-rag and run 'uv run cgr language add-grammar' inside the clone.
+To have a language supported, request it at https://github.com/vitali87/code-graph-rag/issues.[0m
+exit status: 1
+[1;32muser@host[0m:[1;34m~/myproject[0m$ git status --short; echo "(clean)"; ls
+(clean)
+app.py

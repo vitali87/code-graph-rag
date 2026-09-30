@@ -1,0 +1,31 @@
+[2m# watch.sh: fresh app/m.py (def a), empty graph, then python realtime_updater.py app & (default --debounce 5)[0m
+[2m# q.sh: MATCH (n:Function) RETURN n.qualified_name[0m
+[2m# before (main)[0m
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ bash watch.sh    # watcher from main
+watcher ready
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ printf 'def a():\n    return 1\n\ndef b_added():\n    return a()\n' > app/m.py
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ sleep 8
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ grep -oE '(Change detected|Processing debounced|Re-ingested|Graph updated).*' watch.log | sed "s|$PWD/||"
+Change detected: opened on m.py (debouncing for 5.0s)
+Processing debounced change: m.py
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ bash q.sh
+n.qualified_name
+app.m.a
+[2m# the edit was dropped: the debouncer kept 'closed', which is then ignored; b_added never reaches the graph[0m
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ kill $(cat watch.pid)
+[2m# after (this branch)[0m
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ bash watch.sh    # watcher from this branch
+watcher ready
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ printf 'def a():\n    return 1\n\ndef b_added():\n    return a()\n' > app/m.py
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ sleep 8
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ grep -oE '(Change detected|Processing debounced|Re-ingested|Graph updated).*' watch.log | sed "s|$PWD/||"
+Change detected: modified on m.py (debouncing for 5.0s)
+Processing debounced change: m.py
+Change detected: modified on app/m.py. Updating graph.
+Re-ingested 1 file(s) (+0 dependent, -0 removed) in 34.3 ms
+Graph updated successfully for change in: m.py
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ bash q.sh
+n.qualified_name
+app.m.a
+app.m.b_added
+[1;32muser@host[0m:[1;34m~/watchdemo[0m$ kill $(cat watch.pid)

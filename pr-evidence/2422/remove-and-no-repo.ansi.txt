@@ -1,0 +1,26 @@
+[2m# before (main): remove-language fails, prints the error twice, exits 0; lua stays registered[0m
+[1;32muser@host[0m:[1;34m~/scratch[0m$ cgr language remove-language lua; echo "exit status: $?"
+2026-09-29 21:54:33.019 | ERROR    | codebase_rag.tools.language:_remove_language_from_config:793 - Failed to update c
+Error: Failed to update config file: [Errno 2] No such file or directory: 'codebase_rag/language_spec.py'
+exit status: 0
+[1;32muser@host[0m:[1;34m~/scratch[0m$ cgr language list-languages | grep -o 'lua *│ *\.lua'
+lua          │ .lua
+[2m# before (main): add-grammar outside any git repo dies with a traceback and leaves grammars/[0m
+[1;32muser@host[0m:[1;34m~/scratch[0m$ cgr language add-grammar julia > /tmp/out.log 2>&1; echo "exit status: $?"; wc -l < /tmp/out.log
+exit status: 1
+148
+[1;32muser@host[0m:[1;34m~/scratch[0m$ grep -A1 '^CalledProcessError' /tmp/out.log; ls
+CalledProcessError: Command '['git', 'submodule', 'add', 'https://github.com/tree-sitter/tree-sitter-julia', 
+'grammars/tree-sitter-julia']' returned non-zero exit status 128.
+grammars
+[2m# after (this branch): both refuse up front, exit 1, touch nothing[0m
+[1;32muser@host[0m:[1;34m~/scratch[0m$ cgr language remove-language lua; echo "exit status: $?"
+[31mError: 'cgr language remove-language' modifies a code-graph-rag source checkout, and this cgr is installed at /tmp/claude-0/-home-user-code-graph-rag/dd42d47f-4f95-5a22-a9f9-0f48aea95613/scratchpad/d2422/after/site-packages/codebase_rag, outside any checkout. Nothing was changed.
+To add or remove a grammar, clone https://github.com/vitali87/code-graph-rag and run 'uv run cgr language remove-language' inside the clone.
+To have a language supported, request it at https://github.com/vitali87/code-graph-rag/issues.[0m
+exit status: 1
+[1;32muser@host[0m:[1;34m~/scratch[0m$ cgr language add-grammar julia; echo "exit status: $?"; ls
+[31mError: 'cgr language add-grammar' modifies a code-graph-rag source checkout, and this cgr is installed at /tmp/claude-0/-home-user-code-graph-rag/dd42d47f-4f95-5a22-a9f9-0f48aea95613/scratchpad/d2422/after/site-packages/codebase_rag, outside any checkout. Nothing was changed.
+To add or remove a grammar, clone https://github.com/vitali87/code-graph-rag and run 'uv run cgr language add-grammar' inside the clone.
+To have a language supported, request it at https://github.com/vitali87/code-graph-rag/issues.[0m
+exit status: 1
