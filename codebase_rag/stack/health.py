@@ -173,6 +173,10 @@ def qdrant_accepts_key(
     return _qdrant_answers(request, timeout)
 
 
+def qdrant_base_url(host: str, port: int) -> str:
+    return _qdrant_url(host, port, "")
+
+
 def _qdrant_url(host: str, port: int, path: str) -> str:
     # An IPv6 address needs brackets in a URL. Plain http because the bundled
     # Qdrant serves nothing else: it runs on this machine with no TLS. The

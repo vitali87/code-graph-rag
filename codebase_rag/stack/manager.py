@@ -14,6 +14,7 @@ from dotenv import dotenv_values
 from loguru import logger
 
 from .. import constants as root_cs
+from .. import logs as ls
 from ..config import settings
 from ..types_defs import JsonValue
 from . import constants as cs
@@ -24,6 +25,7 @@ from .health import (
     qdrant_accepts_anonymous,
     qdrant_accepts_key,
     qdrant_anonymous_access,
+    qdrant_base_url,
     wait_for_memgraph,
     wait_for_qdrant,
 )
@@ -72,19 +74,20 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
-def _bind_host(project_dir: Path) -> str:
-    """The address the compose file publishes the stack's ports on.
-
-    Resolved as Compose resolves `${CGR_STACK_BIND_HOST:-127.0.0.1}`: its
-    environment first, then the .env file beside the compose file, and the
-    default when the value is empty.
-    """
-    if cs.COMPOSE_BIND_HOST_VAR in os.environ:
-        value = os.environ[cs.COMPOSE_BIND_HOST_VAR]
+def _compose_variable(project_dir: Path, name: str) -> str | None:
+    """A compose-file variable as Compose resolves it: its environment first,
+    then the .env file beside the compose file. Empty reads as unset."""
+    if name in os.environ:
+        value = os.environ[name]
     else:
-        dotenv = project_dir / cs.COMPOSE_DOTENV_FILENAME
-        value = dotenv_values(dotenv).get(cs.COMPOSE_BIND_HOST_VAR)
-    return value or cs.LOOPBACK_HOST
+        value = dotenv_values(project_dir / cs.COMPOSE_DOTENV_FILENAME).get(name)
+    return value or None
+
+
+def _bind_host(project_dir: Path) -> str:
+    """The address the compose file publishes the stack's ports on, resolved
+    as Compose resolves `${CGR_STACK_BIND_HOST:-127.0.0.1}`."""
+    return _compose_variable(project_dir, cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
 
 
 def _bundled_qdrant_probe_host(bind: str) -> str:
@@ -920,3 +923,40 @@ def daemon_restart() -> StackStatus:
     mgr.restart()
     mgr.wait_healthy()
     return mgr.status()
+
+
+def bundled_qdrant_url(home: Path | None = None) -> str | None:
+    """Where the Qdrant `cgr daemon up` runs, when it takes the app's writes.
+
+    None unless the stack was set up here (its compose file exists) and its
+    Qdrant answers a data request without a key. QDRANT_API_KEY is never
+    offered: it belongs to the server QDRANT_URL names, and the stack only
+    configures its Qdrant with it when QDRANT_URL points there. A Qdrant that
+    refuses anonymous requests is logged and left alone, since every write
+    to it would fail (issue #2355).
+    """
+    project_dir = (home or settings.CGR_HOME).expanduser()
+    published = _compose_variable(project_dir, cs.COMPOSE_QDRANT_HTTP_PORT_VAR)
+    port = (_fixed_port(published) if published else None) or (
+        cs.QDRANT_CLIENT_DEFAULT_PORT
+    )
+    manager = StackManager(home=project_dir, qdrant_port=port)
+    if not manager.compose_file.exists():
+        return None
+    url = qdrant_base_url(manager.qdrant_host, manager.qdrant_port)
+    match qdrant_anonymous_access(
+        manager.qdrant_port,
+        timeout=cs.BUNDLED_QDRANT_PROBE_TIMEOUT_S,
+        host=manager.qdrant_host,
+    ):
+        case cs.AnonymousAccess.ALLOWED:
+            return url
+        case cs.AnonymousAccess.REFUSED:
+            logger.warning(
+                ls.QDRANT_BUNDLED_WANTS_KEY.format(
+                    url=url, path=settings.QDRANT_DB_PATH
+                )
+            )
+            return None
+        case _:
+            return None
