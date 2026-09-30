@@ -54,6 +54,10 @@ if TYPE_CHECKING:
 
         def _find_function_ast_node(self, fn_qn: str) -> Node | None: ...
 
+        def shadowed_import_names(
+            self, caller: Node, module_qn: str
+        ) -> frozenset[str]: ...
+
         def _analyze_method_return_statements(
             self, method_node: Node, method_qn: str, module_qn: str | None = None
         ) -> str | None: ...
@@ -80,16 +84,22 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     _method_return_type_cache: dict[str, str | None]
     _self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None]
 
-    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
+    def _infer_type_from_expression(
+        self, node: Node, module_qn: str, scope: Node | None = None
+    ) -> str | None:
+        # `scope`: where the expression is read, whose enclosing defs decide
+        # which names are locals rather than the module's imports.
         if node.type == cs.TS_PY_CALL:
-            return self._infer_call_expression_type(node, module_qn)
+            return self._infer_call_expression_type(node, module_qn, scope)
         if node.type == cs.TS_PY_LIST_COMPREHENSION and (
             body_node := node.child_by_field_name(cs.TS_FIELD_BODY)
         ):
-            return self._infer_type_from_expression(body_node, module_qn)
+            return self._infer_type_from_expression(body_node, module_qn, scope)
         return None
 
-    def _infer_call_expression_type(self, node: Node, module_qn: str) -> str | None:
+    def _infer_call_expression_type(
+        self, node: Node, module_qn: str, scope: Node | None = None
+    ) -> str | None:
         func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if (
             func_node
@@ -113,7 +123,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 method_call_text, module_qn, None
             ):
                 return inferred
-            return self._attribute_constructor_type(method_call_text, module_qn)
+            return self._attribute_constructor_type(
+                method_call_text, module_qn, scope=scope
+            )
         return None
 
     def _attribute_constructor_type(
@@ -121,6 +133,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         method_call_text: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
+        scope: Node | None = None,
     ) -> str | None:
         # alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
         # genai.Client), not a method call: the variable's type is the dotted class
@@ -136,7 +149,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         # fell to the name-only fallback (issue #2558). A head the body binds
         # itself is a local, not the import, and keeps the text as written.
         head = method_call_text.partition(cs.SEPARATOR_DOT)[0]
-        if not (local_var_types and head in local_var_types) and (
+        if (local_var_types and head in local_var_types) or not (
             class_qn := resolve_dotted_class(
                 method_call_text,
                 module_qn,
@@ -144,8 +157,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 self.function_registry,
             )
         ):
-            return class_qn
-        return method_call_text
+            return method_call_text
+        # Read without a type map (a self-assignment), the defs enclosing
+        # `scope` say which heads are locals. Asked only once a class
+        # resolved: walking their bindings for every assignment is costly.
+        if scope is not None and head in self.shadowed_import_names(scope, module_qn):
+            return method_call_text
+        return class_qn
 
     def _infer_type_from_expression_simple(
         self, node: Node, module_qn: str

@@ -593,6 +593,60 @@ def test_an_external_module_attribute_constructor_stays_as_written(
     assert types["df"] == "pd.DataFrame"
 
 
+# `self.x = pkg.Client()` is typed through the same resolver, reading the
+# assignment on its own; a `pkg` the method binds itself must still win.
+
+
+def test_a_self_attribute_built_through_the_import_binds_the_method_exactly(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(
+        tmp_path,
+        "import pkg\n\n"
+        "class Service:\n"
+        "    def __init__(self):\n"
+        "        self.client = pkg.Client()\n\n"
+        "    def run(self):\n"
+        "        self.client.send('x')\n",
+        managers=False,
+    )
+    assert calls["run"].get(f"{CLIENT}.send") == EXACT
+    assert API_SEND not in calls["run"]
+
+
+def test_a_self_attribute_built_through_a_shadowing_parameter_is_not_the_import(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(
+        tmp_path,
+        "import pkg\n\n"
+        "class Service:\n"
+        "    def __init__(self, pkg):\n"
+        "        self.client = pkg.Client()\n\n"
+        "    def run(self):\n"
+        "        self.client.send('x')\n",
+        managers=False,
+    )
+    assert f"{CLIENT}.send" not in calls.get("run", {})
+
+
+def test_a_self_attribute_built_through_a_shadowing_local_keeps_the_written_type(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "import pkg\n\n"
+        "class Service:\n"
+        "    def run(self, factory):\n"
+        "        pkg = factory()\n"
+        "        self.client = pkg.Client()\n"
+        "        self.client.send('x')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "run")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["self.client"] == "pkg.Client"
+    assert f"{CLIENT}.send" not in calls.get("run", {})
+
+
 # --- incremental: the entered type is read from another file ----------------------
 
 

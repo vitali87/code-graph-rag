@@ -748,7 +748,9 @@ class PythonAstAnalyzerMixin(_AstBase):
     _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
 
     @abstractmethod
-    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None: ...
+    def _infer_type_from_expression(
+        self, node: Node, module_qn: str, scope: Node | None = None
+    ) -> str | None: ...
 
     @abstractmethod
     def _infer_type_from_expression_simple(
