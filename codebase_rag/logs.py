@@ -1072,6 +1072,22 @@ GLOSS_REANCHOR_FAILED = (
     "Could not re-attach Gloss notes to their symbols after the sync: {error}. "
     "Unattached notes are re-attached by the next run."
 )
+# Trace-derived CALLS edges carried across a re-parse (issue #2429).
+TRACE_EDGES_CARRIED = "Kept {carried} trace-derived CALLS edge(s) across the re-parse"
+TRACE_EDGES_OUTDATED = (
+    "Kept {carried} trace-derived CALLS edge(s) across the re-parse; "
+    "{stale} newly marked dynamic_stale (an endpoint's definition changed) and "
+    "{dropped} dropped (an endpoint no longer exists). Re-run the trace and "
+    "`cgr trace ingest` it to refresh them."
+)
+TRACE_CARRY_CAPTURE_FAILED = (
+    "Could not read trace-derived CALLS edges before the re-parse; this full "
+    "rebuild continues without them. Re-ingest the trace to restore them."
+)
+TRACE_CARRY_FAILED = (
+    "Could not re-apply {count} trace-derived CALLS edge(s) after the "
+    "re-parse: {error}. Re-ingest the trace to restore them."
+)
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"

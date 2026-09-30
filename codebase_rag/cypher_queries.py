@@ -403,6 +403,53 @@ WHERE a.qualified_name STARTS WITH $prefix
 RETURN a.qualified_name AS from_qn, b.qualified_name AS to_qn
 """
 
+# Trace-derived CALLS edges touching the files a sync is about to delete and
+# re-parse (issue #2429). An observation lives only in the graph, so it is
+# read here, before the subtrees go, and re-applied by qualified name once
+# the re-parse has rebuilt the static edges. Both directions: an edge out of
+# a re-parsed file dies with its caller's subtree, and one into it records
+# an observation of the callee as it was when traced. The endpoints'
+# `anchor_hash` rides along so the carry can tell which definitions changed.
+# Anchored on the nodes at the paths rather than on every CALLS edge: this
+# runs on every incremental sync, and most syncs touch a handful of files.
+CYPHER_TRACE_EDGES_AT_PATHS = """
+MATCH (n)-[r:CALLS]-()
+WHERE n.path IN $paths
+  AND n.qualified_name STARTS WITH $prefix
+  AND r.dynamic = true
+WITH DISTINCT r
+WITH r, startNode(r) AS a, endNode(r) AS b
+WHERE a.qualified_name STARTS WITH $prefix
+  AND b.qualified_name STARTS WITH $prefix
+RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
+       a.path AS from_path, a.anchor_hash AS from_hash,
+       labels(b)[0] AS to_label, b.qualified_name AS to_qn,
+       b.path AS to_path, b.anchor_hash AS to_hash,
+       properties(r) AS props
+"""
+
+# The re-parsed endpoints of the captured trace edges, in the shape
+# CYPHER_TRACE_CALLABLES returns plus the new `anchor_hash`. A name that
+# comes back missing is a definition the edit removed or renamed.
+CYPHER_TRACE_CARRY_ENDPOINTS = """
+MATCH (n)
+WHERE (n:Function OR n:Method OR n:Module)
+  AND n.qualified_name IN $qns
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
+       n.anchor_hash AS anchor_hash
+"""
+
+# CYPHER_TRACE_EXISTING_CALLS narrowed to the carried edges' endpoints, so a
+# sync reads the static edges it may confirm rather than the whole project's.
+CYPHER_TRACE_CARRY_STATIC_PAIRS = """
+MATCH (a)-[r:CALLS]->(b)
+WHERE a.qualified_name IN $from_qns
+  AND b.qualified_name IN $to_qns
+  AND coalesce(r.static_missed, false) = false
+RETURN DISTINCT a.qualified_name AS from_qn, b.qualified_name AS to_qn
+"""
+
 
 CYPHER_STATS_NODE_COUNTS = """
 MATCH (n)

@@ -95,8 +95,14 @@ from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
-from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
+from .services import (
+    FilteringIngestor,
+    IngestorProtocol,
+    QueryingIngestorProtocol,
+    QueryProtocol,
+)
 from .services.resource_cleanup import prune_unanchored_resources
+from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
@@ -1283,6 +1289,12 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The trace-derived CALLS edges `run()` read before deleting the
+        # re-parsed subtrees, re-applied once Pass 3 has rebuilt the static
+        # edges (issue #2429), and the files the run deleted, whose edges must
+        # not follow their qualified names onto a same-stem survivor.
+        self._captured_trace_edges: list[CapturedTraceEdge] = []
+        self._trace_gone_paths: frozenset[str] = frozenset()
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
@@ -2116,6 +2128,8 @@ class GraphUpdater:
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
         self._pending_parser_fingerprint = None
+        self._captured_trace_edges = []
+        self._trace_gone_paths = frozenset()
         if not force and self._is_already_in_sync():
             self._finish_in_sync_run()
             return
@@ -2255,6 +2269,10 @@ class GraphUpdater:
 
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
+        # After that flush: the carry reads the static edges Pass 3 just
+        # wrote to decide which observations confirm one (issue #2429).
+        self._carry_trace_edges(self._captured_trace_edges, self._trace_gone_paths)
+        self._captured_trace_edges = []
 
         self._link_endpoint_resources()
 
@@ -4061,6 +4079,46 @@ class GraphUpdater:
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
 
+    def _capture_trace_edges(self, keys: Iterable[str]) -> list[CapturedTraceEdge]:
+        # Read before the subtrees go, as the inbound edges are: a runtime
+        # observation lives only in the graph, so the delete would otherwise
+        # take it for good (issue #2429).
+        paths = sorted(set(keys))
+        if not paths or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            return capture_trace_edges(
+                self.ingestor, paths, self.project_name + cs.SEPARATOR_DOT
+            )
+        except Exception:
+            # The inbound capture's posture: a full build may go on over an
+            # unreadable graph, saying what it lost; an incremental run
+            # aborts rather than drop the observations without a word.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.TRACE_CARRY_CAPTURE_FAILED)
+            return []
+
+    def _carry_trace_edges(
+        self, captured: list[CapturedTraceEdge], gone_paths: Collection[str]
+    ) -> None:
+        """Re-apply the captured trace edges to the re-parsed graph.
+
+        Never raises, like `_reanchor_glosses`: the sync itself has landed,
+        and the observations come back by re-ingesting the trace, which the
+        warning tells the user to do.
+        """
+        if not captured or not isinstance(self.ingestor, QueryingIngestorProtocol):
+            return
+        try:
+            carry_trace_edges(
+                self.ingestor, captured, self.repo_path.resolve(), gone_paths
+            )
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                ls.TRACE_CARRY_FAILED.format(count=len(captured), error=error)
+            )
+
     def _restorable_edge(
         self, row: ResultRow
     ) -> tuple[tuple[str, str, str], str, tuple[str, str, str]] | None:
@@ -5252,6 +5310,10 @@ class GraphUpdater:
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
+        self._captured_trace_edges = self._capture_trace_edges(
+            (*reindexed_keys, *deleted_before_parse)
+        )
+        self._trace_gone_paths = frozenset(deleted_set)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in scan.changed_entries
         }
@@ -7174,6 +7236,7 @@ class GraphUpdater:
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
+            captured_trace = self._capture_trace_edges(all_keys)
         except Exception as exc:
             raise ReingestAborted(str(exc)) from exc
         # The caller's last word before the first write. Still inside the
@@ -7255,6 +7318,9 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # `_reingest_resolve` ends on a flush, so the static edges the carry
+        # may confirm are in the store (issue #2429).
+        self._carry_trace_edges(captured_trace, gone.keys())
         # AFTER the re-parse, never before: the surviving node of the correct
         # kind and its re-pointed containment edges are written by the parse
         # above, so pruning first would delete the old node while every edge
