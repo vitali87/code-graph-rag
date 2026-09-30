@@ -4196,9 +4196,18 @@ class GraphUpdater:
         # registry and simple-name entries behind and Pass 3 kept resolving
         # calls into definitions that no longer exist. The Rust and C# import
         # blocks below already re-derive the recorded qn for this reason.
-        # A file that was never parsed recorded nothing; the path-derived form
-        # is the only prefix available for it, and it owns no recorded qn that
-        # this could wipe.
+        # A source file that was never parsed recorded nothing; the
+        # path-derived form is the only prefix available for it, and it owns
+        # no recorded qn that this could wipe.
+        #
+        # A file no tree-sitter language parses (`shapes.txt`, trybuild's
+        # `user.stderr`, a Markdown or ast-grep tier file) never records a
+        # module qn, and its path-derived form is the qn of the source file
+        # sharing its stem: clearing `pkg/shapes.txt` swept the definitions
+        # and class records `pkg/shapes.py` holds. A dependent re-parse of
+        # `shapes.py` earlier in the same run then resolved its calls against
+        # a registry that had lost them, and the next sync saw nothing to
+        # redo (issue #2463). Such a file owns no module state to sweep.
         recorded_qns = {
             qn
             for qn, path in (
@@ -4206,7 +4215,12 @@ class GraphUpdater:
             )
             if path == file_path
         }
-        module_qn_prefixes = recorded_qns or {path_derived_qn}
+        if recorded_qns:
+            module_qn_prefixes = recorded_qns
+        elif get_language_for_extension(file_path.suffix) is not None:
+            module_qn_prefixes = {path_derived_qn}
+        else:
+            module_qn_prefixes = set()
         self._drop_module_import_state(file_path, recorded_qns, module_qn_prefixes)
         owned_qns, foreign_qns = self._span_ownership(
             module_qn_prefixes, relative_path, frontend_current
