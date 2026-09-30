@@ -1927,6 +1927,9 @@ class GraphUpdater:
         the same stages, or they vanish until a full update. Returns the
         module qn -> path map the IMPORTS flush verifies against.
         """
+        # Every File node of the pass is buffered by now, so a Markdown link
+        # to a file parsed after its document finds its target (issue #2400).
+        self.document_tier.emit_pending_links()
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
         # nodes and include IMPORTS emitted earlier would be deleted with
