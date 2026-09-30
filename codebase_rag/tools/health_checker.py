@@ -10,6 +10,7 @@ import mgclient
 from loguru import logger
 
 from .. import constants as cs
+from .. import cypher_queries as cq
 from .. import graph_audit
 from ..config import PROVIDER_ENV_KEYS, settings
 from ..graph_dialects import DIALECT_NEO4J
@@ -337,6 +338,11 @@ class HealthChecker:
                 return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
             violations = graph_audit.collect_live_violations(fetch_all)
+            interrupted = sorted(
+                str(row["project"])
+                for row in fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+                if row.get("project")
+            )
         except Exception as e:
             return [
                 HealthCheckResult(
@@ -360,15 +366,7 @@ class HealthChecker:
                 except Exception as cleanup_error:
                     logger.warning(f"Graph audit cleanup failed: {cleanup_error}")
 
-        if not violations:
-            return [
-                HealthCheckResult(
-                    name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
-                    passed=True,
-                    message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
-                )
-            ]
-        return [
+        results = [
             HealthCheckResult(
                 name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
                 passed=False,
@@ -379,7 +377,28 @@ class HealthChecker:
                     v.detail for v in violations
                 ),
             )
+            if violations
+            else HealthCheckResult(
+                name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
+                passed=True,
+                message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
+            )
         ]
+        if interrupted:
+            results.append(
+                HealthCheckResult(
+                    name=cs.HEALTH_CHECK_INTERRUPTED_SYNC,
+                    passed=False,
+                    message=cs.HEALTH_CHECK_INTERRUPTED_SYNC_MSG.format(
+                        count=len(interrupted)
+                    ),
+                    error=cs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
+                        cs.HEALTH_CHECK_INTERRUPTED_SYNC_DETAIL.format(project=project)
+                        for project in interrupted
+                    ),
+                )
+            )
+        return results
 
     def run_all_checks(self) -> list[HealthCheckResult]:
         self.results = []

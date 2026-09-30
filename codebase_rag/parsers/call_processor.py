@@ -1591,6 +1591,12 @@ class CallProcessor:
         # Every CALLS/REFERENCES/INSTANTIATES edge this processor emits goes
         # through here so the current site (line/col/arg shape of the
         # producing expression) rides along as edge properties (#1522).
+        # Invoking a class constructs it. A direct `Config()` is written as
+        # INSTANTIATES, and a class reached through a callable parameter
+        # (`ensure(Config)` running `obj_type()`) is the same fact; as CALLS it
+        # was an edge type the schema does not have (issue #2394).
+        if rel_type == cs.RelationshipType.CALLS and to_spec[0] == cs.NodeLabel.CLASS:
+            rel_type = cs.RelationshipType.INSTANTIATES
         site = self._site_node
         if site is not None:
             cached = self._site_cache
