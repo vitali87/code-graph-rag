@@ -178,6 +178,16 @@ COMPOSE_QDRANT_HTTP_PORT_VAR = "QDRANT_HTTP_PORT"
 # Compose reads unset interpolation variables from this file beside the
 # compose file.
 COMPOSE_DOTENV_FILENAME = ".env"
+# An image pinned by digest; the packaged compose file pins every service.
+IMAGE_DIGEST_MARKER = "@sha256:"
+WARN_COMPOSE_IMAGES_FLOATING = (
+    "The compose file at {path} runs images without a pinned digest, so each "
+    "resolves to whatever is newest when it is pulled. The packaged stack "
+    "pins them: {pins}. To take the pins, run 'cgr daemon down', replace "
+    "those image lines (or delete the file to re-render it), then run "
+    "'cgr daemon up'."
+)
+IMAGE_PIN_PAIR = "{service} {floating} -> {pinned}"
 WARN_COMPOSE_PORTS_PUBLIC = (
     "The compose file at {path} publishes these ports on ALL interfaces, so "
     "any host on your network can read the code graph from these "

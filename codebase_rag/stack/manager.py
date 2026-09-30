@@ -235,6 +235,22 @@ class StackError(RuntimeError):
     pass
 
 
+def _service_images(compose_file: Path) -> dict[str, str]:
+    """Each service's `image` in a compose file; empty if it cannot be read."""
+    try:
+        compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return {}
+    services = compose.get("services") if isinstance(compose, dict) else None
+    if not isinstance(services, dict):
+        return {}
+    return {
+        str(name): image
+        for name, spec in services.items()
+        if isinstance(spec, dict) and isinstance(image := spec.get("image"), str)
+    }
+
+
 @dataclass
 class StackStatus:
     state: cs.StackState
@@ -300,7 +316,38 @@ class StackManager:
             shutil.copyfile(self.package_compose, target)
         else:
             self._warn_if_ports_are_public(target)
+            self._warn_if_images_float(target)
         return target
+
+    def _warn_if_images_float(self, compose_file: Path) -> None:
+        """Flag a rendered file running images the packaged stack now pins.
+
+        The file is rendered once and never overwritten, so an install made
+        before the pins keeps pulling `:latest` (issue #2409). It is the
+        user's file, so this names the pinned images rather than rewriting
+        it; an image the user pinned themselves, to any digest, is theirs.
+        """
+        rendered = _service_images(compose_file)
+        packaged = _service_images(self.package_compose)
+        floating = {
+            service: image
+            for service, image in rendered.items()
+            if cs.IMAGE_DIGEST_MARKER not in image
+            and cs.IMAGE_DIGEST_MARKER in packaged.get(service, "")
+        }
+        if not floating:
+            return
+        logger.warning(
+            cs.WARN_COMPOSE_IMAGES_FLOATING.format(
+                path=compose_file,
+                pins="; ".join(
+                    cs.IMAGE_PIN_PAIR.format(
+                        service=service, floating=image, pinned=packaged[service]
+                    )
+                    for service, image in floating.items()
+                ),
+            )
+        )
 
     @staticmethod
     def _public_port_mappings(compose_file: Path) -> list[str]:
