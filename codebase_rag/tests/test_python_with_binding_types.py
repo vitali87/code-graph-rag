@@ -647,6 +647,86 @@ def test_a_self_attribute_built_through_a_shadowing_local_keeps_the_written_type
     assert f"{CLIENT}.send" not in calls.get("run", {})
 
 
+# A local is typed with the body's type map, which holds no entry for an
+# untyped parameter or a local it could not type: `pkg` is still not the import.
+
+
+def test_a_local_built_through_a_shadowing_parameter_keeps_the_written_type(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "import pkg\n\ndef use(pkg):\n    client = pkg.Client()\n    client.send('x')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == "pkg.Client"
+    assert f"{CLIENT}.send" not in calls.get("use", {})
+
+
+def test_a_local_built_through_a_shadowing_local_keeps_the_written_type(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "import pkg\n\n"
+        "def use(make):\n"
+        "    pkg = make()\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == "pkg.Client"
+    assert f"{CLIENT}.send" not in calls.get("use", {})
+
+
+def test_a_with_target_entered_through_a_shadowing_parameter_is_not_the_import(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(
+        tmp_path,
+        "import pkg\n\n"
+        "def use(pkg):\n"
+        "    with pkg.Client() as client:\n"
+        "        client.send('x')\n",
+        managers=False,
+    )
+    assert f"{CLIENT}.send" not in calls.get("use", {})
+
+
+def test_a_conditional_built_through_a_shadowing_parameter_is_not_the_import(
+    tmp_path: Path,
+) -> None:
+    # Each branch of a conditional is typed on its own, without the type map.
+    calls = _calls(
+        tmp_path,
+        "import pkg\n\n"
+        "def use(pkg, flag):\n"
+        "    client = pkg.Client() if flag else pkg.Client()\n"
+        "    client.send('x')\n",
+        managers=False,
+    )
+    assert f"{CLIENT}.send" not in calls.get("use", {})
+
+
+def test_only_the_function_that_shadows_the_import_keeps_the_written_type(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(
+        tmp_path,
+        "import pkg\n\n"
+        "def shadowed(pkg):\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n\n"
+        "def unshadowed():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('y')\n",
+        managers=False,
+    )
+    assert calls["unshadowed"].get(f"{CLIENT}.send") == EXACT
+    assert API_SEND not in calls["unshadowed"]
+    assert f"{CLIENT}.send" not in calls.get("shadowed", {})
+
+
 # --- incremental: the entered type is read from another file ----------------------
 
 

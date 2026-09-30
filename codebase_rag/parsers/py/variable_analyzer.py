@@ -671,7 +671,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         found: dict[frozenset[str], str] = {}
         for node in candidates:
             if node.type == cs.TS_PY_CALL:
-                inferred = self._infer_type_from_expression(node, module_qn)
+                inferred = self._infer_type_from_expression(node, module_qn, node)
             else:
                 inferred = local_var_types.get(safe_decode_text(node) or "")
             if inferred:

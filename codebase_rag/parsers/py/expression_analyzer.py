@@ -158,9 +158,10 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             )
         ):
             return method_call_text
-        # Read without a type map (a self-assignment), the defs enclosing
-        # `scope` say which heads are locals. Asked only once a class
-        # resolved: walking their bindings for every assignment is costly.
+        # A local the type map holds no type for (an untyped parameter, a
+        # self-assignment read without the map) is still not the import: the
+        # defs enclosing `scope` say which heads are locals. Asked only once a
+        # class resolved: walking their bindings for every call is costly.
         if scope is not None and head in self.shadowed_import_names(scope, module_qn):
             return method_call_text
         return class_qn
@@ -200,7 +201,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 ):
                     return inferred
                 return self._attribute_constructor_type(
-                    method_call_text, module_qn, local_var_types
+                    method_call_text, module_qn, local_var_types, scope=node
                 )
 
             if (
