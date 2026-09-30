@@ -31,6 +31,11 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .cpp.function_values import (
+    CFileScope,
+    c_file_scope,
+    c_function_value_identifiers,
+)
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
 from .dart import utils as dart_utils
@@ -1454,6 +1459,7 @@ class CallProcessor:
         "_js_symbol_assignments",
         "js_symbol_member_types",
         "_js_proto_evidence_cache",
+        "_c_file_scopes",
     )
 
     def __init__(
@@ -1520,6 +1526,9 @@ class CallProcessor:
         self._js_symbol_assignments: list[tuple[str, str, str]] = []
         self.js_symbol_member_types: dict[str, set[str]] = {}
         self._js_proto_evidence_cache: dict[tuple[str, str | None], bool] = {}
+        # What each C/C++ source declares at file scope, read when a bare
+        # function name in C resolves outside its own file (issue #2529).
+        self._c_file_scopes: dict[str, CFileScope] = {}
 
         # The import processor owns the record (#1568); every pass notes
         # through it so the empty-name guard lives in one place.
@@ -2042,6 +2051,7 @@ class CallProcessor:
         self._package_index = {}
         self._package_index_size = -1
         self._path_to_module_qn = None
+        self._c_file_scopes = {}
 
     def process_calls_in_file(
         self,
@@ -2230,6 +2240,16 @@ class CallProcessor:
             )
         if language == cs.SupportedLanguage.GO:
             self._ingest_go_module_references(root_node, module_qn, language, queries)
+        if language == cs.SupportedLanguage.C:
+            # A file-scope ops table or hook struct (`static hooks_t h = {
+            # my_alloc, my_free };`) is wired when the program loads, often in
+            # a file that makes no call at all.
+            self._ingest_c_function_value_references(
+                root_node,
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                module_qn,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
         if language in _JS_TS_LANGUAGES:
             # A module-scope JSX element (export default <App />) can sit
             # in a file with no call expressions; scan before the early
@@ -3992,6 +4012,13 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
             self._ingest_go_composite_literal_instantiations(
+                caller_node,
+                caller_spec,
+                module_qn,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
+        if language == cs.SupportedLanguage.C and caller_type != cs.NodeLabel.MODULE:
+            self._ingest_c_function_value_references(
                 caller_node,
                 caller_spec,
                 module_qn,
@@ -5900,6 +5927,89 @@ class CallProcessor:
                 scope.resolve_func,
                 scope.ensure_rel,
             )
+
+    @_site_scoped
+    def _ingest_c_function_value_references(
+        self,
+        scope_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        boundary_types: frozenset[str],
+    ) -> None:
+        # C's callbacks, vtables and ops tables store a function in a pointer
+        # and call it through the pointer, a call the graph never sees (issue
+        # #2529). The site that stores it references it instead, as Go's func
+        # maps and C#/Dart's passed method groups do, so the REFERENCES edge
+        # keeps it reachable for dead-code and the call graph.
+        for ident in c_function_value_identifiers(scope_node, boundary_types):
+            name = safe_decode_text(ident)
+            if not name:
+                continue
+            targets, resolution = self._c_function_value_targets(name, module_qn)
+            # A parameter or local of that name hides the function.
+            if not targets or name in cpp_utils.cpp_enclosing_function_value_names(
+                ident
+            ):
+                continue
+            self._site_node = ident
+            self._resolution = resolution
+            for target_qn in targets:
+                self._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _c_function_value_targets(
+        self, name: str, module_qn: str
+    ) -> tuple[list[str], str]:
+        registry = self._resolver.function_registry
+        # The file's own definition is what the name denotes, static or not.
+        own_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        if registry.get(own_qn) == NodeType.FUNCTION:
+            variants = registry.variants(own_qn)
+            return variants, (
+                cs.EdgeResolution.OVERLOAD
+                if len(variants) > 1
+                else cs.EdgeResolution.EXACT
+            )
+        if name in self._c_file_scope(module_qn).objects:
+            return [], cs.EdgeResolution.EXACT
+        # Otherwise it is an extern declaration the linker binds by name to a
+        # definition with external linkage, which no file's `static` has.
+        targets = [
+            variant
+            for qn in registry.find_ending_with(name)
+            if registry.get(qn) == NodeType.FUNCTION
+            and self._c_links_externally(qn, name)
+            for variant in registry.variants(qn)
+        ]
+        return targets, cs.EdgeResolution.HEURISTIC
+
+    def _c_links_externally(self, qn: str, name: str) -> bool:
+        module_qn = qn[: -len(name) - 1]
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        # A namespace or class member, or a definition in another language.
+        if file_path is None or not file_path.name.endswith(
+            cs.C_EXTENSIONS + cs.CPP_EXTENSIONS
+        ):
+            return False
+        # A header's `static inline` is compiled into every file including it.
+        if not file_path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
+            return True
+        return name not in self._c_file_scope(module_qn).tu_local_functions
+
+    def _c_file_scope(self, module_qn: str) -> CFileScope:
+        if (cached := self._c_file_scopes.get(module_qn)) is not None:
+            return cached
+        scope = CFileScope(frozenset(), frozenset())
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is not None and (
+            entry := self._resolver.type_inference.ast_cache.load(file_path)
+        ):
+            scope = c_file_scope(entry[0])
+        self._c_file_scopes[module_qn] = scope
+        return scope
 
     @_site_scoped
     def _ingest_cpp_braced_return_instantiations(
