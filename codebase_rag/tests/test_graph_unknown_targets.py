@@ -254,7 +254,8 @@ class TestUnknownProject:
         )
 
         assert code == cs.GRAPH_EXIT_UNKNOWN_PROJECT
-        assert P in err and TWIN in err
+        assert P in err
+        assert TWIN in err
         assert UNRELATED not in err
 
     def test_without_a_close_match_the_indexed_projects_are_listed(
@@ -344,7 +345,8 @@ class TestUnknownTarget:
         )
 
         assert code == cs.GRAPH_EXIT_UNKNOWN_TARGET
-        assert TOTAL in err and REPORT_TOTAL in err
+        assert TOTAL in err
+        assert REPORT_TOTAL in err
 
     def test_with_nothing_close_it_points_at_resolve(
         self, connected: FakeGraph, tmp_path: Path
