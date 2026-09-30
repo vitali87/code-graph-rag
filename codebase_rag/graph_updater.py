@@ -3067,6 +3067,27 @@ class GraphUpdater:
             if isinstance(qn := row.get(key), str) and self._owns(qn)
         ]
 
+    def _project_module_rows(self) -> list[ResultRow]:
+        """This project's Module paths and qns, read from the graph.
+
+        Scoped to the project: the seeded-map prune read every module of every
+        project in the shared graph on each sync, which made a three-file
+        repo sync ten times slower beside thirty other projects (issue
+        #2404). Raises when the read fails; callers decide what that means.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        return self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_MODULE_PATHS,
+                {
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -3414,7 +3435,16 @@ class GraphUpdater:
             return
         dp = self.factory.definition_processor
         module_map = dp.module_qn_to_file_path
-        if not module_map:
+        parsed_this_run = (
+            exempt_paths
+            if exempt_paths is not None
+            else {path for path, _lang in self._parsed_files}
+        )
+        # Only an entry this run did not parse can be dropped. On a first
+        # sync every entry is one it parsed, so there is nothing to decide
+        # and no read to make; reading anyway found the brand-new graph empty
+        # and warned on the first run every new user makes (issue #2404).
+        if not any(path not in parsed_this_run for path in module_map.values()):
             return
         # No rows is "no verdict", never "the graph is empty". A read that
         # fails or comes back empty against a populated map is the unflushed
@@ -3424,7 +3454,7 @@ class GraphUpdater:
         # _rehydrate_registry_from_graph, where a failed query leaves the
         # previous state intact.
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+            rows = self._project_module_rows()
         except Exception:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
@@ -3434,11 +3464,6 @@ class GraphUpdater:
         if not in_graph:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
-        parsed_this_run = (
-            exempt_paths
-            if exempt_paths is not None
-            else {path for path, _lang in self._parsed_files}
-        )
         for qn in [qn for qn in module_map if qn not in in_graph]:
             # A file this run parsed writes its own entry and its Module node
             # may still be unflushed, so the read above cannot see it.
@@ -4985,7 +5010,13 @@ class GraphUpdater:
         # can tell which of the two they are looking at.
         if stored is None:
             self._cache_project_match = False
-            logger.info(ls.EXCLUSION_STATE_MISSING)
+            # Only an index built before the stamp existed is being upgraded;
+            # a repository never indexed has nothing to re-run "once", and a
+            # first-time user was told otherwise (issue #2404).
+            if (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+                logger.info(ls.EXCLUSION_STATE_MISSING)
+            else:
+                logger.debug(ls.EXCLUSION_STATE_FIRST_INDEX)
         else:
             logger.info(
                 ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
