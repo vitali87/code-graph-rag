@@ -33,6 +33,9 @@ _JS_TS_BINDING_DECLARATION_TYPES = frozenset(
         cs.TS_VARIABLE_DECLARATOR,
     }
 )
+_JS_TS_FIELD_DEFINITION_TYPES = frozenset(
+    {cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
 # Real function scopes. A bare `{ ... }` statement_block at top level
 # (django's core.js) is NOT one: prototype mutations and var/function
 # declarations inside it still land in page scope, so only a function
@@ -245,14 +248,29 @@ def _js_ts_private_member(node: Node) -> bool:
     # while the ECMAScript form is a `#name` method whose name node is a
     # `private_property_identifier`; both are private regardless of an
     # exported enclosing class.
-    if any(c.type == cs.TS_PRIVATE_PROPERTY_IDENTIFIER for c in node.children):
+    member = _js_ts_member_declaration(node)
+    if any(c.type == cs.TS_PRIVATE_PROPERTY_IDENTIFIER for c in member.children):
         return True
     modifier = next(
-        (c for c in node.children if c.type == cs.TS_ACCESSIBILITY_MODIFIER), None
+        (c for c in member.children if c.type == cs.TS_ACCESSIBILITY_MODIFIER), None
     )
     return modifier is not None and any(
         c.type == cs.TS_PRIVATE for c in modifier.children
     )
+
+
+def _js_ts_member_declaration(node: Node) -> Node:
+    # A property-arrow member (`private hide = () => 1`) is ingested from the
+    # arrow itself, but its `private` modifier and `#name` sit on the enclosing
+    # field definition, so privacy is read there.
+    parent = node.parent
+    if (
+        parent is not None
+        and parent.type in _JS_TS_FIELD_DEFINITION_TYPES
+        and parent.child_by_field_name(cs.FIELD_VALUE) == node
+    ):
+        return parent
+    return node
 
 
 def _has_export_ancestor(node: Node) -> bool:

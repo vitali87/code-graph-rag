@@ -432,3 +432,51 @@ def test_export_name_scan_runs_once_per_file() -> None:
         ]
     assert exported == [True, False, False]
     assert spy.call_count == 1
+
+
+# Property-arrow members: the Method node is ingested from the arrow itself,
+# while `private` / `#` sits on the enclosing field definition.
+_ARROW_BODY = """\
+class Panel {
+  private hide = () => 1
+  private static reset = () => 2
+  #toggle = () => 3
+  protected paint = () => 4
+  protected layout() { return 5 }
+  public show = () => 6
+  open = () => 7
+}
+"""
+_ARROW_FORMS = [
+    pytest.param("export " + _ARROW_BODY, id="export-class"),
+    pytest.param(_ARROW_BODY + "export { Panel }\n", id="clause"),
+]
+
+
+@pytest.mark.parametrize("source", _ARROW_FORMS)
+def test_private_property_arrows_stay_unexported(tmp_path: Path, source: str) -> None:
+    # The issue's Expected: only public (non-`#private`, non-`private`)
+    # property-arrows are roots, exactly as for methods.
+    graph = _index(tmp_path, {"p.ts": source})
+    members = graph.members("p.Panel")
+    assert members["hide"] is False
+    assert members["reset"] is False
+    # No node is ingested for a `#name` arrow today; none may be exported.
+    assert members.get("#toggle", False) is False
+
+
+@pytest.mark.parametrize("source", _ARROW_FORMS)
+def test_protected_property_arrow_follows_protected_methods(
+    tmp_path: Path, source: str
+) -> None:
+    # `protected` is an inheritance surface and stays exported for methods; a
+    # protected property-arrow gets the same decision.
+    members = _index(tmp_path, {"p.ts": source}).members("p.Panel")
+    assert members["paint"] is members["layout"] is True
+
+
+@pytest.mark.parametrize("source", _ARROW_FORMS)
+def test_public_property_arrows_stay_exported(tmp_path: Path, source: str) -> None:
+    members = _index(tmp_path, {"p.ts": source}).members("p.Panel")
+    assert members["show"] is True
+    assert members["open"] is True
