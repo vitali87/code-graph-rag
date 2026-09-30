@@ -138,7 +138,8 @@ def test_the_seed_prune_reads_only_this_projects_modules(
         for row in rows
         if cs.KEY_QUALIFIED_NAME in row
     ]
-    assert qns and all(qn.startswith("myrepo.") for qn in qns), qns
+    assert qns
+    assert all(qn.startswith("myrepo.") for qn in qns), qns
     # Negative: the prune still does its job on the narrower read.
     assert "myrepo.pkg.gone" not in module_map
     assert "myrepo.pkg.core" in module_map
