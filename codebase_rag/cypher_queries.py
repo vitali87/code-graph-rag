@@ -30,6 +30,7 @@ from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
     DEFINITION_NODE_LABELS,
+    GLOSS_UNATTACHED_STATES,
     SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
@@ -46,8 +47,14 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 # `:IncompleteRun` is the CLI's own sync marker, unattached to any project
 # tree on purpose (see CYPHER_MARK_PROJECT_INCOMPLETE); doctor reports it as
 # an interrupted sync, not as an orphan (issue #2394).
+# A LOST or AMBIGUOUS gloss keeps its note with no edge by design (#1808),
+# so it is no orphan either (issue #2652).
+_UNATTACHED_GLOSS_STATES = ", ".join(
+    f"'{state}'" for state in sorted(GLOSS_UNATTACHED_STATES)
+)
 CYPHER_AUDIT_ORPHANS = (
     "MATCH (n) WHERE NOT n:Project AND NOT n:IncompleteRun "
+    f"AND NOT (n:Gloss AND n.anchor_state IN [{_UNATTACHED_GLOSS_STATES}]) "
     "OPTIONAL MATCH (n)--(x) "
     "WITH n, count(x) AS degree "
     "WHERE degree = 0 "
