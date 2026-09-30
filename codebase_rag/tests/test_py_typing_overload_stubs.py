@@ -15,10 +15,16 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.py.overloads import (
+    folded_overload_stubs,
+    overload_stub_names,
+)
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 
@@ -294,12 +300,28 @@ def run():
 """
 
 
-def test_rename_rewrites_every_stub_with_the_implementation(temp_repo: Path) -> None:
+@pytest.mark.parametrize(
+    "before",
+    [
+        pytest.param(RENAME_UTIL, id="typing-alias"),
+        pytest.param(
+            RENAME_UTIL.replace(
+                "import typing as t\n",
+                "import typing as t\n\nt = None\n\nimport typing as t\n",
+            ),
+            id="rebound-then-reimported-from-typing",
+        ),
+        pytest.param(RENAME_UTIL + "\n\nt = None\n", id="rebound-after-the-stubs"),
+    ],
+)
+def test_rename_rewrites_every_stub_with_the_implementation(
+    temp_repo: Path, before: str
+) -> None:
     root = temp_repo / PROJECT
     root.mkdir()
     store, updater = _real_project(
         root,
-        {"pkg/__init__.py": "", "pkg/util.py": RENAME_UTIL, "pkg/app.py": RENAME_APP},
+        {"pkg/__init__.py": "", "pkg/util.py": before, "pkg/app.py": RENAME_APP},
     )
     report = rename(
         root,
@@ -367,8 +389,41 @@ NOT_TYPING_OVERLOAD = [
     pytest.param("import functools", "@functools.cache", id="ordinary-decorator"),
 ]
 
+# typing's overload is imported, then its root name is rebound before the
+# stubs, so the decorator calls whatever the rebinding put there.
+REBOUND_OVERLOAD = [
+    pytest.param(
+        "from typing import overload\n\n\ndef overload(fn):\n    return fn\n",
+        "@overload",
+        id="import-then-local-def",
+    ),
+    pytest.param(
+        "from typing import overload\n\n\nclass overload:\n    pass\n",
+        "@overload",
+        id="import-then-local-class",
+    ),
+    pytest.param(
+        "import typing as t\n\nt = something\n", "@t.overload", id="alias-reassigned"
+    ),
+    pytest.param(
+        "from typing import overload\n\noverload: object = something\n",
+        "@overload",
+        id="annotated-reassignment",
+    ),
+    pytest.param(
+        "from typing import overload\nfrom mylib import overload\n",
+        "@overload",
+        id="reimported-from-another-module",
+    ),
+    pytest.param(
+        "from typing import overload\nimport mylib as overload\n",
+        "@overload",
+        id="module-imported-as-overload",
+    ),
+]
 
-@pytest.mark.parametrize(("imports", "deco"), NOT_TYPING_OVERLOAD)
+
+@pytest.mark.parametrize(("imports", "deco"), [*NOT_TYPING_OVERLOAD, *REBOUND_OVERLOAD])
 def test_a_decorator_that_is_not_typing_overload_keeps_every_definition(
     temp_repo: Path, mock_ingestor: MagicMock, imports: str, deco: str
 ) -> None:
@@ -390,6 +445,129 @@ def test_a_decorator_that_is_not_typing_overload_keeps_every_definition(
     assert {dst for dst, _how in _calls_from(mock_ingestor, ".deco.use")} == set(
         command
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            METHOD_MODULE.format(
+                imports=REBOUND_OVERLOAD[0].values[0], deco="@overload"
+            ),
+            id="rebound-at-module-level",
+        ),
+        pytest.param(
+            METHOD_MODULE.format(
+                imports="from typing import overload", deco="@overload"
+            ).replace(
+                "class Box:\n",
+                "class Box:\n    def overload(fn):\n        return fn\n\n",
+            ),
+            id="rebound-in-the-class-body",
+        ),
+    ],
+)
+def test_a_rebound_overload_keeps_every_method(
+    temp_repo: Path, mock_ingestor: MagicMock, text: str
+) -> None:
+    # A method's decorators see the class body, then the module.
+    root = _write(temp_repo / "rbm", text)
+    create_and_run_updater(root, mock_ingestor)
+
+    get = _named(_defs(mock_ingestor, cs.NodeLabel.METHOD), "rbm.deco.Box.get")
+    assert len(get) == 3, sorted(get)
+    assert "rbm.deco.Box.get" in get
+
+
+# typing's overload IS the binding live at the stubs, though the same name is
+# rebound somewhere: re-imported from typing after the rebinding, rebound only
+# after the stubs, or rebound inside another scope.
+LIVE_AT_THE_STUBS = [
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\ndef overload(fn):\n    return fn\n"
+                "\n\nfrom typing import overload"
+            ),
+            deco="@overload",
+        ),
+        id="reimported-from-typing",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports="import typing as t\n\nt = something\n\nimport typing as t",
+            deco="@t.overload",
+        ),
+        id="alias-reimported-from-typing",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(imports="from typing import overload", deco="@overload")
+        + "\n\ndef overload(fn):\n    return fn\n",
+        id="rebound-after-the-stubs",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\nclass Holder:\n"
+                "    overload = something\n\n\ndef helper():\n"
+                "    overload = something\n    return overload"
+            ),
+            deco="@overload",
+        ),
+        id="rebound-in-other-scopes",
+    ),
+]
+
+
+@pytest.mark.parametrize("text", LIVE_AT_THE_STUBS)
+def test_a_typing_overload_live_at_the_stubs_still_folds(
+    temp_repo: Path, mock_ingestor: MagicMock, text: str
+) -> None:
+    root = _write(temp_repo / "live", text)
+    create_and_run_updater(root, mock_ingestor)
+
+    command = _named(_defs(mock_ingestor, cs.NodeLabel.FUNCTION), "live.deco.command")
+    assert list(command) == ["live.deco.command"], sorted(command)
+    assert command["live.deco.command"][cs.KEY_START_LINE] == _line_of(
+        text, "def command(name=None):"
+    )
+    assert _calls_from(mock_ingestor, ".deco.use") == {
+        ("live.deco.command", cs.EdgeResolution.EXACT.value)
+    }
+
+
+def _parse(text: str) -> Node:
+    parsers, _queries = load_parsers()
+    return parsers[cs.SupportedLanguage.PYTHON].parse(text.encode()).root_node
+
+
+@pytest.mark.parametrize(
+    ("text", "stubs"),
+    [
+        *(
+            pytest.param(
+                FUNCTION_MODULE.format(imports=p.values[0], deco=p.values[1]),
+                0,
+                id=f"rebound-{p.id}",
+            )
+            for p in REBOUND_OVERLOAD
+        ),
+        *(pytest.param(p.values[0], 2, id=f"live-{p.id}") for p in LIVE_AT_THE_STUBS),
+    ],
+)
+def test_indexing_and_rename_read_the_same_binding(text: str, stubs: int) -> None:
+    # The fold the graph applies and the stubs a rename rewrites come from
+    # one binding-aware reading of the decorators.
+    root = _parse(text)
+    line = _line_of(text, "def command(name=None):") - 1
+    token = root.descendant_for_point_range((line, 4), (line, 4))
+    assert token is not None and token.parent is not None
+    names = overload_stub_names(token.parent, root)
+    assert len(folded_overload_stubs(root)) == stubs
+    assert [name.start_point[0] for name in names] == [
+        _line_of(text, "def command(name: None) -> int: ...") - 1,
+        _line_of(text, "def command(name: str) -> int: ...") - 1,
+    ][:stubs]
 
 
 def test_overload_stubs_without_an_implementation_keep_their_nodes(
@@ -516,14 +694,34 @@ def test_a_pyi_stub_beside_the_module_changes_nothing(
     assert graphs[0][0] == {"deco.helper", "deco.use"}
 
 
+@pytest.mark.parametrize(
+    "util",
+    [
+        pytest.param(
+            RENAME_UTIL.replace("import typing as t", "import mylib as t"),
+            id="t-is-not-typing",
+        ),
+        pytest.param(
+            RENAME_UTIL.replace("import typing as t", "import typing as t\n\nt = None"),
+            id="alias-reassigned",
+        ),
+        pytest.param(
+            RENAME_UTIL.replace(
+                "import typing as t",
+                "from typing import overload\n\n\ndef overload(fn):\n    return fn",
+            ).replace("@t.overload", "@overload"),
+            id="import-then-local-def",
+        ),
+    ],
+)
 def test_rename_of_a_plain_duplicate_still_refuses_as_overload(
-    temp_repo: Path,
+    temp_repo: Path, util: str
 ) -> None:
-    # A non-typing `overload` leaves the fan-out, so the rename still sees
-    # ambiguous sites and refuses rather than guessing.
+    # A non-typing `overload` (or typing's, rebound before the stubs) leaves
+    # the fan-out, so the rename still sees ambiguous sites and refuses rather
+    # than guessing; it never rewrites the real definitions as stubs.
     root = temp_repo / PROJECT
     root.mkdir()
-    util = RENAME_UTIL.replace("import typing as t", "import mylib as t")
     store, _updater = _real_project(
         root, {"pkg/__init__.py": "", "pkg/util.py": util, "pkg/app.py": RENAME_APP}
     )
