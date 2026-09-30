@@ -2158,19 +2158,28 @@ class CallResolver:
         on_self = head in _PY_SELF_RECEIVERS
         if on_self and len(parts) == 2:
             return False
-        local_types = call.local_var_types or {}
-        if cs.SEPARATOR_DOT.join(parts[:-1]) in local_types:
+        if self._receiver_is_bound(call, parts, on_self):
             return False
-        if not on_self:
-            if head in local_types:
-                return False
-            import_map = self.import_processor.import_mapping.get(call.module_qn)
-            if import_map and head in import_map:
-                return False
         if len(self._trie_candidates(call_name, call.module_qn, call.call_point)) < 2:
             return False
         # Last, being the one probe that reads the module's AST.
         return on_self or self._receiver_base_qn(head, call.module_qn) is None
+
+    def _receiver_is_bound(
+        self, call: _CallSite, parts: list[str], on_self: bool
+    ) -> bool:
+        # A typed local or an import names the receiver, so the typed and
+        # import paths answer the call and the fallback guard stays out.
+        local_types = call.local_var_types or {}
+        if cs.SEPARATOR_DOT.join(parts[:-1]) in local_types:
+            return True
+        if on_self:
+            return False
+        head = parts[0]
+        if head in local_types:
+            return True
+        import_map = self.import_processor.import_mapping.get(call.module_qn)
+        return bool(import_map) and head in import_map
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
