@@ -11,6 +11,9 @@ says plainly when they apply to this run only.
 from __future__ import annotations
 
 import errno
+import os
+import stat
+import sys
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -207,12 +210,29 @@ def test_a_failed_write_leaves_the_existing_rules_intact(
     # write that failed part-way (a full disk) lost the existing rules.
     before = (vendored / CGRIGNORE_FILENAME).read_text()
     real_write_text = Path.write_text
+    real_fdopen = os.fdopen
 
     def disk_fills(self: Path, data: str, *args: object, **kwargs: object) -> int:
         real_write_text(self, "", encoding="utf-8")
         raise OSError(errno.ENOSPC, "No space left on device")
 
-    with patch.object(Path, "write_text", disk_fills):
+    class _FullDisk:
+        def __init__(self, fd: int, *args: object, **kwargs: object) -> None:
+            self._handle = real_fdopen(fd, "w", encoding="utf-8")
+
+        def __enter__(self) -> _FullDisk:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._handle.close()
+
+        def write(self, data: str) -> int:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    with (
+        patch.object(Path, "write_text", disk_fills),
+        patch("codebase_rag.main.os.fdopen", _FullDisk),
+    ):
         _keep(vendored, "3", confirm=True)
 
     assert (vendored / CGRIGNORE_FILENAME).read_text() == before
@@ -220,3 +240,46 @@ def test_a_failed_write_leaves_the_existing_rules_intact(
         CGRIGNORE_FILENAME
     ]
     assert "Could not write" in _printed(console)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="creating symlinks needs privileges"
+)
+def test_a_planted_temp_file_link_is_never_written_through(
+    vendored: Path, console: MagicMock, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    # Review of PR 2510 (CWE-377): the temp name was fixed, so a repository
+    # that ships `.cgrignore.tmp` as a link made the save overwrite the file
+    # it points at, anywhere the user can write.
+    outside = tmp_path_factory.mktemp("elsewhere") / "precious.txt"
+    outside.write_text("precious\n")
+    (vendored / f"{CGRIGNORE_FILENAME}.tmp").symlink_to(outside)
+
+    _keep(vendored, "3", confirm=True)
+
+    assert outside.read_text() == "precious\n"
+    saved = vendored / CGRIGNORE_FILENAME
+    assert not saved.is_symlink()
+    assert "!vendor" in saved.read_text().splitlines()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_the_saved_file_keeps_its_permissions(
+    vendored: Path, console: MagicMock
+) -> None:
+    # Negative: the rewrite does not narrow the file to the temp file's 0600.
+    (vendored / CGRIGNORE_FILENAME).chmod(0o640)
+
+    _keep(vendored, "3", confirm=True)
+
+    assert stat.S_IMODE((vendored / CGRIGNORE_FILENAME).stat().st_mode) == 0o640
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_a_new_file_is_readable_like_any_checkout_file(
+    repo: Path, console: MagicMock
+) -> None:
+    # Negative: a .cgrignore the save creates is 0644, not the temp's 0600.
+    _keep(repo, "1", confirm=True)
+
+    assert stat.S_IMODE((repo / CGRIGNORE_FILENAME).stat().st_mode) == 0o644

@@ -9,8 +9,10 @@ import mimetypes
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 from collections import deque
@@ -2056,9 +2058,23 @@ def _replace_ignore_file(ignore_file: Path, content: str) -> None:
     first, so a write that failed part-way (a full disk) would lose the
     rules already there (review of PR 2510).
     """
-    temp_file = ignore_file.with_name(f"{ignore_file.name}{cs.TMP_EXTENSION}")
+    # Created exclusively under a fresh name: a fixed name could already be
+    # a link the repository ships, and writing through it would overwrite
+    # whatever it points at (review of PR 2510, CWE-377).
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f"{ignore_file.name}.", suffix=cs.TMP_EXTENSION, dir=ignore_file.parent
+    )
+    temp_file = Path(temp_name)
     try:
-        temp_file.write_text(content, encoding=cs.ENCODING_UTF8)
+        with os.fdopen(fd, "w", encoding=cs.ENCODING_UTF8) as handle:
+            handle.write(content)
+        # mkstemp makes the file 0600; keep the mode a checkout file has.
+        mode = (
+            stat.S_IMODE(ignore_file.stat().st_mode)
+            if ignore_file.is_file()
+            else cs.CGRIGNORE_FILE_MODE
+        )
+        temp_file.chmod(mode)
         os.replace(temp_file, ignore_file)
     except OSError:
         temp_file.unlink(missing_ok=True)

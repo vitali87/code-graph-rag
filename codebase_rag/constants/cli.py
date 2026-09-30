@@ -538,6 +538,8 @@ INTERACTIVE_KEEP_NONE = "none"
 # Saving keeps from interactive setup (issue #2448).
 CGRIGNORE_UNIGNORE_PREFIX = "!"
 CGRIGNORE_KEEPS_HEADER = "# Kept by `cgr --interactive-setup`"
+# The mode of a `.cgrignore` the save creates: an ordinary checkout file.
+CGRIGNORE_FILE_MODE = 0o644
 INTERACTIVE_PROMPT_SAVE_KEEPS = (
     "Save {lines} to .cgrignore so every later sync keeps them too?"
 )
