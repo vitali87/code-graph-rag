@@ -3877,11 +3877,19 @@ class GraphUpdater:
         modified file's GAINED definitions can be told from the ones it had.
         A failed read marks every file fully known: nothing extra is offered."""
         known: dict[str, set[str]] = {}
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        # The query excludes rows a longer project (`proj.sub`) owns, the
+        # scoping `structural_delta.snapshot` passes too; without the list
+        # Memgraph rejects the read on every incremental sync (issue #2392).
+        longer_project_prefixes = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
         try:
             rows = self._graph_rows(
                 cq.CYPHER_DELTA_DEFINITIONS,
                 {
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_LONGER_PROJECT_PREFIXES: longer_project_prefixes,
                     cs.CYPHER_PARAM_PATHS: keys,
                 },
             )
