@@ -542,6 +542,20 @@ INTERACTIVE_PROMPT_SAVE_KEEPS = (
     "Save {lines} to .cgrignore so every later sync keeps them too?"
 )
 INTERACTIVE_MSG_KEEPS_SAVED = "Saved {lines} to {file}; every later sync keeps them."
+# A kept path `.cgrignore` itself excludes: its excludes beat its `!` lines,
+# so keeping it means removing that line (review of PR 2510).
+INTERACTIVE_PROMPT_SAVE_KEEPS_LIFTING = (
+    "Save {lines} to .cgrignore and remove its {lifted} exclusion, so every "
+    "later sync keeps them too?"
+)
+INTERACTIVE_MSG_KEEPS_SAVED_LIFTING = (
+    "Saved {lines} to {file} and removed its {lifted} exclusion; every later "
+    "sync keeps them."
+)
+INTERACTIVE_MSG_KEEPS_STILL_EXCLUDED = (
+    "{lifted} is still excluded: {file} excludes it, and its exclusions win "
+    "over any keep. To keep it, remove that line from {file}."
+)
 INTERACTIVE_MSG_KEEPS_THIS_RUN = (
     "Kept for this run only: the next sync without --interactive-setup excludes "
     "them again. To keep them, add {lines} to {file}."

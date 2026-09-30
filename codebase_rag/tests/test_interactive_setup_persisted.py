@@ -10,14 +10,18 @@ says plainly when they apply to this run only.
 
 from __future__ import annotations
 
+import errno
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
+from codebase_rag.cli import app
 from codebase_rag.config import CGRIGNORE_FILENAME, load_ignore_patterns
 from codebase_rag.main import prompt_for_unignored_directories
+from codebase_rag.utils.path_utils import should_skip_path
 
 
 @pytest.fixture
@@ -101,3 +105,118 @@ def test_a_choice_already_saved_is_not_asked_again(
     assert "bin" in kept
     confirm_ask.assert_not_called()
     assert (repo / CGRIGNORE_FILENAME).read_text() == "!bin\n"
+
+
+def _skipped_by_a_later_sync(repo: Path, rel_path: str) -> bool:
+    # The skip decision an ordinary sync makes from the saved files alone.
+    patterns = load_ignore_patterns(repo)
+    return should_skip_path(
+        repo / rel_path,
+        repo,
+        patterns.exclude or None,
+        patterns.unignore or None,
+        is_file=True,
+    )
+
+
+@pytest.fixture
+def vendored(repo: Path) -> Path:
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "lib.py").write_text("def vendored():\n    pass\n")
+    (repo / "build").mkdir()
+    (repo / "build" / "out.py").write_text("X = 1\n")
+    (repo / CGRIGNORE_FILENAME).write_text("# third-party\nvendor\nbuild\n")
+    return repo
+
+
+def test_keeping_a_cgrignore_exclusion_lifts_it_for_later_syncs(
+    vendored: Path, console: MagicMock
+) -> None:
+    # Review of PR 2510: a .cgrignore exclude beats any `!` line, so saving
+    # `!vendor` beside `vendor` left the next sync excluding it anyway while
+    # the prompt said every later sync keeps it. The exclude line goes.
+    assert _skipped_by_a_later_sync(vendored, "vendor/lib.py")
+
+    _keep(vendored, "all", confirm=True)
+
+    assert not _skipped_by_a_later_sync(vendored, "vendor/lib.py")
+    assert not _skipped_by_a_later_sync(vendored, "build/out.py")
+    lines = (vendored / CGRIGNORE_FILENAME).read_text().splitlines()
+    assert "vendor" not in lines and "build" not in lines
+    assert lines[0] == "# third-party"
+
+
+def test_an_exclusion_that_is_not_kept_stays(
+    vendored: Path, console: MagicMock
+) -> None:
+    # Negative: only the kept exclusion is lifted. Rows: bin, build, vendor.
+    _keep(vendored, "3", confirm=True)
+
+    assert not _skipped_by_a_later_sync(vendored, "vendor/lib.py")
+    assert _skipped_by_a_later_sync(vendored, "build/out.py")
+    assert "build" in (vendored / CGRIGNORE_FILENAME).read_text().splitlines()
+
+
+def test_declining_to_lift_an_exclusion_says_it_stays_excluded(
+    vendored: Path, console: MagicMock
+) -> None:
+    before = (vendored / CGRIGNORE_FILENAME).read_text()
+
+    _keep(vendored, "3", confirm=False)
+
+    assert (vendored / CGRIGNORE_FILENAME).read_text() == before
+    assert _skipped_by_a_later_sync(vendored, "vendor/lib.py")
+    printed = _printed(console)
+    assert "vendor" in printed and "still excluded" in printed
+
+
+def test_this_run_honours_a_lifted_exclusion(
+    vendored: Path, console: MagicMock
+) -> None:
+    # The run that saved the choice keeps the directory too, not only the
+    # next one.
+    with (
+        patch("codebase_rag.cli.connect_memgraph") as connect,
+        patch("codebase_rag.graph_updater.GraphUpdater") as updater,
+        patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
+        patch("codebase_rag.main.Prompt.ask", return_value="3"),
+        patch("rich.prompt.Confirm.ask", return_value=True),
+    ):
+        connect.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        connect.return_value.__exit__ = MagicMock(return_value=False)
+        result = CliRunner().invoke(
+            app,
+            [
+                "start",
+                "--update-graph",
+                "--interactive-setup",
+                "--repo-path",
+                str(vendored),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    excluded = updater.call_args.kwargs["exclude_paths"] or frozenset()
+    assert "vendor" not in excluded and "build" in excluded
+
+
+def test_a_failed_write_leaves_the_existing_rules_intact(
+    vendored: Path, console: MagicMock
+) -> None:
+    # Review of PR 2510: writing .cgrignore in place truncated it first, so a
+    # write that failed part-way (a full disk) lost the existing rules.
+    before = (vendored / CGRIGNORE_FILENAME).read_text()
+    real_write_text = Path.write_text
+
+    def disk_fills(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        real_write_text(self, "", encoding="utf-8")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    with patch.object(Path, "write_text", disk_fills):
+        _keep(vendored, "3", confirm=True)
+
+    assert (vendored / CGRIGNORE_FILENAME).read_text() == before
+    assert sorted(p.name for p in vendored.iterdir() if p.is_file()) == [
+        CGRIGNORE_FILENAME
+    ]
+    assert "Could not write" in _printed(console)

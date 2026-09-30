@@ -1973,34 +1973,46 @@ def prompt_for_unignored_directories(
             selected.update(groups[root])
         kept = frozenset(selected)
 
-    _offer_to_save_keeps(repo_path, kept - cgrignore.unignore)
+    # A path both excluded and unignored in `.cgrignore` is still excluded
+    # (its excludes win), so it counts as new.
+    _offer_to_save_keeps(
+        repo_path, kept - (cgrignore.unignore - cgrignore.exclude), cgrignore.exclude
+    )
     return kept | cgrignore.unignore
 
 
-def _offer_to_save_keeps(repo_path: Path, new_keeps: frozenset[str]) -> None:
+def _offer_to_save_keeps(
+    repo_path: Path, new_keeps: frozenset[str], cgrignore_excludes: frozenset[str]
+) -> None:
     """Offer to save new keeps to `.cgrignore` so later syncs keep them too.
 
     Otherwise a choice made here holds for this run only: the next ordinary
     sync reads the exclusions from `.cgrignore` alone and removes the kept
-    directories from the graph again (#2448).
+    directories from the graph again (#2448). A kept path that `.cgrignore`
+    itself excludes needs that line removed, not a `!` line beside it:
+    `.cgrignore` excludes beat its `!` lines (review of PR 2510).
     """
     if not new_keeps:
         return
     lines = [f"{cs.CGRIGNORE_UNIGNORE_PREFIX}{path}" for path in sorted(new_keeps)]
     listing = cs.SEPARATOR_COMMA_SPACE.join(lines)
-    ignore_file = repo_path / CGRIGNORE_FILENAME
-    if not Confirm.ask(
-        style(cs.INTERACTIVE_PROMPT_SAVE_KEEPS.format(lines=listing), cs.Color.CYAN),
-        default=True,
-    ):
-        app_context.console.print(
-            style(
-                cs.INTERACTIVE_MSG_KEEPS_THIS_RUN.format(
-                    lines=listing, file=CGRIGNORE_FILENAME
-                ),
-                cs.Color.YELLOW,
-            )
+    lifted = sorted(new_keeps & cgrignore_excludes)
+    lifted_listing = cs.SEPARATOR_COMMA_SPACE.join(lifted)
+    prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS.format(lines=listing)
+    if lifted:
+        prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS_LIFTING.format(
+            lines=listing, lifted=lifted_listing
         )
+    ignore_file = repo_path / CGRIGNORE_FILENAME
+    if not Confirm.ask(style(prompt, cs.Color.CYAN), default=True):
+        declined = cs.INTERACTIVE_MSG_KEEPS_THIS_RUN.format(
+            lines=listing, file=CGRIGNORE_FILENAME
+        )
+        if lifted:
+            declined = cs.INTERACTIVE_MSG_KEEPS_STILL_EXCLUDED.format(
+                lifted=lifted_listing, file=CGRIGNORE_FILENAME
+            )
+        app_context.console.print(style(declined, cs.Color.YELLOW))
         return
     try:
         existing = (
@@ -2008,11 +2020,14 @@ def _offer_to_save_keeps(repo_path: Path, new_keeps: frozenset[str]) -> None:
             if ignore_file.is_file()
             else ""
         )
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        ignore_file.write_text(
-            existing + "\n".join([cs.CGRIGNORE_KEEPS_HEADER, *lines]) + "\n",
-            encoding=cs.ENCODING_UTF8,
+        kept_lines = [
+            line for line in existing.splitlines() if line.strip() not in lifted
+        ]
+        _replace_ignore_file(
+            ignore_file,
+            "".join(
+                f"{line}\n" for line in [*kept_lines, cs.CGRIGNORE_KEEPS_HEADER, *lines]
+            ),
         )
     except OSError as e:
         app_context.console.print(
@@ -2024,14 +2039,30 @@ def _offer_to_save_keeps(repo_path: Path, new_keeps: frozenset[str]) -> None:
             )
         )
         return
-    app_context.console.print(
-        style(
-            cs.INTERACTIVE_MSG_KEEPS_SAVED.format(
-                lines=listing, file=CGRIGNORE_FILENAME
-            ),
-            cs.Color.GREEN,
-        )
+    saved = cs.INTERACTIVE_MSG_KEEPS_SAVED.format(
+        lines=listing, file=CGRIGNORE_FILENAME
     )
+    if lifted:
+        saved = cs.INTERACTIVE_MSG_KEEPS_SAVED_LIFTING.format(
+            lines=listing, lifted=lifted_listing, file=CGRIGNORE_FILENAME
+        )
+    app_context.console.print(style(saved, cs.Color.GREEN))
+
+
+def _replace_ignore_file(ignore_file: Path, content: str) -> None:
+    """Replace `ignore_file` with `content`, or leave it as it was.
+
+    Written beside it and then moved over it: writing in place truncates
+    first, so a write that failed part-way (a full disk) would lose the
+    rules already there (review of PR 2510).
+    """
+    temp_file = ignore_file.with_name(f"{ignore_file.name}{cs.TMP_EXTENSION}")
+    try:
+        temp_file.write_text(content, encoding=cs.ENCODING_UTF8)
+        os.replace(temp_file, ignore_file)
+    except OSError:
+        temp_file.unlink(missing_ok=True)
+        raise
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:

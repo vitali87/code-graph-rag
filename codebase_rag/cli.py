@@ -641,12 +641,15 @@ def _run_graph_sync(
 
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo, exclude)
+        # Read again: a keep saved at the prompt may have removed a
+        # `.cgrignore` exclusion, and this run keeps it too (review of PR 2510).
+        cgrignore = load_ignore_patterns(repo)
     else:
         unignore_paths = cgrignore.unignore or None
+    exclude_paths = cli_excludes | cgrignore.exclude or None
 
     elapsed = time.monotonic()
     with connect_memgraph(batch_size) as ingestor:
@@ -996,13 +999,15 @@ def index(
 
     cgrignore = load_ignore_patterns(repo_to_index)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None = None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo_to_index, exclude)
+        # As in `start`: a saved keep may have lifted an exclusion.
+        cgrignore = load_ignore_patterns(repo_to_index)
     else:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
         unignore_paths = cgrignore.unignore or None
+    exclude_paths = cli_excludes | cgrignore.exclude or None
 
     try:
         indexed_source = source_state(Path(repo_to_index))
