@@ -9,6 +9,7 @@ member, whose files a workspace sync would index under two projects.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -107,7 +108,8 @@ def test_add_repo_refuses_a_path_overlapping_a_member(
     overlapping = backend / "pkg" if where == "inside" else backend.parent
     overlapping.mkdir(exist_ok=True)
 
-    with pytest.raises(WorkspaceError, match=str(backend)):
+    # A Windows path is full of backslashes, which a raw pattern reads as escapes.
+    with pytest.raises(WorkspaceError, match=re.escape(str(backend))):
         add_repo("shop", str(overlapping))
 
     assert len(load_workspace("shop").repos) == 1
