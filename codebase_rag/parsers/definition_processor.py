@@ -124,6 +124,10 @@ class DefinitionProcessor(
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
         self.interface_implementers: dict[str, set[str]] = {}
+        # The same pairs read back from the graph on an incremental run, which
+        # parses only the changed files (issue #2403). Kept apart and rebuilt
+        # on every rehydration so a pair the graph no longer holds leaves.
+        self.rehydrated_interface_implementers: dict[str, set[str]] = {}
         # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # member call `field_.method()` in a (possibly out-of-line, cross-file)
         # method resolves via the field's declared type. Populated at class

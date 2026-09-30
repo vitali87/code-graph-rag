@@ -125,6 +125,22 @@ class FunctionRegistryTrie:
         # whichever files this run happened to re-parse.
         bucket[1:] = sorted(bucket[1:], key=_variant_position)
 
+    def index_declared_name(self, qualified_name: QualifiedName, name: str) -> None:
+        """List a definition read back from the graph under its declared name.
+
+        Parsing indexes every definition by the name it was written with as
+        well as by its last qn segment. The two differ for a `@line` variant
+        (`Limb@6` is written `Limb`) and a signatured method (`m(String)` is
+        written `m`), so an incremental run that only inserted the qn left a
+        bare-name lookup short of a clean index's candidates: a unique match
+        where the clean index saw two, and a result that depended on which
+        files were re-parsed (issue #2403).
+        """
+        if self._simple_name_lookup is None or not name:
+            return
+        self._simple_name_lookup[name].add(qualified_name)
+        self._invalidate_ending_with_cache(name)
+
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])
 

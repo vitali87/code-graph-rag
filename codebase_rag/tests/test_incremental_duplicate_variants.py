@@ -16,6 +16,7 @@ be re-parsed.
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,37 @@ PY_SAME_FILE: dict[str, str] = {
     "pkg/util.py": PY_UTIL + "\n\ndef run():\n    return dumps(1)\n",
     "pkg/other.py": "def unrelated():\n    return 0\n",
 }
+
+# serde_json's `Limb`: one alias per pointer width, so the second registers as
+# `Limb@5`. A clean index cannot tell which one `Vec<Limb>` names and emits no
+# RETURNS edge for it.
+RUST_LIMB: dict[str, str] = {
+    "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\n',
+    "src/lib.rs": "mod lexical;\n",
+    "src/lexical/mod.rs": "mod algorithm;\nmod bignum;\nmod math;\n",
+    "src/lexical/math.rs": (
+        '#[cfg(target_pointer_width = "32")]\n'
+        "pub type Limb = u32;\n"
+        "\n"
+        '#[cfg(target_pointer_width = "64")]\n'
+        "pub type Limb = u64;\n"
+    ),
+    "src/lexical/bignum.rs": (
+        "use super::math::*;\n"
+        "\n"
+        "pub(crate) struct Bigint {\n"
+        "    pub(crate) data: Vec<Limb>,\n"
+        "}\n"
+        "\n"
+        "impl Bigint {\n"
+        "    pub(crate) fn data(&self) -> &Vec<Limb> {\n"
+        "        &self.data\n"
+        "    }\n"
+        "}\n"
+    ),
+    "src/lexical/algorithm.rs": "pub(crate) fn run() -> u32 {\n    0\n}\n",
+}
+LIMB_QN = f"{PROJECT}.src.lexical.math.Limb"
 
 CallEdge = tuple[str, str, str]
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
@@ -230,6 +262,58 @@ def test_variants_read_back_from_the_graph_list_in_line_order(
         f"{JAVA_TARGET_QN}@11",
         f"{JAVA_TARGET_QN}@17",
     ]
+
+
+def test_a_type_named_twice_stays_ambiguous_after_a_sync(temp_repo: Path) -> None:
+    # The type-edge resolver matches a bare name against the declared-name
+    # index. Read back from the graph, `Limb@5` was indexed only as `Limb@5`,
+    # so `Limb` looked unique and the unchanged `Bigint.data` gained a RETURNS
+    # edge a clean index never emits.
+    root = temp_repo / PROJECT
+    store, _clean_calls, clean, updater = _clean_then_incremental(
+        root, RUST_LIMB, "src/lexical/algorithm.rs", "//"
+    )
+    returns = {
+        (edge[1], edge[4])
+        for edge in clean[1]
+        if edge[2] == cs.RelationshipType.RETURNS.value
+    }
+    assert not any(target.startswith(LIMB_QN) for _source, target in returns)
+    assert {(label, qn) for label, qn in clean[0] if qn.startswith(LIMB_QN)} == {
+        ("Type", LIMB_QN),
+        ("Type", f"{LIMB_QN}@5"),
+    }
+
+    assert _snapshot(store) == clean
+    assert sorted(updater.function_registry.find_ending_with("Limb")) == [
+        LIMB_QN,
+        f"{LIMB_QN}@5",
+    ]
+
+
+class TestIndexDeclaredName:
+    def test_a_variant_is_found_by_the_name_it_was_written_with(self) -> None:
+        registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
+        registry["p.Limb"] = NodeType.TYPE
+        registry["p.Limb@6"] = NodeType.TYPE
+        # Warm the cache first: the index change must invalidate it.
+        assert registry.find_ending_with("Limb") == ["p.Limb"]
+        registry.index_declared_name("p.Limb@6", "Limb")
+        assert registry.find_ending_with("Limb") == ["p.Limb", "p.Limb@6"]
+
+    def test_a_signatured_method_is_found_by_its_bare_name(self) -> None:
+        registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
+        registry["p.C.m(String)"] = NodeType.METHOD
+        registry.index_declared_name("p.C.m(String)", "m")
+        assert registry.find_ending_with("m") == ["p.C.m(String)"]
+        assert registry.find_ending_with("m(String)") == ["p.C.m(String)"]
+
+    def test_an_empty_name_indexes_nothing(self) -> None:
+        lookup: defaultdict[str, set[str]] = defaultdict(set)
+        registry = FunctionRegistryTrie(simple_name_lookup=lookup)
+        registry["p.f"] = NodeType.FUNCTION
+        registry.index_declared_name("p.f", "")
+        assert "" not in lookup
 
 
 class TestRestoreVariant:
