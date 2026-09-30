@@ -426,6 +426,7 @@ class Renamer:
         params = {
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
+            cs.KEY_LABEL: definition["label"],
         }
         # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
         # rows too: a site in a project whose name extends this one must not

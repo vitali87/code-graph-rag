@@ -1431,7 +1431,10 @@ def ingest_method(
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     if language != cs.SupportedLanguage.CPP:
         method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
+            method_qn,
+            method_start_line,
+            method_start_col,
+            kind=NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None,
         )
 
     decorators = []
