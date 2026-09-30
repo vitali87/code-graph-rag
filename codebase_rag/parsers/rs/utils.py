@@ -498,6 +498,30 @@ def block_item_at(
     return best[1] if best else None
 
 
+def literal_receiver_types(receiver: str) -> frozenset[str] | None:
+    """The primitive types a literal method-call receiver can have.
+
+    None when `receiver` is not a literal at all. A literal's type is a
+    primitive (or an array, which yields the empty set), so only an impl
+    block on that primitive can hold the method it calls (issue #2543).
+    """
+    if cs.RS_BYTE_STRING_LITERAL.match(receiver):
+        return frozenset()
+    if cs.RS_STRING_LITERAL.match(receiver):
+        return frozenset({cs.RS_STR_TYPE})
+    if receiver.startswith(cs.RS_BYTE_LITERAL_PREFIX):
+        return frozenset({cs.RS_BYTE_TYPE})
+    if receiver.startswith(cs.RS_CHAR_LITERAL_PREFIX):
+        return frozenset({cs.RS_CHAR_TYPE})
+    if receiver in cs.RS_BOOL_LITERALS:
+        return frozenset({cs.RS_BOOL_TYPE})
+    if receiver[:1].isdigit():
+        if suffix := cs.RS_NUMERIC_SUFFIX.search(receiver):
+            return frozenset({suffix.group()})
+        return cs.RS_NUMERIC_TYPES
+    return None
+
+
 def is_body_local(node: Node) -> bool:
     """True when *node* sits directly in a function body or an initializer.
 

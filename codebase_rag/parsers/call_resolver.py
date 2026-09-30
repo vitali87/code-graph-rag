@@ -53,6 +53,12 @@ _CONSTRUCTIBLE_NODE_TYPES = frozenset(
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
+# Registry kinds a Rust `Type::f()` qualifier may name and read methods off:
+# the type alias of the receiver set is missing because its target, which
+# owns the methods, is not recorded.
+_RS_OWNER_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.UNION, NodeType.INTERFACE}
+)
 # Sets of languages whose sources call each other directly, so a candidate
 # written in a sibling language is a legitimate target for the simple-name
 # fallback: the JS family compiles to one runtime, C++ calls C, and Scala
@@ -75,6 +81,46 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+
+
+def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
+    """A Rust `Type::f` call's object path and item, or None for any other shape.
+
+    Turbofish arguments (`Vec::<u8>::new`) drop out of the path. A dotted
+    receiver is a method call, and a `<T as Trait>::f` qualified path does
+    not name its owner in its first segment, so neither qualifies.
+    """
+    name = call.call_name
+    if (
+        call.language != cs.SupportedLanguage.RUST
+        or cs.SEPARATOR_DOUBLE_COLON not in name
+        or cs.SEPARATOR_DOT in name
+        or name.startswith(cs.CHAR_ANGLE_OPEN)
+    ):
+        return None
+    segments = [
+        segment
+        for segment in _drop_angle_groups(name).split(cs.SEPARATOR_DOUBLE_COLON)
+        if segment
+    ]
+    if len(segments) < 2:
+        return None
+    return segments[:-1], segments[-1]
+
+
+def _drop_angle_groups(text: str) -> str:
+    if cs.CHAR_ANGLE_OPEN not in text:
+        return text
+    kept: list[str] = []
+    depth = 0
+    for char in text:
+        if char == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            kept.append(char)
+    return "".join(kept)
 
 
 def _split_receiver_chain(expr: str) -> list[str] | None:
@@ -1307,6 +1353,9 @@ class CallResolver:
         handled, result = self._resolve_rust_prefixed_or_local(call, cache_key)
         if handled:
             return result
+        handled, result = self._resolve_rust_external_path(call, cache_key)
+        if handled:
+            return result
         handled, result = self._resolve_typed_receiver_or_csharp(call)
         if handled:
             return result
@@ -1317,6 +1366,9 @@ class CallResolver:
         if handled:
             return result
         handled, result = self._resolve_untyped_member_or_unresolvable(call, cache_key)
+        if handled:
+            return result
+        handled, result = self._resolve_rust_named_owner(call, cache_key)
         if handled:
             return result
 
@@ -1735,6 +1787,221 @@ class CallResolver:
             if import_mapping.get(scope, {}).get(call_name) == cs.RUST_UNRESOLVABLE_QN:
                 return True
         return False
+
+    def _resolve_rust_external_path(
+        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # A Rust path whose head binds an item outside the project names
+        # that crate's associated function: `String::new()`,
+        # `Default::default()`, `std::mem::take(..)`, `fmt::Debug::fmt(..)`
+        # under `use std::fmt`, `tokio::sync::Mutex::new(..)` with tokio in
+        # the manifest. The graph holds none of them, and every probe below
+        # answers by name alone: the type lookup with an out-of-scope
+        # first-party `String`, the same-module guess with the file's own
+        # `fn new`, the trie with any type's `new` (issue #2543). Only an
+        # impl block ON the external type (`impl From<Foo> for u8`) can
+        # hold a first-party target, so the path decides here.
+        path = _rust_assoc_path(call)
+        if path is None:
+            return False, None
+        object_path, item = path
+        if not self._rust_head_is_external(
+            object_path[0], call.module_qn, call.caller_qn
+        ):
+            return False, None
+        result = self._rust_owned_method(
+            item, call, frozenset(), frozenset({object_path[-1]})
+        )
+        self._remember_cacheable(cache_key, result)
+        return True, result
+
+    def _resolve_rust_named_owner(
+        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # The last stop before the bare-name trie for a Rust call that names
+        # the type owning its target: `Type::f()` or `Self::f()` on a
+        # first-party type, or a method on a literal, whose type is a
+        # primitive. Every precise probe has missed, so the target is a
+        # method the graph cannot see (a derive's `Config::default()`,
+        # clap's `Cli::parse()`) unless an impl block elsewhere or a trait
+        # default supplies it; the trie would bind whatever type's
+        # same-named method sat closest (issue #2543). A type alias, a
+        # generic parameter or an external type the probes above did not
+        # place is unknown rather than known, and keeps the trie.
+        if path := _rust_assoc_path(call):
+            object_path, item = path
+            owners = self._rust_qualifier_types(
+                object_path, call.module_qn, call.class_context
+            )
+            if owners is None:
+                return False, None
+            names = frozenset(qn.rpartition(cs.SEPARATOR_DOT)[2] for qn in owners)
+            result = self._rust_owned_method(item, call, owners, names)
+            # `Self` means the caller's impl target, so the answer is the
+            # caller's, never the module's.
+            if object_path != [cs.RS_SELF_TYPE]:
+                self._remember_cacheable(cache_key, result)
+            return True, result
+        if call.language != cs.SupportedLanguage.RUST:
+            return False, None
+        receiver, _sep, item = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not receiver or (types := rs_utils.literal_receiver_types(receiver)) is None:
+            return False, None
+        result = self._rust_owned_method(item, call, frozenset(), types)
+        self._remember_cacheable(cache_key, result)
+        return True, result
+
+    def _rust_qualifier_types(
+        self, object_path: list[str], module_qn: str, class_context: str | None
+    ) -> frozenset[str] | None:
+        """The first-party type qns a Rust `Type::` qualifier names, or None.
+
+        `Self` is the caller's impl target; when that impl block sits away
+        from its type's definition its qn is unregistered, so the type it
+        names is added. Any other qualifier counts only when it resolves to
+        a registered struct, enum, union or trait: a type alias's target is
+        not recorded, so its methods are not knowable from its qn.
+        """
+        qualifier = object_path[-1]
+        owners: set[str] = set()
+        if object_path == [cs.RS_SELF_TYPE]:
+            if not class_context:
+                return None
+            owners.add(class_context)
+            if class_context in self.function_registry:
+                return frozenset(owners)
+            qualifier = class_context.rpartition(cs.SEPARATOR_DOT)[2]
+        type_qn = self._resolve_class_name(qualifier, module_qn)
+        if type_qn is not None and self.function_registry.get(type_qn) in (
+            _RS_OWNER_NODE_TYPES
+        ):
+            owners.add(type_qn)
+        return frozenset(owners) or None
+
+    def _rust_owned_method(
+        self,
+        item: str,
+        call: _CallSite,
+        owners: frozenset[str],
+        names: frozenset[str],
+    ) -> tuple[str, str] | None:
+        """The method `item` of the Rust type a call names, or None.
+
+        A candidate counts when its owner is one of `owners`, an impl block
+        on a type called one of `names` written in another module (which
+        registers under an unregistered owner qn of that name), or a trait
+        either of those implements, for its default method. Free functions
+        never count: a path through a type or a method call names neither.
+        """
+        candidates = [
+            qn
+            for qn in self._nameable_candidates(
+                self.function_registry.find_ending_with(item),
+                call.module_qn,
+                call.call_point,
+            )
+            if self.function_registry[qn] == cs.NodeLabel.METHOD.value
+            and self._rust_method_owner_matches(
+                qn.rpartition(cs.SEPARATOR_DOT)[0], owners, names
+            )
+        ]
+        if not candidates:
+            logger.debug(ls.CALL_RUST_OWNER_UNRESOLVED, call_name=call.call_name)
+            return None
+        best = self._best_trie_candidate(candidates, call.module_qn)
+        self.last_resolution = (
+            cs.EdgeResolution.EXACT
+            if best.rpartition(cs.SEPARATOR_DOT)[0] in owners
+            else cs.EdgeResolution.HEURISTIC
+        )
+        return self.function_registry[best], best
+
+    def _rust_method_owner_matches(
+        self, owner: str, owners: frozenset[str], names: frozenset[str]
+    ) -> bool:
+        if self._rust_owner_is(owner, owners, names):
+            return True
+        return self.function_registry.get(owner) == NodeType.INTERFACE and any(
+            self._rust_owner_is(implementer, owners, names)
+            for implementer in self.interface_implementers.get(owner, ())
+        )
+
+    def _rust_owner_is(
+        self, owner: str, owners: frozenset[str], names: frozenset[str]
+    ) -> bool:
+        return owner in owners or (
+            owner not in self.function_registry
+            and owner.rpartition(cs.SEPARATOR_DOT)[2] in names
+        )
+
+    def _rust_head_is_external(
+        self, head: str, module_qn: str, caller_qn: str | None
+    ) -> bool:
+        """Whether a Rust path's first segment binds an item outside the project.
+
+        A binding in scope decides by where it points: a first-party item or
+        a `use` of a local module says no, a `use` from a std crate or a
+        manifest-proven external dependency says yes. Unbound, a prelude or
+        primitive name is the language's own, and any other head names a
+        crate, external on the same evidence.
+        """
+        binding = self._rust_head_binding(head, module_qn, caller_qn)
+        path = head if binding is None else binding
+        if self._rust_local_qn(path, module_qn) is not None:
+            return False
+        if binding is None and head in cs.RS_PRELUDE_NAMES:
+            return True
+        crate = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        return crate in cs.RS_STDLIB_CRATES or (
+            not self.import_processor.rust_head_is_repo_crate(crate)
+            and self.import_processor.rust_head_is_external_dep(crate, module_qn)
+        )
+
+    def _rust_head_binding(
+        self, head: str, module_qn: str, caller_qn: str | None
+    ) -> str | None:
+        """What binds a Rust path head at a call site, innermost scope first.
+
+        A `use` target (raw `::` path when external), or the qn of the
+        first-party type a scope defines or glob-imports; None when nothing
+        in scope binds the name. A path head is a type, trait or module,
+        never a function, so a same-named function or method (`fmt` inside
+        `impl Debug`) is no binding; a module holds no registry entry and
+        is left to the caller's module check.
+        """
+        if self_module := self._rust_self_module_head(head, module_qn, caller_qn):
+            return self_module[0]
+        if caller_qn and (
+            target := self.import_processor.rust_fn_scope_imports.get(
+                caller_qn, {}
+            ).get(head)
+        ):
+            return target
+        import_mapping = self.import_processor.import_mapping
+        for scope in (*self._rust_enclosing_scopes(module_qn, caller_qn), module_qn):
+            local = f"{scope}{cs.SEPARATOR_DOT}{head}"
+            if self.function_registry.get(local) in cs.RS_TYPE_SCOPE_LABELS:
+                return local
+            scope_map = import_mapping.get(scope, {})
+            if (target := scope_map.get(head)) is not None:
+                return target
+            if glob_hit := self._rust_glob_type(scope_map, scope, head):
+                return glob_hit
+        return None
+
+    def _rust_glob_type(
+        self, scope_map: dict[str, str], scope: str, name: str
+    ) -> str | None:
+        for key, value in scope_map.items():
+            if not key.startswith(cs.RS_WILDCARD_PREFIX):
+                continue
+            base = self._rust_local_qn(value, scope)
+            if base is None:
+                continue
+            hit = self._follow_rust_scope_target(f"{base}{cs.SEPARATOR_DOT}{name}")
+            if hit is not None and hit[0] in cs.RS_TYPE_SCOPE_LABELS:
+                return hit[1]
+        return None
 
     def _resolve_dart_external_base_arg_member(
         self,
@@ -3228,6 +3495,11 @@ class CallResolver:
             and separator == cs.SEPARATOR_DOT
             and object_name not in cs.JS_MODULE_RECEIVERS
         ):
+            return None
+        # Rust has no such receiver: `Type::f()` names an associated item of
+        # Type and `recv.f()` a method, never the caller module's free `f`
+        # (`String::new()` bound the file's own `fn new`, issue #2543).
+        if language == cs.SupportedLanguage.RUST:
             return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
         if resolved is not None:
