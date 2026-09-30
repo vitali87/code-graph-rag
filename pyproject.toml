@@ -94,6 +94,10 @@ codebase_rag = [
     "analyzers/ast_grep_rules/*/*.yaml",
     "queries/highlights/*.scm",
 ]
+# The provenance manifest hashes this file to stamp each index with its codec
+# schema; without it every installed build writes a null hash and
+# `cgr diff-index` refuses its indexes (issue #2399).
+codec = ["schema.proto"]
 
 [project.optional-dependencies]
 test = [
