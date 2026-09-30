@@ -313,7 +313,8 @@ def test_a_link_under_a_state_file_name_is_neither_followed_nor_moved(
     assert outside.read_text() == "not cgr's"
     assert (repo / cs.HASH_CACHE_FILENAME).is_symlink()
     cache = state_dir(repo) / cs.HASH_CACHE_FILENAME
-    assert cache.is_file() and not cache.is_symlink()
+    assert cache.is_file()
+    assert not cache.is_symlink()
 
 
 def test_other_files_in_the_tree_are_left_alone(
