@@ -49,6 +49,11 @@ class _OrderRecorder(_StatefulIngestor):
 
 @pytest.fixture
 def docs_first_repo(tmp_path: Path) -> Path:
+    # Links come from the Markdown parser; the flush tests below need none.
+    pytest.importorskip(
+        "tree_sitter_markdown",
+        reason="markdown grammar ships in the treesitter-full extra",
+    )
     # The guide sorts, and so parses, before every file it links to.
     repo = tmp_path / "repo"
     (repo / "zz" / "deep").mkdir(parents=True)
