@@ -124,11 +124,13 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    python_stub_has_implementation,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
     walk_eligible_files,
 )
+from .utils.source_encoding import grammar_bytes
 from .utils.source_extraction import extract_source_with_fallback
 
 
@@ -3863,7 +3865,9 @@ class GraphUpdater:
         if parser is None or query is None:
             return set()
         try:
-            tree = parser.parse(file_bytes)
+            tree = parser.parse(
+                grammar_bytes(file_bytes, language, self.repo_path / key)
+            )
             captures = sorted_captures(QueryCursor(query), tree.root_node)
         except Exception:
             return set()
@@ -4183,7 +4187,7 @@ class GraphUpdater:
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
             relative_path.parent.parts
-            if file_path.name == cs.INIT_PY
+            if file_path.name in cs.PY_PACKAGE_INIT_FILES
             else relative_path.with_suffix("").parts
         )
         path_derived_qn = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
@@ -6087,14 +6091,9 @@ class GraphUpdater:
     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
         result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
         for filepath, _file_key, _is_new, file_bytes in changed_entries:
-            lang_config = get_language_spec(filepath.suffix)
-            if not (
-                lang_config
-                and isinstance(lang_config.language, cs.SupportedLanguage)
-                and lang_config.language in self.parsers
-            ):
+            language = self._tree_sitter_language(filepath)
+            if language is None:
                 continue
-            language = lang_config.language
             # `parsers` and `queries` arrive separately; a language one lacks
             # is left to the per-file path rather than aborting the run.
             language_queries = self.queries.get(language)
@@ -6103,7 +6102,9 @@ class GraphUpdater:
             parser = language_queries.get(cs.KEY_PARSER)
             if parser is None:
                 continue
-            tree = parse_with_preproc_recovery(parser, file_bytes, language)
+            tree = parse_with_preproc_recovery(
+                parser, grammar_bytes(file_bytes, language, filepath), language
+            )
             root_node = tree.root_node
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
@@ -6135,15 +6136,10 @@ class GraphUpdater:
                 )
                 return
 
-        lang_config = get_language_spec(filepath.suffix)
-        if (
-            lang_config
-            and isinstance(lang_config.language, cs.SupportedLanguage)
-            and lang_config.language in self.parsers
-        ):
+        if (language := self._tree_sitter_language(filepath)) is not None:
             result = self.factory.definition_processor.process_file(
                 filepath,
-                lang_config.language,
+                language,
                 self.queries,
                 self.factory.structure_processor.structural_elements,
                 source_bytes=file_bytes,
@@ -6159,6 +6155,29 @@ class GraphUpdater:
             self.process_with_secondary_tier(filepath)
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
+
+    def _tree_sitter_language(self, filepath: Path) -> cs.SupportedLanguage | None:
+        """The loaded grammar that defines `filepath`'s module, if any.
+
+        None for a `.pyi` stub whose implementation is indexed: it shares that
+        module's qn, and parsing it would claim or twin the Module. It still
+        falls through to the generic File node (issue #2445).
+        """
+        lang_config = get_language_spec(filepath.suffix)
+        if not (
+            lang_config
+            and isinstance(lang_config.language, cs.SupportedLanguage)
+            and lang_config.language in self.parsers
+        ):
+            return None
+        if python_stub_has_implementation(
+            filepath,
+            self.repo_path,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        ):
+            return None
+        return lang_config.language
 
     def process_with_secondary_tier(self, filepath: Path) -> bool:
         """Parse a file with whichever non-tree-sitter tier claims it.
@@ -6207,7 +6226,11 @@ class GraphUpdater:
         except OSError as e:
             logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None
-        root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
+        # Transcoded exactly as the first parse was, or a declared-encoding
+        # file's call pass would see names its definitions do not carry.
+        root_node = parse_with_preproc_recovery(
+            parser, grammar_bytes(file_bytes, language, file_path), language
+        ).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 

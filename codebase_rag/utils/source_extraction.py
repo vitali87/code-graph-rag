@@ -6,7 +6,8 @@ from pathlib import Path
 from loguru import logger
 
 from .. import logs as ls
-from ..constants import ENCODING_UTF8
+from ..constants import ENCODING_UTF8, PY_EXTENSIONS
+from .source_encoding import decode_python_source
 
 
 def extract_source_lines(
@@ -22,7 +23,14 @@ def extract_source_lines(
 
     try:
         raw_bytes = file_path.read_bytes()
-        text = raw_bytes.decode(encoding)
+        # The indexer parsed a Python source in the encoding it declares, and
+        # the lines it recorded are lines of that text (issue #2445).
+        declared = (
+            decode_python_source(raw_bytes, file_path)
+            if file_path.suffix in PY_EXTENSIONS
+            else None
+        )
+        text = raw_bytes.decode(encoding) if declared is None else declared
         lines = text.splitlines(keepends=True)
 
         if not lines:
