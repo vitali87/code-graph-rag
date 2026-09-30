@@ -36,6 +36,7 @@ from rich.table import Table
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -72,9 +73,9 @@ def cgr_flow_triples(language_dir: Path) -> set[FlowTriple]:
     parsers, queries = load_parsers()
     ingestor = MagicMock()
     with tempfile.TemporaryDirectory() as scratch:
-        # Index a COPY: GraphUpdater writes cache artifacts (.cgr-hash-cache,
-        # parser fingerprint) into the repo root, which must never dirty the
-        # committed corpus fixtures.
+        # Index a COPY, so nothing a run does can touch the committed corpus
+        # fixtures. Its sync state lives under CGR_HOME, keyed by this
+        # throwaway path, so it is dropped with the copy.
         run_dir = Path(scratch) / language_dir.name
         shutil.copytree(language_dir, run_dir)
         GraphUpdater(
@@ -84,6 +85,7 @@ def cgr_flow_triples(language_dir: Path) -> set[FlowTriple]:
             queries=queries,
             capture=resolve_capture([cs.CaptureGroup.IO.value]),
         ).run(force=True)
+        shutil.rmtree(state_dir(run_dir), ignore_errors=True)
     flows: set[FlowTriple] = set()
     for call in ingestor.ensure_relationship_batch.call_args_list:
         if str(call.args[1]) != cs.RelationshipType.FLOWS_TO.value:

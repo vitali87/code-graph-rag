@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -42,7 +43,7 @@ def test_a_run_rooted_at_a_deleted_file_raises(
     nothing; the caller could not tell that from a successful re-index.
     """
     _create_graph_updater(py_project, mock_ingestor).run()
-    before = (py_project / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+    before = state_file(py_project, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
     target = py_project / "module_a.py"
     target.unlink()
     assert not target.exists(), "fixture guard: the target must be gone"
@@ -52,7 +53,7 @@ def test_a_run_rooted_at_a_deleted_file_raises(
         updater.run()
 
     # Nothing was published for the run that never happened.
-    after = (py_project / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+    after = state_file(py_project, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
     assert after == before, "a run that indexed nothing rewrote the cache"
 
 

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -149,7 +150,7 @@ def test_adding_a_sibling_that_wins_the_bare_qn_renames_the_existing_one(
     assert bare_qn in _modules(_snapshot(store, root)), "alone, the header owns it"
     added = root / source
     added.write_text(fixture[source], encoding="utf-8")
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(added, (cache_mtime + 1, cache_mtime + 1))
     _index(store, root, language, force=False)
     after = _snapshot(store, root)

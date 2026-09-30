@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater, _load_exclusion_state
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import indexed_scope
@@ -70,7 +71,7 @@ def test_check_reads_every_projects_own_scope_after_both_indexed(root: Path) -> 
         None,
     )
     # The top level stays the last run's: the hash cache is that project's.
-    top = _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME)
+    top = _load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME))
     assert top is not None
     assert top["project"] == "project_b"
 
@@ -94,7 +95,7 @@ def test_an_in_sync_named_run_refreshes_an_unnamed_stamp(root: Path) -> None:
 def test_an_unchanged_in_sync_run_does_not_rewrite_the_stamp(root: Path) -> None:
     store = _StatefulIngestor()
     _updater(root, store, "project_a").run(force=True)
-    stamp = root / cs.EXCLUSION_STATE_FILENAME
+    stamp = state_file(root, cs.EXCLUSION_STATE_FILENAME)
     before = stamp.read_bytes()
     stamp.write_bytes(before)
     written_at = stamp.stat().st_mtime_ns
@@ -117,7 +118,7 @@ def test_a_single_file_run_does_not_publish_into_another_projects_cache(
     store = _StatefulIngestor()
     _updater(root, store, "project_a").run(force=True)
     _updater(root, store, "project_b").run(force=True)
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     before = json.loads(cache.read_text(encoding="utf-8"))
 
     target = root / "pkg" / "util.py"

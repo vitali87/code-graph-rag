@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -70,7 +71,7 @@ def test_an_unchanged_files_global_static_import_scopes_an_edited_caller(
     # Past the hash cache's mtime, so only App.cs re-parses (see
     # test_cpp_incremental_out_of_class_method._touch_after_cache).
     app = root / "App.cs"
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     app.write_text(app.read_text(encoding="utf-8") + "// touched\n")
     os.utime(app, (cache_mtime + 1, cache_mtime + 1))
     _index(store, root, force=False)

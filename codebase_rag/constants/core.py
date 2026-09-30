@@ -212,10 +212,17 @@ EDIT_MODE_MASK = 0o7777
 # Mode of the exclusively created temp sibling before the target's mode is
 # copied onto it: owner-only, so nothing reads staged bytes mid-write.
 EDIT_TEMP_FILE_MODE = 0o600
+# Every file cgr keeps about one checkout. They live in that checkout's
+# directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working
+# tree, and a copy an older cgr left in the tree is moved there, so a name
+# added here is kept out of the tree and migrated with no code of its own
+# (issue #2427).
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
         DIR_MTIMES_FILENAME,
+        EXPOSES_CLEANUP_PENDING_FILENAME,
+        PRUNE_PENDING_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
         EXCLUSION_STATE_FILENAME,
@@ -223,6 +230,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         EDIT_LOCK_FILENAME,
     }
 )
+CGR_STATE_DIRNAME = "state"
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50
 

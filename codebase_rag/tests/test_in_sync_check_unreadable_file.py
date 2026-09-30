@@ -13,6 +13,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -37,7 +38,7 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
     assert _make_updater(root, store)._is_already_in_sync() is True
 
     # Edited past the cache, so the check must hash it, and unreadable.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     edited = root / "b.py"
     edited.write_text("def b():\n    return 3\n")
     os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
@@ -63,7 +64,7 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
     # digest, so the next run retries it (issue #1983). Exact equality tells
     # the mark from a MISSING key and from any stale digest, which the
     # earlier `not in {old, new}` form could not (bot review).
-    cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text())
+    cache = json.loads(state_file(root, cs.HASH_CACHE_FILENAME).read_text())
     assert cache.get("b.py") == cs.HASH_CACHE_UNREADABLE, cache
     # The readable sibling is still cached, so the mark above is the
     # unreadable file being recorded and not a cache rebuilt from nothing.

@@ -14,6 +14,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import ALL_ENABLED
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import java_lombok
@@ -369,4 +370,4 @@ def test_failed_run_never_commits_the_overlay_state(
     )
     with pytest.raises(RuntimeError):
         updater.run()
-    assert not (repo / cs.DELOMBOK_STATE_FILENAME).exists()
+    assert not state_file(repo, cs.DELOMBOK_STATE_FILENAME).exists()

@@ -7,10 +7,11 @@ overlay idiom), lets a verifier inspect the staged tree, and only then writes
 to the real tree: each file through a temp sibling and `os.replace`, with the
 originals held so a failure part-way restores what was already written.
 
-Every committed transaction is appended to `.cgr-edit-history.json` at the
-repo root (the patch set plus the verification outcome), so `cgr edits show`
-can list the last N and `cgr edits undo` can reverse them, each undo being a
-transaction itself that refuses if the tree has moved on since.
+Every committed transaction is appended to `.cgr-edit-history.json` in the
+checkout's state directory under CGR_HOME (the patch set plus the
+verification outcome), so `cgr edits show` can list the last N and
+`cgr edits undo` can reverse them, each undo being a transaction itself that
+refuses if the tree has moved on since.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from ..checkout_state import state_file
 from ..config import load_ignore_patterns
 from ..utils.path_utils import should_skip_path
 
@@ -82,10 +84,10 @@ class TransactionError(ValueError):
 
 # Two transactions committing into the same tree must serialise their
 # read-verify-write windows, and `cgr edits undo` may run in another process
-# than the agent's server: the lock is an OS advisory lock on a file at the
-# repo root, held across the baseline check, the verifier, the writes and the
-# history update. A thread lock per root sits in front of it so threads of
-# one process queue rather than contend for the file.
+# than the agent's server: the lock is an OS advisory lock on a file in the
+# checkout's state directory, held across the baseline check, the verifier,
+# the writes and the history update. A thread lock per root sits in front of
+# it so threads of one process queue rather than contend for the file.
 _REPO_LOCKS: dict[str, threading.Lock] = {}
 _REPO_LOCKS_GUARD = threading.Lock()
 
@@ -121,7 +123,7 @@ def _unlock_file(handle: IO[bytes]) -> None:
 @contextmanager
 def _repo_lock(root: Path) -> Iterator[None]:
     with _thread_lock(root):
-        lock_path = root / cs.EDIT_LOCK_FILENAME
+        lock_path = state_file(root, cs.EDIT_LOCK_FILENAME)
         with lock_path.open("ab") as handle:
             _lock_file(handle)
             try:
@@ -502,7 +504,7 @@ def _write_file(path: Path, content: bytes | None, mode: int | None = None) -> N
 
 
 def history_path(repo_root: Path) -> Path:
-    return repo_root / cs.EDIT_HISTORY_FILENAME
+    return state_file(repo_root, cs.EDIT_HISTORY_FILENAME)
 
 
 def _b64(data: bytes | None) -> str | None:

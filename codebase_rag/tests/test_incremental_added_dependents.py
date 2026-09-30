@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     CPP,
@@ -42,7 +43,7 @@ TYPESCRIPT: dict[str, str] = {
 def _add_after_cache(root: Path, rel: str, text: str) -> None:
     # The incremental pass trusts directory mtimes that are not newer than
     # the hash cache's; place the addition past the cache.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

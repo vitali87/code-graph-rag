@@ -122,6 +122,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `NEO4J_PASSWORD` | _(unset)_ | Neo4j password |
 | `NEO4J_DATABASE` | `neo4j` | Neo4j database name |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
+| `CGR_HOME` | `~/.cgr` | cgr's own directory: the bundled stack, workspaces, and each checkout's sync and edit state under `state/` (hash cache, exclusion stamp, parser fingerprint, edit history), which is kept out of the indexed repository. See [cgr's own state](../advanced/ignore-patterns.md#cgrs-own-state). |
 | `CPP_FRONTEND` | `hybrid` | C/C++ frontend mode: `treesitter`, `libclang`, or `hybrid`. The libclang-backed modes require the [`cpp` extra and a compilation database](../guide/cpp-semantic-mode.md). |
 | `CSHARP_FRONTEND` | `treesitter` | C# frontend mode: `treesitter`, `auto`, `hybrid`, or `roslyn`. With `dotnet` on `PATH`, `auto` resolves to `hybrid`, and `hybrid`/`roslyn` run the Roslyn path: `dotnet restore` evaluates the analysed repository's MSBuild files, and its source generators execute. Without `dotnet`, all three fall back to `treesitter` (`auto` logs an info message; an explicit `hybrid` or `roslyn` logs a warning). Select a Roslyn-backed mode only for repositories you trust. See the [graph schema documentation](../architecture/graph-schema.md). |
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | Web-search backend: keyless `duckduckgo` or `serpdive`. The web-search tool is registered by default, so searches can send query text to the selected external provider even when this variable is unset. |

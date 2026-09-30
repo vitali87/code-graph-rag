@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -58,7 +59,7 @@ class TestStaleHashCache:
     ) -> None:
         _index(memgraph_ingestor, repo)
         assert _module_count(memgraph_ingestor) > 0
-        assert (repo / cs.HASH_CACHE_FILENAME).is_file()
+        assert state_file(repo, cs.HASH_CACHE_FILENAME).is_file()
 
         # Anything outside this repo's own clean path can wipe the shared
         # database: --clean while indexing another repo, MCP wipe_database,

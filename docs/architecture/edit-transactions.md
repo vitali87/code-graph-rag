@@ -59,9 +59,10 @@ outcome.files  # repo-relative paths, sorted
 
 ## History, show and undo
 
-Every applied transaction is appended to `.cgr-edit-history.json` at the
-repo root (one of the `CGR_STATE_FILENAMES`, so it is never indexed): the
-id, timestamp, each file's before/after bytes and the verification outcome.
+Every applied transaction is appended to `.cgr-edit-history.json` in the
+checkout's state directory under `CGR_HOME`, outside the working tree (see
+[cgr's own state](../advanced/ignore-patterns.md#cgrs-own-state)): the id,
+timestamp, each file's before/after bytes and the verification outcome.
 The file keeps the last 50 transactions.
 
 ```bash

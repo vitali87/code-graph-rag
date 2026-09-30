@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -48,7 +49,9 @@ def _writes(spy: MagicMock) -> list[tuple[str, dict[str, object]]]:
 
 
 def _cache(root: Path) -> dict[str, str]:
-    return json.loads((root / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+    return json.loads(
+        state_file(root, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+    )
 
 
 def test_a_single_file_target_gone_before_run_is_deleted_not_skipped(
@@ -135,7 +138,7 @@ def test_a_target_deleted_during_hashing_is_a_deletion_too(temp_repo: Path) -> N
     target = temp_repo / "module_a.py"
     # Later than the cache, so the run reaches the read rather than the
     # in-sync skip.
-    cache_mtime = (temp_repo / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(temp_repo, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(target, (cache_mtime + 2, cache_mtime + 2))
     updater = _create_graph_updater(target, store)
     real_hash = graph_updater_module._hash_file_with_bytes
@@ -184,7 +187,7 @@ def test_an_unreadable_but_present_target_is_not_treated_as_deleted(
     before = _cache(temp_repo)
 
     target = temp_repo / "module_a.py"
-    cache_mtime = (temp_repo / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(temp_repo, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(target, (cache_mtime + 2, cache_mtime + 2))
     updater = _create_graph_updater(target, store)
 

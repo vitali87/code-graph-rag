@@ -16,6 +16,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -131,7 +132,7 @@ def test_a_prune_that_leaves_rows_owes_the_next_run_a_prune(
 
     updater._prune_orphan_nodes()
 
-    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
 
 def test_a_failed_path_read_owes_the_next_run_a_prune(
@@ -147,24 +148,24 @@ def test_a_failed_path_read_owes_the_next_run_a_prune(
 
     updater._prune_orphan_nodes()
 
-    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
 
 def test_a_complete_prune_settles_what_an_earlier_run_owed(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    (temp_repo / cs.PRUNE_PENDING_FILENAME).touch()
+    state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).touch()
     mock_ingestor.fetch_all.side_effect = lambda query, params=None: []
     updater = _updater(temp_repo, mock_ingestor)
 
     updater._prune_orphan_nodes()
     # Not yet: the prune's deletes are durable only after run()'s flush, and
     # clearing before it would lose the retry if that flush failed.
-    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
     updater._settle_prune_marker()
 
-    assert not (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    assert not state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
 
 def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
@@ -184,7 +185,7 @@ def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
         )
 
     updater().run()
-    (temp_repo / cs.PRUNE_PENDING_FILENAME).touch()
+    state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).touch()
     owed = updater()
     real_prune = owed._prune_orphan_nodes
 
@@ -196,7 +197,7 @@ def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
     with pytest.raises(ConnectionError):
         owed.run()
 
-    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
 
 def test_an_owed_prune_refuses_the_in_sync_fast_path(temp_repo: Path) -> None:
@@ -217,12 +218,12 @@ def test_an_owed_prune_refuses_the_in_sync_fast_path(temp_repo: Path) -> None:
 
     run()
     assert run().skipped_because_in_sync is True
-    (temp_repo / cs.PRUNE_PENDING_FILENAME).touch()
+    state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).touch()
 
     owed = run()
 
     assert owed.skipped_because_in_sync is False
-    assert not (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    assert not state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
     # Removing the marker touched the root directory after the owed run
     # recorded its mtime, so one more run re-walks (as after the EXPOSES
     # marker); the run after that is back on the fast path.

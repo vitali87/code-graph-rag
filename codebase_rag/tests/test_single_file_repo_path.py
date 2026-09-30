@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import (
@@ -239,7 +240,9 @@ class TestSingleFileRunScope:
         self, tmp_path: Path, mock_ingestor: MagicMock
     ) -> None:
         repo, _second = self._build_then_single_file(tmp_path, mock_ingestor)
-        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert set(cache) == {"__init__.py", "module_a.py", "module_b.py"}, (
             "the cache must keep every sibling's hash; replacing it with the "
             "one walked file makes the next full run treat the rest as new"
@@ -262,7 +265,7 @@ class TestSingleFileRunScope:
             parsers=parsers,
             queries=queries,
         ).run()
-        mtimes_path = repo / cs.DIR_MTIMES_FILENAME
+        mtimes_path = state_file(repo, cs.DIR_MTIMES_FILENAME)
         before = json.loads(mtimes_path.read_text(encoding="utf-8"))
         assert before, "fixture guard: the full build must record at least one"
 
@@ -354,7 +357,7 @@ class TestSingleFileRunScope:
             queries=queries,
         ).run()
 
-        (repo / cs.DELOMBOK_STATE_FILENAME).write_text(
+        state_file(repo, cs.DELOMBOK_STATE_FILENAME).write_text(
             json.dumps({"identity": "stale", "keys": ["module_b.py"], "lombok": "x"}),
             encoding="utf-8",
         )
@@ -371,7 +374,9 @@ class TestSingleFileRunScope:
             "stale, or this test cannot see the defect it exists for"
         )
 
-        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert "module_b.py" in cache, (
             "a Lombok-stale sibling was dropped from the cache by a run that "
             "does not commit the delombok state; the next run then treats it "
@@ -404,7 +409,9 @@ class TestSingleFileRunScope:
             queries=queries,
         ).run()
 
-        before = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        before = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert "module_b.py" in before, (
             "fixture guard: the project run must have cached the sibling, or "
             "this test cannot observe it being erased"
@@ -417,7 +424,9 @@ class TestSingleFileRunScope:
             queries=queries,
         ).run(force=force)
 
-        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert "module_b.py" in cache, (
             f"run(force={force}) on a single file erased the sibling's hash: "
             "the next project run then treats every sibling as new, skipping "
@@ -454,7 +463,7 @@ class TestSingleFileRunScope:
             queries=queries,
         ).run()
 
-        cache_path = repo / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(repo, cs.HASH_CACHE_FILENAME)
         assert cache_path.is_file(), (
             "fixture guard: the project run must have written a cache, or "
             "removing it below would not establish the precondition"
@@ -550,7 +559,7 @@ class TestSingleFileRunScope:
         # A real second run queries a graph that still holds the first run's
         # modules; the fake sink has to say so or nothing is "pre-existing"
         # and the test could not tell the two paths apart.
-        cache_path = repo / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(repo, cs.HASH_CACHE_FILENAME)
         assert cache_path.is_file(), (
             "fixture guard: the project run must have written a hash cache, "
             "or the cacheless case below would be indistinguishable from it"

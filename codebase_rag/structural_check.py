@@ -23,6 +23,7 @@ from pathlib import Path
 from tree_sitter import Parser
 
 from . import constants as cs
+from .checkout_state import state_file
 from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
 from .services import QueryingIngestorProtocol
@@ -101,15 +102,21 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
     # `-z` output alternates status and path fields, each NUL-terminated.
     fields = [f for f in status.split("\0") if f]
     for code, path in zip(fields[0::2], fields[1::2], strict=False):
-        (deleted if code.startswith(_GIT_DELETED) else changed).add(path)
-    # cgr's own untracked state files (hash cache, directory mtimes, ...)
-    # are not source and must not be re-ingested or reported as reparsed.
+        if not _is_cgr_state(path):
+            (deleted if code.startswith(_GIT_DELETED) else changed).add(path)
     changed.update(
-        entry
-        for entry in untracked.split("\0")
-        if entry and not Path(entry).name.startswith(_CGR_STATE_PREFIX)
+        entry for entry in untracked.split("\0") if entry and not _is_cgr_state(entry)
     )
     return sorted(changed), sorted(deleted)
+
+
+def _is_cgr_state(path: str) -> bool:
+    """cgr's own state files (hash cache, directory mtimes, ...) are not
+    source: never re-ingested or reported as reparsed. That holds for a copy
+    a user committed with `git add -A` before cgr kept them out of the tree,
+    which every later sync rewrote, or the next one moves out (issue #2427).
+    """
+    return Path(path).name.startswith(_CGR_STATE_PREFIX)
 
 
 def _stamp_is_named(stored: dict[str, list[str] | str]) -> bool:
@@ -176,7 +183,7 @@ def indexed_scope(
     the wrong project silently re-ingests files the index left out, or drops
     files it deliberately kept.
     """
-    state_path = repo_root / cs.EXCLUSION_STATE_FILENAME
+    state_path = state_file(repo_root, cs.EXCLUSION_STATE_FILENAME)
     stored = _load_exclusion_state(state_path)
     # Every project indexed from this tree keeps its own entry, so one that
     # a later project's run overwrote at the top level still has its scope
