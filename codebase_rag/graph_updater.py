@@ -4791,13 +4791,18 @@ class GraphUpdater:
         )
 
     def _stored_project_root(self) -> str | None:
-        """The root the graph's project of this name was last indexed from."""
-        try:
-            rows = self._graph_rows(
-                cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: self.project_name}
-            )
-        except Exception:
+        """The root the graph's project of this name was last indexed from.
+
+        A graph that cannot answer raises instead of reading as "no root":
+        the cache would then be trusted for another repository's code, and
+        the Project write that follows replaces the root that shows it
+        (review of PR 2499). A write-only sink holds no project to own.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
             return None
+        rows = self._graph_rows(
+            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: self.project_name}
+        )
         root = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
         return root if isinstance(root, str) and root else None
 

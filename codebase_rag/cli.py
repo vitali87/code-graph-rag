@@ -593,7 +593,11 @@ def _project_owner_refusal(
         )
     except Exception as exc:
         logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
-        return None
+        if assume_yes:
+            return None
+        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+            project_name=project_name, error=exc
+        )
     owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
     if not isinstance(owner, str) or not owner or not repo.is_dir():
         return None
@@ -914,7 +918,11 @@ def start(
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
-    resolved_project_name = project_name or derive_project_name(resolved_repo)
+    # Stripped as `GraphUpdater` strips it, so the ownership check asks about
+    # the name the sync writes (review of PR 2499).
+    resolved_project_name = (
+        project_name and project_name.strip()
+    ) or derive_project_name(resolved_repo)
 
     if output and not update_graph:
         _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)

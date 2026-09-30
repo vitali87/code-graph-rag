@@ -24,6 +24,7 @@ from codebase_rag.cli import app
 from codebase_rag.cli_help import HELP_PROJECT_NAME
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from evals.cgr_graph import _StatefulIngestor
 
 runner = CliRunner()
@@ -95,6 +96,63 @@ def test_a_project_with_no_recorded_root_keeps_its_cache(tmp_path: Path) -> None
     assert again.skipped_because_in_sync is True
 
 
+class _RootUnreadable(_StatefulIngestor):
+    """A graph that answers everything but the project-root read."""
+
+    def fetch_all(self, query: str, params: object = None) -> list[dict[str, object]]:
+        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+            raise ConnectionError("lost connection")
+        return super().fetch_all(query, params)
+
+
+def test_an_unreadable_root_stops_the_sync_before_its_project_write(
+    tmp_path: Path,
+) -> None:
+    # Review of PR 2499: a failed read looked like "no recorded root", so a
+    # repository displaced from its name trusted its unchanged cache and
+    # reported the other repository's code as in sync, and the Project write
+    # then replaced the root that would have shown the mismatch later.
+    org_a, org_b = _repos(tmp_path)
+    store = _RootUnreadable()
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=_StatefulIngestor(),
+        repo_path=org_a,
+        parsers=parsers,
+        queries=queries,
+        project_name="api2",
+        project_named=True,
+    ).run()
+    store.nodes[(cs.NodeLabel.PROJECT, "api2")] = {
+        cs.KEY_NAME: "api2",
+        cs.KEY_ROOT_PATH: str(org_b.resolve()),
+    }
+
+    with pytest.raises(ConnectionError):
+        _sync(org_a, store)
+
+    project = store.nodes[(cs.NodeLabel.PROJECT, "api2")]
+    assert project[cs.KEY_ROOT_PATH] == str(org_b.resolve())
+
+
+def test_a_write_only_sink_still_syncs_with_a_cache(tmp_path: Path) -> None:
+    # Negative: the protobuf exporter has no graph that could own a project,
+    # so there is no root to read and nothing to refuse.
+    org_a, _ = _repos(tmp_path)
+    parsers, queries = load_parsers()
+    for run in ("first", "second"):
+        GraphUpdater(
+            ingestor=ProtobufFileIngestor(str(tmp_path / run)),
+            repo_path=org_a,
+            parsers=parsers,
+            queries=queries,
+            project_name="api2",
+            project_named=True,
+        ).run()
+
+    assert (org_a / cs.HASH_CACHE_FILENAME).is_file()
+
+
 @pytest.fixture
 def graph() -> Generator[MagicMock, None, None]:
     ingestor = MagicMock()
@@ -112,8 +170,16 @@ def graph() -> Generator[MagicMock, None, None]:
 
 
 def _owned_by(ingestor: MagicMock, root: Path | None) -> None:
-    def fetch_all(query: str, params: object = None) -> list[dict[str, str]]:
-        if query == cq.CYPHER_PROJECT_ROOT_PATH and root is not None:
+    # Matches on the exact name, as the Cypher lookup does.
+    def fetch_all(
+        query: str, params: dict[str, str] | None = None
+    ) -> list[dict[str, str]]:
+        if (
+            query == cq.CYPHER_PROJECT_ROOT_PATH
+            and root is not None
+            and params is not None
+            and params.get(cs.KEY_PROJECT_NAME) == "api2"
+        ):
             return [{cs.KEY_ROOT_PATH: str(root)}]
         return []
 
@@ -169,6 +235,74 @@ def test_a_name_this_repo_owns_or_nobody_owns_syncs(
 
     assert result.exit_code == 0, result.output
     graph.updater.return_value.run.assert_called_once()
+
+
+def _root_read_fails(ingestor: MagicMock) -> None:
+    def fetch_all(query: str, params: object = None) -> list[dict[str, str]]:
+        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+            raise ConnectionError("lost connection")
+        return []
+
+    ingestor.fetch_all.side_effect = fetch_all
+
+
+def test_start_refuses_when_the_owner_cannot_be_read(
+    graph: MagicMock, tmp_path: Path
+) -> None:
+    # Review of PR 2499: an unreadable owner is not an absent one.
+    _, org_b = _repos(tmp_path)
+    _root_read_fails(graph)
+
+    result = runner.invoke(app, _start(org_b))
+
+    assert result.exit_code == 1, result.output
+    output = " ".join(click.unstyle(result.output).split())
+    assert "lost connection" in output and "--yes" in output
+    graph.updater.assert_not_called()
+
+
+def test_yes_syncs_when_the_owner_cannot_be_read(
+    graph: MagicMock, tmp_path: Path
+) -> None:
+    _, org_b = _repos(tmp_path)
+    _root_read_fails(graph)
+
+    result = runner.invoke(app, _start(org_b, "--yes"))
+
+    assert result.exit_code == 0, result.output
+    graph.updater.return_value.run.assert_called_once()
+
+
+@pytest.mark.parametrize("padded", [" api2", "api2 ", "  api2  "])
+def test_a_padded_name_is_checked_as_the_name_it_writes(
+    graph: MagicMock, tmp_path: Path, padded: str
+) -> None:
+    # Review of PR 2499: the updater strips the name, so the check must ask
+    # about the same one or a padded name slips past it.
+    org_a, org_b = _repos(tmp_path)
+    _owned_by(graph, org_a)
+    args = _start(org_b)
+    args[args.index("api2")] = padded
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1, result.output
+    graph.updater.assert_not_called()
+
+
+def test_a_padded_name_this_repo_owns_syncs_under_the_stripped_name(
+    graph: MagicMock, tmp_path: Path
+) -> None:
+    # Negative.
+    org_a, _ = _repos(tmp_path)
+    _owned_by(graph, org_a)
+    args = _start(org_a)
+    args[args.index("api2")] = " api2 "
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert graph.updater.call_args.kwargs["project_name"] == "api2"
 
 
 def _chat(repo: Path, *extra: str) -> list[str]:
