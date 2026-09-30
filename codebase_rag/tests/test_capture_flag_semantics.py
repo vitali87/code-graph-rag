@@ -77,7 +77,9 @@ def test_start_refuses_an_unknown_capture_token(
 
     output = " ".join(click.unstyle(result.output).split())
     assert result.exit_code == 2, output
-    assert token in output and "structure" in output and "io" in output
+    assert token in output
+    assert "structure" in output
+    assert "io" in output
     sync.assert_not_called()
 
 
@@ -115,14 +117,16 @@ def test_a_comma_list_on_the_flag_is_split_like_the_variable(
 
 
 def test_the_help_states_that_a_group_is_added_to_the_defaults() -> None:
-    assert "default" in HELP_CAPTURE and "none" in HELP_CAPTURE
+    assert "default" in HELP_CAPTURE
+    assert "none" in HELP_CAPTURE
 
 
 def test_a_bare_group_still_adds_to_the_defaults(no_env_capture: None) -> None:
     # Negative: `--capture io` is documented as "the defaults plus I/O".
     selection = _capture_selection(["io"])
 
-    assert _IO <= selection.enabled_rels and _CALLS <= selection.enabled_rels
+    assert _IO <= selection.enabled_rels
+    assert _CALLS <= selection.enabled_rels
 
 
 @pytest.mark.parametrize(
