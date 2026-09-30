@@ -12,7 +12,7 @@ from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 import typer
@@ -22,6 +22,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
+
+if TYPE_CHECKING:
+    # What `TyperGroup.invoke` takes on the locked typer, which vendors click;
+    # an older typer passes click's own Context at runtime (#1409).
+    from typer._click import Context as _GroupContext
 
 from . import (
     _cli_env,  # noqa: F401  (must run before settings load)
@@ -162,10 +167,7 @@ def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
 
 
 class _CgrGroup(TyperGroup):
-    # `ctx` is click's Context or, from a typer that vendors click, typer's
-    # own, which does not descend from it; both typer generations are
-    # supported.
-    def invoke(self, ctx: Any) -> object:
+    def invoke(self, ctx: "_GroupContext") -> object:
         # Every command reaches the graph through the ingestor, which raises
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
