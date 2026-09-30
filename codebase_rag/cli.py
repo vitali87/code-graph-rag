@@ -162,7 +162,10 @@ def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
 
 
 class _CgrGroup(TyperGroup):
-    def invoke(self, ctx: click.Context) -> object:
+    # `ctx` is click's Context or, from a typer that vendors click, typer's
+    # own, which does not descend from it; both typer generations are
+    # supported.
+    def invoke(self, ctx: Any) -> object:
         # Every command reaches the graph through the ingestor, which raises
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
