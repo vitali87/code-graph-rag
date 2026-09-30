@@ -166,6 +166,9 @@ _TYPED_LANGUAGES = frozenset(
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
+# Python callers whose own bindings shadow module and class names for the
+# whole body (issue #2666); a class body or module is excluded on purpose.
+_PY_LOCAL_SCOPE_CALLERS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 # Declarator kinds for the symbol-index value chase (issue #989). OPAQUE
 # marks an introduction whose value cannot be known statically (a parameter,
@@ -3761,15 +3764,25 @@ class CallProcessor:
     ) -> None:
         # Names this caller binds that also name an import: the resolver
         # refuses to read the import map for them (issue #1907).
-        shadowed = (
-            self._resolver.type_inference.python_type_inference.shadowed_import_names(
-                caller_node, module_qn
-            )
-        )
+        python_inference = self._resolver.type_inference.python_type_inference
+        shadowed = python_inference.shadowed_import_names(caller_node, module_qn)
         if shadowed:
             self._resolver.python_shadowed_imports[caller_qn] = shadowed
         else:
             self._resolver.python_shadowed_imports.pop(caller_qn, None)
+        # Every name a function binds itself: a bare use of one never resolves
+        # to the module function or method it shadows (issue #2666). Only a
+        # function or lambda body: in a class body `alias = run` does read the
+        # class's own `run`, and a module's bindings are its definitions.
+        local = (
+            python_inference.locally_bound_names(caller_node, module_qn)
+            if caller_node.type in _PY_LOCAL_SCOPE_CALLERS
+            else frozenset()
+        )
+        if local:
+            self._resolver.python_local_names[caller_qn] = local
+        else:
+            self._resolver.python_local_names.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
