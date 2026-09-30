@@ -142,9 +142,10 @@ class TestDeliberateExitInsideTheConnection:
         self, conn: MagicMock, logged: list[_Logged]
     ) -> None:
         # `cgr start` holds its connection with `async with`.
+        stop = typer.Exit(1)
         with pytest.raises(typer.Exit) as raised:
             async with _ingestor():
-                raise typer.Exit(1)
+                raise stop
 
         assert _alarming(logged) == []
         assert raised.value.exit_code == 1
