@@ -20,12 +20,14 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_audit as ga
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, ResultRow
 from evals.cgr_graph import _StatefulIngestor
@@ -50,6 +52,20 @@ app = Flask(__name__)
 @app.get("/items")
 def list_items():
     return []
+"""
+
+# The route is an ENDPOINT resource (project-scoped); the environment read is
+# an ENV resource, shared across projects and so without one.
+ROUTES_WITH_ENV_PY = """import os
+
+from flask import Flask
+
+app = Flask(__name__)
+
+
+@app.get("/items")
+def list_items():
+    return os.environ.get("ITEMS_DIR")
 """
 
 # `_instance = None` in a class is a Pattern (singleton) and `eval` on a
@@ -275,6 +291,56 @@ def test_an_unknown_resource_property_is_still_flagged() -> None:
     assert [v.check for v in ga.find_property_violations([node])] == [
         cs.AuditCheck.UNDOCUMENTED_PROPERTY
     ]
+
+
+def _exported_resources(repo: Path, out: Path) -> dict[str, pb.Resource]:
+    # Through the real export sink, read back from the file it writes: the
+    # sink copies only the properties its message declares, so a property the
+    # schema lists but the message lacks is dropped here without a warning.
+    out.mkdir()
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=ProtobufFileIngestor(str(out), split_index=False),
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture([cs.CAPTURE_TOKEN_ALL]),
+    ).run()
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / cs.PROTOBUF_INDEX_FILE).read_bytes())
+    return {
+        node.resource.qualified_name: node.resource
+        for node in index.nodes
+        if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) == cs.ONEOF_RESOURCE
+    }
+
+
+def test_an_endpoint_resource_keeps_its_project_through_the_export(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    (temp_repo / "routes.py").write_text(ROUTES_WITH_ENV_PY)
+    resources = _exported_resources(temp_repo, tmp_path / "export")
+    endpoints = [r for r in resources.values() if r.kind == "ENDPOINT"]
+    assert endpoints, f"fixture guard: no ENDPOINT resource exported: {resources}"
+
+    assert [r.project for r in endpoints] == [temp_repo.name]
+
+
+def test_a_shared_resource_exports_without_a_project(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    # Negative: only the endpoint is project-scoped. An ENV resource is shared
+    # across projects, so nothing may be written for it, not even a project
+    # borrowed from the run.
+    (temp_repo / "routes.py").write_text(ROUTES_WITH_ENV_PY)
+    resources = _exported_resources(temp_repo, tmp_path / "export")
+    shared = [r for r in resources.values() if r.kind == "ENV"]
+    assert shared, f"fixture guard: no ENV resource exported: {resources}"
+
+    assert all(
+        cs.KEY_PROJECT not in {field.name for field, _ in r.ListFields()}
+        for r in shared
+    )
 
 
 # --- findings across a capture-set change ------------------------------------

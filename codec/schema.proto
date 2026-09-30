@@ -429,6 +429,8 @@ message GraphCodeIndex {
 
     string name = 2;
     string kind = 3;
+    // The serving project, on ENDPOINT resources only (#2536); "" elsewhere.
+    string project = 4;
   }
 
   // A heading in a document, and the prose beneath it. Sections nest by
