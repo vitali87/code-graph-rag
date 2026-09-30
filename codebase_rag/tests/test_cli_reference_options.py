@@ -14,6 +14,7 @@ import re
 import click
 import pytest
 import typer
+from typer.core import TyperGroup
 
 from codebase_rag import cli as cgr_cli
 from codebase_rag import cli_help as ch
@@ -116,7 +117,9 @@ def test_every_command_heading_with_options_has_a_generated_table(
     for name, section in sections.items():
         assert name in commands, f"`### cgr {name}` names no cgr command"
         command = commands[name]
-        if isinstance(command, click.Group) or not visible_flags(command):
+        # TyperGroup, not `click.Group`: a vendoring typer's groups are not
+        # the real Click's, so that check could never skip one (#1409).
+        if isinstance(command, TyperGroup) or not visible_flags(command):
             continue
         section_name = readme_sections.cli_options_section_name(ch.CLICommandName(name))
         marker = f"<!-- SECTION:{section_name} -->"

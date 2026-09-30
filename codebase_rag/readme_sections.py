@@ -11,9 +11,9 @@ from pathlib import Path
 from threading import Lock
 from typing import NamedTuple
 
-import click
 import typer
 from loguru import logger
+from typer.core import TyperCommand, TyperOption
 
 from . import cli_help as ch
 from .cli import app as cli_app
@@ -61,6 +61,7 @@ LONG_FLAG_PREFIX = "--"
 FLAG_SEPARATOR = ", "
 SECONDARY_FLAG_SEPARATOR = " / "
 CODE_SPAN_DELIMITER = "`"
+NOT_A_TYPER_COMMAND = "cgr {name} is not a TyperCommand, so it has no option table"
 # Help text is written for a terminal. In a markdown table cell `<repo>` would
 # parse as an HTML tag and `'*/tests/*'` as emphasis.
 MARKDOWN_ESCAPES = (("<", "&lt;"), ("*", "\\*"))
@@ -189,7 +190,7 @@ def _code_flags(flags: list[str]) -> str:
     return FLAG_SEPARATOR.join(f"`{flag}`" for flag in flags)
 
 
-def _option_flags(option: click.Option) -> str:
+def _option_flags(option: TyperOption) -> str:
     # Long names first, as `--help` lists them, whatever order they were
     # declared in (`-o, --output` and `--project-name, -n` both occur).
     primary = sorted(
@@ -201,15 +202,19 @@ def _option_flags(option: click.Option) -> str:
     return flags
 
 
-def format_cli_options_table(command: click.Command) -> str:
-    context = click.Context(command, info_name=command.name)
+def format_cli_options_table(command: TyperCommand) -> str:
+    # Typer's own classes throughout, never the real Click's: a typer that
+    # vendors Click as `typer._click`, as the locked one does, builds options
+    # that are not `click.Option`, so filtering on that class found no option
+    # at all and wrote every table empty, on every platform.
+    context = typer.Context(command, info_name=command.name)
     rows: list[list[str]] = []
     # `--help` is not among `params` (Click adds it per context), and an
     # argument belongs to the usage line rather than the option table.
     for param in command.params:
-        if not isinstance(param, click.Option):
+        if not isinstance(param, TyperOption):
             continue
-        # Click's own help record, so each row reads as `--help` does, with
+        # The option's own help record, so each row reads as `--help` does, with
         # its `[default: ...]` and `[required]` notes; a hidden option has no
         # record and stays out of the docs as it stays out of `--help`.
         record = param.get_help_record(context)
@@ -220,10 +225,18 @@ def format_cli_options_table(command: click.Command) -> str:
     return format_markdown_table(["Option", "Description"], rows)
 
 
+def cli_option_command(name: ch.CLICommandName) -> TyperCommand:
+    command = typer.main.get_group(cli_app).commands[name]
+    if not isinstance(command, TyperCommand):
+        raise TypeError(NOT_A_TYPER_COMMAND.format(name=name))
+    return command
+
+
 def format_cli_option_sections() -> dict[str, str]:
-    commands = typer.main.get_group(cli_app).commands
     return {
-        cli_options_section_name(name): format_cli_options_table(commands[name])
+        cli_options_section_name(name): format_cli_options_table(
+            cli_option_command(name)
+        )
         for name in CLI_OPTION_COMMANDS
     }
 

@@ -4,21 +4,29 @@
 so a hidden option stays out of the docs as it stays out of `--help`, and an
 option the CLI drops leaves the table on the next `make readme`, with the
 generated-docs check failing until it is rerun.
+
+The demo commands are built by typer, as the cgr commands are, so their
+options are whichever Click classes the installed typer builds with: the
+locked typer vendors Click as `typer._click`, and a generator that filtered on
+the real `click.Option` wrote every table empty.
 """
 
 from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Callable
 
 import click
 import pytest
 import typer
+from typer.core import TyperCommand
 
-from codebase_rag import cli as cgr_cli
 from codebase_rag import cli_help as ch
+from codebase_rag import readme_sections
 from codebase_rag.readme_sections import (
     CLI_OPTION_COMMANDS,
+    cli_option_command,
     cli_options_section_name,
     format_cli_options_table,
     generate_all_sections,
@@ -31,20 +39,32 @@ from codebase_rag.tests.test_cli_reference_options import (
 from scripts.generate_readme import PROJECT_ROOT, replace_sections, stale_sections
 
 START_SECTION = cli_options_section_name(ch.CLICommandName.START)
+OPTION_PARAM_TYPE = "option"
 
 
-def _command(name: ch.CLICommandName) -> click.Command:
-    return typer.main.get_group(cgr_cli.app).commands[name]
+def _demo(function: Callable[..., None]) -> TyperCommand:
+    demo = typer.Typer(add_completion=False)
+    demo.command()(function)
+    command = typer.main.get_command(demo)
+    assert isinstance(command, TyperCommand)
+    return command
 
 
-def _demo(*params: click.Parameter) -> click.Command:
-    return click.Command("demo", params=list(params))
-
-
-def _without(command: click.Command, flag: str) -> click.Command:
+def _without(command: TyperCommand, flag: str) -> TyperCommand:
     trimmed = copy.copy(command)
     trimmed.params = [param for param in command.params if flag not in param.opts]
     return trimmed
+
+
+def _visible_options(command: TyperCommand) -> list[str]:
+    # Duck-typed on `param_type_name`, independently of the generator's own
+    # filter, so the two cannot agree on finding nothing.
+    return [
+        next(opt for opt in param.opts if opt.startswith("--"))
+        for param in command.params
+        if param.param_type_name == OPTION_PARAM_TYPE
+        and not getattr(param, "hidden", False)
+    ]
 
 
 def _rows(table: str) -> list[str]:
@@ -63,17 +83,14 @@ def page() -> str:
 
 class TestRows:
     def test_rows_follow_the_command_and_read_as_its_help(self) -> None:
-        table = format_cli_options_table(
-            _demo(
-                click.Option(["-o", "--output"], required=True, help="Write it."),
-                click.Option(
-                    ["--json/--no-json"], default=True, show_default=True, help="JSON."
-                ),
-                click.Option(["--size"], default=15, show_default=True, help="Size."),
-                click.Option(["--quiet"], is_flag=True, help="Say less."),
-            )
-        )
-        assert _rows(table) == [
+        def demo(
+            output: str = typer.Option(..., "-o", "--output", help="Write it."),
+            json: bool = typer.Option(True, "--json/--no-json", help="JSON."),
+            size: int = typer.Option(15, "--size", help="Size."),
+            quiet: bool = typer.Option(False, "--quiet", help="Say less."),
+        ) -> None: ...
+
+        assert _rows(format_cli_options_table(_demo(demo))) == [
             "| `--output`, `-o` | Write it. [required] |",
             "| `--json` / `--no-json` | JSON. [default: json] |",
             "| `--size` | Size. [default: 15] |",
@@ -81,52 +98,103 @@ class TestRows:
         ]
 
     def test_help_text_is_escaped_for_markdown_outside_code_spans(self) -> None:
-        table = format_cli_options_table(
-            _demo(
-                click.Option(
-                    ["--exclude"], help="Skip <repo>/'*/tests/*'; see `a*<b>`."
-                )
-            )
-        )
-        assert _rows(table) == [
+        def demo(
+            exclude: str | None = typer.Option(
+                None, "--exclude", help="Skip <repo>/'*/tests/*'; see `a*<b>`."
+            ),
+        ) -> None: ...
+
+        assert _rows(format_cli_options_table(_demo(demo))) == [
             "| `--exclude` | Skip &lt;repo>/'\\*/tests/\\*'; see `a*<b>`. |"
         ]
 
     def test_a_real_command_keeps_its_declaration_order(self) -> None:
-        command = _command(ch.CLICommandName.INDEX)
+        command = cli_option_command(ch.CLICommandName.INDEX)
         flags = [
             re.findall(r"`(--[^`]+)`", row)[0]
             for row in _rows(format_cli_options_table(command))
         ]
-        assert flags == [
-            next(opt for opt in param.opts if opt.startswith("--"))
-            for param in command.params
-            if isinstance(param, click.Option)
-        ]
+        assert flags
+        assert flags == _visible_options(command)
+
+
+class TestWhicheverClickTyperUses:
+    """The locked typer vendors Click as `typer._click`, so the options it
+    builds are not the real `click.Option`; filtering on that class found none
+    and every generated table came out empty on every platform."""
+
+    @pytest.mark.parametrize("name", CLI_OPTION_COMMANDS)
+    def test_every_visible_option_of_a_documented_command_is_a_row(
+        self, name: ch.CLICommandName
+    ) -> None:
+        command = cli_option_command(name)
+        options = _visible_options(command)
+        assert options, f"cgr {name} has no options; the check would pass vacuously"
+        assert len(_rows(format_cli_options_table(command))) == len(options)
+
+    def test_rows_do_not_hinge_on_the_real_click_option_class(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The vendoring typer's condition, emulated for whichever typer is
+        # installed: no option typer builds descends from `click.Option`.
+        start = cli_option_command(ch.CLICommandName.START)
+
+        class UnrelatedOption:
+            pass
+
+        monkeypatch.setattr(click, "Option", UnrelatedOption)
+        table = format_cli_options_table(start)
+
+        assert "`--capture`" in table
+        assert len(_rows(table)) == len(_visible_options(start))
+
+    def test_a_group_in_place_of_a_documented_command_fails_loudly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A group has no option table of its own; refusing it keeps a class
+        # mismatch from turning back into a silently empty table.
+        group = typer.Typer()
+
+        @group.command()
+        def run() -> None: ...
+
+        app = typer.Typer()
+        app.add_typer(group, name=ch.CLICommandName.START)
+        monkeypatch.setattr(readme_sections, "cli_app", app)
+
+        with pytest.raises(TypeError, match="cgr start is not a TyperCommand"):
+            cli_option_command(ch.CLICommandName.START)
 
 
 class TestWhatStaysOut:
     def test_a_hidden_option_is_not_documented(self) -> None:
-        table = format_cli_options_table(
-            _demo(
-                click.Option(["--shown"], help="Shown."),
-                click.Option(["--secret"], hidden=True, help="Internal."),
-            )
-        )
-        assert _rows(table) == ["| `--shown` | Shown. |"]
+        def demo(
+            shown: str | None = typer.Option(None, "--shown", help="Shown."),
+            secret: str | None = typer.Option(
+                None, "--secret", hidden=True, help="Internal."
+            ),
+        ) -> None: ...
+
+        assert _rows(format_cli_options_table(_demo(demo))) == [
+            "| `--shown` | Shown. |"
+        ]
 
     def test_the_help_option_is_not_a_row(self) -> None:
         for name in CLI_OPTION_COMMANDS:
-            assert "--help" not in format_cli_options_table(_command(name))
+            table = format_cli_options_table(cli_option_command(name))
+            assert _rows(table)
+            assert "--help" not in table
 
     def test_an_argument_is_not_an_option_row(self) -> None:
-        table = format_cli_options_table(
-            _demo(click.Argument(["language"]), click.Option(["--repo-path"]))
-        )
-        assert _rows(table) == ["| `--repo-path` |  |"]
+        def demo(
+            language: str = typer.Argument(...),
+            repo_path: str | None = typer.Option(None, "--repo-path"),
+        ) -> None: ...
+
+        assert _rows(format_cli_options_table(_demo(demo))) == ["| `--repo-path` |  |"]
 
     def test_a_removed_option_leaves_the_table(self) -> None:
-        start = _command(ch.CLICommandName.START)
+        start = cli_option_command(ch.CLICommandName.START)
         full = format_cli_options_table(start)
         trimmed = format_cli_options_table(_without(start, "--capture"))
 
@@ -155,7 +223,7 @@ class TestStaleTables:
     def test_an_option_the_cli_drops_is_stale_then_regenerates_away(
         self, page: str, sections: dict[str, str]
     ) -> None:
-        start = _command(ch.CLICommandName.START)
+        start = cli_option_command(ch.CLICommandName.START)
         shrunk = {
             **sections,
             START_SECTION: format_cli_options_table(_without(start, "--capture")),
