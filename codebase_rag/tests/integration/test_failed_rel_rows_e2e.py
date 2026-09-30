@@ -56,7 +56,8 @@ def test_a_lossy_flush_names_only_the_lost_row(
 
     rows = [w for w in warnings if w.startswith("  Failed ")]
     assert len(rows) == 1, warnings
-    assert PHANTOM in rows[0] and "missing target" in rows[0], rows
+    assert PHANTOM in rows[0], rows
+    assert "missing target" in rows[0], rows
     assert any("Failed to create 1 of 3" in w for w in warnings), warnings
     assert _called(memgraph_ingestor) == ["proj.app.ok_1", "proj.app.ok_2"]
 

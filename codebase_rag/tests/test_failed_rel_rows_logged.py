@@ -153,12 +153,16 @@ def test_a_mixed_batch_lists_exactly_its_failures(warnings: list[str]) -> None:
     )
 
     header = [w for w in warnings if w.startswith("Failed to create")]
-    assert len(header) == 1 and "3 of 5" in header[0], warnings
+    assert len(header) == 1, warnings
+    assert "3 of 5" in header[0], warnings
     rows = _row_lines(warnings)
     assert len(rows) == 3, warnings
-    assert "proj.app.gone_1" in rows[0] and "missing target" in rows[0], rows
-    assert "proj.app.ghost" in rows[1] and "missing source" in rows[1], rows
-    assert "proj.app.gone_2" in rows[2] and "missing target" in rows[2], rows
+    assert "proj.app.gone_1" in rows[0], rows
+    assert "missing target" in rows[0], rows
+    assert "proj.app.ghost" in rows[1], rows
+    assert "missing source" in rows[1], rows
+    assert "proj.app.gone_2" in rows[2], rows
+    assert "missing target" in rows[2], rows
     # Negative: a row that was written is never listed as a failure.
     assert not [r for r in rows if "ok_1" in r or "ok_2" in r], rows
 
@@ -180,7 +184,8 @@ def test_a_lost_row_of_another_relationship_type_is_named(
 
     assert any(cs.RelationshipType.IMPORTS in w for w in warnings), warnings
     rows = _row_lines(warnings)
-    assert len(rows) == 1 and "proj.missing" in rows[0], warnings
+    assert len(rows) == 1, warnings
+    assert "proj.missing" in rows[0], warnings
 
 
 def test_a_batch_that_wrote_every_row_logs_nothing(warnings: list[str]) -> None:
