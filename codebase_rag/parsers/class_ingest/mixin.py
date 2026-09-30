@@ -2333,6 +2333,16 @@ class ClassIngestMixin:
         resolved = resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+        # Every name resolved here is a base, interface or trait, which a
+        # method never is, but the simple-name sweep matches methods too: a
+        # decorator factory's `class extends constructor` (its parameter)
+        # bound to an unrelated `User.constructor`, an INHERITS the schema
+        # forbids. A function stays a valid answer (an ES5 constructor).
+        if (
+            resolved is not None
+            and self.function_registry.get(resolved) == NodeType.METHOD
+        ):
+            resolved = None
         if resolved is not None or language != cs.SupportedLanguage.CSHARP:
             return resolved
         # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to

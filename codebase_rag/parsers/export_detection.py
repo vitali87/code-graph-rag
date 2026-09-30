@@ -128,6 +128,8 @@ def _js_ts_exported(node: Node, name: str) -> bool:
     # matching the Java rule and staying conservative against false dead-flags.
     if _js_ts_private_member(node):
         return False
+    if _in_commonjs_exported_class(node):
+        return True
     # Two export forms: the declaration wrapped by `export` (caught by the
     # ancestor walk), and a separate `export { name }` / `export { x as y }`
     # list elsewhere in the module, which does not wrap the declaration and so
@@ -181,6 +183,61 @@ def _is_module_construct(statement: Node) -> bool:
     return (
         _JS_REQUIRE_CALL in text
         or _JS_MODULE_EXPORTS in text
+        or text.startswith(_JS_EXPORTS_MEMBER)
+    )
+
+
+_JS_MODULE_EXPORTS_MEMBER = _JS_MODULE_EXPORTS + cs.SEPARATOR_DOT.encode()
+
+
+def _in_commonjs_exported_class(node: Node) -> bool:
+    # A class expression inside the value of a top-level CommonJS export
+    # (`module.exports = class {...}`, `module.exports = [class {...}]`,
+    # `exports.Rule = class {...}`) is published by it the way
+    # `export default class {...}` publishes its class, and its members follow
+    # it (issue #2567). It has no name an export list could match. Only a class
+    # counts: the methods of an exported object literal keep today's decision,
+    # and a class built inside a function is that function's local.
+    in_class = node.type == cs.TS_CLASS_EXPRESSION
+    child = node
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            return (
+                in_class
+                and current.child_by_field_name(cs.FIELD_RIGHT) == child
+                and _is_top_level_commonjs_export(current)
+            )
+        if (
+            current.type in _JS_TS_FUNCTION_SCOPE_TYPES
+            or current.type in _JS_TS_EXPORT_STOP_TYPES
+        ):
+            return False
+        if current.type == cs.TS_CLASS_EXPRESSION:
+            in_class = True
+        child = current
+        current = current.parent
+    return False
+
+
+def _is_top_level_commonjs_export(assignment: Node) -> bool:
+    # Only a module-level statement runs at load; the same assignment inside a
+    # function exports nothing until that function is called.
+    statement = assignment.parent
+    if (
+        statement is None
+        or statement.type != cs.TS_EXPRESSION_STATEMENT
+        or statement.parent is None
+        or statement.parent.type != cs.TS_PROGRAM
+    ):
+        return False
+    target = assignment.child_by_field_name(cs.FIELD_LEFT)
+    if target is None or target.type != cs.TS_MEMBER_EXPRESSION:
+        return False
+    text = target.text or b""
+    return (
+        text == _JS_MODULE_EXPORTS
+        or text.startswith(_JS_MODULE_EXPORTS_MEMBER)
         or text.startswith(_JS_EXPORTS_MEMBER)
     )
 
