@@ -70,7 +70,8 @@ def test_a_file_that_is_not_an_export_says_why(
         load_graph(str(path))
 
     message = str(raised.value)
-    assert "is not a cgr graph export" in message and path.name in message
+    assert "is not a cgr graph export" in message
+    assert path.name in message
     assert reason in message
 
 
@@ -79,7 +80,8 @@ def test_a_graph_without_metadata_loads(tmp_path: Path) -> None:
 
     summary = load_graph(str(path)).summary()
 
-    assert summary["total_nodes"] == 2 and summary["total_relationships"] == 1
+    assert summary["total_nodes"] == 2
+    assert summary["total_relationships"] == 1
     assert summary["metadata"]["exported_at"] == "unknown"
     assert summary["metadata"]["total_nodes"] == 2
 
