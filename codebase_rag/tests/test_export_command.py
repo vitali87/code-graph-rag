@@ -14,6 +14,7 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 import typer
 from click.testing import Result
@@ -225,12 +226,14 @@ def test_no_json_says_the_option_is_deprecated(
 
 def test_the_help_lists_the_scope_and_hides_the_deprecated_options() -> None:
     result = _run(["export", "--help"])
+    # CI forces colour, so rich wraps each option name in ANSI spans.
+    help_text = click.unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--project-name" in result.output
-    assert "--workspace" in result.output
-    assert "--batch-size" not in result.output
-    assert "--no-json" not in result.output
+    assert "--project-name" in help_text
+    assert "--workspace" in help_text
+    assert "--batch-size" not in help_text
+    assert "--no-json" not in help_text
 
 
 # --- output errors ----------------------------------------------------------
