@@ -124,7 +124,8 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
-    separator_free_project_name,
+    default_project_name,
+    project_roots_from_rows,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -1227,11 +1228,9 @@ class GraphUpdater:
             if project_named is None
             else project_named
         )
-        # The directory-name default drops `.`: `acme.web/` must not write
-        # the nodes of project `acme`'s package `web` (issue #2412).
         self.project_name = (
             project_name and project_name.strip()
-        ) or separator_free_project_name(repo_path.resolve().name)
+        ) or default_project_name(repo_path)
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
@@ -2018,6 +2017,8 @@ class GraphUpdater:
         # report, so a stale True describes a run that did real work as
         # already in sync (#1620).
         self.skipped_because_in_sync = False
+        if not self.project_named and self._single_file is None:
+            self._retire_legacy_dotted_project()
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -4781,6 +4782,55 @@ class GraphUpdater:
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
         return should_keep_dir(
             dirname, dir_prefix, self.exclude_paths, self.unignore_paths
+        )
+
+    def _retire_legacy_dotted_project(self) -> None:
+        """Remove the project this checkout was indexed under before #2412.
+
+        A checkout at `acme.web/` used to default to project `acme.web`,
+        whose qualified names alias project `acme`'s package `web`. Syncing
+        under the new default would leave that project beside it (review of
+        PR 2497). Only a project whose recorded root is this checkout is
+        removed, and only while no project named by a prefix of it exists:
+        its containers may then be that project's too, and deleting them
+        would delete them from it.
+        """
+        legacy = self.repo_path.resolve().name
+        if legacy == self.project_name or cs.SEPARATOR_DOT not in legacy:
+            return
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            roots = project_roots_from_rows(
+                self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
+            )
+        except Exception:
+            return
+        root = roots.get(legacy)
+        if root is None or Path(root).resolve() != self.repo_path.resolve():
+            return
+        sharing = sorted(
+            name
+            for name in roots
+            if name != legacy and legacy.startswith(f"{name}{cs.SEPARATOR_DOT}")
+        )
+        if sharing:
+            logger.warning(
+                ls.LEGACY_DOTTED_PROJECT_KEPT.format(
+                    legacy=legacy,
+                    project=self.project_name,
+                    sharing=", ".join(sharing),
+                )
+            )
+            return
+        delete_project = getattr(self.ingestor, "delete_project", None)
+        if delete_project is None:
+            return
+        delete_project(legacy)
+        logger.info(
+            ls.LEGACY_DOTTED_PROJECT_RETIRED.format(
+                legacy=legacy, project=self.project_name
+            )
         )
 
     def _drop_cache_if_graph_lost(self) -> None:

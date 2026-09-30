@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
@@ -233,8 +234,134 @@ def test_a_dotted_directory_does_not_merge_with_another_projects_package(
     _index(frontend, store, None)
     _index(monorepo, store, "acme")
 
+    frontend_name = derive_project_name(frontend)
     assert _defined_by(store, "acme.web.views") == {"acme.web.views.start_server"}
-    assert _defined_by(store, "acme_web.views") == {"acme_web.views.render_page"}
+    assert _defined_by(store, f"{frontend_name}.views") == {
+        f"{frontend_name}.views.render_page"
+    }
+
+
+def test_dotted_and_underscored_checkouts_keep_distinct_default_names(
+    tmp_path: Path,
+) -> None:
+    # Review of PR 2497: dropping the `.` alone gave `acme.web/` and
+    # `acme_web/` the same default, so their nodes merged instead.
+    dotted = tmp_path / "acme.web"
+    underscored = tmp_path / "acme_web"
+    for root, name in ((dotted, "render_page"), (underscored, "list_users")):
+        root.mkdir()
+        (root / "views.py").write_text(f"def {name}():\n    return 1\n")
+    store = _StatefulIngestor()
+
+    _index(dotted, store, None)
+    _index(underscored, store, None)
+
+    projects = {uid for label, uid in store.nodes if label == cs.NodeLabel.PROJECT}
+    assert projects == {derive_project_name(dotted), "acme_web"}
+    assert _defined_by(store, "acme_web.views") == {"acme_web.views.list_users"}
+
+
+def test_a_plain_directory_keeps_its_name_as_the_default(tmp_path: Path) -> None:
+    # Negative: only a name holding the separator changes.
+    root = tmp_path / "billing"
+    root.mkdir()
+    (root / "views.py").write_text("def charge():\n    return 1\n")
+    store = _StatefulIngestor()
+
+    _index(root, store, None)
+
+    assert (cs.NodeLabel.PROJECT, "billing") in store.nodes
+
+
+class _Retiring(_StatefulIngestor):
+    """Records the projects a run deletes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.deleted: list[str] = []
+
+    def delete_project(self, project_name: str) -> None:
+        self.deleted.append(project_name)
+        self.nodes.pop((cs.NodeLabel.PROJECT, project_name), None)
+
+
+def _legacy_project(store: _StatefulIngestor, name: str, root: Path | None) -> None:
+    properties: dict[str, str] = {cs.KEY_NAME: name}
+    if root is not None:
+        properties[cs.KEY_ROOT_PATH] = str(root.resolve())
+    store.nodes[(cs.NodeLabel.PROJECT, name)] = properties
+
+
+@pytest.fixture
+def dotted_checkout(tmp_path: Path) -> Path:
+    root = tmp_path / "acme.web"
+    root.mkdir()
+    (root / "views.py").write_text("def render_page():\n    return 1\n")
+    return root
+
+
+def test_the_project_a_dotted_checkout_was_indexed_under_is_retired(
+    dotted_checkout: Path,
+) -> None:
+    # Review of PR 2497: a re-sync under the new default left the old
+    # `acme.web` project, with its colliding qualified names, in the graph.
+    store = _Retiring()
+    _legacy_project(store, "acme.web", dotted_checkout)
+
+    _index(dotted_checkout, store, None)
+
+    assert store.deleted == ["acme.web"]
+    assert (cs.NodeLabel.PROJECT, derive_project_name(dotted_checkout)) in store.nodes
+
+
+@pytest.mark.parametrize(
+    "owner",
+    ["another-checkout", "no-recorded-root"],
+)
+def test_an_old_dotted_project_this_checkout_does_not_own_is_kept(
+    dotted_checkout: Path, tmp_path: Path, owner: str
+) -> None:
+    # Negative: only a project whose root is this checkout is its own.
+    store = _Retiring()
+    elsewhere = tmp_path / "elsewhere" / "acme.web"
+    elsewhere.mkdir(parents=True)
+    _legacy_project(
+        store, "acme.web", elsewhere if owner == "another-checkout" else None
+    )
+
+    _index(dotted_checkout, store, None)
+
+    assert store.deleted == []
+    assert (cs.NodeLabel.PROJECT, "acme.web") in store.nodes
+
+
+def test_an_old_dotted_project_sharing_nodes_is_kept_with_a_warning(
+    dotted_checkout: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Negative: with a project `acme` in the graph, `acme.web`'s containers
+    # may be `acme`'s package `web` too, and deleting them would delete it.
+    store = _Retiring()
+    _legacy_project(store, "acme.web", dotted_checkout)
+    _legacy_project(store, "acme", dotted_checkout.parent / "acme")
+    records: list[str] = []
+    sink = logger.add(records.append, level="WARNING", format="{message}")
+    try:
+        _index(dotted_checkout, store, None)
+    finally:
+        logger.remove(sink)
+
+    assert store.deleted == []
+    assert any("acme.web" in r and "cgr delete-project" in r for r in records)
+
+
+def test_a_named_run_never_retires_a_project(dotted_checkout: Path) -> None:
+    # Negative: an explicit name says nothing about the directory's default.
+    store = _Retiring()
+    _legacy_project(store, "acme.web", dotted_checkout)
+
+    _index(dotted_checkout, store, "frontend")
+
+    assert store.deleted == []
 
 
 def test_check_reads_the_scope_an_unnamed_run_stamped_on_a_dotted_directory(

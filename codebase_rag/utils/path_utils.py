@@ -27,6 +27,21 @@ def derive_project_name(repo_path: Path) -> str:
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
 
 
+def default_project_name(repo_path: Path) -> str:
+    """The name a run that names no project writes under.
+
+    The directory name, as before, unless it holds the qualified-name
+    separator: `acme.web/` would write the nodes of project `acme`'s package
+    `web` (#2412). Such a checkout gets the digest-suffixed derived name, not
+    just the `.` dropped, which would give `acme.web/` and `acme_web/` the
+    same project (review of PR 2497).
+    """
+    directory = repo_path.resolve().name
+    if cs.SEPARATOR_DOT not in directory:
+        return directory
+    return derive_project_name(repo_path)
+
+
 def project_name_error(name: str) -> str | None:
     """Why `name` cannot be stored as a project name, or None if it can.
 
