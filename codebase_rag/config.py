@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Collection
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, ValidationError, field_validator
+from pydantic.fields import FieldInfo
+from pydantic_core import ErrorDetails
+from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
 
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
 from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
+
+# Taken before `.env` is merged into the environment, so a refused value can be
+# traced to the shell that exported it or to the file (#2474).
+_INHERITED_ENV = frozenset(os.environ)
 
 # Load only the configuration file in the invocation directory.  The default
 # python-dotenv discovery walks parent directories, which can silently import
@@ -195,11 +202,16 @@ class AppConfig(BaseSettings):
     # project's own `CRATES_API_TOKEN`). Refusing them made every command fail
     # at start-up and echoed the secret in the validation error, so undeclared
     # keys are ignored rather than forbidden.
+    #
+    # A blank value means "not set": `MEMGRAPH_HOST=` copied from
+    # `.env.example` used to connect to the empty host name rather than fall
+    # back to `localhost` (#2474).
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        env_ignore_empty=True,
     )
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
@@ -221,7 +233,9 @@ class AppConfig(BaseSettings):
     NEO4J_PASSWORD: str | None = None
     NEO4J_DATABASE: str = "neo4j"
     LAB_PORT: int = 3000
-    MEMGRAPH_BATCH_SIZE: int = 1000
+    # The floor `--batch-size` has, so the variable is refused at start-up as
+    # the flag is, not with a traceback from the first command that reads it.
+    MEMGRAPH_BATCH_SIZE: int = Field(default=1000, ge=1)
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
@@ -567,7 +581,57 @@ class AppConfig(BaseSettings):
         return resolved
 
 
-settings = AppConfig()
+def _variable_name(name: str, field: FieldInfo) -> str:
+    alias = field.validation_alias
+    return alias if isinstance(alias, str) else name
+
+
+def _describe_refusal(error: ErrorDetails, inherited_env: Collection[str]) -> str:
+    name = str(error["loc"][0])
+    exported = name.upper() in {key.upper() for key in inherited_env}
+    origin = cs.SETTING_ORIGIN_ENVIRONMENT if exported else cs.SETTING_ORIGIN_DOTENV
+    template = ex.SETTING_PROBLEMS.get(error["type"], ex.SETTING_PROBLEM_OTHER)
+    problem = template.format(
+        input=error["input"], msg=error["msg"], **error.get("ctx", {})
+    )
+    return ex.SETTING_INVALID.format(name=name, origin=origin, problem=problem)
+
+
+def load_settings(inherited_env: Collection[str]) -> tuple[AppConfig, tuple[str, ...]]:
+    """The settings, and one message per variable whose value was refused.
+
+    Every `cgr` invocation imports this module before it parses its arguments,
+    so raising here failed `--version` and `--help` too (#2474). A refused
+    variable falls back to its default instead, the rest of the configuration
+    is kept, and the CLI refuses to run a command while any message stands.
+    `AppConfig()` itself still raises for a caller that builds its own.
+
+    `inherited_env` names the variables the process was started with, which
+    tells a value exported in the shell from one read out of `.env`.
+    """
+    try:
+        return AppConfig(), ()
+    except SettingsError as error:
+        # A list setting that is not JSON fails while its source is read,
+        # before validation, so there is no per-field detail to recover from.
+        message = ex.SETTING_UNREADABLE.format(error=error, cause=error.__cause__)
+        return AppConfig.model_construct(), (message,)
+    except ValidationError as error:
+        refusals = error.errors(include_url=False)
+    refused = {str(refusal["loc"][0]) for refusal in refusals}
+    # Init values outrank every source, so a default passed here replaces only
+    # the refused value. A refusal is keyed by the variable, which for an
+    # aliased field is its alias.
+    defaults = {
+        variable: field.get_default(call_default_factory=True)
+        for name, field in AppConfig.model_fields.items()
+        if (variable := _variable_name(name, field)) in refused
+    }
+    messages = tuple(_describe_refusal(r, inherited_env) for r in refusals)
+    return AppConfig(**defaults), messages
+
+
+settings, settings_errors = load_settings(_INHERITED_ENV)
 
 CGRIGNORE_FILENAME = ".cgrignore"
 GITIGNORE_FILENAME = ".gitignore"

@@ -44,6 +44,9 @@ CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
 CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
+CLI_ERR_INVALID_SETTING = "Error: {problem}"
+# click's own exit status for a bad parameter value.
+CLI_EXIT_USAGE_ERROR = 2
 CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
     "Error: --output-format json requires --ask-agent/-a; "
     "it only applies to single-query output."

@@ -1,0 +1,310 @@
+"""One invalid setting must not take every `cgr` command down with it (#2474).
+
+`codebase_rag.config` builds `settings` when it is imported, and every `cgr`
+invocation imports it before parsing its arguments. A single malformed value
+in `.env` or the environment used to fail `--version` and `--help` with a raw
+pydantic traceback, and a value that parsed but broke later (a zero batch size,
+an empty host) failed deep inside a command instead of naming the variable.
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from pydantic import ValidationError
+from typer.testing import CliRunner
+
+from codebase_rag import cli, config
+
+# The `cgr` entry point is `codebase_rag.cli:app`.
+_CLI = "from codebase_rag.cli import app; app()"
+# Deadline for the child interpreter, not a performance assertion.
+_TIMEOUT_SECONDS = 120
+# The variables these tests set; the child inherits none of the developer's.
+_VARIABLES = (
+    "MEMGRAPH_HOST",
+    "MEMGRAPH_PORT",
+    "MEMGRAPH_BATCH_SIZE",
+    "SHELL_COMMAND_ALLOWLIST",
+    "CGR_SKIP_EMBEDDINGS",
+    "CPP_FRONTEND",
+    "GRAPH_BACKEND",
+    "QDRANT_BATCH_SIZE",
+)
+# Resolves the batch size before it connects, so a bad value is reached
+# without a database.
+_A_COMMAND = ("delete-project", "--name", "demo")
+
+
+def _cgr(
+    cwd: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    dotenv: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    if dotenv is not None:
+        (cwd / ".env").write_text(f"{dotenv}\n", encoding="utf-8")
+    child_env = {k: v for k, v in os.environ.items() if k.upper() not in _VARIABLES}
+    child_env.update(env or {})
+    return subprocess.run(
+        [sys.executable, "-c", _CLI, *args],
+        cwd=cwd,
+        env=child_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+@pytest.fixture
+def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    # In-process loads read `.env` from the working directory, so run them
+    # from an empty one with none of the variables under test set.
+    for name in _VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+class TestTheCliStartsWithAnInvalidSetting:
+    def test_version_works_with_an_invalid_value_in_dotenv(
+        self, tmp_path: Path
+    ) -> None:
+        result = _cgr(tmp_path, "--version", dotenv="MEMGRAPH_PORT=76 87")
+
+        assert result.returncode == 0, result.stderr
+        assert "code-graph-rag version" in result.stdout
+
+    def test_help_works_with_an_invalid_value_in_the_environment(
+        self, tmp_path: Path
+    ) -> None:
+        result = _cgr(tmp_path, "--help", env={"MEMGRAPH_PORT": "abc"})
+
+        assert result.returncode == 0, result.stderr
+        assert "Usage" in result.stdout
+
+    def test_a_command_names_the_variable_value_and_file_in_one_line(
+        self, tmp_path: Path
+    ) -> None:
+        result = _cgr(tmp_path, *_A_COMMAND, dotenv="MEMGRAPH_PORT=76 87")
+
+        assert result.returncode == 2
+        assert result.stderr.strip() == (
+            "Error: Invalid value for MEMGRAPH_PORT in ./.env: "
+            "'76 87' is not a valid integer."
+        )
+        assert "Traceback" not in result.stdout + result.stderr
+
+    def test_an_exported_value_is_traced_to_the_environment(
+        self, tmp_path: Path
+    ) -> None:
+        # The exported value wins over `.env`, so it is the one to name.
+        result = _cgr(
+            tmp_path,
+            *_A_COMMAND,
+            env={"MEMGRAPH_PORT": "abc"},
+            dotenv="MEMGRAPH_PORT=76 87",
+        )
+
+        assert result.returncode == 2
+        assert result.stderr.strip() == (
+            "Error: Invalid value for MEMGRAPH_PORT in the environment: "
+            "'abc' is not a valid integer."
+        )
+
+    def test_every_invalid_variable_gets_its_own_line(self, tmp_path: Path) -> None:
+        result = _cgr(
+            tmp_path,
+            *_A_COMMAND,
+            env={"MEMGRAPH_PORT": "abc", "CGR_SKIP_EMBEDDINGS": "maybe"},
+        )
+
+        assert result.returncode == 2
+        lines = result.stderr.strip().splitlines()
+        assert len(lines) == 2, result.stderr
+        assert any("MEMGRAPH_PORT" in line for line in lines)
+        assert any("CGR_SKIP_EMBEDDINGS" in line for line in lines)
+
+    def test_the_batch_size_variable_gets_the_flags_range_check(
+        self, tmp_path: Path
+    ) -> None:
+        result = _cgr(tmp_path, *_A_COMMAND, env={"MEMGRAPH_BATCH_SIZE": "0"})
+
+        assert result.returncode == 2
+        assert result.stderr.strip() == (
+            "Error: Invalid value for MEMGRAPH_BATCH_SIZE in the environment: "
+            "0 is not in the range x>=1."
+        )
+        assert "Traceback" not in result.stdout + result.stderr
+
+    def test_a_list_setting_that_is_not_json_is_reported_not_raised(
+        self, tmp_path: Path
+    ) -> None:
+        env = {"SHELL_COMMAND_ALLOWLIST": "ls,cat"}
+
+        version = _cgr(tmp_path, "--version", env=env)
+        command = _cgr(tmp_path, *_A_COMMAND, env=env)
+
+        assert version.returncode == 0, version.stderr
+        assert command.returncode == 2
+        assert "SHELL_COMMAND_ALLOWLIST" in command.stderr
+        assert len(command.stderr.strip().splitlines()) == 1, command.stderr
+        assert "Traceback" not in command.stdout + command.stderr
+
+
+class TestEmptyValues:
+    def test_an_empty_host_in_the_environment_means_the_default(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_HOST", "")
+
+        assert config.AppConfig().MEMGRAPH_HOST == "localhost"
+
+    def test_an_empty_host_in_dotenv_means_the_default(self, clean_env: Path) -> None:
+        # The blank line a user copies from `.env.example` and never fills in.
+        (clean_env / ".env").write_text("MEMGRAPH_HOST=\n", encoding="utf-8")
+
+        assert config.AppConfig().MEMGRAPH_HOST == "localhost"
+
+    def test_a_host_that_is_set_is_kept(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_HOST", "db.internal")
+
+        assert config.AppConfig().MEMGRAPH_HOST == "db.internal"
+
+
+class TestLoadSettings:
+    def test_a_valid_configuration_has_no_errors(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_PORT", "7688")
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert errors == ()
+        assert loaded.MEMGRAPH_PORT == 7688
+
+    def test_only_the_invalid_variable_falls_back_to_its_default(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The rest of the configuration is still the user's, so a library
+        # caller that ignores the errors does not silently lose it all.
+        monkeypatch.setenv("MEMGRAPH_PORT", "abc")
+        monkeypatch.setenv("MEMGRAPH_HOST", "db.internal")
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert loaded.MEMGRAPH_PORT == 7687
+        assert loaded.MEMGRAPH_HOST == "db.internal"
+        assert errors == (
+            "Invalid value for MEMGRAPH_PORT in the environment: "
+            "'abc' is not a valid integer.",
+        )
+
+    def test_a_value_only_in_dotenv_is_traced_to_the_file(
+        self, clean_env: Path
+    ) -> None:
+        (clean_env / ".env").write_text("MEMGRAPH_PORT=76 87\n", encoding="utf-8")
+
+        _, errors = config.load_settings(frozenset(os.environ))
+
+        assert errors == (
+            "Invalid value for MEMGRAPH_PORT in ./.env: '76 87' is not a valid integer.",
+        )
+
+    def test_a_variable_with_an_alias_is_named_and_reset(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CGR_SKIP_EMBEDDINGS", "maybe")
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert loaded.SKIP_EMBEDDINGS is False
+        assert errors == (
+            "Invalid value for CGR_SKIP_EMBEDDINGS in the environment: "
+            "'maybe' is not a valid boolean.",
+        )
+
+    @pytest.mark.parametrize(
+        ("name", "value", "problem"),
+        [
+            ("CPP_FRONTEND", "bogus", "'bogus' is not one of 'treesitter', "),
+            ("QDRANT_BATCH_SIZE", "0", "0 is not in the range x>0."),
+            ("MEMGRAPH_BATCH_SIZE", "-3", "-3 is not in the range x>=1."),
+            ("GRAPH_BACKEND", "bogus", "GRAPH_BACKEND must be one of "),
+        ],
+    )
+    def test_each_kind_of_refusal_reads_like_a_flag_error(
+        self,
+        clean_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        name: str,
+        value: str,
+        problem: str,
+    ) -> None:
+        monkeypatch.setenv(name, value)
+
+        _, errors = config.load_settings(frozenset(os.environ))
+
+        assert len(errors) == 1
+        assert errors[0].startswith(f"Invalid value for {name} in the environment: ")
+        assert problem in errors[0]
+
+
+class TestWhatStaysTheSame:
+    def test_building_app_config_directly_still_raises(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Only the module-level `settings` is lenient; a caller that builds its
+        # own configuration still gets the strict error.
+        monkeypatch.setenv("MEMGRAPH_PORT", "abc")
+
+        with pytest.raises(ValidationError, match="MEMGRAPH_PORT"):
+            config.AppConfig()
+
+    def test_a_batch_size_of_one_is_accepted(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_BATCH_SIZE", "1")
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert errors == ()
+        assert loaded.MEMGRAPH_BATCH_SIZE == 1
+
+    def test_the_batch_size_flag_keeps_its_own_check(self) -> None:
+        result = CliRunner().invoke(cli.app, ["start", "--batch-size", "0"])
+
+        assert result.exit_code == 2
+        assert "0 is not in the range x>=1." in result.output
+
+    def test_a_valid_configuration_runs_the_command(self) -> None:
+        # A blank name is the command's own refusal, reached only once the
+        # start-up check has let the command run.
+        with patch.object(cli, "settings_errors", ()):
+            result = CliRunner().invoke(cli.app, ["delete-project", "--name", " "])
+
+        assert result.exit_code == 1, result.output
+        assert "--name is required" in result.output
+
+    def test_cgr_help_still_works_while_a_setting_is_invalid(self) -> None:
+        errors = ("Invalid value for MEMGRAPH_PORT in ./.env: 'x' is not valid.",)
+        with patch.object(cli, "settings_errors", errors):
+            result = CliRunner().invoke(cli.app, ["help", "start"])
+
+        assert result.exit_code == 0, result.output
+        assert "--batch-size" in result.output
+
+    def test_a_command_is_refused_while_a_setting_is_invalid(self) -> None:
+        errors = ("Invalid value for MEMGRAPH_PORT in ./.env: 'x' is not valid.",)
+        with patch.object(cli, "settings_errors", errors):
+            result = CliRunner().invoke(cli.app, list(_A_COMMAND))
+
+        assert result.exit_code == 2
+        assert f"Error: {errors[0]}" in result.output

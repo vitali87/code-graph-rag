@@ -85,6 +85,9 @@ WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
 ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
+# Where a refused setting came from, as its error message names it.
+SETTING_ORIGIN_ENVIRONMENT = "the environment"
+SETTING_ORIGIN_DOTENV = "./.env"
 LOGURU_DEFAULT_HANDLER_ID = 0
 
 # Debounce settings for realtime watcher
