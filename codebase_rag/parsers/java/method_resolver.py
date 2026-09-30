@@ -11,6 +11,7 @@ from ... import logs as ls
 from ...decorators import depth_guard, recursion_guard
 from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
+from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
 from .utils import (
     extract_class_info,
     extract_method_call_info,
@@ -242,6 +243,9 @@ class JavaMethodResolverMixin:
     def _rank_module_candidates(
         self, candidates: list[str], class_qn: str, current_module_qn: str | None
     ) -> list[str]: ...
+
+    @abstractmethod
+    def _module_qn_to_java_fqn(self, module_qn: str) -> str | None: ...
 
     @abstractmethod
     def _find_registry_entries_under(
@@ -499,8 +503,9 @@ class JavaMethodResolverMixin:
         # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
         # so bind against the anon's base type FIRST: `_lexical_class_qn` only
         # sees the enclosing NAMED class and would mis-bind an inherited call to
-        # a same-named method there. Then the enclosing class hierarchy; the bare
-        # module-wide scan is the last resort (it ignores lexical scope).
+        # a same-named method there. Then the enclosing class hierarchy, then
+        # the file's static imports; the bare module-wide scan is the last
+        # resort (it ignores lexical scope).
         if (anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)) and (
             result := self._resolve_instance_method(
                 anon_base_qn, method_name, module_qn, arg_count, arg_types
@@ -515,6 +520,11 @@ class JavaMethodResolverMixin:
         ):
             logger.debug(ls.JAVA_FOUND_STATIC, result=result)
             return result
+        decided, result = self._resolve_static_import_call(
+            call_node, method_name, module_qn, arg_count, arg_types, enclosing_qn
+        )
+        if decided:
+            return result
         result = self._resolve_static_or_local_method(
             method_name, module_qn, arg_count, arg_types, caller_qn
         )
@@ -523,6 +533,135 @@ class JavaMethodResolverMixin:
         else:
             logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
         return result
+
+    def _resolve_static_import_call(
+        self,
+        call_node: ASTNode,
+        method_name: str,
+        module_qn: str,
+        arg_count: int,
+        arg_types: tuple[str | None, ...],
+        checked_qn: str | None,
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # (decided, callee). Undecided means no static import settles the
+        # call, which leaves it to the module-wide scan as before.
+        imports = self.import_processor.java_static_imports.get(module_qn, ())
+        named = [imp.class_path for imp in imports if imp.member == method_name]
+        on_demand = [imp.class_path for imp in imports if imp.member is None]
+        if not (named or on_demand):
+            return False, None
+        # JLS 15.12.1: a static import is consulted only when no enclosing
+        # class declares or inherits a method of that name, so an outer
+        # class's method still wins; the module-wide scan cannot say which
+        # classes enclose the call.
+        if result := self._resolve_enclosing_class_method(
+            call_node, method_name, module_qn, arg_count, arg_types, checked_qn
+        ):
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+            return True, result
+        # A single-static-import shadows every on-demand one (JLS 6.4.1).
+        if result := self._resolve_static_imported_method(
+            named or on_demand, method_name, module_qn, arg_count, arg_types
+        ):
+            logger.debug(ls.JAVA_FOUND_STATIC_IMPORT, result=result)
+            return True, result
+        if named:
+            # The import names this very member, so the call means it even
+            # when its class is not in the repo (Math.max, JUnit's
+            # assertEquals); the scan would bind a same-named method of an
+            # unrelated class in this file instead.
+            logger.debug(
+                ls.JAVA_STATIC_IMPORT_EXTERNAL, method=method_name, classes=named
+            )
+            return True, None
+        return False, None
+
+    def _resolve_enclosing_class_method(
+        self,
+        call_node: ASTNode,
+        method_name: str,
+        module_qn: str,
+        arg_count: int,
+        arg_types: tuple[str | None, ...],
+        checked_qn: str | None,
+    ) -> tuple[str, str] | None:
+        # Every named class around the call, innermost first: a nested class
+        # registers as module.Outer.Inner, so the qn is the chain of names.
+        # `checked_qn` is the lexical class the caller already searched.
+        names: list[str] = []
+        current = call_node.parent
+        while current is not None:
+            if current.type in cs.JAVA_CLASS_NODE_TYPES and (
+                name := safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            ):
+                names.append(name)
+            current = current.parent
+        for depth in range(len(names)):
+            class_qn = cs.SEPARATOR_DOT.join((module_qn, *reversed(names[depth:])))
+            if class_qn == checked_qn:
+                continue
+            if self.function_registry.get(class_qn) in JAVA_TYPE_DECL_NODE_TYPES and (
+                result := self._resolve_instance_method(
+                    class_qn, method_name, module_qn, arg_count, arg_types
+                )
+            ):
+                return result
+        return None
+
+    def _resolve_static_imported_method(
+        self,
+        class_paths: list[str],
+        method_name: str,
+        module_qn: str,
+        arg_count: int,
+        arg_types: tuple[str | None, ...],
+    ) -> tuple[str, str] | None:
+        # Static members are inherited, so a class's superclass chain counts;
+        # its interfaces do not (an interface's static method is not
+        # inherited), which is why this skips _resolve_instance_method.
+        for class_path in class_paths:
+            if not (class_qn := self._static_import_class_qn(class_path, module_qn)):
+                continue
+            if result := self._search_method_in_class(
+                class_qn, method_name, arg_count, arg_types
+            ) or self._find_inherited_method(
+                class_qn, method_name, module_qn, arg_count, arg_types
+            ):
+                return result
+        return None
+
+    def _static_import_class_qn(self, class_path: str, module_qn: str) -> str | None:
+        # The registered class a static import names. A local import arrives
+        # as the file's module qn plus any nested-class names
+        # (repo...acme.Util -> repo...acme.Util.Util, repo...acme.Outer.Inner
+        # -> repo...acme.Outer.Outer.Inner). One the source-root probe did not
+        # see as local (a multi-module build) still matches a repo file whose
+        # package path IS the import's. The suffix-tolerant lookup that
+        # qualified calls use is not applied: it would bind
+        # `import static java.lang.Math.max` to a first-party class that is
+        # merely also named Math.
+        parts = class_path.split(cs.SEPARATOR_DOT)
+        for end in range(len(parts), 1, -1):
+            file_qn = cs.SEPARATOR_DOT.join(parts[:end])
+            if file_qn in self.module_qn_to_file_path:
+                owners = [file_qn]
+            else:
+                # The map also files a module under each dotted suffix of its
+                # package path; only a module whose package path is the whole
+                # import (when its layout shows one) is the imported file.
+                owners = [
+                    owner
+                    for owner in self._rank_module_candidates(
+                        self._fqn_to_module_qn.get(file_qn, []), file_qn, module_qn
+                    )
+                    if self._module_qn_to_java_fqn(owner) in (None, file_qn)
+                ]
+            type_path = cs.SEPARATOR_DOT.join(parts[end - 1 :])
+            for owner in owners:
+                class_qn = f"{owner}{cs.SEPARATOR_DOT}{type_path}"
+                if self.function_registry.get(class_qn) in JAVA_TYPE_DECL_NODE_TYPES:
+                    return class_qn
+        return None
 
     def _resolve_instance_method(
         self,

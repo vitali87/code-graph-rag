@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 # Node types an imported Java name can declare (records and annotation types
 # register as CLASS).
-_JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 
 
 class JavaTypeResolverMixin:
@@ -115,13 +115,13 @@ class JavaTypeResolverMixin:
         # through unchanged.
         if (
             target in self.function_registry
-            and self.function_registry[target] in _JAVA_TYPE_DECL_NODE_TYPES
+            and self.function_registry[target] in JAVA_TYPE_DECL_NODE_TYPES
         ):
             return target
         class_qn = f"{target}{cs.SEPARATOR_DOT}{type_name}"
         if (
             class_qn in self.function_registry
-            and self.function_registry[class_qn] in _JAVA_TYPE_DECL_NODE_TYPES
+            and self.function_registry[class_qn] in JAVA_TYPE_DECL_NODE_TYPES
         ):
             return class_qn
         return target
