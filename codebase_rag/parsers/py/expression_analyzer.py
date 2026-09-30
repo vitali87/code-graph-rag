@@ -12,7 +12,7 @@ from ...decorators import recursion_guard
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType, SimpleNameLookup
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
-from .utils import resolve_class_name
+from .utils import resolve_class_name, resolve_dotted_class
 
 # An inline receiver is handed to the expression rules only when its text can
 # be one: an operator, `or`/`and`, or a conditional. Everything else keeps the
@@ -113,19 +113,39 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 method_call_text, module_qn, None
             ):
                 return inferred
-            return self._attribute_constructor_type(method_call_text)
+            return self._attribute_constructor_type(method_call_text, module_qn)
         return None
 
-    def _attribute_constructor_type(self, method_call_text: str) -> str | None:
+    def _attribute_constructor_type(
+        self,
+        method_call_text: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> str | None:
         # alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
         # genai.Client), not a method call: the variable's type is the dotted class
         # itself. Without this the receiver stays untyped, known-external suppression
         # cannot fire, and a later member call (df.apply) rebinds by bare name to an
         # unrelated first-party method. Mirrors the bare `ClassName(...)` heuristic.
         simple_name = method_call_text.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if simple_name and simple_name[0].isupper():
-            return method_call_text
-        return None
+        if not simple_name or not simple_name[0].isupper():
+            return None
+        # A first-party class is stored by its qn: the raw `pkg.Client` names
+        # no registry entry, so the receiver read as external and its calls
+        # got no edge, and `pkg._client.Client` lacked the project prefix and
+        # fell to the name-only fallback (issue #2558). A head the body binds
+        # itself is a local, not the import, and keeps the text as written.
+        head = method_call_text.partition(cs.SEPARATOR_DOT)[0]
+        if not (local_var_types and head in local_var_types) and (
+            class_qn := resolve_dotted_class(
+                method_call_text,
+                module_qn,
+                self.import_processor,
+                self.function_registry,
+            )
+        ):
+            return class_qn
+        return method_call_text
 
     def _infer_type_from_expression_simple(
         self, node: Node, module_qn: str
@@ -161,7 +181,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     method_call_text, module_qn, local_var_types
                 ):
                     return inferred
-                return self._attribute_constructor_type(method_call_text)
+                return self._attribute_constructor_type(
+                    method_call_text, module_qn, local_var_types
+                )
 
             if (
                 func_node

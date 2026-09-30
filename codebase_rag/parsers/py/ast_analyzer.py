@@ -13,15 +13,18 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
+from .with_analyzer import WithTarget
 
 _PY_SCOPE_TYPES = frozenset(
     {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_MODULE}
 )
 
+_WITH_STMT_CAPTURE = "with_stmt"
 _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_ASSIGNMENT}) @assignment "
     f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
     f"({cs.TS_PY_FOR_STATEMENT}) @for_stmt "
+    f"({cs.TS_PY_WITH_STATEMENT}) @{_WITH_STMT_CAPTURE} "
     f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
 )
 
@@ -98,6 +101,34 @@ def _with_aliases(statement: Node) -> Iterator[Node]:
             alias = value.child_by_field_name(cs.FIELD_ALIAS)
             if alias is not None:
                 yield alias
+
+
+def _with_items(statement: Node) -> Iterator[WithTarget]:
+    """The items of a with statement whose `as` target is one plain name.
+
+    A destructuring target (`as (a, b)`) or an attribute (`as self.conn`)
+    binds no single local to the entered value, so neither is yielded.
+    """
+    is_async = any(child.type == cs.TS_PY_ASYNC for child in statement.children)
+    for clause in statement.named_children:
+        for item in clause.named_children:
+            value = item.child_by_field_name(cs.FIELD_VALUE)
+            if value is None or value.type != cs.TS_PY_AS_PATTERN:
+                continue
+            alias = value.child_by_field_name(cs.FIELD_ALIAS)
+            if (
+                alias is None
+                or alias.named_child_count != 1
+                or not value.named_children
+            ):
+                continue
+            target = alias.named_children[0]
+            if target.type == cs.TS_PY_IDENTIFIER and (
+                name := safe_decode_text(target)
+            ):
+                yield WithTarget(
+                    name, value.named_children[0], is_async, target.start_byte
+                )
 
 
 def _except_aliases(clause: Node) -> Iterator[Node]:
@@ -572,6 +603,31 @@ def _own_bound_names(scope: Node) -> frozenset[str]:
     return frozenset(names)
 
 
+def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
+    """The with targets `scope`'s own body binds, each only where no later
+    binding in that body rebinds the name.
+
+    The type map is flat per body, so it holds one type per name. A later
+    `v = Other()` (or another `with ... as v`) describes the value from
+    there on and keeps its type; the with target must not overwrite it,
+    whichever pass happens to run first. An earlier binding is superseded by
+    the with target, which is written over it.
+    """
+    targets = [
+        target
+        for statement in statements
+        if _scope_of(statement) == scope.id
+        for target in _with_items(statement)
+    ]
+    if not targets:
+        return []
+    last: dict[str, int] = {}
+    for _binder, identifier in _bindings_in(scope):
+        if name := safe_decode_text(identifier):
+            last[name] = max(last.get(name, -1), identifier.start_byte)
+    return [target for target in targets if last.get(target.name) == target.binds_at]
+
+
 def _comprehension_names(comprehension: Node) -> frozenset[str]:
     """The names a comprehension's `for ... in` clauses bind."""
     names: set[str] = set()
@@ -646,6 +702,13 @@ if TYPE_CHECKING:
             module_qn: str,
         ) -> None: ...
 
+        def _type_with_targets(
+            self,
+            targets: list[WithTarget],
+            local_var_types: dict[str, str],
+            module_qn: str,
+        ) -> list[WithTarget]: ...
+
     _AstBase: type = _AstAnalyzerDeps
 else:
     _AstBase = object
@@ -718,7 +781,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         """Types locals in one traversal; returns (comprehensions, for
         statements) so the coordinator can re-run loop inference after the
         attribute passes populate ``self.x`` types."""
-        assignments, comprehensions, for_statements = self._collect_traverse_nodes(node)
+        assignments, comprehensions, for_statements, with_statements = (
+            self._collect_traverse_nodes(node)
+        )
 
         # Only what THIS body binds. The captures above walk the whole
         # subtree, so a name bound inside a nested def or class body would
@@ -749,8 +814,17 @@ class PythonAstAnalyzerMixin(_AstBase):
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
 
+        # Between the two assignment passes: a with target types from its
+        # manager, which the simple pass may have typed, and the complex pass
+        # types `r = conn.send()` from the target. A manager only the complex
+        # pass types is retried after it.
+        with_targets = _with_targets(node, with_statements)
+        pending = self._type_with_targets(with_targets, local_var_types, module_qn)
+
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
+        if pending:
+            self._type_with_targets(pending, local_var_types, module_qn)
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
@@ -772,8 +846,8 @@ class PythonAstAnalyzerMixin(_AstBase):
 
     def _collect_traverse_nodes(
         self, node: Node
-    ) -> tuple[list[Node], list[Node], list[Node]]:
-        """(assignments, comprehensions, for statements) under `node`.
+    ) -> tuple[list[Node], list[Node], list[Node], list[Node]]:
+        """(assignments, comprehensions, for statements, with statements) under `node`.
 
         Uses the cached query when the Python grammar is loaded, and falls
         back to a plain tree walk when it is not or the query fails.
@@ -791,6 +865,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                     captures.get("assignment", []),
                     captures.get("comprehension", []),
                     captures.get("for_stmt", []),
+                    captures.get(_WITH_STMT_CAPTURE, []),
                 )
             except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
@@ -798,6 +873,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         assignments: list[Node] = []
         comprehensions: list[Node] = []
         for_statements: list[Node] = []
+        with_statements: list[Node] = []
         stack: list[Node] = [node]
         while stack:
             current = stack.pop()
@@ -809,9 +885,11 @@ class PythonAstAnalyzerMixin(_AstBase):
                 comprehensions.append(current)
             elif node_type == cs.TS_PY_FOR_STATEMENT:
                 for_statements.append(current)
+            elif node_type == cs.TS_PY_WITH_STATEMENT:
+                with_statements.append(current)
 
             stack.extend(reversed(current.children))
-        return assignments, comprehensions, for_statements
+        return assignments, comprehensions, for_statements, with_statements
 
     def analyze_scoped_comprehensions(
         self,

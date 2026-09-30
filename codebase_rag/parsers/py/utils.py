@@ -1,12 +1,59 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from ...constants import SEPARATOR_DOT
-from ...types_defs import FunctionRegistryTrieProtocol
+from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..utils import follow_reexports
 
 if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
+
+
+def resolve_dotted_class(
+    path: str,
+    module_qn: str,
+    import_processor: ImportProcessor,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str | None:
+    """The indexed class a dotted path names from `module_qn`, else None.
+
+    `pkg.Client`, `pkg._client.Client` and `Outer.Inner` start with a name
+    the module binds (an import, or a class of its own); the rest is looked
+    up under what that name refers to, following the package's re-exports
+    (`pkg/__init__.py`'s `from ._client import Client`). A path into a module
+    outside the project (`pd.DataFrame`) names no indexed class.
+    """
+    head, _, rest = path.partition(SEPARATOR_DOT)
+    if not rest:
+        return None
+    import_mapping = import_processor.import_mapping
+    for base in _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {})):
+        qn = follow_reexports(
+            f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
+        )
+        if function_registry.get(qn) == NodeType.CLASS:
+            return qn
+    return None
+
+
+def _dotted_head_bases(
+    head: str, module_qn: str, import_map: dict[str, str]
+) -> Iterator[str]:
+    """What the first name of a dotted path can refer to, most specific first.
+
+    `import pkg._client` binds `pkg` but is recorded as `pkg ->
+    <project>.pkg._client`, so besides the recorded target the package
+    itself is tried: the target cut after its `pkg` segment.
+    """
+    if target := import_map.get(head):
+        yield target
+        parts = target.split(SEPARATOR_DOT)
+        for end in range(len(parts) - 1, 0, -1):
+            if parts[end - 1] == head:
+                yield SEPARATOR_DOT.join(parts[:end])
+    yield f"{module_qn}{SEPARATOR_DOT}{head}"
 
 
 def resolve_class_name(
