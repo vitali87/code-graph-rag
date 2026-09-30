@@ -195,7 +195,8 @@ def test_enum_constant_picks_the_constructor_overload_by_argument_count(
     module = cs.NodeLabel.MODULE.value
     none_edge = calls.get((module, MODULE_QN, f"{OUTER_QN}.Op.Op()"))
     one_edge = calls.get((module, MODULE_QN, f"{OUTER_QN}.Op.Op(String)"))
-    assert none_edge is not None and one_edge is not None, sorted(calls)
+    assert none_edge is not None, sorted(calls)
+    assert one_edge is not None, sorted(calls)
     assert none_edge[cs.KEY_LINE] == one_edge[cs.KEY_LINE] == 5
     assert none_edge[cs.KEY_COL] < one_edge[cs.KEY_COL]
     assert (none_edge[cs.KEY_ARG_COUNT], one_edge[cs.KEY_ARG_COUNT]) == (0, 1)
