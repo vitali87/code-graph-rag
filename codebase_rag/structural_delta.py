@@ -35,6 +35,7 @@ from .dead_code import (
 )
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _prefix
+from .language_spec import get_language_for_extension
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -65,11 +66,28 @@ class CallSite(NamedTuple):
     kwarg_names: tuple[str, ...]
 
 
+class ImportBinding(NamedTuple):
+    """One name an import statement binds: `from module import name as bound`."""
+
+    importer: str
+    importer_path: str
+    module: str
+    imported_name: str
+    bound: str
+    line: int | None
+    col: int | None
+
+    @property
+    def symbol(self) -> str:
+        return f"{self.module}{cs.SEPARATOR_DOT}{self.imported_name}"
+
+
 class Snapshot(NamedTuple):
     """The touched files' subgraph plus the project's module import graph.
 
     `definitions` are the symbols defined in the touched files; `callees`
-    the definitions elsewhere that the touched files' sites resolve to.
+    the definitions elsewhere that the touched files' sites resolve to;
+    `bindings` the by-name imports into and out of the touched files.
     """
 
     paths: frozenset[str]
@@ -78,6 +96,7 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    bindings: tuple[ImportBinding, ...] = ()
 
 
 class RenameFinding(TypedDict):
@@ -91,6 +110,19 @@ class DanglingCaller(TypedDict):
     path: str
     line: int | None
     col: int | None
+    target: str
+    renamed_to: str | None
+
+
+class DanglingImporter(TypedDict):
+    """An import statement or `__all__` entry still naming a gone symbol."""
+
+    importer: str
+    path: str
+    line: int | None
+    col: int | None
+    kind: cs.DanglingImportKind
+    name: str
     target: str
     renamed_to: str | None
 
@@ -179,6 +211,7 @@ class StructuralDelta(TypedDict):
     removed_files: list[str]
     symbols: SymbolDelta
     dangling_callers: list[DanglingCaller]
+    dangling_importers: list[DanglingImporter]
     signature_changes: list[SignatureChange]
     arity_findings: list[ArityAtSite]
     new_duplicates: list[NewDuplicate]
@@ -257,6 +290,20 @@ def _site(row: ResultRow) -> CallSite:
     )
 
 
+def _binding(row: ResultRow) -> ImportBinding:
+    imported_name = _text(row.get(cs.KEY_IMPORTED_NAME))
+    return ImportBinding(
+        importer=_text(row.get(cs.KEY_FROM_QN)),
+        importer_path=_text(row.get(cs.KEY_FROM_PATH)),
+        module=_text(row.get(cs.KEY_TO_QN)),
+        imported_name=imported_name,
+        # A wildcard binds no single name and records no alias.
+        bound=_text(row.get(cs.KEY_ALIAS)) or imported_name,
+        line=_opt_int(row.get(cs.KEY_LINE)),
+        col=_opt_int(row.get(cs.KEY_COL)),
+    )
+
+
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     """Return registered project names that can own a longer qualified name."""
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
@@ -332,6 +379,13 @@ def snapshot(
         imports.setdefault(source, set()).add(target)
         imports.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
+    bindings = tuple(
+        binding
+        for binding in (
+            _binding(row) for row in fetch_all(cq.CYPHER_DELTA_NAMED_IMPORTS, params)
+        )
+        if binding.importer and binding.module and binding.imported_name
+    )
     return Snapshot(
         paths=frozenset(path_list),
         definitions=definitions,
@@ -339,6 +393,7 @@ def snapshot(
         sites=sites,
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
+        bindings=bindings,
     )
 
 
@@ -595,6 +650,192 @@ def _dangling(
         )
     return sorted(
         out, key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["caller"])
+    )
+
+
+# --- dangling importers ------------------------------------------------------
+
+
+class _AfterBindings:
+    """Which names the modules of the after-snapshot still bind."""
+
+    def __init__(self, after: Snapshot, gone: set[str]) -> None:
+        self._definitions = after.definitions
+        self._gone = gone
+        self._by_importer: dict[str, list[ImportBinding]] = {}
+        for binding in after.bindings:
+            self._by_importer.setdefault(binding.importer, []).append(binding)
+
+    def binds(
+        self,
+        module: str,
+        name: str,
+        seen: frozenset[tuple[str, str]] = frozenset(),
+    ) -> bool:
+        """Whether `module` still binds `name` to something that exists.
+
+        Its own definition counts, and so does an import of the name that
+        still resolves: after a move, `from app.util import helper` left in
+        `app.core` keeps every `from app.core import helper` working. A chain
+        of re-exports is followed; a cycle in it binds nothing.
+        """
+        if (module, name) in seen:
+            return False
+        seen = seen | {(module, name)}
+        if f"{module}{cs.SEPARATOR_DOT}{name}" in self._definitions:
+            return True
+        for binding in self._by_importer.get(module, ()):
+            if binding.imported_name == cs.IMPORTED_NAME_WILDCARD:
+                if self.binds(binding.module, name, seen):
+                    return True
+            elif binding.bound == name and (
+                binding.symbol not in self._gone
+                or self.binds(binding.module, binding.imported_name, seen)
+            ):
+                return True
+        return False
+
+
+def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
+    """(line, byte column) of each `__all__` string entry that reads `name`."""
+    found: list[tuple[int, int]] = []
+    for block in re.finditer(cs.PY_DUNDER_ALL_BLOCK_PATTERN, text, re.S):
+        for entry in re.finditer(cs.PY_DUNDER_ALL_ENTRY_PATTERN, block.group(1)):
+            if entry.group("name") != name:
+                continue
+            offset = block.start(1) + entry.start("name")
+            line_start = text.rfind("\n", 0, offset) + 1
+            found.append(
+                (
+                    text.count("\n", 0, offset) + 1,
+                    len(text[line_start:offset].encode(cs.ENCODING_UTF8)),
+                )
+            )
+    return found
+
+
+def _python_source(repo_root: Path, path: str) -> str | None:
+    if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
+        return None
+    try:
+        return (repo_root / path).read_text(encoding=cs.ENCODING_UTF8)
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _import_findings(
+    before: Snapshot,
+    after: Snapshot,
+    gone: set[str],
+    renamed_to: dict[str, str],
+    still: _AfterBindings,
+) -> list[DanglingImporter]:
+    # An importer the edit left alone still holds the statement the base
+    # graph recorded, even when the module it names was deleted and the
+    # edge went with it; an importer the edit touched is read after the
+    # edit, at its new positions, so a statement it dropped is not listed.
+    candidates = [
+        *(b for b in before.bindings if b.importer_path not in after.paths),
+        *(b for b in after.bindings if b.importer_path in after.paths),
+    ]
+    return [
+        DanglingImporter(
+            importer=binding.importer,
+            path=binding.importer_path,
+            line=binding.line,
+            col=binding.col,
+            kind=cs.DanglingImportKind.IMPORT,
+            name=binding.imported_name,
+            target=binding.symbol,
+            renamed_to=renamed_to.get(binding.symbol),
+        )
+        for binding in candidates
+        if binding.symbol in gone
+        and not still.binds(binding.module, binding.imported_name)
+    ]
+
+
+def _all_findings(
+    before: Snapshot,
+    after: Snapshot,
+    gone: set[str],
+    renamed_to: dict[str, str],
+    still: _AfterBindings,
+    repo_root: Path,
+) -> list[DanglingImporter]:
+    # (module, path, the name it exported the symbol under, the symbol): the
+    # defining module of each module-level gone symbol, plus every module
+    # that imported one by name, whether or not the edit kept that import.
+    exporters: set[tuple[str, str, str, str]] = set()
+    for qn in gone:
+        definition = before.definitions.get(qn)
+        module = _module_of(qn)
+        # A method or nested function has its parent among the same file's
+        # definitions, and only a module-level name can be in `__all__`.
+        if definition is None or not module or module in before.definitions:
+            continue
+        exporters.add((module, definition.path, definition.name, qn))
+    for binding in (*before.bindings, *after.bindings):
+        if binding.symbol in gone:
+            exporters.add(
+                (binding.importer, binding.importer_path, binding.bound, binding.symbol)
+            )
+    sources: dict[str, str | None] = {}
+    out: list[DanglingImporter] = []
+    for module, path, name, target in sorted(exporters):
+        if still.binds(module, name):
+            continue
+        if path not in sources:
+            sources[path] = _python_source(repo_root, path)
+        text = sources[path]
+        if text is None:
+            continue
+        out.extend(
+            DanglingImporter(
+                importer=module,
+                path=path,
+                line=line,
+                col=col,
+                kind=cs.DanglingImportKind.ALL,
+                name=name,
+                target=target,
+                renamed_to=renamed_to.get(target),
+            )
+            for line, col in _dunder_all_entries(text, name)
+        )
+    return out
+
+
+def _dangling_importers(
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    repo_root: Path | None,
+) -> list[DanglingImporter]:
+    """Import statements and `__all__` entries naming a removed symbol.
+
+    `dangling_callers` needs a call or reference site, and a package
+    `__init__` that only re-exports a name has none, so deleting the name
+    left the package failing at import time with nothing reported (issue
+    #2516). The IMPORTS edge records the name it binds; an entry is listed
+    when that name, or an `__all__` string exporting it, points at a symbol
+    the edit removed or renamed and nothing still binds it in its place.
+    """
+    gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
+    if not gone:
+        return []
+    renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
+    still = _AfterBindings(after, gone)
+    found = _import_findings(before, after, gone, renamed_to, still)
+    if repo_root is not None:
+        found.extend(_all_findings(before, after, gone, renamed_to, still, repo_root))
+    unique = {
+        (d["kind"], d["path"], d["line"], d["col"], d["name"], d["target"]): d
+        for d in found
+    }
+    return sorted(
+        unique.values(),
+        key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["kind"], d["name"]),
     )
 
 
@@ -1187,6 +1428,7 @@ def structural_delta(
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
         dangling_callers=_dangling(before, after, symbols),
+        dangling_importers=_dangling_importers(before, after, symbols, repo_root),
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
         ),
@@ -1313,6 +1555,9 @@ def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
         delta["dangling_callers"]
+        # An import of a removed name fails when the importing module loads,
+        # with or without a call site to go with it (issue #2516).
+        or delta["dangling_importers"]
         or any(
             site["verdict"] != cs.DELTA_ARITY_OK
             and site["verdict"] != cs.DELTA_ARITY_UNKNOWN

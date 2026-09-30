@@ -77,8 +77,8 @@ _MEMBER_NAME_TYPES = frozenset(
 # The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
 # the restoration check and the rewrite cannot disagree about what an
 # `__all__` entry is (Greptile, PR #1547).
-_ALL_BLOCK = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
-_ALL_ENTRY = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
+_ALL_BLOCK = cs.PY_DUNDER_ALL_BLOCK_PATTERN
+_ALL_ENTRY = cs.PY_DUNDER_ALL_ENTRY_PATTERN
 
 # How far a parenthesised import is followed looking for its closing bracket.
 # Bounded so a file with an unbalanced paren cannot make this walk the rest of

@@ -120,8 +120,8 @@ HELP_GRAPH_REPO_PATH = (
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
 CMD_CHECK = (
     "Report the structural delta of the working tree against a git ref: "
-    "dangling callers, arity findings, new duplicates, new import cycles, "
-    "tests reaching the edited symbols."
+    "dangling callers and importers, arity findings, new duplicates, new "
+    "import cycles, tests reaching the edited symbols."
 )
 EXAMPLES_CHECK = (
     "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
@@ -130,8 +130,8 @@ HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
 )
 HELP_CHECK_FAIL_ON_FOUND = (
-    "Exit with status 1 when the delta reports dangling callers, arity "
-    "findings, new duplicates or new import cycles."
+    "Exit with status 1 when the delta reports dangling callers, dangling "
+    "importers, arity findings, new duplicates or new import cycles."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
