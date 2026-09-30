@@ -209,7 +209,8 @@ def test_start_refuses_a_name_that_indexes_another_repo(
 
     assert result.exit_code == 1, result.output
     output = "".join(click.unstyle(result.output).split())
-    assert str(org_a) in output and "--yes" in output
+    assert str(org_a) in output
+    assert "--yes" in output
     graph.updater.assert_not_called()
 
 
@@ -257,7 +258,8 @@ def test_start_refuses_when_the_owner_cannot_be_read(
 
     assert result.exit_code == 1, result.output
     output = " ".join(click.unstyle(result.output).split())
-    assert "lost connection" in output and "--yes" in output
+    assert "lost connection" in output
+    assert "--yes" in output
     graph.updater.assert_not_called()
 
 
@@ -342,4 +344,5 @@ def test_the_pre_chat_sync_honours_yes(graph: MagicMock, tmp_path: Path) -> None
 
 
 def test_the_help_states_the_real_default() -> None:
-    assert "__" in HELP_PROJECT_NAME and "directory name." not in HELP_PROJECT_NAME
+    assert "__" in HELP_PROJECT_NAME
+    assert "directory name." not in HELP_PROJECT_NAME
