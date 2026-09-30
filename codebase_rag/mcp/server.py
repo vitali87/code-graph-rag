@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
@@ -145,13 +145,18 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     server = Server(cs.MCP_SERVER_NAME)
 
-    def _create_error_content(message: str) -> list[TextContent]:
-        return [
-            TextContent(
-                type=cs.MCP_CONTENT_TYPE_TEXT,
-                text=te.ERROR_WRAPPER.format(message=message),
-            )
-        ]
+    # `isError` is what a host branches on; a failure reported as a
+    # successful result is read as the tool's answer (issue #2461).
+    def _create_error_content(message: str) -> CallToolResult:
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type=cs.MCP_CONTENT_TYPE_TEXT,
+                    text=te.ERROR_WRAPPER.format(message=message),
+                )
+            ],
+            isError=True,
+        )
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -166,7 +171,9 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: MCPToolArguments) -> list[TextContent]:
+    async def call_tool(
+        name: str, arguments: MCPToolArguments
+    ) -> list[TextContent] | CallToolResult:
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
@@ -185,7 +192,18 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             else:
                 result_text = str(result)
 
-            return [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            # A JSON tool refuses with a result that is nothing but its error
+            # (an unknown project or name, a partial graph, a failed read).
+            # One that carries an error beside its data, such as an applied
+            # rename reporting a marker it could not clear, did its work.
+            if (
+                returns_json
+                and isinstance(result, dict)
+                and result.keys() == {cs.DICT_KEY_ERROR}
+            ):
+                return CallToolResult(content=content, isError=True)
+            return content
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)

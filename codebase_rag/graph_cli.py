@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import click
 
@@ -33,14 +34,89 @@ def _project_and_fetch(
     return name, ingestor.fetch_all, ingestor
 
 
+class _Refusal(NamedTuple):
+    message: str
+    exit_code: int
+
+
+def _unknown_project(
+    fetch_all: graph_query.QueryFn, name: str, project: str | None, repo_path: Path
+) -> _Refusal | None:
+    """Why `name` cannot be queried, or None when the graph holds it.
+
+    Checked before any query: every read is scoped by the project prefix,
+    so a project the graph does not hold answers `[]` to all of them.
+    """
+    roots = graph_query.indexed_projects(fetch_all)
+    if name in roots:
+        return None
+    close = graph_query.close_project_names(name, roots)
+    if project is None:
+        # The name was derived from --repo-path, so the directory is what
+        # was never indexed; a project indexed from it under a name of its
+        # own is the likeliest thing meant.
+        rooted = graph_query.projects_rooted_at(roots, repo_path)
+        message = cs.CLI_ERR_GRAPH_REPO_NOT_INDEXED.format(
+            path=repo_path.resolve()
+        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+    elif close:
+        message = cs.CLI_ERR_GRAPH_UNKNOWN_PROJECT.format(
+            project=name
+        ) + graph_query.did_you_mean(close)
+    elif roots:
+        message = cs.CLI_ERR_GRAPH_UNKNOWN_PROJECT.format(
+            project=name
+        ) + cs.CLI_ERR_GRAPH_INDEXED_PROJECTS.format(
+            projects=cs.SEPARATOR_COMMA_SPACE.join(sorted(roots))
+        )
+    else:
+        message = (
+            cs.CLI_ERR_GRAPH_UNKNOWN_PROJECT.format(project=name)
+            + cs.CLI_ERR_GRAPH_NOTHING_INDEXED
+        )
+    return _Refusal(message, cs.GRAPH_EXIT_UNKNOWN_PROJECT)
+
+
+def _unknown_target(
+    fetch_all: graph_query.QueryFn, name: str, qualified_name: str
+) -> _Refusal | None:
+    if graph_query.node_exists(fetch_all, qualified_name):
+        return None
+    close = graph_query.similar_targets(fetch_all, name, qualified_name)
+    message = cs.CLI_ERR_GRAPH_UNKNOWN_TARGET.format(qualified_name=qualified_name)
+    message += (
+        graph_query.did_you_mean(close) if close else cs.CLI_ERR_GRAPH_RESOLVE_HINT
+    )
+    return _Refusal(message, cs.GRAPH_EXIT_UNKNOWN_TARGET)
+
+
 def _run_query_and_emit(
     project: str | None,
     repo_path: Path,
     query: Callable[[graph_query.QueryFn, str], object],
+    target: str | None = None,
 ) -> None:
+    """Run `query` and print its JSON, or refuse on stderr with a status.
+
+    `target` is the qualified name the query walks from; an empty answer
+    for it is checked against the graph, because `[]` for a name the graph
+    never saw reads as "nothing calls it" (issue #2461).
+    """
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:
-        _emit(query(fetch_all, name))
+        refusal = _unknown_project(fetch_all, name, project, repo_path)
+        result = None if refusal is not None else query(fetch_all, name)
+        if refusal is None and target is not None and result == []:
+            refusal = _unknown_target(fetch_all, name, target)
+    # Reported after the connection closes: an exit raised inside it is
+    # logged as a failed write with a traceback.
+    if refusal is not None:
+        click.secho(refusal.message, fg=cs.Color.RED, err=True)
+        # sys.exit, not click's Exit: the group runs with standalone_mode off
+        # under typer, where click turns its own Exit into a return value and
+        # the status would be lost.
+        sys.exit(refusal.exit_code)
+    _emit(result)
 
 
 def _graph_options[F: Callable[..., None]](fn: F) -> F:
@@ -109,6 +185,7 @@ def callers_cmd(
         project,
         repo_path,
         lambda f, n: graph_query.callers(f, n, qualified_name, depth),
+        target=qualified_name,
     )
 
 
@@ -123,6 +200,7 @@ def callees_cmd(
         project,
         repo_path,
         lambda f, n: graph_query.callees(f, n, qualified_name, depth),
+        target=qualified_name,
     )
 
 
@@ -133,7 +211,10 @@ def callees_cmd(
 @_graph_options
 def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
     _run_query_and_emit(
-        project, repo_path, lambda f, n: graph_query.implementors(f, n, qualified_name)
+        project,
+        repo_path,
+        lambda f, n: graph_query.implementors(f, n, qualified_name),
+        target=qualified_name,
     )
 
 
@@ -144,7 +225,10 @@ def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) 
 @_graph_options
 def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
     _run_query_and_emit(
-        project, repo_path, lambda f, n: graph_query.overrides(f, n, qualified_name)
+        project,
+        repo_path,
+        lambda f, n: graph_query.overrides(f, n, qualified_name),
+        target=qualified_name,
     )
 
 
@@ -160,6 +244,7 @@ def importers_cmd(
         project,
         repo_path,
         lambda f, n: graph_query.importers(f, n, module_qualified_name),
+        target=module_qualified_name,
     )
 
 
@@ -177,4 +262,5 @@ def tests_reaching_cmd(
         project,
         repo_path,
         lambda f, n: graph_query.tests_reaching(f, n, qualified_name),
+        target=qualified_name,
     )
