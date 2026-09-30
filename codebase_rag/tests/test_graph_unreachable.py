@@ -12,7 +12,6 @@ renders it once for every command.
 from __future__ import annotations
 
 import socket
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,13 +35,13 @@ def _unused_port() -> int:
 
 
 @pytest.fixture
-def nothing_listening(monkeypatch: pytest.MonkeyPatch) -> Generator[int, None, None]:
+def nothing_listening(monkeypatch: pytest.MonkeyPatch) -> int:
     port = _unused_port()
     monkeypatch.setattr(settings, "MEMGRAPH_HOST", "127.0.0.1")
     monkeypatch.setattr(settings, "MEMGRAPH_PORT", port)
     monkeypatch.setattr(settings, "MEMGRAPH_USERNAME", None)
     monkeypatch.setattr(settings, "MEMGRAPH_PASSWORD", None)
-    yield port
+    return port
 
 
 def test_an_unreachable_graph_raises_one_typed_error(nothing_listening: int) -> None:
@@ -52,7 +51,8 @@ def test_an_unreachable_graph_raises_one_typed_error(nothing_listening: int) -> 
 
     message = str(raised.value)
     assert f"127.0.0.1:{nothing_listening}" in message
-    assert "cgr daemon up" in message and "MEMGRAPH_PORT" in message
+    assert "cgr daemon up" in message
+    assert "MEMGRAPH_PORT" in message
     assert "cgr doctor" in message
 
 
@@ -67,7 +67,8 @@ def test_rejected_credentials_name_the_credential_variables() -> None:
 
     message = str(raised.value)
     assert "Authentication failure" in message
-    assert "MEMGRAPH_USERNAME" in message and "MEMGRAPH_PASSWORD" in message
+    assert "MEMGRAPH_USERNAME" in message
+    assert "MEMGRAPH_PASSWORD" in message
 
 
 @pytest.mark.parametrize(
@@ -102,7 +103,8 @@ def test_a_command_prints_one_line_and_exits_1(
     output = "".join(click.unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert output.count(f"127.0.0.1:{nothing_listening}") == 1, output
-    assert "Traceback" not in output and "TransientError" not in output
+    assert "Traceback" not in output
+    assert "TransientError" not in output
     assert not isinstance(result.exception, mgclient.Error)
     # The command's own "Failed to ..." handler must not log it again with
     # its traceback.
@@ -141,7 +143,8 @@ def test_a_failure_after_connecting_is_not_reported_as_unreachable(
         def close(self) -> None:
             pass
 
+    broke = RuntimeError("query broke")
     with patch.object(MemgraphIngestor, "_create_connection", return_value=_Conn()):
         with pytest.raises(RuntimeError, match="query broke"):
             with MemgraphIngestor(host="127.0.0.1", port=nothing_listening):
-                raise RuntimeError("query broke")
+                raise broke
