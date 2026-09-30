@@ -13,7 +13,7 @@ class ToolFailure(str):
     __slots__ = ()
 
 
-def failure(message: object) -> ToolFailure:
+def failure(message: str | Exception | None) -> ToolFailure:
     return ToolFailure(ERROR_WRAPPER.format(message=message))
 
 
