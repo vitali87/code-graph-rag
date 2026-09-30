@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
-from collections.abc import Generator, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -81,10 +81,10 @@ def _orchestrator() -> HealthCheckResult:
 
 
 @pytest.fixture
-def nothing_listening(monkeypatch: pytest.MonkeyPatch) -> Generator[str, None, None]:
+def nothing_listening(monkeypatch: pytest.MonkeyPatch) -> str:
     url = f"http://127.0.0.1:{_unused_port()}"
     monkeypatch.setattr(settings, "OLLAMA_BASE_URL", url)
-    yield url
+    return url
 
 
 def test_no_ollama_server_is_not_ready(nothing_listening: str) -> None:
@@ -164,7 +164,8 @@ def test_a_key_based_provider_reports_credentials_without_a_probe(
     result = _orchestrator()
 
     assert result.passed, result
-    assert "credentials" in result.name and "ready" not in result.name
+    assert "credentials" in result.name
+    assert "ready" not in result.name
 
 
 def test_a_key_based_provider_without_a_key_still_fails(
