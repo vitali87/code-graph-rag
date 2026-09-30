@@ -336,6 +336,18 @@ def _is_abstract_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
 
 
+def _is_bodiless_ts_member(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> bool:
+    # An interface or `abstract` TS member never runs itself, like a Python
+    # @abstractmethod stub (issue #2524). Gated on language because Dart spells
+    # its ordinary, bodied members `method_signature` too.
+    return (
+        language in cs.JS_TS_LANGUAGES
+        and method_node.type in cs.TS_BODILESS_METHOD_TYPES
+    )
+
+
 _PY_NAMED_PARAMETERS = frozenset(
     {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
 )
@@ -1542,7 +1554,9 @@ def ingest_method(
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
-    if _is_abstract_decorator(decorators):
+    if _is_abstract_decorator(decorators) or _is_bodiless_ts_member(
+        method_node, language
+    ):
         function_registry.mark_abstract(method_qn)
     function_registry.mark_callable_params(
         method_qn, callable_parameter_indices(method_node, language)

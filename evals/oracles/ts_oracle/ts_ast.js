@@ -15,12 +15,13 @@
 //   function (in namespace/class) -> Method
 //   const x = () => ... / fn expr -> Function (or Method inside a namespace)
 //   method / constructor          -> Method
+//   interface method signature    -> Method  (first signature of an overload set)
 //
 // Containment edges (matching how cgr models TypeScript containment):
 //
 //   DEFINES        : the file module -> every named type (class/interface/enum/
 //                    namespace, even when nested) and every Function
-//   DEFINES_METHOD : the enclosing class/namespace -> Method
+//   DEFINES_METHOD : the enclosing class/namespace/interface -> Method
 //
 // cgr keeps type containment flat (all types DEFINEd by the file module, keyed
 // at line 0); a Method binds to its enclosing class/namespace; a Function binds
@@ -207,6 +208,22 @@ function defineFunction(node, sf, file, container, ctx, kind, line) {
   }
 }
 
+// An interface's method signatures are Methods of the interface (issue #2524).
+// Overloads declare one member, so only the first signature of a name counts;
+// property signatures (even function-typed ones) are not methods.
+function emitInterfaceMethods(node, sf, file, ifaceLine) {
+  const seen = new Set();
+  node.members.forEach((m) => {
+    if (!ts.isMethodSignature(m) || !m.name) return;
+    const nm = m.name.text;
+    if (!nm || seen.has(nm)) return;
+    seen.add(nm);
+    const line = lineOf(sf, m);
+    emit("Method", file, line, nm, endLineOf(sf, m));
+    emitEdge("DEFINES_METHOD", file, "Interface", ifaceLine, "Method", line);
+  });
+}
+
 // container: "module" | "class" | "namespace" | "function"
 function walk(node, sf, file, container, ctx) {
   if (ts.isClassDeclaration(node) && node.name) {
@@ -223,6 +240,7 @@ function walk(node, sf, file, container, ctx) {
     emit("Interface", file, line, node.name.text, endLineOf(sf, node));
     emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
     emitHeritage(node, sf, file, "Interface", line);
+    emitInterfaceMethods(node, sf, file, line);
     return;
   }
   if (ts.isEnumDeclaration(node) && node.name) {
