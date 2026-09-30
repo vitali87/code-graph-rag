@@ -18,9 +18,11 @@ from pathlib import Path
 
 import pytest
 
+import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from evals.cgr_graph import _StatefulIngestor
 
 PLAIN_SOURCE = (
@@ -306,6 +308,40 @@ def test_an_incremental_run_binds_like_a_clean_index(
     rel = cs.RelationshipType.INSTANTIATES
     assert _targets(store, rel, "Explicit.GenericInt") == {generic}
     assert _targets(store, rel, "Explicit.NonGeneric") == {plain}
+
+
+def test_a_protobuf_export_carries_the_generic_arity(tmp_path: Path) -> None:
+    # The exporter copies only properties the payload message declares, so an
+    # undeclared arity would vanish from an exported index without a word.
+    files, plain, generic = LAYOUTS["one_file"]
+    repo = tmp_path / "proj"
+    shape = "public interface IShape { }\npublic interface IShape<T> { }\n"
+    _write(repo, {**files, "src/Acme/Shape.cs": NAMESPACE + shape})
+    parsers, queries = _parsers()
+    out = tmp_path / "out"
+    exporter = ProtobufFileIngestor(output_path=str(out), repo_path=str(repo))
+    GraphUpdater(
+        ingestor=exporter,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run(force=True)
+    exporter.flush_all()
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / "index.bin").read_bytes())
+    arities = {
+        payload.qualified_name: payload.generic_arity
+        for node in index.nodes
+        if (kind := node.WhichOneof("payload")) in (cs.ONEOF_CLASS, cs.ONEOF_INTERFACE)
+        for payload in (getattr(node, kind),)
+    }
+    # proto3 reads an absent int as 0, which is what "not generic" means here.
+    assert arities[plain] == 0
+    assert arities[generic] == 1
+    interfaces = {qn: n for qn, n in arities.items() if ".IShape" in qn}
+    assert sorted(interfaces.values()) == [0, 1], interfaces
+    assert all(qn.endswith("`1") == (n == 1) for qn, n in interfaces.items())
 
 
 def test_a_target_typed_new_argument_binds_the_parameter_type(tmp_path: Path) -> None:
