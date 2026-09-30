@@ -617,6 +617,7 @@ CALL_WILDCARD = "Wildcard-resolved call: {call_name} -> {qn}"
 CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
+CALL_GO_SAME_PACKAGE = "Go same-package resolution: {call_name} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
 CALL_CHAINED = (
     "Resolved chained call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"

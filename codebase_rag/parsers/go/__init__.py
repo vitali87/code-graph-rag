@@ -5,6 +5,7 @@ from .utils import (
     extract_receiver_type_name,
     extract_return_type_name,
     is_receiver_method,
+    package_level_definitions,
 )
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     "extract_receiver_type_name",
     "extract_return_type_name",
     "is_receiver_method",
+    "package_level_definitions",
     "resolve_go_import_path",
 ]

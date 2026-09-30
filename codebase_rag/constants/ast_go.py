@@ -86,6 +86,10 @@ TS_GO_GENERIC_TYPE = "generic_type"
 # Field names of a `qualified_type` (`pkg.Name`): the package identifier and
 # the type name; a `composite_literal` carries its constructed type in `type`.
 FIELD_GO_PACKAGE = "package"
+# `switch t := x.(type)` declares `t` in the type switch's `alias` list; a
+# select arm's `case v := <-ch` is a `receive_statement` with a `left` list.
+FIELD_GO_ALIAS = "alias"
+TS_GO_RECEIVE_STATEMENT = "receive_statement"
 # Go composite types a method may return; a chained call lands on the CONTAINER,
 # not its element, so return-type inference must not unwrap these (a `[]Command`
 # return must not resolve `.Run()` to `Command.Run`).

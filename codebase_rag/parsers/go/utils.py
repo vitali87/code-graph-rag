@@ -1,9 +1,85 @@
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import safe_decode_text
+
+# What a Go type name can declare: a struct (Class), a named or alias type,
+# or an interface. Receiver and constructor-return types name one of them.
+TYPE_DECLARATION_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFACE})
+
+
+def package_level_definitions(
+    registry: FunctionRegistryTrieProtocol,
+    package_qn: str,
+    name: str,
+    labels: Collection[str],
+) -> list[str]:
+    # A Go package spans its directory's files, and cgr files each package-level
+    # declaration under its FILE module (`pkg.file.Name`), a segment the source
+    # never writes. So `Name` of package `pkg` is any `labels` entry exactly one
+    # segment below `pkg`: deeper qns are methods or another package's files.
+    prefix = f"{package_qn}{cs.SEPARATOR_DOT}"
+    depth = package_qn.count(cs.SEPARATOR_DOT) + 2
+    return [
+        qn
+        for qn in registry.find_ending_with(name)
+        if qn.startswith(prefix)
+        and qn.count(cs.SEPARATOR_DOT) == depth
+        and registry.get(qn) in labels
+    ]
+
+
+# Statements whose `left` (or a type switch's `alias`) list declares names:
+# `a, b := ...`, `for k, v := range m`, `case v := <-ch`, `switch t := x.(type)`.
+_GO_BINDING_LIST_FIELDS = {
+    cs.TS_GO_SHORT_VAR_DECLARATION: cs.FIELD_LEFT,
+    cs.TS_GO_RANGE_CLAUSE: cs.FIELD_LEFT,
+    cs.TS_GO_RECEIVE_STATEMENT: cs.FIELD_LEFT,
+    cs.TS_GO_TYPE_SWITCH_STATEMENT: cs.FIELD_GO_ALIAS,
+}
+# Declarations whose `name` identifiers are the names they bind.
+_GO_NAMED_BINDING_TYPES = frozenset(
+    {
+        cs.TS_GO_VAR_SPEC,
+        cs.TS_GO_CONST_SPEC,
+        cs.TS_GO_PARAMETER_DECLARATION,
+        cs.TS_GO_VARIADIC_PARAMETER_DECLARATION,
+    }
+)
+
+
+def local_binding_names(func_node: Node) -> frozenset[str]:
+    # Every name a function or method binds for itself: receiver, parameters,
+    # locals, and those of the closures inside it. A bare call to one of them
+    # calls that value, whatever package-level function shares its name. The
+    # set ignores block scoping, so it may hold a name that is out of scope at
+    # a given call, never miss one that is in scope.
+    names: set[str] = set()
+    stack = [func_node]
+    while stack:
+        node = stack.pop()
+        if (field := _GO_BINDING_LIST_FIELDS.get(node.type)) is not None:
+            if (bound := node.child_by_field_name(field)) is not None:
+                names.update(
+                    name
+                    for child in bound.named_children
+                    if child.type == cs.TS_GO_IDENTIFIER
+                    and (name := safe_decode_text(child))
+                )
+        elif node.type in _GO_NAMED_BINDING_TYPES:
+            names.update(
+                name
+                for child in node.children_by_field_name(cs.FIELD_NAME)
+                if child.type == cs.TS_GO_IDENTIFIER
+                and (name := safe_decode_text(child))
+            )
+        stack.extend(node.named_children)
+    return frozenset(names)
 
 
 def extract_package_name(root: Node) -> str | None:
