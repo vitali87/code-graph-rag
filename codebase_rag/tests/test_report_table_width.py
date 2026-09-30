@@ -93,6 +93,9 @@ LOCATIONS = [
     )
     for m in MEMBERS
 ]
+# Each member's name within the project: all of what #2397's table shows once
+# it drops the project prefix, and the part a cut name used to lose.
+MEMBER_NAMES = [m["qualified_name"].removeprefix(f"{PROJECT}.") for m in MEMBERS]
 
 
 def _no_terminal_anywhere(fd: int = 0) -> os.terminal_size:
@@ -161,7 +164,7 @@ class TestAFileOrPipeGetsWholeNames:
 
         text = report.read_text(encoding=cs.ENCODING_UTF8)
         assert ELLIPSIS not in text
-        for value in [*(m["qualified_name"] for m in MEMBERS), *LOCATIONS]:
+        for value in [*MEMBER_NAMES, *LOCATIONS]:
             assert _on_one_line(value, text), value
 
     def test_piped_duplicates_keep_members_and_locations_whole(
@@ -171,7 +174,7 @@ class TestAFileOrPipeGetsWholeNames:
 
         out = capsys.readouterr().out
         assert ELLIPSIS not in out
-        for value in [*(m["qualified_name"] for m in MEMBERS), *LOCATIONS]:
+        for value in [*MEMBER_NAMES, *LOCATIONS]:
             assert _on_one_line(value, out), value
 
 
