@@ -849,6 +849,10 @@ class DeferredInherit(NamedTuple):
     registered node: a written path can be exact about where to look and
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
+
+    `written_ref` is a C# base as written, with its type-argument count in
+    CLR style (`PB`1`): the parse-time lookup goes by name alone, and `PB`
+    and `PB<T>` are two types (issue #2579).
     """
 
     rel_type: RelationshipType
@@ -858,6 +862,7 @@ class DeferredInherit(NamedTuple):
     base_index: int
     language: SupportedLanguage
     alt_parent_qn: str | None = None
+    written_ref: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
@@ -1012,7 +1017,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1024,7 +1029,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,

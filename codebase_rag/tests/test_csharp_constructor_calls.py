@@ -198,19 +198,24 @@ public class App {
     ), instantiates
 
 
-def test_target_typed_new_in_argument_position_stays_unresolved(
+def test_target_typed_new_argument_of_disagreeing_overloads_stays_unresolved(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # `Take(new())` needs overload resolution to type; the syntactic walk
-    # bails at the argument boundary rather than guess a wrong class.
+    # `Take(new())` is typed by the parameter of the overload C# picks
+    # (issue #2579); with two one-argument overloads that disagree on the
+    # type, only argument types could pick one, so no class is guessed.
     (csharp_project / "App.cs").write_text(
         """
 namespace N;
 public class Widget {
     public Widget() {}
 }
+public class Gadget {
+    public Gadget() {}
+}
 public class App {
     public void Take(Widget w) {}
+    public void Take(Gadget g) {}
     public void Run() { Take(new()); }
 }
 """,
@@ -219,4 +224,6 @@ public class App {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     instantiates = _pairs(mock_ingestor, "INSTANTIATES")
-    assert not any(t.endswith("N.Widget") for _, t in instantiates), instantiates
+    assert not any(t.endswith(("N.Widget", "N.Gadget")) for _, t in instantiates), (
+        instantiates
+    )

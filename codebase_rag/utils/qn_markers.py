@@ -75,3 +75,29 @@ def marker_line(name: str) -> int | None:
     `@event@12` -> 12, and None when the name carries no marker."""
     match = _MARKER_RE.search(name)
     return int(match.group(1)) if match else None
+
+
+# A C# generic declared beside a same-named type of another arity carries its
+# CLR arity on its segment (`PB`1`, issue #2579). Unlike the duplicate marker
+# it is part of the type's identity, but not of its written name.
+_ARITY_RE = re.compile(re.escape(cs.CSHARP_GENERIC_ARITY_MARKER) + r"\d+$")
+
+
+def strip_arity_marker(segment: str) -> str:
+    """`PB`1` -> `PB`; a segment without the marker is returned unchanged."""
+    return _ARITY_RE.sub("", segment)
+
+
+def with_leaf_arity(qualified_name: str, arity: int) -> str:
+    """The qn with its last segment spelled for `arity`, CLR style.
+
+    The duplicate marker goes and the arity marker is set whether or not the
+    qn carried one: `N.Box@12` and `N.Box` with arity 1 -> `N.Box`1`, with
+    arity 0 -> `N.Box`. Two parts of one partial generic agree on this even
+    when only one of them sits beside a non-generic twin.
+    """
+    head, sep, last = qualified_name.rpartition(cs.SEPARATOR_DOT)
+    leaf = strip_arity_marker(strip_dup_marker(last))
+    if arity:
+        leaf = f"{leaf}{cs.CSHARP_GENERIC_ARITY_MARKER}{arity}"
+    return f"{head}{sep}{leaf}"

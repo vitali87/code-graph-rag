@@ -42,6 +42,14 @@ def create_class_relationships(
             class_node, module_qn, import_processor, resolve_to_qn, csharp_base_kinds
         )
     class_inheritance[class_qn] = parent_classes
+    # The C# bases as written ride along with the deferred edges, in the
+    # same order and split as the qns above, so the deferred pass can bind
+    # each to the type of its written arity (issue #2579).
+    inherited_refs, implemented_refs = (
+        pe.split_csharp_base_refs(class_node, csharp_base_kinds)
+        if language == cs.SupportedLanguage.CSHARP
+        else ([], [])
+    )
 
     # The DEFINES containment edge is emitted by the caller via
     # _emit_or_defer_defines, so a non-module parent is verified against
@@ -66,6 +74,7 @@ def create_class_relationships(
             ingestor,
             function_registry,
             defer_inherits,
+            inherited_refs,
         )
 
     # A class OR an enum can `implements` interfaces; both expose them via the
@@ -91,7 +100,12 @@ def create_class_relationships(
             ingestor,
             interface_implementers,
             defer_inherits,
+            implemented_refs,
         )
+
+
+def _written_ref(written_refs: list[str], index: int) -> str | None:
+    return written_refs[index] if index < len(written_refs) else None
 
 
 def _link_parent_classes(
@@ -103,6 +117,7 @@ def _link_parent_classes(
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
     defer_inherits: list[DeferredInherit] | None,
+    written_refs: list[str],
 ) -> None:
     if defer_inherits is None:
         for base_index, parent_class_qn in enumerate(parent_classes):
@@ -128,6 +143,7 @@ def _link_parent_classes(
                 module_qn=module_qn,
                 base_index=base_index,
                 language=language,
+                written_ref=_written_ref(written_refs, base_index),
             )
         )
 
@@ -141,8 +157,9 @@ def _link_implemented_interfaces(
     ingestor: IngestorProtocol,
     interface_implementers: dict[str, set[str]] | None,
     defer_inherits: list[DeferredInherit] | None,
+    written_refs: list[str],
 ) -> None:
-    for interface_qn in interface_qns:
+    for position, interface_qn in enumerate(interface_qns):
         if defer_inherits is not None:
             defer_inherits.append(
                 DeferredInherit(
@@ -152,6 +169,7 @@ def _link_implemented_interfaces(
                     module_qn=module_qn,
                     base_index=0,
                     language=language,
+                    written_ref=_written_ref(written_refs, position),
                 )
             )
         else:

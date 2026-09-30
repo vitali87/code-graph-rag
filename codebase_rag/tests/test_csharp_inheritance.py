@@ -204,9 +204,8 @@ def test_same_file_arity_pair_child_first_recovers_variant_sibling(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
     # Issue #764 shape 1: both members of the arity pair in ONE file, child
-    # declared first. The two types collide on natural qn (the second gets a
-    # DUP_QN_MARKER variant), the base resolves to the child itself, and the
-    # unique other same-scope variant IS the written sibling.
+    # declared first. The generic member is its own type, `ITtl`1` (issue
+    # #2579), and the written arity binds the base to it.
     (csharp_project / "Ttl.cs").write_text(
         "namespace N;\n"
         "public interface ITtl : ITtl<object> { }\n"
@@ -217,8 +216,7 @@ def test_same_file_arity_pair_child_first_recovers_variant_sibling(
 
     inherits = _pairs(mock_ingestor, "INHERITS")
     assert any(
-        ch.endswith("N.ITtl") and pa.split("@")[0].endswith("N.ITtl") and pa != ch
-        for ch, pa in inherits
+        ch.endswith("N.ITtl") and pa.endswith("N.ITtl`1") for ch, pa in inherits
     ), inherits
 
 
@@ -226,8 +224,9 @@ def test_same_file_arity_pair_generic_child_first_recovers_variant_sibling(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
     # Issue #764 shape 2 (Polly's ExecuteParameters, nested in a class): the
-    # GENERIC member is the child and declares first (bare qn); the
-    # non-generic base registers second as the variant.
+    # GENERIC member is the child and declares first; it is `Outer.
+    # ExecuteParameters`1` whichever order the pair is declared in (issue
+    # #2579), and the non-generic base keeps the plain name.
     (csharp_project / "Exec.cs").write_text(
         "namespace N;\n"
         "public class Outer {\n"
@@ -240,9 +239,8 @@ def test_same_file_arity_pair_generic_child_first_recovers_variant_sibling(
 
     inherits = _pairs(mock_ingestor, "INHERITS")
     assert any(
-        ch.endswith("Outer.ExecuteParameters")
-        and pa.split("@")[0].endswith("Outer.ExecuteParameters")
-        and pa != ch
+        ch.endswith("Outer.ExecuteParameters`1")
+        and pa.endswith("Outer.ExecuteParameters")
         for ch, pa in inherits
     ), inherits
 
@@ -250,10 +248,9 @@ def test_same_file_arity_pair_generic_child_first_recovers_variant_sibling(
 def test_same_file_arity_pair_generic_first_still_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Declaration-order regression pin: with the generic FIRST (bare qn),
-    # the child registers as the variant and the base already resolves to
-    # the bare sibling at parse time; the fix for the child-first order
-    # must not disturb this.
+    # Declaration-order regression pin: with the generic FIRST the names are
+    # the same as with it second (issue #2579), and the base still binds to
+    # the generic sibling.
     (csharp_project / "Rev.cs").write_text(
         "namespace N;\n"
         "public interface IRev<TResult> { int GetIt(); }\n"
@@ -264,8 +261,7 @@ def test_same_file_arity_pair_generic_first_still_resolves(
 
     inherits = _pairs(mock_ingestor, "INHERITS")
     assert any(
-        ch.split("@")[0].endswith("N.IRev") and pa.endswith("N.IRev") and pa != ch
-        for ch, pa in inherits
+        ch.endswith("N.IRev") and pa.endswith("N.IRev`1") for ch, pa in inherits
     ), inherits
 
 
