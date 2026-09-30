@@ -303,6 +303,11 @@ def module_stem(filename: str) -> str:
     return Path(filename).stem
 
 
+def module_extension(filename: str) -> str:
+    """The extension `module_stem` removes, dot included (`.py`, `.d.ts`)."""
+    return filename[len(module_stem(filename)) :]
+
+
 _DECLARATION_EXTS: tuple[str, ...] = tuple(
     ext
     for ext in _MODULE_EXTS_LONGEST_FIRST
