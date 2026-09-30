@@ -193,3 +193,22 @@ LANG_SPECS_NAME = "LANGUAGE_SPECS"
 LANG_ENUM_KEY_TEMPLATE = "cs.SupportedLanguage.{member}"
 
 LANG_ERR_ENTRY_NOT_IN_CONFIG = "no config entry found for '{name}'"
+
+# Variables that point git at a repository, index or object store other than
+# the working directory's (git's own `local_repo_env`, less the config ones a
+# user may rely on for auth or proxies when the submodule is cloned).
+GIT_LOCATION_ENV_VARS = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    }
+)

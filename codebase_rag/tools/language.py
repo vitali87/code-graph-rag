@@ -95,9 +95,17 @@ def _require_source_checkout() -> pathlib.Path:
 
 
 def _run_git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+    # A hook or wrapper may export another repository's GIT_DIR, which git
+    # obeys over `cwd`; the checkout found above must be the one edited.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in cs.GIT_LOCATION_ENV_VARS
+    }
     return subprocess.run(
         ["git", *args],
         cwd=root,
+        env=env,
         check=True,
         capture_output=True,
         text=True,

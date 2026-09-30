@@ -11,6 +11,7 @@ can reach the network, and grammar URLs point at a local repository.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,6 +21,7 @@ from click.testing import CliRunner
 from loguru import logger
 from typer.testing import CliRunner as TyperCliRunner
 
+from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.language_spec import LanguageSpec
 from codebase_rag.tools import language
@@ -35,8 +37,11 @@ REFUSAL_MARKER = "source checkout"
 
 
 def _git(cwd: Path, *args: str) -> str:
+    # The test's own git calls must address `cwd` even while a test exports
+    # another repository's GIT_DIR, as a hook or wrapper script would.
+    env = {k: v for k, v in os.environ.items() if k not in cs.GIT_LOCATION_ENV_VARS}
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
     ).stdout
 
 
@@ -424,3 +429,38 @@ _THIS_CHECKOUT = Path(language.__file__).resolve().parents[2]
 )
 def test_the_checkout_running_these_tests_is_recognised() -> None:
     assert language._source_checkout_root() == _THIS_CHECKOUT
+
+
+class TestGitRepositoryVariablesAreIgnored:
+    # A git hook or wrapper script can export GIT_DIR / GIT_WORK_TREE for
+    # another repository, and git lets them outrank the working directory.
+    def test_add_grammar_changes_the_checkout_not_the_exported_repo(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        grammar_url: str,
+        user_repo: Path,
+    ) -> None:
+        root = _make_checkout(tmp_path, monkeypatch)
+        monkeypatch.chdir(root)
+        monkeypatch.setenv("GIT_DIR", str(user_repo / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(user_repo))
+        monkeypatch.setenv("GIT_INDEX_FILE", str(user_repo / ".git" / "index"))
+
+        exit_code, output, _ = _invoke(
+            ["add-grammar", LANG, "--grammar-url", grammar_url]
+        )
+
+        assert exit_code == 0, output
+        assert _git(user_repo, "status", "--porcelain") == ""
+        assert f"A  {GRAMMAR_PATH}" in _git(root, "status", "--porcelain").splitlines()
+
+    def test_other_git_variables_still_reach_git(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _make_checkout(tmp_path, monkeypatch)
+        monkeypatch.setenv("GIT_AUTHOR_NAME", "Hook Author")
+
+        result = language._run_git(root, "var", "GIT_AUTHOR_IDENT")
+
+        assert result.stdout.startswith("Hook Author ")
