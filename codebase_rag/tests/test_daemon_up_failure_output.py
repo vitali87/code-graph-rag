@@ -139,29 +139,30 @@ def test_another_projects_container_is_not_this_stacks_lab(tmp_path: Path) -> No
     mgr = StackManager(home=tmp_path, package_compose=src, project_name="my.stack")
 
     for other in ("myxstack", "cgr"):
+        output = _bind_failure(stack_cs.SERVICE_LAB, 3000, other)
         with pytest.raises(StackError):
-            _up(
-                mgr,
-                _bind_failure(stack_cs.SERVICE_LAB, 3000, other),
-                {stack_cs.SERVICE_MEMGRAPH, stack_cs.SERVICE_QDRANT},
-            )
+            _up(mgr, output, {stack_cs.SERVICE_MEMGRAPH, stack_cs.SERVICE_QDRANT})
 
 
 def test_a_lab_failure_with_memgraph_down_still_fails(mgr: StackManager) -> None:
     # Negative: Lab is optional, Memgraph is not.
+    output = _bind_failure(stack_cs.SERVICE_LAB, 3000)
     with pytest.raises(StackError) as exc:
-        _up(mgr, _bind_failure(stack_cs.SERVICE_LAB, 3000), {stack_cs.SERVICE_QDRANT})
+        _up(mgr, output, {stack_cs.SERVICE_QDRANT})
 
     assert "127.0.0.1:3000" in str(exc.value)
 
 
 def test_the_error_names_the_cause_not_the_progress(mgr: StackManager) -> None:
+    output = _bind_failure(stack_cs.SERVICE_MEMGRAPH, 7687)
     with pytest.raises(StackError) as exc:
-        _up(mgr, _bind_failure(stack_cs.SERVICE_MEMGRAPH, 7687), set())
+        _up(mgr, output, set())
 
     message = str(exc.value)
-    assert "127.0.0.1:7687" in message and "MEMGRAPH_PORT" in message
-    assert "Creating" not in message and "Started" not in message
+    assert "127.0.0.1:7687" in message
+    assert "MEMGRAPH_PORT" in message
+    assert "Creating" not in message
+    assert "Started" not in message
 
 
 def test_a_pull_failure_keeps_its_error_line_and_drops_the_progress(
