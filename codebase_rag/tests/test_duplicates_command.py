@@ -231,14 +231,18 @@ class TestClickableLocations:
 
     def test_location_cell_is_plain_without_root(self) -> None:
         member = _member(path="b.py", start_line=5, end_line=12)
-        assert _duplicates_location_cell(member, None) == "b.py:5-12"
+        cell = _duplicates_location_cell(member, None)
+        assert cell.plain == "b.py:5-12"
+        assert cell.spans == []
 
     def test_location_cell_is_plain_when_links_disabled(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_NONE)
         member = _member(path="b.py", start_line=5, end_line=12)
-        assert _duplicates_location_cell(member, Path("/repo")) == "b.py:5-12"
+        cell = _duplicates_location_cell(member, Path("/repo"))
+        assert cell.plain == "b.py:5-12"
+        assert cell.spans == []
 
     def test_group_cell_links_to_side_by_side_pair(self) -> None:
         # Clicking the group number opens both members side by side in a
