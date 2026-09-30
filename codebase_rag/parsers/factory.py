@@ -113,6 +113,7 @@ class ProcessorFactory:
                 function_registry=self.function_registry,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
+                module_qn_to_file_path=self.module_qn_to_file_path,
             )
         return self._import_processor
 
