@@ -64,7 +64,8 @@ def test_a_workspace_without_repositories_is_not_the_whole_graph(home: Path) -> 
     code, out = _run(["--workspace", "empty"], mock)
 
     assert code == 1, out
-    assert "empty" in out and "no repositories" in out
+    assert "empty" in out
+    assert "no repositories" in out
     assert not _whole_graph_queried(mock)
 
 
