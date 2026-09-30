@@ -19,7 +19,7 @@ from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
@@ -132,7 +132,10 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         if workspace_config is not None
         else [derive_project_name(project_root)]
     )
-    cypher_generator = CypherGenerator(active_projects=active_projects)
+    # Built on the first natural-language query, not here: indexing and the
+    # deterministic tools need no LLM, and an unreachable provider must not
+    # keep them from starting (issue #2518).
+    cypher_generator = LazyCypherGenerator(active_projects=active_projects)
 
     tools = create_mcp_tools_registry(
         project_root=str(project_root),

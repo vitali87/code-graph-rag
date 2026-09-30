@@ -29,7 +29,7 @@ from ..constants import (
 )
 from ..schemas import QueryGraphData
 from ..services import ReadOnlyQueryProtocol
-from ..services.llm import CypherGenerator
+from ..services.llm import CypherQueryGenerator
 from ..types_defs import ResultRow
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
@@ -833,7 +833,7 @@ def _query_summary(
 
 def create_query_tool(
     ingestor: ReadOnlyQueryProtocol,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     console: Console | None = None,
     project_name: str | None = None,
 ) -> Tool:
@@ -898,6 +898,17 @@ def create_query_tool(
             )
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
+            )
+        except ex.CypherModelUnavailableError as e:
+            # Not a translation that went wrong: the request could not be
+            # served at all, which a caller must be able to tell from an
+            # empty answer, so it carries `error` like a scope refusal.
+            message = str(e)
+            return QueryGraphData(
+                query_used=QUERY_NOT_AVAILABLE,
+                results=[],
+                summary=message,
+                error=message,
             )
         except ex.LLMGenerationError as e:
             return QueryGraphData(

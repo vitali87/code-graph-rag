@@ -137,17 +137,18 @@ class TestStartupKeyValidation:
                 property(lambda self: _local_config()),
             ),
             patch.object(srv, "MemgraphIngestor") as ingestor,
-            patch.object(srv, "CypherGenerator") as cypher_generator,
+            patch.object(srv, "LazyCypherGenerator") as cypher_generator,
         ):
             with pytest.raises(ValueError, match=cs.ModelRole.ORCHESTRATOR):
                 srv.create_server()
             ingestor.assert_not_called()
             # The generator too, not just the ingestor: it is constructed
-            # after the ingestor, and building it opens a connection to the
-            # provider. Unmocked, this test reached a real Ollama endpoint
-            # and failed on a machine that has none -- so it could not
-            # distinguish "the key check fired" from "the key check did not
-            # fire but the service happened to be reachable" (issue #1871).
+            # after the ingestor. It used to open a connection to the
+            # provider there, so unmocked this test reached a real Ollama
+            # endpoint and could not distinguish "the key check fired" from
+            # "the key check did not fire but the service happened to be
+            # reachable" (issue #1871). It now defers that to the first
+            # query (issue #2518); the ordering is still pinned here.
             cypher_generator.assert_not_called()
 
     def test_cypher_role_is_validated_too(self, tmp_path: Path) -> None:
@@ -164,7 +165,7 @@ class TestStartupKeyValidation:
                 property(lambda self: _remote_config_without_key()),
             ),
             patch.object(srv, "MemgraphIngestor") as ingestor,
-            patch.object(srv, "CypherGenerator") as cypher_generator,
+            patch.object(srv, "LazyCypherGenerator") as cypher_generator,
         ):
             with pytest.raises(ValueError, match=cs.ModelRole.CYPHER):
                 srv.create_server()
@@ -188,7 +189,7 @@ class TestStartupKeyValidation:
                 property(lambda self: _local_config()),
             ),
             patch.object(srv, "MemgraphIngestor"),
-            patch.object(srv, "CypherGenerator"),
+            patch.object(srv, "LazyCypherGenerator"),
             patch.object(srv, "create_mcp_tools_registry"),
         ):
             server, _ = srv.create_server()
