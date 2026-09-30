@@ -375,6 +375,26 @@ def test_class_local_to_an_exported_function_stays_unexported(
     assert graph.exported("o.outer.Inner.m") is False
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "const factory = () => class Local { method() { return 1 } }\n"
+        "export { factory }\n",
+        "export const factory = () => class Local { method() { return 1 } }\n",
+    ],
+    ids=["export-clause", "export-declaration"],
+)
+def test_class_built_by_a_concise_arrow_stays_unexported(
+    tmp_path: Path, source: str
+) -> None:
+    # A concise arrow's expression body is a function body too: the class it
+    # returns is built per call, like one declared inside `{ ... }`.
+    graph = _index(tmp_path, {"f.ts": source})
+    assert graph.exported("f.factory") is True
+    assert graph.exported("f.Local") is False
+    assert graph.exported("f.Local.method") is False
+
+
 def test_commonjs_assignment_inside_a_function_exports_nothing(
     tmp_path: Path,
 ) -> None:

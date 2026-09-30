@@ -6,8 +6,10 @@ from .. import constants as cs
 from .cpp import utils as cpp_utils
 
 # Once inside a function body the declaration is a local, not a module-level
-# export, so an `export` ancestor beyond this boundary must not count.
-_JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK})
+# export, so an `export` ancestor beyond this boundary must not count. A
+# concise arrow (`() => class {}`) has no block, so the arrow itself is the
+# boundary for what its expression body builds.
+_JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK, cs.TS_ARROW_FUNCTION})
 # Textual markers whose presence in a top-level statement makes a JS file a
 # CommonJS module rather than a classic page-scope script.
 _JS_REQUIRE_CALL = (cs.JS_REQUIRE_KEYWORD + cs.CHAR_PAREN_OPEN).encode()
@@ -180,9 +182,11 @@ def _named_by_module_export(node: Node, name: str) -> bool:
 def _module_binding_name(node: Node) -> str | None:
     # The outermost binding declaration enclosing `node` at module level, found
     # by the same walk (and the same function-body boundary) as the `export`
-    # ancestor rule; None once the walk enters a function body.
-    binding: Node | None = None
-    current: Node | None = node
+    # ancestor rule; None once the walk enters a function body. `node` itself
+    # is never a boundary: `const f = () => x` binds the arrow, it does not
+    # sit inside one.
+    binding = node if node.type in _JS_TS_BINDING_DECLARATION_TYPES else None
+    current = node.parent
     while current is not None:
         if current.type in _JS_TS_EXPORT_STOP_TYPES:
             return None
