@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Collection
 from dataclasses import asdict, dataclass
@@ -13,7 +14,7 @@ from loguru import logger
 from pydantic import Field, ValidationError, field_validator
 from pydantic.fields import FieldInfo
 from pydantic_core import ErrorDetails
-from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
@@ -206,12 +207,18 @@ class AppConfig(BaseSettings):
     # A blank value means "not set": `MEMGRAPH_HOST=` copied from
     # `.env.example` used to connect to the empty host name rather than fall
     # back to `localhost` (#2474).
+    #
+    # List settings are decoded by `_decode_json_list`, not by the source:
+    # pydantic-settings raises on a value that is not JSON while it reads the
+    # environment, before validation and without saying which field, so one
+    # such value cost every other setting too (#2474).
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
         env_ignore_empty=True,
+        enable_decoding=False,
     )
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
@@ -445,6 +452,24 @@ class AppConfig(BaseSettings):
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
     QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)
 
+    @field_validator(
+        "SHELL_COMMAND_ALLOWLIST",
+        "SHELL_READ_ONLY_COMMANDS",
+        "SHELL_SAFE_GIT_SUBCOMMANDS",
+        "SHELL_NONINTERACTIVE_READ_COMMANDS",
+        mode="before",
+    )
+    @classmethod
+    def _decode_json_list(cls, value: str | Collection[str]) -> Collection[str]:
+        # A value from the environment or `.env` is JSON text; one passed in
+        # code is already a collection.
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError(ex.SETTING_NOT_JSON_LIST.format(value=value)) from error
+
     @field_validator("GRAPH_BACKEND")
     @classmethod
     def _known_backend(cls, value: str) -> str:
@@ -611,11 +636,6 @@ def load_settings(inherited_env: Collection[str]) -> tuple[AppConfig, tuple[str,
     """
     try:
         return AppConfig(), ()
-    except SettingsError as error:
-        # A list setting that is not JSON fails while its source is read,
-        # before validation, so there is no per-field detail to recover from.
-        message = ex.SETTING_UNREADABLE.format(error=error, cause=error.__cause__)
-        return AppConfig.model_construct(), (message,)
     except ValidationError as error:
         refusals = error.errors(include_url=False)
     refused = {str(refusal["loc"][0]) for refusal in refusals}

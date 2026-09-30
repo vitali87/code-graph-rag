@@ -76,7 +76,7 @@ SETTING_PROBLEMS = {
     "value_error": "{error}",
 }
 SETTING_PROBLEM_OTHER = "{input!r}: {msg}"
-SETTING_UNREADABLE = "{error}: {cause}"
+SETTING_NOT_JSON_LIST = '{value!r} is not a JSON list, such as ["ls", "cat"].'
 CONFIG = "{role} configuration error: {error}"
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "

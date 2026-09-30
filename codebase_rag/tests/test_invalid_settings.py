@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings import EnvSettingsSource
 from typer.testing import CliRunner
 
 from codebase_rag import cli, config
@@ -23,12 +24,19 @@ from codebase_rag import cli, config
 _CLI = "from codebase_rag.cli import app; app()"
 # Deadline for the child interpreter, not a performance assertion.
 _TIMEOUT_SECONDS = 120
+# Every setting read as a JSON list.
+_LIST_SETTINGS = (
+    "SHELL_COMMAND_ALLOWLIST",
+    "SHELL_READ_ONLY_COMMANDS",
+    "SHELL_SAFE_GIT_SUBCOMMANDS",
+    "SHELL_NONINTERACTIVE_READ_COMMANDS",
+)
 # The variables these tests set; the child inherits none of the developer's.
 _VARIABLES = (
+    *_LIST_SETTINGS,
     "MEMGRAPH_HOST",
     "MEMGRAPH_PORT",
     "MEMGRAPH_BATCH_SIZE",
-    "SHELL_COMMAND_ALLOWLIST",
     "CGR_SKIP_EMBEDDINGS",
     "CPP_FRONTEND",
     "GRAPH_BACKEND",
@@ -37,6 +45,7 @@ _VARIABLES = (
 # Resolves the batch size before it connects, so a bad value is reached
 # without a database.
 _A_COMMAND = ("delete-project", "--name", "demo")
+_NOT_JSON = '\'ls,cat\' is not a JSON list, such as ["ls", "cat"].'
 
 
 def _cgr(
@@ -152,9 +161,10 @@ class TestTheCliStartsWithAnInvalidSetting:
 
         assert version.returncode == 0, version.stderr
         assert command.returncode == 2
-        assert "SHELL_COMMAND_ALLOWLIST" in command.stderr
-        assert len(command.stderr.strip().splitlines()) == 1, command.stderr
-        assert "Traceback" not in command.stdout + command.stderr
+        assert command.stderr.strip() == (
+            "Error: Invalid value for SHELL_COMMAND_ALLOWLIST in the environment: "
+            f"{_NOT_JSON}"
+        )
 
 
 class TestEmptyValues:
@@ -255,6 +265,94 @@ class TestLoadSettings:
         assert len(errors) == 1
         assert errors[0].startswith(f"Invalid value for {name} in the environment: ")
         assert problem in errors[0]
+
+
+class TestAListSettingThatIsNotJson:
+    """A list setting is read as JSON. One that is not JSON used to fail while
+    pydantic-settings read the source, before validation, and the fallback
+    dropped every other setting with it."""
+
+    def test_the_other_settings_from_the_environment_are_kept(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL_COMMAND_ALLOWLIST", "ls,cat")
+        monkeypatch.setenv("MEMGRAPH_HOST", "db.internal")
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert loaded.MEMGRAPH_HOST == "db.internal"
+        assert loaded.SHELL_COMMAND_ALLOWLIST == (
+            config.AppConfig.model_fields["SHELL_COMMAND_ALLOWLIST"].default
+        )
+        assert errors == (
+            f"Invalid value for SHELL_COMMAND_ALLOWLIST in the environment: "
+            f"{_NOT_JSON}",
+        )
+
+    def test_the_other_settings_from_dotenv_are_kept(self, clean_env: Path) -> None:
+        (clean_env / ".env").write_text(
+            "SHELL_COMMAND_ALLOWLIST=ls,cat\nMEMGRAPH_HOST=db.internal\n",
+            encoding="utf-8",
+        )
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert loaded.MEMGRAPH_HOST == "db.internal"
+        assert errors == (
+            f"Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: {_NOT_JSON}",
+        )
+
+    def test_it_is_reported_alongside_a_value_that_fails_validation(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL_COMMAND_ALLOWLIST", "ls,cat")
+        monkeypatch.setenv("MEMGRAPH_PORT", "abc")
+        monkeypatch.setenv("MEMGRAPH_HOST", "db.internal")
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert loaded.MEMGRAPH_HOST == "db.internal"
+        assert loaded.MEMGRAPH_PORT == 7687
+        assert sorted(error.split(" in ")[0] for error in errors) == [
+            "Invalid value for MEMGRAPH_PORT",
+            "Invalid value for SHELL_COMMAND_ALLOWLIST",
+        ]
+
+    @pytest.mark.parametrize("name", _LIST_SETTINGS)
+    def test_a_json_list_is_still_honoured(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        monkeypatch.setenv(name, '["ls", "cat"]')
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert errors == ()
+        assert getattr(loaded, name) == frozenset({"ls", "cat"})
+
+    def test_the_json_list_cases_cover_every_list_setting(self) -> None:
+        # Decoding is off at the source, so a list setting the validator does
+        # not name would refuse every JSON value it is given.
+        source = EnvSettingsSource(config.AppConfig)
+        list_settings = {
+            name
+            for name, field in config.AppConfig.model_fields.items()
+            if source.field_is_complex(field)
+        }
+
+        assert list_settings == set(_LIST_SETTINGS)
+
+    def test_a_list_passed_in_code_is_still_accepted(self, clean_env: Path) -> None:
+        loaded = config.AppConfig(SHELL_COMMAND_ALLOWLIST=["ls"])
+
+        assert loaded.SHELL_COMMAND_ALLOWLIST == frozenset({"ls"})
+
+    def test_building_app_config_directly_still_raises(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL_COMMAND_ALLOWLIST", "ls,cat")
+
+        with pytest.raises(ValueError, match="SHELL_COMMAND_ALLOWLIST"):
+            config.AppConfig()
 
 
 class TestWhatStaysTheSame:
