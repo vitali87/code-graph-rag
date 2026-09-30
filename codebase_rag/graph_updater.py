@@ -3150,6 +3150,11 @@ class GraphUpdater:
         # @property defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_PROPERTY):
             self.function_registry.mark_property(qn)
+        # Restore the object-member set for unchanged files, or a re-parsed
+        # file's bare call binds by name to a JS/TS object literal's function
+        # value that only its object reaches (issue #2435).
+        if row.get(cs.KEY_IS_OBJECT_MEMBER):
+            self.function_registry.mark_object_member(qn)
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.

@@ -4898,7 +4898,7 @@ class CallProcessor:
                 return
             callee_type, callee_qn = redirected
 
-        self._emit_resolved_callee_targets(ctx, callee_type, callee_qn)
+        self._emit_resolved_callee_targets(ctx, call_name, callee_type, callee_qn)
         self._emit_callee_fanouts(ctx, call_name, callee_type, callee_qn)
 
     def _emit_protocol_conformer_edges(
@@ -5019,9 +5019,13 @@ class CallProcessor:
             )
 
     def _emit_resolved_callee_targets(
-        self, ctx: _CallScanContext, callee_type: str, callee_qn: str
+        self, ctx: _CallScanContext, call_name: str, callee_type: str, callee_qn: str
     ) -> None:
-        targets = self._resolver.function_registry.variants(callee_qn)
+        targets = self._resolver.lexical_call_targets(
+            call_name,
+            ctx.module_qn,
+            self._resolver.function_registry.variants(callee_qn),
+        )
         if len(
             targets
         ) > 1 and not self._resolver.import_processor.rust_block_item_qns.isdisjoint(
