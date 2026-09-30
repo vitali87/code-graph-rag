@@ -76,12 +76,14 @@ def test_a_usage_error_is_a_usage_message_and_exit_2(
     usage: str,
     error: str,
 ) -> None:
+    ctx = _ctx(path, args)
     with pytest.raises(typer.Exit) as raised:
-        _run_delegated_group(group, _ctx(path, args))
+        _run_delegated_group(group, ctx)
 
     assert raised.value.exit_code == 2
     err = capsys.readouterr().err
-    assert usage in err and error in err
+    assert usage in err
+    assert error in err
     assert "Traceback" not in err
 
 
@@ -109,8 +111,9 @@ def test_an_aborted_prompt_is_aborted_and_exit_1(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Ctrl+D at `click.confirm` (e.g. `cgr language add-grammar`).
+    ctx = _ctx("cgr prompting", ["ask"])
     with pytest.raises(typer.Exit) as raised:
-        _run_delegated_group(_prompting, _ctx("cgr prompting", ["ask"]))
+        _run_delegated_group(_prompting, ctx)
 
     assert raised.value.exit_code == 1
     assert "Aborted!" in capsys.readouterr().err
@@ -118,8 +121,9 @@ def test_an_aborted_prompt_is_aborted_and_exit_1(
 
 def test_a_real_failure_still_propagates() -> None:
     # Negative: only click's own usage and abort signals are handled here.
+    ctx = _ctx("cgr prompting", ["boom"])
     with pytest.raises(RuntimeError, match="real failure"):
-        _run_delegated_group(_prompting, _ctx("cgr prompting", ["boom"]))
+        _run_delegated_group(_prompting, ctx)
 
 
 def test_a_valid_command_still_runs(capsys: pytest.CaptureFixture[str]) -> None:
