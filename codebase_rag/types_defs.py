@@ -849,6 +849,10 @@ class DeferredInherit(NamedTuple):
     registered node: a written path can be exact about where to look and
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
+
+    `written_ref` is a C# base as written (`NotificationHandler`1`): the
+    parse-time qn cannot say which name was written, and C# binds that
+    name by scope (namespace, enclosing namespaces, usings), issue #2534.
     """
 
     rel_type: RelationshipType
@@ -858,6 +862,7 @@ class DeferredInherit(NamedTuple):
     base_index: int
     language: SupportedLanguage
     alt_parent_qn: str | None = None
+    written_ref: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
