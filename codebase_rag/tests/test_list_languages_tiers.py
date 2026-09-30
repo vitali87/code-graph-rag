@@ -22,9 +22,12 @@ from codebase_rag.parsers.ast_grep_tier import load_pattern_configs
 from codebase_rag.parsers.document_tier import DOCUMENT_EXTENSIONS
 from codebase_rag.tools.language import list_languages
 
-_HEADER_BAR = "┃"
+# Rich draws the header heavy (┏ ┃ ┡) on a VT console and swaps in the light
+# box (┌ │ ├) on a legacy Windows console, so both glyph sets must parse.
+_TOP_EDGES = ("┏", "┌")
+_HEADER_BARS = ("┃", "│")
+_HEADER_RULES = ("┡", "├")
 _BODY_BAR = "│"
-_HEADER_RULE = "┡"
 _BOTTOM_EDGE = "└"
 _ELLIPSIS = "…"
 
@@ -61,13 +64,16 @@ def _table(output: str, headers: tuple[str, ...]) -> list[dict[str, str]]:
     joined onto the row, so a wrapped cell reads back whole.
     """
     header_lines: list[list[str]] = []
+    in_header = False
     columns: list[str] | None = None
     rows: list[dict[str, str]] = []
     for line in output.splitlines():
         if columns is None:
-            if _HEADER_BAR in line:
-                header_lines.append(_cells(line, _HEADER_BAR))
-            elif line.lstrip().startswith(_HEADER_RULE) and header_lines:
+            edge = line.lstrip()[:1]
+            if edge in _TOP_EDGES:
+                in_header, header_lines = True, []
+            elif in_header and edge in _HEADER_RULES:
+                in_header = False
                 joined = [
                     _squashed("".join(parts))
                     for parts in zip(*header_lines, strict=True)
@@ -76,7 +82,10 @@ def _table(output: str, headers: tuple[str, ...]) -> list[dict[str, str]]:
                 if joined[: len(headers)] == wanted:
                     # keyed by the real names, spaces and all
                     columns = [*headers, *joined[len(headers) :]]
-                header_lines = []
+            elif in_header:
+                bar = next((b for b in _HEADER_BARS if b in line), None)
+                if bar is not None:
+                    header_lines.append(_cells(line, bar))
             continue
         if line.lstrip().startswith(_BOTTOM_EDGE):
             break
@@ -400,3 +409,16 @@ def test_grammar_installed_never_builds_a_submodule(
     ):
         assert grammar_installed(cs.SupportedLanguage.RUST) is True
     run.assert_not_called()
+
+
+# Rich's HEAVY_HEAD -> SQUARE substitution on a legacy Windows console.
+_LEGACY_WINDOWS_BOX = str.maketrans("┏┓┳┃┡┩╇━", "┌┐┬│├┤┼─")
+
+
+def test_the_table_reads_the_same_in_the_legacy_windows_box() -> None:
+    output = _invoke().output
+    legacy = output.translate(_LEGACY_WINDOWS_BOX)
+
+    assert legacy != output
+    for headers in (_LANGUAGE_HEADERS, _FRONTEND_HEADERS):
+        assert _table(legacy, headers) == _table(output, headers)
