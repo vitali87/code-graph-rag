@@ -30,6 +30,10 @@ from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
     DEFINITION_NODE_LABELS,
+    KEY_FROM_MISSING,
+    KEY_FROM_VAL,
+    KEY_TO_MISSING,
+    KEY_TO_VAL,
     SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
@@ -620,6 +624,25 @@ def build_create_relationship_query(
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query
+
+
+def build_missing_rel_endpoints_query(
+    from_label: str, from_key: str, to_label: str, to_key: str, limit: int
+) -> str:
+    """The rows of a relationship batch that have an endpoint node missing.
+
+    The write MATCHes both endpoints and returns only how many rows it wrote,
+    so this read over the same batch is what names the rows it lost and which
+    end of each was absent (issue #2438).
+    """
+    return (
+        f"OPTIONAL MATCH (a:{from_label} {{{from_key}: row.from_val}})\n"
+        f"OPTIONAL MATCH (b:{to_label} {{{to_key}: row.to_val}})\n"
+        "WITH row, a, b WHERE a IS NULL OR b IS NULL\n"
+        f"RETURN row.from_val AS {KEY_FROM_VAL}, row.to_val AS {KEY_TO_VAL}, "
+        f"a IS NULL AS {KEY_FROM_MISSING}, b IS NULL AS {KEY_TO_MISSING}\n"
+        f"LIMIT {limit}"
+    )
 
 
 # Deterministic graph queries for agents (issue #1523). All project-scoped

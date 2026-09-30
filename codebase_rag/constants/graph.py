@@ -138,6 +138,10 @@ KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+# Columns of the endpoint lookup a relationship flush runs when rows were lost:
+# whether each failed row's source/target node was absent (issue #2438).
+KEY_FROM_MISSING = "from_missing"
+KEY_TO_MISSING = "to_missing"
 KEY_FROM_LABEL = "from_label"
 KEY_FROM_QN = "from_qn"
 KEY_REL_TYPE = "rel_type"
@@ -1133,6 +1137,12 @@ class GlossAnchorState(StrEnum):
 
 
 REL_TYPE_CALLS = "CALLS"
+# How many lost rows of one flushed relationship batch the warning names, and
+# the words it names their missing endpoints with (issue #2438).
+FAILED_REL_ROWS_SHOWN = 10
+REL_ENDPOINT_SOURCE = "source"
+REL_ENDPOINT_TARGET = "target"
+REL_ENDPOINT_JOINER = " and "
 
 # Rel types where multiple semantically-distinct edges may exist between the
 # same node pair; these props join the MERGE key so parallel edges are not
