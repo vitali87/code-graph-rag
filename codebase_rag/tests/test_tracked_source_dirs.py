@@ -11,6 +11,7 @@ ignored build output under the same names is still skipped.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -160,3 +161,46 @@ def test_the_watcher_draws_the_same_line(defex: Path) -> None:
 
     assert eligible("bin/main.dart")
     assert not eligible("bin/generated.js")
+
+
+def _commit(repo: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "more")
+
+
+@pytest.mark.parametrize(
+    "tracked", ["vendor/bin/lib.js", "node_modules/pkg/bin/cli.js", "bin/vendor/x.js"]
+)
+def test_a_tracked_file_under_another_default_exclusion_stays_excluded(
+    defex: Path, tracked: str
+) -> None:
+    # Review of PR 2490: the rescue looked only for an ambiguous name, so a
+    # committed `vendor/bin/lib.js` came in through `vendor`, which is
+    # excluded whatever git tracks.
+    _commit(defex, {tracked: "export const x = 1;\n"})
+
+    indexed = _indexed_paths(defex)
+
+    assert tracked not in indexed
+    assert "bin/main.dart" in indexed
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows file names cannot hold * or ?"
+)
+@pytest.mark.parametrize("name", ["*.js", "?.js", "[a-z].js"])
+def test_a_tracked_name_with_glob_characters_rescues_nothing_else(
+    defex: Path, name: str
+) -> None:
+    # Review of PR 2490: the tracked path became a pattern as written, so a
+    # tracked `bin/*.js` let every untracked `bin/<name>.js` in too.
+    _commit(defex, {f"bin/{name}": "export const x = 1;\n"})
+    (defex / "bin" / "q.js").write_text("export const leaked = 1;\n")
+
+    indexed = _indexed_paths(defex)
+
+    assert "bin/q.js" not in indexed
+    assert "bin/main.dart" in indexed

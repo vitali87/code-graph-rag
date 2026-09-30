@@ -54,8 +54,11 @@ package called `out`, a JavaScript `env` module. The files git tracks under a
 directory with one of those names are indexed, and the run log names each
 directory they are in. Everything else under the same name is still skipped:
 an untracked `bin/generated.js` beside a tracked `bin/main.dart`, a
-`.gitignore`d build folder, an untracked `tools/bin/`. An explicit exclude
-(`.cgrignore` or `--exclude`) still wins.
+`.gitignore`d build folder, an untracked `tools/bin/`, and a tracked file that
+also sits under another excluded directory (`vendor/bin/lib.js` is still
+vendored code). A tracked path whose name holds pattern characters (`*`, `?`,
+`[`, `]`, `!`, `\`) is not rescued either. An explicit exclude (`.cgrignore`
+or `--exclude`) still wins.
 
 <!-- SECTION:default_exclusions -->
 | Directory name | Excluded |

@@ -668,6 +668,16 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     dirs: set[str] = set()
     for entry in listing.stdout.split("\0"):
         parts = entry.split(cs.SEPARATOR_SLASH)
+        # Rescued only when every excluded directory on the path is one of
+        # the ambiguous names: a tracked `vendor/bin/x.js` is still vendored
+        # code. A name with pattern characters is left excluded rather than
+        # written as a pattern that could match untracked files beside it
+        # (review of PR 2490).
+        if cs.TRACKED_PATH_PATTERN_CHARS.search(entry) or any(
+            part in cs.IGNORE_PATTERNS and part not in cs.TRACKED_SOURCE_DIR_NAMES
+            for part in parts[:-1]
+        ):
+            continue
         for index, part in enumerate(parts[:-1]):
             if part in cs.TRACKED_SOURCE_DIR_NAMES:
                 rescued.add(f"{cs.SEPARATOR_SLASH}{entry}")

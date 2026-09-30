@@ -1,5 +1,6 @@
 # Supported languages, file extensions, metadata, and grammar modules.
 
+import re
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -418,6 +419,9 @@ DIR_SRC = "src"
 TRACKED_SOURCE_DIR_NAMES = frozenset(
     {"bin", "coverage", "env", "obj", "out", "target", "temp", "tmp"}
 )
+# gitwildmatch reads these as pattern syntax (and drops trailing whitespace),
+# so a tracked path holding them cannot be rescued by its literal path.
+TRACKED_PATH_PATTERN_CHARS = re.compile(r"[*?\[\]\\!]|\s$")
 GIT_LS_FILES_TIMEOUT_S = 30
 
 # Patterns detected at repo root and offered as exclude candidates (user picks which)
