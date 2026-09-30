@@ -184,6 +184,20 @@ CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
     "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
 )
 
+# When a sync of the project last completed (issue #2444). On the Project node
+# so the time lives exactly as long as the project does in THIS graph:
+# `delete-project` and `--clean` take it with the node, and a project synced
+# into another Memgraph is simply not here. The client-side log `cgr status`
+# read before could reconcile none of that.
+CYPHER_RECORD_PROJECT_SYNC = (
+    "MATCH (p:Project {name: $project_name}) SET p.last_synced_at = $last_synced_at"
+)
+# A project synced before the time was recorded reads back null.
+CYPHER_PROJECT_SYNC_TIMES = (
+    "MATCH (p:Project) "
+    "RETURN p.name AS name, p.last_synced_at AS last_synced_at ORDER BY p.name"
+)
+
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)

@@ -162,6 +162,8 @@ KEY_WRITING = "writing"
 # keyed only by project let the second run's clear delete the first run's
 # marker (issue #1709).
 KEY_RUN_ID = "run_id"
+# When a sync of the project last completed, on its Project node (#2444).
+KEY_LAST_SYNCED_AT = "last_synced_at"
 # ast-grep finding node properties (issue #413)
 KEY_MESSAGE = "message"
 KEY_SNIPPET = "snippet"

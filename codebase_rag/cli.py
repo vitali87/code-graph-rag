@@ -22,10 +22,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from . import (
-    _cli_env,  # noqa: F401  (must run before settings load)
-    cgr_state,
-)
+from . import _cli_env  # noqa: F401  (must run before settings load)
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
@@ -68,6 +65,7 @@ from .types_defs import (
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
+    ProjectSync,
     PropertyValue,
     ResultRow,
     ResultValue,
@@ -680,7 +678,6 @@ def _run_graph_sync(
             skip_embeddings=skip_embeddings,
         )
         updater.run()
-        cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
 
         if output:
@@ -1570,34 +1567,65 @@ def status_command() -> None:
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")
-    timestamps = cgr_state.read_sync_timestamps()
-    incomplete = (
-        _projects_with_incomplete_runs() if status.memgraph_reachable else set()
-    )
-    if not timestamps and not incomplete:
-        app_context.console.print("syncs:    (no projects synced via cgr yet)")
+    syncs = _project_syncs() if status.memgraph_reachable else None
+    if syncs is None:
+        app_context.console.print(
+            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=status.memgraph_endpoint)
+        )
         return
-    app_context.console.print("syncs:")
-    for project in sorted(timestamps.keys() | incomplete):
-        ts = timestamps.get(project)
-        line = f"  - {project}: last sync {ts}" if ts else f"  - {project}:"
-        if project in incomplete:
-            line = f"{line} ({cs.CLI_STATUS_SYNC_INCOMPLETE})"
-        app_context.console.print(line)
+    if not syncs:
+        app_context.console.print(
+            cs.CLI_STATUS_SYNCS_NONE.format(endpoint=status.memgraph_endpoint)
+        )
+        return
+    app_context.console.print(cs.CLI_STATUS_SYNCS_HEADER)
+    for sync in syncs:
+        app_context.console.print(_sync_row(sync))
 
 
-def _projects_with_incomplete_runs() -> set[str]:
-    """Projects with an outstanding `:IncompleteRun` marker (#2219).
+def _project_syncs() -> list[ProjectSync] | None:
+    """Every project the connected graph holds, with its last sync (#2444).
 
-    Best effort: status must still print when the graph cannot be read.
+    The graph is the only source: a project deleted or wiped goes with its
+    node, and one synced into another Memgraph is not in this one. A project
+    whose first sync never finished has only its `:IncompleteRun` marker
+    (#2219), so it is listed from that. None when the graph cannot be read:
+    status must still print without it.
     """
     try:
         with connect_memgraph(1) as ingestor:
-            rows = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+            projects = ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES)
+            markers = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
     except Exception as exc:
-        logger.warning(ls.CLI_SYNC_MARKERS_UNREADABLE.format(error=exc))
-        return set()
-    return {str(row["project"]) for row in rows if row.get("project")}
+        logger.warning(ls.CLI_SYNC_STATE_UNREADABLE.format(error=exc))
+        return None
+    synced_at = {
+        str(row[cs.KEY_NAME]): row.get(cs.KEY_LAST_SYNCED_AT)
+        for row in projects
+        if row.get(cs.KEY_NAME)
+    }
+    interrupted = {str(row["project"]) for row in markers if row.get("project")}
+    return [
+        ProjectSync(
+            name=name,
+            last_synced_at=str(stamp) if (stamp := synced_at.get(name)) else None,
+            interrupted=name in interrupted,
+        )
+        for name in sorted(synced_at.keys() | interrupted)
+    ]
+
+
+def _sync_row(sync: ProjectSync) -> str:
+    details: list[str] = []
+    if sync.last_synced_at:
+        details.append(cs.CLI_STATUS_SYNC_TIME.format(time=sync.last_synced_at))
+    elif not sync.interrupted:
+        details.append(cs.CLI_STATUS_SYNC_NOT_RECORDED)
+    if sync.interrupted:
+        details.append(
+            cs.CLI_STATUS_SYNC_MARKED.format(marker=cs.CLI_STATUS_SYNC_INCOMPLETE)
+        )
+    return cs.CLI_STATUS_SYNC_ROW.format(project=sync.name, detail=" ".join(details))
 
 
 @app.command(

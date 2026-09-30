@@ -91,6 +91,17 @@ CLI_ERR_SYNC_MARKER_FAILED = (
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
+# `cgr status` lists the projects of the graph it reports on (issue #2444).
+CLI_STATUS_SYNCS_HEADER = "syncs:"
+CLI_STATUS_SYNCS_NONE = "syncs:    (no projects in the graph at {endpoint})"
+CLI_STATUS_SYNCS_NEED_GRAPH = (
+    "syncs:    unknown -- sync times are kept in the graph, and Memgraph at "
+    "{endpoint} could not be read"
+)
+CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
+CLI_STATUS_SYNC_TIME = "last sync {time}"
+CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"
+CLI_STATUS_SYNC_MARKED = "({marker})"
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (

@@ -932,8 +932,12 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
 )
-CLI_SYNC_MARKERS_UNREADABLE = (
-    "Could not read incomplete-run markers for cgr status: {error}"
+CLI_SYNC_STATE_UNREADABLE = (
+    "Could not read the graph's projects and sync markers for cgr status: {error}"
+)
+SYNC_TIME_NOT_RECORDED = (
+    "The sync of {project} completed, but its sync time could not be recorded "
+    "in the graph: {error}. The next sync records it."
 )
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
