@@ -85,7 +85,11 @@ CMD_EDITS_GROUP = CMD_EDITS
 CMD_EDITS_SHOW = (
     "List the last N recorded edit transactions, newest first, with their diffs."
 )
-CMD_EDITS_UNDO = "Reverse the last N recorded edit transactions, newest first; stops at the first file that changed since."
+CMD_EDITS_UNDO = (
+    "Reverse the last N recorded edit transactions, newest first; stops at the "
+    "first file that changed since. The restored files are re-ingested into "
+    "the graph, as the edit's own files were."
+)
 EPILOG_EDITS = "Run 'cgr help edits COMMAND' for command-specific help."
 EXAMPLES_EDITS_SHOW = (
     "Examples:\n  cgr edits show\n  cgr edits show -n 5 --repo-path ~/proj"

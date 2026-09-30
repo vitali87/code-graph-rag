@@ -617,6 +617,20 @@ EDIT_APPLIED = "Applied {count} file(s)"
 EDIT_UNDO_NONE = "No recorded edit transactions to undo"
 EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
 EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
+# The undo follows the restored files into the graph (issue #2515).
+EDIT_UNDO_GRAPH_SYNCED = (
+    "Re-ingested {count} restored file(s) into the graph ({project})"
+)
+EDIT_UNDO_GRAPH_NOT_INDEXED = (
+    "No graph to update: project {project} is not indexed "
+    "(pass --project if the edit was made under another name)"
+)
+EDIT_UNDO_GRAPH_STALE = (
+    "The files are restored but the graph was not updated ({error}); it still "
+    "describes the undone edit. Run '{command}' to bring it in line."
+)
+EDIT_UNDO_RESYNC_COMMAND = "cgr start --repo-path {repo} --update-graph"
+EDIT_UNDO_RESYNC_PROJECT = " --project-name {project}"
 EDIT_SHOW_NONE = "No recorded edit transactions"
 EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 # Rename (issue #1532).
