@@ -142,12 +142,12 @@ if sys.platform == "win32":  # pragma: no cover - platform
 
 
 @functools.cache
-def _mgclient_own_c_runtimes() -> tuple[_CRuntime, ...]:
-    # The C runtimes besides Python's that mgclient prints through.
+def _mgclient_own_c_runtime() -> _CRuntime | None:
+    # The C runtime besides Python's that mgclient prints through, if any.
     if sys.platform != "win32":
-        return ()
-    return (  # pragma: no cover - platform
-        _MsvcrtCRuntime(ctypes.CDLL(cs.MGCLIENT_WINDOWS_C_RUNTIME)),
+        return None
+    return _MsvcrtCRuntime(  # pragma: no cover - platform
+        ctypes.CDLL(cs.MGCLIENT_WINDOWS_C_RUNTIME)
     )
 
 
@@ -180,8 +180,9 @@ def _mgclient_stderr_to_debug_log() -> Iterator[None]:
             sys.stderr.flush()
         try:
             with ExitStack() as redirects:
-                for runtime in (_PYTHON_C_RUNTIME, *_mgclient_own_c_runtimes()):
-                    redirects.enter_context(_stderr_into(runtime, capture))
+                redirects.enter_context(_stderr_into(_PYTHON_C_RUNTIME, capture))
+                if (own_runtime := _mgclient_own_c_runtime()) is not None:
+                    redirects.enter_context(_stderr_into(own_runtime, capture))
                 yield
         finally:
             # Kept rather than dropped, for whoever is chasing a Memgraph that

@@ -417,7 +417,7 @@ def mgclient_c_runtime(tmp_path: Path) -> Iterator[tuple[_SeparateCRuntime, Path
     with terminal.open("wb") as file:
         runtime = _SeparateCRuntime(file.fileno())
     try:
-        with patch.object(health, "_mgclient_own_c_runtimes", return_value=(runtime,)):
+        with patch.object(health, "_mgclient_own_c_runtime", return_value=runtime):
             yield runtime, terminal
     finally:
         for real_fd in runtime.fds.values():
@@ -483,7 +483,7 @@ def test_a_c_runtime_without_stderr_still_probes(
     failure = health.mgclient.OperationalError("failed to receive handshake")
 
     with (
-        patch.object(health, "_mgclient_own_c_runtimes", return_value=(runtime,)),
+        patch.object(health, "_mgclient_own_c_runtime", return_value=runtime),
         patch.object(health.mgclient, "connect", side_effect=_noisy_connect(failure)),
     ):
         assert (
@@ -497,9 +497,9 @@ def test_a_c_runtime_without_stderr_still_probes(
 
 def test_mgclient_has_a_c_runtime_of_its_own_only_on_windows() -> None:
     # Everywhere else mgclient and Python share the kernel's descriptors.
-    expected = 1 if sys.platform == "win32" else 0
+    own_runtime = health._mgclient_own_c_runtime()
 
-    assert len(health._mgclient_own_c_runtimes()) == expected
+    assert (own_runtime is not None) == (sys.platform == "win32")
 
 
 def test_a_failed_c_runtime_call_raises_instead_of_returning_minus_one() -> None:
