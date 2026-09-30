@@ -251,6 +251,7 @@ PROTOBUF_INVALID_REL = (
 )
 PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
 PROTOBUF_FLUSHING = "Flushing data to {path}..."
+PROTOBUF_FLUSH_UNCHANGED = "Nothing new since the last write to {path}; not rewriting"
 
 # Provenance manifest logs
 CODEC_SCHEMA_MISSING = (
