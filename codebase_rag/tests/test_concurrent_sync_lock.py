@@ -56,7 +56,8 @@ def _held_elsewhere(repo: Path, project: str) -> Iterator[subprocess.Popen[str]]
         stderr=subprocess.PIPE,
         text=True,
     )
-    assert holder.stdout is not None and holder.stdin is not None
+    assert holder.stdout is not None
+    assert holder.stdin is not None
     try:
         started = holder.stdout.readline().strip()
         if started != "held":
@@ -118,7 +119,8 @@ def test_a_second_run_is_refused_naming_the_running_sync(
             _updater(repo, mock_ingestor).run()
 
     message = str(refused.value)
-    assert str(holder.pid) in message and "click__a4231746" in message
+    assert str(holder.pid) in message
+    assert "click__a4231746" in message
     assert str(repo) in message
     # Refused before the Project write, the first thing a run sends.
     mock_ingestor.ensure_node_batch.assert_not_called()
@@ -169,7 +171,8 @@ def test_the_cli_stops_before_connecting_while_a_sync_runs(
 
     output = " ".join(click.unstyle(result.output).split())
     assert result.exit_code == 1, output
-    assert str(holder.pid) in output and "click__a4231746" in output
+    assert str(holder.pid) in output
+    assert "click__a4231746" in output
     assert "Traceback" not in output
     # No marker, no wipe, no write: the running sync is left alone.
     cli_sync.assert_not_called()
@@ -234,7 +237,8 @@ def test_a_scoped_reingest_waits_for_the_running_sync(
             )
             worker.start()
             time.sleep(0.5)
-            assert started_at == [] and worker.is_alive()
+            assert started_at == []
+            assert worker.is_alive()
             assert holder.stdin is not None
             holder.stdin.close()
             holder.wait(timeout=10)
@@ -242,7 +246,8 @@ def test_a_scoped_reingest_waits_for_the_running_sync(
         worker.join(10)
 
     assert not worker.is_alive()
-    assert started_at and started_at[0] >= released_at
+    assert started_at
+    assert started_at[0] >= released_at
 
 
 def test_the_lock_is_released_when_the_run_fails(
@@ -344,7 +349,8 @@ def test_cgr_index_says_why_it_stopped(repo: Path, tmp_path: Path) -> None:
 
     output = " ".join(click.unstyle(result.output).split())
     assert result.exit_code == 1, output
-    assert str(holder.pid) in output and "Traceback" not in output
+    assert str(holder.pid) in output
+    assert "Traceback" not in output
     assert not list(out.rglob("*.bin"))
 
 

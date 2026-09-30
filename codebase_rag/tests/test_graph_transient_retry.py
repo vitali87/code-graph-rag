@@ -90,7 +90,8 @@ def test_a_conflicting_write_is_retried_until_it_goes_through(
     _ingestor(conn).execute_write("MATCH (m:Module) SET m.x = 1")
 
     assert len(conn.executed) == 3
-    assert len(no_wait) == 2 and no_wait[1] > no_wait[0]
+    assert len(no_wait) == 2
+    assert no_wait[1] > no_wait[0]
     assert errors == []
 
 
@@ -131,4 +132,5 @@ def test_other_errors_are_not_retried(failure: Exception, no_wait: list[float]) 
     with pytest.raises(type(failure)):
         _ingestor(conn).execute_write("MATC (m) RETURN m")
 
-    assert len(conn.executed) == 1 and no_wait == []
+    assert len(conn.executed) == 1
+    assert no_wait == []
