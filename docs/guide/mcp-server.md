@@ -148,8 +148,8 @@ claude mcp add --transport stdio code-graph-rag-frontend \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
-!!! warning
-    Only one repository can be indexed at a time per MCP instance. When you index a new repository, the previous repository's data is automatically cleared.
+!!! note
+    Each MCP instance indexes and updates the project for its own `TARGET_REPO_PATH`. `index_repository` rebuilds that project from scratch (its nodes and embeddings), and `update_repository` syncs it incrementally. Other projects in the shared graph are not touched, so several instances, one per repository, can share one Memgraph, and cross-service links between their projects keep working (see [multi-project](multi-project.md)). Only `wipe_database` removes every project.
 
 ### Serving a workspace
 
