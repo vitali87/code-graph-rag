@@ -3,6 +3,9 @@ language: swift
 ast_grep_id: swift
 extensions:
   - ".swift"
+# Members are named under their type and overloads stay distinct nodes, the
+# way the tree-sitter tier names them (issue #2589).
+scoped_names: true
 functions:
   # covers func, static func, and modifier-prefixed declarations
   - kind: function_declaration
@@ -10,8 +13,15 @@ functions:
   # requirements inside a protocol body are their own kind
   - kind: protocol_function_declaration
 classes:
-  # class, struct, enum and extension all share this kind in the grammar
+  # class, struct, enum and extension all share this kind in the grammar;
+  # extensions are claimed first by type_extensions below
   - kind: class_declaration
   - kind: protocol_declaration
+# `extension T { }` adds members to T rather than declaring it. It is a
+# class_declaration whose leading keyword token is `extension`, so without
+# this it read as a second T and overwrote the class's location.
+type_extensions:
+  - kind: class_declaration
+    has_child: extension
 imports:
   - kind: import_declaration
