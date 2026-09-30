@@ -69,6 +69,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Function, Method | ACCEPTS | Class, Interface, Enum, Type, Union |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
+| Module | LINKS_TO | File |
 | Module, Function, Method | CALLS | Function, Method, Enum, Type |
 | Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
