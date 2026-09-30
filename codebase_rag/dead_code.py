@@ -580,22 +580,28 @@ def _is_root(
     path = str(props.get(cs.KEY_PATH, ""))
     is_method = qn in method_qns
     bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
-    rules: tuple[Callable[[], bool], ...] = (
-        # With endpoint roots off, a handler that EXPOSES an endpoint is not
-        # rooted by its route decorator; it is live only if an indexed call
-        # site reaches the endpoint (issue #1603). Other decorators (a
-        # fixture, a CLI command) keep rooting as before, on the same
-        # definition too.
-        lambda: (
-            _has_root_decorator(props, config.root_decorators)
-            and (
-                config.endpoint_roots
-                or endpoint_links is None
-                or qn not in endpoint_links
-                or endpoint_links[qn] > 0
-                or _has_non_route_root_decorator(props, config.root_decorators)
+    # With endpoint roots off, a handler that EXPOSES an endpoint is live only
+    # if an indexed call site reaches the endpoint (issue #1603). That verdict
+    # must come before the rules below: every framework registers a handler
+    # by exporting it, so "exported symbols are roots" kept every public
+    # handler alive and only `_private` ones were ever reported (issue
+    # #2664). A second root decorator (a fixture, a CLI command), a named
+    # entry point and test code still root it, on the same definition too.
+    if (
+        not config.endpoint_roots
+        and endpoint_links is not None
+        and qn in endpoint_links
+    ):
+        return (
+            endpoint_links[qn] > 0
+            or _has_non_route_root_decorator(props, config.root_decorators)
+            or _is_named_entry_point(qn, config)
+            or _is_rooted_test_symbol(
+                props, qn, path, config, rust_test_modules, rust_test_spans
             )
-        ),
+        )
+    rules: tuple[Callable[[], bool], ...] = (
+        lambda: _has_root_decorator(props, config.root_decorators),
         lambda: props.get(cs.KEY_IS_EXPORTED) is True,
         # A method overriding an EXTERNAL stdlib base's method (click's
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
@@ -647,20 +653,29 @@ def _is_root(
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
         ),
-        lambda: any(qn.endswith(entry) for entry in config.entry_points),
-        lambda: (
-            config.include_tests
-            and _is_test_symbol(
-                props,
-                qn,
-                path,
-                config.test_patterns,
-                rust_test_modules,
-                rust_test_spans,
-            )
+        lambda: _is_named_entry_point(qn, config),
+        lambda: _is_rooted_test_symbol(
+            props, qn, path, config, rust_test_modules, rust_test_spans
         ),
     )
     return any(rule() for rule in rules)
+
+
+def _is_named_entry_point(qn: str, config: DeadCodeConfig) -> bool:
+    return any(qn.endswith(entry) for entry in config.entry_points)
+
+
+def _is_rooted_test_symbol(
+    props: PropertyDict,
+    qn: str,
+    path: str,
+    config: DeadCodeConfig,
+    rust_test_modules: set[str],
+    rust_test_spans: dict[str, list[tuple[int, int]]],
+) -> bool:
+    return config.include_tests and _is_test_symbol(
+        props, qn, path, config.test_patterns, rust_test_modules, rust_test_spans
+    )
 
 
 @dataclass
