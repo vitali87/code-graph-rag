@@ -205,7 +205,7 @@ _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 def _flush_embedding_batch(
     pending: list[tuple[int, str, str]],
-    expected_ids: set[int],
+    expected: dict[int, str],
     embed_code_batch: Callable[[list[str]], list[list[float]]],
     store_embedding_batch: Callable[[list[tuple[int, list[float], str]]], int],
 ) -> int:
@@ -227,8 +227,8 @@ def _flush_embedding_batch(
     points: list[tuple[int, list[float], str]] = [
         (node_id, emb, qname) for (node_id, qname, _), emb in zip(pending, embeddings)
     ]
-    for node_id, _qname, _src in pending:
-        expected_ids.add(node_id)
+    for node_id, qname, _src in pending:
+        expected[node_id] = qname
     stored = store_embedding_batch(points)
     pending.clear()
     return stored
@@ -7735,6 +7735,7 @@ class GraphUpdater:
             from .embedder import embed_code_batch, get_embedding_cache
             from .vector_store import (
                 close_qdrant_client,
+                delete_stale_embeddings,
                 store_embedding_batch,
                 verify_stored_ids,
             )
@@ -7744,21 +7745,30 @@ class GraphUpdater:
             results = self.ingestor.fetch_all(
                 cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
             )
+            current = self._current_symbols(results)
 
             if not results:
                 logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
+                # The project's last function may just have gone; its point
+                # must go with it.
+                self._delete_stale_embeddings(current, delete_stale_embeddings)
+                close_qdrant_client()
                 return
 
             logger.info(ls.GENERATING_EMBEDDINGS, count=len(results))
 
             embedded_count = 0
-            expected_ids: set[int] = set()
+            expected: dict[int, str] = {}
             pending: list[tuple[int, str, str]] = []
             flush_at = settings.QDRANT_BATCH_SIZE
+            project_name = self.project_name
+
+            def store(points: list[tuple[int, list[float], str]]) -> int:
+                return store_embedding_batch(project_name, points)
 
             def flush() -> int:
                 return _flush_embedding_batch(
-                    pending, expected_ids, embed_code_batch, store_embedding_batch
+                    pending, expected, embed_code_batch, store
                 )
 
             for row in results:
@@ -7774,7 +7784,9 @@ class GraphUpdater:
 
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
-            self._reconcile_embeddings(expected_ids, verify_stored_ids)
+            # Before the check, so it reads the store as the sync leaves it.
+            self._delete_stale_embeddings(current, delete_stale_embeddings)
+            self._reconcile_embeddings(expected, verify_stored_ids)
 
             get_embedding_cache().save()
             close_qdrant_client()
@@ -7782,27 +7794,62 @@ class GraphUpdater:
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
 
+    def _current_symbols(self, rows: list[ResultRow]) -> dict[int, str]:
+        """Every function and method the graph holds for the project now,
+        by node id, whether or not its source can be read to embed it."""
+        current: dict[int, str] = {}
+        for row in rows:
+            parsed = self._parse_embedding_result(row)
+            if parsed is not None:
+                current[parsed[cs.KEY_NODE_ID]] = parsed[cs.KEY_QUALIFIED_NAME]
+        return current
+
+    def _delete_stale_embeddings(
+        self,
+        current: Mapping[int, str],
+        delete_fn: Callable[[str, Mapping[int, str]], int],
+    ) -> None:
+        """Drop the project's vectors of symbols `current` no longer holds.
+
+        A re-parse re-creates a file's nodes, and a deleted function leaves
+        nothing to overwrite its vector, so without this the store kept a
+        vector per edit and every deleted function's (issue #2447).
+        """
+        try:
+            removed = delete_fn(self.project_name, current)
+        except Exception as e:
+            logger.warning(
+                ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)
+            )
+            return
+        if removed:
+            logger.info(
+                ls.EMBEDDING_STALE_REMOVED.format(
+                    count=removed, project=self.project_name
+                )
+            )
+
     def _reconcile_embeddings(
         self,
-        expected_ids: set[int],
-        verify_fn: Callable[[set[int]], set[int]],
+        expected: Mapping[int, str],
+        verify_fn: Callable[[str, Mapping[int, str]], set[int]],
     ) -> None:
-        if not expected_ids:
+        if not expected:
             return
         try:
-            stored_ids = verify_fn(expected_ids)
-            missing = expected_ids - stored_ids
+            stored_ids = verify_fn(self.project_name, expected)
+            missing = set(expected) - stored_ids
             if missing:
                 sample = sorted(missing)[:10]
                 logger.warning(
                     ls.EMBEDDING_RECONCILE_MISSING.format(
                         missing=len(missing),
-                        expected=len(expected_ids),
+                        expected=len(expected),
                         sample_ids=sample,
                     )
                 )
             else:
-                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected_ids)))
+                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
 

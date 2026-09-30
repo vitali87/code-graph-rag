@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,11 +24,23 @@ _PATCH_EMBED_BATCH = patch(
     "codebase_rag.embedder.embed_code_batch", side_effect=_fake_embed_batch
 )
 _PATCH_STORE_BATCH = patch(
-    "codebase_rag.vector_store.store_embedding_batch", side_effect=len
+    "codebase_rag.vector_store.store_embedding_batch",
+    side_effect=lambda _project, points: len(points),
 )
 _PATCH_RECONCILE = patch(
-    "codebase_rag.vector_store.verify_stored_ids", side_effect=lambda ids: ids
+    "codebase_rag.vector_store.verify_stored_ids",
+    side_effect=lambda _project, expected: set(expected),
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_stale_pruning() -> Generator[MagicMock, None, None]:
+    # The pass also prunes the project's stale vectors; these tests are about
+    # what it embeds, so the store is not opened for that.
+    with patch(
+        "codebase_rag.vector_store.delete_stale_embeddings", return_value=0
+    ) as prune:
+        yield prune
 
 
 @pytest.fixture
@@ -181,7 +194,7 @@ class TestGenerateSemanticEmbeddings:
         assert len(snippets_arg) == 1
         assert "def hello()" in snippets_arg[0]
         mock_store_batch.assert_called_once()
-        batch_arg = mock_store_batch.call_args[0][0]
+        batch_arg = mock_store_batch.call_args[0][1]
         assert len(batch_arg) == 1
         assert batch_arg[0] == (1, MOCK_EMBEDDING, "myproject.module.hello")
 
@@ -304,7 +317,7 @@ class TestGenerateSemanticEmbeddings:
         snippets_arg = mock_embed_batch.call_args[0][0]
         assert len(snippets_arg) == 2
         mock_store_batch.assert_called_once()
-        batch_arg = mock_store_batch.call_args[0][0]
+        batch_arg = mock_store_batch.call_args[0][1]
         assert len(batch_arg) == 2
 
 

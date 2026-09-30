@@ -667,6 +667,20 @@ CYPHER_QUERY_PROJECT_NODE_IDS = (
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
+# The project a Qdrant point belongs to. Points written before issue #2447
+# have none and are keyed by Memgraph's internal node id instead.
+PAYLOAD_PROJECT = "project"
+# The UUIDv5 namespace a Qdrant point id is derived in, from the project and
+# the symbol's qualified name. Changing it re-keys every stored point.
+EMBEDDING_POINT_ID_NAMESPACE = "4c6a2f1e-8d3b-5e7a-9f10-2b6c8d4e0a17"
+# A project's Milvus rows are the qualified names in [name + ".", name + "/"):
+# "/" is the character after ".", so the range holds exactly the names under
+# the prefix. LIKE would read the `_` of many project names as a wildcard.
+QN_PREFIX_RANGE_END = "/"
+MILVUS_PREFIX_RANGE_EXPR = "{field} >= {low} and {field} < {high}"
+MILVUS_STALE_ROWS_EXPR = "({scope}) and not ({field} in {ids})"
+# Milvus answers a delete with the deleted keys or with this count.
+MILVUS_DELETE_COUNT_KEY = "delete_count"
 
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the

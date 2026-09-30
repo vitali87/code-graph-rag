@@ -23,6 +23,10 @@ def updater(temp_repo: Path) -> GraphUpdater:
     )
 
 
+def _symbols(*node_ids: int) -> dict[int, str]:
+    return {node_id: f"proj.m.f{node_id}" for node_id in node_ids}
+
+
 @pytest.fixture
 def log_messages() -> Generator[list[str], None, None]:
     messages: list[str] = []
@@ -34,25 +38,25 @@ def log_messages() -> Generator[list[str], None, None]:
 class TestReconcileEmbeddings:
     def test_noop_when_expected_empty(self, updater: GraphUpdater) -> None:
         mock_fn = MagicMock()
-        updater._reconcile_embeddings(set(), mock_fn)
+        updater._reconcile_embeddings({}, mock_fn)
         mock_fn.assert_not_called()
 
     def test_logs_ok_when_all_found(
         self, updater: GraphUpdater, log_messages: list[str]
     ) -> None:
-        expected = {1, 2, 3}
+        expected = _symbols(1, 2, 3)
         mock_fn = MagicMock(return_value={1, 2, 3})
 
         updater._reconcile_embeddings(expected, mock_fn)
 
-        mock_fn.assert_called_once_with(expected)
+        mock_fn.assert_called_once_with(updater.project_name, expected)
         combined = "\n".join(log_messages)
         assert "all 3 expected embeddings found" in combined
 
     def test_logs_warning_when_ids_missing(
         self, updater: GraphUpdater, log_messages: list[str]
     ) -> None:
-        expected = {1, 2, 3, 4, 5}
+        expected = _symbols(1, 2, 3, 4, 5)
         mock_fn = MagicMock(return_value={1, 3})
 
         updater._reconcile_embeddings(expected, mock_fn)
@@ -63,7 +67,7 @@ class TestReconcileEmbeddings:
     def test_sample_ids_in_warning(
         self, updater: GraphUpdater, log_messages: list[str]
     ) -> None:
-        expected = {10, 20, 30}
+        expected = _symbols(10, 20, 30)
         mock_fn = MagicMock(return_value={10})
 
         updater._reconcile_embeddings(expected, mock_fn)
@@ -77,7 +81,7 @@ class TestReconcileEmbeddings:
     ) -> None:
         mock_fn = MagicMock(side_effect=RuntimeError("connection lost"))
 
-        updater._reconcile_embeddings({1, 2}, mock_fn)
+        updater._reconcile_embeddings(_symbols(1, 2), mock_fn)
 
         combined = "\n".join(log_messages).lower()
         assert "reconciliation check failed" in combined
@@ -85,7 +89,7 @@ class TestReconcileEmbeddings:
     def test_sample_limited_to_ten(
         self, updater: GraphUpdater, log_messages: list[str]
     ) -> None:
-        expected = set(range(20))
+        expected = _symbols(*range(20))
         mock_fn = MagicMock(return_value=set())
 
         updater._reconcile_embeddings(expected, mock_fn)
