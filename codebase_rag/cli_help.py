@@ -133,6 +133,12 @@ HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, arity "
     "findings, new duplicates or new import cycles."
 )
+HELP_CHECK_ISOLATED = (
+    "Measure the edit, then put the graph and the hash cache back so the "
+    "same edit can be checked again. The graph does change while the check "
+    "runs; if the restore fails, the project stays marked incomplete until a "
+    "full update."
+)
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
     "and reference sites, imports, overrides, __all__); refuses on guessed sites."
@@ -168,6 +174,12 @@ EXAMPLES_MCP_SERVER = (
 EXAMPLES_GRAPH_LOADER = "EXAMPLE\n\n  cgr graph-loader graph.json"
 EXAMPLES_LANGUAGE_ADD = "EXAMPLE\n\n  cgr language add-grammar ruby"
 EXAMPLES_LANGUAGE_REMOVE = "EXAMPLE\n\n  cgr language remove-language ruby"
+EXAMPLES_STATS = (
+    "EXAMPLES\n\n"
+    "  cgr stats\n\n"
+    "  cgr stats --project-name my-project\n\n"
+    "  cgr stats --workspace my-workspace"
+)
 EXAMPLES_DEAD_CODE = (
     "EXAMPLE\n\n  cgr dead-code --project-name my-project --format json"
 )
@@ -396,6 +408,11 @@ HELP_MCP_WORKSPACE = (
     "MCP_WORKSPACE environment variable."
 )
 
+HELP_STATS_PROJECT_NAME = (
+    "Count only this project's nodes and relationships. Repeatable; without it "
+    "the totals cover every project in the shared graph."
+)
+HELP_STATS_WORKSPACE = "Count only the projects defined in workspace NAME."
 HELP_DEADCODE_PROJECT_NAME = (
     "Project to scan. If omitted, cgr uses the only indexed project."
 )

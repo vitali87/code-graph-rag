@@ -14,9 +14,9 @@ transaction landed and answers pass or fail with reasons.
 from codebase_rag.editing import rename_expectation, verify
 
 verdict = verify(rename_expectation([(old_qn, new_qn)], heuristic_allowed=False), delta)
-verdict.ok               # False when any check failed
-verdict.failures         # one reason per failed check
-verdict.affected_tests   # the delta's tests_reaching, for the caller to run
+verdict.ok  # False when any check failed
+verdict.failures  # one reason per failed check
+verdict.affected_tests  # the delta's tests_reaching, for the caller to run
 ```
 
 ## Expectations
