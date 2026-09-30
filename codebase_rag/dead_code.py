@@ -98,6 +98,16 @@ def _norm_decorator(decorator: str) -> str:
     return head.split(cs.SEPARATOR_DOT)[-1].strip("[]").lower()
 
 
+def _names_entry_point(qn: str, entry: str) -> bool:
+    """Whether `entry` is the qualified name or its trailing whole segments.
+
+    A plain suffix test let `-e main` root `_remain` and `domain`, and
+    `-e cli.run` root `mycli.run`, with everything they call, so the report
+    silently lost real dead code (issue #2641).
+    """
+    return qn == entry or qn.endswith(cs.SEPARATOR_DOT + entry)
+
+
 def _is_dunder(name: str) -> bool:
     # A __dunder__ method is invoked by the Python runtime (async with,
     # iteration, operators), never by an explicit call the graph can see, so it
@@ -647,7 +657,7 @@ def _is_root(
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
         ),
-        lambda: any(qn.endswith(entry) for entry in config.entry_points),
+        lambda: any(_names_entry_point(qn, entry) for entry in config.entry_points),
         lambda: (
             config.include_tests
             and _is_test_symbol(
