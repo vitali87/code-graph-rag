@@ -1886,6 +1886,31 @@ def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
     )
 
 
+def _width_set_by_user() -> bool:
+    # Rich reads $COLUMNS only when it is a number, so only that counts.
+    return os.environ.get(cs.ENV_COLUMNS, "").isdigit()
+
+
+def _print_report_table(console: Console, table: Table) -> None:
+    """Print a report table at its content's width when no screen shows it.
+
+    A file or pipe has no width to fit, yet Rich lays the table out at
+    $COLUMNS or 80 columns there and cuts every long name with an ellipsis,
+    so a CI report's rows read alike and depended on who ran it (issue
+    #2561). A terminal keeps its own width, and a $COLUMNS the user set still
+    wins. The stream's own isatty decides, not Rich's is_terminal: a forced
+    terminal or FORCE_COLOR chooses styling, not whether a screen clips lines.
+    The table is sized in place.
+    """
+    if console.file.isatty() or _width_set_by_user():
+        console.print(table)
+        return
+    unbounded = console.options.update_width(sys.maxsize)
+    table.width = console.measure(table, options=unbounded).maximum
+    # Wider than the console on purpose, so it must not be cropped back to it.
+    console.print(table, crop=False)
+
+
 def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> Table:
     table = Table(
         title=style(
@@ -1896,7 +1921,12 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
         header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
     )
     table.add_column(cs.CLI_DEADCODE_COL_KIND, style=cs.Color.MAGENTA)
-    table.add_column(cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN)
+    # Folded, not ellipsised: a qualified name has no space to wrap at, so a
+    # narrow terminal cut every row back to the same package prefix and never
+    # named the method (issue #2561).
+    table.add_column(
+        cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN, overflow="fold"
+    )
     table.add_column(cs.CLI_DEADCODE_COL_LINES, style=cs.Color.YELLOW, justify="right")
     for row in candidates:
         table.add_row(
@@ -1942,7 +1972,7 @@ def _emit_dead_code(
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
             file_console = Console(file=fh)
-            file_console.print(table)
+            _print_report_table(file_console, table)
             if notice:
                 file_console.print(notice)
         app_context.console.print(
@@ -1958,7 +1988,7 @@ def _emit_dead_code(
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
     else:
-        app_context.console.print(table)
+        _print_report_table(app_context.console, table)
         app_context.console.print(
             style(cs.CLI_DEADCODE_SUMMARY.format(count=len(candidates)), cs.Color.GREEN)
         )
@@ -2241,7 +2271,7 @@ def _write_duplicates_file(
 ) -> None:
     with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
         file_console = Console(file=fh)
-        file_console.print(table)
+        _print_report_table(file_console, table)
         for notice in notices:
             file_console.print(notice)
     _print_duplicates_written(group_count, output)
@@ -2281,7 +2311,7 @@ def _emit_duplicates(
         if not all_skipped:
             app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
     else:
-        app_context.console.print(table)
+        _print_report_table(app_context.console, table)
         members = sum(len(group["members"]) for group in groups)
         app_context.console.print(
             style(

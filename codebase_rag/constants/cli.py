@@ -294,6 +294,9 @@ EDITOR_DIFF_COMMANDS: dict[str, str] = {
     "windsurf": "windsurf --diff {left} {right}",
 }
 ENV_TERM_PROGRAM = "TERM_PROGRAM"
+# Rich's width override. The one width a user sets on purpose, so a report
+# table written to a file or pipe still honours it (issue #2561).
+ENV_COLUMNS = "COLUMNS"
 TERM_PROGRAM_VSCODE = "vscode"
 ENV_CF_BUNDLE_ID = "__CFBundleIdentifier"
 # Substring of the hosting app's macOS bundle identifier -> editor name.
