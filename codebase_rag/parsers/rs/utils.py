@@ -517,6 +517,10 @@ def is_body_local(node: Node) -> bool:
     return False
 
 
+def has_visibility_modifier(node: Node) -> bool:
+    return any(child.type == cs.TS_RS_VISIBILITY_MODIFIER for child in node.children)
+
+
 def enclosing_mod_names(node: Node) -> frozenset[str]:
     """Names of `mod` items in scope at the node's own module level.
 

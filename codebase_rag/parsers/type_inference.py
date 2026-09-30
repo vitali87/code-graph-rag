@@ -26,6 +26,7 @@ from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
+from .utils import follow_reexports
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -780,7 +781,11 @@ class TypeInferenceEngine:
             elif next_type := self.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{hop}"
             ):
-                current_type = next_type
+                # A method returning its own type (`fn new() -> Get`) keeps the
+                # caller's spelling of it: through `pub use inner::Get as
+                # Fetch;` the caller only has `Fetch` in scope (issue #2542).
+                if next_type != class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]:
+                    current_type = next_type
             elif hop not in cs.RS_IDENTITY_METHODS:
                 return None
         return current_type
@@ -816,9 +821,13 @@ class TypeInferenceEngine:
             if cs.SEPARATOR_DOUBLE_COLON in target:
                 return self._resolve_rust_import_path(target)
             # A crate::/super::/self:: use target arrives as an already
-            # resolved project qn; use it when it names a registered type.
-            # Otherwise fall through with require_registered so the SAME
-            # unregistered map value cannot come back verbatim.
+            # resolved project qn; use it when it names a registered type,
+            # after following any `pub use` re-export that qn names (issue
+            # #2542). Otherwise fall through with require_registered so the
+            # SAME unregistered map value cannot come back verbatim.
+            target = follow_reexports(
+                target, self.import_processor.import_mapping, self.function_registry
+            )
             if self.function_registry.get(target) is not None:
                 return target
             return (

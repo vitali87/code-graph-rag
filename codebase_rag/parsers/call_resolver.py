@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import PurePath
 from typing import NamedTuple
 
@@ -416,7 +416,23 @@ class CallResolver:
             if cs.SEPARATOR_DOUBLE_COLON in target:
                 return self._resolve_rust_class_qn(target)
             return self._follow_reexports(target)
+        if (scoped := self._rust_glob_imported_type(var_type, module_qn)) is not None:
+            return scoped
         return self._resolve_class_name(var_type, module_qn) or ""
+
+    def _rust_glob_imported_type(self, name: str, module_qn: str) -> str | None:
+        # A Rust type the module brings in by a glob (`use crate::cmd::*;`)
+        # has no import-map key of its own. Look it up in the module's
+        # namespace the way rustc does, globs and their re-exports included,
+        # before the bare-name search can pick a same-named type from
+        # anywhere (issue #2542).
+        if self._module_language(module_qn) != cs.SupportedLanguage.RUST:
+            return None
+        return self._rust_scope_type(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+
+    def _rust_scope_type(self, qn: str) -> str | None:
+        hit = self._follow_rust_scope_target(qn)
+        return hit[1] if hit is not None and hit[0] in _RS_TYPE_NODE_TYPES else None
 
     def _strip_optional(self, var_type: str) -> str:
         # An Optional annotation (X | None) names a single concrete class; reduce it
@@ -432,9 +448,18 @@ class CallResolver:
         return non_none[0] if len(non_none) == 1 else var_type
 
     def _follow_reexports(self, class_qn: str) -> str:
-        return follow_reexports(
+        followed = follow_reexports(
             class_qn, self.import_processor.import_mapping, self.function_registry
         )
+        if (
+            followed in self.function_registry
+            or self._module_language(followed) != cs.SupportedLanguage.RUST
+        ):
+            return followed
+        # A Rust glob re-export (`pub use inner::*;`) binds no name the walk
+        # above can follow, so a type exported through one stayed a dead
+        # qn and every method called on it lost its edge (issue #2542).
+        return self._rust_scope_type(followed) or followed
 
     def _try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
@@ -2826,7 +2851,7 @@ class CallResolver:
         return self._follow_rust_scope_item(target, {target})[0]
 
     def _follow_rust_scope_item(
-        self, target: str, seen: set[str]
+        self, target: str, seen: set[str], via_glob_from: str | None = None
     ) -> tuple[tuple[str, str] | None, bool]:
         """Chase a candidate qn through re-export hops to a registered fn.
 
@@ -2838,6 +2863,11 @@ class CallResolver:
         True when an unindexable glob base was met: the item may live
         behind it, so the caller must not turn the miss into a decided
         drop.
+
+        `via_glob_from` is the module whose glob reached this candidate. A
+        private `use` in the glob's base binds its name for the base and
+        the modules below it alone, and shadows the base's own globs for
+        that name, so a glob written anywhere else gets nothing under it.
         """
         while True:
             if (target_type := self.function_registry.get(target)) is not None:
@@ -2846,14 +2876,37 @@ class CallResolver:
             owner_map = self.import_processor.import_mapping.get(owner)
             if not owner_map:
                 return None, False
+            hidden = (
+                self.import_processor.rust_private_use_names.get(owner, frozenset())
+                if via_glob_from is not None
+                and not self._rust_module_sees_private(via_glob_from, owner)
+                else frozenset()
+            )
             if (hop := owner_map.get(item)) is not None:
+                if item in hidden:
+                    return None, False
                 resolved = self._rust_local_qn(hop, owner)
                 if resolved is None or resolved in seen:
                     return None, False
                 seen.add(resolved)
                 target = resolved
+                # A named `use` is a path the source spells out, which rustc
+                # already checked is visible where it is written.
+                via_glob_from = None
                 continue
-            return self._expand_rust_glob_hops(owner_map, owner, item, seen)
+            return self._expand_rust_glob_hops(owner_map, owner, item, seen, hidden)
+
+    def _rust_module_sees_private(self, module_qn: str, owner: str) -> bool:
+        # A module's private items are visible to itself and every module
+        # below it. A crate entry file (lib.rs, main.rs) is the parent of the
+        # modules beside it, which its own qn does not prefix, so its
+        # directory stands in for it there.
+        if module_qn == owner or module_qn.startswith(f"{owner}{cs.SEPARATOR_DOT}"):
+            return True
+        parent, _, stem = owner.rpartition(cs.SEPARATOR_DOT)
+        return stem in cs.RS_ENTRY_STEMS and module_qn.startswith(
+            f"{parent}{cs.SEPARATOR_DOT}"
+        )
 
     def _expand_rust_glob_hops(
         self,
@@ -2861,10 +2914,11 @@ class CallResolver:
         owner: str,
         item: str,
         seen: set[str],
+        hidden: Collection[str] = frozenset(),
     ) -> tuple[tuple[str, str] | None, bool]:
         unknown = False
         for key, value in owner_map.items():
-            if not key.startswith(cs.RS_WILDCARD_PREFIX):
+            if not key.startswith(cs.RS_WILDCARD_PREFIX) or key in hidden:
                 continue
             resolved = self._rust_local_qn(value, owner)
             if resolved is None:
@@ -2874,7 +2928,9 @@ class CallResolver:
             if candidate in seen:
                 continue
             seen.add(candidate)
-            result, sub_unknown = self._follow_rust_scope_item(candidate, seen)
+            result, sub_unknown = self._follow_rust_scope_item(
+                candidate, seen, via_glob_from=owner
+            )
             if result is not None:
                 return result, False
             unknown = unknown or sub_unknown
@@ -3202,7 +3258,7 @@ class CallResolver:
             return result
 
         if result := self._try_resolve_via_import(
-            object_name, method_name, separator, call_name, import_map
+            object_name, method_name, separator, call_name, import_map, language
         ):
             return result
 
@@ -3237,7 +3293,10 @@ class CallResolver:
     def _try_resolve_static_type_method(
         self, object_name: str, method_name: str, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        if not (class_qn := self._resolve_class_name(object_name, module_qn)):
+        if not (
+            class_qn := self._rust_glob_imported_type(object_name, module_qn)
+            or self._resolve_class_name(object_name, module_qn)
+        ):
             return None
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
         if method_qn in self.function_registry:
@@ -3319,12 +3378,23 @@ class CallResolver:
         separator: str,
         call_name: str,
         import_map: dict[str, str],
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if object_name not in import_map:
             return None
 
+        target = import_map[object_name]
+        if (
+            language == cs.SupportedLanguage.RUST
+            and cs.SEPARATOR_DOUBLE_COLON not in target
+        ):
+            # `use crate::cmd::Get;` names the module that re-exports `Get`.
+            # Unfollowed, `Get::new()` missed here and the simple-name
+            # search bound it to whichever `Get` it reached first, as an
+            # exact edge (issue #2542).
+            target = self._follow_reexports(target)
         class_qn = self._resolve_imported_class_qn(
-            import_map[object_name], object_name, method_name, separator
+            target, object_name, method_name, separator
         )
 
         registry_separator = (
@@ -4107,6 +4177,16 @@ class CallResolver:
         ret = self.type_inference.method_return_types.get(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}"
         )
+        if (
+            ret is not None
+            and ret != type_name
+            and ret == class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        ):
+            # `Fetch::new()` for `pub use inner::Get as Fetch;` returns `Get`,
+            # the type the caller spelled `Fetch`. `Get` itself need not be in
+            # scope here, and a bare-name search for it lands on whichever
+            # same-named type comes first (issue #2542).
+            return class_qn
         # The recorded return type is the bare source name; downstream
         # hops remap it through the FILE's imports, so at a block-gated
         # site qualify it through the block's binding here instead.
