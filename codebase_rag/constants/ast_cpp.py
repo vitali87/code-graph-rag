@@ -137,6 +137,10 @@ CPP_OPERATOR_SYMBOL_MAP: dict[str, str] = {
     "[]": "operator_subscript",
     "()": "operator_call",
 }
+# The member a call on an object of class type runs (`enter_state(n)` on a
+# functor local, `Cmp{}(a, b)`, a comparator handed to std::sort): its
+# operator(), under the name the map above gives it (issue #2555).
+CPP_OPERATOR_CALL_NAME = CPP_OPERATOR_SYMBOL_MAP["()"]
 
 # Tree-sitter C++ node types for language_spec
 TS_CPP_FUNCTION_DEFINITION = "function_definition"
@@ -156,6 +160,11 @@ CPP_TYPE_PARAMETER_DECL_TYPES = frozenset(
     }
 )
 TS_CPP_LAMBDA_EXPRESSION = "lambda_expression"
+# A class/struct/union body; a function definition directly in one is a
+# member function.
+TS_CPP_FIELD_DECLARATION_LIST = "field_declaration_list"
+# `Cmp{}` / `Point{1, 2}`: a braced temporary of the named type.
+TS_CPP_COMPOUND_LITERAL_EXPRESSION = "compound_literal_expression"
 TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
 TS_CPP_CALL_EXPRESSION = "call_expression"

@@ -4,6 +4,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from . import local_types
 
 
 class CppTypeInferenceEngine:
@@ -286,7 +287,10 @@ class CppTypeInferenceEngine:
 
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
-        if type_node is None or not (type_name := self._bare_type_name(type_node)):
+        if type_node is None or not (
+            type_name := self._bare_type_name(type_node)
+            or self._defined_type_name(type_node)
+        ):
             return
         # One statement may declare several variables sharing the leading type
         # (`Zeta a, b;`), each its own `declarator` field child; record them all.
@@ -307,6 +311,22 @@ class CppTypeInferenceEngine:
                 return self._bare_type_name(inner) if inner is not None else None
             case _:
                 return None
+
+    @staticmethod
+    def _defined_type_name(type_node: Node) -> str | None:
+        # `struct Checker {...} checker;` / `struct {...} enter_state;`: a
+        # local typed by the type defined right there. An unnamed one is
+        # named by position, as its node is; the call pass binds either
+        # name to the local type's qn (issue #2555).
+        if (
+            type_node.type not in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+            or type_node.child_by_field_name(cs.FIELD_BODY) is None
+        ):
+            return None
+        name_node = type_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None:
+            return safe_decode_text(name_node)
+        return local_types.positional_name(type_node)
 
     def _rightmost_name(self, node: Node) -> str | None:
         name_node = node.child_by_field_name(cs.KEY_NAME)

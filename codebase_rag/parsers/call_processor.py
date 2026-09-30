@@ -30,6 +30,7 @@ from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
+from .cpp import local_types as cpp_local_types
 from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
@@ -165,6 +166,8 @@ _TYPED_LANGUAGES = frozenset(
 # name lives in a nested declarator (no `name` field), needing the libclang
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+# The node kinds a C++ type written in a function body registers as.
+_CPP_LOCAL_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.UNION, NodeType.ENUM})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 
 # Declarator kinds for the symbol-index value chase (issue #989). OPAQUE
@@ -1656,7 +1659,17 @@ class CallProcessor:
             return self._calls_owned_by(
                 func_node, owned_func_nodes, all_call_nodes, call_starts
             )
-        return self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        calls = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        if language == cs.SupportedLanguage.CPP:
+            # A member function of a type written in this body is its own
+            # caller; its calls are not also this function's (issue #2555).
+            # A lambda is no caller of its own, so its calls still count here.
+            return [
+                call
+                for call in calls
+                if not cpp_local_types.in_local_type_member(call, func_node)
+            ]
+        return calls
 
     def _filter_calls_in_node(
         self,
@@ -3665,6 +3678,8 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        if language == cs.SupportedLanguage.CPP and local_var_types:
+            self._bind_cpp_local_types(caller_node, module_qn, local_var_types)
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
 
@@ -4111,6 +4126,23 @@ class CallProcessor:
         # one the syntax hides.
         if self._string_call_specs and call_name:
             self._emit_string_call_edges(ctx, call_node, call_name)
+        # `enter_state(n)` on a functor local, `Cmp{}(a, b)` on a temporary:
+        # a call on an object of class type runs that type's operator(),
+        # which no name lookup of the callee text reaches (issue #2555).
+        if (
+            ctx.is_cpp
+            and call_node.type == cs.TS_CPP_CALL_EXPRESSION
+            and (callee := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+            and (
+                functor := self._cpp_functor_operator(
+                    callee, ctx.module_qn, ctx.local_var_types
+                )
+            )
+        ):
+            self._ingest_resolved_call(
+                ctx, call_node, cs.CPP_OPERATOR_CALL_NAME, functor
+            )
+            return
         # An inline function ARGUMENT is handed to the callee regardless of
         # whether the callee resolves: an external/param callee
         # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
@@ -4576,6 +4608,86 @@ class CallProcessor:
         ):
             return (cs.NodeLabel.CLASS, aliased_qn)
         return None
+
+    def _cpp_local_anchors(self, node: Node, module_qn: str) -> list[str]:
+        # The qns the types written in each function around `node` are
+        # named under, innermost first.
+        return [
+            anchor
+            for callable_node in cpp_local_types.enclosing_callables(node)
+            if (
+                anchor := cpp_local_types.callable_anchor_qn(
+                    callable_node, module_qn, self.function_locations
+                )
+            )
+        ]
+
+    def _cpp_local_type_under(self, anchors: list[str], type_name: str) -> str | None:
+        registry = self._resolver.function_registry
+        for anchor in anchors:
+            local_qn = f"{anchor}{cs.SEPARATOR_DOT}{type_name}"
+            if registry.get(local_qn) in _CPP_LOCAL_TYPE_NODE_TYPES:
+                return local_qn
+        return None
+
+    def _bind_cpp_local_types(
+        self, caller_node: Node, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # A variable of a type written in an enclosing function body binds
+        # to that type's node, not whichever same-named class the
+        # module-wide lookup meets first, so two functions' local
+        # `Checker`s stay apart (issue #2555). A position name that binds to
+        # nothing names a type with no node, and must not reach the
+        # name-based lookups.
+        anchors = self._cpp_local_anchors(caller_node, module_qn)
+        for name, type_name in list(var_types.items()):
+            if local_qn := self._cpp_local_type_under(anchors, type_name):
+                var_types[name] = local_qn
+            elif cpp_local_types.is_positional_name(type_name):
+                del var_types[name]
+
+    def _cpp_functor_operator(
+        self, node: Node, module_qn: str, var_types: dict[str, str] | None
+    ) -> tuple[str, str] | None:
+        # The operator() an object-valued expression runs when it is called:
+        # a local or parameter of class type (`enter_state`), or a temporary
+        # (`Cmp{}`, `Cmp()`). None for anything else, so every other callee
+        # and argument keeps its name-based resolution.
+        if (class_qn := self._cpp_functor_class(node, module_qn, var_types)) is None:
+            return None
+        return self._resolver._try_resolve_method(class_qn, cs.CPP_OPERATOR_CALL_NAME)
+
+    def _cpp_functor_class(
+        self, node: Node, module_qn: str, var_types: dict[str, str] | None
+    ) -> str | None:
+        match node.type:
+            case cs.TS_CPP_IDENTIFIER:
+                return self._resolver.cpp_operand_class_qn(
+                    safe_decode_text(node), var_types, module_qn
+                )
+            case cs.TS_CPP_COMPOUND_LITERAL_EXPRESSION:
+                type_node = node.child_by_field_name(cs.FIELD_TYPE)
+            case cs.TS_CPP_CALL_EXPRESSION:
+                type_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            case _:
+                return None
+        if type_node is None or not (
+            type_name := cpp_local_types.named_type(type_node)
+        ):
+            return None
+        if local_qn := self._cpp_local_type_under(
+            self._cpp_local_anchors(node, module_qn), type_name
+        ):
+            return local_qn
+        class_qn = self._resolver._resolve_class_name(type_name, module_qn)
+        # The same spelling calls a function (`make(x)`) as often as it
+        # constructs a class (`Cmp(x)`); only a class is a functor.
+        if (
+            class_qn is None
+            or self._resolver.function_registry.get(class_qn) != NodeType.CLASS
+        ):
+            return None
+        return class_qn
 
     def _bare_name_callee(
         self,
@@ -7107,6 +7219,23 @@ class CallProcessor:
         if arg_node.type in _INLINE_FUNC_VALUE_TYPES:
             self._emit_inline_arg_function_ref(
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
+            )
+            return
+        # A functor handed over (`std::sort(b, e, Cmp{})`) is passed the way
+        # a function pointer is, and the callee runs its operator()
+        # (issue #2555).
+        if language == cs.SupportedLanguage.CPP and (
+            functor := self._cpp_functor_operator(arg_node, module_qn, local_var_types)
+        ):
+            self._resolver.last_resolution = cs.EdgeResolution.EXACT
+            self._emit_callback_targets(
+                source_spec,
+                functor[0],
+                functor[1],
+                rel_type,
+                ensure_rel,
+                module_qn,
+                language,
             )
             return
         if not (arg_text := safe_decode_text(arg_node)):
