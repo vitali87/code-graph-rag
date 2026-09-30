@@ -3,19 +3,22 @@
 A Flask API, a `requests` client over a module-level `BASE`, an Express API
 with inline handlers and a `fetch` client, indexed as one project. Before
 the fix the Express routes were exposed by the module and three of the four
-client URLs linked nowhere.
+client URLs linked nowhere, and a project synced without the `io` group
+answered the endpoint tools with `[]`.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
@@ -198,3 +201,61 @@ def test_an_unchanged_module_keeps_its_inline_handlers_on_a_later_sync(
         _FILES["node/web.js"] + "export const unused = 1;\n", encoding="utf-8"
     )
     assert sync() == expected
+
+
+def _sync(ingestor: MemgraphIngestor, repo: Path, tokens: list[str]) -> None:
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(tokens),
+    ).run()
+    ingestor.flush_all()
+
+
+def _registry(ingestor: MemgraphIngestor, repo: Path) -> MCPToolsRegistry:
+    with patch("codebase_rag.mcp.tools.load_parsers", return_value=({}, {})):
+        return MCPToolsRegistry(
+            project_root=str(repo), ingestor=ingestor, cypher_gen=MagicMock()
+        )
+
+
+@pytest.mark.anyio
+async def test_a_default_sync_is_named_instead_of_answering_empty(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    repo = tmp_path / "users"
+    (repo / "api").mkdir(parents=True)
+    (repo / "api" / "app.py").write_text(_FILES["api/app.py"], encoding="utf-8")
+    registry = _registry(memgraph_ingestor, repo)
+
+    _sync(memgraph_ingestor, repo, [])
+    refused = await registry.endpoints(project="users")
+    assert isinstance(refused, dict), refused
+    assert "--capture io" in refused[cs.DICT_KEY_ERROR]
+    assert str(repo.resolve()) in refused[cs.DICT_KEY_ERROR]
+
+    # The capture is part of the parser fingerprint: the io sync re-parses.
+    _sync(memgraph_ingestor, repo, [cs.CaptureGroup.IO.value])
+    answer = await registry.endpoints(project="users")
+    assert {row["endpoint"] for row in answer} == {
+        "GET /users/<int:user_id>",
+        "POST /users",
+    }
+
+
+@pytest.mark.anyio
+async def test_an_io_project_with_nothing_to_expose_still_answers_empty(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    repo = tmp_path / "lib"
+    repo.mkdir()
+    (repo / "util.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8"
+    )
+    _sync(memgraph_ingestor, repo, [cs.CaptureGroup.IO.value])
+    registry = _registry(memgraph_ingestor, repo)
+    assert await registry.endpoints(project="lib") == []
+    assert await registry.remote_dependencies(project="lib") == []

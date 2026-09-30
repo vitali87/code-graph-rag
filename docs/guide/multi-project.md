@@ -112,9 +112,14 @@ call sites in the whole graph reach each one; `endpoint_callers` lists the
 call sites in any project that reach one endpoint, by handler name or by
 identity (`GET /users/{id}`); `remote_dependencies` lists every network
 access a project makes with the handler it resolves to, keeping the
-unresolved ones. `cgr dead-code --no-endpoint-roots` stops rooting a
-decorator-routed handler (FastAPI, Flask) by its decorator alone: such a
-handler whose endpoint no indexed call site reaches is reported. A handler
+unresolved ones. These edges exist only where the `io` group was
+captured, and each sync records its capture on the Project node: on a
+project whose last sync left `io` out, an empty answer comes back as an
+error naming the group and the re-index command rather than as `[]` (a
+graph synced before the record existed answers as before).
+`cgr dead-code --no-endpoint-roots` stops rooting a decorator-routed
+handler (FastAPI, Flask) by its decorator alone: such a handler whose
+endpoint no indexed call site reaches is reported. A handler
 registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
 stays live through that registration, whatever the switch. On a graph
 holding one project the report reads as "no callers indexed", which the

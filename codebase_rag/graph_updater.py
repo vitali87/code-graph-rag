@@ -2080,6 +2080,11 @@ class GraphUpdater:
             {
                 cs.KEY_NAME: self.project_name,
                 cs.KEY_ROOT_PATH: str(self.repo_path.resolve()),
+                # The capture is part of the parser fingerprint, so a run that
+                # returns early as in sync captured this same selection.
+                cs.KEY_CAPTURED_RELATIONSHIPS: sorted(
+                    rel.value for rel in self.capture.enabled_rels
+                ),
             },
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
