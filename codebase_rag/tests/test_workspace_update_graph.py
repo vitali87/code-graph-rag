@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import click
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from codebase_rag.cli import _run_graph_sync, app
@@ -125,6 +126,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     user_home = tmp_path / "me"
     user_home.mkdir()
     monkeypatch.setenv("HOME", str(user_home))
+    # Windows resolves Path.home() from USERPROFILE, not HOME.
+    monkeypatch.setenv("USERPROFILE", str(user_home))
     return user_home
 
 
@@ -157,7 +160,7 @@ def test_a_sync_of_the_home_directory_or_root_is_refused(
 ) -> None:
     repo = home if target == "home" else Path(home.anchor)
 
-    with pytest.raises(click.exceptions.Exit):
+    with pytest.raises(typer.Exit):
         _sync_repo(repo)
 
     graph.assert_not_called()
