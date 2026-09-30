@@ -20,12 +20,31 @@ Pyroscope, OpenTelemetry, `perf`) can be ingested through the same pprof door
 
 ## Recording a trace
 
-The `cgr` package ships a pytest plugin. It is inert unless enabled:
+The `cgr` package ships a pytest plugin. It runs inside your test process, so
+`code-graph-rag` must be importable by the pytest that runs your tests. The
+`uv tool install` or `pipx install` from the installation guide keeps cgr in an
+environment of its own, which your project's pytest cannot see: run as is,
+`pytest --cgr-trace` stops with `error: unrecognized arguments: --cgr-trace`.
+Add the package to the test run instead:
 
 ```bash
 cd /path/to/your-repo
+# a uv-managed project: overlay the package for this run only
+uv run --with code-graph-rag pytest --cgr-trace
+```
+
+In any other virtual environment, install it into the project's test
+environment once (`pip install code-graph-rag`), then enable the plugin, which
+is inert until you do:
+
+```bash
 pytest --cgr-trace
 ```
+
+The overlay leaves the project's dependencies untouched; installing the package
+adds cgr's own dependencies (pydantic-ai and the rest) to the test
+environment. The `cgr trace ingest` step below runs with the `cgr` you already
+have on your PATH.
 
 This writes `cgr-trace.jsonl` (override with `--cgr-trace-output PATH`). Each
 test's node id is attached to the calls it triggered, so an edge in the graph
