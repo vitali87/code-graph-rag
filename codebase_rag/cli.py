@@ -1843,8 +1843,6 @@ def _dead_code_config(
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
 ) -> DeadCodeConfig:
-    # test_patterns is always set: included tests become roots; excluded, it
-    # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
@@ -1853,7 +1851,6 @@ def _dead_code_config(
             | {d.lower() for d in decorator_roots}
         ),
         entry_points=tuple(entry_points),
-        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
         endpoint_roots=endpoint_roots,
     )
