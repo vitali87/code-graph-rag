@@ -71,7 +71,8 @@ def repo(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> Path:
 
 
 def _line(repo: Path, path: str | None, line: int | None) -> str:
-    assert path is not None and line is not None
+    assert path is not None
+    assert line is not None
     return (repo / path).read_text(encoding="utf-8").splitlines()[line - 1]
 
 
