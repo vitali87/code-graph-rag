@@ -26,7 +26,11 @@ from codebase_rag.parsers.go_frontend import frontend as fe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER = REPO_ROOT / "codebase_rag" / "parsers" / "go_frontend" / "gotypes"
-SUPPORTED_FLOOR = (1, 22, 0)
+# The oldest Go the helper asks for. It parses the repositories it indexes
+# with go/parser, so the floor is the first release carrying the stdlib fixes
+# OSV reports as reachable from it: GO-2024-3105 and GO-2024-3107 (1.22.7),
+# GO-2025-3750 (1.23.10) and GO-2025-3956 (1.23.12).
+SUPPORTED_FLOOR = (1, 23, 12)
 
 
 def _directive(name: str) -> str | None:
@@ -101,10 +105,19 @@ def _run(
     return facts, warnings
 
 
-def test_the_helper_asks_for_go_1_22_at_most() -> None:
+def test_the_helper_asks_for_no_newer_go_than_the_floor() -> None:
     directive = _directive("go")
     assert directive is not None
     assert _version(directive) <= SUPPORTED_FLOOR
+
+
+def test_the_helper_asks_for_a_go_with_the_stdlib_fixes() -> None:
+    # The CI vulnerability scan reads the `go` line as the stdlib the helper
+    # links, and a floor below these fixes let the helper build against a
+    # go/parser with the known stack-exhaustion bug (review of PR 2417).
+    directive = _directive("go")
+    assert directive is not None
+    assert _version(directive) >= SUPPORTED_FLOOR
 
 
 def test_the_helper_pins_no_newer_toolchain() -> None:
@@ -138,18 +151,19 @@ def test_dependabot_holds_x_tools_to_patch_releases() -> None:
     )
 
 
+@pytest.mark.parametrize("found", ["1.21.9", "1.22.6", "1.23.11"])
 def test_an_old_go_is_named_once_and_never_built(
-    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, found: str
 ) -> None:
-    fake = _FakeGo("go1.21.9", build_ok=True)
+    fake = _FakeGo(f"go{found}", build_ok=True)
 
     facts, warnings = _run(monkeypatch, go_repo, fake)
 
     assert fake.builds == 0
     assert not facts.call_sites
     assert len(warnings) == 1
-    assert "1.21.9" in warnings[0]
-    assert "1.22" in warnings[0]
+    assert found in warnings[0]
+    assert "1.23.12" in warnings[0]
 
 
 def test_a_failed_build_is_logged_once(
@@ -231,7 +245,7 @@ def test_changed_helper_sources_retry_a_remembered_failure(
 def test_a_new_enough_go_builds_the_helper(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
-    fake = _FakeGo("go1.22.0", build_ok=True)
+    fake = _FakeGo("go1.23.12", build_ok=True)
 
     _facts, warnings = _run(monkeypatch, go_repo, fake)
 

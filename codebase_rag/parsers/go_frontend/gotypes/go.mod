@@ -1,6 +1,6 @@
 module cgr.dev/gotypes
 
-go 1.22.0
+go 1.23.12
 
 require golang.org/x/tools v0.30.0
 
