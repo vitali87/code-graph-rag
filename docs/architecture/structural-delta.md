@@ -70,7 +70,7 @@ records it next to the re-ingest itself.
 | `symbols.renamed`    | A symbol that disappeared while one with the same whole-skeleton fingerprint appeared in the same file. Paired one-to-one. |
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
-| `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each. |
+| `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
 | `arity_findings`     | Call sites in the edited files that pass more positional arguments than the callee declares (`too_many`), the only verdict that needs no knowledge of defaults. |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |

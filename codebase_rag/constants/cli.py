@@ -163,6 +163,12 @@ CLI_STATS_TOTAL_NODES = "Total Nodes"
 CLI_STATS_TOTAL_RELS = "Total Relationships"
 CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
+CLI_STATS_SCOPE = "Scoped to: {projects}"
+CLI_STATS_PER_PROJECT_TITLE = "Per project:"
+CLI_STATS_PER_PROJECT_ROW = (
+    "  {project}: {nodes:,} nodes / {relationships:,} relationships"
+)
+CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
@@ -663,6 +669,15 @@ RENAME_ROLLBACK_UNMEASURED = (
 RENAME_CONTRACT_UNMEASURED = (
     "Rename applied, but its postcondition could not be measured: {error}"
 )
+# context slice (issue #1536).
+CONTEXT_WHY_TARGET = "target"
+CONTEXT_WHY_CALLER = "direct caller: the call line"
+CONTEXT_WHY_CALLEE = "direct callee: its signature"
+CONTEXT_WHY_RETURNS = "type it returns"
+CONTEXT_WHY_ACCEPTS = "type it accepts"
+CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
+CONTEXT_WHY_DOC = "documentation section whose file links to it"
+CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"

@@ -43,8 +43,11 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 # count instead of `WHERE NOT (n)--()`: Memgraph 3.x rejects pattern
 # expressions inside WHERE, and this form is accepted by both 2.x and 3.x
 # (issue #1257).
+# `:IncompleteRun` is the CLI's own sync marker, unattached to any project
+# tree on purpose (see CYPHER_MARK_PROJECT_INCOMPLETE); doctor reports it as
+# an interrupted sync, not as an orphan (issue #2394).
 CYPHER_AUDIT_ORPHANS = (
-    "MATCH (n) WHERE NOT n:Project "
+    "MATCH (n) WHERE NOT n:Project AND NOT n:IncompleteRun "
     "OPTIONAL MATCH (n)--(x) "
     "WITH n, count(x) AS degree "
     "WHERE degree = 0 "
@@ -413,6 +416,48 @@ RETURN type(r) AS type, count(*) AS count
 ORDER BY count DESC
 """
 
+# What a project owns is what deleting it removes: its containment tree and
+# everything the containers define (the same walk as CYPHER_DELETE_PROJECT).
+# That covers File and Folder nodes, which have no qualified name to match a
+# prefix against, and leaves out shared nodes (ExternalPackage, Resource)
+# another project may hold too. Relationships count when they START at an
+# owned node (issue #2391).
+_CYPHER_STATS_OWNED_NODES = """
+MATCH (p:Project) WHERE p.name IN $project_names
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT n
+"""
+CYPHER_STATS_PROJECT_NODE_COUNTS = (
+    _CYPHER_STATS_OWNED_NODES
+    + """RETURN labels(n) AS labels, count(*) AS count
+ORDER BY count DESC
+"""
+)
+CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS = (
+    _CYPHER_STATS_OWNED_NODES
+    + """MATCH (n)-[r]->()
+RETURN type(r) AS type, count(r) AS count
+ORDER BY count DESC
+"""
+)
+# One row per project, so unscoped totals over a shared graph can be
+# attributed; the same ownership walk as above, grouped by project.
+CYPHER_STATS_PER_PROJECT = """
+MATCH (p:Project)
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH p, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT p, n
+OPTIONAL MATCH (n)-[r]->()
+WITH p, n, count(r) AS outgoing
+RETURN p.name AS project, count(n) AS nodes, sum(outgoing) AS relationships
+ORDER BY project
+"""
+
 
 # Dead-code fetch queries. Reachability itself runs client-side in
 # codebase_rag/dead_code.py: the previous single-query formulation expanded
@@ -590,6 +635,15 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.name AS name, n.namespace AS namespace"""
+# Every definition registered under one natural name: the name itself and
+# its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
+# tell a property's getter, setter and deleter apart (issue #1808).
+CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.decorators AS decorators"""
 CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
@@ -842,6 +896,18 @@ WITH g, count(subject) AS subjects
 WHERE subjects = 0
 OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
 RETURN {_GLOSS_ROW}"""
+# The same, for a definition and its `name@<line>` variants: a note filed
+# through a descriptor (`x#setter`) sits on a variant, so the literal target
+# names nothing once the member is gone (issue #1808).
+CYPHER_GLOSSES_ORPHANED_UNDER = f"""MATCH (g:{_GLOSS})
+WHERE (g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix))
+  AND (g.target_qn = $qn OR g.target_qn STARTS WITH $variant_prefix)
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
 # One row per call SITE (edges carry the site from issue #1522).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
@@ -967,6 +1033,25 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
+# The blast radius of a signature change crosses services (issue #1603): a
+# changed handler's endpoint is reached by call sites in OTHER projects,
+# through a NETWORK resource that RESOLVES_TO it, or directly for the RPC and
+# dispatch kinds. A caller inside the handler's own project is a local
+# site, whatever route it takes, and is excluded (bot review on PR #1978).
+CYPHER_DELTA_REMOTE_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name IN $qns
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource {kind: 'NETWORK'})-[:RESOLVES_TO]->(e)
+WHERE NOT c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT h.qualified_name AS handler, e.name AS endpoint,
+       labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url"""
+CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name IN $qns AND e.kind IN ['RPC', 'DISPATCH']
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(e)
+WHERE NOT c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT h.qualified_name AS handler, e.name AS endpoint,
+       labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       e.name AS url"""
 CYPHER_DELTA_CALLERS_OF = """MATCH (a)-[:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1007,6 +1092,22 @@ WHERE m.qualified_name STARTS WITH $project_prefix
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn"""
+# Context slice reads (issue #1536): trace hotness of the callers of one
+# symbol, the types it returns and accepts, and the sections of the
+# documents whose links point at its file.
+CYPHER_CONTEXT_HOTNESS = """MATCH (caller)-[r:CALLS]->(callee)
+WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
+  AND r.dynamic_call_count IS NOT NULL
+RETURN caller.qualified_name AS qualified_name, r.dynamic_call_count AS dynamic_call_count"""
+CYPHER_CONTEXT_TYPES = """MATCH (n)-[r:RETURNS|ACCEPTS]->(t)
+WHERE n.qualified_name = $qn AND t.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT type(r) AS rel_type, t.qualified_name AS qualified_name, t.path AS path,
+       t.start_line AS start_line, t.end_line AS end_line"""
+CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (doc:Module)-[:LINKS_TO]->(f:File {absolute_path: $absolute_path})
+MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
+WHERE doc.qualified_name STARTS WITH $project_prefix
+RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
+       s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,

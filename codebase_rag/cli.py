@@ -70,6 +70,7 @@ from .types_defs import (
     DuplicatesReport,
     PropertyValue,
     ResultRow,
+    ResultValue,
 )
 from .utils.path_utils import (
     derive_project_name,
@@ -240,7 +241,12 @@ def _global_options(
     settings.QUIET = quiet
     if quiet:
         logger.remove()
-        logger.add(lambda msg: app_context.console.print(msg, end=""), level="ERROR")
+        logger.add(
+            lambda msg: app_context.console.print(msg, end=""),
+            level="ERROR",
+            backtrace=False,
+            diagnose=False,
+        )
     else:
         _default_log_level_to_info()
 
@@ -1691,47 +1697,134 @@ def _build_stats_table(
     name=ch.CLICommandName.STATS,
     help=ch.CMD_STATS,
     short_help=ch.CMD_STATS,
+    epilog=ch.EXAMPLES_STATS,
     rich_help_panel=ch.PANEL_GRAPH,
 )
-def stats() -> None:
-    from .cypher_queries import (
-        CYPHER_STATS_NODE_COUNTS,
-        CYPHER_STATS_RELATIONSHIP_COUNTS,
+def stats(
+    project_name: list[str] = typer.Option(
+        [], "--project-name", "-n", help=ch.HELP_STATS_PROJECT_NAME
+    ),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help=ch.HELP_STATS_WORKSPACE
+    ),
+) -> None:
+    workspace_config = _load_workspace_or_exit(workspace)
+    # Order kept, duplicates dropped: `-n a --workspace w` where w holds a
+    # again counts a once (issue #2391).
+    requested = list(
+        dict.fromkeys(
+            [name.strip() for name in project_name if name.strip()]
+            + (workspace_config.project_names() if workspace_config else [])
+        )
     )
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
+    missing: list[str] = []
+    projects: list[str] = []
     try:
         with connect_memgraph(batch_size=1) as ingestor:
-            node_results = ingestor.fetch_all(CYPHER_STATS_NODE_COUNTS)
-            rel_results = ingestor.fetch_all(CYPHER_STATS_RELATIONSHIP_COUNTS)
-
-            app_context.console.print(
-                _build_stats_table(
-                    cs.CLI_STATS_NODE_TITLE,
-                    cs.CLI_STATS_COL_NODE_TYPE,
-                    node_results,
-                    _node_label,
-                    cs.CLI_STATS_TOTAL_NODES,
+            projects = list(ingestor.list_projects())
+            if missing := [name for name in requested if name not in projects]:
+                node_results, rel_results, breakdown = [], [], []
+            else:
+                node_results, rel_results, breakdown = _stats_rows(
+                    ingestor, requested, len(projects)
                 )
-            )
-            app_context.console.print()
-            app_context.console.print(
-                _build_stats_table(
-                    cs.CLI_STATS_REL_TITLE,
-                    cs.CLI_STATS_COL_REL_TYPE,
-                    rel_results,
-                    lambda r: str(r.get("type", cs.CLI_STATS_UNKNOWN)),
-                    cs.CLI_STATS_TOTAL_RELS,
-                )
-            )
-
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.STATS_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # Outside the connection, as dead-code does: a typo must not look like a
+    # failed query to the service layer's error logging.
+    if missing:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_STATS_UNKNOWN_PROJECTS.format(
+                    missing=", ".join(missing), projects=", ".join(sorted(projects))
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
+    _print_stats(requested, node_results, rel_results, breakdown)
+
+
+def _stats_rows(
+    ingestor: MemgraphIngestor, requested: list[str], project_count: int
+) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
+    """Node rows, relationship rows and the per-project breakdown.
+
+    Scoped counts cover what the named projects own; unscoped ones keep the
+    whole-graph totals and, when they span several projects, a breakdown that
+    says which project contributed what.
+    """
+    if requested:
+        params = {cs.KEY_PROJECT_NAMES: requested}
+        return (
+            ingestor.fetch_all(cq.CYPHER_STATS_PROJECT_NODE_COUNTS, params),
+            ingestor.fetch_all(cq.CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS, params),
+            [],
+        )
+    return (
+        ingestor.fetch_all(cq.CYPHER_STATS_NODE_COUNTS),
+        ingestor.fetch_all(cq.CYPHER_STATS_RELATIONSHIP_COUNTS),
+        ingestor.fetch_all(cq.CYPHER_STATS_PER_PROJECT) if project_count > 1 else [],
+    )
+
+
+def _print_stats(
+    requested: list[str],
+    node_results: list[ResultRow],
+    rel_results: list[ResultRow],
+    breakdown: list[ResultRow],
+) -> None:
+    console = app_context.console
+    if requested:
+        console.print(
+            style(
+                cs.CLI_STATS_SCOPE.format(projects=", ".join(requested)), cs.Color.CYAN
+            )
+        )
+    console.print(
+        _build_stats_table(
+            cs.CLI_STATS_NODE_TITLE,
+            cs.CLI_STATS_COL_NODE_TYPE,
+            node_results,
+            _node_label,
+            cs.CLI_STATS_TOTAL_NODES,
+        )
+    )
+    console.print()
+    console.print(
+        _build_stats_table(
+            cs.CLI_STATS_REL_TITLE,
+            cs.CLI_STATS_COL_REL_TYPE,
+            rel_results,
+            lambda r: str(r.get("type", cs.CLI_STATS_UNKNOWN)),
+            cs.CLI_STATS_TOTAL_RELS,
+        )
+    )
+    if breakdown:
+        console.print()
+        console.print(style(cs.CLI_STATS_PER_PROJECT_TITLE, cs.Color.GREEN))
+        for row in breakdown:
+            console.print(
+                cs.CLI_STATS_PER_PROJECT_ROW.format(
+                    project=row.get(cs.KEY_PROJECT),
+                    nodes=_int(row.get(cs.KEY_NODES)),
+                    relationships=_int(row.get(cs.KEY_RELATIONSHIPS)),
+                ),
+                markup=False,
+                highlight=False,
+            )
+
+
+def _int(value: ResultValue | None) -> int:
+    return int(value) if isinstance(value, int | float) else 0
 
 
 def _resolve_dead_code_project(

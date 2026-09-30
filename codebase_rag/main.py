@@ -2124,7 +2124,13 @@ def main_single_query(
     _setup_common_initialization(repo_path)
     # Override logger to stderr so stdout is clean for scripted output
     logger.remove()
-    logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
+    logger.add(
+        sys.stderr,
+        level=cs.LOG_LEVEL_ERROR,
+        format=cs.LOG_FORMAT,
+        backtrace=False,
+        diagnose=False,
+    )
 
     with connect_memgraph(batch_size) as ingestor:
         rag_agent, _, _ = _initialize_services_and_agent(
