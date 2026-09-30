@@ -43,7 +43,33 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
-CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
+# `-o` checks, made before a graph is read or indexed (issue #2410).
+CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
+CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
+    "Error: --output cannot be created, this is not a directory: {parent}"
+)
+CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
+# `cgr export` scope and retired options (issue #2410).
+CLI_EXPORT_SCOPE = "Scoped to: {projects}"
+CLI_ERR_EXPORT_UNKNOWN_PROJECTS = (
+    "Not indexed: {missing}. Indexed projects: {projects}."
+)
+CLI_ERR_EXPORT_EMPTY_SCOPE = (
+    "Error: --project-name/--workspace named no project. "
+    "Leave both out to export the whole graph."
+)
+CLI_WARN_EXPORT_BATCH_SIZE = (
+    "Warning: --batch-size is deprecated and ignored: an export only reads the "
+    "graph. It will be removed in a future release."
+)
+CLI_WARN_EXPORT_JSON = (
+    "Warning: --json is deprecated and does nothing: an export is always JSON. "
+    "It will be removed in a future release."
+)
+CLI_ERR_EXPORT_NO_JSON = (
+    "Error: --no-json is deprecated: JSON is the only export format. "
+    "Leave the option out."
+)
 CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
     "Error: --output-format json requires --ask-agent/-a; "
     "it only applies to single-query output."
