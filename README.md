@@ -158,6 +158,8 @@ empty graph, add `--clean` — it deletes **every** project in the shared graph,
 not just this one, and asks for confirmation first when other
 projects would be destroyed.
 
+A default index leaves out the opt-in [capture groups](docs/architecture/graph-schema.md#capture-groups); add them with `--capture` or `CGR_CAPTURE`.
+
 The [Quick Start](docs/getting-started/quickstart.md) guide walks through parsing, querying, and exporting in five minutes.
 
 ## MCP Server

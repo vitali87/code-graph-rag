@@ -385,9 +385,13 @@ HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
 )
 HELP_INTERACTIVE_SETUP = "Choose which detected directories remain included."
+# Filled in by `capture.capture_help` from the capture model, so the groups
+# the help names cannot drift from the ones the resolver accepts (#2584).
 HELP_CAPTURE = (
-    "Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE "
-    "override. Repeatable; later values override CGR_CAPTURE."
+    "Capture GROUP on top of the defaults ({default_groups}). Opt-in groups: "
+    "{opt_in_groups}. {add}NAME adds and {drop}NAME drops a GROUP or a "
+    "relationship type such as {example_type}; {all} or {none} replaces the "
+    "selection. Repeatable; later values override CGR_CAPTURE."
 )
 
 HELP_ASK_AGENT = "Ask one question, write the answer to stdout, and exit."

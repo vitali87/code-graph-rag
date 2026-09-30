@@ -30,7 +30,7 @@ from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
 from . import logs as ls
-from .capture import CaptureSelection, resolve_capture, split_spec
+from .capture import CaptureSelection, capture_help, resolve_capture, split_spec
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -825,7 +825,7 @@ def start(
     capture: list[str] | None = typer.Option(
         None,
         "--capture",
-        help=ch.HELP_CAPTURE,
+        help=capture_help(),
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -982,7 +982,7 @@ def index(
     capture: list[str] | None = typer.Option(
         None,
         "--capture",
-        help=ch.HELP_CAPTURE,
+        help=capture_help(),
     ),
     interactive_setup: bool = typer.Option(
         False,

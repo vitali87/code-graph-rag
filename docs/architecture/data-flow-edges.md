@@ -12,7 +12,7 @@ this page is the detailed reference.
 All three are **opt-in**. They belong to the `io` capture group, which is
 excluded from the default capture set, so a default build emits none of them and
 does no extra work. Enable them with the `io` capture group (see
-[Configuration](../getting-started/configuration.md)).
+[Capture Groups](graph-schema.md#capture-groups)).
 
 ## The mental model: taint
 
