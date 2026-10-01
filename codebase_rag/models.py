@@ -53,10 +53,17 @@ def _default_console() -> Console:
     return Console(width=None, force_terminal=True)
 
 
+def _stderr_console() -> Console:
+    return Console(stderr=True)
+
+
 @dataclass
 class AppContext:
     session: SessionState = field(default_factory=SessionState)
     console: Console = field(default_factory=_default_console)
+    # Errors and status lines of report commands: their stdout is the report
+    # a CI step redirects to a file or a JSON parser (issue #2642).
+    err_console: Console = field(default_factory=_stderr_console)
 
 
 @dataclass
