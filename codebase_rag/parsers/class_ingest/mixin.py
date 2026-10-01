@@ -2180,7 +2180,7 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             module_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        logger.info(
+        logger.debug(
             logs.CLASS_FOUND_INLINE_MODULE.format(name=module_name, qn=inline_module_qn)
         )
         # Same-qn bodied twins (mutually-exclusive cfg mods, or two impls

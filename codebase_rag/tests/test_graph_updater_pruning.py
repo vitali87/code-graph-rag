@@ -55,7 +55,7 @@ class TestPruneOrphanNodes:
 
         mock_ingestor.fetch_all.side_effect = _rows_by_query(
             {
-                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL: [
+                cs.CYPHER_PROJECT_PRUNABLE_MODULES: [
                     {
                         "path": "old_project/main.py",
                         "qualified_name": f"{project_name}.old_project.main",
@@ -248,11 +248,11 @@ class TestPruneOrphanNodes:
         repo_abs = py_project.resolve().as_posix()
         mock_ingestor.fetch_all.side_effect = _rows_by_query(
             {
-                cs.CYPHER_ALL_FILE_PATHS: [
+                cs.CYPHER_REPO_FILE_PATHS: [
                     {"path": "gone.py", "absolute_path": f"{repo_abs}/gone.py"},
                     {"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"},
                 ],
-                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL: [
+                cs.CYPHER_PROJECT_PRUNABLE_MODULES: [
                     {
                         "path": "deleted.py",
                         "qualified_name": f"{project_name}.deleted",
@@ -262,7 +262,7 @@ class TestPruneOrphanNodes:
                         "qualified_name": f"{project_name}.module_a",
                     },
                 ],
-                cs.CYPHER_ALL_FOLDER_PATHS: [
+                cs.CYPHER_REPO_FOLDER_PATHS: [
                     {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
                     {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
                 ],
@@ -538,11 +538,18 @@ class TestLegacyFileIdentitySweep:
         owner_calls: list[str] = []
 
         def fetch_all(query, params=None):
-            if query == cs.CYPHER_ALL_FILE_PATHS:
+            # Out-of-repo keys come from this project's containers now, and
+            # their containers are read in one batch (issue #2405).
+            if query == cs.CYPHER_PROJECT_OUTSIDE_FILE_KEYS:
                 return file_rows
             if query == cs.CYPHER_FILE_CONTAINERS:
-                owner_calls.append(params[cs.KEY_PATH])
-                return owners_by_key.get(params[cs.KEY_PATH], [])
+                keys = params[cs.CYPHER_PARAM_PATHS]
+                owner_calls.extend(keys)
+                return [
+                    {**owner, cs.KEY_FILE_KEY: key}
+                    for key in keys
+                    for owner in owners_by_key.get(key, [])
+                ]
             return []
 
         mock_ingestor.fetch_all.side_effect = fetch_all
@@ -674,7 +681,7 @@ class TestLegacyFileIdentitySweep:
         row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
 
         def fetch_all(query, params=None):
-            if query == cs.CYPHER_ALL_FILE_PATHS:
+            if query == cs.CYPHER_PROJECT_OUTSIDE_FILE_KEYS:
                 return [row]
             if query == cs.CYPHER_FILE_CONTAINERS:
                 raise RuntimeError("connection dropped")
