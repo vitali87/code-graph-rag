@@ -155,6 +155,16 @@ TRACE_PROP_STATIC_MISSED = "static_missed"
 TRACE_PROP_SAMPLED = "dynamic_sampled"
 
 
+class TraceAgent(StrEnum):
+    """The tracers that run inside the traced program, by `cgr trace agent`
+    name (issue #2684)."""
+
+    C = "c"
+    LUA = "lua"
+    DART = "dart"
+    JVM = "jvm"
+
+
 class TraceUnresolvedReason(StrEnum):
     """Why a traced frame could not be mapped to a graph node."""
 
