@@ -221,6 +221,20 @@ QDRANT_BUNDLED_WANTS_KEY = (
     "stay in the embedded store at '{path}'. Set QDRANT_URL and QDRANT_API_KEY to "
     "use the stack's Qdrant"
 )
+QDRANT_BUNDLED_NOT_RUNNING = (
+    "The cgr stack's Qdrant container is not running, so embeddings stay in the "
+    "embedded store at '{path}'. Run 'cgr daemon up' to store them in the "
+    "stack's Qdrant"
+)
+QDRANT_BUNDLED_UNVERIFIED = (
+    "Could not confirm through Docker Compose that the cgr stack's Qdrant is "
+    "running ({detail}), so embeddings stay in the embedded store at '{path}'"
+)
+QDRANT_BUNDLED_NOT_QDRANT = (
+    "The service at {url}, where the cgr stack publishes its Qdrant, does not "
+    "identify as Qdrant, so no embeddings are sent to it and they stay in the "
+    "embedded store at '{path}'"
+)
 QDRANT_LOCK_ERROR = (
     "Failed to open embedded Qdrant at '{path}': {error}. The storage folder is "
     "locked by another process; look for the '.lock' sentinel inside it. Embedded "
