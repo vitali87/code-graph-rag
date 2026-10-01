@@ -10,7 +10,9 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+import click
 import mgclient
+import typer
 from loguru import logger
 
 from codebase_rag.config import settings
@@ -167,6 +169,9 @@ def _log_failed_calls(
         )
 
 
+_COMMAND_EXITS = (typer.Exit, click.exceptions.Exit, SystemExit)
+
+
 def _log_failed_relationships(
     pattern: tuple[str, str, str, str, str], attempted: int, successful: int
 ) -> None:
@@ -268,12 +273,18 @@ class MemgraphIngestor:
     def __exit__(
         self,
         exc_type: type | None,
-        exc_val: Exception | None,
+        exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         try:
             if exc_type:
-                if issubclass(exc_type, Exception):
+                if issubclass(exc_type, _COMMAND_EXITS):
+                    # A command that chose its exit code (a refused rename, an
+                    # unindexed project) has said why already. `typer.Exit` is
+                    # a RuntimeError with no message, so logging it as an
+                    # error printed "An exception occurred: ." and a traceback.
+                    logger.debug(ls.MG_COMMAND_EXIT)
+                elif issubclass(exc_type, Exception):
                     logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
                 else:
                     # Ctrl+C or a cancelled task: the user stopped the run,
