@@ -950,7 +950,7 @@ class FunctionIngestMixin:
                     )
                 )
 
-            logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
+            logger.debug(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
             emit_endpoints(
                 self.ingestor,
@@ -1411,7 +1411,7 @@ class FunctionIngestMixin:
         ):
             func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
             self.function_registry.mark_body_scoped_name(resolution.qualified_name)
-        logger.info(
+        logger.debug(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)

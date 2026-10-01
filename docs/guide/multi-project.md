@@ -50,6 +50,11 @@ cgr start --workspace backend
 repository saved in the workspace. See `cgr help workspace` for the full
 workspace command set.
 
+A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
+identifier, not a path: it starts with a letter or digit and uses only
+letters, digits, `.`, `_` and `-`. Any other name (empty, `a/b`, `../x`) is
+refused with exit 1 before a file is touched.
+
 ## Semantic search within one project
 
 When several projects share the graph, semantic search can be confined to a
@@ -114,6 +119,18 @@ registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
 stays live through that registration, whatever the switch. On a graph
 holding one project the report reads as "no callers indexed", which the
 command says; index the calling services first.
+
+Two analyses follow the link across the boundary. `flow_verdict` continues
+a `FLOWS_TO` walk from a client's network resource into the handler it
+resolves to (and from an RPC or dispatch resource into its handler), loads
+that handler's project's own flow edges once the walk reaches the hop, and
+reports the pairs where the path crossed into another project as
+`remote_hops` (a service calling itself over HTTP is not a boundary). A
+`NO_FLOW` verdict needs full coverage of every project the walk entered,
+not only the asked one. The structural delta after a write lists, on a
+signature change, the `remote_callers`: call sites in other projects
+reaching the changed handler's endpoint, which no `CALLS` edge would ever
+name.
 
 ## Housekeeping
 
