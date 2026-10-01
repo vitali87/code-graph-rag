@@ -163,3 +163,15 @@ SYNC_IN_PROGRESS = (
 )
 SYNC_HOLDER = "pid {pid}, project '{project}'"
 SYNC_HOLDER_UNKNOWN = "holder unknown"
+
+
+# Deriving from Exception would let every `except Exception` handler between
+# the embeddings pass and the top level swallow a Ctrl+C (python:S5709
+# accepted).
+class EmbeddingsInterrupted(KeyboardInterrupt):  # NOSONAR
+    """Ctrl+C stopped the embeddings pass of a run that has already committed.
+
+    A `KeyboardInterrupt`, so a caller that does not look for it still stops
+    where it would have; one that does can finish its own bookkeeping first,
+    because the graph and the hash cache are already saved.
+    """
