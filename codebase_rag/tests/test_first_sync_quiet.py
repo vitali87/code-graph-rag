@@ -17,6 +17,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
@@ -91,7 +92,7 @@ def test_an_index_built_before_the_stamp_still_gets_the_notice(
     store = _StatefulIngestor()
     repo = _repo(tmp_path, "myrepo")
     _sync(store, repo, "myrepo")
-    (repo / cs.EXCLUSION_STATE_FILENAME).unlink()
+    (state_dir(repo) / cs.EXCLUSION_STATE_FILENAME).unlink()
     (repo / "pkg" / "core.py").write_text("def a():\n    return 2\n")
 
     messages = _sync(store, repo, "myrepo")

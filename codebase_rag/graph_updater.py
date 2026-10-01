@@ -5040,7 +5040,7 @@ class GraphUpdater:
             # Only an index built before the stamp existed is being upgraded;
             # a repository never indexed has nothing to re-run "once", and a
             # first-time user was told otherwise (issue #2404).
-            if (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+            if (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
                 logger.info(ls.EXCLUSION_STATE_MISSING)
             else:
                 logger.debug(ls.EXCLUSION_STATE_FIRST_INDEX)
