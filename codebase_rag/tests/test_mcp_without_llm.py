@@ -230,6 +230,34 @@ class TestLazyCypherGenerator:
             with pytest.raises(ex.CypherModelUnavailableError, match="down"):
                 await lazy.generate("q")
 
+    async def test_repair_asks_the_lazily_built_model(self) -> None:
+        from codebase_rag.services import llm
+
+        with patch.object(llm, "CypherGenerator") as generator_cls:
+            generator_cls.return_value.generate = AsyncMock(return_value="MATCH (m)")
+            lazy = llm.LazyCypherGenerator()
+
+            assert await lazy.repair("q", "MATCH (", "syntax error") == "MATCH (m)"
+
+        generator_cls.assert_called_once()
+        sent = generator_cls.return_value.generate.await_args.args[0]
+        assert "MATCH (" in sent
+        assert "syntax error" in sent
+
+    async def test_repair_with_an_unavailable_model_raises_the_refusal_type(
+        self,
+    ) -> None:
+        from codebase_rag.services import llm
+
+        with patch.object(
+            llm,
+            "CypherGenerator",
+            side_effect=ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error="down")),
+        ):
+            lazy = llm.LazyCypherGenerator()
+            with pytest.raises(ex.CypherModelUnavailableError, match="down"):
+                await lazy.repair("q", "MATCH (", "syntax error")
+
 
 def _run_cli(
     serve: AsyncMock, transport: cs.MCPTransport = cs.MCPTransport.STDIO
