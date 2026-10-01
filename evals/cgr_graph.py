@@ -585,7 +585,8 @@ class _StatefulIngestor:
                 or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
             ):
                 continue
-            for _fl, fv, rel, tl, tv, _site in self._out.get(node_id, ()):
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
                 if (
                     rel == cs.RelationshipType.IMPORTS.value
                     and tl == module
@@ -597,6 +598,9 @@ class _StatefulIngestor:
                             cs.KEY_FROM_QN: _result(fv),
                             cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
                             cs.KEY_TO_QN: _result(tv),
+                            cs.KEY_IMPORT_SCOPE: _result(
+                                self.edge_props.get(edge, {}).get(cs.KEY_IMPORT_SCOPE)
+                            ),
                         }
                     )
         return rows
