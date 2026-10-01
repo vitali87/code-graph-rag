@@ -1882,6 +1882,8 @@ def _dead_code_config(
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
 ) -> DeadCodeConfig:
+    from .dead_code import normalize_decorator_root
+
     # test_patterns is always set: included tests become roots; excluded, it
     # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
@@ -1889,7 +1891,7 @@ def _dead_code_config(
         include_classes=include_classes,
         root_decorators=frozenset(
             {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
-            | {d.lower() for d in decorator_roots}
+            | {normalize_decorator_root(d) for d in decorator_roots}
         ),
         entry_points=tuple(entry_points),
         test_patterns=tuple(cs.TEST_PATH_PATTERNS),

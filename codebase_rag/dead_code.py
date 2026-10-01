@@ -88,14 +88,37 @@ def default_dead_code_config(
     )
 
 
-def _norm_decorator(decorator: str) -> str:
-    # Drop '@' and any surrounding attribute brackets, take the text before
-    # '(', then the last dotted segment, lowercased -> `@app.route(...)` and a
-    # C# `[Route("x")]` both become `route`. Bracket-stripping keeps the
-    # normalization robust to whatever a highlight query captures.
+def normalize_decorator_root(decorator: str) -> str:
+    """A decorator's dotted head, lowercased: `@app.route(...)` becomes
+    `app.route`. Drops '@', any surrounding attribute brackets and the
+    arguments, so a C# `[Route("x")]` becomes `route`. The same reading
+    applies to a stored decorator and to a user's `--decorator-root`, which
+    may be written `@registry.register` or `registry.register()`."""
     cleaned = decorator.replace(cs.DECORATOR_AT, "").strip("[] ")
-    head = cleaned.split(cs.CHAR_PAREN_OPEN)[0]
-    return head.split(cs.SEPARATOR_DOT)[-1].strip("[]").lower()
+    return cleaned.split(cs.CHAR_PAREN_OPEN)[0].strip("[] ").lower()
+
+
+def _norm_decorator(decorator: str) -> str:
+    # The last dotted segment of the head: `@app.route(...)` -> `route`, the
+    # form the built-in roots are written in.
+    return normalize_decorator_root(decorator).split(cs.SEPARATOR_DOT)[-1]
+
+
+def _is_root_decorator(decorator: str, root_decorators: frozenset[str]) -> bool:
+    """A bare root names the decorator's last segment, so `register` matches
+    any `@x.register`. A dotted root names the head's trailing whole
+    segments: `registry.register` matches `@registry.register(...)` and
+    `@app.registry.register`, not `@other.register` or
+    `@myregistry.register`. Comparing only the last segment made a dotted
+    root, the documented form, match nothing at all (issue #2640)."""
+    if _norm_decorator(decorator) in root_decorators:
+        return True
+    head = normalize_decorator_root(decorator)
+    return any(
+        cs.SEPARATOR_DOT in root
+        and (head == root or head.endswith(cs.SEPARATOR_DOT + root))
+        for root in root_decorators
+    )
 
 
 def _is_dunder(name: str) -> bool:
@@ -423,7 +446,7 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
         return False
-    return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
+    return any(_is_root_decorator(str(d), root_decorators) for d in decorators)
 
 
 def _has_non_route_root_decorator(
@@ -441,7 +464,7 @@ def _has_non_route_root_decorator(
     if not isinstance(decorators, list):
         return False
     return any(
-        _norm_decorator(str(d)) in root_decorators
+        _is_root_decorator(str(d), root_decorators)
         and _norm_decorator(str(d)) not in DISPATCH_REGISTRARS
         and not parse_route_decorator(str(d))
         for d in decorators
