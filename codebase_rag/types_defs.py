@@ -31,6 +31,8 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
+    from rich.console import JustifyMethod, OverflowMethod
+    from rich.style import Style
     from tree_sitter import Language, Node, Parser, Query
 
     from .models import LanguageSpec
@@ -242,6 +244,24 @@ class TreeSitterNodeProtocol(Protocol):
     def children(self) -> Sequence[TreeSitterNodeProtocol]: ...
     @property
     def text(self) -> bytes | None: ...
+
+
+class ConsolePrintOptions(TypedDict, total=False):
+    # Rich's `Console.print` keywords, less `soft_wrap`, which the
+    # terminal-aware console decides itself.
+    sep: str
+    end: str
+    style: str | Style | None
+    justify: JustifyMethod | None
+    overflow: OverflowMethod | None
+    no_wrap: bool | None
+    emoji: bool | None
+    markup: bool | None
+    highlight: bool | None
+    width: int | None
+    height: int | None
+    crop: bool
+    new_line_start: bool
 
 
 class ModelConfigKwargs(TypedDict, total=False):
