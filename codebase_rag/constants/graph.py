@@ -179,6 +179,16 @@ PROTOBUF_PAYLOAD_ONEOF = "payload"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
 
+DIFF_ERR_NO_MANIFEST = (
+    "schema metadata missing: no readable manifest in {path}; "
+    "re-export with a manifest before diffing"
+)
+DIFF_ERR_NO_SCHEMA_HASH = (
+    "schema metadata missing: {manifest} records no codec_schema_sha256 because "
+    "the cgr that wrote it could not find codec/schema.proto; "
+    "upgrade code-graph-rag and re-index before diffing"
+)
+
 ONEOF_PROJECT = "project"
 ONEOF_PACKAGE = "package"
 ONEOF_FOLDER = "folder"
@@ -778,13 +788,59 @@ CYPHER_COUNT_PROJECT_MODULES = (
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
-# Containers of one File key, for legacy-identity sweep attribution: File
+# Containers of the legacy-identity sweep's File keys, for attribution: File
 # nodes MERGE globally on absolute_path, so a key can be shared with another
-# project and must not be deleted from under it (issue #1156).
+# project and must not be deleted from under it (issue #1156). One query for
+# every candidate: asked per key, a sync paid a round trip per File of every
+# other project in the shared graph (issue #2405).
 CYPHER_FILE_CONTAINERS = (
-    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: $path}) "
-    "RETURN labels(p) AS labels, p.name AS name, "
+    "UNWIND $paths AS file_key "
+    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: file_key}) "
+    "RETURN file_key, labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
+)
+KEY_FILE_KEY = "file_key"
+KEY_REPO_ROOT = "repo_root"
+KEY_REPO_PREFIX = "repo_prefix"
+# The orphan prune's reads, scoped to this repository or project. Unscoped,
+# every sync with changes read every File, Folder, Module and Package of
+# every project in the shared graph, so its cost grew with the graph, not
+# the repository (issue #2405). A key outside the repository was skipped by
+# the prune anyway; the legacy-identity sweep finds its own candidates below.
+CYPHER_REPO_FILE_PATHS = (
+    "MATCH (f:File) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_REPO_FOLDER_PATHS = (
+    "MATCH (f:Folder) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_PROJECT_PACKAGE_PATHS = (
+    "MATCH (p:Package) WHERE p.qualified_name = $project_name "
+    "OR p.qualified_name STARTS WITH $project_prefix "
+    "RETURN p.path AS path, p.absolute_path AS absolute_path, "
+    "p.qualified_name AS qualified_name"
+)
+# Modules the prune can act on: this project's, with a path to test.
+CYPHER_PROJECT_PRUNABLE_MODULES = (
+    "MATCH (m:Module) WHERE m.path IS NOT NULL "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+)
+# The legacy-identity sweep's only possible candidates: out-of-repo File keys
+# this project's own containers (its Project node, or a Folder or Package in
+# the repository) hold. Every other project's Files used to be candidates,
+# each one vetoed after its own containers query (issue #2405).
+CYPHER_PROJECT_OUTSIDE_FILE_KEYS = (
+    "MATCH (c)-[:CONTAINS_FILE]->(f:File) "
+    "WHERE ((c:Project AND c.name = $project_name) "
+    "OR c.absolute_path = $repo_root OR c.absolute_path STARTS WITH $repo_prefix) "
+    "AND NOT (f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix) "
+    "RETURN DISTINCT f.path AS path, f.absolute_path AS absolute_path"
 )
 # The module names a project records, by file path, for the incremental
 # requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
