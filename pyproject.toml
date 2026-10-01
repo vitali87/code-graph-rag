@@ -69,6 +69,10 @@ cgr_trace = "codebase_rag.trace.pytest_plugin"
 
 [tool.uv]
 package = true
+# semgrep (dev group) pins pyjwt~=2.13.0, which holds the single locked PyJWT
+# below the 2.14.0 fix for GHSA-ffc3-869f-jxw9 and its sibling advisories.
+# Drop this once a semgrep release accepts pyjwt>=2.14.0.
+override-dependencies = ["pyjwt[crypto]>=2.14.0"]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
