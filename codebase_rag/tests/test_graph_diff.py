@@ -136,6 +136,57 @@ def test_missing_schema_hash_refuses_to_diff(tmp_path: Path) -> None:
         diff_indexes(out_a, out_b)
 
 
+def _diff_error(old: Path, new: Path) -> str:
+    with pytest.raises(DiffError) as caught:
+        diff_indexes(old, new)
+    return str(caught.value)
+
+
+def test_a_null_schema_hash_blames_the_install_not_the_manifest(
+    tmp_path: Path,
+) -> None:
+    # Issue #2399: a cgr installed without codec/schema.proto writes a manifest
+    # whose hash is null. Telling the user to "re-export with a manifest" sent
+    # them round a loop, since the index had one and re-exporting from the
+    # same install wrote the same null.
+    repo = tmp_path / "proj"
+    _write(repo, _BASE)
+    out_a = tmp_path / "out_a"
+    out_b = tmp_path / "out_b"
+    _export(repo, out_a)
+    _export(repo, out_b)
+    manifest_path = out_a / MANIFEST_FILE
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["codec_schema_sha256"] = None
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    message = _diff_error(out_a, out_b)
+
+    assert message.startswith("schema metadata missing")
+    assert str(manifest_path) in message
+    assert "re-export with a manifest" not in message
+    assert "upgrade code-graph-rag and re-index" in message
+
+
+def test_a_missing_manifest_keeps_its_re_export_advice(tmp_path: Path) -> None:
+    # The upgrade advice is for a manifest that exists but carries no hash; an
+    # index with no manifest at all still just needs one written.
+    repo = tmp_path / "proj"
+    _write(repo, _BASE)
+    out_a = tmp_path / "out_a"
+    out_b = tmp_path / "out_b"
+    _export(repo, out_a)
+    _export(repo, out_b)
+    (out_b / MANIFEST_FILE).unlink()
+
+    message = _diff_error(out_a, out_b)
+
+    assert message.startswith("schema metadata missing")
+    assert str(out_b) in message
+    assert "re-export with a manifest" in message
+    assert "upgrade" not in message
+
+
 def test_bool_flip_reports_declared_defaults_not_null(tmp_path: Path) -> None:
     from codebase_rag.capture import resolve_capture
 
