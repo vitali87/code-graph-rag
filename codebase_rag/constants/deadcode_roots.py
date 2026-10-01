@@ -164,6 +164,55 @@ JAVA_SERIALIZATION_METHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Java annotations that mark a method as invoked by a container or runtime
+# rather than a first-party call the graph can see, so an annotated method is
+# a reachability root, gated by the .java extension (the Java counterpart of
+# CSHARP_ROOT_ATTRIBUTES). Such methods are usually package-private, so the
+# exported rule does not cover them. Names are the lowercased,
+# argument-stripped last segment _norm_decorator produces.
+JAVA_ROOT_ANNOTATIONS: frozenset[str] = frozenset(
+    {
+        # Jakarta/JSR-250 lifecycle callbacks.
+        "postconstruct",
+        "predestroy",
+        # Spring container, scheduling and event dispatch.
+        "bean",
+        "scheduled",
+        "schedules",
+        "eventlistener",
+        "transactionaleventlistener",
+        "exceptionhandler",
+        "modelattribute",
+        "initbinder",
+        # Spring MVC request mappings (not parsed as routes, so the
+        # endpoint-roots switch has nothing to link them to).
+        "requestmapping",
+        "getmapping",
+        "postmapping",
+        "putmapping",
+        "deletemapping",
+        "patchmapping",
+        # Message listeners.
+        "kafkalistener",
+        "rabbitlistener",
+        "jmslistener",
+        "sqslistener",
+        # JAX-RS resource methods (`get`/`post`/`put`/`delete`/`patch` are
+        # already in DEFAULT_ROOT_DECORATORS for every language).
+        "path",
+        "head",
+        "options",
+        # JPA entity lifecycle callbacks.
+        "prepersist",
+        "postpersist",
+        "preupdate",
+        "postupdate",
+        "preremove",
+        "postremove",
+        "postload",
+    }
+)
+
 # C# attributes that mark a method as invoked by a framework/runtime rather
 # than a first-party call the graph can see -- so an attributed method is a
 # reachability root, gated by the .cs extension. Test runners invoke [Fact]/
