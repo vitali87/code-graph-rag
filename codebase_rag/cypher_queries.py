@@ -29,6 +29,7 @@ from collections.abc import Iterable
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS,
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
@@ -188,12 +189,15 @@ CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
     "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
 )
 
-CYPHER_DELETE_PROJECT = """
+CYPHER_DELETE_PROJECT = (
+    """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
-DETACH DELETE p, container, defined
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
 
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a

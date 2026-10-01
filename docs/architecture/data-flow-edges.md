@@ -148,12 +148,18 @@ A value read from one resource reaches a write to another within a function
 body. No `via`.
 
 ```
-Resource(ENV::K) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+Resource(ENV::K) -FLOWS_TO {kind: resource, scope: module.leak}-> Resource(STDOUT::<dynamic>)
 ```
 
 `x` is read from `ENV::K`, then passed to `print(x)`, which writes `STDOUT`. Both
 endpoints are **resource** nodes. This is the leak/provenance answer: a value
 from the environment reached standard output.
+
+`scope` is the qualified name of the function whose body produced the flow, or
+the module's for top-level code. Both endpoints are shared Resource nodes, so
+the edge is owned through it. Two functions that leak the same value give two
+edges. Each edge is removed when its function's file is re-parsed or its
+project is deleted, so a fixed leak does not stay in the graph.
 
 ### Shape 2 — caller to callee (`kind = arg`)
 
@@ -319,9 +325,10 @@ the provenance questions the edges are designed for:
 
 ```cypher
 // Every value that flows from an environment variable to standard output.
+// One edge per producing function, so DISTINCT for the pairs alone.
 MATCH (a:Resource)-[r:FLOWS_TO {kind: 'resource'}]->(b:Resource)
 WHERE a.kind = 'ENV' AND b.kind = 'STDOUT'
-RETURN a.qualified_name, b.qualified_name;
+RETURN DISTINCT a.qualified_name, b.qualified_name;
 
 // Multi-hop reachability: does any source reach any sink across calls?
 MATCH p = (src:Resource)-[:FLOWS_TO*1..8]->(dst:Resource)
