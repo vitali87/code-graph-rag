@@ -107,6 +107,60 @@ def test_a_singledispatchmethod_implementation_lives_with_its_generic(
     assert not {q for q in _dead(tmp_path, METHOD_DISPATCH) if "Renderer._" in q}
 
 
+STACKED = """import functools
+
+
+@functools.singledispatch
+def _gen_a(obj):
+    return "a"
+
+
+@functools.singledispatch
+def _gen_b(obj):
+    return "b"
+
+
+@_gen_a.register(int)
+@_gen_b.register(int)
+def _impl(obj):
+    return "int"
+"""
+
+
+@pytest.mark.parametrize("live_generic", ["_gen_a", "_gen_b"])
+def test_an_implementation_stacked_on_two_generics_lives_with_either(
+    tmp_path: Path, live_generic: str
+) -> None:
+    source = STACKED + f"\n\ndef show(x):\n    return {live_generic}(x)\n"
+
+    assert "_impl" not in _dead(tmp_path, source)
+
+
+ATEXIT_AND_DISPATCH = """import atexit
+import functools
+
+
+@functools.singledispatch
+def _gen(obj):
+    return "gen"
+
+
+@atexit.register
+@_gen.register(int)
+def _cleanup(obj=0):
+    return "cleanup"
+"""
+
+
+def test_another_register_decorator_still_roots_a_dispatch_implementation(
+    tmp_path: Path,
+) -> None:
+    dead = _dead(tmp_path, ATEXIT_AND_DISPATCH)
+
+    assert "_gen" in dead
+    assert "_cleanup" not in dead
+
+
 # Negative: what must not change.
 
 
@@ -114,6 +168,12 @@ def test_the_implementations_of_a_dead_generic_stay_dead(tmp_path: Path) -> None
     dead = _dead(tmp_path, SINGLEDISPATCH)
 
     assert {"_render", "_render_int", "_render_float"} <= dead
+
+
+def test_an_implementation_stacked_on_two_dead_generics_stays_dead(
+    tmp_path: Path,
+) -> None:
+    assert {"_gen_a", "_gen_b", "_impl"} <= _dead(tmp_path, STACKED)
 
 
 @pytest.mark.parametrize(
