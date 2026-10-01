@@ -1167,6 +1167,9 @@ class _StatefulIngestor:
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
+                        cs.KEY_IS_OBJECT_MEMBER: bool(
+                            props.get(cs.KEY_IS_OBJECT_MEMBER)
+                        ),
                     }
                     defs.append(row)
                 return defs

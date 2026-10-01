@@ -939,11 +939,47 @@ class CallResolver:
         # A bare Rust path NEVER names a method: inherent methods are
         # reachable only via self./Self::/Type:: (rustc-verified; the bare
         # spelling calls the module item, issue #1011). Other languages
-        # keep their scope-chain semantics.
+        # keep their scope-chain semantics, except that no bare name
+        # reaches a JS/TS object literal's function value (issue #2435).
+        if self._only_object_members(qn):
+            return False
         return (
             language != cs.SupportedLanguage.RUST
             or self.function_registry[qn] != cs.NodeLabel.METHOD.value
         )
+
+    def _only_object_members(self, qualified_name: str) -> bool:
+        # A JS/TS object literal's function value is reached through its
+        # object (`options.retry.delay()`), never by its key alone, although
+        # its qn reads like a name the enclosing scope declares (issue
+        # #2435). A real binding of the same name in its `@line` group keeps
+        # the group nameable; `lexical_call_targets` then drops the members
+        # from the call's fan-out.
+        registry = self.function_registry
+        if not registry.is_object_member(qualified_name):
+            return False
+        return all(
+            registry.is_object_member(variant)
+            for variant in registry.variants(qn_markers.natural_qn(qualified_name))
+        )
+
+    def lexical_call_targets(
+        self, call_name: str, module_qn: str, targets: list[str]
+    ) -> list[str]:
+        """The members of a bare call's `@line` group its name can reach.
+
+        `function delay` and `{delay: () => 0}` in one file share a group, and
+        the bare name means the declaration, not the object's value (issue
+        #2435). A name the module imports is left whole: the import may bind
+        a module's exported object member, which it does reach by name.
+        """
+        if len(targets) < 2 or cs.SEPARATOR_DOT in call_name:
+            return targets
+        if call_name in self.import_processor.import_mapping.get(module_qn, {}):
+            return targets
+        registry = self.function_registry
+        bound = [qn for qn in targets if not registry.is_object_member(qn)]
+        return bound or targets
 
     def _protocol_impl_map(self) -> dict[str, str]:
         # A Protocol stub never runs; the concrete implementer does. Map each
@@ -2938,6 +2974,10 @@ class CallResolver:
             # It is in scope for its block alone (issue #1061).
             return None
         if same_module_func_qn in self.function_registry:
+            if self._only_object_members(same_module_func_qn):
+                # An object literal's function value flattened to the
+                # module's qn; the module never binds its key (issue #2435).
+                return None
             logger.debug(
                 ls.CALL_SAME_MODULE, call_name=call_name, qn=same_module_func_qn
             )
@@ -3032,6 +3072,12 @@ class CallResolver:
         possible_matches = self._nameable_candidates(
             self.function_registry.find_ending_with(search_name), module_qn, call_point
         )
+        if search_name == call_name:
+            # A bare name never reaches an object literal's function value;
+            # a member call (`opts.retry.delay()`) still does (issue #2435).
+            possible_matches = [
+                qn for qn in possible_matches if not self._only_object_members(qn)
+            ]
         if constructing:
             # `new X(...)` names a TYPE: a method or function that merely
             # shares the name is never its target, however close by import
