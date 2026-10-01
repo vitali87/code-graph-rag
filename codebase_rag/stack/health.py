@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import urllib.error
 import urllib.request
@@ -171,6 +172,35 @@ def qdrant_accepts_key(
         method=cs.HTTP_METHOD_POST,
     )
     return _qdrant_answers(request, timeout)
+
+
+def qdrant_identifies(
+    port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+) -> bool:
+    """Whether the server answers Qdrant's root as Qdrant does.
+
+    A bare 200 proves nothing about who is listening: any local service can
+    give one. Qdrant's root names it and its version, which another service
+    has no reason to imitate.
+    """
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_ROOT_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
+    try:
+        with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            body = json.loads(resp.read(cs.QDRANT_ROOT_MAX_BYTES))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    title = body.get(cs.QDRANT_ROOT_TITLE_KEY)
+    version = body.get(cs.QDRANT_ROOT_VERSION_KEY)
+    return (
+        isinstance(title, str)
+        and cs.QDRANT_ROOT_TITLE_MARKER in title.lower()
+        and isinstance(version, str)
+        and bool(version)
+    )
 
 
 def qdrant_base_url(host: str, port: int) -> str:
