@@ -245,7 +245,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     self.module_qn_to_file_path.get(module_qn),
                     self.repo_path,
                 )
-                logger.info(
+                logger.debug(
                     lg.JS_PROTOTYPE_METHOD_FOUND,
                     method_name=method_name,
                     method_qn=method_qn,
@@ -417,7 +417,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
-        logger.info(
+        logger.debug(
             lg.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
