@@ -12,10 +12,12 @@ The `CypherGenerator` translates natural language questions into Cypher queries 
 import asyncio
 from cgr import CypherGenerator
 
+
 async def main():
     gen = CypherGenerator()
     cypher = await gen.generate("Find all classes that inherit from BaseModel")
     print(cypher)
+
 
 asyncio.run(main())
 ```
