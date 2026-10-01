@@ -1,6 +1,14 @@
 WORKSPACES_SUBDIR = "workspaces"
 WORKSPACE_EXTENSION = ".toml"
+# A workspace name becomes a file name under the workspaces directory, so it
+# must not carry a path separator or a leading dot: either would let `..`,
+# `a/b` or an empty name point the file outside that directory (issue #2663).
+WORKSPACE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
 
+ERR_WORKSPACE_INVALID_NAME = (
+    "Invalid workspace name '{name}': use letters, digits, '.', '_' and '-', "
+    "starting with a letter or digit."
+)
 ERR_WORKSPACE_NOT_FOUND = "Workspace '{name}' not found at {path}."
 ERR_WORKSPACE_ALREADY_EXISTS = "Workspace '{name}' already exists at {path}."
 ERR_WORKSPACE_INVALID_TOML = "Workspace '{name}' has invalid TOML: {error}"
