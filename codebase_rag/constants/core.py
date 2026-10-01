@@ -72,6 +72,14 @@ class EventType(StrEnum):
     CREATED = "created"
     DELETED = "deleted"
     MOVED = "moved"
+    CLOSED = "closed"
+
+
+# `opened` and `closed_no_write` are reads, and `closed` only ends a write
+# whose `modified` normally came first, so none of them is re-ingested alone.
+CONTENT_EVENT_TYPES = frozenset(
+    {EventType.MODIFIED, EventType.CREATED, EventType.DELETED}
+)
 
 
 REALTIME_LOGGER_FORMAT = (
