@@ -16,8 +16,8 @@ from .config import settings
 from .constants import (
     PAYLOAD_NODE_ID,
     PAYLOAD_QUALIFIED_NAME,
-    QDRANT_DEFAULT_DB_PATH,
     QDRANT_INSECURE_URL_SCHEME,
+    SETTING_QDRANT_DB_PATH,
     VECTOR_DIM_SETTINGS,
     VectorStoreBackend,
 )
@@ -202,13 +202,15 @@ def _bundled_qdrant_url() -> str | None:
     cwd-relative QDRANT_DB_PATH, so with `cgr daemon up` running the vectors
     went into a hidden folder of the indexed repository and the stack's Qdrant
     stayed empty (issue #2355). A QDRANT_DB_PATH the user set is their choice
-    and is kept, and then the stack is not even probed.
+    and is kept, and then the stack is not even probed. Set is told from the
+    fields a settings source (environment, .env) or the code supplied, not
+    from the value: QDRANT_DB_PATH=./.qdrant_code_embeddings is a choice too.
     """
     global _BUNDLED_QDRANT, _BUNDLED_QDRANT_PROBED
     if (
         settings.QDRANT_URL
         or settings.VECTOR_STORE_BACKEND != VectorStoreBackend.QDRANT
-        or settings.QDRANT_DB_PATH != QDRANT_DEFAULT_DB_PATH
+        or SETTING_QDRANT_DB_PATH in settings.model_fields_set
     ):
         return None
     if not _BUNDLED_QDRANT_PROBED:

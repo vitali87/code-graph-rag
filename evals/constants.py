@@ -790,3 +790,9 @@ AGENTIC_DEFAULT_SAMPLE = 40
 AGENTIC_QA_TIMEOUT_S = 300
 AGENTIC_RESULTS_FILE = "agentic_qa{suffix}.json"
 AGENTIC_RECORDS_FILE = "agentic_qa{suffix}_records.jsonl"
+
+# Memgraph rejects a statement whose `$name` has no value; the graph double
+# refuses it the same way so a caller that forgets one fails a unit test
+# instead of every real sync (issue #2392).
+CYPHER_PARAM_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*)"
+CYPHER_PARAMS_MISSING = "Parameter(s) {names} not provided for query:\n{query}"

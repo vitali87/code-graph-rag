@@ -18,13 +18,21 @@ Qdrant is the default vector store. Where the vectors go is decided in this
 order:
 
 1. `QDRANT_URL` set: that Qdrant server.
-2. `QDRANT_DB_PATH` set: an embedded, file-based Qdrant in that folder.
+2. `QDRANT_DB_PATH` set: an embedded, file-based Qdrant in that folder. Set
+   means named in the environment, `.env` or code, even with the default
+   value `./.qdrant_code_embeddings`.
 3. Neither set, and the stack `cgr daemon up` starts is running: its Qdrant,
-   on the address and port Compose publishes it on (`CGR_STACK_BIND_HOST`,
-   `QDRANT_HTTP_PORT`, default `127.0.0.1:6333`). No API key is sent to it; a
-   stack Qdrant that requires one is left alone with a warning.
+   on the address and port `docker compose config` resolves for it (default
+   `127.0.0.1:6333`; `CGR_STACK_BIND_HOST`, `QDRANT_HTTP_PORT`, the `.env`
+   beside the compose file, `COMPOSE_ENV_FILES` and edits to the compose file
+   all count). It is used only while `docker compose ps` reports the stack's
+   own Qdrant container running and that address answers as Qdrant, so a
+   stopped stack never hands the embeddings to another process on its port.
+   No API key is sent to it; a stack Qdrant that requires one is left alone
+   with a warning.
 4. Otherwise: an embedded Qdrant in `./.qdrant_code_embeddings`, relative to
-   the directory cgr runs in.
+   the directory cgr runs in. The log says why the stack's Qdrant was not
+   used.
 
 The embedding cache (`.embedding_cache.json`) sits in the embedded store's
 folder, and moves to the stack's folder (`CGR_HOME`, default `~/.cgr`) along

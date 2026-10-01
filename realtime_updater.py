@@ -11,6 +11,7 @@ from loguru import logger
 from watchdog.events import (
     FileCreatedEvent,
     FileDeletedEvent,
+    FileModifiedEvent,
     FileSystemEvent,
     FileSystemEventHandler,
 )
@@ -21,6 +22,7 @@ from codebase_rag import logs
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.constants import (
+    CONTENT_EVENT_TYPES,
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_MAX_WAIT_SECONDS,
     LOG_LEVEL_INFO,
@@ -270,18 +272,25 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         current_time = time.time()
 
         with self.lock:
+            pending = self.pending_events.get(relative_path_str)
+            change = _coalesce(pending, event)
+            if change is None or change is pending:
+                # Nothing new to apply (a read, or the `closed` that ends a
+                # write already pending), so the window is neither opened nor
+                # extended and a read never logs as a change.
+                return
+            self.pending_events[relative_path_str] = change
+
             # Track the first event time for the max-wait calculation
             if relative_path_str not in self.first_event_time:
                 self.first_event_time[relative_path_str] = current_time
                 logger.info(
                     logs.CHANGE_DEBOUNCING.format(
-                        event_type=event.event_type,
+                        event_type=change.event_type,
                         name=path.name,
                         debounce=self.debounce_seconds,
                     )
                 )
-
-            self.pending_events[relative_path_str] = event
 
             if relative_path_str in self.timers:
                 self.timers[relative_path_str].cancel()
@@ -357,14 +366,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         src_path = _event_path(event.src_path)
 
-        # Only process events that change file content; skip read-only events
-        # like "opened" or "closed_no_write" that don't modify the file
-        relevant_events = {
-            EventType.MODIFIED,
-            EventType.CREATED,
-            EventType.DELETED,  # watchdog deletion event
-        }
-        if event.event_type not in relevant_events:
+        # Without a debounce every event arrives here, and the `closed` after
+        # a write would re-ingest the file a second time.
+        if event.event_type not in CONTENT_EVENT_TYPES:
             return
 
         path = Path(src_path)
@@ -403,6 +407,28 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._needs_full_rebuild = True
             return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+
+
+def _coalesce(
+    pending: FileSystemEvent | None, event: FileSystemEvent
+) -> FileSystemEvent | None:
+    """The change a path's debounce window applies once `event` joins it.
+
+    Linux reports one write as `created, opened, modified, closed` and a read
+    as `opened, closed_no_write`, so the LAST event is rarely the one that
+    matters; keeping it handed the timer a `closed` that
+    `_process_change_locked` skips, and no edit reached the graph (issue
+    #2430). The newest created, modified or deleted wins: both re-ingest
+    calls read the path from disk when the timer fires, so a delete then a
+    re-create applies the new content and a create then a delete applies the
+    delete. A `closed` stands in for a write only when the window holds
+    nothing else, as after a write through mmap, which raises no `modified`.
+    """
+    if event.event_type in CONTENT_EVENT_TYPES:
+        return event
+    if event.event_type == EventType.CLOSED and pending is None:
+        return FileModifiedEvent(_event_path(event.src_path))
+    return pending
 
 
 def _raise_walk_error(error: OSError) -> None:

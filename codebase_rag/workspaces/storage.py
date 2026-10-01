@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -21,7 +22,17 @@ def workspaces_dir(home: Path | None = None) -> Path:
     return base / cs.WORKSPACES_SUBDIR
 
 
+def validate_workspace_name(name: str) -> str:
+    if re.fullmatch(cs.WORKSPACE_NAME_PATTERN, name) is None:
+        raise WorkspaceError(cs.ERR_WORKSPACE_INVALID_NAME.format(name=name))
+    return name
+
+
 def workspace_path(name: str, home: Path | None = None) -> Path:
+    # Every command reaches the file through here, so validating the name once
+    # keeps delete/create --force/load from touching a file outside the
+    # workspaces directory.
+    validate_workspace_name(name)
     return workspaces_dir(home) / f"{name}{cs.WORKSPACE_EXTENSION}"
 
 

@@ -1196,8 +1196,16 @@ class GraphUpdater:
         capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
         project_named: bool | None = None,
+        state_dir: Path | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
+        # Where the incremental-sync state (hash cache, dir mtimes, exclusion
+        # stamp, parser fingerprint, pending markers) is read and written.
+        # None keeps it in the repository, beside the graph it describes. A
+        # snapshot run points it at a throwaway directory so it neither
+        # builds incrementally from a sync's state nor leaves state claiming
+        # a live graph is current (issue #2401).
+        self._state_dir = state_dir
         # `ingestor` stays the raw object for DB queries (QueryProtocol),
         # flushes, and test introspection. `_sink` is a filtering wrapper that
         # drops disabled relationships/nodes at one choke point, so the ~20
@@ -1919,6 +1927,9 @@ class GraphUpdater:
         the same stages, or they vanish until a full update. Returns the
         module qn -> path map the IMPORTS flush verifies against.
         """
+        # Every File node of the pass is buffered by now, so a Markdown link
+        # to a file parsed after its document finds its target (issue #2400).
+        self.document_tier.emit_pending_links()
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
         # nodes and include IMPORTS emitted earlier would be deleted with
@@ -2036,6 +2047,10 @@ class GraphUpdater:
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
+
+    @property
+    def state_dir(self) -> Path:
+        return self._state_dir if self._state_dir is not None else self.repo_path
 
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
@@ -2313,7 +2328,7 @@ class GraphUpdater:
         # Single-file runs never commit it.
         if self._delombok_state_changed and self._single_file is None:
             _save_delombok_state(
-                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
+                self.state_dir / cs.DELOMBOK_STATE_FILENAME,
                 self._delombok_state_candidate,
             )
 
@@ -2329,7 +2344,7 @@ class GraphUpdater:
         # stamp and the warning with it.
         if self._pending_parser_fingerprint is not None:
             _save_parser_fingerprint(
-                self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
+                self.state_dir / cs.PARSER_FINGERPRINT_FILENAME,
                 self._pending_parser_fingerprint,
             )
             self._pending_parser_fingerprint = None
@@ -2433,7 +2448,7 @@ class GraphUpdater:
         `cgr check` reading the right owner; rewriting an identical stamp
         would only churn the file (CodeRabbit, PR #2251).
         """
-        path = self.repo_path / cs.EXCLUSION_STATE_FILENAME
+        path = self.state_dir / cs.EXCLUSION_STATE_FILENAME
         state = _exclusion_state(
             self.exclude_paths,
             self.unignore_paths,
@@ -2566,7 +2581,7 @@ class GraphUpdater:
         if not pending:
             return
         try:
-            (self.repo_path / cs.PRUNE_PENDING_FILENAME).touch()
+            (self.state_dir / cs.PRUNE_PENDING_FILENAME).touch()
         except OSError:
             # Best effort, like the EXPOSES marker: a read-only tree must not
             # lose the run to a marker it could not write.
@@ -2578,7 +2593,7 @@ class GraphUpdater:
             return
         self._prune_settled = False
         try:
-            (self.repo_path / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
+            (self.state_dir / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
         except OSError:
             logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
 
@@ -2589,7 +2604,7 @@ class GraphUpdater:
         its cleanups settles whatever an earlier run owed; any run that
         skipped one leaves the marker for the next (issue #2193).
         """
-        marker = self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        marker = self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
         try:
             if self._exposes_cleanup_skipped:
                 marker.touch()
@@ -3055,6 +3070,27 @@ class GraphUpdater:
             if isinstance(qn := row.get(key), str) and self._owns(qn)
         ]
 
+    def _project_module_rows(self) -> list[ResultRow]:
+        """This project's Module paths and qns, read from the graph.
+
+        Scoped to the project: the seeded-map prune read every module of every
+        project in the shared graph on each sync, which made a three-file
+        repo sync ten times slower beside thirty other projects (issue
+        #2404). Raises when the read fails; callers decide what that means.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        return self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_MODULE_PATHS,
+                {
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -3402,7 +3438,16 @@ class GraphUpdater:
             return
         dp = self.factory.definition_processor
         module_map = dp.module_qn_to_file_path
-        if not module_map:
+        parsed_this_run = (
+            exempt_paths
+            if exempt_paths is not None
+            else {path for path, _lang in self._parsed_files}
+        )
+        # Only an entry this run did not parse can be dropped. On a first
+        # sync every entry is one it parsed, so there is nothing to decide
+        # and no read to make; reading anyway found the brand-new graph empty
+        # and warned on the first run every new user makes (issue #2404).
+        if not any(path not in parsed_this_run for path in module_map.values()):
             return
         # No rows is "no verdict", never "the graph is empty". A read that
         # fails or comes back empty against a populated map is the unflushed
@@ -3412,7 +3457,7 @@ class GraphUpdater:
         # _rehydrate_registry_from_graph, where a failed query leaves the
         # previous state intact.
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+            rows = self._project_module_rows()
         except Exception:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
@@ -3422,11 +3467,6 @@ class GraphUpdater:
         if not in_graph:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
-        parsed_this_run = (
-            exempt_paths
-            if exempt_paths is not None
-            else {path for path, _lang in self._parsed_files}
-        )
         for qn in [qn for qn in module_map if qn not in in_graph]:
             # A file this run parsed writes its own entry and its Module node
             # may still be unflushed, so the read above cannot see it.
@@ -3837,11 +3877,19 @@ class GraphUpdater:
         modified file's GAINED definitions can be told from the ones it had.
         A failed read marks every file fully known: nothing extra is offered."""
         known: dict[str, set[str]] = {}
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        # The query excludes rows a longer project (`proj.sub`) owns, the
+        # scoping `structural_delta.snapshot` passes too; without the list
+        # Memgraph rejects the read on every incremental sync (issue #2392).
+        longer_project_prefixes = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
         try:
             rows = self._graph_rows(
                 cq.CYPHER_DELTA_DEFINITIONS,
                 {
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_LONGER_PROJECT_PREFIXES: longer_project_prefixes,
                     cs.CYPHER_PARAM_PATHS: keys,
                 },
             )
@@ -4856,7 +4904,7 @@ class GraphUpdater:
         incremental sync that trusts it would skip every file and leave the
         project silently empty.
         """
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
             return
         fetch_all = getattr(self.ingestor, "fetch_all", None)
@@ -4891,8 +4939,8 @@ class GraphUpdater:
         # to a file it only wanted to delete (issue #1647).
         for stale in (
             cache_path,
-            self.repo_path / cs.DIR_MTIMES_FILENAME,
-            self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
+            self.state_dir / cs.DIR_MTIMES_FILENAME,
+            self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
         ):
             try:
                 stale.unlink(missing_ok=True)
@@ -4921,10 +4969,10 @@ class GraphUpdater:
         this is not a clean rebuild; the warning says what survives.
         """
         # No hash cache means a full build is coming: nothing to compare.
-        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+        if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
             return
         stored = _load_parser_fingerprint(
-            self.repo_path / cs.PARSER_FINGERPRINT_FILENAME
+            self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
         )
         # A missing stamp on an existing graph means it was built by an
         # unknown (pre-fingerprint) parser: treat it as stale too, without
@@ -4941,7 +4989,7 @@ class GraphUpdater:
         # the same one the sync check acted on, logged once.
         if self._exclusion_match is not None:
             return self._exclusion_match
-        stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
+        stored = _load_exclusion_state(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
         current = _exclusion_state(self.exclude_paths, self.unignore_paths)
         if stored is not None:
             # The cache and directory mtimes are repository-scoped, but the
@@ -4973,7 +5021,13 @@ class GraphUpdater:
         # can tell which of the two they are looking at.
         if stored is None:
             self._cache_project_match = False
-            logger.info(ls.EXCLUSION_STATE_MISSING)
+            # Only an index built before the stamp existed is being upgraded;
+            # a repository never indexed has nothing to re-run "once", and a
+            # first-time user was told otherwise (issue #2404).
+            if (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+                logger.info(ls.EXCLUSION_STATE_MISSING)
+            else:
+                logger.debug(ls.EXCLUSION_STATE_FIRST_INDEX)
         else:
             logger.info(
                 ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
@@ -4984,9 +5038,9 @@ class GraphUpdater:
     def _is_already_in_sync(self) -> bool:
         if self._sync_state_forces_reparse():
             return False
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         cache_mtime = _trustworthy_cache_mtime(cache_path)
-        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
+        dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         old_hashes = (
             {}
             if self._cache_discarded_in_memory or self._parser_changed
@@ -5006,14 +5060,14 @@ class GraphUpdater:
             return True
         if self._single_file is not None:
             return True
-        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+        if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
             return True
         # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
         # hash below would send the run into the endpoint passes that owe it
         # (issue #2193).
-        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+        if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return True
-        if (self.repo_path / cs.PRUNE_PENDING_FILENAME).exists():
+        if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -5081,7 +5135,7 @@ class GraphUpdater:
         # so without forcing them through a reparse the graph would keep
         # stale (or never gain) generated members.
         self._delombok_overlay = build_delombok_overlay(self.repo_path)
-        previous = _load_delombok_state(self.repo_path / cs.DELOMBOK_STATE_FILENAME)
+        previous = _load_delombok_state(self.state_dir / cs.DELOMBOK_STATE_FILENAME)
         current = {
             "identity": overlay_identity(self._delombok_overlay),
             "keys": sorted(self._delombok_overlay),
@@ -5157,8 +5211,8 @@ class GraphUpdater:
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
-        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
+        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
+        dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
@@ -7076,7 +7130,7 @@ class GraphUpdater:
             return []
         if prefix == ".":
             return []
-        hashes = _load_hash_cache(self.repo_path / cs.HASH_CACHE_FILENAME)
+        hashes = _load_hash_cache(self.state_dir / cs.HASH_CACHE_FILENAME)
         return [
             self.repo_path / key
             for key in sorted(hashes)
@@ -7154,7 +7208,7 @@ class GraphUpdater:
             # a watcher's updater lives across many events, so refresh them per
             # call (the batch path does the same through _delombok_stale_keys).
             self._register_generated_sources()
-            cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+            cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
             hashes = _load_hash_cache(cache_path)
 
             # Same-stem reconciliation, as the batch path does it (issue #1569):

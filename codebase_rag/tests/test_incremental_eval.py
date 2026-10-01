@@ -63,6 +63,7 @@ class TestStatefulStore:
                 cs.KEY_PATH: "callee.py",
                 cs.KEY_PROJECT_NAME: "proj",
                 cs.KEY_PROJECT_PREFIX: "proj.",
+                cs.KEY_NESTED_PROJECTS: [],
             },
         )
 
@@ -335,7 +336,7 @@ class TestIncrementalScenario:
                 (klass, _QN, want[index]),
                 {cs.KEY_BASE_INDEX: index},
             )
-        rows = s.fetch_all(cs.CYPHER_ALL_INHERITS)
+        rows = s.fetch_all(cs.CYPHER_ALL_INHERITS, {cs.KEY_PROJECT_PREFIX: "proj."})
         bases = [r[cs.KEY_BASE_QN] for r in rows if r[cs.KEY_CHILD_QN] == child]
         assert bases == want
 

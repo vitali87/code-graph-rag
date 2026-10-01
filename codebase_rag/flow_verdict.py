@@ -175,7 +175,7 @@ def _registered_projects(fetch_all: QueryFn, project_name: str) -> tuple[str, ..
     names.update(
         name for row in rows if isinstance(name := row.get(cs.KEY_NAME), str) and name
     )
-    return tuple(sorted(names, key=lambda name: len(name), reverse=True))
+    return tuple(sorted(names, key=len, reverse=True))
 
 
 def _project_of(qn: str, projects: tuple[str, ...]) -> str:
