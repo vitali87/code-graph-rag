@@ -968,18 +968,38 @@ def _go_innermost_block_end(node: Node, block_end: _Point | None) -> _Point | No
     if node.type in _GO_SCOPE_TYPES or (
         block_end is not None and node.type in _GO_BLOCK_TYPES
     ):
-        return (node.end_point.row, node.end_point.column)
+        return (node.end_point[0], node.end_point[1])
     return block_end
 
 
-def _go_type_spec_start(node: Node, name: str) -> _Point | None:
-    """The start point of `node` when it is a `type_spec` declaring `name`."""
-    if node.type != cs.TS_GO_TYPE_SPEC:
-        return None
-    spec_name = node.child_by_field_name(cs.FIELD_NAME)
-    if spec_name is None or safe_decode_text(spec_name) != name:
-        return None
-    return (node.start_point.row, node.start_point.column)
+def _go_type_declarations_by_name(
+    root: Node,
+) -> dict[str, list[tuple[int, _Span | None]]]:
+    """(1-based line, visible span or None) per `type` declaration, by name.
+
+    One walk answers every name in the file. Each composite literal of a
+    shadowed type used to walk the whole file for its own name, which cost
+    O(literals x file size) per file (issue #2393). Sorted by line, the
+    order the definition pass registered the variants in.
+    """
+    found: dict[str, list[tuple[int, _Span | None]]] = {}
+    # The second item is the end point of the innermost block, or None above
+    # every function.
+    stack: list[tuple[Node, _Point | None]] = [(root, None)]
+    while stack:
+        node, block_end = stack.pop()
+        block_end = _go_innermost_block_end(node, block_end)
+        if node.type == cs.TS_GO_TYPE_SPEC and (
+            name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+        ):
+            start: _Point = (node.start_point[0], node.start_point[1])
+            found.setdefault(name, []).append(
+                (start[0] + 1, None if block_end is None else (start, block_end))
+            )
+        stack.extend((child, block_end) for child in node.children)
+    for declarations in found.values():
+        declarations.sort(key=lambda item: item[0])
+    return found
 
 
 def _go_variant_spans(
@@ -1449,6 +1469,7 @@ class CallProcessor:
         "_resolver",
         "_string_call_specs",
         "_flow_param_names",
+        "_go_type_declarations",
         "_callable_flow",
         "_flow_bucket",
         "_io_processor",
@@ -1544,6 +1565,9 @@ class CallProcessor:
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
+        self._go_type_declarations: (
+            tuple[Node, dict[str, list[tuple[int, _Span | None]]]] | None
+        ) = None
         # Return-value / factory tracing rides along: functions each function
         # may return (nested closures), and call sites `x = factory(...); x(cb)`
         # where cb flows into the returned closure's callable parameter.
@@ -6417,7 +6441,7 @@ class CallProcessor:
         # A point, not a row: `x := Local{}; type Local struct{}` on one line
         # puts the literal BEFORE the declaration, and rows alone attributed
         # it to the later local type (#1747 review).
-        point: _Point = (literal.start_point.row, literal.start_point.column)
+        point: _Point = (literal.start_point[0], literal.start_point[1])
         local = [
             variant
             for variant, span in zip(variants, spans, strict=True)
@@ -6453,21 +6477,13 @@ class CallProcessor:
         if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
             return []
         root_node, _ = entry
-        found: list[tuple[int, _Span | None]] = []
-        # The second item is the end point of the innermost block, or None
-        # above every function.
-        stack: list[tuple[Node, _Point | None]] = [(root_node, None)]
-        while stack:
-            node, block_end = stack.pop()
-            block_end = _go_innermost_block_end(node, block_end)
-            start = _go_type_spec_start(node, name)
-            if start is not None:
-                found.append(
-                    (start[0] + 1, None if block_end is None else (start, block_end))
-                )
-            stack.extend((child, block_end) for child in node.children)
-        found.sort(key=lambda item: item[0])
-        return found
+        # Keyed on the root node itself: literals of one file are resolved
+        # together, and a re-parsed file comes back as a new root.
+        cached = self._go_type_declarations
+        if cached is None or cached[0] is not root_node:
+            cached = (root_node, _go_type_declarations_by_name(root_node))
+            self._go_type_declarations = cached
+        return list(cached[1].get(name, ()))
 
     def _ingest_go_composite_function_references(
         self,
