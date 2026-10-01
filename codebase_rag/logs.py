@@ -119,6 +119,9 @@ EXCLUSION_STATE_MISSING = (
     "unchanged; re-running once to establish it. Expect this exactly once "
     "per existing index."
 )
+EXCLUSION_STATE_FIRST_INDEX = (
+    "First index of this repository; recording its exclusion set"
+)
 EXCLUSION_STATE_NOT_RECORDED = (
     "The graph could not be asked for its module paths, so newly excluded "
     "files may still be indexed; the exclusion set is not recorded and the "
@@ -218,6 +221,20 @@ QDRANT_BUNDLED_WANTS_KEY = (
     "stay in the embedded store at '{path}'. Set QDRANT_URL and QDRANT_API_KEY to "
     "use the stack's Qdrant"
 )
+QDRANT_BUNDLED_NOT_RUNNING = (
+    "The cgr stack's Qdrant container is not running, so embeddings stay in the "
+    "embedded store at '{path}'. Run 'cgr daemon up' to store them in the "
+    "stack's Qdrant"
+)
+QDRANT_BUNDLED_UNVERIFIED = (
+    "Could not confirm through Docker Compose that the cgr stack's Qdrant is "
+    "running ({detail}), so embeddings stay in the embedded store at '{path}'"
+)
+QDRANT_BUNDLED_NOT_QDRANT = (
+    "The service at {url}, where the cgr stack publishes its Qdrant, does not "
+    "identify as Qdrant, so no embeddings are sent to it and they stay in the "
+    "embedded store at '{path}'"
+)
 QDRANT_LOCK_ERROR = (
     "Failed to open embedded Qdrant at '{path}': {error}. The storage folder is "
     "locked by another process; look for the '.lock' sentinel inside it. Embedded "
@@ -251,6 +268,7 @@ PROTOBUF_INVALID_REL = (
 )
 PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
 PROTOBUF_FLUSHING = "Flushing data to {path}..."
+PROTOBUF_FLUSH_UNCHANGED = "Nothing new since the last write to {path}; not rewriting"
 
 # Provenance manifest logs
 CODEC_SCHEMA_MISSING = (
@@ -438,6 +456,11 @@ MG_NODES_SKIPPED = (
 )
 MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
 MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
+MG_RELS_FAILED = (
+    "Failed to create {count} of {attempted} ({from_label})-[:{rel_type}]->"
+    "({to_label}) relationships - an endpoint node did not exist when they "
+    "were written"
+)
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )

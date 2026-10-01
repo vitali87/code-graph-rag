@@ -181,7 +181,10 @@ def test_a_module_import_delta_read_does_not_crash(tmp_path: Path) -> None:
 
     from codebase_rag import cypher_queries as cq
 
-    rows = store.fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, {"prefix": "proj"})
+    rows = store.fetch_all(
+        cq.CYPHER_DELTA_MODULE_IMPORTS,
+        {cs.KEY_PROJECT_PREFIX: "proj.", cs.KEY_LONGER_PROJECT_PREFIXES: []},
+    )
 
     assert isinstance(rows, list)
 
