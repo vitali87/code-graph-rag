@@ -13,6 +13,8 @@ KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
 KEY_METADATA = "metadata"
+# Shown for a graph file whose informational metadata has no timestamp.
+GRAPH_EXPORTED_AT_UNKNOWN = "unknown"
 KEY_TOTAL_NODES = "total_nodes"
 KEY_TOTAL_RELATIONSHIPS = "total_relationships"
 KEY_NODE_LABELS = "node_labels"
