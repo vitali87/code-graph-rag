@@ -3186,6 +3186,11 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
+            # Attribute arguments share the token_tree shape (`skip(self)` in
+            # `#[instrument(skip(self))]`) but name no function; binding them
+            # by bare name invented module-level CALLS (issue #2541).
+            if rs_utils.in_attribute_arguments(call_node):
+                return None
             return self._macro_call_name(call_node)
         # A Dart call node is a selector/cascade_section holding the
         # argument_part; the target name lives in the PRECEDING sibling
