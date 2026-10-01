@@ -799,3 +799,9 @@ FIRST_TOOL_COL_GRAPH_FIRST = "Graph first"
 FIRST_TOOL_NO_TOOL = "(none)"
 FIRST_TOOL_PASS = "yes"
 FIRST_TOOL_MISS = "no"
+
+# Memgraph rejects a statement whose `$name` has no value; the graph double
+# refuses it the same way so a caller that forgets one fails a unit test
+# instead of every real sync (issue #2392).
+CYPHER_PARAM_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*)"
+CYPHER_PARAMS_MISSING = "Parameter(s) {names} not provided for query:\n{query}"

@@ -120,6 +120,18 @@ HTTP_METHOD_POST = "POST"
 HTTP_CONTENT_TYPE_HEADER = "Content-Type"
 JSON_CONTENT_TYPE = "application/json"
 QDRANT_READY_PATH = "/readyz"
+# Qdrant names itself on its root: {"title": "qdrant - vector search engine",
+# "version": ...}. Any other service can answer 200 elsewhere, so this is what
+# identifies a Qdrant. The body is a few dozen bytes; the cap keeps a service
+# that streams without end from holding the check.
+QDRANT_ROOT_PATH = "/"
+QDRANT_ROOT_TITLE_KEY = "title"
+QDRANT_ROOT_VERSION_KEY = "version"
+QDRANT_ROOT_TITLE_MARKER = "qdrant"
+QDRANT_ROOT_MAX_BYTES = 65536
+# A stopped stack refuses the connection at once; a running one answers well
+# inside this, so the check costs nothing noticeable when the vector store opens.
+BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "
@@ -134,6 +146,11 @@ COMPOSE_CONFIG_ATTEMPTS = (("config", "--format", "json"), ("config",))
 ERR_AUTH_NOT_VERIFIED = (
     "'docker compose config' failed, so it cannot be checked which "
     "credentials the stack would start with: {detail}. Not starting the stack."
+)
+ERR_COMPOSE_CONFIG_FAILED = "'docker compose config' failed: {detail}"
+ERR_COMPOSE_PS_FAILED = "'docker compose ps' could not list the stack's containers"
+ERR_QDRANT_NOT_PUBLISHED = (
+    "the qdrant service in {path} publishes no host port for container port {target}"
 )
 ERR_QDRANT_REJECTS_KEY = (
     "The running Qdrant rejects the configured QDRANT_API_KEY for writes: it "
@@ -170,9 +187,21 @@ ERR_STACK_ACCEPTS_ANONYMOUS = (
 # The substitution that pins published ports to a host address. Its absence
 # marks a compose file rendered before the loopback default (issue #1012).
 COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
+# The compose file publishes Qdrant's HTTP API on ${QDRANT_HTTP_PORT:-6333}.
+COMPOSE_QDRANT_HTTP_PORT_VAR = "QDRANT_HTTP_PORT"
 # Compose reads unset interpolation variables from this file beside the
 # compose file.
 COMPOSE_DOTENV_FILENAME = ".env"
+# An image pinned by digest; the packaged compose file pins every service.
+IMAGE_DIGEST_MARKER = "@sha256:"
+WARN_COMPOSE_IMAGES_FLOATING = (
+    "The compose file at {path} runs images without a pinned digest, so each "
+    "resolves to whatever is newest when it is pulled. The packaged stack "
+    "pins them: {pins}. To take the pins, run 'cgr daemon down', replace "
+    "those image lines (or delete the file to re-render it), then run "
+    "'cgr daemon up'."
+)
+IMAGE_PIN_PAIR = "{service} {floating} -> {pinned}"
 WARN_COMPOSE_PORTS_PUBLIC = (
     "The compose file at {path} publishes these ports on ALL interfaces, so "
     "any host on your network can read the code graph from these "

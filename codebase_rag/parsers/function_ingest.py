@@ -950,7 +950,7 @@ class FunctionIngestMixin:
                     )
                 )
 
-            logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
+            logger.debug(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
             emit_endpoints(
                 self.ingestor,
@@ -1402,7 +1402,7 @@ class FunctionIngestMixin:
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).
             func_props[cs.KEY_IS_MACRO] = True
-        logger.info(
+        logger.debug(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
