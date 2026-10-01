@@ -40,7 +40,13 @@ def _repos(tmp_path: Path) -> tuple[Path, Path]:
     return org_a, org_b
 
 
-def _sync(repo: Path, store: _StatefulIngestor, *, force: bool = False) -> GraphUpdater:
+def _sync(
+    repo: Path,
+    store: _StatefulIngestor,
+    *,
+    force: bool = False,
+    state_dir: Path | None = None,
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -49,6 +55,7 @@ def _sync(repo: Path, store: _StatefulIngestor, *, force: bool = False) -> Graph
         queries=queries,
         project_name="api2",
         project_named=True,
+        state_dir=state_dir,
     )
     updater.run(force=force)
     return updater
@@ -70,6 +77,37 @@ def test_a_repo_whose_project_another_repo_replaced_is_rebuilt(
 
     assert again.skipped_because_in_sync is False
     assert _functions(store) == {"api2.billing.charge_card"}
+
+
+def test_a_replaced_project_is_rebuilt_when_the_cache_lives_outside_the_repo(
+    tmp_path: Path,
+) -> None:
+    org_a, org_b = _repos(tmp_path)
+    state_a, state_b = tmp_path / "state_a", tmp_path / "state_b"
+    state_a.mkdir()
+    state_b.mkdir()
+    store = _StatefulIngestor()
+    _sync(org_a, store, state_dir=state_a)
+    _sync(org_b, store, state_dir=state_b)
+
+    again = _sync(org_a, store, state_dir=state_a)
+
+    assert again.skipped_because_in_sync is False
+    assert _functions(store) == {"api2.billing.charge_card"}
+
+
+def test_an_unchanged_repo_with_its_cache_outside_the_repo_is_still_in_sync(
+    tmp_path: Path,
+) -> None:
+    org_a, _ = _repos(tmp_path)
+    state_a = tmp_path / "state_a"
+    state_a.mkdir()
+    store = _StatefulIngestor()
+    _sync(org_a, store, state_dir=state_a)
+
+    again = _sync(org_a, store, state_dir=state_a)
+
+    assert again.skipped_because_in_sync is True
 
 
 def test_an_unchanged_repo_is_still_in_sync(tmp_path: Path) -> None:
