@@ -78,10 +78,10 @@ def test_a_network_resource_continues_into_the_handler_of_another_project() -> N
     project's own flow edges, and names the hop that crossed the boundary
     (issue #1603). Before, the path ended at the resource: NO_FLOW with
     full coverage, a verified absence that was not one."""
-    remote = [("p.client.net", "q.api.handler")]
+    remote = [("resource::NETWORK::http://q:8000/items", "q.api.handler")]
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net")],
+            [("p.a.src", "resource::NETWORK::http://q:8000/items")],
             [],
             remote=remote,
             other_edges={"q": [("q.api.handler", "q.db.sink")]},
@@ -91,8 +91,15 @@ def test_a_network_resource_continues_into_the_handler_of_another_project() -> N
         "q.db.sink",
     )
     assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.path == ("p.a.src", "p.client.net", "q.api.handler", "q.db.sink")
-    assert result.remote_hops == (("p.client.net", "q.api.handler"),)
+    assert result.path == (
+        "p.a.src",
+        "resource::NETWORK::http://q:8000/items",
+        "q.api.handler",
+        "q.db.sink",
+    )
+    assert result.remote_hops == (
+        ("resource::NETWORK::http://q:8000/items", "q.api.handler"),
+    )
 
 
 def test_an_rpc_resource_continues_into_its_handler_directly() -> None:
@@ -150,16 +157,24 @@ def test_a_service_calling_itself_is_not_a_boundary() -> None:
     resource and the handler's are one (bot review on PR #1978)."""
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net"), ("p.api.handler", "p.db.sink")],
+            [
+                ("p.a.src", "resource::NETWORK::http://q:8000/items"),
+                ("p.api.handler", "p.db.sink"),
+            ],
             [],
-            remote=[("p.client.net", "p.api.handler")],
+            remote=[("resource::NETWORK::http://q:8000/items", "p.api.handler")],
         ),
         "p",
         "p.a.src",
         "p.db.sink",
     )
     assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.path == ("p.a.src", "p.client.net", "p.api.handler", "p.db.sink")
+    assert result.path == (
+        "p.a.src",
+        "resource::NETWORK::http://q:8000/items",
+        "p.api.handler",
+        "p.db.sink",
+    )
     assert result.remote_hops == ()
 
 
@@ -173,9 +188,12 @@ def test_coverage_of_every_project_the_walk_entered_counts() -> None:
     calls: list[tuple[str, dict | None]] = []
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net")],
+            [("p.a.src", "resource::NETWORK::http://q:8000/items")],
             {"q": ["q/uncovered.php"]},
-            remote=[("p.client.net", "q.api.handler"), ("p.never", "r.api.handler")],
+            remote=[
+                ("resource::NETWORK::http://q:8000/items", "q.api.handler"),
+                ("p.never", "r.api.handler"),
+            ],
             other_edges={"q": [("q.api.handler", "q.other")], "r": []},
             calls=calls,
         ),
@@ -194,9 +212,9 @@ def test_coverage_of_every_project_the_walk_entered_counts() -> None:
 
     covered = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net")],
+            [("p.a.src", "resource::NETWORK::http://q:8000/items")],
             {"q": [], "p": ["p/uncovered.php"]},
-            remote=[("p.client.net", "q.api.handler")],
+            remote=[("resource::NETWORK::http://q:8000/items", "q.api.handler")],
             other_edges={"q": [("q.api.handler", "q.other")]},
         ),
         "p",
