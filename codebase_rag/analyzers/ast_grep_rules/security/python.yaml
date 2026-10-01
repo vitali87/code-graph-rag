@@ -19,14 +19,24 @@ rules:
     # The callee is execute/executemany and the f-string is one of ITS
     # arguments. Searching the whole subtree for each (issue #2691) matched a
     # keyword argument named `execute`, an f-string beside a constant query,
-    # and every call enclosing a real one, once per enclosing call.
+    # and every call enclosing a real one, once per enclosing call. The search
+    # descends only through parentheses and adjacent-literal concatenation, so
+    # `execute((f"..."))` and `execute(f"..." " LIMIT 1")` are still found
+    # while an f-string inside a parameter tuple or a nested call is not.
     rule:
       kind: call
       all:
         - has: { field: function, regex: '(?:^|\.)execute(?:many)?$' }
         - has:
             field: arguments
-            has: { kind: string, regex: '^(?i:f|rf|fr)[\x27"]' }
+            has:
+              kind: string
+              regex: '^(?i:f|rf|fr)[\x27"]'
+              stopBy:
+                not:
+                  any:
+                    - kind: parenthesized_expression
+                    - kind: concatenated_string
   - id: hardcoded_secret
     # Security rule: favour recall. Value must be a non-trivial literal (>=8
     # chars) that is not a format/message template (an f-string/.format {..}

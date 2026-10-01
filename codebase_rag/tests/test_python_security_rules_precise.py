@@ -48,6 +48,7 @@ def test_a_safe_loader_is_not_a_finding(tmp_path: Path, call: str) -> None:
         'scheduler.submit(f"nightly-{name}", execute=True)',
         'log.info(f"checked {n} rows", cursor.execute("SELECT 1"))',
         'cursor.execute("SELECT 1", (f"{uid}",))',
+        'cursor.execute("SELECT 1", ((f"{uid}",)))',
         'run(f"{x}", lambda: execute)',
     ],
 )
@@ -92,6 +93,9 @@ def test_an_unsafe_load_is_still_a_finding(tmp_path: Path, call: str) -> None:
         'execute(f"DELETE FROM t WHERE id = {uid}")',
         'self.db.execute(f"SELECT {col} FROM t")',
         'get_cursor().execute(f"SELECT {col} FROM t", params)',
+        'cursor.execute(f"SELECT * FROM users WHERE id = {uid}" " LIMIT 1")',
+        'cursor.execute((f"SELECT * FROM users WHERE id = {uid}"))',
+        'cursor.execute((f"SELECT {col} " "FROM t"), params)',
     ],
 )
 def test_execute_with_an_f_string_is_still_a_finding(tmp_path: Path, call: str) -> None:
