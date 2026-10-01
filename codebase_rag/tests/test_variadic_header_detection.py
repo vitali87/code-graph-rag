@@ -27,7 +27,21 @@ def _truth(header: str) -> bool:
     """What Python itself says about the header."""
     fn = ast.parse(header + "\n    pass\n").body[0]
     assert isinstance(fn, ast.FunctionDef)
-    return fn.args.vararg is not None or bool(fn.args.kwonlyargs)
+    namespace: dict[str, object] = {"g": lambda: None}
+    exec(header + "\n    pass\n", namespace)  # noqa: S102
+    func = namespace[fn.name]
+    assert callable(func)
+    declared = len(fn.args.posonlyargs) + len(fn.args.args)
+    required_kwonly = {
+        kw.arg: None
+        for kw, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults, strict=True)
+        if default is None
+    }
+    try:
+        func(*range(declared + 1), **required_kwonly)
+    except TypeError:
+        return False
+    return True
 
 
 HEADERS = [
@@ -76,3 +90,10 @@ def test_an_unparseable_header_is_not_variadic() -> None:
     # Refuse to guess: not-variadic keeps the arity check ACTIVE, which
     # is the safe direction for a suppressor.
     assert _header_is_variadic("def f(a, ") is False
+
+
+def test_keyword_only_params_do_not_absorb_an_extra_positional() -> None:
+    """`*` is not `*args`: it absorbs no surplus positional."""
+    assert _header_is_variadic("def f(a, *, b=1):") is False
+    assert _header_is_variadic("def f(a, *, k):") is False
+    assert _header_is_variadic("def f(a, *rest, k=1):") is True
