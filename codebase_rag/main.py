@@ -105,6 +105,7 @@ from .types_defs import (
     StructuralReplaceArgs,
     ToolArgs,
 )
+from .utils.interruptible_thread import run_in_interruptible_thread
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -2124,7 +2125,13 @@ def main_single_query(
     _setup_common_initialization(repo_path)
     # Override logger to stderr so stdout is clean for scripted output
     logger.remove()
-    logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
+    logger.add(
+        sys.stderr,
+        level=cs.LOG_LEVEL_ERROR,
+        format=cs.LOG_FORMAT,
+        backtrace=False,
+        diagnose=False,
+    )
 
     with connect_memgraph(batch_size) as ingestor:
         rag_agent, _, _ = _initialize_services_and_agent(
@@ -2176,7 +2183,7 @@ async def _run_pre_chat_sync(task: Callable[[], None], message: str) -> None:
     logger.disable("codebase_rag")
     try:
         with _thinking_with_status_bar(message):
-            await asyncio.to_thread(task)
+            await run_in_interruptible_thread(task)
     finally:
         logger.enable("codebase_rag")
 

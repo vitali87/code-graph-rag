@@ -16,19 +16,21 @@ drive it directly.
 from codebase_rag.editing import EditTransaction, VerificationResult
 
 tx = EditTransaction(repo_root)
-tx.stage("pkg/models.py", new_models_source)   # full content, str or bytes
-tx.stage("pkg/old_helper.py", None)            # delete
-tx.stage("pkg/new_helper.py", helper_source)   # create
+tx.stage("pkg/models.py", new_models_source)  # full content, str or bytes
+tx.stage("pkg/old_helper.py", None)  # delete
+tx.stage("pkg/new_helper.py", helper_source)  # create
+
 
 def verify(tree):
     # `tree.read(rel)` answers from the overlay first, the disk second;
     # `tree.root` is a materialised copy for tools that need real files.
     return VerificationResult(ok=parses(tree.read("pkg/models.py")), message="")
 
+
 outcome = tx.commit(verify)
-outcome.applied      # True only if every file was written
-outcome.diff         # the combined unified diff (a/ b/ style, /dev/null for create and delete)
-outcome.files        # repo-relative paths, sorted
+outcome.applied  # True only if every file was written
+outcome.diff  # the combined unified diff (a/ b/ style, /dev/null for create and delete)
+outcome.files  # repo-relative paths, sorted
 ```
 
 - **Stage** collects the new content per file in an in-memory overlay keyed
