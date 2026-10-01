@@ -911,6 +911,12 @@ class DeferredImportEdge(NamedTuple):
     site: PropertyDict | None = None
 
 
+LanguageFamily = frozenset[SupportedLanguage]
+# {bare module qn: {language family: its file's module qn}} for a stem whose
+# files carry their extension, the name each family's importers land on.
+StemSiblingModules = dict[str, dict[LanguageFamily, str]]
+
+
 class ReingestReport(NamedTuple):
     """What one GraphUpdater.reingest() call touched (issue #1524)."""
 

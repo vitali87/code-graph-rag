@@ -53,15 +53,6 @@ _CONSTRUCTIBLE_NODE_TYPES = frozenset(
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
-# Sets of languages whose sources call each other directly, so a candidate
-# written in a sibling language is a legitimate target for the simple-name
-# fallback: the JS family compiles to one runtime, C++ calls C, and Scala
-# calls Java on the JVM. Any language absent here calls only its own.
-_CALLABLE_LANGUAGE_FAMILIES: tuple[frozenset[cs.SupportedLanguage], ...] = (
-    cs.JS_TS_LANGUAGES,
-    frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP}),
-    frozenset({cs.SupportedLanguage.JAVA, cs.SupportedLanguage.SCALA}),
-)
 
 
 class _CallSite(NamedTuple):
@@ -3026,9 +3017,10 @@ class CallResolver:
     ) -> bool:
         if caller is None or candidate is None or caller == candidate:
             return True
+        # A candidate written in a sibling language of the caller's family is
+        # a legitimate target for the simple-name fallback.
         return any(
-            caller in family and candidate in family
-            for family in _CALLABLE_LANGUAGE_FAMILIES
+            caller in family and candidate in family for family in cs.LANGUAGE_FAMILIES
         )
 
     def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:

@@ -1927,6 +1927,11 @@ class GraphUpdater:
         the same stages, or they vanish until a full update. Returns the
         module qn -> path map the IMPORTS flush verifies against.
         """
+        # First: every module of the run is named now, and everything below
+        # (inheritance, Pass 3) resolves through the import map.
+        self.factory.import_processor.point_imports_at_own_language_siblings(
+            self.factory.definition_processor.module_qn_to_file_path
+        )
         # Every File node of the pass is buffered by now, so a Markdown link
         # to a file parsed after its document finds its target (issue #2400).
         self.document_tier.emit_pending_links()
@@ -3330,6 +3335,13 @@ class GraphUpdater:
             )
         else:
             self._forgotten_flux_claims.setdefault(path, (qn, survivor))
+            # A scoped re-ingest read the module qns back before this, and the
+            # survivor's old one need not come back: beside a sibling in another
+            # language neither file keeps the bare qn, so left here it is
+            # offered to import verification as a live module the re-parse
+            # just deleted (issue #2586). A re-parse that keeps the qn records
+            # it again; an unreadable survivor gets it back with its claim.
+            self._rehydrated_module_qns.discard(qn)
 
     def _delete_stale_subtrees(self, keys: Iterable[str]) -> None:
         """Delete the old subtree of every re-parsed or deleted file.
@@ -4267,14 +4279,19 @@ class GraphUpdater:
         # A file that was never parsed recorded nothing; the path-derived form
         # is the only prefix available for it, and it owns no recorded qn that
         # this could wipe.
-        recorded_qns = {
-            qn
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-            if path == file_path
-        }
-        module_qn_prefixes = recorded_qns or {path_derived_qn}
+        #
+        # Unless another file holds that qn now. A same-stem survivor re-parses
+        # with its claim dropped, after a sibling parsed earlier in the run took
+        # the bare qn (`util.c` beside `util.h`); sweeping it deregistered the
+        # sibling's fresh definitions, still unflushed and so not read back, and
+        # the sibling's calls resolved to nothing until a fresh index (reported
+        # on #2586). The survivor's own old state went before the parse.
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        recorded_qns = {qn for qn, path in module_map.items() if path == file_path}
+        holder = module_map.get(path_derived_qn)
+        module_qn_prefixes = recorded_qns or (
+            {path_derived_qn} if holder is None else set()
+        )
         self._drop_module_import_state(file_path, recorded_qns, module_qn_prefixes)
         owned_qns, foreign_qns = self._span_ownership(
             module_qn_prefixes, relative_path, frontend_current
