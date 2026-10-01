@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Coroutine
 from fnmatch import fnmatch
@@ -29,6 +30,7 @@ from . import (
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
+from . import exceptions as ex
 from . import logs as ls
 from .capture import CaptureSelection, resolve_capture, split_spec
 from .cli_runtime import app_context, connect_memgraph, style
@@ -680,7 +682,15 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        updater.run()
+        interrupted: ex.EmbeddingsInterrupted | None = None
+        try:
+            updater.run()
+        except ex.EmbeddingsInterrupted as stop:
+            # Raised only after the run committed, so the graph is whole and
+            # the sync is recorded like any other; the interrupt then ends
+            # the command outside the connection, which would otherwise log
+            # it as a failed write.
+            interrupted = stop
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
         # Taken before the export: counting it made a no-op sync of a small
@@ -688,7 +698,7 @@ def _run_graph_sync(
         elapsed = time.monotonic() - elapsed
 
         exported = True
-        if output:
+        if output and interrupted is None:
             # The repo's own graph: `-o` wrote every project in the shared
             # database (issue #2440), which `cgr export` without a scope still
             # does. The updater's name is the one its Project node carries.
@@ -720,6 +730,8 @@ def _run_graph_sync(
                 cs.StyleModifier.NONE,
             )
         )
+    if interrupted is not None:
+        raise interrupted
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
@@ -1034,17 +1046,24 @@ def index(
         parsers, queries = load_parsers()
         from .graph_updater import GraphUpdater
 
-        updater = GraphUpdater(
-            ingestor=ingestor,
-            repo_path=repo_to_index,
-            parsers=parsers,
-            queries=queries,
-            unignore_paths=unignore_paths,
-            exclude_paths=exclude_paths,
-            capture=capture_config,
-        )
-
-        updater.run()
+        # The output is a fresh snapshot, not a graph that persists between
+        # runs, so the sync state lives in a throwaway directory: a previous
+        # run's state must never make this one incremental (it wrote a
+        # Project-only index for an unchanged repo), and this run must not
+        # leave state telling the next sync its live graph is current
+        # (issue #2401).
+        with tempfile.TemporaryDirectory(prefix=cs.INDEX_STATE_DIR_PREFIX) as state:
+            updater = GraphUpdater(
+                ingestor=ingestor,
+                repo_path=repo_to_index,
+                parsers=parsers,
+                queries=queries,
+                unignore_paths=unignore_paths,
+                exclude_paths=exclude_paths,
+                capture=capture_config,
+                state_dir=Path(state),
+            )
+            updater.run(force=True)
         manifest_path = write_manifest(
             Path(output_proto_dir),
             indexed_source,

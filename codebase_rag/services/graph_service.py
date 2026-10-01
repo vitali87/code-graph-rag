@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import threading
 import types
 from collections import defaultdict
@@ -32,6 +33,7 @@ from ..constants import (
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
+    NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
@@ -119,6 +121,33 @@ def _created_count(results: Sequence[ResultRow]) -> int:
     return total
 
 
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception types are bound once here.
+_MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
+_MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
+
+
+def is_query_rejection(error: BaseException) -> bool:
+    """Whether the engine refused the query itself, not the connection.
+
+    A rejected query (a syntax or type error such as sorting on a list) can
+    be fixed by asking for a different query; an unreachable server or a
+    failed login or a missing permission cannot, so those must not trigger a
+    regeneration. In mgclient, `OperationalError` (connection) subclasses
+    `DatabaseError`; in neo4j, `AuthError` and `Forbidden` subclass
+    `ClientError` (issue #2361).
+    """
+    if isinstance(error, _MgclientDatabaseError):
+        return not isinstance(error, _MgclientOperationalError)
+    try:
+        neo4j_exceptions = importlib.import_module(NEO4J_EXCEPTIONS_MODULE)
+    except ImportError:
+        return False
+    return isinstance(error, neo4j_exceptions.ClientError) and not isinstance(
+        error, (neo4j_exceptions.AuthError, neo4j_exceptions.Forbidden)
+    )
+
+
 def _log_failed_calls(
     from_label: str,
     to_label: str,
@@ -139,6 +168,27 @@ def _log_failed_calls(
                 to_val=sample[KEY_TO_VAL],
             )
         )
+
+
+def _log_failed_relationships(
+    pattern: tuple[str, str, str, str, str], attempted: int, successful: int
+) -> None:
+    # Only CALLS losses used to be itemised; a lost edge of any other type
+    # showed up only as a count in the INFO flush summary, so a run that
+    # dropped data looked clean (issue #2400).
+    failed = attempted - successful
+    if failed <= 0:
+        return
+    from_label, _, rel_type, to_label, _ = pattern
+    logger.warning(
+        ls.MG_RELS_FAILED.format(
+            count=failed,
+            attempted=attempted,
+            from_label=from_label,
+            rel_type=rel_type,
+            to_label=to_label,
+        )
+    )
 
 
 class MemgraphIngestor:
@@ -204,10 +254,18 @@ class MemgraphIngestor:
         ] = defaultdict(list)
 
     def __enter__(self) -> MemgraphIngestor:
-        logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = self._create_connection()
+        logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
+        try:
+            self.conn = self._create_connection()
+        except Exception as e:
+            # The driver's error does not say where it tried to connect, and
+            # the line that did is DEBUG now (issue #2398).
+            logger.error(
+                ls.MG_CONNECT_FAILED.format(host=self._host, port=self._port, error=e)
+            )
+            raise
         self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
-        logger.info(ls.MG_CONNECTED)
+        logger.debug(ls.MG_CONNECTED)
         return self
 
     def __exit__(
@@ -218,7 +276,12 @@ class MemgraphIngestor:
     ) -> None:
         try:
             if exc_type:
-                logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                if issubclass(exc_type, Exception):
+                    logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                else:
+                    # Ctrl+C or a cancelled task: the user stopped the run,
+                    # and a traceback here read as a crash.
+                    logger.warning(ls.MG_INTERRUPTED)
                 # Best-effort flush: persist buffered nodes/relationships even when
                 # an exception occurred. Catch broad Exception so a secondary flush
                 # failure never masks the original.
@@ -234,7 +297,7 @@ class MemgraphIngestor:
                 self._executor = None
             if self.conn:
                 self.conn.close()
-                logger.info(ls.MG_DISCONNECTED)
+                logger.debug(ls.MG_DISCONNECTED)
             # Sessions handed to flush workers are closed by those
             # workers; the pooled driver behind them is owned here and
             # would otherwise leak its connection pool for the life of
@@ -629,7 +692,7 @@ class MemgraphIngestor:
     ) -> tuple[int, int, set[str], Exception | None]:
         # Each label group on its own connection; a failed label keeps its
         # buffered nodes for a retry, and the first failure is re-raised.
-        logger.info(
+        logger.debug(
             ls.MG_PARALLEL_FLUSH_NODES.format(
                 count=len(nodes_by_label),
                 workers=settings.FLUSH_THREAD_POOL_SIZE,
@@ -737,6 +800,8 @@ class MemgraphIngestor:
 
         if rel_type == REL_TYPE_CALLS:
             _log_failed_calls(from_label, to_label, params_list, batch_successful)
+        else:
+            _log_failed_relationships(pattern, len(params_list), batch_successful)
 
         return len(params_list), batch_successful
 
@@ -771,7 +836,7 @@ class MemgraphIngestor:
     ) -> tuple[int, int, Exception | None]:
         # Each pattern group on its own connection; every group still runs
         # when one fails, and the first failure is re-raised by the caller.
-        logger.info(
+        logger.debug(
             ls.MG_PARALLEL_FLUSH_RELS.format(
                 count=len(self._rel_groups),
                 workers=settings.FLUSH_THREAD_POOL_SIZE,
@@ -818,10 +883,10 @@ class MemgraphIngestor:
         return total_attempted, total_successful, first_error
 
     def flush_all(self) -> None:
-        logger.info(ls.MG_FLUSH_START)
+        logger.debug(ls.MG_FLUSH_START)
         self.flush_nodes()
         self.flush_relationships()
-        logger.info(ls.MG_FLUSH_COMPLETE)
+        logger.debug(ls.MG_FLUSH_COMPLETE)
 
     def fetch_all(
         self, query: str, params: PropertyParams | None = None
