@@ -50,6 +50,10 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_CAPTURE_UNKNOWN = (
+    "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
+    "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
+)
 CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
 CLI_ERR_STARTUP = "Startup Error: {error}"
 CLI_ERR_CONFIG = "Configuration Error: {error}"
