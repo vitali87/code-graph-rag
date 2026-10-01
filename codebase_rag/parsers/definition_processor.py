@@ -457,7 +457,7 @@ class DefinitionProcessor(
             file_path = Path(file_path)
         relative_path = cached_relative_path(file_path, self.repo_path)
         relative_path_str = relative_path.as_posix()
-        logger.info(
+        logger.debug(
             ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
         )
 
@@ -738,7 +738,7 @@ class DefinitionProcessor(
         self._pending_direct_module_exports = []
 
     def process_dependencies(self, filepath: Path) -> None:
-        logger.info(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
+        logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
 
         dependencies = parse_dependencies(filepath)
         for dep in dependencies:
@@ -750,7 +750,7 @@ class DefinitionProcessor(
         if not dep_name or dep_name.lower() in cs.EXCLUDED_DEPENDENCY_NAMES:
             return
 
-        logger.info(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
+        logger.debug(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
         )
