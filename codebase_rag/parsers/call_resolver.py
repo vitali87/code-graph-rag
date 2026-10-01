@@ -195,6 +195,7 @@ class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
         "python_shadowed_imports",
+        "python_local_names",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -241,6 +242,9 @@ class CallResolver:
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
+        # caller qn -> every name that Python function binds itself (#2666);
+        # filled alongside python_shadowed_imports.
+        self.python_local_names: dict[str, frozenset[str]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -504,6 +508,12 @@ class CallResolver:
             local_var_types,
             language,
         )
+
+    def _is_python_local_name(self, call: _CallSite) -> bool:
+        if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
+            return False
+        local = self.python_local_names.get(call.caller_qn)
+        return local is not None and call.call_name in local
 
     def _receiver_is_untyped_shadow(
         self,
@@ -895,7 +905,18 @@ class CallResolver:
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if parent == module_qn or parent not in self.function_registry:
                 return None
+            # A class is in the registry too, so the check above let the walk
+            # step from a method into its class and answer the method's own
+            # parameter `run` with the sibling method `run` (issue #2666).
+            if self._local_stops_at_class(call_name, caller_qn, parent):
+                return None
             scope = parent
+
+    def _local_stops_at_class(self, call_name: str, caller_qn: str, scope: str) -> bool:
+        return (
+            call_name in self.python_local_names.get(caller_qn, frozenset())
+            and self.function_registry[scope] == cs.NodeLabel.CLASS.value
+        )
 
     def _scope_candidate(
         self, scope: str, call_name: str, language: cs.SupportedLanguage | None
@@ -1320,6 +1341,13 @@ class CallResolver:
         handled, result = self._resolve_caller_scope(call)
         if handled:
             return result
+        # After the scope walk, which answers a nested def or class of the
+        # name: any other local is a value the graph cannot follow, and the
+        # same-module, class, import and trie stages below would bind it to
+        # the definition it shadows (issue #2666). Before the cache, whose
+        # answers are caller-independent.
+        if self._is_python_local_name(call):
+            return None
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
