@@ -454,13 +454,17 @@ MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
 )
-MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
-MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
 MG_RELS_FAILED = (
     "Failed to create {count} of {attempted} ({from_label})-[:{rel_type}]->"
     "({to_label}) relationships - an endpoint node did not exist when they "
     "were written"
 )
+MG_REL_FAILED_ROW = (
+    "  Failed {index}: {from_label}.{from_val} -> {to_label}.{to_val} "
+    "(missing {missing})"
+)
+MG_RELS_FAILED_MORE = "  ... and {count} more"
+MG_RELS_FAILED_LOOKUP = "Could not look up which {rel_type} rows were lost: {error}"
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )

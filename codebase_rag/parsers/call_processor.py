@@ -466,6 +466,25 @@ _FLOW_ARG_REF_TYPES = frozenset(
         cs.TS_MEMBER_EXPRESSION,
     }
 )
+# Node types of a value that hands a callable over BY NAME, in every language
+# the argument-reference path serves: the flow-arg names above, a C# member
+# access or generic method group, a Dart tear-off's `.name` selector (its
+# argument unwraps to the last selector), a C++ qualified, template or field
+# name, and a JS shorthand property. (C++ address-of is checked on its own in
+# `_names_a_callable`.) An operator expression is absent on purpose: it
+# computes a value, and its text resolved as a name against a builtin receiver
+# gave `builtin.Array.prototype.length - start` (issue #2438).
+_CALLBACK_REF_TYPES = _FLOW_ARG_REF_TYPES | frozenset(
+    {
+        cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_GENERIC_NAME,
+        cs.TS_DART_SELECTOR,
+        cs.TS_CPP_QUALIFIED_IDENTIFIER,
+        cs.TS_CPP_TEMPLATE_FUNCTION,
+        cs.TS_CPP_FIELD_EXPRESSION,
+        cs.TS_SHORTHAND_PROPERTY_IDENTIFIER,
+    }
+)
 # Qualified-name prefix marking a resolved callee as a builtin rather than a
 # first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
@@ -585,6 +604,16 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     if natural == scope_qn:
         return [scope_qn]
     return [scope_qn, natural]
+
+
+def _names_a_callable(node: Node) -> bool:
+    # C/C++ also hands a function over by its address (`run(&Cls::m)`), the
+    # one operator expression that names rather than computes; a dereference
+    # (`*p`) or any other operator does not.
+    if node.type == cs.TS_CPP_POINTER_EXPRESSION:
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return operator is not None and safe_decode_text(operator) == cs.CPP_ADDRESS_OF
+    return node.type in _CALLBACK_REF_TYPES
 
 
 def _first_class_value_children(
@@ -7129,6 +7158,11 @@ class CallProcessor:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
+        # Only a name can hand a callable over. The whole source text of any
+        # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
+        # as if it were one (issue #2438).
+        if not _names_a_callable(arg_node):
+            return
         if not (arg_text := safe_decode_text(arg_node)):
             return
         if language == cs.SupportedLanguage.CSHARP:
@@ -7165,6 +7199,14 @@ class CallProcessor:
         # resolves the cast's TYPE name in some paths), and emitting that
         # produces schema-invalid edges.
         if res_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+            return
+        # And only a callable the graph has a node for. A member read on a
+        # builtin-typed receiver (`error.customDelay` on an Error,
+        # `items.length` on an Array) resolves to a synthetic `builtin.*` qn
+        # that is never created, a property as often as a method, so the
+        # edge could only be dropped by the database and counted as a failed
+        # write on every index (issue #2438; #652 for the call form).
+        if res_qn not in registry:
             return
         # A Dart getter in argument position is a VALUE READ, not a tear-off:
         # the getter-read pass owns those edges (with shadow handling), so
