@@ -94,6 +94,7 @@ RESOLUTION_RANK: dict[str, int] = {
     EdgeResolution.TRACE_CONFIRMED: 4,
 }
 KEY_SUFFIX = "suffix"
+KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
@@ -130,6 +131,10 @@ KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
 KEY_PROPS = "props"
+# The `$id` a per-node query addresses its node by.
+KEY_ID = "id"
+# A shared node's inbound-edge count in the isolated check's snapshot.
+KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
@@ -173,6 +178,16 @@ PROTOBUF_INDEX_FILE = "index.bin"
 PROTOBUF_PAYLOAD_ONEOF = "payload"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
+
+DIFF_ERR_NO_MANIFEST = (
+    "schema metadata missing: no readable manifest in {path}; "
+    "re-export with a manifest before diffing"
+)
+DIFF_ERR_NO_SCHEMA_HASH = (
+    "schema metadata missing: {manifest} records no codec_schema_sha256 because "
+    "the cgr that wrote it could not find codec/schema.proto; "
+    "upgrade code-graph-rag and re-index before diffing"
+)
 
 ONEOF_PROJECT = "project"
 ONEOF_PACKAGE = "package"
@@ -543,6 +558,12 @@ class AuditCheck(StrEnum):
     DANGLING_RELATIONSHIP = "dangling_relationship"
 
 
+# Labels cgr writes for its own bookkeeping rather than as part of the code
+# graph: not in NODE_SCHEMAS (the Cypher prompt is built from it), and not
+# graded by the structural audit. `IncompleteRun` is the sync marker, which
+# doctor reports as an interrupted sync instead (issue #2394).
+AUDIT_BOOKKEEPING_LABELS = frozenset({"IncompleteRun"})
+
 # Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
 AUDIT_DETAIL_UNDOCUMENTED_LABEL = "label '{label}' is not documented in NODE_SCHEMAS"
@@ -720,6 +741,22 @@ CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "WHERE inbound = 0 "
     "DETACH DELETE m"
 )
+# A manifest re-parse only MERGEs the dependencies it still names, and an edge
+# does not record which manifest declared it, so the project's edges are
+# dropped and rebuilt from every manifest whenever one changes (issue #2396).
+CYPHER_DELETE_PROJECT_DEPENDENCIES = (
+    "MATCH (:Project {name: $project_name})-[r:DEPENDS_ON_EXTERNAL]->(:ExternalPackage) "
+    "DELETE r"
+)
+# ExternalPackage nodes are shared by name across projects, so only a package
+# no project depends on any more goes.
+CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES = (
+    "MATCH (e:ExternalPackage) "
+    "OPTIONAL MATCH (x)-->(e) "
+    "WITH e, count(x) AS inbound "
+    "WHERE inbound = 0 "
+    "DETACH DELETE e"
+)
 CYPHER_PROJECT_MODULE_PATHS = (
     # The bare-name alternative covers the repository-root __init__.py,
     # whose module qn is the project name itself.
@@ -737,13 +774,59 @@ CYPHER_COUNT_PROJECT_MODULES = (
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
-# Containers of one File key, for legacy-identity sweep attribution: File
+# Containers of the legacy-identity sweep's File keys, for attribution: File
 # nodes MERGE globally on absolute_path, so a key can be shared with another
-# project and must not be deleted from under it (issue #1156).
+# project and must not be deleted from under it (issue #1156). One query for
+# every candidate: asked per key, a sync paid a round trip per File of every
+# other project in the shared graph (issue #2405).
 CYPHER_FILE_CONTAINERS = (
-    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: $path}) "
-    "RETURN labels(p) AS labels, p.name AS name, "
+    "UNWIND $paths AS file_key "
+    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: file_key}) "
+    "RETURN file_key, labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
+)
+KEY_FILE_KEY = "file_key"
+KEY_REPO_ROOT = "repo_root"
+KEY_REPO_PREFIX = "repo_prefix"
+# The orphan prune's reads, scoped to this repository or project. Unscoped,
+# every sync with changes read every File, Folder, Module and Package of
+# every project in the shared graph, so its cost grew with the graph, not
+# the repository (issue #2405). A key outside the repository was skipped by
+# the prune anyway; the legacy-identity sweep finds its own candidates below.
+CYPHER_REPO_FILE_PATHS = (
+    "MATCH (f:File) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_REPO_FOLDER_PATHS = (
+    "MATCH (f:Folder) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_PROJECT_PACKAGE_PATHS = (
+    "MATCH (p:Package) WHERE p.qualified_name = $project_name "
+    "OR p.qualified_name STARTS WITH $project_prefix "
+    "RETURN p.path AS path, p.absolute_path AS absolute_path, "
+    "p.qualified_name AS qualified_name"
+)
+# Modules the prune can act on: this project's, with a path to test.
+CYPHER_PROJECT_PRUNABLE_MODULES = (
+    "MATCH (m:Module) WHERE m.path IS NOT NULL "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+)
+# The legacy-identity sweep's only possible candidates: out-of-repo File keys
+# this project's own containers (its Project node, or a Folder or Package in
+# the repository) hold. Every other project's Files used to be candidates,
+# each one vetoed after its own containers query (issue #2405).
+CYPHER_PROJECT_OUTSIDE_FILE_KEYS = (
+    "MATCH (c)-[:CONTAINS_FILE]->(f:File) "
+    "WHERE ((c:Project AND c.name = $project_name) "
+    "OR c.absolute_path = $repo_root OR c.absolute_path STARTS WITH $repo_prefix) "
+    "AND NOT (f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix) "
+    "RETURN DISTINCT f.path AS path, f.absolute_path AS absolute_path"
 )
 # The module names a project records, by file path, for the incremental
 # requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
@@ -1001,6 +1084,19 @@ KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"
+# Isolated check capture rows (issue #1718): the far end of an edge touching
+# the scope carries its own label, key fields and (for the labels the check
+# can prune or re-grade) properties, prefixed so they sit beside the near
+# end's in one row.
+KEY_OUTGOING = "outgoing"
+FAR_END_PREFIX = "far_"
+KEY_FAR_LABEL = FAR_END_PREFIX + KEY_LABEL
+KEY_FAR_PROPS = FAR_END_PREFIX + KEY_PROPS
+CYPHER_PARAM_ABSOLUTE_PATHS = "absolute_paths"
+CYPHER_PARAM_KEEP = "keep"
+# The isolated check's created shared nodes, as parallel label / name lists.
+CYPHER_PARAM_LABELS = "labels"
+CYPHER_PARAM_QUALIFIED_NAMES = "qualified_names"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
 
@@ -1035,6 +1131,7 @@ KEY_MOVED_FROM = "moved_from"
 # off `target_qn`; a note written before this property existed falls back to
 # the longest registered project name that prefixes its `target_qn`.
 KEY_PROJECT = "project"
+KEY_PROJECT_NAMES = "project_names"
 KEY_CANDIDATE_QNS = "candidate_qns"
 KEY_HASHES = "hashes"
 # Prefix on every anchor hash. A Gloss written before this format existed
