@@ -161,16 +161,22 @@ class AstGrepService:
                     return results
         return results
 
-    def _interpolate(self, rewrite: str, match: SgNode) -> str:
-        # $$$NAME -> joined text of the multi-capture, $NAME -> the single
-        # capture. Unknown metavars are left literal. ponytail: multi-capture
-        # joins matched node texts, so inter-token spacing can normalise
-        # (e.g. "a, b" -> "a,b"); upgrade to a source-span slice only if
-        # exact whitespace fidelity is ever required.
+    def _interpolate(self, rewrite: str, match: SgNode, source: str) -> str:
+        # $$$NAME -> the source from the first captured node to the last,
+        # $NAME -> the single capture. Unknown single metavars are left
+        # literal. The captured nodes are the statements or arguments only:
+        # joining their texts dropped the newline between two statements,
+        # which broke a JS body without semicolons, and the space after each
+        # comma (issue #2669).
         def _sub(m: re.Match[str]) -> str:
             multi, single = m.group(1), m.group(2)
             if multi is not None:
-                return "".join(n.text() for n in match.get_multiple_matches(multi))
+                nodes = match.get_multiple_matches(multi)
+                if not nodes:
+                    return ""
+                return source[
+                    nodes[0].range().start.index : nodes[-1].range().end.index
+                ]
             node = match.get_match(single) if single is not None else None
             return node.text() if node is not None else m.group(0)
 
@@ -192,7 +198,7 @@ class AstGrepService:
             matches = self._find_all(root, pattern)
             if not matches:
                 continue
-            edits = [m.replace(self._interpolate(rewrite, m)) for m in matches]
+            edits = [m.replace(self._interpolate(rewrite, m, source)) for m in matches]
             new_source = root.commit_edits(edits)
             if new_source == source:
                 continue
