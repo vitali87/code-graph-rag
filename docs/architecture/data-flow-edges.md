@@ -258,6 +258,13 @@ Within a function body, taint moves and disappears by these rules:
 - **Copy.** `b = a` copies `a`'s taint (and its origin resource) to `b`.
 - **Rebind to a new source.** `x = os.getenv("B")` after `x = os.getenv("A")`
   makes `x` carry `ENV::B`; the discarded `ENV::A` no longer flows from `x`.
+- **Unpack and walrus.** In Python, every name an assignment binds takes the
+  taint of what it is bound to. `user, pw = getenv("U"), getenv("P")` pairs
+  by position, so `pw` carries `ENV::P` and not `ENV::U`. `first, *rest = ...`
+  gives `rest` the union of the leftover elements. Unpacking a value that is
+  not a literal sequence (`a, b = pair`) gives every name the whole value's
+  taint. Every target of `a = b = value` is bound, and a walrus
+  (`if (tok := getenv("K")):`) binds `tok` for the code the condition guards.
 - **Kill.** Assigning a tainted variable to something clean removes its taint:
   `x = "safe"` or `x = <untainted variable>` means `x` is no longer tracked, so
   a later `print(x)` produces **no** resource flow. The `READS_FROM` /

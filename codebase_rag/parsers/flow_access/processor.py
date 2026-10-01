@@ -333,6 +333,51 @@ def _return_value_nodes(return_node: Node) -> list[Node]:
     return out
 
 
+def _py_unpacked_names(target: Node) -> list[str]:
+    # Every name a tuple/list target binds, through nesting and `*rest`.
+    if target.type == cs.TS_PY_IDENTIFIER and target.text is not None:
+        return [target.text.decode(cs.ENCODING_UTF8)]
+    if (
+        target.type in cs.PY_UNPACKING_TARGET_TYPES
+        or target.type == cs.TS_PY_LIST_SPLAT_PATTERN
+    ):
+        return [name for c in target.named_children for name in _py_unpacked_names(c)]
+    return []
+
+
+def _py_unpacking_pairs(
+    target: Node, value: Node
+) -> list[tuple[Node, list[Node]]] | None:
+    # Each sub-target of a tuple/list target with the value elements it
+    # receives: one element, or a starred target's leftovers. None when the
+    # value is not a literal sequence whose elements can be counted (a name,
+    # a call, a `*xs` element), or the counts cannot match.
+    if value.type not in cs.PY_UNPACKING_VALUE_TYPES:
+        return None
+    elements = [c for c in value.named_children if c.type != cs.TS_COMMENT]
+    if any(e.type == cs.TS_PY_LIST_SPLAT for e in elements):
+        return None
+    targets = [c for c in target.named_children if c.type != cs.TS_COMMENT]
+    stars = [i for i, t in enumerate(targets) if t.type == cs.TS_PY_LIST_SPLAT_PATTERN]
+    if not stars:
+        if len(targets) != len(elements):
+            return None
+        return [(t, [e]) for t, e in zip(targets, elements, strict=True)]
+    star = stars[0]
+    after = len(targets) - star - 1
+    if len(stars) > 1 or len(elements) < star + after:
+        return None
+    rest_end = len(elements) - after
+    return (
+        [(t, [e]) for t, e in zip(targets[:star], elements[:star], strict=True)]
+        + [(targets[star], elements[star:rest_end])]
+        + [
+            (t, [e])
+            for t, e in zip(targets[star + 1 :], elements[rest_end:], strict=True)
+        ]
+    )
+
+
 class _FlowCtx(NamedTuple):
     # Per-caller constants threaded through the source-ordered walk.
     caller_spec: tuple[str, str, str]
@@ -3483,6 +3528,8 @@ class FlowProcessor:
             return self._walk_py_match(node, state, ctx)
         if node_type == cs.TS_PY_ASSIGNMENT:
             self._apply_assignment(node, state, ctx)
+        elif node_type == cs.TS_PY_NAMED_EXPRESSION:
+            self._apply_named_expression(node, state, ctx)
         elif node_type == cs.TS_PY_CALL:
             self._apply_call(node, state, ctx)
         elif node_type == cs.TS_PY_RETURN_STATEMENT:
@@ -3649,21 +3696,75 @@ class FlowProcessor:
         # non-identifier target makes the assignment otherwise untrackable
         # (issue #1211 review); direct-call callees are exempt.
         self._note_capture_escapes_in(right)
-        if (
-            left is None
-            or right is None
-            or left.type != cs.TS_PY_IDENTIFIER
-            or left.text is None
-        ):
+        if left is None or right is None:
             return
-        lhs = left.text.decode(cs.ENCODING_UTF8)
-        taint = self._py_value_taint(right, tainted, ctx)
-        if taint is not None:
-            tainted[lhs] = taint
-        else:
-            # Any other RHS (literal, expression, unresolved call) leaves
-            # lhs clean.
-            tainted.pop(lhs, None)
+        # `a = b = value` nests the second assignment as the first one's
+        # value: every target of the chain is bound to the final value. The
+        # inner assignment binds its own target when the walk reaches it.
+        while right.type == cs.TS_PY_ASSIGNMENT:
+            inner = right.child_by_field_name(cs.TS_FIELD_RIGHT)
+            if inner is None:
+                return
+            right = inner
+        # Every element is read before any target is bound (`a, b = b, a`
+        # swaps), so the bindings are computed first, then applied. A name
+        # bound to a value with no taint (a literal, an unresolved call) is
+        # clean from here on.
+        for name, taint in self._py_target_bindings(left, right, tainted, ctx):
+            if taint is not None:
+                tainted[name] = taint
+            else:
+                tainted.pop(name, None)
+
+    def _py_target_bindings(
+        self, target: Node, value: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> list[tuple[str, Taint | None]]:
+        # The names an assignment target binds, each with the taint of the
+        # part of `value` it receives (issue #2754). A tuple or list target
+        # pairs with a literal sequence value by position, and a starred
+        # target takes the union of the elements left over; any other value
+        # (`a, b = pair`) MAY put its taint in any target, so each gets all
+        # of it. An attribute or subscript target binds no name.
+        if target.type == cs.TS_PY_IDENTIFIER and target.text is not None:
+            name = target.text.decode(cs.ENCODING_UTF8)
+            return [(name, self._py_value_taint(value, tainted, ctx))]
+        if target.type not in cs.PY_UNPACKING_TARGET_TYPES:
+            return []
+        pairs = _py_unpacking_pairs(target, value)
+        if pairs is None:
+            taint = self._py_value_taint(value, tainted, ctx)
+            return [(name, taint) for name in _py_unpacked_names(target)]
+        bindings: list[tuple[str, Taint | None]] = []
+        for sub_target, sub_values in pairs:
+            if sub_target.type == cs.TS_PY_LIST_SPLAT_PATTERN:
+                taint = None
+                for element in sub_values:
+                    taint = _merge_optional_taints(
+                        taint, self._py_value_taint(element, tainted, ctx)
+                    )
+                bindings += [(name, taint) for name in _py_unpacked_names(sub_target)]
+            else:
+                bindings += self._py_target_bindings(
+                    sub_target, sub_values[0], tainted, ctx
+                )
+        return bindings
+
+    def _apply_named_expression(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> None:
+        # `(tok := os.getenv("K"))` binds `tok` like `tok = os.getenv("K")`.
+        # The if/while walks visit the condition before the body, so the
+        # binding is in place for the code the condition guards (#2754).
+        name = node.child_by_field_name(cs.TS_FIELD_NAME)
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        self._note_capture_escapes_in(value)
+        if name is None or value is None:
+            return
+        for bound, taint in self._py_target_bindings(name, value, tainted, ctx):
+            if taint is not None:
+                tainted[bound] = taint
+            else:
+                tainted.pop(bound, None)
 
     def _py_value_taint(
         self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
@@ -3682,6 +3783,10 @@ class FlowProcessor:
         if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
             inner = next(iter(node.named_children), None)
             return self._py_value_taint(inner, tainted, ctx) if inner else None
+        if node.type == cs.TS_PY_NAMED_EXPRESSION:
+            # `print(t := secret())`: a walrus evaluates to the value it binds.
+            value = node.child_by_field_name(cs.FIELD_VALUE)
+            return self._py_value_taint(value, tainted, ctx) if value else None
         if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
             # Named children are [consequence, condition, alternative]; the
             # condition never becomes the value.
