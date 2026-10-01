@@ -1241,6 +1241,13 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.DEPENDS_ON_EXTERNAL,
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
+    # A relative link in a Markdown document to a file in the repository
+    # (issue #2394: emitted by the document tier but never documented).
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.LINKS_TO,
+        (NodeLabel.FILE,),
+    ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.CALLS,

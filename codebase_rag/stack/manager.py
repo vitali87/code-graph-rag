@@ -14,6 +14,7 @@ from dotenv import dotenv_values
 from loguru import logger
 
 from .. import constants as root_cs
+from .. import logs as ls
 from ..config import settings
 from ..types_defs import JsonValue
 from . import constants as cs
@@ -24,6 +25,8 @@ from .health import (
     qdrant_accepts_anonymous,
     qdrant_accepts_key,
     qdrant_anonymous_access,
+    qdrant_base_url,
+    qdrant_identifies,
     wait_for_memgraph,
     wait_for_qdrant,
 )
@@ -72,19 +75,20 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
-def _bind_host(project_dir: Path) -> str:
-    """The address the compose file publishes the stack's ports on.
-
-    Resolved as Compose resolves `${CGR_STACK_BIND_HOST:-127.0.0.1}`: its
-    environment first, then the .env file beside the compose file, and the
-    default when the value is empty.
-    """
-    if cs.COMPOSE_BIND_HOST_VAR in os.environ:
-        value = os.environ[cs.COMPOSE_BIND_HOST_VAR]
+def _compose_variable(project_dir: Path, name: str) -> str | None:
+    """A compose-file variable as Compose resolves it: its environment first,
+    then the .env file beside the compose file. Empty reads as unset."""
+    if name in os.environ:
+        value = os.environ[name]
     else:
-        dotenv = project_dir / cs.COMPOSE_DOTENV_FILENAME
-        value = dotenv_values(dotenv).get(cs.COMPOSE_BIND_HOST_VAR)
-    return value or cs.LOOPBACK_HOST
+        value = dotenv_values(project_dir / cs.COMPOSE_DOTENV_FILENAME).get(name)
+    return value or None
+
+
+def _bind_host(project_dir: Path) -> str:
+    """The address the compose file publishes the stack's ports on, resolved
+    as Compose resolves `${CGR_STACK_BIND_HOST:-127.0.0.1}`."""
+    return _compose_variable(project_dir, cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
 
 
 def _bundled_qdrant_probe_host(bind: str) -> str:
@@ -232,6 +236,22 @@ class StackError(RuntimeError):
     pass
 
 
+def _service_images(compose_file: Path) -> dict[str, str]:
+    """Each service's `image` in a compose file; empty if it cannot be read."""
+    try:
+        compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return {}
+    services = compose.get("services") if isinstance(compose, dict) else None
+    if not isinstance(services, dict):
+        return {}
+    return {
+        str(name): image
+        for name, spec in services.items()
+        if isinstance(spec, dict) and isinstance(image := spec.get("image"), str)
+    }
+
+
 @dataclass
 class StackStatus:
     state: cs.StackState
@@ -297,7 +317,38 @@ class StackManager:
             shutil.copyfile(self.package_compose, target)
         else:
             self._warn_if_ports_are_public(target)
+            self._warn_if_images_float(target)
         return target
+
+    def _warn_if_images_float(self, compose_file: Path) -> None:
+        """Flag a rendered file running images the packaged stack now pins.
+
+        The file is rendered once and never overwritten, so an install made
+        before the pins keeps pulling `:latest` (issue #2409). It is the
+        user's file, so this names the pinned images rather than rewriting
+        it; an image the user pinned themselves, to any digest, is theirs.
+        """
+        rendered = _service_images(compose_file)
+        packaged = _service_images(self.package_compose)
+        floating = {
+            service: image
+            for service, image in rendered.items()
+            if cs.IMAGE_DIGEST_MARKER not in image
+            and cs.IMAGE_DIGEST_MARKER in packaged.get(service, "")
+        }
+        if not floating:
+            return
+        logger.warning(
+            cs.WARN_COMPOSE_IMAGES_FLOATING.format(
+                path=compose_file,
+                pins="; ".join(
+                    cs.IMAGE_PIN_PAIR.format(
+                        service=service, floating=image, pinned=packaged[service]
+                    )
+                    for service, image in floating.items()
+                ),
+            )
+        )
 
     @staticmethod
     def _public_port_mappings(compose_file: Path) -> list[str]:
@@ -440,7 +491,9 @@ class StackManager:
         self.qdrant_port = port
         return self.qdrant_api_key != key_before
 
-    def _resolved_config(self) -> dict[str, JsonValue]:
+    def _resolved_config(
+        self, failure: str = cs.ERR_AUTH_NOT_VERIFIED
+    ) -> dict[str, JsonValue]:
         """The project as `docker compose config` resolves it, or StackError.
 
         JSON is asked for first because it is unambiguous; plain `config`,
@@ -448,7 +501,8 @@ class StackManager:
         are read as YAML, a superset of JSON, which also covers a release that
         prints YAML despite the flag. Unchecked credentials could leave the
         stack open or locked to a key the app lacks, so a project neither form
-        can render is not started.
+        can render is not started; `failure` words the error for a caller
+        that is not starting it.
         """
         detail = ""
         for args in cs.COMPOSE_CONFIG_ATTEMPTS:
@@ -470,7 +524,37 @@ class StackManager:
                 continue
             if isinstance(config, dict):
                 return config
-        raise StackError(cs.ERR_AUTH_NOT_VERIFIED.format(detail=detail))
+        raise StackError(failure.format(detail=detail))
+
+    def locate_running_qdrant(self) -> bool:
+        """Point the Qdrant probes at this project's Qdrant; whether it runs.
+
+        Only Docker knows who owns a local port. A compose file proves the
+        stack was set up, not that it runs, and once it stops any other
+        process can answer on its port. So the endpoint comes from Compose's
+        resolved configuration, as for `up`, and `docker compose ps`, as for
+        telling apart the containers a start created, says whether this
+        project's own Qdrant container is running. StackError when Docker or
+        Compose cannot tell, or Compose publishes Qdrant on no fixed port.
+        """
+        if shutil.which(cs.DOCKER_BIN) is None:
+            raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
+        config = self._resolved_config(cs.ERR_COMPOSE_CONFIG_FAILED)
+        target = cs.QDRANT_CONTAINER_HTTP_PORT
+        if _published_port(config, cs.SERVICE_QDRANT, target) is None:
+            raise StackError(
+                cs.ERR_QDRANT_NOT_PUBLISHED.format(
+                    path=self.compose_file, target=target
+                )
+            )
+        self._adopt_published_qdrant(config)
+        running = _container_ids(
+            self._compose_cmd(*cs.COMPOSE_PS_RUNNING_ARGS, cs.SERVICE_QDRANT),
+            self._compose_env(),
+        )
+        if running is None:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED)
+        return bool(running)
 
     def raise_if_auth_not_enforced(self) -> None:
         """Refuse a running stack whose authentication differs from the settings.
@@ -920,3 +1004,47 @@ def daemon_restart() -> StackStatus:
     mgr.restart()
     mgr.wait_healthy()
     return mgr.status()
+
+
+def bundled_qdrant_url(home: Path | None = None) -> str | None:
+    """Where the Qdrant `cgr daemon up` runs, when it takes the app's writes.
+
+    None unless the stack was set up here (its compose file exists), Docker
+    Compose reports this project's Qdrant container running, and what
+    answers where Compose publishes it identifies as Qdrant and takes a
+    data request without a key. The embeddings carry the indexed code, so
+    an endpoint whose owner is not proven gets none of them: with the stack
+    stopped, any process can answer on its port (CWE-200). QDRANT_API_KEY is
+    never offered: it belongs to the server QDRANT_URL names, and the stack
+    only configures its Qdrant with it when QDRANT_URL points there. A Qdrant
+    that refuses anonymous requests is logged and left alone, since every
+    write to it would fail (issue #2355).
+    """
+    manager = StackManager(home=home)
+    if not manager.compose_file.exists():
+        return None
+    path = settings.QDRANT_DB_PATH
+    try:
+        running = manager.locate_running_qdrant()
+    except (StackError, subprocess.TimeoutExpired, OSError) as e:
+        logger.info(ls.QDRANT_BUNDLED_UNVERIFIED.format(detail=e, path=path))
+        return None
+    if not running:
+        logger.info(ls.QDRANT_BUNDLED_NOT_RUNNING.format(path=path))
+        return None
+    host, port = manager.qdrant_host, manager.qdrant_port
+    url = qdrant_base_url(host, port)
+    timeout = cs.BUNDLED_QDRANT_PROBE_TIMEOUT_S
+    match qdrant_anonymous_access(port, timeout=timeout, host=host):
+        case cs.AnonymousAccess.ALLOWED if qdrant_identifies(
+            port, timeout=timeout, host=host
+        ):
+            return url
+        case cs.AnonymousAccess.ALLOWED:
+            logger.warning(ls.QDRANT_BUNDLED_NOT_QDRANT.format(url=url, path=path))
+            return None
+        case cs.AnonymousAccess.REFUSED:
+            logger.warning(ls.QDRANT_BUNDLED_WANTS_KEY.format(url=url, path=path))
+            return None
+        case _:
+            return None

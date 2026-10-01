@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 
@@ -14,6 +15,11 @@ from ..utils.path_utils import (
     cached_resolve_posix,
     should_skip_path,
 )
+
+
+class StructureSummary(NamedTuple):
+    packages: int
+    folders: int
 
 
 class StructureProcessor:
@@ -172,7 +178,7 @@ class StructureProcessor:
 
     def identify_structure(
         self, only: set[str] | None = None, *, emit: bool = True
-    ) -> None:
+    ) -> StructureSummary:
         """Derive every directory's kind, emitting Package and Folder nodes.
 
         `only` restricts BOTH the walk and the emission to the given
@@ -192,16 +198,25 @@ class StructureProcessor:
         the scoped call never named a second container identity, which is the
         same defect `only` exists to prevent arriving from the hydration path
         (issue #1872).
+
+        Returns how many packages and folders it derived, which a full run
+        reports in place of one line per directory (issue #2398).
         """
         directories = self._directories_to_derive(only)
         package_indicators = self.package_indicator_names()
 
+        packages = folders = 0
         for root in sorted(directories):
-            self._derive_one_directory(root, package_indicators, emit=emit)
+            match self._derive_one_directory(root, package_indicators, emit=emit):
+                case cs.NodeLabel.PACKAGE:
+                    packages += 1
+                case cs.NodeLabel.FOLDER:
+                    folders += 1
+        return StructureSummary(packages=packages, folders=folders)
 
     def _derive_one_directory(
         self, root: Path, package_indicators: set[str], *, emit: bool
-    ) -> None:
+    ) -> cs.NodeLabel | None:
         """Record one directory's kind in the map, and emit it when asked.
 
         Split out of `identify_structure` to keep it under the
@@ -222,7 +237,7 @@ class StructureProcessor:
                 [self.project_name] + list(relative_root.parts)
             )
             self.structural_elements[relative_root] = package_qn
-            logger.info(logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn))
+            logger.debug(logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn))
             if emit:
                 self._emit_package(
                     root,
@@ -231,7 +246,7 @@ class StructureProcessor:
                     parent_rel_path,
                     parent_container_qn,
                 )
-            return
+            return cs.NodeLabel.PACKAGE
 
         # Recorded for the ROOT too, which the Folder emission below
         # deliberately skips. Without this the root's stale package qn
@@ -241,10 +256,11 @@ class StructureProcessor:
         # its parent is the Project -- but it still needs an accurate entry.
         self.structural_elements[relative_root] = None
         if root == self.repo_path:
-            return
-        logger.info(logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root))
+            return None
+        logger.debug(logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root))
         if emit:
             self._emit_folder(root, relative_root, parent_rel_path, parent_container_qn)
+        return cs.NodeLabel.FOLDER
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
         relative_filepath = cached_relative_path(file_path, self.repo_path).as_posix()

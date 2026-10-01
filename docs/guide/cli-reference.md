@@ -108,6 +108,23 @@ cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 
 Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
 
+### `cgr stats`
+
+Count the nodes and relationships in the shared graph, by label and type.
+Without options the totals cover every indexed project, followed by one line
+per project when there is more than one.
+
+```bash
+cgr stats [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--project-name`, `-n` | Count only this project: its containment tree, what it defines, and the relationships that start there. Repeatable. |
+| `--workspace` | Count only the projects of workspace NAME. |
+
+A name that is not indexed is an error that lists the projects that are.
+
 ### `cgr dead-code`
 
 Report functions and methods unreachable from any entry point (candidates for
