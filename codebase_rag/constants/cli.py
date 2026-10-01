@@ -567,6 +567,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+MSG_SURGICAL_AMBIGUOUS = (
+    "Failed to apply surgical replacement in {path}: the target code occurs "
+    "{count} times, starting on lines {lines}. The file was not changed; "
+    "include enough surrounding code for the target to match once."
+)
+# An empty or one-character target can match on every line; the refusal
+# names this many of them.
+SURGICAL_MATCH_LINES_SHOWN = 10
+SURGICAL_MORE_LINES = ", ..."
 # Span-preserving patchers (issue #1529).
 PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
 PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"
