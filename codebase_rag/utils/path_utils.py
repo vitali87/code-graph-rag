@@ -20,7 +20,10 @@ def derive_project_name(repo_path: Path) -> str:
     digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[
         : cs.PROJECT_NAME_DIGEST_LEN
     ]
-    base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_")
+    # Strip `-` as well as `_`: a name like `мой-repo` would otherwise start
+    # with `-`, and so would every qualified name under it, which Click then
+    # reads as an option wherever a command takes one (issue #2638).
+    base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_-")
     if not base:
         base = _PROJECT_NAME_FALLBACK_BASE
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
