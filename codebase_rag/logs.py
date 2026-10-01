@@ -119,6 +119,9 @@ EXCLUSION_STATE_MISSING = (
     "unchanged; re-running once to establish it. Expect this exactly once "
     "per existing index."
 )
+EXCLUSION_STATE_FIRST_INDEX = (
+    "First index of this repository; recording its exclusion set"
+)
 EXCLUSION_STATE_NOT_RECORDED = (
     "The graph could not be asked for its module paths, so newly excluded "
     "files may still be indexed; the exclusion set is not recorded and the "
@@ -251,6 +254,7 @@ PROTOBUF_INVALID_REL = (
 )
 PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
 PROTOBUF_FLUSHING = "Flushing data to {path}..."
+PROTOBUF_FLUSH_UNCHANGED = "Nothing new since the last write to {path}; not rewriting"
 
 # Provenance manifest logs
 CODEC_SCHEMA_MISSING = (
@@ -437,6 +441,11 @@ MG_NODES_SKIPPED = (
 )
 MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
 MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
+MG_RELS_FAILED = (
+    "Failed to create {count} of {attempted} ({from_label})-[:{rel_type}]->"
+    "({to_label}) relationships - an endpoint node did not exist when they "
+    "were written"
+)
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )
