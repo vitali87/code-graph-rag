@@ -31,6 +31,7 @@ class Repo:
 """
 
 SERVICE = """import typing
+from collections.abc import Sequence
 from typing import Optional, Union
 from pathlib import Path
 
@@ -90,6 +91,14 @@ class ByQuotedInit:
 
 class Holder:
     repos: list[Repo]
+
+    def lookup(self, k):
+        for r in self.repos:
+            r.find(k)
+
+
+class SeqHolder:
+    repos: "Sequence[Repo]"
 
     def lookup(self, k):
         for r in self.repos:
@@ -195,6 +204,7 @@ def _find_calls(calls: dict[str, dict[str, str]], caller: str) -> dict[str, str]
         "ByQuoted",
         "ByQuotedInit",
         "Holder",
+        "SeqHolder",
     ],
 )
 def test_an_optional_attribute_binds_to_its_own_class(
