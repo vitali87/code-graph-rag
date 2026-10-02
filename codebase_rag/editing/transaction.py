@@ -589,8 +589,17 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
     naming a path outside the repo is rejected whole: the history file is
     data on disk, not a trusted instruction.
     """
+    return list(undo_steps(repo_root, count))
+
+
+def undo_steps(repo_root: Path, count: int = 1) -> Iterator[TransactionOutcome]:
+    """`undo_last`, one outcome at a time.
+
+    A conflict raised by a later step would otherwise lose the outcomes of
+    the steps that already landed, and a caller that must follow the
+    restored files (the graph re-ingest of `cgr edits undo`) needs them.
+    """
     root = repo_root.resolve()
-    outcomes: list[TransactionOutcome] = []
     for _ in range(count):
         # The history read, the reversal and the truncation share one lock
         # window: a commit landing in between would otherwise be dropped
@@ -598,11 +607,10 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
         with _repo_lock(root):
             outcome = _undo_newest(root)
         if outcome is None:
-            break
-        outcomes.append(outcome)
+            return
+        yield outcome
         if not outcome.applied and outcome.message != cs.EDIT_NOTHING_STAGED:
-            break
-    return outcomes
+            return
 
 
 def undo_transaction(repo_root: Path, transaction_id: str) -> TransactionOutcome:
