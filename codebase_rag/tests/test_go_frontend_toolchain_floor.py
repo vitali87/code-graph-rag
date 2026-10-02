@@ -112,9 +112,10 @@ def test_the_helper_asks_for_no_newer_go_than_the_floor() -> None:
 
 
 def test_the_helper_asks_for_a_go_with_the_stdlib_fixes() -> None:
-    # The CI vulnerability scan reads the `go` line as the stdlib the helper
-    # links, and a floor below these fixes let the helper build against a
-    # go/parser with the known stack-exhaustion bug (review of PR 2417).
+    # The helper links the stdlib of whichever Go builds it, so a floor below
+    # these fixes lets it build against a go/parser with the known
+    # stack-exhaustion bug (review of PR 2417). This test is the only check:
+    # since osv-scanner 2.4.0 the CI scan skips the stdlib version in go.mod.
     directive = _directive("go")
     assert directive is not None
     assert _version(directive) >= SUPPORTED_FLOOR
