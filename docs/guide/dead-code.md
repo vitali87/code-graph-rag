@@ -132,6 +132,17 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
 
+Annotated Java methods count as decorated handlers too. A method carrying a
+container or runtime annotation is a root even when it is package-private, as
+a C# method with `[HttpGet]` or `[Fact]` is. That covers:
+
+- `@PostConstruct` and `@PreDestroy`;
+- Spring's `@Bean`, `@Scheduled`, `@EventListener`, `@ExceptionHandler` and the
+  `@...Mapping` request mappings;
+- the Kafka, Rabbit, JMS and SQS `@...Listener` annotations;
+- JAX-RS resource methods;
+- JPA entity callbacks such as `@PrePersist`.
+
 First-class functions matter for accuracy: a callback stored in an object, an
 inline arrow handed to `useMutation`/`.forEach`/`new Promise`, or a function
 passed as an argument is recorded as a `REFERENCES` edge so it stays reachable

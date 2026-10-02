@@ -403,6 +403,16 @@ def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
     )
 
 
+def _is_java_annotation_root(props: PropertyDict, path: str) -> bool:
+    # A Java method carrying a container/runtime annotation (@PostConstruct,
+    # @Scheduled, @EventListener, @Bean, @GetMapping) is invoked reflectively,
+    # never by a call the graph sees, so it is a reachability root. Gated to
+    # .java so a Python `@bean` keeps its own meaning.
+    return path.endswith(cs.EXT_JAVA) and _has_root_decorator(
+        props, cs.JAVA_ROOT_ANNOTATIONS
+    )
+
+
 def _is_csharp_attribute_root(props: PropertyDict, path: str) -> bool:
     # A C# method carrying a framework/runtime attribute ([Fact], [HttpGet],
     # [OnDeserialized]) is invoked reflectively, never by a call the graph sees,
@@ -657,6 +667,7 @@ def _is_root(
             or _is_c_cpp_entry_root(leaf, is_method, path, qn, project_prefix)
         ),
         lambda: _is_java_serialization_root(bare_leaf, is_method, path),
+        lambda: _is_java_annotation_root(props, path),
         lambda: _is_csharp_attribute_root(props, path),
         lambda: _is_csharp_dispose_root(bare_leaf, is_method, path),
         lambda: _is_csharp_operator_or_finalizer_root(leaf, path),
