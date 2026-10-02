@@ -85,7 +85,11 @@ CMD_EDITS_GROUP = CMD_EDITS
 CMD_EDITS_SHOW = (
     "List the last N recorded edit transactions, newest first, with their diffs."
 )
-CMD_EDITS_UNDO = "Reverse the last N recorded edit transactions, newest first; stops at the first file that changed since."
+CMD_EDITS_UNDO = (
+    "Reverse the last N recorded edit transactions, newest first; stops at the "
+    "first file that changed since. The restored files are re-ingested into "
+    "the graph, as the edit's own files were."
+)
 EPILOG_EDITS = "Run 'cgr help edits COMMAND' for command-specific help."
 EXAMPLES_EDITS_SHOW = (
     "Examples:\n  cgr edits show\n  cgr edits show -n 5 --repo-path ~/proj"
@@ -130,8 +134,9 @@ HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
 )
 HELP_CHECK_FAIL_ON_FOUND = (
-    "Exit with status 1 when the delta reports dangling callers, arity "
-    "findings, new duplicates or new import cycles."
+    "Exit with status 1 when the delta reports dangling callers, calls with "
+    "too many arguments, new duplicates or new import cycles. A "
+    "possibly_missing site is reported but does not fail the check."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
@@ -347,6 +352,10 @@ HELP_REPO_PATH_RETRIEVAL = "Repository to open. Defaults to the current director
 HELP_REPO_PATH_INDEX = "Repository to index. Defaults to the current directory."
 HELP_REPO_PATH_OPTIMIZE = "Repository to optimise. Defaults to the current directory."
 HELP_REPO_PATH_WATCH = "Repository to watch."
+HELP_PROJECT_NAME_WATCH = (
+    "Project name to store in the graph. Defaults to the name "
+    "`cgr start --repo-path` gives the same repository, so both update one project."
+)
 HELP_VERSION = "Show the version and exit."
 HELP_QUIET = "Suppress progress, banners, and informational logs."
 
@@ -399,8 +408,12 @@ HELP_EXCLUDE_PATTERNS = (
 )
 HELP_INTERACTIVE_SETUP = "Choose which detected directories remain included."
 HELP_CAPTURE = (
-    "Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE "
-    "override. Repeatable; later values override CGR_CAPTURE."
+    "Capture GROUP (structure, calls, types, imports, io, findings, glosses, "
+    "parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. "
+    "A GROUP is added to the defaults (structure, calls, types, imports); use "
+    "none first to capture only what follows (none,structure) and -GROUP to drop "
+    "one. Repeatable or comma-separated; later values override CGR_CAPTURE. An "
+    "unknown group or type is an error."
 )
 
 HELP_ASK_AGENT = "Ask one question, write the answer to stdout, and exit."

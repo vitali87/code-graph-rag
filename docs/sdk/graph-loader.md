@@ -28,6 +28,13 @@ from cgr import load_graph
 graph = load_graph("my_graph.json")
 ```
 
+The file must be a JSON object with a `nodes` array (each node has `node_id`,
+`labels` and `properties`) and a `relationships` array (each has `from_id`,
+`to_id`, `type` and `properties`), the shape `cgr export` writes. `metadata` is
+optional: a hand-built or filtered graph without it loads, and its summary
+reports `exported_at` as `unknown`. A file of any other shape raises
+`GraphFileFormatError` (a `ValueError`) naming what is missing.
+
 ### Summary Statistics
 
 ```python

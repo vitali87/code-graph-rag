@@ -32,7 +32,7 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import exceptions as ex
 from . import logs as ls
-from .capture import CaptureSelection, resolve_capture, split_spec
+from .capture import CaptureSelection, resolve_capture, split_spec, unknown_tokens
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -507,7 +507,25 @@ def _maybe_start_stack() -> None:
 def _capture_selection(capture: list[str] | None) -> CaptureSelection:
     # Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
     # a single run can override it (later tokens win in the resolver).
-    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+    return resolve_capture(
+        [*split_spec(settings.CGR_CAPTURE), *_capture_tokens(capture)]
+    )
+
+
+def _capture_tokens(capture: list[str] | None) -> list[str]:
+    # A flag value splits like CGR_CAPTURE, so `--capture none,structure` works.
+    return [token for value in capture or [] for token in split_spec(value)]
+
+
+def _known_capture(capture: list[str] | None) -> list[str] | None:
+    if unknown := unknown_tokens(_capture_tokens(capture)):
+        raise typer.BadParameter(
+            cs.CLI_ERR_CAPTURE_UNKNOWN.format(
+                tokens=cs.SEPARATOR_COMMA_SPACE.join(unknown),
+                groups=cs.SEPARATOR_COMMA_SPACE.join(g.value for g in cs.CaptureGroup),
+            )
+        )
+    return capture
 
 
 def _stdin_is_interactive() -> bool:
@@ -854,6 +872,7 @@ def start(
         None,
         "--capture",
         help=ch.HELP_CAPTURE,
+        callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -1013,6 +1032,7 @@ def index(
         None,
         "--capture",
         help=ch.HELP_CAPTURE,
+        callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -1815,6 +1835,19 @@ def stats(
             + (workspace_config.project_names() if workspace_config else [])
         )
     )
+    # An empty list is what "no scope" looks like to the queries below, so a
+    # scope that was asked for and came out empty would report the whole
+    # shared graph as if it were that scope's (review of PR 2436).
+    if not requested and (project_name or workspace_config is not None):
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
+                if workspace_config is not None
+                else cs.CLI_ERR_STATS_EMPTY_PROJECT_NAME,
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
@@ -1943,6 +1976,8 @@ def _dead_code_config(
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
 ) -> DeadCodeConfig:
+    from .dead_code import normalize_decorator_root
+
     # test_patterns is always set: included tests become roots; excluded, it
     # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
@@ -1950,7 +1985,7 @@ def _dead_code_config(
         include_classes=include_classes,
         root_decorators=frozenset(
             {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
-            | {d.lower() for d in decorator_roots}
+            | {normalize_decorator_root(d) for d in decorator_roots}
         ),
         entry_points=tuple(entry_points),
         test_patterns=tuple(cs.TEST_PATH_PATTERNS),
@@ -2270,15 +2305,24 @@ def _build_duplicates_table(
     table.add_column(
         cs.CLI_DUPLICATES_COL_SIMILARITY, style=cs.Color.YELLOW, justify="right"
     )
-    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN)
-    table.add_column(cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW)
+    # Folded, not ellipsised: a qualified name or path has no space to wrap
+    # at, so at pipe width every cell ended in "…" and never named the
+    # function (issue #2397).
+    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN, overflow="fold")
+    table.add_column(
+        cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW, overflow="fold"
+    )
+    # The title names the project, so each member drops that prefix: at pipe
+    # width the column otherwise showed nothing else (issue #2397). Only the
+    # dotted prefix goes, so `projx.mod` under `proj` keeps its name.
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     for number, group in enumerate(groups, start=1):
         for at, member in enumerate(group["members"]):
             table.add_row(
                 _duplicates_group_cell(number, group, root_path) if at == 0 else "",
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
-                member["qualified_name"],
+                member["qualified_name"].removeprefix(prefix),
                 _duplicates_location_cell(member, root_path),
             )
         table.add_section()

@@ -76,6 +76,10 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_CAPTURE_UNKNOWN = (
+    "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
+    "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
+)
 CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
 CLI_ERR_STARTUP = "Startup Error: {error}"
 CLI_ERR_CONFIG = "Configuration Error: {error}"
@@ -195,6 +199,15 @@ CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
 CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+CLI_ERR_STATS_EMPTY_WORKSPACE = (
+    "Workspace '{name}' has no repositories, so there is nothing to count. Add "
+    "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
+    "count every project."
+)
+CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
+    "--project-name was given without a project name. Name a project, or leave "
+    "out -n to count every project."
+)
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
@@ -643,6 +656,20 @@ EDIT_APPLIED = "Applied {count} file(s)"
 EDIT_UNDO_NONE = "No recorded edit transactions to undo"
 EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
 EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
+# The undo follows the restored files into the graph (issue #2515).
+EDIT_UNDO_GRAPH_SYNCED = (
+    "Re-ingested {count} restored file(s) into the graph ({project})"
+)
+EDIT_UNDO_GRAPH_NOT_INDEXED = (
+    "No graph to update: project {project} is not indexed "
+    "(pass --project if the edit was made under another name)"
+)
+EDIT_UNDO_GRAPH_STALE = (
+    "The files are restored but the graph was not updated ({error}); it still "
+    "describes the undone edit. Run '{command}' to bring it in line."
+)
+EDIT_UNDO_RESYNC_COMMAND = "cgr start --repo-path {repo} --update-graph"
+EDIT_UNDO_RESYNC_PROJECT = " --project-name {project}"
 EDIT_SHOW_NONE = "No recorded edit transactions"
 EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 # Rename (issue #1532).
