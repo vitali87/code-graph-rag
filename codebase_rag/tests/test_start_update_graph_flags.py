@@ -160,11 +160,15 @@ def test_the_options_the_sync_honours_still_reach_it(
 
     assert code == 0, output
     kwargs = start.sync.call_args.kwargs
-    assert kwargs["clean"] is True and kwargs["assume_yes"] is True
+    assert kwargs["clean"] is True
+    assert kwargs["assume_yes"] is True
     assert kwargs["output"] == str(out)
-    assert kwargs["project_name"] == "tsmove" and kwargs["project_named"] is True
-    assert kwargs["exclude"] == ["vendor"] and kwargs["capture"] == ["calls"]
-    assert kwargs["skip_embeddings"] is True and kwargs["batch_size"] == 7
+    assert kwargs["project_name"] == "tsmove"
+    assert kwargs["project_named"] is True
+    assert kwargs["exclude"] == ["vendor"]
+    assert kwargs["capture"] == ["calls"]
+    assert kwargs["skip_embeddings"] is True
+    assert kwargs["batch_size"] == 7
 
 
 def test_ask_agent_without_update_graph_syncs_then_asks(
