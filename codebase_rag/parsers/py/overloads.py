@@ -100,10 +100,15 @@ def _overload_stubs(root: Node) -> frozenset[int]:
                 stubs.add(statement.start_byte)
             if statement.type in cs.PY_STATEMENT_CONTAINERS:
                 pending.extend((inner, dict(bound)) for inner in _blocks_in(statement))
-            for name, spelling in _bindings(statement):
-                if name is not None and name in roots:
-                    bound[name] = spelling
+            _rebind(statement, roots, bound)
     return frozenset(stubs)
+
+
+def _rebind(statement: Node, roots: set[str], bound: dict[str, str]) -> None:
+    # Record what each overload-relevant root name means after `statement`.
+    for name, spelling in _bindings(statement):
+        if name is not None and name in roots:
+            bound[name] = spelling
 
 
 def _bindings(statement: Node) -> Iterator[tuple[str | None, str]]:

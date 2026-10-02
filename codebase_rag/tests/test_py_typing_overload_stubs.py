@@ -333,7 +333,8 @@ def test_rename_rewrites_every_stub_with_the_implementation(
     )
     assert report.applied, report.message
     assert report.ambiguous == ()
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None, report.verdict
+    assert report.verdict.ok, report.verdict
     util = (root / "pkg" / "util.py").read_text(encoding="utf-8")
     # Both stubs and the implementation, never the unrelated method.
     assert util.count("def cmd(") == 3, util
@@ -561,7 +562,8 @@ def test_indexing_and_rename_read_the_same_binding(text: str, stubs: int) -> Non
     root = _parse(text)
     line = _line_of(text, "def command(name=None):") - 1
     token = root.descendant_for_point_range((line, 4), (line, 4))
-    assert token is not None and token.parent is not None
+    assert token is not None
+    assert token.parent is not None
     names = overload_stub_names(token.parent, root)
     assert len(folded_overload_stubs(root)) == stubs
     assert [name.start_point[0] for name in names] == [
