@@ -466,6 +466,16 @@ MCP_PARAM_PROJECT = (
     "Optional. Restrict results to one indexed project; use list_projects for "
     "the available names. Omit to search every project."
 )
+# The tools that read one project and default to the server's own (issue
+# #2757): the graph tools, rename and find_duplicate_code. `{default}` is the
+# project an omitted argument means, so an empty answer is not read as a
+# graph-wide one.
+MCP_PARAM_PROJECT_DEFAULT = (
+    "Optional. The indexed project to read; use list_projects for the "
+    "available names. Omitted, it is {default}, not every project."
+)
+MCP_PROJECT_DEFAULT_SERVER = "this server's own project ({project})"
+MCP_PROJECT_DEFAULT_WORKSPACE = "the workspace's default project"
 MCP_PARAM_SOURCE_QN = "Qualified name of the flow source (function/method)"
 MCP_PARAM_SINK_QN = "Qualified name of the flow sink (function/method)"
 
