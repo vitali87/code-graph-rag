@@ -199,6 +199,15 @@ CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
 CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+CLI_ERR_STATS_EMPTY_WORKSPACE = (
+    "Workspace '{name}' has no repositories, so there is nothing to count. Add "
+    "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
+    "count every project."
+)
+CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
+    "--project-name was given without a project name. Name a project, or leave "
+    "out -n to count every project."
+)
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
