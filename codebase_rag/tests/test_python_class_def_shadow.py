@@ -250,6 +250,15 @@ def _edges_from(mock: MagicMock, caller_qn: str) -> set[_Edge]:
     return out
 
 
+def _references_from(mock: MagicMock, source_qn: str) -> set[tuple[str, str]]:
+    return {
+        (str(c.args[2][0]), str(c.args[2][2]))
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == cs.RelationshipType.REFERENCES
+        and c.args[0][2] == source_qn
+    }
+
+
 class TestClassBeforeSameNamedDef:
     def test_class_keeps_plain_name_and_later_def_is_suffixed(
         self, temp_repo: Path, mock_ingestor: MagicMock
@@ -281,6 +290,17 @@ class TestClassBeforeSameNamedDef:
             f"{m}.Tool{cs.DUP_QN_MARKER}12",
             overload,
         ) in edges
+
+    def test_value_reference_passes_on_the_shim(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `_orig = Tool` hands the name on as a value: the __init__-less
+        # class has no callable target, the shim does, and nothing may name
+        # the class under the shim's label (a dangling edge).
+        m = _index(temp_repo, mock_ingestor, ISSUE_SRC)
+        assert _references_from(mock_ingestor, m) == {
+            (cs.NodeLabel.FUNCTION, f"{m}.Tool{cs.DUP_QN_MARKER}12")
+        }
 
     def test_method_on_constructed_instance_resolves_through_class(
         self, temp_repo: Path, mock_ingestor: MagicMock
@@ -408,12 +428,9 @@ class TestDefBeforeSameNamedClass:
         # `alias = Tool` passes the name on as a value: the def takes the
         # REFERENCES edge, and the __init__-less class twin none. Written
         # under the def's label it named no node (a dangling edge).
-        references = {
-            (str(c.args[2][0]), str(c.args[2][2]))
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if str(c.args[1]) == cs.RelationshipType.REFERENCES and c.args[0][2] == m
+        assert _references_from(mock_ingestor, m) == {
+            (cs.NodeLabel.FUNCTION, f"{m}.Tool")
         }
-        assert references == {(cs.NodeLabel.FUNCTION, f"{m}.Tool")}
 
     def test_conditional_def_above_class_types_through_class(
         self, temp_repo: Path, mock_ingestor: MagicMock

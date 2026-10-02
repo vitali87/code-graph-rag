@@ -7407,6 +7407,22 @@ class CallProcessor:
         res_type, res_qn = resolved
         registry = self._resolver.function_registry
         if res_type == cs.NodeLabel.CLASS:
+            if any(
+                registry.get(variant) in (NodeType.FUNCTION, NodeType.METHOD)
+                for variant in registry.variants(res_qn)
+            ):
+                # A same-named def is passed on with the class (issue
+                # #2621); the fan-out gives each variant its own target.
+                self._emit_callback_targets(
+                    source_spec,
+                    res_type,
+                    res_qn,
+                    rel_type,
+                    ensure_rel,
+                    module_qn,
+                    language,
+                )
+                return
             init_qn = f"{res_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
             if init_qn not in registry:
                 return
