@@ -215,7 +215,7 @@ class TestBuildBinaryCommand:
         result = subprocess.run(
             [sys.executable, "-c", script, str(tmp_path / "x.lock")],
             capture_output=True,
-            text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
         )
 
