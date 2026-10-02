@@ -8,6 +8,7 @@ from .storage import (
     load_workspace,
     remove_repo,
     save_workspace,
+    validate_workspace_name,
     workspace_path,
     workspaces_dir,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "load_workspace",
     "remove_repo",
     "save_workspace",
+    "validate_workspace_name",
     "workspace_path",
     "workspaces_dir",
 ]
