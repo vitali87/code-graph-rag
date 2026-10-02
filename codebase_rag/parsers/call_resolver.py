@@ -1975,6 +1975,34 @@ class CallResolver:
             return False
         return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
 
+    def js_member_head_is_external(self, member_name: str, module_qn: str) -> bool:
+        """Whether a dotted JS/TS name's head is imported from a package.
+
+        `<Prim.Item>` under `import * as Prim from "@radix-ui/react-accordion"`
+        (or a default, named or `require` binding of a package) names a member
+        of that package, which the project never indexes, so its last segment
+        is no licence to bind a same-named first-party symbol (issue #2535).
+        First-party imports are written project-rooted (relative, tsconfig
+        alias and workspace specifiers all are). An aliased-scheme import
+        (deno `ext:`) stands for first-party code, and a target the registry
+        holds under the project prefix is a bare first-party path, so neither
+        counts as external: both keep today's resolution.
+        """
+        head, sep, _member = member_name.partition(cs.SEPARATOR_DOT)
+        if not sep:
+            return False
+        target = self.import_processor.import_mapping.get(module_qn, {}).get(head)
+        if not target:
+            return False
+        bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
+        if bare_imports and head in bare_imports:
+            return False
+        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
+        if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
+            return False
+        prefixed = f"{project_root}{cs.SEPARATOR_DOT}{target}"
+        return not self.function_registry.find_with_prefix(prefixed)
+
     def _two_part_receiver_type(
         self, call_name: str, local_var_types: dict[str, str] | None
     ) -> str | None:
