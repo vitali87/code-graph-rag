@@ -425,12 +425,13 @@ class TestEverySyncRecordsItsTime:
         _updater(repo, store).run()
         completed = _stamp(store, "proj")
         (repo / "more.py").write_text("def other():\n    return 2\n", encoding="utf-8")
+        failing = _updater(repo, store)
 
         with patch.object(
             GraphUpdater, "_process_function_calls", side_effect=RuntimeError("boom")
         ):
             with pytest.raises(RuntimeError, match="boom"):
-                _updater(repo, store).run()
+                failing.run()
 
         assert _stamp(store, "proj") == completed
 

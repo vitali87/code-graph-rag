@@ -1692,6 +1692,11 @@ def status_command() -> None:
         app_context.console.print(_sync_row(sync))
 
 
+def _stamp_text(stamp: ResultValue | None) -> str | None:
+    """A recorded sync time as `cgr status` prints it; None when never stamped."""
+    return str(stamp) if stamp else None
+
+
 def _project_syncs() -> list[ProjectSync] | None:
     """Every project the connected graph holds, with its last sync (#2444).
 
@@ -1717,7 +1722,7 @@ def _project_syncs() -> list[ProjectSync] | None:
     return [
         ProjectSync(
             name=name,
-            last_synced_at=str(stamp) if (stamp := synced_at.get(name)) else None,
+            last_synced_at=_stamp_text(synced_at.get(name)),
             interrupted=name in interrupted,
         )
         for name in sorted(synced_at.keys() | interrupted)

@@ -107,9 +107,10 @@ def test_an_interrupted_embeddings_pass_still_records_the_sync_time(
 ) -> None:
     # The run committed, so `cgr status` must show it like any finished sync.
     _interrupt_embeddings_query(mock_ingestor)
+    updater = _updater(py_project, mock_ingestor)
 
     with pytest.raises(KeyboardInterrupt):
-        _updater(py_project, mock_ingestor).run()
+        updater.run()
 
     assert _recorded_sync(mock_ingestor)
 
