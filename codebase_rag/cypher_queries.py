@@ -195,6 +195,20 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
+# Retires a project whose checkout was just re-indexed under another name
+# (issue #2412). Both projects index the same files, so they share every
+# Folder and File node (keyed on absolute path), and the walk above would
+# cross those into the new project's modules. Only containers carrying the
+# old project's qualified-name prefix go, with what they define; the shared
+# Folder and File nodes stay with the project that still contains them.
+CYPHER_RETIRE_PROJECT = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+WHERE container.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+DETACH DELETE p, container, defined
+"""
+
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a
 # single-hop signature: the topmost merged node has containment parents in

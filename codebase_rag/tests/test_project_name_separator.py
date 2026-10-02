@@ -11,6 +11,7 @@ and DEFINING functions from both. The default name was sanitised; an explicit
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -20,10 +21,13 @@ from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
+from codebase_rag import logs as ls
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import indexed_scope
+from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name, project_name_error
 from codebase_rag.workspaces import (
     WorkspaceError,
@@ -32,6 +36,7 @@ from codebase_rag.workspaces import (
     load_workspace,
 )
 from codebase_rag.workspaces.models import WorkspaceRepo
+from evals import cgr_graph
 from evals.cgr_graph import _StatefulIngestor
 
 runner = CliRunner()
@@ -275,16 +280,44 @@ def test_a_plain_directory_keeps_its_name_as_the_default(tmp_path: Path) -> None
     assert (cs.NodeLabel.PROJECT, "billing") in store.nodes
 
 
+def _module_qns(store: _StatefulIngestor) -> set[str]:
+    return {
+        str(uid) for label, uid in store.nodes if label == cs.NodeLabel.MODULE.value
+    }
+
+
 class _Retiring(_StatefulIngestor):
-    """Records the projects a run deletes."""
+    """Records the projects a run retires, and the modules present then."""
 
     def __init__(self) -> None:
         super().__init__()
         self.deleted: list[str] = []
+        self.calls: list[str] = []
+        self.modules_at_retirement: set[str] = set()
+
+    def _record(self, project_name: str) -> None:
+        self.deleted.append(project_name)
+        self.calls.append("graph")
+        self.modules_at_retirement = _module_qns(self)
+
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        if query == cq.CYPHER_RETIRE_PROJECT and params is not None:
+            self._record(str(params[cs.KEY_PROJECT_NAME]))
+        super().execute_write(query, params)
 
     def delete_project(self, project_name: str) -> None:
-        self.deleted.append(project_name)
-        self.nodes.pop((cs.NodeLabel.PROJECT, project_name), None)
+        # What CYPHER_DELETE_PROJECT deletes: everything its containment walk
+        # reaches. Kept so a retirement through it is caught by the tests
+        # below; the walk crosses the Folder nodes two projects of one
+        # checkout share.
+        self._record(project_name)
+        project = (cs.NodeLabel.PROJECT.value, project_name)
+        doomed = {project} | self._reachable(
+            project, cgr_graph._PROJECT_CONTAINMENT_RELS
+        )
+        for node in set(doomed):
+            doomed |= self._reachable(node, cgr_graph._PROJECT_DEFINED_RELS)
+        self._detach_delete(doomed)
 
 
 def _legacy_project(store: _StatefulIngestor, name: str, root: Path | None) -> None:
@@ -364,6 +397,209 @@ def test_a_named_run_never_retires_a_project(dotted_checkout: Path) -> None:
     _index(dotted_checkout, store, "frontend")
 
     assert store.deleted == []
+
+
+def _with_folder(root: Path) -> Path:
+    # A plain directory is a Folder keyed on its absolute path, so the old
+    # project and the new one of this checkout share it.
+    (root / "app").mkdir()
+    (root / "app" / "routes.py").write_text("def list_pages():\n    return []\n")
+    return root
+
+
+def test_the_new_projects_nodes_exist_before_the_old_project_goes(
+    dotted_checkout: Path,
+) -> None:
+    # CodeRabbit on PR 2497: the old project was deleted before indexing, and
+    # a parse or flush failure after that left neither project whole.
+    store = _Retiring()
+    _index(_with_folder(dotted_checkout), store, "acme.web")
+    new = derive_project_name(dotted_checkout)
+
+    _index(dotted_checkout, store, None)
+
+    assert store.deleted == ["acme.web"]
+    assert {f"{new}.views", f"{new}.app.routes"} <= store.modules_at_retirement
+
+
+def test_retiring_the_old_project_keeps_every_node_of_the_new_one(
+    dotted_checkout: Path,
+) -> None:
+    # The two projects share the checkout's Folder nodes; a delete that
+    # walked through them would take the new project's modules with it.
+    store = _Retiring()
+    _index(_with_folder(dotted_checkout), store, "acme.web")
+    new = derive_project_name(dotted_checkout)
+
+    _index(dotted_checkout, store, None)
+
+    assert _module_qns(store) == {f"{new}.views", f"{new}.app.routes"}
+    assert _defined_by(store, f"{new}.app.routes") == {f"{new}.app.routes.list_pages"}
+    assert (cs.NodeLabel.PROJECT, "acme.web") not in store.nodes
+    folder = (dotted_checkout / "app").resolve().as_posix()
+    assert (cs.NodeLabel.FOLDER.value, folder) in store.nodes
+
+
+class _FailingFlush(_Retiring):
+    def flush_all(self) -> None:
+        raise RuntimeError("flush failed")
+
+
+def test_a_failed_sync_keeps_the_old_project(dotted_checkout: Path) -> None:
+    # CodeRabbit on PR 2497: the old project goes only once its replacement
+    # is written.
+    store = _FailingFlush()
+    _legacy_project(store, "acme.web", dotted_checkout)
+
+    with pytest.raises(RuntimeError, match="flush failed"):
+        _index(dotted_checkout, store, None)
+
+    assert store.deleted == []
+    assert (cs.NodeLabel.PROJECT, "acme.web") in store.nodes
+
+
+def test_an_in_sync_run_retires_an_old_project_left_behind(
+    dotted_checkout: Path,
+) -> None:
+    # The replacement is already whole, so a sync with nothing to do still
+    # finishes the move.
+    store = _Retiring()
+    parsers, queries = load_parsers()
+    GraphUpdater(store, dotted_checkout, parsers, queries).run()
+    _legacy_project(store, "acme.web", dotted_checkout)
+
+    updater = GraphUpdater(store, dotted_checkout, parsers, queries)
+    updater.run()
+
+    assert updater.skipped_because_in_sync
+    assert store.deleted == ["acme.web"]
+
+
+class _WithVectors(_Retiring):
+    """Answers the read of a project's vector ids, which the double lacks."""
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
+            assert params == {cs.KEY_PROJECT_NAME: "acme.web"}
+            return [{cs.KEY_NODE_ID: 7}, {cs.KEY_NODE_ID: 9}]
+        return super().fetch_all(query, params)
+
+
+def test_the_old_projects_vectors_go_before_its_nodes(dotted_checkout: Path) -> None:
+    # CodeRabbit on PR 2497: vectors are keyed by node id, and a deleted
+    # project's stale ones crowd out live results.
+    store = _WithVectors()
+    _legacy_project(store, "acme.web", dotted_checkout)
+
+    def delete_vectors(project: str, node_ids: list[int]) -> None:
+        store.calls.append(f"vectors {project} {node_ids}")
+
+    with patch(
+        "codebase_rag.vector_store.delete_project_embeddings",
+        side_effect=delete_vectors,
+    ):
+        _index(dotted_checkout, store, None)
+
+    assert store.calls == ["vectors acme.web [7, 9]", "graph"]
+
+
+class _UnreadableVectors(_Retiring):
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
+            raise RuntimeError("graph read failed")
+        return super().fetch_all(query, params)
+
+
+def test_an_unreadable_vector_list_keeps_the_old_project(
+    dotted_checkout: Path,
+) -> None:
+    # Negative: without the ids its vectors could never be found again, so
+    # the project stays for the next sync and the sync itself succeeds.
+    store = _UnreadableVectors()
+    _legacy_project(store, "acme.web", dotted_checkout)
+    records: list[str] = []
+    sink = logger.add(records.append, level="WARNING", format="{message}")
+    try:
+        _index(dotted_checkout, store, None)
+    finally:
+        logger.remove(sink)
+
+    assert store.deleted == []
+    assert (cs.NodeLabel.PROJECT, "acme.web") in store.nodes
+    assert any("acme.web" in r and "graph read failed" in r for r in records)
+
+
+def _shared_module_graph(tmp_path: Path, store: _StatefulIngestor) -> Path:
+    # Projects `acme.web` (package `api`) and `acme.web.api`, both from before
+    # #2412, wrote one Module `acme.web.api.views`.
+    web = tmp_path / "acme.web"
+    (web / "api").mkdir(parents=True)
+    (web / "api" / "__init__.py").write_text("")
+    (web / "api" / "views.py").write_text("def web_view():\n    return 1\n")
+    api = tmp_path / "acme.web.api"
+    api.mkdir()
+    (api / "views.py").write_text("def api_view():\n    return 2\n")
+    _index(web, store, "acme.web")
+    _index(api, store, "acme.web.api")
+    return web
+
+
+def test_a_project_named_under_the_old_one_keeps_their_shared_module(
+    tmp_path: Path,
+) -> None:
+    # CodeRabbit on PR 2497: the guard covered `acme` but not `acme.web.api`,
+    # and retiring `acme.web` deleted the Module both had written.
+    store = _Retiring()
+    web = _shared_module_graph(tmp_path, store)
+    assert "acme.web.api.views.api_view" in _defined_by(store, "acme.web.api.views")
+    records: list[str] = []
+    sink = logger.add(records.append, level="INFO", format="{message}")
+    try:
+        _index(web, store, None)
+    finally:
+        logger.remove(sink)
+
+    assert store.deleted == []
+    assert "acme.web.api.views.api_view" in _defined_by(store, "acme.web.api.views")
+    assert (cs.NodeLabel.PROJECT, "acme.web") in store.nodes
+    assert ls.LEGACY_DOTTED_PROJECT_KEPT_FOR_DESCENDANTS.format(
+        legacy="acme.web",
+        project=derive_project_name(web),
+        descendants="acme.web.api",
+    ) in [r.rstrip("\n") for r in records]
+
+
+def test_a_project_that_only_starts_with_the_old_name_does_not_block_it(
+    dotted_checkout: Path, tmp_path: Path
+) -> None:
+    # Negative: `acme.webapp` is not named under `acme.web`, so the old
+    # project still goes.
+    store = _Retiring()
+    _legacy_project(store, "acme.web", dotted_checkout)
+    _legacy_project(store, "acme.webapp", tmp_path / "acme.webapp")
+
+    _index(dotted_checkout, store, None)
+
+    assert store.deleted == ["acme.web"]
+    assert (cs.NodeLabel.PROJECT, "acme.webapp") in store.nodes
+
+
+def _rels_in(query: str, anchor: str) -> frozenset[str]:
+    match = re.search(rf"{re.escape(anchor)}-\[:([A-Z_|]+)\*", query)
+    assert match is not None, query
+    return frozenset(match.group(1).split("|"))
+
+
+def test_the_double_walks_what_the_retire_query_walks() -> None:
+    query = cq.CYPHER_RETIRE_PROJECT
+
+    assert _rels_in(query, "(p)") == cgr_graph._PROJECT_CONTAINMENT_RELS
+    assert _rels_in(query, "(container)") == cgr_graph._PROJECT_DEFINED_RELS
+    assert _rels_in(cq.CYPHER_DELETE_PROJECT, "(p)") == _rels_in(query, "(p)")
 
 
 def test_check_reads_the_scope_an_unnamed_run_stamped_on_a_dotted_directory(

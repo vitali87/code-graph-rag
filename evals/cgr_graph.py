@@ -114,6 +114,22 @@ _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
 }
+# What CYPHER_RETIRE_PROJECT walks: the project's containers, then what the
+# ones carrying its prefix define.
+_PROJECT_CONTAINMENT_RELS = frozenset(
+    {
+        cs.RelationshipType.CONTAINS_PACKAGE.value,
+        cs.RelationshipType.CONTAINS_FOLDER.value,
+        cs.RelationshipType.CONTAINS_FILE.value,
+        cs.RelationshipType.CONTAINS_MODULE.value,
+        cs.RelationshipType.CONTAINS_SECTION.value,
+    }
+)
+_PROJECT_DEFINED_RELS = _DEFINES_RELS | {
+    cs.RelationshipType.HAS_PARAMETER.value,
+    cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
+}
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
     {
@@ -142,8 +158,16 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # answer here, not a silent default. The hash lookup that follows is issued
 # only for notes this read returned, so it is deliberately NOT listed: if a
 # test ever reaches it, the double is missing a real case.
+#
+# `CYPHER_QUERY_PROJECT_NODE_IDS` reads the internal ids a retired project's
+# vectors are keyed by (issue #2412). The double has no internal ids and no
+# vector store, so "no vectors to delete" is its true answer.
 _NOT_MODELLED: frozenset[str] = frozenset(
-    {cs.CYPHER_QUERY_EMBEDDINGS, cq.CYPHER_UNANCHORED_GLOSSES}
+    {
+        cs.CYPHER_QUERY_EMBEDDINGS,
+        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+        cq.CYPHER_UNANCHORED_GLOSSES,
+    }
 )
 _MODULE_QN_LABELS = frozenset(
     {
@@ -1640,6 +1664,11 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_PACKAGE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cq.CYPHER_RETIRE_PROJECT:
+                self._retire_project(
+                    params.get(cs.KEY_PROJECT_NAME) if params else None,
+                    _str(params.get(cs.KEY_PROJECT_PREFIX)) if params else "",
+                )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
             case cs.CYPHER_DELETE_PROJECT_DEPENDENCIES:
@@ -1842,6 +1871,38 @@ class _StatefulIngestor:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)
+        self._detach_delete(doomed)
+
+    def _reachable(self, start: _NodeId, rels: frozenset[str]) -> set[_NodeId]:
+        found: set[_NodeId] = set()
+        frontier = [start]
+        while frontier:
+            node = frontier.pop()
+            for _fl, _fv, rel_type, to_label, to_val, _site in self._out.get(node, ()):
+                child = (to_label, to_val)
+                if rel_type in rels and child not in found:
+                    found.add(child)
+                    frontier.append(child)
+        return found
+
+    def _retire_project(self, project_name: PropertyValue, prefix: str) -> None:
+        # Mirrors CYPHER_RETIRE_PROJECT: the walk may pass through Folder and
+        # File nodes another project shares, but only containers carrying the
+        # retired project's prefix are deleted, with what they define.
+        project = (_PROJECT_LABEL, project_name)
+        if project not in self.nodes:
+            return
+        containers = {
+            node
+            for node in self._reachable(project, _PROJECT_CONTAINMENT_RELS)
+            if isinstance(
+                qn := self.nodes.get(node, {}).get(cs.KEY_QUALIFIED_NAME), str
+            )
+            and qn.startswith(prefix)
+        }
+        doomed = {project} | containers
+        for container in containers:
+            doomed |= self._reachable(container, _PROJECT_DEFINED_RELS)
         self._detach_delete(doomed)
 
     def _delete_project_dependencies(self, project_name: PropertyValue) -> None:
