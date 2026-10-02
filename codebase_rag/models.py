@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -74,7 +76,7 @@ class GraphRelationship:
 class FQNSpec(NamedTuple):
     scope_node_types: frozenset[str]
     function_node_types: frozenset[str]
-    get_name: Callable[["Node"], str | None]
+    get_name: Callable[[Node], str | None]
     file_to_module_parts: Callable[[Path, Path], list[str]]
     # The scope names a definition sits under, as (node type, name) pairs
     # outermost first, folded against the module holding it: C# drops a
@@ -83,6 +85,10 @@ class FQNSpec(NamedTuple):
     fold_scopes: (
         Callable[[list[tuple[str, str]], str, Path | None], list[str]] | None
     ) = None
+    # A scope's qn segment where it is more than its name: a PHP anonymous
+    # class is named `anonymous_<row>_<col>` but sits in the qn under the
+    # callables it is written in (issue #2538). None uses `get_name`.
+    get_scope_name: Callable[[Node], str | None] | None = None
 
 
 @dataclass(frozen=True)
