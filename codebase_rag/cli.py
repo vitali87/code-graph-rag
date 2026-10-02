@@ -80,6 +80,7 @@ from .utils.path_utils import (
     resolve_repo_path,
     unwritable_output_reason,
 )
+from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
@@ -1322,8 +1323,10 @@ def optimize(
 def _mcp_server_notice(message: str) -> None:
     # On the stdio transport stdout IS the JSON-RPC stream: a diagnostic
     # there reaches the client as a malformed message and hides the cause
-    # (issue #2518). stderr is where the server's logs already go.
-    Console(stderr=True).print(message)
+    # (issue #2518). stderr is where the server's logs already go. Hosts
+    # capture it to a log, not a terminal, so the message is not hard-wrapped
+    # there: a long repository path stays whole on one line.
+    terminal_aware_console(stderr=True).print(message)
 
 
 @app.command(
