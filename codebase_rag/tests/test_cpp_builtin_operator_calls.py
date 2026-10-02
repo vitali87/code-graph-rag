@@ -346,3 +346,97 @@ def test_non_operator_calls_in_the_same_body_still_bind(
     edges = _calls(mock_ingestor)
     from_calc = [(dst, res) for src, dst, res in edges if src == f"{project}.calc.calc"]
     assert (f"{project}.calc.twice", cs.EdgeResolution.EXACT) in from_calc
+
+
+# --- a free operator must be able to take the operand ----------------------
+
+
+def _operator_edges(
+    temp_repo: Path, mock_ingestor: MagicMock, source: str
+) -> dict[str, list[tuple[str, str]]]:
+    _index(temp_repo, mock_ingestor, {"ops.hpp": source})
+    project = temp_repo.name
+    edges = _calls(mock_ingestor)
+    prefix = f"{project}.ops.g."
+    return {
+        src.removeprefix(prefix): sorted(
+            (callee.removeprefix(prefix), resolution)
+            for callee, resolution in _operator_calls_from(edges, src)
+        )
+        for src in {src for src, _, _ in edges}
+        if src.startswith(prefix)
+    }
+
+
+def test_unrelated_free_operator_beside_the_class_binds_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `1 + v` and `v + 1` convert V to int and use built-in `+`; the only
+    # operator+ beside V takes two W, so neither can call it.
+    calls = _operator_edges(
+        temp_repo,
+        mock_ingestor,
+        "namespace g {\n"
+        "struct V { operator int() const { return 1; } };\n"
+        "struct W {};\n"
+        "W operator+(W, W);\n"
+        "int calc(V v) { return 1 + v; }\n"
+        "int calc_left(V v) { return v + 1; }\n"
+        "}\n",
+    )
+    assert calls.get("calc", []) == []
+    assert calls.get("calc_left", []) == []
+
+
+def test_free_operator_of_another_arity_binds_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A binary operator- cannot serve unary `-v`, and a postfix
+    # operator++(V&, int) cannot serve prefix `++v`.
+    calls = _operator_edges(
+        temp_repo,
+        mock_ingestor,
+        "namespace g {\n"
+        "struct V { int x; operator int() const { return x; } };\n"
+        "V operator-(const V& a, const V& b) { return a; }\n"
+        "V operator++(V& v, int) { return v; }\n"
+        "int negate(V v) { return -v; }\n"
+        "int pre(V v) { ++v; return 0; }\n"
+        "int post(V v) { v++; return 0; }\n"
+        "}\n",
+    )
+    assert calls.get("negate", []) == []
+    assert calls.get("pre", []) == []
+    assert calls["post"] == [("operator_increment", cs.EdgeResolution.EXACT)]
+
+
+def test_free_operator_taking_the_class_still_binds(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A prototype, a unary overload, a base-class parameter and a template
+    # parameter all accept the operand.
+    calls = _operator_edges(
+        temp_repo,
+        mock_ingestor,
+        "namespace g {\n"
+        "struct Base {};\n"
+        "struct V : Base { int x; };\n"
+        "V operator+(const V& a, const V& b);\n"
+        "V operator-(const V& v) { return v; }\n"
+        "bool operator==(const Base& a, const Base& b) { return true; }\n"
+        "template <typename T>\n"
+        "bool operator!=(const T& a, const T& b) { return false; }\n"
+        "void use(V v, V w) {\n"
+        "    V s = v + w;\n"
+        "    V n = -v;\n"
+        "    bool e = v == w;\n"
+        "    bool d = v != w;\n"
+        "}\n"
+        "}\n",
+    )
+    assert calls["use"] == [
+        ("operator_equal", cs.EdgeResolution.EXACT),
+        ("operator_minus", cs.EdgeResolution.EXACT),
+        ("operator_not_equal", cs.EdgeResolution.EXACT),
+        ("operator_plus", cs.EdgeResolution.EXACT),
+    ]

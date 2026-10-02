@@ -3273,20 +3273,37 @@ class CallProcessor:
         # The left operand (the sole one of a unary/update op) selects a
         # member or a free overload. The right one selects only a free
         # overload (`os << v`, `2 * v`): a member operator takes its own
-        # class on the left.
+        # class on the left. A free overload takes every operand as a
+        # parameter, plus the dummy `int` that marks a postfix `v++`.
         if call_node.type == cs.TS_CPP_BINARY_EXPRESSION:
-            left = call_node.child_by_field_name(cs.FIELD_LEFT)
-            right = call_node.child_by_field_name(cs.FIELD_RIGHT)
+            operands = (
+                call_node.child_by_field_name(cs.FIELD_LEFT),
+                call_node.child_by_field_name(cs.FIELD_RIGHT),
+            )
+            arity = 2
         else:
-            left = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
-            right = None
+            argument = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+            operator = call_node.child_by_field_name(cs.FIELD_OPERATOR)
+            operands = (argument,)
+            arity = (
+                2
+                if argument is not None
+                and operator is not None
+                and operator.start_byte > argument.start_byte
+                else 1
+            )
         resolver = self._resolver
-        if (left_qn := self._cpp_operand_class(ctx, left, var_types)) and (
-            callee_info := resolver.cpp_operator_for_type(call_name, left_qn)
-        ):
-            return callee_info
-        if right_qn := self._cpp_operand_class(ctx, right, var_types):
-            return resolver.cpp_free_operator_for_type(call_name, right_qn)
+        for position, operand in enumerate(operands):
+            if (class_qn := self._cpp_operand_class(ctx, operand, var_types)) is None:
+                continue
+            if position == 0 and (
+                member := resolver.cpp_member_operator(call_name, class_qn)
+            ):
+                return member
+            if free := resolver.cpp_free_operator_for_type(
+                call_name, class_qn, position, arity
+            ):
+                return free
         return None
 
     def _cpp_operand_class(

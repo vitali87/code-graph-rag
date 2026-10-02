@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import CppParameterType
 from ..utils import safe_decode_text
 
 
@@ -352,20 +353,40 @@ class CppTypeInferenceEngine:
             current = self._first_declarator_child(current)
         return None
 
-    def _indirection_depth(self, declarator: Node) -> int:
+    def parameter_types(self, params: Node) -> tuple[CppParameterType, ...]:
+        # Overload viability needs each parameter's class and whether it is
+        # taken through a pointer, named or not (`W operator+(W, W);`).
+        return tuple(
+            CppParameterType(
+                self._bare_type_name(type_node)
+                if (type_node := param.child_by_field_name(cs.FIELD_TYPE))
+                else None,
+                self._indirection_depth(param.child_by_field_name(cs.FIELD_DECLARATOR)),
+            )
+            for param in params.named_children
+            if param.type in cs.CPP_PARAMETER_DECLARATION_TYPES
+        )
+
+    def _indirection_depth(self, declarator: Node | None) -> int:
         # Pointer and array layers between a declarator and its identifier:
         # `T* p` and `T a[2]` are 1, `T** pp` is 2, `T& r` and `T x` are 0.
+        # An unnamed slot (`T*`) nests abstract declarators the same way.
         depth = 0
-        current: Node | None = declarator
+        current = declarator
         while current is not None and current.type not in (
             cs.CppNodeType.IDENTIFIER,
             cs.CppNodeType.FIELD_IDENTIFIER,
         ):
             if current.type in cs.CPP_INDIRECT_DECLARATOR_TYPES:
                 depth += 1
-            current = current.child_by_field_name(
-                cs.FIELD_DECLARATOR
-            ) or self._first_declarator_child(current)
+            current = current.child_by_field_name(cs.FIELD_DECLARATOR) or next(
+                (
+                    child
+                    for child in current.named_children
+                    if child.type.endswith(cs.CPP_DECLARATOR_SUFFIX)
+                ),
+                None,
+            )
         return depth
 
     def _first_declarator_child(self, node: Node) -> Node | None:
