@@ -14,6 +14,7 @@ from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
+    PropertyDict,
     SimpleNameLookup,
 )
 from ..utils import (
@@ -245,7 +246,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     self.module_qn_to_file_path.get(module_qn),
                     self.repo_path,
                 )
-                logger.info(
+                logger.debug(
                     lg.JS_PROTOTYPE_METHOD_FOUND,
                     method_name=method_name,
                     method_qn=method_qn,
@@ -417,7 +418,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
-        logger.info(
+        self._mark_object_member(method_props, method_qn)
+        logger.debug(
             lg.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
@@ -543,6 +545,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 lg.JS_OBJECT_ARROW_FOUND,
                 lang_config,
                 language,
+                object_member=True,
             )
 
     def _resolve_direct_arrow_qn(
@@ -643,6 +646,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         log_message: str,
         lang_config: LanguageSpec | None,
         language: cs.SupportedLanguage,
+        object_member: bool = False,
     ) -> None:
         if self._span_claimed_for_qn(module_qn, function_node, function_qn):
             return
@@ -657,6 +661,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
+        if object_member:
+            self._mark_object_member(function_props, function_qn)
 
         logger.debug(log_message, function_name=function_name, function_qn=function_qn)
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
@@ -685,6 +691,16 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 cs.RelationshipType.DEFINES,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
             )
+
+    def _mark_object_member(self, props: PropertyDict, qualified_name: str) -> None:
+        # The qn drops the object's own path (`{retry: {delay: () => 0}}` is
+        # `<scope>.delay`), so by name alone it looks like a function the
+        # scope declares. It is reached only through its object
+        # (`options.retry.delay()`), so bare-name lookups must skip it (issue
+        # #2435); the node property carries that to an incremental run's
+        # rehydrated registry.
+        props[cs.KEY_IS_OBJECT_MEMBER] = True
+        self.function_registry.mark_object_member(qualified_name)
 
     def _is_static_method_in_class(self, method_node: ASTNode) -> bool:
         if method_node.type == cs.TS_METHOD_DEFINITION:
