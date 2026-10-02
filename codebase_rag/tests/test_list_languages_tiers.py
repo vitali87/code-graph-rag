@@ -256,7 +256,14 @@ def test_missing_grammar_is_not_claimed_installed() -> None:
 
 
 def test_ast_grep_tier_without_its_extra_is_not_claimed_installed() -> None:
-    with patch("codebase_rag.tools.language_catalog.has_ast_grep", return_value=False):
+    # Every grammar present, as with the treesitter-full extra, so the
+    # tree-sitter rows show what the missing ast-grep extra leaves alone.
+    with (
+        patch("codebase_rag.tools.language_catalog.has_ast_grep", return_value=False),
+        patch(
+            "codebase_rag.tools.language_catalog.grammar_installed", return_value=True
+        ),
+    ):
         result = _invoke()
     rows = _table(result.output, _LANGUAGE_HEADERS)
 
@@ -411,14 +418,19 @@ def test_grammar_installed_never_builds_a_submodule(
     run.assert_not_called()
 
 
-# Rich's HEAVY_HEAD -> SQUARE substitution on a legacy Windows console.
-_LEGACY_WINDOWS_BOX = str.maketrans("┏┓┳┃┡┩╇━", "┌┐┬│├┤┼─")
+def _invoke_on_console(monkeypatch: pytest.MonkeyPatch, *, legacy_windows: bool) -> str:
+    # Rich picks the box from the console it detects, so each kind is pinned:
+    # both are drawn whichever one this platform's console is.
+    monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: legacy_windows)
+    return _invoke().output
 
 
-def test_the_table_reads_the_same_in_the_legacy_windows_box() -> None:
-    output = _invoke().output
-    legacy = output.translate(_LEGACY_WINDOWS_BOX)
+def test_the_table_reads_the_same_in_the_legacy_windows_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vt = _invoke_on_console(monkeypatch, legacy_windows=False)
+    legacy = _invoke_on_console(monkeypatch, legacy_windows=True)
 
-    assert legacy != output
+    assert legacy != vt
     for headers in (_LANGUAGE_HEADERS, _FRONTEND_HEADERS):
-        assert _table(legacy, headers) == _table(output, headers)
+        assert _table(legacy, headers) == _table(vt, headers)
