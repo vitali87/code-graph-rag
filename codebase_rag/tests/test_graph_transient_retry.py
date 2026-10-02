@@ -109,9 +109,10 @@ def test_a_conflicting_batch_is_retried(errors: list[str]) -> None:
 def test_a_conflict_that_outlasts_the_retries_is_raised(no_wait: list[float]) -> None:
     # Negative: bounded, and the last error is the one the caller sees.
     conn = _Conn(_conflicts(cs.MG_TRANSIENT_RETRY_ATTEMPTS))
+    ingestor = _ingestor(conn)
 
     with pytest.raises(mgclient.TransientError):
-        _ingestor(conn).execute_write("MATCH (m:Module) SET m.x = 1")
+        ingestor.execute_write("MATCH (m:Module) SET m.x = 1")
 
     assert len(conn.executed) == cs.MG_TRANSIENT_RETRY_ATTEMPTS
     assert len(no_wait) == cs.MG_TRANSIENT_RETRY_ATTEMPTS - 1
@@ -128,9 +129,10 @@ def test_a_conflict_that_outlasts_the_retries_is_raised(no_wait: list[float]) ->
 def test_other_errors_are_not_retried(failure: Exception, no_wait: list[float]) -> None:
     # Negative: only the error Memgraph says to retry is retried.
     conn = _Conn([failure])
+    ingestor = _ingestor(conn)
 
     with pytest.raises(type(failure)):
-        _ingestor(conn).execute_write("MATC (m) RETURN m")
+        ingestor.execute_write("MATC (m) RETURN m")
 
     assert len(conn.executed) == 1
     assert no_wait == []
