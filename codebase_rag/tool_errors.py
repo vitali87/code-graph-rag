@@ -3,6 +3,20 @@ from __future__ import annotations
 # Generic error wrapper
 ERROR_WRAPPER = "Error: {message}"
 
+
+class ToolFailure(str):
+    """A tool's failure message. An agent reads it as the text it always
+    was; the MCP server also reports it with `isError: true`, so a client
+    can tell a failed edit from a successful one without parsing prose
+    (issue #2650)."""
+
+    __slots__ = ()
+
+
+def failure(message: str | Exception | None) -> ToolFailure:
+    return ToolFailure(ERROR_WRAPPER.format(message=message))
+
+
 # File operation errors
 FILE_NOT_FOUND = "File not found."
 FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"

@@ -489,6 +489,58 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     return JavaMethodCallInfo(name=name, object=obj, arguments=arguments)
 
 
+def enum_constants(enum_node: ASTNode) -> list[ASTNode]:
+    body = enum_node.child_by_field_name(cs.TS_FIELD_BODY)
+    if body is None:
+        return []
+    return [c for c in body.named_children if c.type == cs.TS_JAVA_ENUM_CONSTANT]
+
+
+def enum_constructors(enum_node: ASTNode) -> list[ASTNode]:
+    # Only the enum's own declarations: a nested type's constructor sits one
+    # class body deeper and is never run by these constants.
+    body = enum_node.child_by_field_name(cs.TS_FIELD_BODY)
+    if body is None:
+        return []
+    return [
+        member
+        for section in body.named_children
+        if section.type == cs.TS_JAVA_ENUM_BODY_DECLARATIONS
+        for member in section.named_children
+        if member.type == cs.TS_CONSTRUCTOR_DECLARATION
+    ]
+
+
+def argument_count(node: ASTNode) -> int:
+    # A comment between arguments is a named child of the list, not an argument.
+    args_node = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    if args_node is None:
+        return 0
+    return sum(
+        1
+        for child in args_node.named_children
+        if child.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+    )
+
+
+def accepts_argument_count(callable_node: ASTNode, arg_count: int) -> bool:
+    # JLS 15.12.2.1: a fixed-arity callable is a candidate only for its exact
+    # arity; a variable-arity one for any count covering its fixed parameters.
+    params_node = callable_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    params = (
+        [
+            c
+            for c in params_node.named_children
+            if c.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER)
+        ]
+        if params_node is not None
+        else []
+    )
+    if params and params[-1].type == cs.TS_SPREAD_PARAMETER:
+        return arg_count >= len(params) - 1
+    return arg_count == len(params)
+
+
 def _has_main_method_modifiers(method_node: ASTNode) -> bool:
     has_public = False
     has_static = False
