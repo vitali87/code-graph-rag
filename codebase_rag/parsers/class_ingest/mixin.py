@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -52,6 +53,7 @@ from ..utils import (
     sorted_captures,
     written_simple_name,
 )
+from . import base_targets as bt
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -395,8 +397,28 @@ class ClassIngestMixin:
         self, class_name: str, module_qn: str, exclude_qn: str | None = None
     ) -> tuple[str, bool]: ...
 
-    def _resolve_to_qn(self, name: str, module_qn: str) -> str:
-        return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
+    def _resolve_to_qn(
+        self,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str:
+        # Parse time sees a partial registry, so the C# declared-form tier of
+        # _resolve_class_name (a uniqueness test) is left to the deferred pass.
+        return (
+            self._resolve_base_name(name, module_qn, language) or f"{module_qn}.{name}"
+        )
+
+    def _resolve_base_name(
+        self, name: str, module_qn: str, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        return resolve_class_name(
+            name,
+            module_qn,
+            self.import_processor,
+            self.function_registry,
+            kinds=bt.base_target_kinds(language),
+        )
 
     def _resolve_rust_trait_qn(
         self, path: str, name: str, module_qn: str
@@ -416,7 +438,7 @@ class ClassIngestMixin:
         module while the trait registers where it is declared.
         """
         head, _, tail = path.partition(cs.SEPARATOR_DOUBLE_COLON)
-        anchored = self._resolve_to_qn(name, module_qn)
+        anchored = self._resolve_to_qn(name, module_qn, cs.SupportedLanguage.RUST)
         if not tail:
             return anchored, None
         if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
@@ -653,7 +675,10 @@ class ClassIngestMixin:
         emits no edge, because the module-anchored guess is a phantom endpoint
         the database silently drops anyway. Resolved base qns replace the
         guesses in class_inheritance in place so Pass-3 method resolution and
-        override detection walk the real hierarchy.
+        override detection walk the real hierarchy. A C# base is looked up by
+        scope first (its namespace, the enclosing ones, then `using`s); one no
+        scope reaches falls to the name search and its edge is marked
+        heuristic (issue #2534).
         """
         deferred = self._deferred_inherits
         self._deferred_inherits = []
@@ -666,7 +691,12 @@ class ClassIngestMixin:
             child_type = self.function_registry.get(entry.child_qn)
             if child_type is None:
                 continue
-            resolved = self._resolve_deferred_parent_qn(entry)
+            scoped = self._resolve_csharp_scoped_base(entry)
+            resolved = (
+                (scoped, False)
+                if scoped is not None
+                else self._resolve_deferred_parent_qn(entry)
+            )
             is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None or resolved[1]:
                 # Resolved nowhere, or to a node outside the index: the file
@@ -676,8 +706,13 @@ class ClassIngestMixin:
                 )
             if resolved is None:
                 continue
+            # A C# base no scope or `using` reaches, bound anyway by a
+            # project-wide name match, is a guess; say so on the edge.
+            heuristic = (
+                scoped is None and entry.written_ref is not None and not resolved[1]
+            )
             self._emit_resolved_inherit(
-                entry, str(child_type), resolved, is_dart, dart_implements
+                entry, str(child_type), resolved, is_dart, dart_implements, heuristic
             )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
@@ -823,6 +858,22 @@ class ClassIngestMixin:
             stack.extend(implements_map.get(ancestor, []))
         return False
 
+    def _resolve_csharp_scoped_base(self, entry: DeferredInherit) -> str | None:
+        if entry.written_ref is None:
+            return None
+        return bt.resolve_csharp_scoped_base(
+            entry.written_ref,
+            entry.child_qn,
+            self.csharp_class_namespaced.get(entry.child_qn),
+            self.import_processor.import_mapping.get(entry.module_qn, {}),
+            bt.CSharpTypeIndex(
+                self.function_registry,
+                self.csharp_namespaced_qns,
+                self.csharp_class_generic_arity,
+                self.csharp_partial_groups,
+            ),
+        )
+
     def _rust_reexport_target(self, entry: DeferredInherit) -> str | None:
         """Where a `pub use` in the named module declares the parent.
 
@@ -856,7 +907,7 @@ class ClassIngestMixin:
                 # Two modules re-exporting each other's name never declare it.
                 return None
             seen.add(qn)
-            if self.function_registry.get(qn) is not None:
+            if self.function_registry.get(qn) in bt.base_target_kinds(entry.language):
                 return qn
 
     def _resolve_deferred_parent_qn(
@@ -877,7 +928,10 @@ class ClassIngestMixin:
         """
         if entry.parent_qn == entry.child_qn:
             return self._resolve_self_edge_parent(entry)
-        if self.function_registry.get(entry.parent_qn) is not None:
+        # Only a type declaration is a base: a registered member of the same
+        # name (a C# property, a method) is not, however it was reached.
+        target_kinds = bt.base_target_kinds(entry.language)
+        if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
             return followed, False
@@ -907,7 +961,7 @@ class ClassIngestMixin:
             # A simple-name sweep can land on the child itself; a
             # self-INHERITS is never real.
             and resolved != entry.child_qn
-            and self.function_registry.get(resolved) is not None
+            and self.function_registry.get(resolved) in target_kinds
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
@@ -947,8 +1001,13 @@ class ClassIngestMixin:
         simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
         candidates = self.function_registry.find_ending_with(simple)
+        target_kinds = bt.base_target_kinds(entry.language)
         matches = {
-            qn for qn in candidates if qn.endswith(suffix) and qn != entry.child_qn
+            qn
+            for qn in candidates
+            if qn.endswith(suffix)
+            and qn != entry.child_qn
+            and self.function_registry.get(qn) in target_kinds
         }
         if len(matches) == 1:
             return matches.pop(), False
@@ -1267,7 +1326,7 @@ class ClassIngestMixin:
             self.class_inheritance,
             self.ingestor,
             self.import_processor,
-            self._resolve_to_qn,
+            partial(self._resolve_to_qn, language=language),
             self.function_registry,
             self.interface_implementers,
             defer_cpp_inherits=self._deferred_cpp_inherits,
@@ -1276,7 +1335,7 @@ class ClassIngestMixin:
         )
         if language == cs.SupportedLanguage.DART and (
             type_args := pe.extract_dart_extends_type_args(
-                member_node, module_qn, self._resolve_to_qn
+                member_node, module_qn, partial(self._resolve_to_qn, language=language)
             )
         ):
             self.dart_extends_type_args[class_qn] = type_args
@@ -1508,8 +1567,10 @@ class ClassIngestMixin:
         resolved: tuple[str, bool],
         is_dart: bool,
         dart_implements: dict[str, list[str]],
+        heuristic: bool = False,
     ) -> None:
         parent_qn, is_external = resolved
+        resolution = cs.EdgeResolution.HEURISTIC if heuristic else None
         if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
             self._pin_csharp_base_module(entry, parent_qn)
         external_label: str | None = None
@@ -1530,6 +1591,7 @@ class ClassIngestMixin:
                 self.ingestor,
                 entry.base_index,
                 parent_label=external_label,
+                resolution=resolution,
             )
             return
         # Dart has no `interface` keyword: `implements X` targets a
@@ -1546,6 +1608,7 @@ class ClassIngestMixin:
             parent_qn,
             self.ingestor,
             interface_label=interface_label,
+            resolution=resolution,
         )
         self.interface_implementers.setdefault(parent_qn, set()).add(entry.child_qn)
         if is_dart and not is_external:
@@ -2127,7 +2190,7 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             module_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        logger.info(
+        logger.debug(
             logs.CLASS_FOUND_INLINE_MODULE.format(name=module_name, qn=inline_module_qn)
         )
         # Same-qn bodied twins (mutually-exclusive cfg mods, or two impls
@@ -2340,9 +2403,7 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage | None = None,
     ) -> str | None:
-        resolved = resolve_class_name(
-            class_name, module_qn, self.import_processor, self.function_registry
-        )
+        resolved = self._resolve_base_name(class_name, module_qn, language)
         if resolved is not None or language != cs.SupportedLanguage.CSHARP:
             return resolved
         # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to
