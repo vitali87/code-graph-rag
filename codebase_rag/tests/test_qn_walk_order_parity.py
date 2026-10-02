@@ -192,6 +192,16 @@ class TestTheQnMapAssignsTheSAMEQnsNotJustTheSameOrder:
 
         assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
 
+    def test_a_stem_shared_across_languages_agrees(self, tmp_path: Path) -> None:
+        # The cross-language rule is decided on the filesystem on both sides
+        # too (issue #2586): a C++ include of `foo.h` beside `foo.py` must
+        # resolve to the name the indexer gave the header.
+        _write(tmp_path, "foo.h")
+        _write(tmp_path, "foo.py", "x = 1\n")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+        assert build_module_qn_map(tmp_path, PROJECT)["foo.h"] == f"{PROJECT}.foo.h"
+
 
 class TestTheBaseModuleQnIsSharedNotMirrored:
     """``__init__.py``/``mod.rs`` name their package, not themselves.
@@ -353,20 +363,41 @@ class TestADeclarationNeverStealsTheImplementationsName:
     ) -> None:
         """The declaration rule must not disturb the general case (#1025).
 
-        `foo.py` and `foo.cpp` still collide, and the first walked still wins.
+        `foo.cpp` and `foo.h` still collide, and the first walked still wins.
         Without this, narrowing the change to declarations would be untested
         and a broader rewrite of the tie-break would look equally green.
         """
         first = tmp_path / "foo.cpp"
-        second = tmp_path / "foo.py"
+        second = tmp_path / "foo.h"
         first.write_text("int x;\n", encoding="utf-8")
-        second.write_text("x = 1\n", encoding="utf-8")
+        second.write_text("int x;\n", encoding="utf-8")
 
         proc = self._processor(tmp_path)
         qns = {p.name: self._assign(proc, tmp_path, p) for p in (first, second)}
 
         assert qns["foo.cpp"] == f"{PROJECT}.foo", qns
-        assert qns["foo.py"] == f"{PROJECT}.foo.py", qns
+        assert qns["foo.h"] == f"{PROJECT}.foo.h", qns
+
+    @pytest.mark.parametrize("cpp_first", [True, False])
+    def test_a_stem_shared_across_languages_goes_to_neither(
+        self, tmp_path: Path, cpp_first: bool
+    ) -> None:
+        """`foo.py` and `foo.cpp` both carry their extension (issue #2586).
+
+        Neither can keep the name it had alone without the other's arrival
+        handing it over, so the bare qn is retired for the pair, in either
+        walk order.
+        """
+        cpp = tmp_path / "foo.cpp"
+        py = tmp_path / "foo.py"
+        cpp.write_text("int x;\n", encoding="utf-8")
+        py.write_text("x = 1\n", encoding="utf-8")
+        order = (cpp, py) if cpp_first else (py, cpp)
+
+        proc = self._processor(tmp_path)
+        qns = {p.name: self._assign(proc, tmp_path, p) for p in order}
+
+        assert qns == {"foo.cpp": f"{PROJECT}.foo.cpp", "foo.py": f"{PROJECT}.foo.py"}
 
 
 class TestOneUnignorePatternIsEnoughToRescue:

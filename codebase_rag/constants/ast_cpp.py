@@ -197,6 +197,10 @@ TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
 # `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
+# `&fn` / `*p`: the unary address-of or dereference, told apart by its
+# `operator` field. Only address-of names a function it hands over.
+TS_CPP_POINTER_EXPRESSION = "pointer_expression"
+CPP_ADDRESS_OF = "&"
 # `return {args};` -- a braced construction of the declared return type.
 TS_CPP_INITIALIZER_LIST = "initializer_list"
 # Stream-insertion operator; a `binary_expression` using it whose left-spine base
