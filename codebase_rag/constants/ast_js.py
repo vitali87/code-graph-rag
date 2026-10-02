@@ -271,6 +271,36 @@ TS_ARRAY_GENERIC_NAMES = frozenset(
 )
 JS_LIST_TYPE_PREFIX = "list["
 JS_LIST_TYPE_FORMAT = "list[{element}]"
+# A member call's receiver declaration, read to confirm or rule out a method
+# bound only by name (issue #2609).
+TS_PREDEFINED_TYPE = "predefined_type"
+TS_TUPLE_TYPE = "tuple_type"
+TS_PARENTHESIZED_TYPE = "parenthesized_type"
+TS_FIELD_TYPE_ARGUMENTS = "type_arguments"
+TS_TYPE_DECLARATION_NODES = frozenset(
+    {
+        "class_declaration",
+        "abstract_class_declaration",
+        "interface_declaration",
+        "type_alias_declaration",
+        "enum_declaration",
+    }
+)
+# Utility types whose value has the members of their first type argument.
+TS_MEMBER_PRESERVING_UTILITY_TYPES = frozenset(
+    {"Readonly", "Partial", "Required", "NonNullable", "Pick", "Omit"}
+)
+# `@param {Type} name` and `@param {Type} [name]` in a JSDoc block.
+JSDOC_PARAM_TAG_PATTERN = r"@param\s+\{([^{}]*)\}\s+\[?([A-Za-z_$][\w$]*)"
+JSDOC_TYPE_NAME_PATTERN = r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*"
+# `@template T` and `@template K, V`: the names a JSDoc block declares as
+# type parameters.
+JSDOC_TEMPLATE_TAG_PATTERN = (
+    r"@template\s+(?:\{[^{}]*\}\s+)?([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)"
+)
+# Nullable, non-null and optional marks around a JSDoc type name.
+JSDOC_TYPE_MODIFIER_CHARS = "?!="
+JSDOC_ANY_TYPES = frozenset({"*", "?", "any", "unknown"})
 TS_IMPORT_ALIAS = "import_alias"
 TS_JS_WITH_STATEMENT = "with_statement"
 TS_CLASS_STATIC_BLOCK = "class_static_block"
