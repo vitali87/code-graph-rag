@@ -188,35 +188,18 @@ func (c *collector) collectPackage(pkg *packages.Package) {
 func (c *collector) gatherTypes(pkg *packages.Package) {
 	scope := pkg.Types.Scope()
 	for _, name := range scope.Names() {
-		obj, ok := scope.Lookup(name).(*types.TypeName)
-		if !ok {
-			continue
-		}
-		named, ok := obj.Type().(*types.Named)
-		if !ok {
-			continue
-		}
-		// Uninstantiated generic types: types.Implements is not contractually
-		// specified for a type with live type parameters (it happens not to
-		// panic on go1.23, but the result is not part of the API guarantee), so
-		// skip them on BOTH the implementer and the interface side rather than
-		// emit a version-dependent edge -- the frontend degrades to tree-sitter.
-		if named.TypeParams().Len() > 0 {
-			continue
-		}
-		rel, line, col, ok := c.position(pkg.Fset, obj.Pos())
+		entry, ok := c.namedTypeEntry(pkg, scope.Lookup(name))
 		if !ok {
 			continue
 		}
 		// Each test variant re-declares every type of its package; the pass
 		// pairs a type once, from the variant that first held it.
-		key := fmt.Sprintf("%s:%d:%d", rel, line, col)
+		key := fmt.Sprintf("%s:%d:%d", entry.rel, entry.line, entry.col)
 		if c.seenTypes[key] {
 			continue
 		}
 		c.seenTypes[key] = true
-		entry := typeEntry{named: named, rel: rel, line: line, col: col, name: obj.Name()}
-		if iface, ok := named.Underlying().(*types.Interface); ok {
+		if iface, ok := entry.named.Underlying().(*types.Interface); ok {
 			if iface.NumMethods() > 0 {
 				c.interfaces = append(c.interfaces, entry)
 			}
@@ -224,6 +207,32 @@ func (c *collector) gatherTypes(pkg *packages.Package) {
 		}
 		c.namedTypes = append(c.namedTypes, entry)
 	}
+}
+
+// namedTypeEntry returns obj as a typeEntry when it is a non-generic named
+// type declared in the repo.
+func (c *collector) namedTypeEntry(pkg *packages.Package, obj types.Object) (typeEntry, bool) {
+	typeName, ok := obj.(*types.TypeName)
+	if !ok {
+		return typeEntry{}, false
+	}
+	named, ok := typeName.Type().(*types.Named)
+	if !ok {
+		return typeEntry{}, false
+	}
+	// Uninstantiated generic types: types.Implements is not contractually
+	// specified for a type with live type parameters (it happens not to
+	// panic on go1.23, but the result is not part of the API guarantee), so
+	// skip them on BOTH the implementer and the interface side rather than
+	// emit a version-dependent edge -- the frontend degrades to tree-sitter.
+	if named.TypeParams().Len() > 0 {
+		return typeEntry{}, false
+	}
+	rel, line, col, ok := c.position(pkg.Fset, typeName.Pos())
+	if !ok {
+		return typeEntry{}, false
+	}
+	return typeEntry{named: named, rel: rel, line: line, col: col, name: typeName.Name()}, true
 }
 
 // collectImplements pairs every first-party concrete type with every
