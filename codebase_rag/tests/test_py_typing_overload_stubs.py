@@ -421,6 +421,17 @@ REBOUND_OVERLOAD = [
         "@overload",
         id="module-imported-as-overload",
     ),
+    pytest.param(
+        "from typing import overload\n\nfor overload in (identity,):\n    pass\n",
+        "@overload",
+        id="loop-target",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "for _key, (_first, *overload) in registry.items():\n    pass\n",
+        "@overload",
+        id="unpacked-loop-target",
+    ),
 ]
 
 
@@ -517,6 +528,16 @@ LIVE_AT_THE_STUBS = [
         ),
         id="rebound-in-other-scopes",
     ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\nfor item in items:\n    pass\n\n"
+                "for holder.overload in items:\n    pass"
+            ),
+            deco="@overload",
+        ),
+        id="loops-binding-other-names",
+    ),
 ]
 
 
@@ -570,6 +591,34 @@ def test_indexing_and_rename_read_the_same_binding(text: str, stubs: int) -> Non
         _line_of(text, "def command(name: None) -> int: ...") - 1,
         _line_of(text, "def command(name: str) -> int: ...") - 1,
     ][:stubs]
+
+
+LOOP_BODY_STUBS = """from typing import overload
+
+for {target} in (identity,):
+    @overload
+    def command(name: str) -> int: ...
+
+    @overload
+    def command(name: None) -> int: ...
+
+    def command(name=None):
+        return name
+"""
+
+
+@pytest.mark.parametrize(
+    ("target", "stubs"),
+    [
+        pytest.param("overload", 0, id="the-loop-rebinds-overload"),
+        pytest.param("item", 2, id="the-loop-binds-another-name"),
+    ],
+)
+def test_a_loop_body_sees_its_own_target(target: str, stubs: int) -> None:
+    # The target is bound before the body runs, so a decorator in the body
+    # reads the loop's value, not typing's.
+    root = _parse(LOOP_BODY_STUBS.format(target=target))
+    assert len(folded_overload_stubs(root)) == stubs
 
 
 def test_overload_stubs_without_an_implementation_keep_their_nodes(
@@ -713,6 +762,13 @@ def test_a_pyi_stub_beside_the_module_changes_nothing(
                 "from typing import overload\n\n\ndef overload(fn):\n    return fn",
             ).replace("@t.overload", "@overload"),
             id="import-then-local-def",
+        ),
+        pytest.param(
+            RENAME_UTIL.replace(
+                "import typing as t",
+                "import typing as t\n\nfor t in (None,):\n    pass",
+            ),
+            id="alias-rebound-by-a-loop",
         ),
     ],
 )

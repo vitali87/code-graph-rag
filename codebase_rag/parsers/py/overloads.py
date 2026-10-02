@@ -13,11 +13,12 @@ there is to point at and keep their nodes.
 A decorator is typing's `overload` only while the typing import that gave its
 spelling is still the binding of its root name (`overload`, an alias, or the
 `t` of `t.overload`) where the stub is defined. Each block is read in
-statement order: a `def` or `class` of that name, an assignment to it, or an
-import of it from anywhere else, made earlier in the stub's block or in a
-block enclosing it, rebinds it from that statement on, until typing is
-imported again. Where no enclosing block binds the name before the stub, the
-module's imports as a whole decide.
+statement order: a `def` or `class` of that name, an assignment to it, a `for`
+loop target naming it (in the loop's body too), or an import of it from
+anywhere else, made earlier in the stub's block or in a block enclosing it,
+rebinds it from that statement on, until typing is imported again. Where no
+enclosing block binds the name before the stub, the module's imports as a
+whole decide.
 
 The ingest pass and `rename` both read the stubs off the syntax tree with the
 helpers below, so the stubs a rename rewrites are exactly the ones the graph
@@ -32,6 +33,9 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+
+# The unpacking forms a loop target can take: `a, b`, `(a, b)`, `[a, b]`, `*a`.
+_TARGET_PATTERNS = cs.PY_UNPACKING_TARGET_TYPES | {cs.TS_PY_LIST_SPLAT_PATTERN}
 
 
 def folded_overload_stubs(root: Node) -> frozenset[int]:
@@ -98,6 +102,9 @@ def _overload_stubs(root: Node) -> frozenset[int]:
         for statement in block.named_children:
             if _is_stub(statement, spellings, bound):
                 stubs.add(statement.start_byte)
+            if statement.type == cs.TS_PY_FOR_STATEMENT:
+                # The loop target is bound before the body runs.
+                _rebind(statement, roots, bound)
             if statement.type in cs.PY_STATEMENT_CONTAINERS:
                 pending.extend((inner, dict(bound)) for inner in _blocks_in(statement))
             _rebind(statement, roots, bound)
@@ -126,6 +133,10 @@ def _bindings(statement: Node) -> Iterator[tuple[str | None, str]]:
         ):
             definition = statement.child_by_field_name(cs.FIELD_DEFINITION)
             yield _name(definition or statement), ""
+        case cs.TS_PY_FOR_STATEMENT:
+            # `for name in ...` / `for a, (b, *name) in ...`.
+            for name in _target_names(statement.child_by_field_name(cs.FIELD_LEFT)):
+                yield name, ""
         case cs.TS_PY_EXPRESSION_STATEMENT:
             # `name = ...` / `name: T = ...`; the value is never read.
             assignment = statement.named_child(0)
@@ -133,6 +144,17 @@ def _bindings(statement: Node) -> Iterator[tuple[str | None, str]]:
                 target = assignment.child_by_field_name(cs.FIELD_LEFT)
                 if target is not None and target.type == cs.TS_PY_IDENTIFIER:
                     yield safe_decode_text(target), ""
+
+
+def _target_names(target: Node | None) -> Iterator[str | None]:
+    # The names a loop target binds; `x.y` and `x[i]` bind none.
+    if target is None:
+        return
+    if target.type == cs.TS_PY_IDENTIFIER:
+        yield safe_decode_text(target)
+    elif target.type in _TARGET_PATTERNS:
+        for child in target.named_children:
+            yield from _target_names(child)
 
 
 def _module_import_bindings(statement: Node) -> Iterator[tuple[str | None, str]]:
