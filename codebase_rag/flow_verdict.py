@@ -15,15 +15,28 @@ FLOW_VERDICT_FOUND = "FOUND"
 FLOW_VERDICT_NO_FLOW = "NO_FLOW"
 FLOW_VERDICT_UNKNOWN = "UNKNOWN"
 
-# Either endpoint may anchor the edge to the project: FLOWS_TO sources can
-# be Resource nodes whose qns carry their own scheme, and dropping their
-# edges would hide resource-originated flows from the scan.
+# Either endpoint may anchor a code edge to the project. A resource-to-
+# resource flow (`ENV::K -> STDOUT`) has two `resource::` endpoints, so it is
+# anchored by the `scope` it records instead: the project's function whose
+# body produced it (issue #2747). That function is also linked to the sink
+# it wrote, so a question asked from code (`notify -> STDOUT`, or a client
+# function through its NETWORK resource into another service's handler)
+# reaches the resource. The source side gets no such link: a function that
+# reads two resources would join every source to every sink it writes.
 CYPHER_FLOW_EDGES = f"""MATCH (a)-[:{cs.RelationshipType.FLOWS_TO.value}]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
    OR b.qualified_name STARTS WITH $project_prefix
    OR a.qualified_name = $project_name
    OR b.qualified_name = $project_name
 RETURN a.qualified_name AS source, b.qualified_name AS target
+UNION
+MATCH (a:{cs.NodeLabel.RESOURCE.value})-[r:{cs.RelationshipType.FLOWS_TO.value}]->(b:{cs.NodeLabel.RESOURCE.value})
+WHERE r.scope STARTS WITH $project_prefix OR r.scope = $project_name
+RETURN a.qualified_name AS source, b.qualified_name AS target
+UNION
+MATCH (:{cs.NodeLabel.RESOURCE.value})-[r:{cs.RelationshipType.FLOWS_TO.value}]->(b:{cs.NodeLabel.RESOURCE.value})
+WHERE r.scope STARTS WITH $project_prefix OR r.scope = $project_name
+RETURN r.scope AS source, b.qualified_name AS target
 """
 
 # Inline `mod` blocks mint Module nodes with synthetic inline paths and no
