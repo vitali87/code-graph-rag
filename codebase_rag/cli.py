@@ -2055,11 +2055,13 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     # Lines mean nothing without the file they are in (issue #2561).
     table.add_column(cs.CLI_DEADCODE_COL_PATH, style=cs.Color.YELLOW, overflow="fold")
     table.add_column(cs.CLI_DEADCODE_COL_LINES, style=cs.Color.YELLOW, justify="right")
+    # A str cell is parsed as markup, and a route directory such as
+    # `app/[slug]/` reads as a tag in both the path and the qn derived from it.
     for row in candidates:
         table.add_row(
             row["label"],
-            row["qualified_name"],
-            row["path"],
+            Text(row["qualified_name"]),
+            Text(row["path"]),
             cs.CLI_DEADCODE_LINE_RANGE.format(
                 start=row["start_line"], end=row["end_line"]
             ),

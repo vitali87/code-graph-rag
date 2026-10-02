@@ -237,6 +237,39 @@ def test_a_narrow_terminal_folds_dead_code_names_and_paths_instead_of_cutting(
     _assert_names_and_paths_fold_whole(out, rows)
 
 
+# A route directory such as Next.js's `app/[slug]/` is a path and a module qn
+# in square brackets, which Rich would read as a markup tag: `[slug]` vanished
+# from the row and `[/slug]` raised before the report was written.
+BRACKETED_ROWS = [
+    _dead("proj.app.[slug].page.loader", 3, "app/[slug]/page.tsx"),
+    _dead("proj.src.[/slug].helpers.tidy", 9, "src/[/slug]/helpers.py"),
+]
+
+
+def test_a_terminal_shows_bracketed_names_and_paths_as_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    console = _terminal(120)
+    monkeypatch.setattr(cli.app_context, "console", console)
+
+    _emit_dead_code(None, BRACKETED_ROWS)
+
+    _assert_names_and_paths_fold_whole(_terminal_output(console), BRACKETED_ROWS)
+
+
+@pytest.mark.usefixtures("app_console")
+def test_a_saved_report_keeps_bracketed_names_and_paths_as_written(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "dead.txt"
+
+    _emit_dead_code(report, BRACKETED_ROWS)
+
+    _assert_names_and_paths_fold_whole(
+        report.read_text(encoding=cs.ENCODING_UTF8), BRACKETED_ROWS
+    )
+
+
 # Negative: what must not change.
 
 
