@@ -1507,7 +1507,7 @@ def ingest_method(
         annotated_override_sink,
     )
 
-    logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
+    logger.debug(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     # AFTER the Method node is queued: a batch flush writes nodes before
     # relationships, and a HAS_PARAMETER whose owner is still pending would
@@ -1671,7 +1671,7 @@ def ingest_exported_function(
     )
     function_props[cs.KEY_IS_EXPORTED] = True
 
-    logger.info(
+    logger.debug(
         logs.EXPORT_FOUND.format(
             export_type=export_type, name=function_name, qn=function_qn
         )

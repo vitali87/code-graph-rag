@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     NamedTuple,
+    NotRequired,
     Protocol,
     TypedDict,
     runtime_checkable,
@@ -31,6 +32,8 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
+    from rich.console import JustifyMethod, OverflowMethod
+    from rich.style import Style
     from tree_sitter import Language, Node, Parser, Query
 
     from .models import LanguageSpec
@@ -165,6 +168,10 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def property_names(self) -> set[str]: ...
 
+    def mark_object_member(self, qualified_name: QualifiedName) -> None: ...
+
+    def is_object_member(self, qualified_name: QualifiedName) -> bool: ...
+
     def mark_abstract(self, qualified_name: QualifiedName) -> None: ...
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool: ...
@@ -248,6 +255,24 @@ class TreeSitterNodeProtocol(Protocol):
     def text(self) -> bytes | None: ...
 
 
+class ConsolePrintOptions(TypedDict, total=False):
+    # Rich's `Console.print` keywords, less `soft_wrap`, which the
+    # terminal-aware console decides itself.
+    sep: str
+    end: str
+    style: str | Style | None
+    justify: JustifyMethod | None
+    overflow: OverflowMethod | None
+    no_wrap: bool | None
+    emoji: bool | None
+    markup: bool | None
+    highlight: bool | None
+    width: int | None
+    height: int | None
+    crop: bool
+    new_line_start: bool
+
+
 class ModelConfigKwargs(TypedDict, total=False):
     api_key: str | None
     endpoint: str | None
@@ -262,6 +287,8 @@ class GraphMetadata(TypedDict):
     total_nodes: int
     total_relationships: int
     exported_at: str
+    # Only on a scoped export (`cgr export -n`, issue #2410).
+    projects: NotRequired[list[str]]
 
 
 class NodeData(TypedDict):
@@ -857,6 +884,10 @@ class DeferredInherit(NamedTuple):
     registered node: a written path can be exact about where to look and
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
+
+    `written_ref` is a C# base as written (`NotificationHandler`1`): the
+    parse-time qn cannot say which name was written, and C# binds that
+    name by scope (namespace, enclosing namespaces, usings), issue #2534.
     """
 
     rel_type: RelationshipType
@@ -866,6 +897,7 @@ class DeferredInherit(NamedTuple):
     base_index: int
     language: SupportedLanguage
     alt_parent_qn: str | None = None
+    written_ref: str | None = None
     # The label the child was declared with. The registry keeps one kind per
     # name, so a TS interface sharing its name with a value (issue #2520)
     # cannot be told from that value by its qualified name alone.
@@ -917,6 +949,12 @@ class DeferredImportEdge(NamedTuple):
     # Import-site edge properties (statement span, alias, imported name;
     # issue #1522), or None for an import shape that records no site.
     site: PropertyDict | None = None
+
+
+LanguageFamily = frozenset[SupportedLanguage]
+# {bare module qn: {language family: its file's module qn}} for a stem whose
+# files carry their extension, the name each family's importers land on.
+StemSiblingModules = dict[str, dict[LanguageFamily, str]]
 
 
 class ReingestReport(NamedTuple):
@@ -1028,7 +1066,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
