@@ -64,7 +64,9 @@ def _run(
 
 
 def test_runs_are_queued_not_cancelled() -> None:
-    concurrency = _workflow()["concurrency"]
+    workflow = _workflow()
+    assert "concurrency" not in workflow
+    concurrency = workflow["jobs"]["bump-version"]["concurrency"]
     assert concurrency["group"] == "version-bump-main"
     assert concurrency["cancel-in-progress"] is False
 
@@ -194,6 +196,10 @@ git() {
       if [ "$2" = --exit-code ]; then
         return "$LS_REMOTE_EXIT"
       fi
+      if [ "$3" = --refs ]; then
+        [ "$TAG_LIST_FAILS" = true ] && return 128
+        printf '%b' "$TAG_LIST"
+      fi
       ;;
   esac
 }
@@ -223,6 +229,8 @@ def _decide_run(
             "LS_REMOTE_EXIT": "0",
             "COMPARE_FAILS": "false",
             "PULLS_FAIL": "false",
+            "TAG_LIST": "",
+            "TAG_LIST_FAILS": "false",
             **env,
         },
     )
@@ -261,7 +269,7 @@ def test_failed_compare_call_fails_the_run(tmp_path: Path) -> None:
     assert "release" not in out
 
 
-def test_without_a_previous_tag_the_triggering_commit_is_scanned(
+def test_without_any_release_tag_the_triggering_commit_is_scanned(
     tmp_path: Path,
 ) -> None:
     _commits(tmp_path, {SHA: "fix: y [security]"})
@@ -349,4 +357,33 @@ def test_unreadable_pull_request_labels_fail_the_run(tmp_path: Path) -> None:
     result, out = _decide_run(tmp_path, f"{SHA}\\n", PULLS_FAIL="true")
     assert result.returncode != 0
     assert "could not read the pull request labels" in result.stdout
+    assert "release" not in out
+
+
+def test_an_untagged_version_scans_from_the_newest_release_tag(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "chore: set version"})
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.0.9\\n"
+        f"{OLDER}\\trefs/tags/v0.1.10\\n"
+        f"{OLDER}\\trefs/tags/v0.1.9\\n"
+        f"{OLDER}\\trefs/tags/not-a-release\\n"
+    )
+    result, out = _decide_run(
+        tmp_path, f"{OLDER}\\n{SHA}\\n", LS_REMOTE_EXIT="2", TAG_LIST=tags
+    )
+    assert result.returncode == 0, result.stderr
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.1.10...{SHA}" in call
+    assert out["security"] == "true"
+
+
+def test_an_unlistable_tag_set_fails_instead_of_narrowing_the_scan(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(tmp_path, "", LS_REMOTE_EXIT="2", TAG_LIST_FAILS="true")
+    assert result.returncode != 0
+    assert "could not list release tags" in result.stdout
     assert "release" not in out

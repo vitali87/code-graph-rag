@@ -18,14 +18,6 @@ on:
 
 permissions: read-all
 
-# One bump at a time. Without this, two merges close together each start a
-# run from their own commit, and the second push to main is rejected.
-# A pending run replaced by a newer one loses nothing: the newer run's commit
-# contains it, and "Decide" scans every commit since the last tag.
-concurrency:
-  group: version-bump-main
-  cancel-in-progress: false
-
 env:
   RELEASE_EVERY: 50
   VERSION_COMPONENT_CAP: 1000
@@ -36,6 +28,16 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       !contains(github.event.head_commit.message, 'chore: bump version')
+    # One bump at a time. Without this, two merges close together each start
+    # a run from their own commit, and the second push to main is rejected.
+    # Declared on the job, not the workflow: a run whose job is skipped (the
+    # bump commit's own push) then never takes the single pending slot, so it
+    # cannot displace a merge's queued run. A pending run replaced by a newer
+    # merge's loses nothing: the newer commit contains it, and "Decide" scans
+    # every commit since the last release tag.
+    concurrency:
+      group: version-bump-main
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 100
     permissions:
@@ -181,7 +183,12 @@ jobs:
           # URL as anything but a commit id.
           # `--exit-code` returns 2 only when the tag is absent; any other
           # failure (network, auth) must not be mistaken for a missing tag.
+          # With no tag for the current version (a manual version change),
+          # the scan starts from the newest release tag instead, so earlier
+          # commits are still checked. Only a repository with no release tag
+          # at all scans the triggering commit alone.
           COMMITS="$GITHUB_SHA"
+          BASE_TAG=""
           TAG_STATUS=0
           git ls-remote --exit-code --tags origin "refs/tags/v${CURRENT}" > /dev/null || TAG_STATUS=$?
           if [ "$TAG_STATUS" -ne 0 ] && [ "$TAG_STATUS" -ne 2 ]; then
@@ -189,20 +196,30 @@ jobs:
             exit 1
           fi
           if [ "$TAG_STATUS" -eq 0 ]; then
+            BASE_TAG="v${CURRENT}"
+          else
+            if ! TAGS=$(git ls-remote --tags --refs origin "refs/tags/v*"); then
+              echo "::error::could not list release tags; refusing to decide the release"
+              exit 1
+            fi
+            BASE_TAG=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
+              | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
+          fi
+          if [ -n "$BASE_TAG" ]; then
             if ! RANGE=$(gh api --paginate \
-                "repos/${GITHUB_REPOSITORY}/compare/v${CURRENT}...${GITHUB_SHA}?per_page=100" \
+                "repos/${GITHUB_REPOSITORY}/compare/${BASE_TAG}...${GITHUB_SHA}?per_page=100" \
                 --jq '.commits[].sha'); then
-              echo "::error::could not list the commits since v${CURRENT}; refusing to decide the release without scanning them"
+              echo "::error::could not list the commits since ${BASE_TAG}; refusing to decide the release without scanning them"
               exit 1
             fi
             RANGE=$(printf '%s\n' "$RANGE" | grep -xE '[0-9a-f]{40}' || true)
             if [ -z "$RANGE" ]; then
-              echo "::error::the compare API returned no commits since v${CURRENT}; refusing to decide the release"
+              echo "::error::the compare API returned no commits since ${BASE_TAG}; refusing to decide the release"
               exit 1
             fi
             COMMITS="$RANGE"
           else
-            echo "::notice::no tag v${CURRENT} (manual version change); scanning only ${GITHUB_SHA}"
+            echo "::notice::no release tag found; scanning only ${GITHUB_SHA}"
           fi
           # Every lookup below fails the run rather than reading as "no
           # marker": a scan that silently skipped a commit could ship a
