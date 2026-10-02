@@ -289,6 +289,15 @@ EXAMPLES_TRACE_PULL = (
     "      --header Authorization=Bearer $TOKEN\n\n"
     "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
 )
+CMD_TRACE_AGENT = (
+    "Print where the installed tracer for a language is: the C/C++ shim, the "
+    "Lua module, or the Dart collector or JVM agent source directory."
+)
+EXAMPLES_TRACE_AGENT = (
+    "EXAMPLE\n\n"
+    '  cc -pthread -finstrument-functions -g -O0 main.c "$(cgr trace agent c)" -o app\n\n'
+    '  LUA_PATH="$(dirname "$(cgr trace agent lua)")/?.lua;;" lua -l cgr_trace main.lua'
+)
 ERR_TRACE_CONVERT_BAD_FORMAT = "Unknown --format '{format}'; supported: ebpf."
 ERR_TRACE_CONVERT_BAD_PATH_MAP = (
     "Invalid --path-map '{value}'; expected BUILD_PREFIX=REPO_PREFIX."

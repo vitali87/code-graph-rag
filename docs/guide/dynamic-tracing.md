@@ -75,16 +75,19 @@ tracer.write(Path("cgr-trace.jsonl"))
 ## Recording a JVM trace (Java, Scala)
 
 Build the agent once (requires a JDK with the `java.lang.classfile` API,
-i.e. JDK 24+; the agent itself has no dependencies):
+i.e. JDK 24+; the agent itself has no dependencies). Its source ships with
+cgr, and `cgr trace agent jvm` prints where:
 
 ```bash
-make jvm-agent   # produces build/cgr-jvm-agent.jar
+AGENT="$(cgr trace agent jvm)"
+javac --release 24 -d cgr-jvm-agent "$AGENT"/src/cgr/trace/*.java
+jar cfm cgr-jvm-agent.jar "$AGENT/MANIFEST.MF" -C cgr-jvm-agent .
 ```
 
 Attach it to any JVM workload, most usefully a test run:
 
 ```bash
-java -javaagent:build/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
+java -javaagent:/path/to/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
 # Maven:  MAVEN_OPTS='-javaagent:...' mvn test
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
@@ -237,14 +240,15 @@ and convert one process at a time.
 
 ## Recording a Lua trace
 
-The agent is a single dependency-free Lua module
-(`codebase_rag/trace/lua_agent/cgr_trace.lua`) built on `debug.sethook`;
+The agent is a single dependency-free Lua module (`cgr_trace.lua`, which
+ships with cgr; `cgr trace agent lua` prints where) built on `debug.sethook`;
 it records every call exactly and writes the interchange format directly,
 so no `cgr trace convert` step is needed:
 
 ```bash
 export CGR_TRACE_REPO=/path/to/your-repo CGR_TRACE_WORKLOAD=busted
-lua -l cgr_trace main.lua      # with the module on LUA_PATH
+export LUA_PATH="$(dirname "$(cgr trace agent lua)")/?.lua;;"
+lua -l cgr_trace main.lua
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
@@ -260,14 +264,17 @@ exit (plain tables have no `__gc` there).
 
 ## Recording a Dart trace
 
-A small in-repo Dart tool (`codebase_rag/trace/dart_collector/`, one
-`vm_service` dependency fetched with `dart pub get`) runs the target under
+A small Dart tool that ships with cgr (`cgr trace agent dart` prints its
+directory; one `vm_service` dependency fetched with `dart pub get`) runs the
+target under
 the VM's own sampling profiler, pulls the CPU samples over the VM Service
 protocol when the program pauses at exit, and writes the interchange
 format directly:
 
 ```bash
-cd codebase_rag/trace/dart_collector && dart pub get   # once
+# once: `dart pub get` writes beside the tool, so work on a copy
+cp -r "$(cgr trace agent dart)" ~/cgr-dart-collector
+cd ~/cgr-dart-collector && dart pub get
 dart bin/cgr_trace_collect.dart --repo /path/to/your-repo \
     --workload smoke -- /path/to/your-repo/main.dart
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
@@ -374,15 +381,15 @@ project frame.
 
 ## Recording a C or C++ trace
 
-A single-file shim (`codebase_rag/trace/c_agent/cgr_trace_shim.c`, no
-dependencies beyond pthreads) rides the compiler's own instrumentation and
+A single-file shim (`cgr_trace_shim.c`, which ships with cgr; `cgr trace
+agent c` prints where; no dependencies beyond pthreads) rides the compiler's own instrumentation and
 records **every call exactly**:
 
 For a **C** project, compile the sources and the shim together:
 
 ```bash
 cc -pthread -finstrument-functions -g -O0 your_sources... \
-   codebase_rag/trace/c_agent/cgr_trace_shim.c -o app
+   "$(cgr trace agent c)" -o app
 ./app        # writes cgr-trace.addrs (override with CGR_TRACE_ADDRS)
 cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
@@ -394,12 +401,13 @@ instrumented C++ objects with the C++ driver; only the C++ translation units
 carry `-finstrument-functions`:
 
 ```bash
-cc  -pthread -c codebase_rag/trace/c_agent/cgr_trace_shim.c -o cgr_shim.o
+cc  -pthread -c "$(cgr trace agent c)" -o cgr_shim.o
 c++ -pthread -finstrument-functions -g -O0 -c your_sources... # -> *.o
 c++ -pthread your_objects... cgr_shim.o -o app
 ```
 
-In CMake, add `cgr_trace_shim.c` to the target's sources (CMake compiles a
+In CMake, add the `cgr_trace_shim.c` that `cgr trace agent c` prints to the
+target's sources (CMake compiles a
 `.c` file with the C compiler on its own), set `-finstrument-functions -g -O0`
 on the traced build type, and link pthreads (the shim uses
 `pthread_mutex_*`/`pthread_once`):
