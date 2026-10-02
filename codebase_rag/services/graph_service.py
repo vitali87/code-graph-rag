@@ -10,7 +10,9 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+import click
 import mgclient
+import typer
 from loguru import logger
 
 from codebase_rag.config import settings
@@ -23,19 +25,25 @@ from ..constants import (
     CYPHER_EXPLAIN_PREFIX,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
+    FAILED_REL_ROWS_SHOWN,
     KEY_CREATED,
+    KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_NAME,
     KEY_PROJECT_NAME,
+    KEY_PROJECT_NAMES,
     KEY_PROPS,
     KEY_PURGED,
+    KEY_TO_MISSING,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
     NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
-    REL_TYPE_CALLS,
+    REL_ENDPOINT_JOINER,
+    REL_ENDPOINT_SOURCE,
+    REL_ENDPOINT_TARGET,
 )
 from ..cypher_queries import (
     CYPHER_ANY_KEYLESS_STRUCTURE,
@@ -43,6 +51,8 @@ from ..cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
+    CYPHER_EXPORT_PROJECT_NODES,
+    CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
@@ -51,6 +61,7 @@ from ..cypher_queries import (
     build_create_relationship_query,
     build_merge_node_query,
     build_merge_relationship_query,
+    build_missing_rel_endpoints_query,
     wrap_with_unwind,
 )
 from ..graph_dialects import (
@@ -146,26 +157,18 @@ def is_query_rejection(error: BaseException) -> bool:
     )
 
 
-def _log_failed_calls(
-    from_label: str,
-    to_label: str,
-    params_list: list[RelBatchRow],
-    batch_successful: int,
-) -> None:
-    failed = len(params_list) - batch_successful
-    if failed <= 0:
-        return
-    logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
-    for i, sample in enumerate(params_list[:3]):
-        logger.warning(
-            ls.MG_CALLS_SAMPLE.format(
-                index=i + 1,
-                from_label=from_label,
-                from_val=sample[KEY_FROM_VAL],
-                to_label=to_label,
-                to_val=sample[KEY_TO_VAL],
-            )
+def _missing_endpoints(row: ResultRow) -> str:
+    return REL_ENDPOINT_JOINER.join(
+        side
+        for side, key in (
+            (REL_ENDPOINT_SOURCE, KEY_FROM_MISSING),
+            (REL_ENDPOINT_TARGET, KEY_TO_MISSING),
         )
+        if row.get(key) is True
+    )
+
+
+_COMMAND_EXITS = (typer.Exit, click.exceptions.Exit, SystemExit)
 
 
 class GraphUnavailableError(ConnectionError):
@@ -182,11 +185,16 @@ _MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attrib
 
 
 def _log_failed_relationships(
-    pattern: tuple[str, str, str, str, str], attempted: int, successful: int
+    pattern: tuple[str, str, str, str, str],
+    attempted: int,
+    successful: int,
+    failed_rows: Sequence[ResultRow] = (),
 ) -> None:
-    # Only CALLS losses used to be itemised; a lost edge of any other type
-    # showed up only as a count in the INFO flush summary, so a run that
-    # dropped data looked clean (issue #2400).
+    # Every relationship type, not only CALLS: a lost edge of any other type
+    # showed up only as a count in the INFO flush summary (issue #2400). The
+    # rows named are the ones the endpoint lookup found without a node; the
+    # head of the batch, listed before, was nearly always rows that had been
+    # written (issue #2438).
     failed = attempted - successful
     if failed <= 0:
         return
@@ -200,6 +208,22 @@ def _log_failed_relationships(
             to_label=to_label,
         )
     )
+    named = [
+        (row, missing) for row in failed_rows if (missing := _missing_endpoints(row))
+    ][:FAILED_REL_ROWS_SHOWN]
+    for index, (row, missing) in enumerate(named, start=1):
+        logger.warning(
+            ls.MG_REL_FAILED_ROW.format(
+                index=index,
+                from_label=from_label,
+                from_val=row.get(KEY_FROM_VAL),
+                to_label=to_label,
+                to_val=row.get(KEY_TO_VAL),
+                missing=missing,
+            )
+        )
+    if named and failed > len(named):
+        logger.warning(ls.MG_RELS_FAILED_MORE.format(count=failed - len(named)))
 
 
 class MemgraphIngestor:
@@ -292,12 +316,18 @@ class MemgraphIngestor:
     def __exit__(
         self,
         exc_type: type | None,
-        exc_val: Exception | None,
+        exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         try:
             if exc_type:
-                if issubclass(exc_type, Exception):
+                if issubclass(exc_type, _COMMAND_EXITS):
+                    # A command that chose its exit code (a refused rename, an
+                    # unindexed project) has said why already. `typer.Exit` is
+                    # a RuntimeError with no message, so logging it as an
+                    # error printed "An exception occurred: ." and a traceback.
+                    logger.debug(ls.MG_COMMAND_EXIT)
+                elif issubclass(exc_type, Exception):
                     logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
                 else:
                     # Ctrl+C or a cancelled task: the user stopped the run,
@@ -807,7 +837,6 @@ class MemgraphIngestor:
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None,
     ) -> tuple[int, int]:
-        from_label, _, rel_type, to_label, _ = pattern
         target_conn = conn or self.conn
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
@@ -817,14 +846,37 @@ class MemgraphIngestor:
             results = self._execute_batch_with_return_on(
                 target_conn, query, params_list
             )
-        batch_successful = _created_count(results)
+            batch_successful = _created_count(results)
+            failed_rows = (
+                self._missing_endpoint_rows(target_conn, pattern, params_list)
+                if batch_successful < len(params_list)
+                else []
+            )
 
-        if rel_type == REL_TYPE_CALLS:
-            _log_failed_calls(from_label, to_label, params_list, batch_successful)
-        else:
-            _log_failed_relationships(pattern, len(params_list), batch_successful)
+        _log_failed_relationships(
+            pattern, len(params_list), batch_successful, failed_rows
+        )
 
         return len(params_list), batch_successful
+
+    def _missing_endpoint_rows(
+        self,
+        conn: ConnectionProtocol,
+        pattern: tuple[str, str, str, str, str],
+        params_list: list[RelBatchRow],
+    ) -> list[ResultRow]:
+        # Only runs for a batch that lost rows. It is a diagnostic: the write
+        # already happened, so a failed lookup must not fail the flush, and
+        # the count of lost rows is still reported without it.
+        from_label, from_key, rel_type, to_label, to_key = pattern
+        query = build_missing_rel_endpoints_query(
+            from_label, from_key, to_label, to_key, FAILED_REL_ROWS_SHOWN
+        )
+        try:
+            return self._execute_batch_with_return_on(conn, query, params_list)
+        except Exception as e:
+            logger.warning(ls.MG_RELS_FAILED_LOOKUP.format(rel_type=rel_type, error=e))
+            return []
 
     def flush_relationships(self) -> None:
         if not self._rel_count:
@@ -954,17 +1006,31 @@ class MemgraphIngestor:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
         self._execute_query(query, dict(params) if params is not None else None)
 
-    def export_graph_to_dict(self) -> GraphData:
+    def export_graph_to_dict(self, project_names: Sequence[str] = ()) -> GraphData:
+        """The whole shared graph, or what `project_names` own when given.
+
+        A scoped file records its projects in the metadata, so a reader can
+        tell it from a whole-graph export with the same shape.
+        """
         logger.info(ls.MG_EXPORTING)
 
-        nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
-        relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
+        if project_names:
+            params: PropertyParams = {KEY_PROJECT_NAMES: list(project_names)}
+            nodes_data = self.fetch_all(CYPHER_EXPORT_PROJECT_NODES, params)
+            relationships_data = self.fetch_all(
+                CYPHER_EXPORT_PROJECT_RELATIONSHIPS, params
+            )
+        else:
+            nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
+            relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
 
         metadata = GraphMetadata(
             total_nodes=len(nodes_data),
             total_relationships=len(relationships_data),
             exported_at=self._get_current_timestamp(),
         )
+        if project_names:
+            metadata["projects"] = list(project_names)
 
         logger.info(
             ls.MG_EXPORTED.format(nodes=len(nodes_data), rels=len(relationships_data))
