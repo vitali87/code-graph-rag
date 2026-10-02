@@ -355,6 +355,27 @@ class TestClassBeforeSameNamedDef:
             ),
         }
 
+    def test_bare_class_decorator_without_twin_does_not_fan_out(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Applying a lone class still constructs it, once and exactly.
+        m = _index(temp_repo, mock_ingestor, CLASS_DECORATOR_SRC)
+        exact = cs.EdgeResolution.EXACT
+        assert _edges_from(mock_ingestor, m) == {
+            (
+                cs.RelationshipType.INSTANTIATES,
+                cs.NodeLabel.CLASS,
+                f"{m}.register",
+                exact,
+            ),
+            (
+                cs.RelationshipType.CALLS,
+                cs.NodeLabel.METHOD,
+                f"{m}.register.__init__",
+                exact,
+            ),
+        }
+
 
 class TestDefBeforeSameNamedClass:
     # The def is written first, so the documented rule already gave it the
@@ -441,26 +462,6 @@ class TestNeighboursUnchanged:
         assert _edges_from(mock_ingestor, f"{m}.use") == {
             (cs.RelationshipType.INSTANTIATES, cs.NodeLabel.CLASS, f"{m}.Tool", exact),
             (cs.RelationshipType.CALLS, cs.NodeLabel.METHOD, f"{m}.Tool.run", exact),
-        }
-
-    def test_bare_class_decorator_without_twin_is_exact(
-        self, temp_repo: Path, mock_ingestor: MagicMock
-    ) -> None:
-        m = _index(temp_repo, mock_ingestor, CLASS_DECORATOR_SRC)
-        exact = cs.EdgeResolution.EXACT
-        assert _edges_from(mock_ingestor, m) == {
-            (
-                cs.RelationshipType.INSTANTIATES,
-                cs.NodeLabel.CLASS,
-                f"{m}.register",
-                exact,
-            ),
-            (
-                cs.RelationshipType.CALLS,
-                cs.NodeLabel.METHOD,
-                f"{m}.register.__init__",
-                exact,
-            ),
         }
 
     def test_if_else_function_twins_are_unchanged(

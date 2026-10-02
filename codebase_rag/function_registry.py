@@ -61,6 +61,19 @@ class FunctionRegistryTrie:
     def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
         return self._callable_params.get(qualified_name)
 
+    def reserve_qns(self, reservations: dict[QualifiedName, tuple[int, int]]) -> None:
+        """Keep each plain name for the definition at its (line, col).
+
+        Passes register one kind at a time, not in document order: Python's
+        functions go before its classes, so a `def Tool` shim below `class
+        Tool` took the plain name and the class, written first, took `@line`
+        (issue #2621). A reserved name goes to that position when it
+        registers; a definition above it still takes the plain name first,
+        and one below takes the `@line` variant. Each call replaces the last
+        file's reservations, which only ever name that file's definitions.
+        """
+        self._reserved = reservations
+
     def mark_property(self, qualified_name: QualifiedName) -> None:
         self._properties.add(qualified_name)
         self._property_names.add(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
@@ -108,19 +121,6 @@ class FunctionRegistryTrie:
         if variant not in bucket:
             bucket.append(variant)
         return variant
-
-    def reserve_qns(self, reservations: dict[QualifiedName, tuple[int, int]]) -> None:
-        """Keep each plain name for the definition at its (line, col).
-
-        Passes register one kind at a time, not in document order: Python's
-        functions go before its classes, so a `def Tool` shim below `class
-        Tool` took the plain name and the class, written first, took `@line`
-        (issue #2621). A reserved name goes to that position when it
-        registers; a definition above it still takes the plain name first,
-        and one below takes the `@line` variant. Each call replaces the last
-        file's reservations, which only ever name that file's definitions.
-        """
-        self._reserved = reservations
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])
