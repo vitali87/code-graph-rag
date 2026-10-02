@@ -36,6 +36,7 @@ class ReadOnlyQueryProtocol(QueryProtocol, Protocol):
     def fetch_read_only(self, query: str) -> list[ResultRow]: ...
 
 
+@runtime_checkable
 class QueryingIngestorProtocol(IngestorProtocol, QueryProtocol, Protocol):
     """A sink that can also read back what it wrote."""
 

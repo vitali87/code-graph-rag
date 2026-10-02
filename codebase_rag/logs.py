@@ -415,6 +415,7 @@ MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
+MG_COMMAND_EXIT = "Command exited. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
@@ -453,13 +454,17 @@ MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
 )
-MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
-MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
 MG_RELS_FAILED = (
     "Failed to create {count} of {attempted} ({from_label})-[:{rel_type}]->"
     "({to_label}) relationships - an endpoint node did not exist when they "
     "were written"
 )
+MG_REL_FAILED_ROW = (
+    "  Failed {index}: {from_label}.{from_val} -> {to_label}.{to_val} "
+    "(missing {missing})"
+)
+MG_RELS_FAILED_MORE = "  ... and {count} more"
+MG_RELS_FAILED_LOOKUP = "Could not look up which {rel_type} rows were lost: {error}"
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )
@@ -656,6 +661,7 @@ CALL_INSTANCE_QUALIFIED = "Instance-resolved qualified call: {call_name} -> {met
 CALL_INSTANCE_INHERITED = "Instance-resolved inherited call: {call_name} -> {method_qn} (via {class_name}:{var_type})"
 CALL_WILDCARD = "Wildcard-resolved call: {call_name} -> {qn}"
 CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
+CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
@@ -1124,6 +1130,22 @@ GLOSS_REANCHOR_FAILED = (
     "Could not re-attach Gloss notes to their symbols after the sync: {error}. "
     "Unattached notes are re-attached by the next run."
 )
+# Trace-derived CALLS edges carried across a re-parse (issue #2429).
+TRACE_EDGES_CARRIED = "Kept {carried} trace-derived CALLS edge(s) across the re-parse"
+TRACE_EDGES_OUTDATED = (
+    "Kept {carried} trace-derived CALLS edge(s) across the re-parse; "
+    "{stale} newly marked dynamic_stale (an endpoint's definition changed) and "
+    "{dropped} dropped (an endpoint no longer exists). Re-run the trace and "
+    "`cgr trace ingest` it to refresh them."
+)
+TRACE_CARRY_CAPTURE_FAILED = (
+    "Could not read trace-derived CALLS edges before the re-parse; this full "
+    "rebuild continues without them. Re-ingest the trace to restore them."
+)
+TRACE_CARRY_FAILED = (
+    "Could not re-apply {count} trace-derived CALLS edge(s) after the "
+    "re-parse: {error}. Re-ingest the trace to restore them."
+)
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
@@ -1179,6 +1201,11 @@ PROGRESS_FILES_PROCESSED = "{count} processed"
 
 # Capture selection logs
 CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
+CAPTURE_GROUP_ALREADY_ON = (
+    "Capture group '{group}' adds nothing: it is already captured. A group is "
+    "added to the defaults; use `--capture none --capture {group}` to capture "
+    "only it, or `-GROUP` to drop a group."
+)
 CAPTURE_DEPENDENCY_GAP = (
     "Capture selection keeps {rel} but its usual companion {missing} is disabled; "
     "obeying as requested (edges may be incomplete)"
