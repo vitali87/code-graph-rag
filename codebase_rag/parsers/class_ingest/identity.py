@@ -28,9 +28,14 @@ def resolve_class_identity(
         class_name = fqn_config.get_name(class_node)
         warn_if_name_truncated(class_node, class_name, file_path)
         if class_name:
+            scope_name = (
+                fqn_config.get_scope_name(class_node)
+                if fqn_config.get_scope_name
+                else None
+            )
             parts = [
                 *scoped_name_parts(class_node.parent, fqn_config, module_qn, file_path),
-                class_name,
+                scope_name or class_name,
             ]
 
             # Use the module's already-resolved (and collision-disambiguated)
