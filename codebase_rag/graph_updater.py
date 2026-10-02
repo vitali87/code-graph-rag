@@ -825,6 +825,23 @@ def _stem_key(file_key: str) -> str:
     return Path(file_key).with_suffix("").as_posix()
 
 
+def _flux_stems_of(file_key: str) -> set[str]:
+    """The stems a file added or deleted puts in flux.
+
+    Its own, and for a Python package initializer the stem of the module it
+    defines: `x/__init__.py` names `proj.x` as `x.py` and `x.pyi` do, so adding
+    or deleting it hands that module between them although the stems differ.
+    Without this, an added package left the stub holding `proj.x` and itself
+    suffixed to a twin, and a deleted one left `proj.x` with no Module, the
+    stub never re-parsed to take it back (issue #2445).
+    """
+    stems = {_stem_key(file_key)}
+    path = Path(file_key)
+    if path.name in cs.PY_PACKAGE_INIT_FILES and path.parent != Path("."):
+        stems.add(path.parent.as_posix())
+    return stems
+
+
 # Longest first, so `index.d.ts` loses `.d.ts` whole rather than being cut back
 # to `index.d` the way a single-suffix strip does.
 _MODULE_EXTS_LONGEST_FIRST: tuple[str, ...] = tuple(
@@ -5671,9 +5688,10 @@ class GraphUpdater:
             set()
             if is_full_build
             else {
-                _stem_key(key)
+                stem
                 for key in (eligible_keys - old_hashes.keys())
                 | (old_hashes.keys() - eligible_keys)
+                for stem in _flux_stems_of(key)
             }
         )
         # Per run: a full build forgets nothing, and a reused updater must not
@@ -6605,8 +6623,8 @@ class GraphUpdater:
         # share them and are not named in the call. Those survivors re-parse
         # in walk order so the bare module qn goes to the file a clean index
         # gives it rather than to the file indexed first (issue #1569).
-        flux_stems = {_stem_key(key) for key in present if key not in hashes}
-        flux_stems |= {_stem_key(key) for key in gone}
+        added = [key for key in present if key not in hashes]
+        flux_stems = {stem for key in (*added, *gone) for stem in _flux_stems_of(key)}
         survivors: dict[str, Path] = {}
         for stem in flux_stems:
             self._collect_stem_survivors(stem, present, gone, survivors)

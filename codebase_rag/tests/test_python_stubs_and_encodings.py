@@ -498,21 +498,33 @@ class TestStubOwnershipAcrossIncrementalRuns:
 
     Adding or deleting the `.py` puts the stub's stem in flux, so the stub
     re-parses and yields or takes the module the way a clean index would.
+    The package `x/__init__.py` decides for `x.pyi` just as `x.py` does,
+    though its stem is `x/__init__`, not `x`.
     """
 
     _STUB = b"def add(a: int, b: int) -> int: ...\ndef only_in_stub() -> None: ...\n"
     _IMPL = b"def add(a, b):\n    return a + b\n"
 
     @staticmethod
-    def _run(store: _StatefulIngestor, root: Path, *, force: bool) -> None:
+    def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
         parsers, queries = load_parsers()
-        GraphUpdater(
+        return GraphUpdater(
             ingestor=store,
             repo_path=root,
             parsers=parsers,
             queries=queries,
             project_name="proj",
-        ).run(force=force)
+        )
+
+    def _sync(
+        self, store: _StatefulIngestor, root: Path, changed: str, scoped: bool
+    ) -> None:
+        # A walk finds the change itself; `reingest` (the watcher, the MCP
+        # tool) is named only the changed file and must find the stub.
+        if scoped:
+            self._updater(store, root).reingest([changed])
+        else:
+            self._updater(store, root).run(force=False)
 
     @staticmethod
     def _state(store: _StatefulIngestor) -> tuple[dict[str, str], set[str]]:
@@ -528,36 +540,39 @@ class TestStubOwnershipAcrossIncrementalRuns:
         }
         return modules, functions
 
+    @pytest.mark.parametrize("scoped", [False, True], ids=["run", "reingest"])
+    @pytest.mark.parametrize("impl", ["x.py", "x/__init__.py"])
     def test_an_added_implementation_takes_the_module_from_its_stub(
-        self, project: Path
+        self, project: Path, impl: str, scoped: bool
     ) -> None:
         store = _StatefulIngestor()
         (project / "x.pyi").write_bytes(self._STUB)
-        self._run(store, project, force=True)
+        self._updater(store, project).run(force=True)
         modules, functions = self._state(store)
         assert modules["proj.x"] == "x.pyi"
         assert "proj.x.only_in_stub" in functions
 
-        (project / "x.py").write_bytes(self._IMPL)
-        self._run(store, project, force=False)
+        _write(project, {impl: self._IMPL})
+        self._sync(store, project, impl, scoped)
         modules, functions = self._state(store)
         assert {qn: p for qn, p in modules.items() if qn.startswith("proj.x")} == {
-            "proj.x": "x.py"
+            "proj.x": impl
         }
         assert "proj.x.add" in functions
         assert "proj.x.only_in_stub" not in functions
 
+    @pytest.mark.parametrize("scoped", [False, True], ids=["run", "reingest"])
+    @pytest.mark.parametrize("impl", ["x.py", "x/__init__.py"])
     def test_a_deleted_implementation_hands_the_module_to_its_stub(
-        self, project: Path
+        self, project: Path, impl: str, scoped: bool
     ) -> None:
         store = _StatefulIngestor()
-        (project / "x.pyi").write_bytes(self._STUB)
-        (project / "x.py").write_bytes(self._IMPL)
-        self._run(store, project, force=True)
-        assert self._state(store)[0]["proj.x"] == "x.py"
+        _write(project, {"x.pyi": self._STUB, impl: self._IMPL})
+        self._updater(store, project).run(force=True)
+        assert self._state(store)[0]["proj.x"] == impl
 
-        (project / "x.py").unlink()
-        self._run(store, project, force=False)
+        (project / impl).unlink()
+        self._sync(store, project, impl, scoped)
         modules, functions = self._state(store)
         assert modules["proj.x"] == "x.pyi"
         assert {"proj.x.add", "proj.x.only_in_stub"} <= functions
