@@ -1199,23 +1199,9 @@ class ClassIngestMixin:
             )
             return
 
-        # A type written in a function body is that function's, not the
-        # module's: two functions' local `Checker`s must not collide, and an
-        # unnamed functor needs a name for its operator() to hang off
-        # (issue #2555).
-        local_qn = (
-            cpp_local_types.local_type_qn(
-                class_node, module_qn, self.function_locations
-            )
-            if language == cs.SupportedLanguage.CPP
-            else None
-        )
+        local_qn = self._cpp_local_type_qn(class_node, module_qn, language)
         identity = (
-            (
-                local_qn,
-                local_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
-                cpp_utils.is_exported(class_node),
-            )
+            self._cpp_local_type_identity(class_node, local_qn)
             if local_qn is not None
             else id_.resolve_class_identity(
                 class_node,
@@ -1380,6 +1366,29 @@ class ClassIngestMixin:
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
             module_qn=module_qn,
+        )
+
+    def _cpp_local_type_qn(
+        self, class_node: Node, module_qn: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        # A type written in a function body is that function's, not the
+        # module's: two functions' local `Checker`s must not collide, and an
+        # unnamed functor needs a name for its operator() to hang off
+        # (issue #2555).
+        if language != cs.SupportedLanguage.CPP:
+            return None
+        return cpp_local_types.local_type_qn(
+            class_node, module_qn, self.function_locations
+        )
+
+    @staticmethod
+    def _cpp_local_type_identity(
+        class_node: Node, local_qn: str
+    ) -> tuple[str, str, bool]:
+        return (
+            local_qn,
+            local_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            cpp_utils.is_exported(class_node),
         )
 
     def _cpp_local_type_parent(

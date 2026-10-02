@@ -4840,6 +4840,36 @@ class CallProcessor:
             elif cpp_local_types.is_positional_name(type_name):
                 del var_types[name]
 
+    def _emit_cpp_functor_callback(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        rel_type: cs.RelationshipType,
+        ensure_rel: Callable[..., None],
+        language: cs.SupportedLanguage | None,
+    ) -> bool:
+        # A functor handed over (`std::sort(b, e, Cmp{})`) is passed the way
+        # a function pointer is, and the callee runs its operator()
+        # (issue #2555). True when the argument was one and its edge is out.
+        if language != cs.SupportedLanguage.CPP:
+            return False
+        functor = self._cpp_functor_operator(arg_node, module_qn, local_var_types)
+        if functor is None:
+            return False
+        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        self._emit_callback_targets(
+            source_spec,
+            functor[0],
+            functor[1],
+            rel_type,
+            ensure_rel,
+            module_qn,
+            language,
+        )
+        return True
+
     def _cpp_functor_operator(
         self, node: Node, module_qn: str, var_types: dict[str, str] | None
     ) -> tuple[str, str] | None:
@@ -7419,22 +7449,15 @@ class CallProcessor:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
-        # A functor handed over (`std::sort(b, e, Cmp{})`) is passed the way
-        # a function pointer is, and the callee runs its operator()
-        # (issue #2555).
-        if language == cs.SupportedLanguage.CPP and (
-            functor := self._cpp_functor_operator(arg_node, module_qn, local_var_types)
+        if self._emit_cpp_functor_callback(
+            arg_node,
+            source_spec,
+            module_qn,
+            local_var_types,
+            rel_type,
+            ensure_rel,
+            language,
         ):
-            self._resolver.last_resolution = cs.EdgeResolution.EXACT
-            self._emit_callback_targets(
-                source_spec,
-                functor[0],
-                functor[1],
-                rel_type,
-                ensure_rel,
-                module_qn,
-                language,
-            )
             return
         # Only a name can hand a callable over. The whole source text of any
         # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
