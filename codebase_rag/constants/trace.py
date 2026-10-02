@@ -153,6 +153,21 @@ TRACE_PROP_STATIC_MISSED = "static_missed"
 # dynamic_call_count are approximate (a sampled edge that was never sampled is
 # not evidence of dead code); False when the tracer observed every call.
 TRACE_PROP_SAMPLED = "dynamic_sampled"
+# True once an incremental sync re-parsed an endpoint whose definition changed
+# after the trace was ingested (issue #2429): the observation is kept, but it
+# describes code that no longer exists as traced. Only a new ingest clears it.
+TRACE_PROP_STALE = "dynamic_stale"
+# What a re-parse carries of a trace-derived edge: the runtime observation
+# itself. Resolution, `static_missed` and the dispatch-literal site are
+# re-derived against the re-parsed static graph instead, as an ingest would.
+TRACE_CARRIED_PROPS = (
+    TRACE_PROP_DYNAMIC,
+    TRACE_PROP_CALL_COUNT,
+    TRACE_PROP_WORKLOADS,
+    TRACE_PROP_WORKLOAD_COUNT,
+    TRACE_PROP_RECEIVER_TYPES,
+    TRACE_PROP_SAMPLED,
+)
 
 
 class TraceUnresolvedReason(StrEnum):

@@ -34,7 +34,11 @@ from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.sync_lock import repo_sync_lock
-from codebase_rag.utils.path_utils import is_eligible_rel_file, is_walked_dir
+from codebase_rag.utils.path_utils import (
+    derive_project_name,
+    is_eligible_rel_file,
+    is_walked_dir,
+)
 
 
 class PendingTimer(Protocol):
@@ -449,6 +453,7 @@ def start_watcher(
     batch_size: int | None = None,
     debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
     max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+    project_name: str | None = None,
 ) -> None:
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
@@ -469,6 +474,7 @@ def start_watcher(
             queries,
             debounce_seconds,
             max_wait_seconds,
+            project_name,
         )
 
 
@@ -492,8 +498,20 @@ def _run_watcher_loop(
     queries,
     debounce_seconds: float,
     max_wait_seconds: float,
+    project_name: str | None = None,
 ):
-    updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
+    # The name `cgr start --repo-path` gives this checkout, not GraphUpdater's
+    # bare-directory fallback: live updates must land in the project every
+    # other command reads, and the two writers share one hash cache and
+    # exclusion stamp (issue #2432).
+    updater = GraphUpdater(
+        ingestor,
+        repo_path_obj,
+        parsers,
+        queries,
+        project_name=project_name or derive_project_name(repo_path_obj),
+        project_named=project_name is not None,
+    )
     _initial_scan(updater)
 
     event_handler = CodeChangeEventHandler(
@@ -561,6 +579,10 @@ def main(
             callback=_validate_non_negative_float,
         ),
     ] = DEFAULT_MAX_WAIT_SECONDS,
+    project_name: Annotated[
+        str | None,
+        typer.Option("--project-name", help=ch.HELP_PROJECT_NAME_WATCH),
+    ] = None,
 ) -> None:
     """
     Watch a repository for file changes and update the knowledge graph in real-time.
@@ -604,7 +626,7 @@ def main(
         )
         max_wait = debounce
 
-    start_watcher(repo_path, host, port, batch_size, debounce, max_wait)
+    start_watcher(repo_path, host, port, batch_size, debounce, max_wait, project_name)
 
 
 if __name__ == "__main__":

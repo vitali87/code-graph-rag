@@ -95,6 +95,20 @@ EMBEDDING_DIM_MISMATCH = (
 # Graph loading errors
 GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 FAILED_TO_LOAD_DATA = "Failed to load data from file"
+# A JSON file that is not a graph export (issue #2446).
+GRAPH_FILE_NOT_AN_EXPORT = "{name} is not a cgr graph export: {reason}"
+GRAPH_FILE_NOT_AN_OBJECT = (
+    'expected a JSON object with "nodes" and "relationships" arrays, found a '
+    "JSON {found}"
+)
+GRAPH_FILE_MISSING_KEYS = (
+    'expected a JSON object with "nodes" and "relationships" arrays '
+    "(missing: {missing})"
+)
+GRAPH_FILE_NOT_AN_ARRAY = '"{key}" is not an array'
+GRAPH_FILE_ITEM_NOT_AN_OBJECT = "{kind} {index} is not an object"
+GRAPH_FILE_ITEM_MISSING = "{kind} {index} is missing {missing}"
+GRAPH_FILE_ITEM_KINDS = {"nodes": "node", "relationships": "relationship"}
 NODES_NOT_LOADED = "Nodes should be loaded"
 RELATIONSHIPS_NOT_LOADED = "Relationships should be loaded"
 DATA_NOT_LOADED = "Data should be loaded"
