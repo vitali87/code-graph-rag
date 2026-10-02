@@ -2385,6 +2385,16 @@ class CallResolver:
         if direct is not None and direct in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=direct)
             return self.function_registry[direct], direct
+        # An ES-module default import maps to `<module>.default`, which no
+        # definition is registered under; the module's `export default` names
+        # the definition the call reaches (issue #2724).
+        if imported_qn.endswith(cs.IMPORT_DEFAULT_SUFFIX):
+            default = self.import_processor.esm_default_exports.get(
+                imported_qn[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
+            )
+            if default is not None and default in self.function_registry:
+                logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=default)
+                return self.function_registry[default], default
         return None
 
     def _try_resolve_qualified_call(
