@@ -91,6 +91,7 @@ Write patterns against a snippet first:
 
 ```python
 from ast_grep_py import SgRoot
+
 root = SgRoot(source, "ruby").root()
 for node in root.find_all(pattern="def $NAME"):
     print(node.get_match("NAME").text(), node.range().start.line + 1)

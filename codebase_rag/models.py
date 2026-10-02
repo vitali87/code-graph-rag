@@ -8,6 +8,7 @@ from rich.console import Console
 
 from .constants import PermissionMode, SupportedLanguage
 from .types_defs import MCPHandlerType, MCPInputSchema, PropertyValue
+from .utils.terminal_console import terminal_aware_console
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -49,14 +50,10 @@ class SessionState:
         return self.permission_mode
 
 
-def _default_console() -> Console:
-    return Console(width=None, force_terminal=True)
-
-
 @dataclass
 class AppContext:
     session: SessionState = field(default_factory=SessionState)
-    console: Console = field(default_factory=_default_console)
+    console: Console = field(default_factory=terminal_aware_console)
 
 
 @dataclass

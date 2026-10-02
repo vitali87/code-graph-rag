@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -21,7 +22,17 @@ def workspaces_dir(home: Path | None = None) -> Path:
     return base / cs.WORKSPACES_SUBDIR
 
 
+def validate_workspace_name(name: str) -> str:
+    if re.fullmatch(cs.WORKSPACE_NAME_PATTERN, name) is None:
+        raise WorkspaceError(cs.ERR_WORKSPACE_INVALID_NAME.format(name=name))
+    return name
+
+
 def workspace_path(name: str, home: Path | None = None) -> Path:
+    # Every command reaches the file through here, so validating the name once
+    # keeps delete/create --force/load from touching a file outside the
+    # workspaces directory.
+    validate_workspace_name(name)
     return workspaces_dir(home) / f"{name}{cs.WORKSPACE_EXTENSION}"
 
 
@@ -95,11 +106,23 @@ def add_repo(
     resolved = Path(repo_path).expanduser().resolve()
     if not resolved.exists():
         raise WorkspaceError(cs.ERR_WORKSPACE_REPO_PATH_MISSING.format(path=resolved))
+    if not resolved.is_dir():
+        raise WorkspaceError(
+            cs.ERR_WORKSPACE_REPO_NOT_A_DIRECTORY.format(path=resolved)
+        )
     config = load_workspace(name, home=home)
     if config.find_repo(str(resolved)) is not None:
         raise WorkspaceError(
             cs.ERR_WORKSPACE_REPO_DUPLICATE.format(path=resolved, name=name)
         )
+    for member in config.repos:
+        member_path = member.repo_path()
+        if resolved.is_relative_to(member_path) or member_path.is_relative_to(resolved):
+            raise WorkspaceError(
+                cs.ERR_WORKSPACE_REPO_OVERLAPS.format(
+                    path=resolved, member=member_path, name=name
+                )
+            )
     repo = WorkspaceRepo(
         path=str(resolved),
         project_name=(project_name or derive_project_name(resolved)),
