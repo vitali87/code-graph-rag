@@ -21,7 +21,10 @@ def derive_project_name(repo_path: Path) -> str:
     digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[
         : cs.PROJECT_NAME_DIGEST_LEN
     ]
-    base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_")
+    # Strip `-` as well as `_`: a name like `мой-repo` would otherwise start
+    # with `-`, and so would every qualified name under it, which Click then
+    # reads as an option wherever a command takes one (issue #2638).
+    base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_-")
     if not base:
         base = _PROJECT_NAME_FALLBACK_BASE
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
@@ -71,6 +74,29 @@ def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
     if target_default and target_default != ".":
         return Path(target_default).resolve()
     return Path.cwd().resolve()
+
+
+def unwritable_output_reason(path: Path) -> str | None:
+    """Why no file can be written at `path`, or None when one can.
+
+    Run before the graph is read or indexed, so a mistyped `-o` fails at once
+    instead of after the work it was meant to save (issue #2410). Missing
+    parent directories are fine: the writer creates them.
+    """
+    if path.is_dir():
+        return cs.CLI_ERR_OUTPUT_IS_DIR.format(path=path)
+    if path.exists():
+        if os.access(path, os.W_OK):
+            return None
+        return cs.CLI_ERR_OUTPUT_NOT_WRITABLE.format(target=path)
+    ancestor = next((parent for parent in path.parents if parent.exists()), None)
+    if ancestor is None:
+        return None
+    if not ancestor.is_dir():
+        return cs.CLI_ERR_OUTPUT_PARENT_NOT_DIR.format(parent=ancestor)
+    if not os.access(ancestor, os.W_OK | os.X_OK):
+        return cs.CLI_ERR_OUTPUT_NOT_WRITABLE.format(target=ancestor)
+    return None
 
 
 @lru_cache(maxsize=4096)
@@ -340,6 +366,11 @@ def module_stem(filename: str) -> str:
         if filename.endswith(ext) and len(filename) > len(ext):
             return filename[: -len(ext)]
     return Path(filename).stem
+
+
+def module_extension(filename: str) -> str:
+    """The extension `module_stem` removes, dot included (`.py`, `.d.ts`)."""
+    return filename[len(module_stem(filename)) :]
 
 
 _DECLARATION_EXTS: tuple[str, ...] = tuple(
