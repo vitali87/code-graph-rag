@@ -728,3 +728,31 @@ def build_module_path(
 
     path_parts.reverse()
     return path_parts
+
+
+def in_attribute_arguments(token: Node) -> bool:
+    """True when a token sits inside an attribute's `#[...]` arguments.
+
+    tree-sitter-rust gives attribute arguments the same `token_tree` a macro
+    body gets, so `skip(self)` in `#[instrument(skip(self))]` has the shape of
+    a macro-internal call. Only the owner of the enclosing groups tells them
+    apart (issue #2541).
+    """
+    group = token.parent
+    while group is not None and group.type == cs.TS_RS_TOKEN_TREE:
+        if _is_raw_attribute_group(group):
+            return True
+        group = group.parent
+    return group is not None and group.type == cs.TS_RS_ATTRIBUTE
+
+
+def _is_raw_attribute_group(group: Node) -> bool:
+    # A macro body (`macro_rules!` arm, `quote!`) does not parse the attributes
+    # it carries: `#[cfg(not(test))]` there is a `#` token then a `[...]` group.
+    first = group.child(0)
+    if first is None or first.type != cs.TS_RS_TOKEN_BRACKET_OPEN:
+        return False
+    marker = group.prev_sibling
+    if marker is not None and marker.type == cs.TS_RS_TOKEN_BANG:
+        marker = marker.prev_sibling
+    return marker is not None and marker.type == cs.TS_RS_TOKEN_HASH

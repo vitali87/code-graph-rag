@@ -78,6 +78,27 @@ def _resolve_token(token: str) -> frozenset[cs.RelationshipType] | None:
         return None
 
 
+def _is_group(name: str) -> bool:
+    return name.lower() in cs.CaptureGroup.__members__.values()
+
+
+def unknown_tokens(tokens: Iterable[str]) -> list[str]:
+    """The tokens that name no group, relationship type, `all` or `none`.
+
+    Checked before any work so a typo is a usage error, not a warning
+    followed by a full re-parse with the defaults (#2439).
+    """
+    unknown: list[str] = []
+    for token in tokens:
+        token = token.strip()
+        if not token or token.lower() in (cs.CAPTURE_TOKEN_NONE, cs.CAPTURE_TOKEN_ALL):
+            continue
+        name = token.lstrip(cs.CAPTURE_DROP_PREFIX + cs.CAPTURE_ADD_PREFIX)
+        if _resolve_token(name) is None:
+            unknown.append(token)
+    return unknown
+
+
 def _base_rels(groups: Iterable[cs.CaptureGroup]) -> set[cs.RelationshipType]:
     enabled: set[cs.RelationshipType] = set()
     for group in groups:
@@ -109,8 +130,16 @@ def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
             continue
         if drop:
             enabled -= rels
-        else:
-            enabled |= rels
+            continue
+        # A bare group is added to what is already on, so naming a default
+        # group changes nothing; say how to capture only it (#2439).
+        if (
+            not token.startswith(cs.CAPTURE_ADD_PREFIX)
+            and _is_group(name)
+            and rels <= enabled
+        ):
+            logger.warning(ls.CAPTURE_GROUP_ALREADY_ON.format(group=name.lower()))
+        enabled |= rels
 
     return _selection_for(frozenset(enabled))
 

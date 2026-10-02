@@ -326,3 +326,4 @@ TS_RECEIVER_PARAMETER = "receiver_parameter"
 # with the constructors and methods (issue #1807).
 TS_JAVA_ENUM_BODY = "enum_body"
 TS_JAVA_ENUM_CONSTANT = "enum_constant"
+TS_JAVA_ENUM_BODY_DECLARATIONS = "enum_body_declarations"

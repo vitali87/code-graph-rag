@@ -116,7 +116,8 @@ class TestDuplicatesTable:
         console.print(cli._build_duplicates_table([_group(segment)], "repo"))
 
         out = _output(console)
-        assert _qn(segment) in out
+        # The title names the project, so a member drops that prefix.
+        assert _qn(segment).removeprefix("repo.") in out
         assert f"{_path(segment)}:7-9" in out
 
     def test_linked_location_keeps_the_segment(self, tmp_path: Path) -> None:

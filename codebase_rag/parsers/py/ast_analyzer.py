@@ -337,6 +337,79 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     return frozenset(names)
 
 
+# A comprehension is a scope of its own; a lambda is one too, but unlike a
+# def its calls are the enclosing function's (issue #2666).
+_PY_COMPREHENSION_TYPES = frozenset(
+    {
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+    }
+)
+
+
+def _inner_scope_bindings(scope: Node) -> set[str]:
+    """The names a comprehension's `for` targets or a lambda's parameters
+    bind."""
+    if scope.type == cs.TS_PY_LAMBDA:
+        return set(_parameter_names(scope))
+    names: set[str] = set()
+    for clause in scope.named_children:
+        if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+            continue
+        if (target := clause.child_by_field_name(cs.TS_FIELD_LEFT)) is not None:
+            names.update(
+                name
+                for identifier in _identifiers_in(target)
+                if (name := safe_decode_text(identifier))
+            )
+    return names
+
+
+def _is_name_read(identifier: Node) -> bool:
+    """Whether an identifier reads a variable: not the attribute of `x.name`
+    and not the keyword of `f(name=...)`."""
+    parent = identifier.parent
+    if parent is None:
+        return True
+    if parent.type == cs.TS_PY_ATTRIBUTE:
+        attribute = parent.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        return attribute is None or attribute.id != identifier.id
+    if parent.type == cs.TS_PY_KEYWORD_ARGUMENT:
+        keyword = parent.child_by_field_name(cs.TS_FIELD_NAME)
+        return keyword is None or keyword.id != identifier.id
+    return True
+
+
+def _inner_scope_only_names(caller: Node) -> frozenset[str]:
+    """Names a comprehension or lambda inside the caller binds, kept only
+    when every read of the name in the caller sits inside a scope that binds
+    it. `[Item(c) for c in values]` makes `c` the comprehension's own, but a
+    comprehension variable does not leak in Python 3, so a `key(...)` after
+    `[key for key in items]` still reads the module's `key`. Checking every
+    read keeps the answer free of call positions, which the resolver does
+    not have on every path."""
+    bound: set[str] = set()
+    read_outside: set[str] = set()
+    stack: list[tuple[Node, frozenset[str]]] = [
+        (child, frozenset()) for child in caller.children
+    ]
+    while stack:
+        node, enclosing = stack.pop()
+        if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
+            continue
+        if node.type in _PY_COMPREHENSION_TYPES or node.type == cs.TS_PY_LAMBDA:
+            own = _inner_scope_bindings(node)
+            bound.update(own)
+            enclosing = enclosing | own
+        elif node.type == cs.TS_PY_IDENTIFIER and _is_name_read(node):
+            if (name := safe_decode_text(node)) and name not in enclosing:
+                read_outside.add(name)
+        stack.extend((child, enclosing) for child in node.children)
+    return frozenset(bound - read_outside)
+
+
 def _call_bound_by(binder: Node) -> Node | None:
     """The call a plain `p = call()` binds to its WHOLE target, else None:
     `p, q = fw()`, `p += x`, `for p in xs`, `with cm as p`, `(p := x)` and
@@ -661,6 +734,17 @@ def _node_name(node: Node) -> str | None:
 
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
+
+    def locally_bound_names(self, caller: Node, module_qn: str) -> frozenset[str]:
+        """Every name a function's body reads as its own rather than the
+        module's or the class's: parameters, what its statements bind, what
+        an enclosing def binds, and what only its comprehensions and lambdas
+        bind. `apply(key, item)` calling `key(item)` calls the argument, not
+        a module function named `key` (issue #2666)."""
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        return _locally_bound_names(caller, import_map) | _inner_scope_only_names(
+            caller
+        )
 
     def shadowed_import_names(self, caller: Node, module_qn: str) -> frozenset[str]:
         """The import-map names the caller's body binds as locals.

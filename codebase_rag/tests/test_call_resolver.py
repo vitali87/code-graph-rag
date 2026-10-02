@@ -77,6 +77,9 @@ class MockFunctionRegistry:
     def property_names(self) -> set[str]:
         return self._property_names
 
+    def is_object_member(self, qn: QualifiedName) -> bool:
+        return False
+
     def mark_abstract(self, qn: QualifiedName) -> None:
         self._abstracts.add(qn)
 
