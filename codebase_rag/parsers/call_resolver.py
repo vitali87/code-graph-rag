@@ -121,6 +121,14 @@ def _split_csharp_qualified_path(path: str) -> list[str]:
     return parts
 
 
+def _rust_caller(
+    language: cs.SupportedLanguage | None, caller_qn: str | None
+) -> str | None:
+    # The caller whose inner-scope `use`s bind a Rust type name, or None for
+    # any other language, whose scopes those maps never describe.
+    return caller_qn if language == cs.SupportedLanguage.RUST else None
+
+
 PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 # PHP folds A-Z only when comparing namespace and function names, so
@@ -404,7 +412,7 @@ class CallResolver:
     ) -> str:
         var_type = self._strip_optional(var_type)
         if cs.SEPARATOR_DOUBLE_COLON in var_type:
-            return self._resolve_rust_class_qn(var_type)
+            return self._resolve_rust_class_qn(var_type, module_qn)
         if cs.SEPARATOR_DOT in var_type:
             return self._follow_reexports(var_type)
         if var_type in import_map:
@@ -414,7 +422,7 @@ class CallResolver:
             # first-party (else its trie fallback is wrongly suppressed).
             target = import_map[var_type]
             if cs.SEPARATOR_DOUBLE_COLON in target:
-                return self._resolve_rust_class_qn(target)
+                return self._resolve_rust_class_qn(target, module_qn)
             return self._follow_reexports(target)
         return self._resolve_class_name(var_type, module_qn) or ""
 
@@ -1277,7 +1285,9 @@ class CallResolver:
         call = _CallSite(
             call_name,
             module_qn,
-            local_var_types,
+            self._rust_scoped_local_types(
+                local_var_types, module_qn, caller_qn, language
+            ),
             class_context,
             caller_qn,
             language,
@@ -1325,6 +1335,38 @@ class CallResolver:
         )
         self._remember_cacheable(cache_key, result)
         return result
+
+    def _rust_scoped_local_types(
+        self,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None,
+    ) -> dict[str, str] | None:
+        # A receiver's recorded type is the bare name its binding spells
+        # (`b: Builder`, or the `Builder` that `Builder::new()` returns), and
+        # every probe resolves a bare type name through the FILE's bindings.
+        # A `use` in the caller's own body or enclosing inline mod rebinds
+        # that name for this caller alone, so `b.build()` in
+        # `mod tests { use my_beta::Builder; }` reached the crate's own
+        # `Builder` (issue #2622). Rebinding the map once covers them all.
+        if (
+            language != cs.SupportedLanguage.RUST
+            or not local_var_types
+            or not caller_qn
+        ):
+            return local_var_types
+        scoped: dict[str, str] | None = None
+        for name, type_name in local_var_types.items():
+            if cs.SEPARATOR_DOT in type_name or cs.SEPARATOR_DOUBLE_COLON in type_name:
+                continue
+            bound = self._rust_scoped_type(type_name, module_qn, caller_qn)
+            if bound is None:
+                continue
+            if scoped is None:
+                scoped = dict(local_var_types)
+            scoped[name] = bound
+        return local_var_types if scoped is None else scoped
 
     def _resolve_receiver_shadow(
         self, call: _CallSite
@@ -1515,7 +1557,46 @@ class CallResolver:
             )
             if scoped is not None:
                 return True, scoped[0]
+            return self._resolve_rust_scoped_type_path(call)
         return False, None
+
+    def _resolve_rust_scoped_type_path(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # `Type::f()` where a `use` in the caller's own body or enclosing
+        # inline mod names `Type`. Every probe below reads the FILE's
+        # bindings and then searches types by simple name, so the crate's
+        # own `Builder` answered for `mod tests { use my_beta::Builder; }`
+        # and any first-party `Parser` for a function-scoped
+        # `use regex_syntax::Parser;`, both as exact edges (issue #2622).
+        # Caller-dependent, and the cache key already excludes such callers.
+        type_name, sep, item = call.call_name.partition(cs.SEPARATOR_DOUBLE_COLON)
+        if (
+            not sep
+            or not type_name
+            or cs.SEPARATOR_DOUBLE_COLON in item
+            or cs.SEPARATOR_DOT in call.call_name
+        ):
+            return False, None
+        bound = self._rust_scoped_type(type_name, call.module_qn, call.caller_qn)
+        if bound is None:
+            return False, None
+        if bound not in self.function_registry:
+            return True, None
+        if result := self._try_method_on_class(
+            bound, item, cs.SEPARATOR_DOT, call.call_name, type_name, type_name
+        ):
+            return True, result
+        # The type holds no such method in the graph (a derive, a macro, an
+        # impl block written in another module), so only the bare-name
+        # guess is left, as it is for a file-level import of the type.
+        return True, self._try_resolve_via_trie(
+            call.call_name,
+            call.module_qn,
+            call.language,
+            call.call_point,
+            call.constructing,
+        )
 
     def _resolve_rust_prefixed_or_local(
         self, call: _CallSite, cache_key: tuple[str, str, bool] | None
@@ -2754,6 +2835,69 @@ class CallResolver:
             if scope in self.declared_module_qns
         ]
 
+    def _rust_scoped_type(
+        self, name: str, module_qn: str, caller_qn: str | None
+    ) -> str | None:
+        """What a bare Rust type name binds to in the caller's inner scopes.
+
+        Innermost first, in the order `_rust_walk_enclosing_scopes` reads a
+        bare call: the caller's own body `use`, then each scope between it
+        and the file module, where a type the scope defines outranks the
+        scope's `use`. A registered qn is the first-party type; any other
+        string is a provably external path (or an unrepresentable module)
+        that speaks for the name, so no first-party type may answer. None
+        when no inner scope binds the name to a type: the file's own
+        bindings then decide, as they always did.
+        """
+        if not caller_qn:
+            return None
+        imports = self.import_processor
+        effective = self.rust_function_modules.get(caller_qn, module_qn)
+        target = imports.rust_fn_scope_imports.get(caller_qn, {}).get(name)
+        owner = effective
+        if target is None:
+            weak = imports.rust_fn_scope_mod_imports.get(caller_qn, {}).get(name)
+            for scope in self._rust_enclosing_scopes(module_qn, caller_qn):
+                local = f"{scope}{cs.SEPARATOR_DOT}{name}"
+                if self.function_registry.get(local) in _RS_TYPE_NODE_TYPES:
+                    return local
+                raw = imports.import_mapping.get(scope, {}).get(name)
+                if (target := raw if weak is None else weak) is not None:
+                    owner = scope if weak is None else effective
+                    break
+        if target is None:
+            return None
+        if target == cs.RUST_UNRESOLVABLE_QN:
+            return target
+        resolved = self._rust_local_qn(target, owner)
+        if resolved is None:
+            return target if self._rust_path_is_external(target, module_qn) else None
+        hit = self._follow_rust_scope_target(resolved)
+        return hit[1] if hit is not None and hit[0] in _RS_TYPE_NODE_TYPES else None
+
+    def _rust_path_is_external(self, path: str, module_qn: str) -> bool:
+        """Whether a raw Rust `use` path provably names an item outside the repo.
+
+        Its head must be a toolchain crate, or a dependency the importing
+        package's manifest fetches from outside the repo that is no crate
+        the repo itself holds. Any other raw head may still be first-party
+        in a layout the import half does not rewrite, so it proves nothing.
+        """
+        if (
+            cs.SEPARATOR_DOT in path
+            or self._module_language(module_qn) != cs.SupportedLanguage.RUST
+        ):
+            return False
+        head = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        return head in cs.RS_STDLIB_CRATES or (
+            not self.import_processor.rust_head_is_repo_crate(head)
+            and self.import_processor.rust_head_is_external_dep(head, module_qn)
+        )
+
+    def _rust_file_use_is_external(self, name: str, module_qn: str) -> bool:
+        target = self.import_processor.import_mapping.get(module_qn, {}).get(name)
+        return target is not None and self._rust_path_is_external(target, module_qn)
+
     def _decide_rust_module_item(
         self, mapped: str, rest: list[str], item: str, owner: str
     ) -> tuple[tuple[str, str] | None, bool]:
@@ -3189,6 +3333,15 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         object_name, method_name = parts
+        # `Type::f()` with `Type` imported from an external crate calls that
+        # crate's function; the import probe below would resolve the raw
+        # path by its last segment to a same-named first-party type, and the
+        # type probe after it by simple name (issue #2622).
+        if separator == cs.SEPARATOR_DOUBLE_COLON and (
+            (target := import_map.get(object_name)) is not None
+            and self._rust_path_is_external(target, module_qn)
+        ):
+            return None
 
         if result := self._try_resolve_via_local_type(
             object_name,
@@ -3385,7 +3538,15 @@ class CallResolver:
             return potential_class_qn
         return class_qn
 
-    def _resolve_rust_class_qn(self, class_qn: str) -> str:
+    def _resolve_rust_class_qn(
+        self, class_qn: str, module_qn: str | None = None
+    ) -> str:
+        # A path into an external crate names that crate's type, which the
+        # graph does not hold; a same-named first-party type is not it
+        # (issue #2622). Kept raw, it resolves to no class, so the receiver
+        # reads as external instead of binding the lookalike's methods.
+        if module_qn is not None and self._rust_path_is_external(class_qn, module_qn):
+            return class_qn
         rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
         class_name = rust_parts[-1]
 
@@ -3761,7 +3922,7 @@ class CallResolver:
             # (`parser(ia, cb).parse()`, C++): type it from the factory's recorded
             # return type. Other paren bases stay unresolved.
             current_type = self._infer_rust_assoc_base_type(
-                base, module_qn, call_point
+                base, module_qn, call_point, _rust_caller(language, caller_qn)
             ) or self._infer_call_base_type(
                 base,
                 module_qn,
@@ -3789,7 +3950,9 @@ class CallResolver:
             if not current_type or cs.CHAR_PAREN_OPEN not in part:
                 return None
             method = part.split(cs.CHAR_PAREN_OPEN, 1)[0]
-            class_qn = self._chain_class_qn(current_type, module_qn)
+            class_qn = self._chain_class_qn(
+                current_type, module_qn, _rust_caller(language, caller_qn)
+            )
             current_type = self.type_inference.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
@@ -3985,10 +4148,17 @@ class CallResolver:
         member = self._drop_named_constructor(name, target)
         return f"{target}{cs.SEPARATOR_DOT}{member}"
 
-    def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
+    def _chain_class_qn(
+        self, type_name: str, module_qn: str, rust_caller: str | None = None
+    ) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring
         # imports (a Rust `use` target is a raw `::`-path, not a registry qn), so a
-        # method-return-type lookup keyed by the class qn hits.
+        # method-return-type lookup keyed by the class qn hits. A Rust caller's own
+        # body or inline-mod `use` binds the name ahead of the file's (#2622).
+        if rust_caller and (
+            scoped := self._rust_scoped_type(type_name, module_qn, rust_caller)
+        ):
+            return scoped
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         return (
             self._resolve_class_qn_from_type(type_name, import_map, module_qn)
@@ -4075,7 +4245,11 @@ class CallResolver:
         return matches[0]
 
     def _infer_rust_assoc_base_type(
-        self, base: str, module_qn: str, call_point: int | None = None
+        self,
+        base: str,
+        module_qn: str,
+        call_point: int | None = None,
+        rust_caller: str | None = None,
     ) -> str | None:
         # `Ping::new(msg)` -> the return type recorded for `Ping::new` (Ping).
         # The callee is the text before the first paren; only a `::`-rooted
@@ -4103,7 +4277,7 @@ class CallResolver:
                 or type_name
             )
         else:
-            class_qn = self._chain_class_qn(type_name, module_qn)
+            class_qn = self._chain_class_qn(type_name, module_qn, rust_caller)
         ret = self.type_inference.method_return_types.get(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}"
         )
@@ -4168,7 +4342,9 @@ class CallResolver:
             if cs.SEPARATOR_DOT not in object_type:
                 # Honor imports (Rust `use` targets are raw `::`-paths) so an
                 # imported chained type (`Get::new(k).into_frame()`) resolves.
-                if resolved_class := self._chain_class_qn(object_type, module_qn):
+                if resolved_class := self._chain_class_qn(
+                    object_type, module_qn, _rust_caller(language, caller_qn)
+                ):
                     full_object_type = resolved_class
 
             method_qn = f"{full_object_type}.{final_method}"
@@ -4417,6 +4593,13 @@ class CallResolver:
         return type_name
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
+        # A Rust name the file imports from an external crate is that
+        # crate's type. The lookup below skips an unregistered import target
+        # and searches first-party types by simple name, which bound
+        # `use regex_syntax::Parser;` to whichever `Parser` the repo holds
+        # (issue #2622).
+        if self._rust_file_use_is_external(class_name, module_qn):
+            return None
         # Call resolution runs in Pass 3, after every definition pass, so a
         # class qn missing from the registry can never be a real node;
         # require registration so an import-map module entry (a C++ header

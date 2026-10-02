@@ -1,0 +1,380 @@
+"""A Rust `use` that names `Type` decides what `Type::f()` calls.
+
+`Type::new()` and the methods called on its result bound `Type` to a
+first-party type found by simple name, even when the calling scope imported
+`Type` from somewhere else: a manifest-declared external crate
+(`use regex_syntax::Parser;`), or a dev-dependency imported inside
+`mod tests { use my_beta::Builder; }` while the enclosing crate defines its
+own `Builder`. The edge was labelled exact and could land in a crate the
+caller does not depend on at all (issue #2622: ripgrep's
+`use regex_syntax::Parser; Parser::new().parse(p)` became a call to rg's own
+command-line `Parser`).
+"""
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from codebase_rag import constants as cs
+from codebase_rag.tests.test_rust_crate_path_trait_linking import (
+    _write,
+    create_and_run_updater,
+)
+
+_BUILDER_RS = (
+    "pub struct Builder {\n    n: u32,\n}\n\n"
+    "impl Builder {\n"
+    "    pub fn new() -> Builder {\n        Builder { n: 1 }\n    }\n"
+    "    pub fn build(&self) -> u32 {\n        self.n\n    }\n"
+    "}\n\n"
+)
+
+_ALPHA_LIB_RS = _BUILDER_RS + (
+    "pub struct Parser;\n\n"
+    "impl Parser {\n"
+    "    pub fn new() -> Parser {\n        Parser\n    }\n"
+    "    pub fn parse(&self, _s: &str) -> Result<(), ()> {\n        Ok(())\n    }\n"
+    "}\n"
+)
+
+_BETA_LIB_RS = (
+    "pub struct Builder {\n    n: u32,\n}\n\n"
+    "impl Builder {\n"
+    "    pub fn new() -> Builder {\n        Builder { n: 2 }\n    }\n"
+    "    pub fn build(&self) -> u32 {\n        self.n * 2\n    }\n"
+    "}\n\n"
+    "pub struct Other;\n"
+)
+
+_WORKSPACE = {
+    "Cargo.toml": (
+        '[workspace]\nmembers = ["crates/alpha", "crates/beta", "crates/app"]\n'
+    ),
+    "crates/alpha/Cargo.toml": (
+        '[package]\nname = "my-alpha"\nversion = "0.1.0"\n\n'
+        '[dev-dependencies]\nmy-beta = { path = "../beta" }\n'
+    ),
+    "crates/beta/Cargo.toml": '[package]\nname = "my-beta"\nversion = "0.1.0"\n',
+    "crates/beta/src/lib.rs": _BETA_LIB_RS,
+    "crates/app/Cargo.toml": (
+        '[package]\nname = "app"\nversion = "0.1.0"\n\n'
+        '[dependencies]\nmy-beta = { path = "../beta" }\nregex-syntax = "0.8"\n'
+    ),
+}
+
+
+def _index(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, files: dict[str, str]
+) -> dict[tuple[str, str], set[str]]:
+    project = temp_repo / name
+    _write(project, files)
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    edges: dict[tuple[str, str], set[str]] = {}
+    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
+        if str(c.args[1]) != cs.RelationshipType.CALLS:
+            continue
+        props = c.kwargs.get("properties") or {}
+        edges.setdefault((str(c.args[0][2]), str(c.args[2][2])), set()).add(
+            str(props.get(cs.KEY_RESOLUTION))
+        )
+    return edges
+
+
+def _callees(edges: dict[tuple[str, str], set[str]], caller: str) -> set[str]:
+    return {callee for src, callee in edges if src == caller}
+
+
+# --- the issue: a `use` in scope loses to a same-named first-party type ------
+
+
+def test_file_use_of_external_crate_type_binds_no_first_party_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The issue's first row: `regex_syntax` is a registry dependency of
+    # `app`, so neither `Parser::new()` nor `.parse` on its result is a call
+    # into `alpha`, a crate `app` does not even depend on.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_ext_file",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS,
+            "crates/app/src/lib.rs": "pub mod top;\n",
+            "crates/app/src/top.rs": (
+                "use regex_syntax::Parser;\n\n"
+                "pub fn top_level() -> bool {\n"
+                '    Parser::new().parse("a+").is_ok()\n'
+                "}\n"
+            ),
+        },
+    )
+    leaked = {
+        callee
+        for callee in _callees(edges, "rs_use_ext_file.crates.app.src.top.top_level")
+        if callee.startswith("rs_use_ext_file.crates.alpha.")
+    }
+    assert not leaked, edges
+
+
+def test_fn_scoped_use_of_external_crate_type_binds_no_first_party_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # ripgrep's crates/regex/src/ban.rs writes the `use` inside the function.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_ext_fn",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS,
+            "crates/app/src/lib.rs": "pub mod inner;\n",
+            "crates/app/src/inner.rs": (
+                "pub fn fn_scoped() -> bool {\n"
+                "    use regex_syntax::Parser;\n"
+                '    Parser::new().parse("a+").is_ok()\n'
+                "}\n"
+            ),
+        },
+    )
+    leaked = {
+        callee
+        for callee in _callees(edges, "rs_use_ext_fn.crates.app.src.inner.fn_scoped")
+        if callee.startswith("rs_use_ext_fn.crates.alpha.")
+    }
+    assert not leaked, edges
+
+
+def test_inline_mod_use_binds_the_dev_dependency_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The issue's second row: `mod tests` imports beta's `Builder`, which
+    # shadows alpha's own for every path in the module (`cargo test` sees
+    # `b.build() == 4`, beta's value).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_mod",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS
+            + (
+                "\n#[cfg(test)]\nmod tests {\n"
+                "    use my_beta::Builder;\n\n"
+                "    #[test]\n    fn uses_beta() {\n"
+                "        let b = Builder::new();\n"
+                "        assert_eq!(b.build(), 4);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    caller = "rs_use_mod.crates.alpha.src.lib.tests.uses_beta"
+    beta = "rs_use_mod.crates.beta.src.lib.Builder"
+    alpha = "rs_use_mod.crates.alpha.src.lib.Builder"
+    assert edges.get((caller, f"{beta}.new")) == {"exact"}, edges
+    assert edges.get((caller, f"{beta}.build")) == {"exact"}, edges
+    assert (caller, f"{alpha}.new") not in edges, edges
+    assert (caller, f"{alpha}.build") not in edges, edges
+
+
+def test_inline_mod_use_binds_a_chained_call_on_the_imported_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_mod_chain",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS
+            + (
+                "\n#[cfg(test)]\nmod tests {\n"
+                "    use my_beta::Builder;\n\n"
+                "    #[test]\n    fn chained() {\n"
+                "        let v = Builder::new().build();\n"
+                "        assert_eq!(v, 4);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    caller = "rs_use_mod_chain.crates.alpha.src.lib.tests.chained"
+    beta = "rs_use_mod_chain.crates.beta.src.lib.Builder"
+    alpha = "rs_use_mod_chain.crates.alpha.src.lib.Builder"
+    assert edges.get((caller, f"{beta}.build")) == {"exact"}, edges
+    assert (caller, f"{alpha}.build") not in edges, edges
+
+
+def test_inline_mod_use_of_external_crate_type_binds_no_first_party_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A test module importing a dev-dependency from the registry, beside a
+    # crate that defines a type of the same name.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_mod_ext",
+        {
+            **_WORKSPACE,
+            "crates/alpha/Cargo.toml": (
+                '[package]\nname = "my-alpha"\nversion = "0.1.0"\n\n'
+                '[dev-dependencies]\nregex-syntax = "0.8"\n'
+            ),
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS
+            + (
+                "\n#[cfg(test)]\nmod tests {\n"
+                "    use regex_syntax::Parser;\n\n"
+                "    #[test]\n    fn external() {\n"
+                '        let ok = Parser::new().parse("a+").is_ok();\n'
+                "        assert!(ok);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    alpha = "rs_use_mod_ext.crates.alpha.src.lib.Parser"
+    callees = _callees(edges, "rs_use_mod_ext.crates.alpha.src.lib.tests.external")
+    assert f"{alpha}.new" not in callees, edges
+    assert f"{alpha}.parse" not in callees, edges
+
+
+def test_fn_scoped_use_of_first_party_type_shadows_the_module_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A function-body `use` shadows the module's own item of that name for
+    # the rest of the body, the receiver it types included.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_fn_local",
+        {
+            "Cargo.toml": '[package]\nname = "rs_use_fn_local"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod other;\n\n"
+            + _BUILDER_RS
+            + (
+                "pub fn shadowed() -> u32 {\n"
+                "    use crate::other::Builder;\n"
+                "    let b = Builder::new();\n"
+                "    b.build() + Builder::new().build()\n"
+                "}\n"
+            ),
+            "src/other.rs": _BETA_LIB_RS,
+        },
+    )
+    caller = "rs_use_fn_local.src.lib.shadowed"
+    other = "rs_use_fn_local.src.other.Builder"
+    own = "rs_use_fn_local.src.lib.Builder"
+    assert edges.get((caller, f"{other}.new")) == {"exact"}, edges
+    assert edges.get((caller, f"{other}.build")) == {"exact"}, edges
+    assert (caller, f"{own}.new") not in edges, edges
+    assert (caller, f"{own}.build") not in edges, edges
+
+
+# --- what must keep resolving as before ---------------------------------------
+
+
+def test_local_type_path_still_binds_the_local_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # No `use` names `Builder` here, so the crate's own type is meant: at
+    # module level, and in a test module that glob-imports its parent.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_local",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS
+            + (
+                "\npub fn make() -> u32 {\n"
+                "    let b = Builder::new();\n"
+                "    b.build() + Builder::new().build()\n"
+                "}\n\n"
+                "#[cfg(test)]\nmod tests {\n"
+                "    use super::*;\n\n"
+                "    #[test]\n    fn own() {\n"
+                "        let v = Builder::new().build();\n"
+                "        assert_eq!(v, 1);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    alpha = "rs_use_local.crates.alpha.src.lib.Builder"
+    make = "rs_use_local.crates.alpha.src.lib.make"
+    own = "rs_use_local.crates.alpha.src.lib.tests.own"
+    assert edges.get((make, f"{alpha}.new")) == {"exact"}, edges
+    assert edges.get((make, f"{alpha}.build")) == {"exact"}, edges
+    assert edges.get((own, f"{alpha}.new")) == {"exact"}, edges
+    assert edges.get((own, f"{alpha}.build")) == {"exact"}, edges
+
+
+def test_imported_dependency_type_is_not_captured_by_a_same_named_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `app` imports beta's `Builder` at file level; alpha's `Builder`, in a
+    # crate `app` does not depend on, and a same-named type in app's own
+    # sibling module never capture the call.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_dep",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS,
+            "crates/app/src/lib.rs": "pub mod shapes;\npub mod top;\n",
+            "crates/app/src/shapes.rs": _ALPHA_LIB_RS,
+            "crates/app/src/top.rs": (
+                "use my_beta::Builder;\n\n"
+                "pub fn top_level() -> u32 {\n"
+                "    let b = Builder::new();\n"
+                "    b.build() + Builder::new().build()\n"
+                "}\n"
+            ),
+        },
+    )
+    caller = "rs_use_dep.crates.app.src.top.top_level"
+    beta = "rs_use_dep.crates.beta.src.lib.Builder"
+    assert edges.get((caller, f"{beta}.new")) == {"exact"}, edges
+    assert edges.get((caller, f"{beta}.build")) == {"exact"}, edges
+    assert _callees(edges, caller) == {f"{beta}.new", f"{beta}.build"}, edges
+
+
+def test_scoped_use_of_a_different_name_leaves_the_call_alone(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The test module and the function each import something, but not
+    # `Builder`, so the crate's own `Builder` still answers.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_other",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS
+            + (
+                "\npub fn fn_use() -> u32 {\n"
+                "    use std::fmt::Write;\n"
+                "    Builder::new().build()\n"
+                "}\n\n"
+                "#[cfg(test)]\nmod tests {\n"
+                "    use super::Builder;\n"
+                "    use my_beta::Other;\n\n"
+                "    #[test]\n    fn other_name() {\n"
+                "        let _o = Other;\n"
+                "        let b = Builder::new();\n"
+                "        assert_eq!(b.build(), 1);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    alpha = "rs_use_other.crates.alpha.src.lib.Builder"
+    beta = "rs_use_other.crates.beta.src.lib.Builder"
+    fn_use = "rs_use_other.crates.alpha.src.lib.fn_use"
+    other_name = "rs_use_other.crates.alpha.src.lib.tests.other_name"
+    assert edges.get((fn_use, f"{alpha}.new")) == {"exact"}, edges
+    assert edges.get((fn_use, f"{alpha}.build")) == {"exact"}, edges
+    assert edges.get((other_name, f"{alpha}.new")) == {"exact"}, edges
+    assert edges.get((other_name, f"{alpha}.build")) == {"exact"}, edges
+    assert (other_name, f"{beta}.new") not in edges, edges
