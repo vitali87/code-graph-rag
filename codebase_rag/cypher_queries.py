@@ -752,6 +752,27 @@ WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line"""
+# Which of $paths the project holds (issue #2611), asked only once a
+# location matched no definition: `[]` for a file the graph never saw read
+# as "no definition spans that line". A file with definitions has a Module
+# under the project prefix; one without (a README) has only its File node,
+# which File identity (an absolute path) does not scope to a project, so it
+# is reached through the project's own containment edges.
+_LOCATION_CONTAINMENT = "|".join(
+    rel.value
+    for rel in (
+        RelationshipType.CONTAINS_PACKAGE,
+        RelationshipType.CONTAINS_FOLDER,
+        RelationshipType.CONTAINS_FILE,
+    )
+)
+CYPHER_GRAPH_LOCATION_FILES = f"""MATCH (m:{NodeLabel.MODULE.value})
+WHERE m.qualified_name STARTS WITH $project_prefix AND m.path IN $paths
+RETURN m.qualified_name AS qualified_name
+UNION
+MATCH (:{NodeLabel.PROJECT.value} {{name: $project_name}})-[:{_LOCATION_CONTAINMENT}*]->(f:{NodeLabel.FILE.value})
+WHERE f.path IN $paths
+RETURN $project_name AS qualified_name"""
 CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,

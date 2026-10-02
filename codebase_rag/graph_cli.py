@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,7 +41,17 @@ def _run_query_and_emit(
 ) -> None:
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:
-        _emit(query(fetch_all, name))
+        result = query(fetch_all, name)
+    # A refusal is the `{"error": ...}` the MCP tools answer with. It goes to
+    # stderr with a status, not to stdout as JSON a script would read as an
+    # answer, and only after the connection closes: an exit raised inside it
+    # is logged as a failed write with a traceback.
+    if isinstance(result, dict) and isinstance(
+        error := result.get(cs.DICT_KEY_ERROR), str
+    ):
+        click.secho(error, fg=cs.Color.RED, err=True)
+        sys.exit(cs.GRAPH_EXIT_UNKNOWN_FILE)
+    _emit(result)
 
 
 def _graph_options[F: Callable[..., None]](fn: F) -> F:
@@ -68,8 +79,12 @@ def cli() -> None:
 @click.argument("target")
 @_graph_options
 def resolve_cmd(target: str, project: str | None, repo_path: Path) -> None:
+    # An absolute `path:line` is made relative to --repo-path as well as to
+    # the root the project was indexed from (issue #2611).
     _run_query_and_emit(
-        project, repo_path, lambda f, n: graph_query.resolve(f, n, target)
+        project,
+        repo_path,
+        lambda f, n: graph_query.resolve_or_refuse(f, n, target, (repo_path,)),
     )
 
 

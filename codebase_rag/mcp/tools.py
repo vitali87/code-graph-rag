@@ -2643,8 +2643,21 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.RESOLVE,
             project,
-            lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
+            lambda name: graph_query.resolve_or_refuse(
+                self.ingestor.fetch_all, name, target, (self._checkout_for(name),)
+            ),
         )
+
+    def _checkout_for(self, project_name: str) -> Path:
+        # Where this server holds the project's files: its workspace repo, or
+        # the server's own root. An agent's file tools hand it absolute paths
+        # under this directory, which a `path:line` target makes relative to
+        # it (issue #2611), and `definition` reads source from it.
+        if self.workspace is not None:
+            for repo in self.workspace.repos:
+                if repo.project_name == project_name:
+                    return repo.repo_path()
+        return Path(self.project_root)
 
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
         """(the project a request means, why it is refused) under a workspace.
@@ -2722,12 +2735,7 @@ class MCPToolsRegistry:
         # does not prove the root, so its span is answered without source.
         # A workspace names each repo's root, so its projects are answered
         # from their own checkouts under the same stored-root proof.
-        candidate = Path(self.project_root)
-        if self.workspace is not None:
-            for repo in self.workspace.repos:
-                if repo.project_name == project_name:
-                    candidate = repo.repo_path()
-                    break
+        candidate = self._checkout_for(project_name)
         return graph_query.source_root_for(
             self.ingestor.fetch_all, project_name, candidate
         )
@@ -2871,6 +2879,7 @@ class MCPToolsRegistry:
                 author,
                 self._commit_sha_for(name),
                 self._source_reader_for(name),
+                checkouts=(self._checkout_for(name),),
             ),
         )
 
@@ -2900,7 +2909,9 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.GLOSSES,
             project,
-            lambda name: gloss.glosses_for(self.ingestor.fetch_all, name, target),
+            lambda name: gloss.glosses_for(
+                self.ingestor.fetch_all, name, target, (self._checkout_for(name),)
+            ),
         )
 
     def _rename_tool(self) -> ToolMetadata:
