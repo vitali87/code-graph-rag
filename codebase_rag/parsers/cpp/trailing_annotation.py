@@ -217,13 +217,9 @@ def _annotation_spans(source: bytes, start: int) -> list[tuple[int, int]]:
         name = word.group()
         if name in cs.CPP_DECLARATOR_END_KEYWORDS:
             break
-        end = word.end()
-        after = _skip_trivia(source, end)
-        if source.startswith(cs.CPP_OPEN_PAREN, after):
-            closed = _argument_list_end(source, after)
-            if closed is None or _reads_as_parameters(source[after:closed]):
-                return []
-            end = closed
+        end = _word_end(source, word)
+        if end is None:
+            return []
         if name not in cs.CPP_DECLARATOR_SUFFIX_KEYWORDS:
             if not _ANNOTATION_MACRO.fullmatch(name):
                 return []
@@ -232,6 +228,19 @@ def _annotation_spans(source: bytes, start: int) -> list[tuple[int, int]]:
     if not spans or not _ends_declaration(source, pos):
         return []
     return spans
+
+
+def _word_end(source: bytes, word: re.Match[bytes]) -> int | None:
+    # Where `word` ends, past its argument list when it has one; None when
+    # that list never closes or declares parameters (a function, no macro).
+    end = word.end()
+    after = _skip_trivia(source, end)
+    if not source.startswith(cs.CPP_OPEN_PAREN, after):
+        return end
+    closed = _argument_list_end(source, after)
+    if closed is None or _reads_as_parameters(source[after:closed]):
+        return None
+    return closed
 
 
 def _ends_declaration(source: bytes, pos: int) -> bool:

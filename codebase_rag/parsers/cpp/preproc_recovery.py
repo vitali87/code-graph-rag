@@ -208,6 +208,17 @@ def _blank_csharp_directives(source_bytes: bytes) -> bytes:
     return _CHAR_NEWLINE.join(lines)
 
 
+def _retry_without_csharp_directives(
+    parser: Parser, tree: Tree, source_bytes: bytes
+) -> Tree:
+    if not tree.root_node.has_error or b"#if" not in source_bytes:
+        return tree
+    retry = parser.parse(_blank_csharp_directives(source_bytes))
+    if _count_error_nodes(retry.root_node) < _count_error_nodes(tree.root_node):
+        return retry
+    return tree
+
+
 def parse_with_preproc_recovery(
     parser: Parser, source_bytes: bytes, language: cs.SupportedLanguage
 ) -> Tree:
@@ -225,12 +236,7 @@ def parse_with_preproc_recovery(
         # the shatter often yields SINGLE-LINE inner ERROR nodes inside a
         # plausibly-shaped wrong declaration (a property named after the
         # directive condition), which a span measure scores as zero.
-        if not tree.root_node.has_error or b"#if" not in source_bytes:
-            return tree
-        retry = parser.parse(_blank_csharp_directives(source_bytes))
-        if _count_error_nodes(retry.root_node) < _count_error_nodes(tree.root_node):
-            return retry
-        return tree
+        return _retry_without_csharp_directives(parser, tree, source_bytes)
     if language not in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
         return tree
     tree, source_bytes = _retry_without_macro_markers(parser, tree, source_bytes)

@@ -478,7 +478,8 @@ def test_ordinary_qualified_methods_and_trailing_return_type_unchanged(
             sorted(graph.calls),
         )
     assert graph.callees("c.free_fn") == {graph.qn("c.x")}
-    assert graph.has("C.d") and graph.has("C.p"), sorted(graph.defs)
+    assert graph.has("C.d"), sorted(graph.defs)
+    assert graph.has("C.p"), sorted(graph.defs)
 
 
 CLASS_SCOPE_MACROS_H = (
