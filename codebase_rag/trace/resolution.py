@@ -67,6 +67,28 @@ def _dir_prefix(path: str) -> str:
     return path.rstrip(cs.SEPARATOR_SLASH) + cs.SEPARATOR_SLASH
 
 
+def _prefix_key(posix_path: str) -> str:
+    """How a POSIX-form path compares as a prefix on the OS that recorded it.
+
+    Windows names one file whatever the case of its path, and a drive letter
+    is written either way (``sys.path`` can hold ``c:\\``), so a Windows path
+    compares without case; a POSIX path keeps it.
+    """
+    if PureWindowsPath(posix_path).is_absolute():
+        return posix_path.casefold()
+    return posix_path
+
+
+def _below_dir(posix_path: str, dir_prefix: str) -> str | None:
+    """``posix_path`` relative to ``dir_prefix``, or None when not under it."""
+    if not _prefix_key(posix_path).startswith(_prefix_key(dir_prefix)):
+        return None
+    # Sliced by separators, not characters: case folding may change a
+    # string's length but never its separators.
+    depth = dir_prefix.count(cs.SEPARATOR_SLASH)
+    return posix_path.split(cs.SEPARATOR_SLASH, depth)[depth]
+
+
 def is_absolute_on_any_os(frame_path: str) -> bool:
     """Whether a recorded path is absolute on the OS that recorded it.
 
@@ -131,18 +153,20 @@ class PathRebase:
     def matches(self, frame: FramePoint) -> bool:
         """Whether a rule, rather than the checkout root, anchors the frame."""
         path = _portable_posix(frame.path)
-        return not path.startswith(self.local_root) and any(
-            path.startswith(recorded) for recorded, _ in self.rules
+        return _below_dir(path, self.local_root) is None and any(
+            _below_dir(path, recorded) is not None for recorded, _ in self.rules
         )
 
     def apply(self, frame: FramePoint) -> FramePoint:
         path = _portable_posix(frame.path)
         if path.startswith(self.local_root):
             return frame
-        for recorded, local in self.rules:
-            if path.startswith(recorded):
+        # The checkout root first: a frame under it in another case (Windows)
+        # is re-cased onto it rather than moved by an ancestor's rule.
+        for recorded, local in ((self.local_root, self.local_root), *self.rules):
+            if (rest := _below_dir(path, recorded)) is not None:
                 return FramePoint(
-                    path=local + path[len(recorded) :],
+                    path=local + rest,
                     qualname=frame.qualname,
                     line=frame.line,
                 )

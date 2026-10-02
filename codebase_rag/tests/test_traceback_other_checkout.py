@@ -36,6 +36,7 @@ from codebase_rag.trace.records import (
     TraceHeader,
     write_trace_file,
 )
+from codebase_rag.trace.resolution import PathRebase
 from codebase_rag.utils.path_utils import derive_project_name
 
 _P = "tbdemo__cafe02"
@@ -287,6 +288,22 @@ def test_a_path_prefix_map_can_point_into_a_subdirectory(tmp_path):
     )
 
     assert _qns(report) == _resolved(_P)
+
+
+def test_a_windows_path_prefix_map_matches_without_case(tmp_path):
+    """Windows paths name the same file whatever their case, and a drive
+    letter is written either way, so a root typed as `c:\\users\\dev` still
+    anchors frames recorded under `C:\\Users\\dev`."""
+    report = explain_traceback(
+        _fetch_all_for(_P),
+        _P,
+        tmp_path,
+        _shop_traceback(_WINDOWS_ROOT, "\\"),
+        path_prefix_map={_WINDOWS_ROOT.lower(): "."},
+    )
+
+    assert _qns(report) == _resolved(_P)
+    assert report.inferred_root is None
 
 
 def test_rank_root_causes_says_why_nothing_resolved(tmp_path):
@@ -678,3 +695,48 @@ def test_trace_ingest_does_not_rebase_local_frames_under_a_recorded_ancestor(
 
     assert summary.unresolved == 0
     assert summary.edges == 2
+
+
+def test_trace_ingest_matches_a_windows_recorded_root_without_case(tmp_path):
+    """The header root and `co_filename` can disagree on a Windows path's
+    case (a lowercase drive letter on `sys.path`); both name one file."""
+    repo = tmp_path.resolve() / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, _WINDOWS_ROOT, "c:\\users\\Dev\\tbdemo")
+    graph = _IngestGraph(_P)
+
+    summary = ingest_trace(trace_path, graph, repo, _P)
+
+    assert summary.unresolved == 0
+    assert summary.edges == 2
+
+
+def test_trace_ingest_keeps_posix_recorded_roots_case_sensitive(tmp_path):
+    repo = tmp_path.resolve() / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, _CI_ROOT.upper(), _CI_ROOT)
+    graph = _IngestGraph(_P)
+
+    summary = ingest_trace(trace_path, graph, repo, _P)
+
+    assert summary.edges == 0
+    assert summary.resolution.unresolved == {_OUTSIDE: 2}
+
+
+def test_a_frame_under_the_checkout_in_another_case_stays_under_it():
+    """On Windows the checkout root itself compares without case, so a frame
+    under it is re-cased onto it, never moved by an ancestor's rule."""
+    rebase = PathRebase(
+        local_root="C:/Users/dev/tbdemo/",
+        rules=(("C:/Users/", "C:/Users/dev/tbdemo/elsewhere/"),),
+    )
+    frame = FramePoint(
+        path="c:\\users\\DEV\\tbdemo\\shop\\pricing.py",
+        qualname="apply_tax",
+        line=9,
+    )
+
+    assert rebase.apply(frame).path == "C:/Users/dev/tbdemo/shop/pricing.py"
+    assert not rebase.matches(frame)
