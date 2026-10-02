@@ -32,7 +32,7 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import exceptions as ex
 from . import logs as ls
-from .capture import CaptureSelection, resolve_capture, split_spec
+from .capture import CaptureSelection, resolve_capture, split_spec, unknown_tokens
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -78,6 +78,7 @@ from .utils.path_utils import (
     derive_project_name,
     project_roots_from_rows,
     resolve_repo_path,
+    unwritable_output_reason,
 )
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
@@ -506,7 +507,25 @@ def _maybe_start_stack() -> None:
 def _capture_selection(capture: list[str] | None) -> CaptureSelection:
     # Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
     # a single run can override it (later tokens win in the resolver).
-    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+    return resolve_capture(
+        [*split_spec(settings.CGR_CAPTURE), *_capture_tokens(capture)]
+    )
+
+
+def _capture_tokens(capture: list[str] | None) -> list[str]:
+    # A flag value splits like CGR_CAPTURE, so `--capture none,structure` works.
+    return [token for value in capture or [] for token in split_spec(value)]
+
+
+def _known_capture(capture: list[str] | None) -> list[str] | None:
+    if unknown := unknown_tokens(_capture_tokens(capture)):
+        raise typer.BadParameter(
+            cs.CLI_ERR_CAPTURE_UNKNOWN.format(
+                tokens=cs.SEPARATOR_COMMA_SPACE.join(unknown),
+                groups=cs.SEPARATOR_COMMA_SPACE.join(g.value for g in cs.CaptureGroup),
+            )
+        )
+    return capture
 
 
 def _stdin_is_interactive() -> bool:
@@ -693,10 +712,14 @@ def _run_graph_sync(
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
 
+        exported = True
         if output and interrupted is None:
             _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
-            if not export_graph_to_file(ingestor, output):
-                raise typer.Exit(1)
+            exported = export_graph_to_file(ingestor, output)
+    # Raised outside the `with`: the ingestor logs any exception leaving it as
+    # a traceback, typer.Exit included, and the failure is already reported.
+    if not exported:
+        raise typer.Exit(1)
     elapsed = time.monotonic() - elapsed
     if updater.skipped_because_in_sync:
         app_context.console.print(
@@ -838,6 +861,7 @@ def start(
         None,
         "--capture",
         help=ch.HELP_CAPTURE,
+        callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -893,6 +917,8 @@ def start(
 
     if output and not update_graph:
         _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
+    if output:
+        _exit_if_unwritable(output)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -995,6 +1021,7 @@ def index(
         None,
         "--capture",
         help=ch.HELP_CAPTURE,
+        callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -1124,37 +1151,100 @@ def diff_index_command(
 )
 def export(
     output: str = typer.Option(..., "-o", "--output", help=ch.HELP_OUTPUT_PATH),
-    format_json: bool = typer.Option(
-        True, "--json/--no-json", help=ch.HELP_FORMAT_JSON
+    project_name: list[str] = typer.Option(
+        [], "--project-name", "-n", help=ch.HELP_EXPORT_PROJECT_NAME
     ),
-    batch_size: int | None = typer.Option(
-        None,
-        "--batch-size",
-        min=1,
-        help=ch.HELP_BATCH_SIZE,
+    workspace: str | None = typer.Option(
+        None, "--workspace", help=ch.HELP_EXPORT_WORKSPACE
     ),
+    # Retired (issue #2410), but still accepted so scripts that pass them get
+    # a warning rather than click's "No such option".
+    format_json: bool | None = typer.Option(None, "--json/--no-json", hidden=True),
+    batch_size: int | None = typer.Option(None, "--batch-size", hidden=True),
 ) -> None:
-    if not format_json:
-        app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
-        raise typer.Exit(1)
+    _check_retired_export_options(format_json, batch_size)
+    _exit_if_unwritable(output)
+    requested = _requested_projects(project_name, _load_workspace_or_exit(workspace))
+    # An explicit scope that resolves to nothing (`-n ""`, an empty workspace)
+    # must not fall through to the whole graph.
+    if not requested and (project_name or workspace is not None):
+        _exit_with_error(cs.CLI_ERR_EXPORT_EMPTY_SCOPE)
 
     _info(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
-
-    effective_batch_size = settings.resolve_batch_size(batch_size)
-
+    exported = False
+    missing: list[str] = []
+    indexed: list[str] = []
     try:
-        with connect_memgraph(effective_batch_size) as ingestor:
-            _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
-
-            if not export_graph_to_file(ingestor, output):
-                raise typer.Exit(1)
-
+        # An export only reads, so the write buffer's size is moot.
+        with connect_memgraph(batch_size=1) as ingestor:
+            if requested:
+                indexed = ingestor.list_projects()
+                missing = [name for name in requested if name not in indexed]
+            if not missing:
+                exported = _export_to_file(ingestor, output, requested)
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
         )
-        logger.exception(ls.EXPORT_ERROR.format(error=e))
+        # The one line above is the report; the traceback is for debugging.
+        logger.opt(exception=e).debug(ls.EXPORT_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # Exits are raised out here: typer.Exit is a RuntimeError, so inside the
+    # `try` it was reported as "Failed to export graph: 1" with a traceback.
+    if missing:
+        _exit_with_error(
+            cs.CLI_ERR_EXPORT_UNKNOWN_PROJECTS.format(
+                missing=", ".join(missing), projects=", ".join(sorted(indexed))
+            )
+        )
+    if not exported:
+        raise typer.Exit(1)
+
+
+def _check_retired_export_options(
+    format_json: bool | None, batch_size: int | None
+) -> None:
+    match format_json:
+        case False:
+            _exit_with_error(cs.CLI_ERR_EXPORT_NO_JSON)
+        case True:
+            app_context.console.print(style(cs.CLI_WARN_EXPORT_JSON, cs.Color.YELLOW))
+    if batch_size is not None:
+        app_context.console.print(style(cs.CLI_WARN_EXPORT_BATCH_SIZE, cs.Color.YELLOW))
+
+
+def _exit_if_unwritable(output: str) -> None:
+    if problem := unwritable_output_reason(Path(output)):
+        _exit_with_error(problem)
+
+
+def _requested_projects(
+    project_name: list[str], workspace_config: WorkspaceConfig | None
+) -> list[str]:
+    # Order kept, duplicates dropped: `-n a --workspace w` where w also holds
+    # `a` selects `a` once. `cgr stats -n` (#2391) resolves its scope the same
+    # way.
+    return list(
+        dict.fromkeys(
+            [name.strip() for name in project_name if name.strip()]
+            + (workspace_config.project_names() if workspace_config else [])
+        )
+    )
+
+
+def _export_to_file(
+    ingestor: MemgraphIngestor, output: str, requested: list[str]
+) -> bool:
+    if requested:
+        _info(
+            style(
+                cs.CLI_EXPORT_SCOPE.format(projects=", ".join(requested)),
+                cs.Color.CYAN,
+            )
+        )
+    _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
+    return export_graph_to_file(ingestor, output, requested)
 
 
 @app.command(
@@ -1734,6 +1824,19 @@ def stats(
             + (workspace_config.project_names() if workspace_config else [])
         )
     )
+    # An empty list is what "no scope" looks like to the queries below, so a
+    # scope that was asked for and came out empty would report the whole
+    # shared graph as if it were that scope's (review of PR 2436).
+    if not requested and (project_name or workspace_config is not None):
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
+                if workspace_config is not None
+                else cs.CLI_ERR_STATS_EMPTY_PROJECT_NAME,
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
@@ -1862,12 +1965,14 @@ def _dead_code_config(
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
 ) -> DeadCodeConfig:
+    from .dead_code import normalize_decorator_root
+
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
         root_decorators=frozenset(
             {d.lower() for d in cs.DEFAULT_ROOT_DECORATORS}
-            | {d.lower() for d in decorator_roots}
+            | {normalize_decorator_root(d) for d in decorator_roots}
         ),
         entry_points=tuple(entry_points),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
@@ -2186,15 +2291,24 @@ def _build_duplicates_table(
     table.add_column(
         cs.CLI_DUPLICATES_COL_SIMILARITY, style=cs.Color.YELLOW, justify="right"
     )
-    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN)
-    table.add_column(cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW)
+    # Folded, not ellipsised: a qualified name or path has no space to wrap
+    # at, so at pipe width every cell ended in "…" and never named the
+    # function (issue #2397).
+    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN, overflow="fold")
+    table.add_column(
+        cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW, overflow="fold"
+    )
+    # The title names the project, so each member drops that prefix: at pipe
+    # width the column otherwise showed nothing else (issue #2397). Only the
+    # dotted prefix goes, so `projx.mod` under `proj` keeps its name.
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     for number, group in enumerate(groups, start=1):
         for at, member in enumerate(group["members"]):
             table.add_row(
                 _duplicates_group_cell(number, group, root_path) if at == 0 else "",
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
-                member["qualified_name"],
+                member["qualified_name"].removeprefix(prefix),
                 _duplicates_location_cell(member, root_path),
             )
         table.add_section()
