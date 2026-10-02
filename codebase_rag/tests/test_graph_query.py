@@ -194,11 +194,14 @@ def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[Resul
             if (dst if callers else src) != qn:
                 continue
             other = _by_qn(src if callers else dst)
+            # The site is in the caller's body whichever side the row names
+            # (issue #2460).
             out.append(
                 {
                     cs.KEY_LABEL: other[cs.KEY_LABEL],
                     cs.KEY_QUALIFIED_NAME: other[cs.KEY_QUALIFIED_NAME],
-                    cs.KEY_PATH: other[cs.KEY_PATH],
+                    cs.KEY_PATH: _by_qn(src)[cs.KEY_PATH],
+                    cs.KEY_CALLEE_PATH: _by_qn(dst)[cs.KEY_PATH],
                     cs.KEY_LINE: line,
                     cs.KEY_COL: col,
                     cs.KEY_END_LINE: el,

@@ -415,6 +415,7 @@ MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
+MG_COMMAND_EXIT = "Command exited. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
@@ -453,13 +454,17 @@ MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
 )
-MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
-MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
 MG_RELS_FAILED = (
     "Failed to create {count} of {attempted} ({from_label})-[:{rel_type}]->"
     "({to_label}) relationships - an endpoint node did not exist when they "
     "were written"
 )
+MG_REL_FAILED_ROW = (
+    "  Failed {index}: {from_label}.{from_val} -> {to_label}.{to_val} "
+    "(missing {missing})"
+)
+MG_RELS_FAILED_MORE = "  ... and {count} more"
+MG_RELS_FAILED_LOOKUP = "Could not look up which {rel_type} rows were lost: {error}"
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )
@@ -1168,6 +1173,11 @@ PROGRESS_FILES_PROCESSED = "{count} processed"
 
 # Capture selection logs
 CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
+CAPTURE_GROUP_ALREADY_ON = (
+    "Capture group '{group}' adds nothing: it is already captured. A group is "
+    "added to the defaults; use `--capture none --capture {group}` to capture "
+    "only it, or `-GROUP` to drop a group."
+)
 CAPTURE_DEPENDENCY_GAP = (
     "Capture selection keeps {rel} but its usual companion {missing} is disabled; "
     "obeying as requested (edges may be incomplete)"

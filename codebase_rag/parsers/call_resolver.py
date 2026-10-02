@@ -53,15 +53,6 @@ _CONSTRUCTIBLE_NODE_TYPES = frozenset(
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
-# Sets of languages whose sources call each other directly, so a candidate
-# written in a sibling language is a legitimate target for the simple-name
-# fallback: the JS family compiles to one runtime, C++ calls C, and Scala
-# calls Java on the JVM. Any language absent here calls only its own.
-_CALLABLE_LANGUAGE_FAMILIES: tuple[frozenset[cs.SupportedLanguage], ...] = (
-    cs.JS_TS_LANGUAGES,
-    frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP}),
-    frozenset({cs.SupportedLanguage.JAVA, cs.SupportedLanguage.SCALA}),
-)
 
 
 class _CallSite(NamedTuple):
@@ -204,6 +195,7 @@ class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
         "python_shadowed_imports",
+        "python_local_names",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -250,6 +242,9 @@ class CallResolver:
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
+        # caller qn -> every name that Python function binds itself (#2666);
+        # filled alongside python_shadowed_imports.
+        self.python_local_names: dict[str, frozenset[str]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -513,6 +508,12 @@ class CallResolver:
             local_var_types,
             language,
         )
+
+    def _is_python_local_name(self, call: _CallSite) -> bool:
+        if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
+            return False
+        local = self.python_local_names.get(call.caller_qn)
+        return local is not None and call.call_name in local
 
     def _receiver_is_untyped_shadow(
         self,
@@ -904,7 +905,18 @@ class CallResolver:
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if parent == module_qn or parent not in self.function_registry:
                 return None
+            # A class is in the registry too, so the check above let the walk
+            # step from a method into its class and answer the method's own
+            # parameter `run` with the sibling method `run` (issue #2666).
+            if self._local_stops_at_class(call_name, caller_qn, parent):
+                return None
             scope = parent
+
+    def _local_stops_at_class(self, call_name: str, caller_qn: str, scope: str) -> bool:
+        return (
+            call_name in self.python_local_names.get(caller_qn, frozenset())
+            and self.function_registry[scope] == cs.NodeLabel.CLASS.value
+        )
 
     def _scope_candidate(
         self, scope: str, call_name: str, language: cs.SupportedLanguage | None
@@ -939,11 +951,47 @@ class CallResolver:
         # A bare Rust path NEVER names a method: inherent methods are
         # reachable only via self./Self::/Type:: (rustc-verified; the bare
         # spelling calls the module item, issue #1011). Other languages
-        # keep their scope-chain semantics.
+        # keep their scope-chain semantics, except that no bare name
+        # reaches a JS/TS object literal's function value (issue #2435).
+        if self._only_object_members(qn):
+            return False
         return (
             language != cs.SupportedLanguage.RUST
             or self.function_registry[qn] != cs.NodeLabel.METHOD.value
         )
+
+    def _only_object_members(self, qualified_name: str) -> bool:
+        # A JS/TS object literal's function value is reached through its
+        # object (`options.retry.delay()`), never by its key alone, although
+        # its qn reads like a name the enclosing scope declares (issue
+        # #2435). A real binding of the same name in its `@line` group keeps
+        # the group nameable; `lexical_call_targets` then drops the members
+        # from the call's fan-out.
+        registry = self.function_registry
+        if not registry.is_object_member(qualified_name):
+            return False
+        return all(
+            registry.is_object_member(variant)
+            for variant in registry.variants(qn_markers.natural_qn(qualified_name))
+        )
+
+    def lexical_call_targets(
+        self, call_name: str, module_qn: str, targets: list[str]
+    ) -> list[str]:
+        """The members of a bare call's `@line` group its name can reach.
+
+        `function delay` and `{delay: () => 0}` in one file share a group, and
+        the bare name means the declaration, not the object's value (issue
+        #2435). A name the module imports is left whole: the import may bind
+        a module's exported object member, which it does reach by name.
+        """
+        if len(targets) < 2 or cs.SEPARATOR_DOT in call_name:
+            return targets
+        if call_name in self.import_processor.import_mapping.get(module_qn, {}):
+            return targets
+        registry = self.function_registry
+        bound = [qn for qn in targets if not registry.is_object_member(qn)]
+        return bound or targets
 
     def _protocol_impl_map(self) -> dict[str, str]:
         # A Protocol stub never runs; the concrete implementer does. Map each
@@ -1293,6 +1341,13 @@ class CallResolver:
         handled, result = self._resolve_caller_scope(call)
         if handled:
             return result
+        # After the scope walk, which answers a nested def or class of the
+        # name: any other local is a value the graph cannot follow, and the
+        # same-module, class, import and trie stages below would bind it to
+        # the definition it shadows (issue #2666). Before the cache, whose
+        # answers are caller-independent.
+        if self._is_python_local_name(call):
+            return None
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
@@ -2938,6 +2993,10 @@ class CallResolver:
             # It is in scope for its block alone (issue #1061).
             return None
         if same_module_func_qn in self.function_registry:
+            if self._only_object_members(same_module_func_qn):
+                # An object literal's function value flattened to the
+                # module's qn; the module never binds its key (issue #2435).
+                return None
             logger.debug(
                 ls.CALL_SAME_MODULE, call_name=call_name, qn=same_module_func_qn
             )
@@ -2986,9 +3045,10 @@ class CallResolver:
     ) -> bool:
         if caller is None or candidate is None or caller == candidate:
             return True
+        # A candidate written in a sibling language of the caller's family is
+        # a legitimate target for the simple-name fallback.
         return any(
-            caller in family and candidate in family
-            for family in _CALLABLE_LANGUAGE_FAMILIES
+            caller in family and candidate in family for family in cs.LANGUAGE_FAMILIES
         )
 
     def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:
@@ -3032,6 +3092,12 @@ class CallResolver:
         possible_matches = self._nameable_candidates(
             self.function_registry.find_ending_with(search_name), module_qn, call_point
         )
+        if search_name == call_name:
+            # A bare name never reaches an object literal's function value;
+            # a member call (`opts.retry.delay()`) still does (issue #2435).
+            possible_matches = [
+                qn for qn in possible_matches if not self._only_object_members(qn)
+            ]
         if constructing:
             # `new X(...)` names a TYPE: a method or function that merely
             # shares the name is never its target, however close by import

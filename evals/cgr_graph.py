@@ -667,6 +667,17 @@ class _StatefulIngestor:
             row[key] = _result(edge_props.get(key))
         return row
 
+    def _graph_call_row(self, edge: _EdgeKey, node: _NodeId) -> ResultRow:
+        """A CALLS site as both call reads return it: `node` is the endpoint
+        the row names, but `path` is always the caller's file, where the
+        site is, and `callee_path` the callee's (issue #2460)."""
+        row = self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, node)
+        caller = self.nodes.get((edge[0], edge[1]), {})
+        callee = self.nodes.get((edge[3], edge[4]), {})
+        row[cs.KEY_PATH] = _result(caller.get(cs.KEY_PATH))
+        row[cs.KEY_CALLEE_PATH] = _result(callee.get(cs.KEY_PATH))
+        return row
+
     def _project_root_rows(self, params: PropertyDict) -> list[ResultRow]:
         """The Project node's stored root, as `source_root_for` reads it."""
         name = _str(params.get(cs.KEY_PROJECT_NAME))
@@ -748,9 +759,7 @@ class _StatefulIngestor:
                     if edge[2] == cs.RelationshipType.CALLS.value and self._in_project(
                         callee, prefix
                     ):
-                        rows.append(
-                            self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, callee)
-                        )
+                        rows.append(self._graph_call_row(edge, callee))
             return rows
         if query == cq.CYPHER_GRAPH_DEFINITION:
             for label, uid in targets:
@@ -781,7 +790,11 @@ class _StatefulIngestor:
             for target in targets:
                 for edge in self._in.get(target, ()):
                     source = (edge[0], edge[1])
-                    if edge[2] in wanted and self._in_project(source, prefix):
+                    if not (edge[2] in wanted and self._in_project(source, prefix)):
+                        continue
+                    if query == cq.CYPHER_GRAPH_CALLERS:
+                        rows.append(self._graph_call_row(edge, source))
+                    else:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
                         )
@@ -1167,6 +1180,9 @@ class _StatefulIngestor:
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
+                        cs.KEY_IS_OBJECT_MEMBER: bool(
+                            props.get(cs.KEY_IS_OBJECT_MEMBER)
+                        ),
                     }
                     defs.append(row)
                 return defs
