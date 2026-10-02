@@ -246,6 +246,33 @@ def test_targets_by_bare_name_location_and_free_text(
     assert callers[0] == _qn("pkg.app.run_twice")
 
 
+async def test_mcp_context_tool(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    root, store, _updater = repo
+    ingestor = MagicMock()
+    ingestor.fetch_all = store.fetch_all
+    ingestor.list_projects.return_value = [PROJECT]
+    registry = MCPToolsRegistry(
+        project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+    )
+    schema = next(
+        s for s in registry.get_tool_schemas() if s.name == cs.MCPToolName.CONTEXT
+    )
+    assert schema.inputSchema["required"] == [cs.MCPParamName.TARGET]
+    payload = await registry.context(
+        target=_qn("pkg.util.helper"), budget_tokens=300, project=PROJECT
+    )
+    assert isinstance(payload, dict)
+    assert (
+        payload["resolved"] == _qn("pkg.util.helper") and payload["used_tokens"] <= 300
+    )
+
+
 # A broken skip guard is invisible: if `_markdown_unavailable` silently returned
 # a constant, the two tests it gates would SKIP or would run without the grammar,
 # and a skip reads as green in every summary while also being the legitimate
