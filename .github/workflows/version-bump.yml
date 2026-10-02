@@ -31,13 +31,17 @@ jobs:
     # One bump at a time. Without this, two merges close together each start
     # a run from their own commit, and the second push to main is rejected.
     # Declared on the job, not the workflow: a run whose job is skipped (the
-    # bump commit's own push) then never takes the single pending slot, so it
-    # cannot displace a merge's queued run. A pending run replaced by a newer
-    # merge's loses nothing: the newer commit contains it, and "Decide" scans
-    # every commit since the last release tag.
+    # bump commit's own push) then never joins the queue. `queue: max` keeps
+    # every merge's run waiting instead of letting a newly queued run replace
+    # the pending one: admission order is not guaranteed, so a delayed older
+    # run could otherwise displace the newest one and then stand down at the
+    # tip check, leaving nothing to bump. Older runs still stand down; the
+    # newest bumps once for all, as "Decide" scans every commit since the
+    # last release tag.
     concurrency:
       group: version-bump-main
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 100
     permissions:

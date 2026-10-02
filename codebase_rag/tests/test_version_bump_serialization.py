@@ -71,6 +71,37 @@ def test_runs_are_queued_not_cancelled() -> None:
     assert concurrency["cancel-in-progress"] is False
 
 
+def _keeps_every_pending_run(concurrency: dict) -> bool:
+    # By default a group holds one pending run and a newly queued run replaces
+    # it. Admission order is not guaranteed, so a delayed older run can take
+    # the slot from the newest one and then stand down at the tip check,
+    # leaving the merge unbumped. `queue: max` keeps every run waiting; GitHub
+    # rejects it alongside `cancel-in-progress: true`.
+    return (
+        concurrency.get("queue") == "max"
+        and concurrency.get("cancel-in-progress") is False
+    )
+
+
+def test_a_pending_bump_run_is_never_replaced() -> None:
+    assert _keeps_every_pending_run(_workflow()["jobs"]["bump-version"]["concurrency"])
+
+
+@pytest.mark.parametrize(
+    "concurrency",
+    [
+        {"group": "version-bump-main", "cancel-in-progress": False},
+        {"group": "version-bump-main", "cancel-in-progress": False, "queue": "single"},
+        {"group": "version-bump-main", "cancel-in-progress": True, "queue": "max"},
+    ],
+    ids=["default-slot", "single-slot", "cancels-in-progress"],
+)
+def test_a_concurrency_that_replaces_or_cancels_runs_is_rejected(
+    concurrency: dict,
+) -> None:
+    assert not _keeps_every_pending_run(concurrency)
+
+
 CHECK_STUBS = r"""
 git() {
   case "$1" in
