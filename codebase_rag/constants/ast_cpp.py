@@ -94,6 +94,14 @@ CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
     {"class_specifier", "struct_specifier", "union_specifier"}
 )
+# The tags that can also name a type without defining it: `struct Table *mt;`,
+# `f(struct stat *st)`, `enum color c;` (issue #2615).
+C_ELABORATED_TYPE_NODE_TYPES = CPP_TYPE_SPECIFIER_NODE_TYPES | {TS_ENUM_SPECIFIER}
+# A bodyless tag as the whole of one of these, with no declarator, is a
+# forward declaration (`class Inner;` in a class body), not a use.
+C_FORWARD_DECLARING_NODE_TYPES = frozenset(
+    {CppNodeType.DECLARATION, CppNodeType.FIELD_DECLARATION}
+)
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"

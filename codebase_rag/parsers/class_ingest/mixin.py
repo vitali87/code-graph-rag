@@ -197,6 +197,31 @@ def _is_cpp_template_inner_specifier(
     )
 
 
+def _is_elaborated_type_use(class_node: Node, language: cs.SupportedLanguage) -> bool:
+    # `struct Table *metatable;`, `f(struct stat *st)`, `sizeof(struct node)`:
+    # a bodyless tag written as the type of something only names a type
+    # declared elsewhere. Indexing it minted a Class nested under whatever
+    # held the use (`Udata.Table`, `node.node`, libc's `stat`), and that
+    # phantom could even win the field's OF_TYPE edge (issue #2615). A forward
+    # declaration has no declarator and stays on the deferred path, as does a
+    # bodyless typedef: `typedef struct lua_State lua_State;` is C's
+    # opaque-handle idiom and may be the only declaration the type has.
+    if (
+        language not in cs.C_FAMILY_LANGUAGES
+        or class_node.type not in cs.C_ELABORATED_TYPE_NODE_TYPES
+        or class_node.child_by_field_name(cs.FIELD_BODY) is not None
+        or (parent := class_node.parent) is None
+        or parent.type == cs.CppNodeType.TYPE_DEFINITION
+        or (written := parent.child_by_field_name(cs.FIELD_TYPE)) is None
+        or written.id != class_node.id
+    ):
+        return False
+    return (
+        parent.type not in cs.C_FORWARD_DECLARING_NODE_TYPES
+        or parent.child_by_field_name(cs.FIELD_DECLARATOR) is not None
+    )
+
+
 def _cpp_type_spec(class_node: Node) -> Node | None:
     if class_node.type != cs.CppNodeType.TEMPLATE_DECLARATION:
         return class_node
@@ -1177,6 +1202,8 @@ class ClassIngestMixin:
         # `@line`, splitting members (which attach to the bodied specifier) away
         # from the natural qn that callers reference, orphaning the whole class.
         if _is_cpp_template_inner_specifier(class_node, language):
+            return
+        if _is_elaborated_type_use(class_node, language):
             return
 
         type_spec = _cpp_type_spec(class_node)
