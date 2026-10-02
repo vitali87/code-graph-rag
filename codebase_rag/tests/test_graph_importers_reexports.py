@@ -408,6 +408,28 @@ def test_a_reexport_cycle_terminates_and_lists_each_module_once() -> None:
     assert len(rows) == 3
 
 
+def test_a_name_reaching_a_listed_module_later_still_reaches_its_consumers() -> None:
+    # `mid` imports Short from the target, so it is listed as a direct
+    # importer; Long reaches it one hop later, through the facade. A module
+    # importing Long from `mid` reaches the target through `mid` and `pkg`.
+    late: list[Edge] = [
+        (f"{P}.mid", "mid.py", f"{P}.core", 1, 0, 1, 22, "Short", "Short"),
+        (f"{P}.pkg", "pkg/__init__.py", f"{P}.core", 1, 0, 1, 21, "Long", "Long"),
+        (f"{P}.mid", "mid.py", f"{P}.pkg", 2, 0, 2, 20, "Long", "Long"),
+        (f"{P}.consumer", "consumer.py", f"{P}.mid", 1, 0, 1, 20, "Long", "Long"),
+    ]
+    rows = graph_query.importers_through_reexports(
+        _fetch_for(late, budget=10), P, f"{P}.core"
+    )
+    assert _hops(rows) == {
+        (f"{P}.mid", ()),
+        (f"{P}.pkg", ()),
+        (f"{P}.consumer", (f"{P}.mid", f"{P}.pkg")),
+    }
+    # `mid` is still listed once, at the depth it was first reached.
+    assert len(rows) == 3
+
+
 def test_an_unknown_target_answers_empty_as_the_direct_query_does() -> None:
     fetch = _fetch_for(EDGES)
     assert graph_query.importers(fetch, P, f"{P}.nope") == []

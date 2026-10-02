@@ -16,7 +16,7 @@ the call; `callee_path` is where the invoked symbol is defined (issue #2460).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TypedDict
 
@@ -606,11 +606,31 @@ def _reach(
     if not matched:
         return None
     # A `*` import passes on every name the statements it matched carry.
-    forwarded: frozenset[str] | None = frozenset()
-    for entry in matched:
-        names = entry["names"]
-        forwarded = None if forwarded is None or names is None else forwarded | names
+    forwarded = _union_names(entry["names"] for entry in matched)
     return matched[0], _bound_names(row, imported_qn, forwarded)
+
+
+def _union_names(
+    name_sets: Iterable[frozenset[str] | None],
+) -> frozenset[str] | None:
+    """Every name in `name_sets`; None (every name) when any of them is."""
+    union: frozenset[str] = frozenset()
+    for names in name_sets:
+        if names is None:
+            return None
+        union |= names
+    return union
+
+
+def _new_names(
+    names: frozenset[str] | None, walked: frozenset[str] | None
+) -> frozenset[str] | None:
+    """The part of `names` not already in `walked`; None is every name."""
+    if walked is None:
+        return frozenset()
+    if names is None:
+        return None
+    return names - walked
 
 
 def importers_through_reexports(
@@ -628,7 +648,10 @@ def importers_through_reexports(
 
     Breadth-first, one query per hop: a module is listed at the depth it is
     first reached, with the statements that reach it there, and never again,
-    so a direct importer is listed once and a cycle of re-exports ends.
+    so a direct importer is listed once. A later path bringing it a name it
+    did not bind there is still walked on, for that name alone, so a module
+    importing the name from it is reached; a module is walked again only
+    for names new to it, so a cycle of re-exports ends.
     """
     direct = importers(fetch_all, project_name, module_qn)
     out = [ReexportImporterRow(**row, via=[]) for row in direct]
@@ -638,7 +661,11 @@ def importers_through_reexports(
         frontier.setdefault(row["module"], []).append(
             _ReexportEntry(row=row, via=[], names=names)
         )
-    reached = {module_qn, *frontier}
+    # The names each module has been walked on with; the target passes
+    # nothing back to itself.
+    walked: dict[str, frozenset[str] | None] = {module_qn: None}
+    for module, entries in frontier.items():
+        walked[module] = _union_names(entry["names"] for entry in entries)
     owns = _owner_check(fetch_all, project_name)
     while frontier:
         rows = fetch_all(
@@ -660,17 +687,28 @@ def importers_through_reexports(
         found: dict[str, list[_ReexportEntry]] = {}
         for imported_qn, row in hops:
             entries = frontier.get(imported_qn)
-            if not entries or row["module"] in reached:
+            if not entries:
                 continue
             if (reach := _reach(row, imported_qn, entries)) is None:
                 continue
             through, names = reach
+            module = row["module"]
             via = [through["row"], *through["via"]]
-            out.append(ReexportImporterRow(**row, via=via))
-            found.setdefault(row["module"], []).append(
+            if module in walked:
+                # Listed at an earlier depth: walked on only with what this
+                # path brings it that the earlier one did not.
+                names = _new_names(names, walked[module])
+                if names is not None and not names:
+                    continue
+            else:
+                out.append(ReexportImporterRow(**row, via=via))
+            found.setdefault(module, []).append(
                 _ReexportEntry(row=row, via=via, names=names)
             )
-        reached.update(found)
+        for module, entries in found.items():
+            walked[module] = _union_names(
+                [walked.get(module, frozenset()), *(e["names"] for e in entries)]
+            )
         frontier = found
     return sorted(out, key=lambda r: (len(r["via"]), *_importer_key(r)))
 
