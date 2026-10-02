@@ -2307,6 +2307,112 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+        if language == cs.SupportedLanguage.JAVA:
+            # A constant runs its enum's constructor without any call
+            # expression, so a file holding only an enum has to be covered
+            # before the no-calls early return (issue #2547).
+            self._ingest_java_enum_constant_ctor_calls(
+                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
+            )
+
+    @_site_scoped
+    def _ingest_java_enum_constant_ctor_calls(
+        self,
+        module_qn: str,
+        class_nodes: list[Node],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        # Outside its own constructors, `CLASS("c")` is the only thing that runs
+        # a Java enum constructor (`new` on an enum is a compile error), and no
+        # call node names it, so every parameterised enum constructor looked
+        # dead. Each constant CALLS the constructors its argument count admits;
+        # one candidate is the compiler's choice, several (same arity) fan out
+        # as `overload`, the way `new X(...)` does. No INSTANTIATES: that edge
+        # only targets Class.
+        for enum_node in class_nodes:
+            if enum_node.type != cs.TS_ENUM_DECLARATION:
+                continue
+            constants = java_utils.enum_constants(enum_node)
+            if not constants:
+                continue
+            ctors = [
+                (ctor, target)
+                for ctor in java_utils.enum_constructors(enum_node)
+                if (
+                    target := self._java_enum_ctor_target(
+                        ctor, enum_node, module_qn, queries
+                    )
+                )
+                is not None
+            ]
+            if not ctors:
+                continue
+            caller_spec = self._java_enum_initializer(enum_node, module_qn)
+            for constant in constants:
+                arg_count = java_utils.argument_count(constant)
+                targets = [
+                    target
+                    for ctor, target in ctors
+                    if java_utils.accepts_argument_count(ctor, arg_count)
+                ]
+                self._site_node = constant
+                self._resolution = (
+                    cs.EdgeResolution.EXACT
+                    if len(targets) == 1
+                    else cs.EdgeResolution.OVERLOAD
+                )
+                for target_label, target_qn in targets:
+                    # A bare `NONE` has no argument list for the site to
+                    # count, yet it is a zero-argument invocation all the same.
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
+                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+                    )
+
+    def _java_enum_ctor_target(
+        self,
+        ctor_node: Node,
+        enum_node: Node,
+        module_qn: str,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> tuple[str, str] | None:
+        if loc := self._recorded_caller(ctor_node, module_qn):
+            return loc.label, loc.qualified_name
+        # The class pass's own derivation, for a run that did not re-record
+        # this file's definitions.
+        enum_name = self._get_node_name(enum_node)
+        ctor_name = self._get_node_name(ctor_node)
+        if not enum_name or not ctor_name:
+            return None
+        language = cs.SupportedLanguage.JAVA
+        target_qn, target_label = self._class_member_qn_and_label(
+            ctor_node,
+            _class_qn_for_calls(enum_node, module_qn, enum_name, language, queries),
+            ctor_name,
+            queries[language][cs.QUERY_CONFIG],
+            language,
+        )
+        if target_qn not in self._resolver.function_registry:
+            return None
+        return target_label, target_qn
+
+    def _java_enum_initializer(
+        self, enum_node: Node, module_qn: str
+    ) -> tuple[str, str, str]:
+        # A local enum initialises when its method first uses it, so that
+        # method runs the constructors: a dead method keeps them dead. Any
+        # other enum initialises at class load, which the graph attributes to
+        # the module, as it does a static field initializer.
+        current = enum_node.parent
+        while current is not None:
+            if current.type in cs.JAVA_METHOD_NODE_TYPES:
+                if loc := self._recorded_caller(current, module_qn):
+                    return (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name)
+                break
+            current = current.parent
+        return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
     def _ingest_dart_module_initializer_reads(
         self,
