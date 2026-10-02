@@ -9,6 +9,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..models import Dependency
+from ..types_defs import JsonValue
 
 
 def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
@@ -33,11 +34,11 @@ def _load_toml(file_path: Path) -> dict:
 # A manifest is repository content, so any value in it can have any type. A
 # section of the wrong type declares nothing, and an entry of the wrong type
 # is skipped or loses its version, so it never costs the entries beside it.
-def _table(value: object) -> dict:
+def _table(value: JsonValue) -> dict[str, JsonValue]:
     return value if isinstance(value, dict) else {}
 
 
-def _lines(value: object) -> list[str]:
+def _lines(value: JsonValue) -> list[str]:
     # A string is not a list of requirements: iterating it would read one
     # package per character.
     if not isinstance(value, list):
@@ -45,7 +46,7 @@ def _lines(value: object) -> list[str]:
     return [line for line in value if isinstance(line, str)]
 
 
-def _version(value: object) -> str:
+def _version(value: JsonValue) -> str:
     return value if isinstance(value, str) else ""
 
 
