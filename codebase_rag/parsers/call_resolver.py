@@ -3394,6 +3394,12 @@ class CallResolver:
                 language,
             ):
                 return result
+            if language == cs.SupportedLanguage.DART and (
+                extension := self._dart_extension_member(
+                    class_qn, method_name, module_qn
+                )
+            ):
+                return extension
 
         if var_type in cs.JS_BUILTIN_TYPES:
             return (
@@ -3985,7 +3991,103 @@ class CallResolver:
             current_type = self.type_inference.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
+            if current_type is None and language == cs.SupportedLanguage.DART:
+                current_type = self._dart_member_return_type(
+                    class_qn, method, module_qn
+                )
         return current_type
+
+    def _dart_member_return_type(
+        self, class_qn: str, member: str, module_qn: str
+    ) -> str | None:
+        # An inherited or extension member records its return type under the
+        # DECLARING qn, not the receiver's, so a hop through one ended the
+        # chain (`o.move(1).sum()` on a subclass of Point, issue #2482).
+        found = self._resolve_inherited_method(
+            class_qn, member
+        ) or self._dart_extension_member(class_qn, member, module_qn)
+        if found is None:
+            return None
+        return self.type_inference.method_return_types.get(found[1])
+
+    def _dart_extension_member(
+        self, class_qn: str, member: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """The extension member a Dart receiver of `class_qn` reaches, if any.
+
+        Dart consults extensions only after the receiver's own and inherited
+        members miss, and the extension on the most specific type wins: one
+        `on` the receiver's class beats one `on` an ancestor. Two at the same
+        level are told apart by which the caller's library can see; any tie
+        left is ambiguous (a compile error in Dart) and binds nothing.
+        """
+        on_types = self.type_inference.dart_extension_on_types
+        if not on_types:
+            return None
+        # The `on` type is resolved from the extension's own library, where it
+        # was written; an extension is always a top-level declaration.
+        candidates = [
+            (
+                member_qn,
+                ext_qn,
+                self._chain_class_qn(
+                    on_types[ext_qn], ext_qn.rpartition(cs.SEPARATOR_DOT)[0]
+                ),
+            )
+            for member_qn in self.function_registry.find_ending_with(member)
+            if (ext_qn := member_qn.rpartition(cs.SEPARATOR_DOT)[0]) in on_types
+        ]
+        if not candidates:
+            return None
+        for level in self._class_and_ancestor_levels(class_qn):
+            matches = [
+                (member_qn, ext_qn)
+                for member_qn, ext_qn, on_qn in candidates
+                if on_qn in level
+            ]
+            if len(matches) > 1:
+                matches = [
+                    match
+                    for match in matches
+                    if self._dart_library_visible(match[1], module_qn)
+                ]
+            if len(matches) == 1:
+                member_qn = matches[0][0]
+                return self.function_registry[member_qn], member_qn
+            if matches:
+                return None
+        return None
+
+    def _class_and_ancestor_levels(self, class_qn: str) -> list[set[str]]:
+        # The class, then each breadth-first generation of its ancestors.
+        levels: list[set[str]] = [{class_qn}]
+        seen = {class_qn}
+        frontier = [class_qn]
+        while frontier:
+            parents = {
+                self._follow_reexports(parent)
+                for child in frontier
+                for parent in self.class_inheritance.get(child, [])
+            } - seen
+            if not parents:
+                break
+            levels.append(parents)
+            seen |= parents
+            frontier = list(parents)
+        return levels
+
+    def _dart_library_visible(self, ext_qn: str, module_qn: str) -> bool:
+        # A Dart extension applies only where its library is imported.
+        ext_module = ext_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if ext_module == module_qn:
+            return True
+        if (
+            ext_module
+            in self.import_processor.import_mapping.get(module_qn, {}).values()
+        ):
+            return True
+        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
+        return any(ext_module in libraries for libraries in aliases.values())
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but
@@ -4386,6 +4488,13 @@ class CallResolver:
                     obj_type=object_type,
                 )
                 return inherited_method
+
+            if language == cs.SupportedLanguage.DART and (
+                extension := self._dart_extension_member(
+                    full_object_type, final_method, module_qn
+                )
+            ):
+                return extension
 
         # C/C++ only, and ONLY when the receiver type was never inferred: its return
         # type is unrecordable (`auto`/trailing/decltype, e.g. fmt's

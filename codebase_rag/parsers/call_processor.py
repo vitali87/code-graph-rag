@@ -823,9 +823,13 @@ def _find_call_arguments_node(call_node: Node) -> Node | None:
 
 
 def _dart_call_arguments_node(call_node: Node) -> Node | None:
-    if call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
-        # `new X(...)`, `const X(...)`, `X<T>.named(...)` hold their
-        # `arguments` node directly.
+    if (
+        call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES
+        or call_node.type in cs.DART_CONSTRUCTOR_DELEGATION_TYPES
+    ):
+        # `new X(...)`, `const X(...)`, `X<T>.named(...)` and a constructor's
+        # `: this(...)` / `: super(...)` clause hold their `arguments` node
+        # directly.
         return next(
             (
                 child
@@ -1757,6 +1761,13 @@ class CallProcessor:
         # at load time, so it excludes nothing.
         nested_starts: set[int] = set()
         for func_node in func_nodes:
+            # A Dart constructor's `: this(...)` / `: super(...)` / field
+            # initializer clauses run with it, outside its body (issue #2482).
+            for clause in dart_utils.dart_constructor_clauses(func_node):
+                for call in self._filter_calls_in_node(
+                    all_call_nodes, call_starts, clause
+                ):
+                    nested_starts.add(call.start_byte)
             body = func_node.child_by_field_name(cs.FIELD_BODY)
             if body is None:
                 # a Dart body is a SIBLING of its signature, not a field
@@ -2980,6 +2991,11 @@ class CallProcessor:
     ) -> str | None:
         if language in _C_FAMILY_LANGUAGES:
             method_name = cpp_utils.extract_function_name(method_node)
+        elif language == cs.SupportedLanguage.DART:
+            # A factory_constructor_signature has no `name` field at all, so
+            # the field lookup skipped every factory and its body was never
+            # scanned (issue #2482); the definition pass names it this way.
+            method_name = dart_utils.dart_get_name(method_node)
         else:
             method_name = self._get_node_name(method_node)
         if method_name or language not in _JS_TS_LANGUAGES:
@@ -4200,6 +4216,49 @@ class CallProcessor:
                 caller_node, caller_spec, caller_qn, module_qn
             )
             self._ingest_cpp_declaration_ctor_calls(caller_node, caller_spec, module_qn)
+        if language == cs.SupportedLanguage.DART and class_context:
+            self._ingest_dart_constructor_delegations(
+                caller_node, caller_spec, class_context
+            )
+
+    @_site_scoped
+    def _ingest_dart_constructor_delegations(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        class_qn: str,
+    ) -> None:
+        # `: this(...)` and `: super(...)` run another constructor without
+        # any call node, so a constructor reached only through a redirect or
+        # a subclass's super initializer reported dead (issue #2482). An
+        # unnamed constructor is registered under its class's simple name.
+        # Only the `extends` base declares constructors among the recorded
+        # parents (a mixin cannot), so the first registered hit is the one.
+        registry = self._resolver.function_registry
+        for delegation in dart_utils.dart_constructor_delegations(caller_node):
+            owners = (
+                [
+                    self._resolver._follow_reexports(parent)
+                    for parent in self._resolver.class_inheritance.get(class_qn, [])
+                ]
+                if delegation.to_super
+                else [class_qn]
+            )
+            for owner_qn in owners:
+                simple = qn_markers.strip_dup_marker(
+                    owner_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                )
+                target_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{delegation.name or simple}"
+                if registry.get(target_qn) != NodeType.METHOD:
+                    continue
+                self._site_node = delegation.site
+                self._resolution = cs.EdgeResolution.EXACT
+                self._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+                break
 
     def _call_scan_context(
         self,

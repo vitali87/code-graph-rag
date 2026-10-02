@@ -222,6 +222,25 @@ DART_SIGNATURE_TYPES = frozenset(
 )
 DART_SIGNATURE_WRAPPERS = frozenset({TS_DART_METHOD_SIGNATURE, TS_DART_DECLARATION})
 
+# Constructor clauses between the signature and the body: `: this(...)` /
+# `: this.named(...)` is a `redirection`; `: super(...)`, field initializers
+# and asserts are `initializer_list_entry` nodes under `initializers`. Both
+# sit BESIDE the signature inside its wrapper, so neither the signature nor
+# the sibling body spans them, and neither holds a selector call node: the
+# delegated-to constructor is named by a `this`/`super` keyword child, an
+# optional `identifier` and the `arguments` (issue #2482).
+TS_DART_REDIRECTION = "redirection"
+TS_DART_INITIALIZERS = "initializers"
+TS_DART_INITIALIZER_LIST_ENTRY = "initializer_list_entry"
+DART_CONSTRUCTOR_CLAUSE_TYPES = frozenset({TS_DART_REDIRECTION, TS_DART_INITIALIZERS})
+DART_CONSTRUCTOR_DELEGATION_TYPES = frozenset(
+    {TS_DART_REDIRECTION, TS_DART_INITIALIZER_LIST_ENTRY}
+)
+
+# `extension E on T { ... }` names its extended type after this keyword
+# token; the call resolver reaches E's members through a `T` receiver.
+DART_EXTENSION_ON_KEYWORD = "on"
+
 # Constructor signatures whose grammar `name` field is the CLASS identifier,
 # not the declared name: `C.named` must take its LAST bare identifier or every
 # named constructor collapses into a duplicate of the default one.
