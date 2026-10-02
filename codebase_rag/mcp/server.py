@@ -145,18 +145,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     server = Server(cs.MCP_SERVER_NAME)
 
-    # `isError` is what a host branches on; a failure reported as a
-    # successful result is read as the tool's answer (issue #2461).
     def _create_error_content(message: str) -> CallToolResult:
-        return CallToolResult(
-            content=[
-                TextContent(
-                    type=cs.MCP_CONTENT_TYPE_TEXT,
-                    text=te.ERROR_WRAPPER.format(message=message),
-                )
-            ],
-            isError=True,
-        )
+        return _failed_call(te.failure(message))
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -187,6 +177,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
             result = await handler(**arguments)
 
+            if isinstance(result, te.ToolFailure):
+                return _failed_call(result)
             if returns_json:
                 result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
             else:
@@ -211,6 +203,16 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             return _create_error_content(error_msg)
 
     return server, ingestor
+
+
+def _failed_call(message: str) -> CallToolResult:
+    # A returned content list reaches the client as `isError: false`; a
+    # failure the server or a tool detected must say so in the protocol, not
+    # only in its prose (issue #2650).
+    return CallToolResult(
+        content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=message)],
+        isError=True,
+    )
 
 
 @contextlib.contextmanager
