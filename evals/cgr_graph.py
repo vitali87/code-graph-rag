@@ -670,6 +670,17 @@ class _StatefulIngestor:
             row[key] = _result(edge_props.get(key))
         return row
 
+    def _graph_call_row(self, edge: _EdgeKey, node: _NodeId) -> ResultRow:
+        """A CALLS site as both call reads return it: `node` is the endpoint
+        the row names, but `path` is always the caller's file, where the
+        site is, and `callee_path` the callee's (issue #2460)."""
+        row = self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, node)
+        caller = self.nodes.get((edge[0], edge[1]), {})
+        callee = self.nodes.get((edge[3], edge[4]), {})
+        row[cs.KEY_PATH] = _result(caller.get(cs.KEY_PATH))
+        row[cs.KEY_CALLEE_PATH] = _result(callee.get(cs.KEY_PATH))
+        return row
+
     def _project_root_rows(self, params: PropertyDict) -> list[ResultRow]:
         """The Project node's stored root, as `source_root_for` reads it."""
         name = _str(params.get(cs.KEY_PROJECT_NAME))
@@ -751,9 +762,7 @@ class _StatefulIngestor:
                     if edge[2] == cs.RelationshipType.CALLS.value and self._in_project(
                         callee, prefix
                     ):
-                        rows.append(
-                            self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, callee)
-                        )
+                        rows.append(self._graph_call_row(edge, callee))
             return rows
         if query == cq.CYPHER_GRAPH_DEFINITION:
             for label, uid in targets:
@@ -784,7 +793,11 @@ class _StatefulIngestor:
             for target in targets:
                 for edge in self._in.get(target, ()):
                     source = (edge[0], edge[1])
-                    if edge[2] in wanted and self._in_project(source, prefix):
+                    if not (edge[2] in wanted and self._in_project(source, prefix)):
+                        continue
+                    if query == cq.CYPHER_GRAPH_CALLERS:
+                        rows.append(self._graph_call_row(edge, source))
+                    else:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
                         )
@@ -1112,6 +1125,18 @@ class _StatefulIngestor:
                         }
                     )
                 return inbound
+            case cq.CYPHER_TRACE_EDGES_AT_PATHS:
+                # Trace-derived CALLS edges touching the re-parsed files, in
+                # both directions (issue #2429). Only an edge a test wrote
+                # with `dynamic` set matches, as in the store. The carry's
+                # follow-up reads are issued only for edges this returned,
+                # so they are deliberately not modelled: a test reaching
+                # them needs a real case here.
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                return self._trace_edge_rows(
+                    set(raw_paths) if isinstance(raw_paths, list) else set(),
+                    _str((params or {}).get(cs.KEY_PREFIX)),
+                )
             case cs.CYPHER_AFFECTED_CALLER_PATHS:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 prefix = str(params.get(cs.KEY_PROJECT_PREFIX, "")) if params else ""
@@ -1170,6 +1195,9 @@ class _StatefulIngestor:
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
+                        cs.KEY_IS_OBJECT_MEMBER: bool(
+                            props.get(cs.KEY_IS_OBJECT_MEMBER)
+                        ),
                     }
                     defs.append(row)
                 return defs
@@ -1631,6 +1659,42 @@ class _StatefulIngestor:
                 )
             case _:
                 return None
+
+    def _trace_edge_rows(self, paths: set[str], prefix: str) -> list[ResultRow]:
+        touching: set[_EdgeKey] = set()
+        for node_id, props in self.nodes.items():
+            if props.get(cs.KEY_PATH) in paths:
+                touching.update(self._in.get(node_id, ()))
+                touching.update(self._out.get(node_id, ()))
+        rows: list[ResultRow] = []
+        for edge in sorted(touching, key=repr):
+            from_label, from_val, rel_type, to_label, to_val, _site = edge
+            props = self.edge_props.get(edge, {})
+            caller = self.nodes.get((from_label, from_val))
+            callee = self.nodes.get((to_label, to_val))
+            if (
+                rel_type != cs.RelationshipType.CALLS.value
+                or props.get(cs.TRACE_PROP_DYNAMIC) is not True
+                or caller is None
+                or callee is None
+                or not _str(from_val).startswith(prefix)
+                or not _str(to_val).startswith(prefix)
+            ):
+                continue
+            rows.append(
+                {
+                    cs.KEY_FROM_LABEL: from_label,
+                    cs.KEY_FROM_QN: _text(from_val),
+                    cs.KEY_FROM_PATH: _text(caller.get(cs.KEY_PATH)),
+                    cs.KEY_FROM_HASH: _text(caller.get(cs.KEY_ANCHOR_HASH)),
+                    cs.KEY_TO_LABEL: to_label,
+                    cs.KEY_TO_QN: _text(to_val),
+                    cs.KEY_TO_PATH: _text(callee.get(cs.KEY_PATH)),
+                    cs.KEY_TO_HASH: _text(callee.get(cs.KEY_ANCHOR_HASH)),
+                    cs.KEY_PROPS: _result_props(props),
+                }
+            )
+        return rows
 
     def _edges_into(self, paths: set[str]) -> list[_EdgeKey]:
         # Every edge whose TARGET node lives at one of `paths`, through the

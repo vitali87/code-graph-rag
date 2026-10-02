@@ -13,6 +13,8 @@ KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
 KEY_METADATA = "metadata"
+# Shown for a graph file whose informational metadata has no timestamp.
+GRAPH_EXPORTED_AT_UNKNOWN = "unknown"
 KEY_TOTAL_NODES = "total_nodes"
 KEY_TOTAL_RELATIONSHIPS = "total_relationships"
 KEY_NODE_LABELS = "node_labels"
@@ -23,6 +25,9 @@ KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+# A JS/TS function that is an object literal's property value, reached only
+# through its object (issue #2435).
+KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -99,6 +104,9 @@ KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
+# Call-site rows: where the invoked symbol is defined. `path` on those rows is
+# the file holding the site, which is the caller's (issue #2460).
+KEY_CALLEE_PATH = "callee_path"
 # IMPORTS only: the name the statement binds in the importing scope (the
 # `as` name when renamed, else the imported/module name) and, for
 # symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
@@ -138,6 +146,10 @@ KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+# Columns of the endpoint lookup a relationship flush runs when rows were lost:
+# whether each failed row's source/target node was absent (issue #2438).
+KEY_FROM_MISSING = "from_missing"
+KEY_TO_MISSING = "to_missing"
 KEY_FROM_LABEL = "from_label"
 KEY_FROM_QN = "from_qn"
 KEY_REL_TYPE = "rel_type"
@@ -147,6 +159,13 @@ KEY_TO_QN = "to_qn"
 KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
+# Trace-edge carry rows and parameters (issue #2429): each endpoint's
+# `anchor_hash` when the edge was read, and the qualified names whose static
+# edges are looked up after the re-parse.
+KEY_FROM_HASH = "from_hash"
+KEY_TO_HASH = "to_hash"
+KEY_FROM_QNS = "from_qns"
+KEY_TO_QNS = "to_qns"
 KEY_PROJECT_PREFIX = "project_prefix"
 KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
@@ -881,7 +900,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1195,6 +1214,12 @@ class GlossAnchorState(StrEnum):
 
 
 REL_TYPE_CALLS = "CALLS"
+# How many lost rows of one flushed relationship batch the warning names, and
+# the words it names their missing endpoints with (issue #2438).
+FAILED_REL_ROWS_SHOWN = 10
+REL_ENDPOINT_SOURCE = "source"
+REL_ENDPOINT_TARGET = "target"
+REL_ENDPOINT_JOINER = " and "
 
 # Rel types where multiple semantically-distinct edges may exist between the
 # same node pair; these props join the MERGE key so parallel edges are not
