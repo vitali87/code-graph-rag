@@ -669,7 +669,7 @@ def test_an_empty_module_read_does_not_prune_the_seeded_map(
     original = store.fetch_all
 
     def _empty(query: str, *args: object, **kwargs: object) -> list[dict[str, object]]:
-        if query is cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+        if query is cs.CYPHER_PROJECT_MODULE_PATHS:
             return []
         return original(query, *args, **kwargs)
 
@@ -692,7 +692,7 @@ def test_a_failed_module_read_does_not_prune_the_seeded_map(
     original = store.fetch_all
 
     def _boom(query: str, *args: object, **kwargs: object) -> list[dict[str, object]]:
-        if query is cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+        if query is cs.CYPHER_PROJECT_MODULE_PATHS:
             raise RuntimeError("module path read failed")
         return original(query, *args, **kwargs)
 
@@ -733,7 +733,7 @@ def test_a_file_parsed_this_run_survives_a_read_that_cannot_see_it(
         query: str, *args: object, **kwargs: object
     ) -> list[dict[str, object]]:
         rows = original(query, *args, **kwargs)
-        if query is cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+        if query is cs.CYPHER_PROJECT_MODULE_PATHS:
             # What an unflushed write looks like from the prune's read.
             return [r for r in rows if r.get(cs.KEY_QUALIFIED_NAME) != "proj.fresh"]
         return rows

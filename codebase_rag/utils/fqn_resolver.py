@@ -26,10 +26,11 @@ def scoped_name_parts(
     so the graph, the recovered-orphan path and `get_function_source` agree.
     """
     typed: list[tuple[str, str]] = []
+    scope_name = fqn_config.get_scope_name or fqn_config.get_name
     current = start
     while current is not None:
         if current.type in fqn_config.scope_node_types and (
-            name := fqn_config.get_name(current)
+            name := scope_name(current)
         ):
             typed.append((current.type, name))
         current = current.parent

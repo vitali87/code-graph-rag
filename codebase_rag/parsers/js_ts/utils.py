@@ -238,6 +238,17 @@ def _is_default_export_value(node: Node) -> bool:
     )
 
 
+def is_object_literal_method(func_node: Node) -> bool:
+    # `{delay () {...}}` (getters and setters too): a method written in an
+    # object literal, which binds no name in any scope.
+    parent = func_node.parent
+    return (
+        func_node.type == cs.TS_METHOD_DEFINITION
+        and parent is not None
+        and parent.type == cs.TS_OBJECT
+    )
+
+
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
     match expr_node.type:
         case cs.TS_NEW_EXPRESSION:
