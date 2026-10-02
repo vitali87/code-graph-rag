@@ -43,13 +43,43 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
-CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
+# `-o` checks, made before a graph is read or indexed (issue #2410).
+CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
+CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
+    "Error: --output cannot be created, this is not a directory: {parent}"
+)
+CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
+# `cgr export` scope and retired options (issue #2410).
+CLI_EXPORT_SCOPE = "Scoped to: {projects}"
+CLI_ERR_EXPORT_UNKNOWN_PROJECTS = (
+    "Not indexed: {missing}. Indexed projects: {projects}."
+)
+CLI_ERR_EXPORT_EMPTY_SCOPE = (
+    "Error: --project-name/--workspace named no project. "
+    "Leave both out to export the whole graph."
+)
+CLI_WARN_EXPORT_BATCH_SIZE = (
+    "Warning: --batch-size is deprecated and ignored: an export only reads the "
+    "graph. It will be removed in a future release."
+)
+CLI_WARN_EXPORT_JSON = (
+    "Warning: --json is deprecated and does nothing: an export is always JSON. "
+    "It will be removed in a future release."
+)
+CLI_ERR_EXPORT_NO_JSON = (
+    "Error: --no-json is deprecated: JSON is the only export format. "
+    "Leave the option out."
+)
 CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
     "Error: --output-format json requires --ask-agent/-a; "
     "it only applies to single-query output."
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_CAPTURE_UNKNOWN = (
+    "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
+    "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
+)
 CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
 CLI_ERR_STARTUP = "Startup Error: {error}"
 CLI_ERR_CONFIG = "Configuration Error: {error}"
@@ -165,6 +195,21 @@ CLI_STATS_TOTAL_NODES = "Total Nodes"
 CLI_STATS_TOTAL_RELS = "Total Relationships"
 CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
+CLI_STATS_SCOPE = "Scoped to: {projects}"
+CLI_STATS_PER_PROJECT_TITLE = "Per project:"
+CLI_STATS_PER_PROJECT_ROW = (
+    "  {project}: {nodes:,} nodes / {relationships:,} relationships"
+)
+CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+CLI_ERR_STATS_EMPTY_WORKSPACE = (
+    "Workspace '{name}' has no repositories, so there is nothing to count. Add "
+    "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
+    "count every project."
+)
+CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
+    "--project-name was given without a project name. Name a project, or leave "
+    "out -n to count every project."
+)
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
@@ -179,6 +224,27 @@ CHECK_SCOPE_OF_OTHER_PROJECT = (
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
     "base ref first."
+)
+# --isolated restores the subgraph the re-ingest replaces, and reaches it by
+# walking out from the re-parsed modules. A Resource is never on that walk,
+# and the endpoint pass deletes every network RESOLVES_TO edge repo-wide
+# before rebuilding them from the edited tree, so those edges cannot be put
+# back. Refused rather than silently lost (greptile-local, #1718).
+CHECK_ISOLATED_GRAPH_HAS_IO = (
+    "--isolated cannot restore the IO resource links this graph already "
+    "holds ({groups}): cutting a changed file's subtree can leave a resource "
+    "chain unanchored, and the re-ingest's repo-wide resource prune would "
+    "delete it. Re-run without --isolated on a graph you can rebuild."
+)
+CHECK_ISOLATED_CACHE_UNREADABLE = (
+    "--isolated cannot run: the hash cache {path} exists but cannot be read, "
+    "so it could not be put back after the re-ingest rewrites it."
+)
+CHECK_ISOLATED_WITH_IO = (
+    "--isolated cannot restore IO resource links, which the current capture "
+    "({groups}) enables: the endpoint pass rewrites them across the whole "
+    "graph, not only the changed files. Re-run with '--capture -io', or "
+    "without --isolated on a graph you can rebuild."
 )
 
 CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
@@ -592,6 +658,20 @@ EDIT_APPLIED = "Applied {count} file(s)"
 EDIT_UNDO_NONE = "No recorded edit transactions to undo"
 EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
 EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
+# The undo follows the restored files into the graph (issue #2515).
+EDIT_UNDO_GRAPH_SYNCED = (
+    "Re-ingested {count} restored file(s) into the graph ({project})"
+)
+EDIT_UNDO_GRAPH_NOT_INDEXED = (
+    "No graph to update: project {project} is not indexed "
+    "(pass --project if the edit was made under another name)"
+)
+EDIT_UNDO_GRAPH_STALE = (
+    "The files are restored but the graph was not updated ({error}); it still "
+    "describes the undone edit. Run '{command}' to bring it in line."
+)
+EDIT_UNDO_RESYNC_COMMAND = "cgr start --repo-path {repo} --update-graph"
+EDIT_UNDO_RESYNC_PROJECT = " --project-name {project}"
 EDIT_SHOW_NONE = "No recorded edit transactions"
 EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 # Rename (issue #1532).
@@ -644,6 +724,15 @@ RENAME_ROLLBACK_UNMEASURED = (
 RENAME_CONTRACT_UNMEASURED = (
     "Rename applied, but its postcondition could not be measured: {error}"
 )
+# context slice (issue #1536).
+CONTEXT_WHY_TARGET = "target"
+CONTEXT_WHY_CALLER = "direct caller: the call line"
+CONTEXT_WHY_CALLEE = "direct callee: its signature"
+CONTEXT_WHY_RETURNS = "type it returns"
+CONTEXT_WHY_ACCEPTS = "type it accepts"
+CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
+CONTEXT_WHY_DOC = "documentation section whose file links to it"
+CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
