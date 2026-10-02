@@ -102,7 +102,7 @@ from .services import (
     QueryProtocol,
 )
 from .services.resource_cleanup import prune_unanchored_resources
-from .sync_lock import repo_sync_lock
+from .sync_lock import holds_sync_lock
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
@@ -2070,6 +2070,7 @@ class GraphUpdater:
     def state_dir(self) -> Path:
         return self._state_dir if self._state_dir is not None else self.repo_path
 
+    @holds_sync_lock()
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
 
@@ -2085,14 +2086,12 @@ class GraphUpdater:
         exists) and is a separate decision (#1737).
 
         Raises `SyncInProgressError`, before anything is written, while
-        another writer holds the checkout's sync lock (issue #2441).
+        another writer holds the checkout's sync lock, which
+        `holds_sync_lock` takes around the whole run (issue #2441), and
+        `UnsafeSyncLockError` when that lock file is a symbolic link.
         """
         if not self.repo_path.is_dir():
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
-        with repo_sync_lock(self.repo_path, self.project_name):
-            self._run(force)
-
-    def _run(self, force: bool) -> None:
         self._clear_python_inference_caches()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
@@ -7229,6 +7228,7 @@ class GraphUpdater:
             if key.startswith(prefix + "/")
         ]
 
+    @holds_sync_lock(wait=True)
     def reingest(
         self,
         paths: Iterable[Path | str],
@@ -7268,17 +7268,9 @@ class GraphUpdater:
         as the walk would leave them.
 
         Waits while another writer holds the checkout's sync lock, then
-        applies the change to the graph that sync finished (issue #2441).
+        applies the change to the graph that sync finished; the lock is
+        taken by `holds_sync_lock` (issue #2441).
         """
-        with repo_sync_lock(self.repo_path, self.project_name, wait=True):
-            return self._reingest(paths, deleted, before_write)
-
-    def _reingest(
-        self,
-        paths: Iterable[Path | str],
-        deleted: Iterable[Path | str],
-        before_write: Callable[[], None] | None,
-    ) -> ReingestReport:
         started = time.perf_counter()
         # A scoped re-ingest is never a full build, whatever the previous
         # run() was: the flag decides whether a failed inbound-edge capture

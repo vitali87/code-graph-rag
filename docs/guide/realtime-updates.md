@@ -70,9 +70,13 @@ deletes and re-creates and leave the graph incomplete, so:
   their change to the graph it finished.
 
 The lock is an OS file lock, so a sync that crashes or is killed releases it
-with its process; there is never a stale lock to delete. A write Memgraph
-rejects as a conflicting transaction is retried a few times with a short,
-growing wait before it is reported.
+with its process; there is never a stale lock to delete. The lock file is
+never opened through a symbolic link: a checkout that ships `.cgr-sync-lock`
+as a link is refused with a message naming it, since writing the holder's
+name through the link would overwrite whatever file it points at.
+
+A write Memgraph rejects as a conflicting transaction is retried a few times
+with a short, growing wait before it is reported.
 
 ## CLI Arguments
 

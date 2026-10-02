@@ -61,7 +61,7 @@ from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
 from .stack.manager import StackError
-from .sync_lock import SyncInProgressError, repo_sync_lock
+from .sync_lock import SyncLockError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .trace.cli import cli as trace_cli
@@ -658,8 +658,8 @@ def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
     held = ExitStack()
     try:
         held.enter_context(repo_sync_lock(repo, project_name))
-    except SyncInProgressError as busy:
-        app_context.console.print(style(str(busy), cs.Color.RED))
+    except SyncLockError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
         raise typer.Exit(1) from None
     with held:
         yield
@@ -1109,8 +1109,8 @@ def index(
         )
         _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
-    except SyncInProgressError as busy:
-        app_context.console.print(style(str(busy), cs.Color.RED))
+    except SyncLockError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
         raise typer.Exit(1) from None
     except Exception as e:
         app_context.console.print(

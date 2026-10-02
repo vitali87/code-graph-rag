@@ -31,7 +31,11 @@ from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.sync_lock import SyncInProgressError, repo_sync_lock
+from codebase_rag.sync_lock import (
+    SyncInProgressError,
+    UnsafeSyncLockError,
+    repo_sync_lock,
+)
 
 runner = CliRunner()
 
@@ -55,6 +59,7 @@ def _held_elsewhere(repo: Path, project: str) -> Iterator[subprocess.Popen[str]]
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     )
     assert holder.stdout is not None
     assert holder.stdin is not None
@@ -114,9 +119,10 @@ def _updater(repo: Path, ingestor: MagicMock, project: str = "click") -> GraphUp
 def test_a_second_run_is_refused_naming_the_running_sync(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
+    updater = _updater(repo, mock_ingestor)
     with _held_elsewhere(repo, "click__a4231746") as holder:
         with pytest.raises(SyncInProgressError) as refused:
-            _updater(repo, mock_ingestor).run()
+            updater.run()
 
     message = str(refused.value)
     assert str(holder.pid) in message
@@ -132,9 +138,10 @@ def test_another_thread_of_the_same_process_is_refused_too(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # Two MCP registries in one server hold separate ingestor locks.
+    updater = _updater(repo, mock_ingestor)
     with _held_by_another_thread(repo, "click"):
         with pytest.raises(SyncInProgressError):
-            _updater(repo, mock_ingestor).run()
+            updater.run()
 
     mock_ingestor.ensure_node_batch.assert_not_called()
 
@@ -240,14 +247,17 @@ def test_a_scoped_reingest_waits_for_the_running_sync(
             assert started_at == []
             assert worker.is_alive()
             assert holder.stdin is not None
+            # Taken before the release is asked for, not after the holder
+            # exits: it drops the lock on leaving its `with` block, so the
+            # reingest may start before the holder's process has ended.
+            release_asked_at = time.monotonic()
             holder.stdin.close()
             holder.wait(timeout=10)
-            released_at = time.monotonic()
         worker.join(10)
 
     assert not worker.is_alive()
     assert started_at
-    assert started_at[0] >= released_at
+    assert started_at[0] >= release_asked_at
 
 
 def test_the_lock_is_released_when_the_run_fails(
@@ -255,8 +265,9 @@ def test_the_lock_is_released_when_the_run_fails(
 ) -> None:
     # Negative: a failed run must not leave the checkout locked.
     mock_ingestor.ensure_node_batch.side_effect = RuntimeError("boom")
+    updater = _updater(repo, mock_ingestor)
     with pytest.raises(RuntimeError, match="boom"):
-        _updater(repo, mock_ingestor).run()
+        updater.run()
 
     with repo_sync_lock(repo, "click"):
         pass
@@ -374,3 +385,111 @@ def test_the_watcher_starts_after_the_running_sync_finishes(
 
     assert not worker.is_alive()
     mock_ingestor.ensure_node_batch.assert_called()
+
+
+class TestPlantedLockLink:
+    """A checkout can ship `.cgr-sync-lock` as a symlink to a file outside it.
+
+    The holder truncates and rewrites the lock file, so following the link
+    would overwrite its target with a pid and a project name. The sync is
+    refused instead, before anything is written, and the target is never
+    opened.
+    """
+
+    @pytest.fixture
+    def outside(self, tmp_path: Path) -> Path:
+        target = tmp_path / "outside" / "precious.txt"
+        target.parent.mkdir()
+        target.write_bytes(b"do not touch\n")
+        return target
+
+    def test_a_run_refuses_and_leaves_the_target_untouched(
+        self, repo: Path, outside: Path, mock_ingestor: MagicMock
+    ) -> None:
+        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(outside)
+        updater = _updater(repo, mock_ingestor)
+
+        with pytest.raises(UnsafeSyncLockError) as refused:
+            updater.run()
+
+        assert outside.read_bytes() == b"do not touch\n"
+        assert str(repo / cs.SYNC_LOCK_FILENAME) in str(refused.value)
+        mock_ingestor.ensure_node_batch.assert_not_called()
+        mock_ingestor.execute_write.assert_not_called()
+
+    def test_a_dangling_link_creates_nothing_outside_the_checkout(
+        self, repo: Path, outside: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Opening with O_CREAT through a dangling link would create its
+        # target, wherever it points.
+        target = outside.with_name("planted.txt")
+        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(target)
+        updater = _updater(repo, mock_ingestor)
+
+        with pytest.raises(UnsafeSyncLockError):
+            updater.run()
+
+        assert not target.exists()
+
+    @pytest.mark.skipif(
+        not hasattr(os, "O_NOFOLLOW"),
+        reason="Windows has no O_NOFOLLOW; the is_symlink check stands alone there",
+    )
+    def test_a_link_planted_after_the_check_is_still_not_followed(
+        self, repo: Path, outside: Path
+    ) -> None:
+        # The link lands between the `is_symlink` check and the open: the
+        # open itself must refuse it.
+        lock_path = repo / cs.SYNC_LOCK_FILENAME
+        lock_path.symlink_to(outside)
+        real_is_symlink = Path.is_symlink
+        checks: list[Path] = []
+
+        def link_appears_late(path: Path) -> bool:
+            checks.append(path)
+            return len(checks) > 1 and real_is_symlink(path)
+
+        with patch.object(Path, "is_symlink", link_appears_late):
+            with pytest.raises(UnsafeSyncLockError):
+                with repo_sync_lock(repo, "click"):
+                    pass
+
+        assert checks == [lock_path, lock_path]
+        assert outside.read_bytes() == b"do not touch\n"
+
+    def test_a_waiting_reingest_refuses_instead_of_waiting(
+        self, repo: Path, outside: Path, mock_ingestor: MagicMock
+    ) -> None:
+        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(outside)
+        updater = _updater(repo, mock_ingestor)
+        changed = [repo / "core.py"]
+
+        with pytest.raises(UnsafeSyncLockError):
+            updater.reingest(changed)
+
+        assert outside.read_bytes() == b"do not touch\n"
+        mock_ingestor.ensure_node_batch.assert_not_called()
+
+    def test_the_cli_says_why_it_stopped(
+        self, repo: Path, outside: Path, cli_sync: MagicMock
+    ) -> None:
+        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(outside)
+
+        result = runner.invoke(
+            app,
+            [
+                "start",
+                "--repo-path",
+                str(repo),
+                "--no-start-stack",
+                "--no-embeddings",
+                "--update-graph",
+            ],
+        )
+
+        output = " ".join(click.unstyle(result.output).split())
+        assert result.exit_code == 1, output
+        assert "symbolic link" in output
+        assert "Traceback" not in output
+        assert outside.read_bytes() == b"do not touch\n"
+        cli_sync.assert_not_called()

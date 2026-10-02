@@ -19,18 +19,26 @@ Re-entrant per thread: the CLI and the MCP tools take it before they put
 the `:IncompleteRun` marker down, then call `GraphUpdater.run`, which takes
 it again. Another thread of the same process is refused like another process
 is, since two MCP registries in one server hold separate ingestor locks.
+
+The lock file sits in a checkout that may come from anyone, so it is never
+opened through a symbolic link: a planted `.cgr-sync-lock -> ~/.bashrc`
+would otherwise have its target truncated and overwritten with the holder's
+name. Such a link refuses the sync instead of falling back to an unguarded
+one.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Concatenate, Protocol
 
 from loguru import logger
 
@@ -44,8 +52,26 @@ else:
     import fcntl
 
 
-class SyncInProgressError(RuntimeError):
+class SyncLockError(RuntimeError):
+    """The checkout's sync lock was not taken, so the sync did not start."""
+
+
+class SyncInProgressError(SyncLockError):
     """Another process, or another thread of this one, is syncing the checkout."""
+
+
+class UnsafeSyncLockError(SyncLockError):
+    """The lock path is a symbolic link, which a sync never writes through."""
+
+
+class _Syncs(Protocol):
+    """What `holds_sync_lock` reads off the instance whose method it wraps."""
+
+    @property
+    def repo_path(self) -> Path: ...
+
+    @property
+    def project_name(self) -> str: ...
 
 
 @dataclass
@@ -58,11 +84,21 @@ class _Hold:
 _HELD: dict[str, _Hold] = {}
 _HELD_GUARD = threading.Lock()
 
+# O_NOFOLLOW refuses a symlink in the same call that opens the file, so a
+# link swapped in after the `is_symlink` check still cannot redirect the
+# write. Windows has no such flag; there the `is_symlink` check stands alone.
+_NO_FOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_BINARY = getattr(os, "O_BINARY", 0)
+
 
 def _try_lock(fd: int) -> bool:
     try:
         if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
-            os.lseek(fd, 0, os.SEEK_SET)
+            # A Windows byte-range lock also stops other processes READING
+            # the locked bytes, so it locks a byte past the holder's name
+            # rather than over it: a refused writer must still read whom it
+            # is waiting for.
+            os.lseek(fd, cs.SYNC_LOCK_REGION_OFFSET, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         else:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -73,7 +109,7 @@ def _try_lock(fd: int) -> bool:
 
 def _unlock(fd: int) -> None:
     if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
-        os.lseek(fd, 0, os.SEEK_SET)
+        os.lseek(fd, cs.SYNC_LOCK_REGION_OFFSET, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
     else:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -81,32 +117,50 @@ def _unlock(fd: int) -> None:
 
 def _record_holder(fd: int, project_name: str) -> None:
     # Best effort: the lock is what excludes, this only names the holder in
-    # the refusal a second writer prints.
+    # the refusal a second writer prints. Truncated last, so a failed
+    # truncation still leaves this holder's two lines first in the file,
+    # and only the first two lines are read.
+    holder = f"{os.getpid()}\n{project_name}\n".encode(cs.ENCODING_UTF8)
     try:
-        os.ftruncate(fd, 0)
         os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, f"{os.getpid()}\n{project_name}\n".encode(cs.ENCODING_UTF8))
+        os.write(fd, holder)
+        os.ftruncate(fd, len(holder))
     except OSError:
         return
 
 
 def _holder(lock_path: Path) -> str:
     try:
-        pid, project = lock_path.read_text(encoding=cs.ENCODING_UTF8).splitlines()[:2]
+        fd = os.open(lock_path, os.O_RDONLY | _BINARY | _NO_FOLLOW)
+        try:
+            raw = os.read(fd, cs.SYNC_LOCK_HOLDER_MAX_BYTES)
+        finally:
+            os.close(fd)
+        pid, project = raw.decode(cs.ENCODING_UTF8).splitlines()[:2]
         return ex.SYNC_HOLDER.format(pid=int(pid), project=project)
     except (OSError, ValueError):
         return ex.SYNC_HOLDER_UNKNOWN
+
+
+def _refuse_link(lock_path: Path) -> UnsafeSyncLockError:
+    return UnsafeSyncLockError(ex.SYNC_LOCK_IS_LINK.format(path=lock_path))
 
 
 def _try_acquire(key: str, lock_path: Path, project_name: str) -> bool:
     with _HELD_GUARD:
         if key in _HELD:
             return False
+        if lock_path.is_symlink():
+            raise _refuse_link(lock_path)
         try:
             fd = os.open(
-                lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644
+                lock_path, os.O_RDWR | os.O_CREAT | _BINARY | _NO_FOLLOW, 0o644
             )
         except OSError as exc:
+            # A link that appeared after the check above is refused, never
+            # synced around: it is the planted file this guards against.
+            if lock_path.is_symlink():
+                raise _refuse_link(lock_path) from exc
             # A read-only or unusual checkout syncs unguarded, as it did
             # before the lock existed, rather than not at all. Threads of
             # this process still exclude each other through `_HELD`.
@@ -154,6 +208,9 @@ def repo_sync_lock(
     holds it, unless `wait` is set: a scoped reingest (the watcher, the MCP
     reingest after an edit, `cgr check`) queues behind a running sync and
     applies its change to the finished graph instead of dropping it.
+
+    Raises `UnsafeSyncLockError`, waiting or not, when the lock path is a
+    symbolic link.
     """
     key = str(repo_path.resolve())
     if not _reenter(key):
@@ -173,3 +230,27 @@ def repo_sync_lock(
         yield
     finally:
         _release(key)
+
+
+def holds_sync_lock[S: _Syncs, **P, R](
+    *, wait: bool = False
+) -> Callable[[Callable[Concatenate[S, P], R]], Callable[Concatenate[S, P], R]]:
+    """Run the decorated method under its instance's checkout sync lock.
+
+    A decorator rather than a `with` block inside the method, so the body
+    and every phase call in it stay in the method itself: the phase order of
+    `GraphUpdater.run` is pinned over the AST of `run`
+    (`test_graph_updater_phase_order.py`).
+    """
+
+    def decorate(
+        method: Callable[Concatenate[S, P], R],
+    ) -> Callable[Concatenate[S, P], R]:
+        @functools.wraps(method)
+        def locked(self: S, /, *args: P.args, **kwargs: P.kwargs) -> R:
+            with repo_sync_lock(self.repo_path, self.project_name, wait=wait):
+                return method(self, *args, **kwargs)
+
+        return locked
+
+    return decorate

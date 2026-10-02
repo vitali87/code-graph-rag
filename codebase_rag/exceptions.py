@@ -177,6 +177,10 @@ SYNC_IN_PROGRESS = (
 )
 SYNC_HOLDER = "pid {pid}, project '{project}'"
 SYNC_HOLDER_UNKNOWN = "holder unknown"
+SYNC_LOCK_IS_LINK = (
+    "The sync lock {path} is a symbolic link. A sync never writes through one, "
+    "since it can point outside the checkout; remove it, then run this again."
+)
 
 
 # Deriving from Exception would let every `except Exception` handler between
