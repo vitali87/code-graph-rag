@@ -175,9 +175,11 @@ def annotate_type_ref(text: str) -> str:
     # style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
     # name always means arity 0, so simple-name twins stay distinguishable
     # through every stored type map without touching method signatures.
-    base = _normalize_type_name(text)
-    arity = generic_arity_of_type_text(text)
-    return f"{base}{GENERIC_ARITY_MARKER}{arity}" if arity else base
+    return type_ref(_normalize_type_name(text), generic_arity_of_type_text(text))
+
+
+def type_ref(name: str, arity: int) -> str:
+    return f"{name}{GENERIC_ARITY_MARKER}{arity}" if arity else name
 
 
 def split_type_ref(name: str) -> tuple[str, int]:

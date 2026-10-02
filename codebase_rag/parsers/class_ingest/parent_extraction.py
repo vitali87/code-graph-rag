@@ -119,17 +119,19 @@ def _csharp_base_arity(node: Node) -> int:
 
 
 def split_csharp_base_refs(
-    class_node: Node, base_kinds: dict[str, str] | None = None
+    class_node: Node,
+    base_kinds: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     # Return the (inherited, implemented) bases as written: generic-free,
-    # with the written arity in CLR style (`Base`1`), since `Base` and
-    # `Base<T>` are two types (issue #2579). C# folds the base class and all
-    # interfaces into one base_list; the base class, if any, is the FIRST
-    # entry (grammar-enforced) and must not look like an interface. An
-    # interface's bases are all inheritance; a struct/record/class
-    # implements the rest. `base_kinds` (from the Roslyn frontend) maps a
-    # base's simple name to its exact kind; when present it overrides the
-    # I-prefix heuristic per base.
+    # with the written arity in CLR style (`NotificationHandler`1`), so a
+    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`, and `Base`
+    # from `Base<T>`, which are two types too (issue #2579). C# folds
+    # the base class and all interfaces into one base_list; the base class,
+    # if any, is the FIRST entry (grammar-enforced) and must not look like
+    # an interface. An interface's bases are all inheritance; a
+    # struct/record/class implements the rest. `base_kinds` (from the
+    # Roslyn frontend) maps a base's simple name to its exact kind; when
+    # present it overrides the I-prefix heuristic per base.
     if class_node.type == cs.TS_CSHARP_ENUM_DECLARATION:
         return [], []
     base_list = find_child_by_type(class_node, cs.TS_CSHARP_BASE_LIST)
@@ -137,7 +139,7 @@ def split_csharp_base_refs(
         return [], []
 
     written = [
-        (name, csharp_utils.clr_type_name(name, _csharp_base_arity(child)))
+        (name, csharp_utils.type_ref(name, _csharp_base_arity(child)))
         for child in base_list.children
         if (name := _csharp_base_written_name(child))
     ]

@@ -463,6 +463,9 @@ message GraphCodeIndex {
     // Annotations as written (#1527); absent return_type is the empty string.
     string return_type = 11;
     repeated string param_types = 12;
+    // A JS/TS object literal's function value (#2435): reached through its
+    // object, never by its key alone, so a bare call must not bind to it.
+    bool is_object_member = 13;
   }
 
   message Method {

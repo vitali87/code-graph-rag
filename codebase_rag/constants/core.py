@@ -77,6 +77,14 @@ class EventType(StrEnum):
     CREATED = "created"
     DELETED = "deleted"
     MOVED = "moved"
+    CLOSED = "closed"
+
+
+# `opened` and `closed_no_write` are reads, and `closed` only ends a write
+# whose `modified` normally came first, so none of them is re-ingested alone.
+CONTENT_EVENT_TYPES = frozenset(
+    {EventType.MODIFIED, EventType.CREATED, EventType.DELETED}
+)
 
 
 REALTIME_LOGGER_FORMAT = (
@@ -186,6 +194,9 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 # re-parses it with the delete-before-reparse a KNOWN file gets (issue #1983).
 HASH_CACHE_UNREADABLE = "unreadable"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+# `cgr index` keeps a run's sync state in a throwaway directory with this
+# prefix instead of the repository (issue #2401).
+INDEX_STATE_DIR_PREFIX = "cgr-index-state-"
 # Present while an EXPOSES cleanup the last run skipped (its project registry
 # was unreadable) is still owed; the in-sync fast path refuses until a batch
 # run has done it (issue #2193).

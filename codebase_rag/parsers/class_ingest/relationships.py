@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import DeferredCppInherit, DeferredInherit, NodeType
+from ...types_defs import DeferredCppInherit, DeferredInherit, NodeType, PropertyDict
 from ..cpp import utils as cpp_utils
 from . import parent_extraction as pe
 
@@ -43,8 +43,9 @@ def create_class_relationships(
         )
     class_inheritance[class_qn] = parent_classes
     # The C# bases as written ride along with the deferred edges, in the
-    # same order and split as the qns above, so the deferred pass can bind
-    # each to the type of its written arity (issue #2579).
+    # same order and split as the qns above, so the deferred pass can look
+    # each one up by scope instead of by the parse-time guess alone, and bind
+    # it to the type of its written arity (issues #2534, #2579).
     inherited_refs, implemented_refs = (
         pe.split_csharp_base_refs(class_node, csharp_base_kinds)
         if language == cs.SupportedLanguage.CSHARP
@@ -81,13 +82,16 @@ def create_class_relationships(
     # `interfaces` field (a super_interfaces clause), so handle both. C#
     # struct/record types implement interfaces through their base_list too
     # (a C# class reuses the class_declaration node type already listed);
-    # a C# interface's base_list is inheritance, so it is excluded here.
+    # a C# interface's base_list is inheritance, so it is excluded here. A
+    # PHP anonymous class carries the same class_interface_clause as a named
+    # one (issue #2538).
     if class_node.type in (
         cs.TS_CLASS_DECLARATION,
         cs.TS_ENUM_DECLARATION,
         cs.TS_CSHARP_STRUCT_DECLARATION,
         cs.TS_CSHARP_RECORD_DECLARATION,
         cs.TS_DART_CLASS_DEFINITION,
+        cs.TS_PHP_ANONYMOUS_CLASS,
     ):
         _link_implemented_interfaces(
             pe.extract_implemented_interfaces(
@@ -221,10 +225,14 @@ def create_inheritance_relationship(
     ingestor: IngestorProtocol,
     base_index: int = 0,
     parent_label: str | None = None,
+    resolution: cs.EdgeResolution | None = None,
 ) -> None:
     parent_type = parent_label or get_node_type_for_inheritance(
         parent_qn, function_registry
     )
+    properties: PropertyDict = {cs.KEY_BASE_INDEX: base_index}
+    if resolution is not None:
+        properties[cs.KEY_RESOLUTION] = resolution
     # Persist the base's position in the child's base list. An incremental run
     # rehydrates class_inheritance from these edges; ordering by base_index
     # restores the original source order, which method resolution (Pass 3) and
@@ -233,7 +241,7 @@ def create_inheritance_relationship(
         (child_node_type, cs.KEY_QUALIFIED_NAME, child_qn),
         cs.RelationshipType.INHERITS,
         (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
-        {cs.KEY_BASE_INDEX: base_index},
+        properties,
     )
 
 
@@ -243,13 +251,22 @@ def create_implements_relationship(
     interface_qn: str,
     ingestor: IngestorProtocol,
     interface_label: str | None = None,
+    resolution: cs.EdgeResolution | None = None,
 ) -> None:
+    source = (class_type, cs.KEY_QUALIFIED_NAME, class_qn)
+    target = (
+        interface_label or cs.NodeLabel.INTERFACE,
+        cs.KEY_QUALIFIED_NAME,
+        interface_qn,
+    )
+    if resolution is None:
+        ingestor.ensure_relationship_batch(
+            source, cs.RelationshipType.IMPLEMENTS, target
+        )
+        return
     ingestor.ensure_relationship_batch(
-        (class_type, cs.KEY_QUALIFIED_NAME, class_qn),
+        source,
         cs.RelationshipType.IMPLEMENTS,
-        (
-            interface_label or cs.NodeLabel.INTERFACE,
-            cs.KEY_QUALIFIED_NAME,
-            interface_qn,
-        ),
+        target,
+        {cs.KEY_RESOLUTION: resolution},
     )
