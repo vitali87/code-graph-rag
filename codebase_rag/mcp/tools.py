@@ -2823,20 +2823,17 @@ class MCPToolsRegistry:
         through_reexports: bool = False,
         project: str | None = None,
     ) -> object:
-        if through_reexports:
-            return await self._graph_query(
-                cs.MCPToolName.IMPORTERS,
-                project,
-                lambda name: graph_query.importers_through_reexports(
-                    self.ingestor.fetch_all, name, module_qualified_name
-                ),
-            )
+        # A single `return await` keeps the handler a pure delegation to the
+        # locked `_graph_query`, so the read is serialised against a rebuild
+        # (issue #1471) whichever query the flag picks.
         return await self._graph_query(
             cs.MCPToolName.IMPORTERS,
             project,
-            lambda name: graph_query.importers(
-                self.ingestor.fetch_all, name, module_qualified_name
-            ),
+            lambda name: (
+                graph_query.importers_through_reexports
+                if through_reexports
+                else graph_query.importers
+            )(self.ingestor.fetch_all, name, module_qualified_name),
         )
 
     async def tests_reaching(
