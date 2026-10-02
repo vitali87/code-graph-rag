@@ -1,0 +1,332 @@
+# A TypeScript heritage clause produced an edge only when it named a bare
+# identifier (issue #2560). `class TrieRouter<T> implements Router<T>` names a
+# `generic_type`, `interface CachedStore<K, V> extends Store<K, V>` likewise,
+# and `implements r.Plain` after `import * as r` names a
+# `nested_type_identifier`: all three were skipped, so the graph held no
+# IMPLEMENTS/INHERITS edge for them and `cgr graph implementors` on a generic
+# interface (hono's `Router<T>`, six implementors) answered [].
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from evals.cgr_graph import _capture
+
+_PROJECT = "proj"
+_IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
+_INHERITS = cs.RelationshipType.INHERITS.value
+_CLASS = cs.NodeLabel.CLASS.value
+_INTERFACE = cs.NodeLabel.INTERFACE.value
+_EXTERNAL = cs.NodeLabel.EXTERNAL_MODULE.value
+
+ROUTER_TS = """\
+export interface Router<T> { add(path: string, handler: T): void }
+export interface Plain { run(): void }
+export class Base { go(): void {} }
+export class GBase<T> { go(): void {} }
+"""
+
+TYPE_IMPORT_TS = """\
+import type { Router, Plain } from '../router'
+export class TypeImportGeneric<T> implements Router<T> { add(p: string, h: T): void {} }
+export class TypeImportPlain implements Plain { run(): void {} }
+"""
+
+VALUE_IMPORT_TS = """\
+import { Router, Plain } from '../router'
+export class ValueImportGeneric<T> implements Router<T> { add(p: string, h: T): void {} }
+export class ValueImportPlain implements Plain { run(): void {} }
+"""
+
+INLINE_TYPE_IMPORT_TS = """\
+import { type Router } from '../router'
+export class InlineTypeImportGeneric<T> implements Router<T> { add(p: string, h: T): void {} }
+"""
+
+NAMESPACE_IMPORT_TS = """\
+import * as r from '../router'
+export class NamespacedPlain implements r.Plain { run(): void {} }
+export class NamespacedGeneric<T> implements r.Router<T> { add(p: string, h: T): void {} }
+export class Both<T> implements r.Plain, r.Router<T> { run(): void {} add(p: string, h: T): void {} }
+export interface NamespacedChild extends r.Plain { more(): void }
+export interface NamespacedGenericChild<T> extends r.Router<T> { more(): void }
+export class NsExtends extends r.Base { go(): void {} }
+export class NsGenericExtends extends r.GBase<string> { go(): void {} }
+"""
+
+BASE_TS = """\
+export class Base<T> { describe(): string { return 'base' } }
+export class GenericChild extends Base<string> { describe(): string { return 'child' } }
+export interface Store<K, V> { get(k: K): V | undefined }
+export interface CachedStore<K, V> extends Store<K, V> { clear(): void }
+export interface Named { name(): string }
+export interface Labeled extends Named { label(): string }
+export interface Mixed<K> extends Named, Store<K, string> { mixed(): void }
+"""
+
+LOCAL_NAMESPACE_TS = """\
+namespace ns {
+  export interface Shape { area(): number }
+  export interface Box<T> { value(): T }
+}
+export class Square implements ns.Shape { area(): number { return 1 } }
+export class NumberBox implements ns.Box<number> { value(): number { return 1 } }
+export interface Solid extends ns.Shape { volume(): number }
+"""
+
+
+def _heritage(root: Path) -> set[tuple[str, str, str, str, str]]:
+    prefix = f"{_PROJECT}{cs.SEPARATOR_DOT}"
+    return {
+        (
+            from_label,
+            str(from_qn).removeprefix(prefix),
+            rel,
+            to_label,
+            str(to_qn).removeprefix(prefix),
+        )
+        for from_label, from_qn, rel, to_label, to_qn in _capture(root, _PROJECT).rels
+        if rel in (_IMPLEMENTS, _INHERITS)
+    }
+
+
+def _write(root: Path, files: dict[str, str]) -> Path:
+    for name, body in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    return root
+
+
+@pytest.fixture(scope="module", params=[".ts", ".tsx"])
+def issue_edges(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> set[tuple[str, str, str, str, str]]:
+    ext = request.param
+    root = _write(
+        tmp_path_factory.mktemp("issue2560"),
+        {
+            f"src/router{ext}": ROUTER_TS,
+            f"src/impl/a{ext}": TYPE_IMPORT_TS,
+            f"src/impl/b{ext}": VALUE_IMPORT_TS,
+            f"src/impl/c{ext}": INLINE_TYPE_IMPORT_TS,
+            f"src/impl/d{ext}": NAMESPACE_IMPORT_TS,
+            f"src/base{ext}": BASE_TS,
+            f"src/shapes{ext}": LOCAL_NAMESPACE_TS,
+        },
+    )
+    return _heritage(root)
+
+
+@pytest.mark.parametrize(
+    "child",
+    [
+        "src.impl.a.TypeImportGeneric",
+        "src.impl.b.ValueImportGeneric",
+        "src.impl.c.InlineTypeImportGeneric",
+    ],
+)
+def test_class_implementing_a_generic_interface_records_implements(
+    issue_edges: set[tuple[str, str, str, str, str]], child: str
+) -> None:
+    edge = (_CLASS, child, _IMPLEMENTS, _INTERFACE, "src.router.Router")
+    assert edge in issue_edges, sorted(issue_edges)
+
+
+def test_interface_extending_a_generic_interface_records_inherits(
+    issue_edges: set[tuple[str, str, str, str, str]],
+) -> None:
+    edge = (_INTERFACE, "src.base.CachedStore", _INHERITS, _INTERFACE, "src.base.Store")
+    assert edge in issue_edges, sorted(issue_edges)
+
+
+def test_every_base_of_a_mixed_extends_list_is_kept(
+    issue_edges: set[tuple[str, str, str, str, str]],
+) -> None:
+    mixed = {(to, rel) for _fl, f, rel, _tl, to in issue_edges if f == "src.base.Mixed"}
+    assert mixed == {("src.base.Named", _INHERITS), ("src.base.Store", _INHERITS)}
+
+
+@pytest.mark.parametrize(
+    ("child", "interface"),
+    [
+        ("src.impl.d.NamespacedPlain", "src.router.Plain"),
+        ("src.impl.d.NamespacedGeneric", "src.router.Router"),
+        ("src.impl.d.Both", "src.router.Plain"),
+        ("src.impl.d.Both", "src.router.Router"),
+    ],
+)
+def test_namespace_qualified_interface_records_implements(
+    issue_edges: set[tuple[str, str, str, str, str]], child: str, interface: str
+) -> None:
+    edge = (_CLASS, child, _IMPLEMENTS, _INTERFACE, interface)
+    assert edge in issue_edges, sorted(issue_edges)
+
+
+@pytest.mark.parametrize(
+    "child", ["src.impl.d.NamespacedChild", "src.impl.d.NamespacedGenericChild"]
+)
+def test_interface_extending_a_namespace_qualified_interface_records_inherits(
+    issue_edges: set[tuple[str, str, str, str, str]], child: str
+) -> None:
+    targets = {
+        (tl, to)
+        for _fl, f, rel, tl, to in issue_edges
+        if f == child and rel == _INHERITS
+    }
+    assert targets == {
+        (
+            _INTERFACE,
+            "src.router.Router" if "Generic" in child else "src.router.Plain",
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("child", "base"),
+    [
+        ("src.impl.d.NsExtends", "src.router.Base"),
+        ("src.impl.d.NsGenericExtends", "src.router.GBase"),
+    ],
+)
+def test_class_extending_through_a_namespace_import_binds_the_first_party_class(
+    issue_edges: set[tuple[str, str, str, str, str]], child: str, base: str
+) -> None:
+    # The same namespace binding the type positions use: `extends r.Base` was
+    # externalized as an `r.Base` ExternalModule.
+    targets = {
+        (tl, to)
+        for _fl, f, rel, tl, to in issue_edges
+        if f == child and rel == _INHERITS
+    }
+    assert targets == {(_CLASS, base)}
+
+
+@pytest.mark.parametrize(
+    ("child", "rel", "target"),
+    [
+        ("src.shapes.Square", _IMPLEMENTS, "src.shapes.ns.Shape"),
+        ("src.shapes.NumberBox", _IMPLEMENTS, "src.shapes.ns.Box"),
+        ("src.shapes.Solid", _INHERITS, "src.shapes.ns.Shape"),
+    ],
+)
+def test_local_namespace_member_heritage_records_an_edge(
+    issue_edges: set[tuple[str, str, str, str, str]],
+    child: str,
+    rel: str,
+    target: str,
+) -> None:
+    targets = {(r, to) for _fl, f, r, _tl, to in issue_edges if f == child}
+    assert targets == {(rel, target)}
+
+
+# --- negative tests: what must not change ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "edge",
+    [
+        (
+            _CLASS,
+            "src.impl.a.TypeImportPlain",
+            _IMPLEMENTS,
+            _INTERFACE,
+            "src.router.Plain",
+        ),
+        (
+            _CLASS,
+            "src.impl.b.ValueImportPlain",
+            _IMPLEMENTS,
+            _INTERFACE,
+            "src.router.Plain",
+        ),
+        (_CLASS, "src.base.GenericChild", _INHERITS, _CLASS, "src.base.Base"),
+        (_INTERFACE, "src.base.Labeled", _INHERITS, _INTERFACE, "src.base.Named"),
+    ],
+)
+def test_bare_and_class_extends_heritage_is_unchanged(
+    issue_edges: set[tuple[str, str, str, str, str]],
+    edge: tuple[str, str, str, str, str],
+) -> None:
+    assert edge in issue_edges, sorted(issue_edges)
+
+
+TYPE_ARGUMENT_TS = """\
+export interface Named { name(): string }
+export interface Store<K, V> { get(k: K): V | undefined }
+export interface Holder<T> { held(): T }
+export class Keeper implements Holder<Named> { held(): Named { return { name: () => '' } } }
+export interface Shelf extends Store<string, Named> { shelve(): void }
+export class Deep implements Holder<Store<string, Named>> { held(): Store<string, Named> { return { get: () => undefined } } }
+"""
+
+
+def test_type_arguments_are_not_heritage(tmp_path: Path) -> None:
+    # `implements Holder<Named>` implements Holder only: the type argument is
+    # a use of Named, not a supertype, at any nesting depth.
+    edges = _heritage(_write(tmp_path, {"t.ts": TYPE_ARGUMENT_TS}))
+    assert edges == {
+        (_CLASS, "t.Keeper", _IMPLEMENTS, _INTERFACE, "t.Holder"),
+        (_INTERFACE, "t.Shelf", _INHERITS, _INTERFACE, "t.Store"),
+        (_CLASS, "t.Deep", _IMPLEMENTS, _INTERFACE, "t.Holder"),
+    }, sorted(edges)
+
+
+DECOY_TS = """\
+export interface Other { run(): void }
+"""
+
+NAMESPACE_MISS_TS = """\
+import * as r from './router'
+export class Miss implements r.Other { run(): void {} }
+export interface MissChild extends r.Other { more(): void }
+"""
+
+
+def test_namespace_member_the_module_lacks_does_not_bind_elsewhere(
+    tmp_path: Path,
+) -> None:
+    # `r` is ./router, which declares no `Other`: a same-named interface in
+    # another module is not what `r.Other` names, so no first-party edge.
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "router.ts": ROUTER_TS,
+                "decoy.ts": DECOY_TS,
+                "miss.ts": NAMESPACE_MISS_TS,
+            },
+        )
+    )
+    assert not {e for e in edges if e[4] == "decoy.Other"}, sorted(edges)
+    assert not {
+        e for e in edges if e[3] in (_CLASS, _INTERFACE) and e[1].startswith("miss.")
+    }
+
+
+REACT_TSX = """\
+import React from 'react'
+export interface CardProps extends React.HTMLAttributes<HTMLDivElement> { title: string }
+export class Card extends React.Component<CardProps> { render() { return null } }
+"""
+
+
+def test_default_import_heritage_keeps_its_written_external_name(
+    tmp_path: Path,
+) -> None:
+    # A default import binds `React` to `react.default`; nothing first-party
+    # lives under it, so the base keeps the written name it was externalized
+    # under. Dead-code roots a React class component by that `React.Component`.
+    edges = _heritage(_write(tmp_path, {"card.tsx": REACT_TSX}))
+    assert (_CLASS, "card.Card", _INHERITS, _EXTERNAL, "React.Component") in edges, (
+        sorted(edges)
+    )
+    assert (
+        _INTERFACE,
+        "card.CardProps",
+        _INHERITS,
+        _EXTERNAL,
+        "React.HTMLAttributes",
+    ) in edges, sorted(edges)
