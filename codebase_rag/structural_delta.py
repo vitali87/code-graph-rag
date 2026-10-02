@@ -304,6 +304,19 @@ def _binding(row: ResultRow) -> ImportBinding:
     )
 
 
+def _named_import_bindings(
+    fetch_all: QueryFn, params: PropertyDict
+) -> tuple[ImportBinding, ...]:
+    """The named imports of the snapshot's modules (issue #2516)."""
+    return tuple(
+        binding
+        for binding in (
+            _binding(row) for row in fetch_all(cq.CYPHER_DELTA_NAMED_IMPORTS, params)
+        )
+        if binding.importer and binding.module and binding.imported_name
+    )
+
+
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     """Return registered project names that can own a longer qualified name."""
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
@@ -379,13 +392,6 @@ def snapshot(
         imports.setdefault(source, set()).add(target)
         imports.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
-    bindings = tuple(
-        binding
-        for binding in (
-            _binding(row) for row in fetch_all(cq.CYPHER_DELTA_NAMED_IMPORTS, params)
-        )
-        if binding.importer and binding.module and binding.imported_name
-    )
     return Snapshot(
         paths=frozenset(path_list),
         definitions=definitions,
@@ -393,7 +399,7 @@ def snapshot(
         sites=sites,
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
-        bindings=bindings,
+        bindings=_named_import_bindings(fetch_all, params),
     )
 
 

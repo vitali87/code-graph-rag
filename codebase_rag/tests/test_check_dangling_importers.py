@@ -208,9 +208,8 @@ def test_all_entry_left_in_the_defining_module_is_a_finding(
     line = entry["line"]
     assert line is not None
     text = (root / "app/core.py").read_text().splitlines()[line - 1]
-    assert text.startswith("__all__") and text[entry["col"] or 0 :].startswith(
-        'unused"'
-    )
+    assert text.startswith("__all__")
+    assert text[entry["col"] or 0 :].startswith('unused"')
 
 
 def test_import_from_a_deleted_module_is_a_finding(
