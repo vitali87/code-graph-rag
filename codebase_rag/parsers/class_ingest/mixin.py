@@ -18,6 +18,7 @@ from ...types_defs import (
     ASTNode,
     CppDefinitionSpan,
     CSharpCallShape,
+    CSharpGenericShape,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
@@ -266,10 +267,8 @@ def _signatured_method_qn(
         # (without it two `Widget(...)` ctors collide and the second
         # gets an `@line` suffix). Zero-arg members stay bare so their
         # qn is stable and matches an unsignatured call site.
-        cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
-        if cs_name and cs_params:
-            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
-            return f"{class_qn}.{cs_name}({param_sig})"
+        if leaf := csharp_utils.member_qn_leaf(method_node):
+            return f"{class_qn}.{leaf}"
     return None
 
 
@@ -307,6 +306,7 @@ class ClassIngestMixin:
     csharp_call_shapes: dict[str, CSharpCallShape]
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
+    csharp_generic_shapes: dict[str, CSharpGenericShape]
     csharp_class_namespaced: dict[str, str]
     csharp_namespaced_qns: dict[str, set[str]]
     csharp_method_return_types: dict[str, tuple[str, int]]
@@ -1481,6 +1481,8 @@ class ClassIngestMixin:
             self._record_csharp_class_members(
                 member_node, class_qn, module_qn, modifiers, file_path
             )
+            if shape := csharp_utils.generic_shape(member_node):
+                self.csharp_generic_shapes[class_qn] = shape
 
     def _record_rust_class_field_types(self, class_node: Node, class_qn: str) -> None:
         # Record Rust struct field types so a field-hop receiver
@@ -2339,6 +2341,7 @@ class ClassIngestMixin:
             self.csharp_override_methods,
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
+            self.csharp_class_generic_arity,
         )
         self._resolve_java_anon_overrides()
 

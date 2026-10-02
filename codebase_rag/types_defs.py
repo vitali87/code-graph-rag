@@ -906,6 +906,23 @@ class RustTraitImpl(NamedTuple):
     method_qns: list[str]
 
 
+class CSharpGenericBase(NamedTuple):
+    """A base written with type arguments: `Inline<Person>` is
+    ("Inline", ("Person",)); the arity is the argument count."""
+
+    name: str
+    arguments: tuple[str, ...]
+
+
+class CSharpGenericShape(NamedTuple):
+    """What a C# type contributes to substituting type arguments down its
+    hierarchy: its own type parameters (`T` of `Validator<T>`) and the
+    arguments it passes to each generic base (issue #2619)."""
+
+    parameters: tuple[str, ...]
+    bases: tuple[CSharpGenericBase, ...]
+
+
 class PendingTypeFact(NamedTuple):
     """A definition whose annotations still need resolving into edges (#1527)."""
 

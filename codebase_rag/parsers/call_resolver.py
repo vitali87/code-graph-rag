@@ -14,6 +14,7 @@ from .. import logs as ls
 from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
+from .csharp import utils as csharp_utils
 from .import_processor import ImportProcessor
 from .lua import utils as lua_utils
 from .py import resolve_class_name
@@ -473,7 +474,7 @@ class CallResolver:
         # PRIVATE attribute so a project with no C# does not build an engine
         # just to clear an empty dict.
         if (csharp := self.type_inference._csharp_type_inference) is not None:
-            csharp._call_memo.clear()
+            csharp.clear_call_memo()
 
     def resolve_function_call(
         self,
@@ -1289,7 +1290,34 @@ class CallResolver:
             return set()
         if result := self._try_resolve_method(impl_qn, method_name):
             return {result}
+        if result := self._explicit_implementation(impl_qn, class_qn, method_name):
+            return {result}
         return set()
+
+    def _explicit_implementation(
+        self, impl_qn: str, interface_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A C# implementer that implements the member EXPLICITLY registers it
+        # as `IValidator#Validate(Ctx)` (issue #2619), and that body is the one
+        # an interface-typed call runs.
+        interface = csharp_utils.split_type_ref(
+            qn_markers.strip_dup_marker(interface_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        )[0]
+        prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
+        for qn, node_type in self.function_registry.find_with_prefix(impl_qn):
+            if not qn.startswith(prefix):
+                continue
+            explicit = csharp_utils.split_explicit_member(qn[len(prefix) :])
+            if (
+                explicit is not None
+                and explicit[1] == method_name
+                and csharp_utils.strip_generic_arguments(
+                    csharp_utils.leaf_type_segment(explicit[0])
+                )
+                == interface
+            ):
+                return node_type, qn
+        return None
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None

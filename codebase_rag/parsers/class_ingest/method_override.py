@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterator, Mapping
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,7 @@ from ... import constants as cs
 from ... import logs
 from ...types_defs import NodeType
 from ...utils import qn_markers
+from ..csharp import utils as csharp_utils
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -25,6 +27,7 @@ def process_all_method_overrides(
     csharp_override_methods: set[str] | None = None,
     impl_method_traits: dict[str, str] | None = None,
     inherent_impl_methods: set[str] | None = None,
+    csharp_class_generic_arity: Mapping[str, int] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
@@ -32,6 +35,20 @@ def process_all_method_overrides(
     for method_qn in function_registry.keys():
         if function_registry[method_qn] != NodeType.METHOD:
             continue
+        if csharp_methods and method_qn in csharp_methods:
+            explicit = _csharp_explicit_member(method_qn)
+            if explicit is not None:
+                # Its leaf names the interface it implements; matching that
+                # leaf by name, as the walk below does, would find nothing.
+                _emit_explicit_impl_override(
+                    method_qn,
+                    explicit,
+                    function_registry,
+                    _ancestors(explicit[0], class_inheritance, implemented_interfaces),
+                    csharp_class_generic_arity or {},
+                    ingestor,
+                )
+                continue
         # A dotless qn has no class to walk from; rpartition leaves class_qn
         # empty for it, which is the same set the membership test used to skip.
         class_qn, _, method_name = method_qn.rpartition(cs.SEPARATOR_DOT)
@@ -237,6 +254,85 @@ def _emit_recorded_impl_override(
     return True
 
 
+def _csharp_explicit_member(method_qn: str) -> tuple[str, str, str] | None:
+    # (class qn, interface as written, member leaf) for an explicit interface
+    # implementation, `...Validator.IValidator#Validate(Ctx)`. The class is
+    # cut before the parameter list, whose qualified types hold dots too.
+    head = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+    class_qn, separator, _ = head.rpartition(cs.SEPARATOR_DOT)
+    if not separator:
+        return None
+    split = csharp_utils.split_explicit_member(method_qn[len(class_qn) + 1 :])
+    if split is None:
+        return None
+    return class_qn, split[0], split[1]
+
+
+def _ancestors(
+    class_qn: str,
+    class_inheritance: dict[str, list[str]],
+    implemented_interfaces: dict[str, list[str]],
+) -> Iterator[str]:
+    # Every base and implemented interface, nearest first, as the override
+    # walk visits them.
+    queue = deque([class_qn])
+    visited = {class_qn}
+    while queue:
+        current = queue.popleft()
+        for parent in chain(
+            class_inheritance.get(current, ()), implemented_interfaces.get(current, ())
+        ):
+            if parent not in visited:
+                visited.add(parent)
+                queue.append(parent)
+                yield parent
+
+
+def _emit_explicit_impl_override(
+    method_qn: str,
+    explicit: tuple[str, str, str],
+    function_registry: FunctionRegistryTrieProtocol,
+    ancestors: Iterator[str],
+    generic_arity: Mapping[str, int],
+    ingestor: IngestorProtocol,
+) -> None:
+    """Link `IValidator#Validate(Ctx)` to `IValidator.Validate(Ctx)`.
+
+    The interface is the nearest one the class implements whose name and
+    generic arity are the ones the implementation spells (issue #2619).
+    """
+    _, interface, member = explicit
+    name = csharp_utils.strip_generic_arguments(
+        csharp_utils.leaf_type_segment(interface)
+    )
+    arity = csharp_utils.generic_arity_of_type_text(interface)
+    for ancestor in ancestors:
+        if function_registry.get(ancestor) != NodeType.INTERFACE:
+            continue
+        leaf = qn_markers.strip_dup_marker(ancestor.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        if (
+            csharp_utils.split_type_ref(leaf)[0] != name
+            or generic_arity.get(ancestor, 0) != arity
+        ):
+            continue
+        parent_method_qn = _parent_method_qn(
+            ancestor, member, function_registry, erase_generics=True
+        )
+        if parent_method_qn is None:
+            continue
+        ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+            cs.RelationshipType.OVERRIDES,
+            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
+        )
+        logger.debug(
+            logs.CLASS_METHOD_OVERRIDE,
+            method_qn=method_qn,
+            parent_method_qn=parent_method_qn,
+        )
+        return
+
+
 def _invert_implementers(
     interface_implementers: dict[str, set[str]],
 ) -> dict[str, list[str]]:
@@ -305,6 +401,28 @@ def _find_override_by_arity(
     return matches[0] if len(matches) == 1 else None
 
 
+def _find_override_by_erasure(
+    parent_class: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str | None:
+    # A C# signature keeps generic arguments, so an override in a closed
+    # subclass (`Put(List<int>)` on `Derived : Base<int>`) no longer spells
+    # its base's `Put(List<T>)`. With the arguments erased they agree again;
+    # a UNIQUE erased match is taken, as the arity fallback takes one.
+    erased = csharp_utils.strip_generic_arguments(method_name)
+    prefix = f"{parent_class}{cs.SEPARATOR_DOT}"
+    matches = [
+        qn
+        for qn, node_type in function_registry.find_with_prefix(parent_class)
+        if node_type == NodeType.METHOD
+        and qn.startswith(prefix)
+        and cs.SEPARATOR_DOT not in qn[len(prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]
+        and csharp_utils.strip_generic_arguments(qn[len(prefix) :]) == erased
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _csharp_override_gated(
     method_qn: str,
     csharp_methods: set[str] | None,
@@ -318,15 +436,24 @@ def _csharp_override_gated(
 
 
 def _parent_method_qn(
-    parent_class: str, method_name: str, function_registry: FunctionRegistryTrieProtocol
+    parent_class: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    erase_generics: bool = False,
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target."""
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
         # Fall back to name+arity so a generic type-var rename in the override
         # signature still matches the base method.
+        erased = (
+            _find_override_by_erasure(parent_class, method_name, function_registry)
+            if erase_generics
+            else None
+        )
         parent_method_qn = (
-            _find_override_by_arity(parent_class, method_name, function_registry)
+            erased
+            or _find_override_by_arity(parent_class, method_name, function_registry)
             or parent_method_qn
         )
     # The parent member must BE a method: a ctor of a nested class that
@@ -359,6 +486,7 @@ def check_method_overrides(
     csharp_gated = _csharp_override_gated(
         method_qn, csharp_methods, csharp_override_methods
     )
+    is_csharp = csharp_methods is not None and method_qn in csharp_methods
 
     queue = deque([class_qn])
     visited = {class_qn}
@@ -367,7 +495,7 @@ def check_method_overrides(
         current_class = queue.popleft()
 
         parent_method_qn = (
-            _parent_method_qn(current_class, method_name, function_registry)
+            _parent_method_qn(current_class, method_name, function_registry, is_csharp)
             if current_class != class_qn
             else None
         )

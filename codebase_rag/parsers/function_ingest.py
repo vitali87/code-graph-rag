@@ -1906,11 +1906,8 @@ class FunctionIngestMixin:
         from .csharp import utils as csharp_utils
 
         class_qn = self._csharp_scope_qn(class_node, module_qn, file_path)
-        cs_name, cs_params = csharp_utils.extract_method_signature(func_node)
-        method_qualified_name = None
-        if cs_name and cs_params:
-            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
-            method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
+        leaf = csharp_utils.member_qn_leaf(func_node)
+        method_qualified_name = f"{class_qn}.{leaf}" if leaf else None
 
         ingested_qn = ingest_method(
             func_node,
