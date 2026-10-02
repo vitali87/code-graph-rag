@@ -49,6 +49,7 @@ def _git(root: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     ).stdout
 
 
