@@ -1468,6 +1468,20 @@ class CallResolver:
     def _resolve_caller_scope(
         self, call: _CallSite
     ) -> tuple[bool, tuple[str, str] | None]:
+        # `self.run()` where a class body aliases `run` (issue #2620) is a
+        # member of the enclosing class, which the module-keyed cache does
+        # not know about.
+        if (
+            call.language == cs.SupportedLanguage.PYTHON
+            and call.class_context
+            and (
+                result := self._resolve_self_member_alias(
+                    call.call_name, call.class_context
+                )
+            )
+        ):
+            return True, result
+
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
@@ -1489,19 +1503,6 @@ class CallResolver:
         # CommonJS module-receiver fallback still applies when no sibling exists.
         if result := self._resolve_js_prototype_sibling(
             call.call_name, call.caller_qn, call.language
-        ):
-            return True, result
-        # `self.run()` where a class body aliases `run` (issue #2620) is a
-        # member of the enclosing class, which the module-keyed cache does
-        # not know about.
-        if (
-            call.language == cs.SupportedLanguage.PYTHON
-            and call.class_context
-            and (
-                result := self._resolve_self_member_alias(
-                    call.call_name, call.class_context
-                )
-            )
         ):
             return True, result
         return False, None

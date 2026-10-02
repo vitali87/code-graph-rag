@@ -91,9 +91,6 @@ TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"
 TS_PY_EXCEPT_CLAUSE = "except_clause"
 TS_PY_FINALLY_CLAUSE = "finally_clause"
-# Every clause of a compound statement (elif/else/except/finally/case) ends
-# with this, so a class-body scan can reach the blocks under any of them.
-TS_PY_CLAUSE_SUFFIX = "_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
@@ -101,6 +98,9 @@ TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
+# Every clause of a compound statement (elif/else/except/finally/case) ends
+# with this, so a class-body scan can reach the blocks under any of them.
+TS_PY_CLAUSE_SUFFIX = "_clause"
 
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.

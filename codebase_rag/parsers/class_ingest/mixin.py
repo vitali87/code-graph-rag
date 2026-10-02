@@ -1855,6 +1855,7 @@ class ClassIngestMixin:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
+        member_aliases = _python_member_aliases(body_node, language)
 
         method_nodes = _impl_body_method_nodes(
             body_node, lang_queries, sorted_func_nodes, func_node_starts
@@ -1866,7 +1867,6 @@ class ClassIngestMixin:
             self._method_override_context(class_qn, language)
         )
         scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
-        member_aliases = _python_member_aliases(body_node, language)
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):

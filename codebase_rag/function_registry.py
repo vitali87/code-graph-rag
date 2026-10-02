@@ -25,13 +25,13 @@ class FunctionRegistryTrie:
         "_ending_with_tails",
         "_duplicates",
         "_variant_columns",
+        "_member_aliases",
+        "_aliases_by_target",
         "_properties",
         "_property_names",
         "_object_members",
         "_abstracts",
         "_callable_params",
-        "_member_aliases",
-        "_aliases_by_target",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -46,15 +46,15 @@ class FunctionRegistryTrie:
         self._ending_with_tails: dict[str, set[str]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
         self._variant_columns: dict[QualifiedName, int] = {}
+        # `Class.run` -> the methods a class body bound `run` to (issue
+        # #2620); the alias is no node, so it never enters the trie.
+        self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
+        self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
-        # `Class.run` -> the methods a class body bound `run` to (issue
-        # #2620); the alias is no node, so it never enters the trie.
-        self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
-        self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -64,6 +64,28 @@ class FunctionRegistryTrie:
 
     def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
         return self._callable_params.get(qualified_name)
+
+    def mark_property(self, qualified_name: QualifiedName) -> None:
+        self._properties.add(qualified_name)
+        self._property_names.add(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+
+    def is_property(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._properties
+
+    def property_names(self) -> set[str]:
+        return self._property_names
+
+    def mark_object_member(self, qualified_name: QualifiedName) -> None:
+        self._object_members.add(qualified_name)
+
+    def is_object_member(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._object_members
+
+    def mark_abstract(self, qualified_name: QualifiedName) -> None:
+        self._abstracts.add(qualified_name)
+
+    def is_abstract(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._abstracts
 
     def add_member_alias(
         self, alias_qn: QualifiedName, target_qn: QualifiedName
@@ -87,28 +109,6 @@ class FunctionRegistryTrie:
                 targets.remove(target_qn)
             if not targets:
                 self._member_aliases.pop(alias_qn, None)
-
-    def mark_property(self, qualified_name: QualifiedName) -> None:
-        self._properties.add(qualified_name)
-        self._property_names.add(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
-
-    def is_property(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._properties
-
-    def property_names(self) -> set[str]:
-        return self._property_names
-
-    def mark_object_member(self, qualified_name: QualifiedName) -> None:
-        self._object_members.add(qualified_name)
-
-    def is_object_member(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._object_members
-
-    def mark_abstract(self, qualified_name: QualifiedName) -> None:
-        self._abstracts.add(qualified_name)
-
-    def is_abstract(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._abstracts
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int, start_col: int = 0

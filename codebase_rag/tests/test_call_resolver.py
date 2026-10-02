@@ -67,6 +67,9 @@ class MockFunctionRegistry:
     def variants(self, qn: QualifiedName) -> list[QualifiedName]:
         return [qn]
 
+    def member_alias_targets(self, qn: QualifiedName) -> tuple[QualifiedName, ...]:
+        return ()
+
     def mark_property(self, qn: QualifiedName) -> None:
         self._properties.add(qn)
         self._property_names.add(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
@@ -85,9 +88,6 @@ class MockFunctionRegistry:
 
     def is_abstract(self, qn: QualifiedName) -> bool:
         return qn in self._abstracts
-
-    def member_alias_targets(self, qn: QualifiedName) -> tuple[QualifiedName, ...]:
-        return ()
 
 
 @pytest.fixture
