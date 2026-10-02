@@ -3111,6 +3111,7 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: str(refused),
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
+                cs.KEY_UNPLANNED: sites_for(refused.unplanned),
             }
         payload_marker_error: str | None = None
         if getattr(report, "graph_incomplete", False):
@@ -3130,6 +3131,7 @@ class MCPToolsRegistry:
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+        payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
         payload["verdict"] = report.verdict._asdict() if report.verdict else None
         if payload_marker_error is not None:
             # The graph is partial AND the record of it could not be written.

@@ -684,6 +684,21 @@ RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
     "fan-out, or only by a trace; pass allow_heuristic to rewrite through them"
 )
+RENAME_UNPLANNED = (
+    "Refusing to rename {qn}: {count} occurrence(s) of {name} in code have no site in "
+    "the graph ({locations}), so renaming only the sites it knows would leave them "
+    "under the old name. The index may have missed them, or they may belong to a "
+    "symbol it does not model; review them and pass allow_heuristic to rewrite them "
+    "as guessed sites"
+)
+RENAME_UNPLANNED_ALSO_GUESSED = (
+    ". {count} graph site(s) were also resolved heuristically, by overload fan-out, "
+    "or only by a trace"
+)
+# How many unplanned locations the refusal message spells out; the full list
+# is the refusal's `unplanned` sites.
+RENAME_UNPLANNED_SHOWN = 10
+RENAME_UNPLANNED_MORE = "{shown}, and {more} more"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "

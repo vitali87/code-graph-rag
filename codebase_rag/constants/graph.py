@@ -67,6 +67,8 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+# Occurrences of the old name in code that no graph site accounts for (#2564).
+KEY_UNPLANNED = "unplanned"
 KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 

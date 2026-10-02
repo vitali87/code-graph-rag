@@ -11,7 +11,10 @@ The graph knows every site, so a rename is a graph operation:
 2. refuse when a site is ambiguous (`heuristic`, `overload`, `dynamic`)
    unless the caller accepts the risk with `allow_heuristic`; a graph-known
    site with no rewrite location refuses regardless, it cannot be rewritten
-   at all and applying would leave it under the old name;
+   at all and applying would leave it under the old name. The index misses
+   sites too, so the plan is cross-checked against the source: an
+   occurrence of the name in code that no site covers refuses the same way
+   (issue #2564);
 3. rewrite the identifier at every site through the span patcher (issue
    #1529) and the import statements through the import rewriter (issue
    #1530), stage the results in a transaction (issue #1528), verify that
@@ -43,6 +46,7 @@ from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
+from .occurrences import find_occurrences
 from .patcher import Patcher, PatcherError, line_col_to_byte
 from .transaction import (
     EditTransaction,
@@ -69,6 +73,12 @@ _STRUCTURAL = "structural"
 _SITELESS = "siteless"
 # A same-named link of a fluent chain the index has no row for.
 _CHAIN = "chain"
+# An occurrence of the name in code that no graph site accounts for (#2564).
+_UNPLANNED = "unplanned"
+# A callable's name is shared by locals, parameters and fields everywhere, so
+# only its called or scoped occurrences are held against the plan; a type's
+# every occurrence is a reference to it.
+_CALLABLE_LABELS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
@@ -107,11 +117,16 @@ class RenameRefused(ValueError):
     """The rename would rewrite through a guess; nothing was changed."""
 
     def __init__(
-        self, message: str, ambiguous: list[RenameSite], unlocatable: list[str]
+        self,
+        message: str,
+        ambiguous: list[RenameSite],
+        unlocatable: list[str],
+        unplanned: list[RenameSite] | None = None,
     ) -> None:
         super().__init__(message)
         self.ambiguous = ambiguous
         self.unlocatable = unlocatable
+        self.unplanned = unplanned or []
 
 
 class RenameReport(NamedTuple):
@@ -133,6 +148,9 @@ class RenameReport(NamedTuple):
     # the graph may hold a partial picture and must be rebuilt.
     graph_incomplete: bool = False
     undone: bool | None = None
+    # Occurrences of the old name the graph has no site for, rewritten as
+    # guessed sites under `allow_heuristic` (issue #2564).
+    unplanned: tuple[RenameSite, ...] = ()
 
 
 # --- site collection -----------------------------------------------------------
@@ -682,11 +700,13 @@ class Renamer:
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
+        label: str | None = None
         for member in hierarchy:
-            member_sites, member_unlocatable, member_name, _label = self._collect(
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
                 member
             )
             old_name = old_name or member_name
+            label = label or member_label
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
         assert old_name is not None
@@ -716,24 +736,33 @@ class Renamer:
         ambiguous = [
             s for s in sites if s.resolution in _AMBIGUOUS or s.resolution == _CHAIN
         ]
-        if ambiguous and not allow_heuristic:
+        imports = [
+            (site, module)
+            for member in hierarchy
+            for site, module in self._import_sites(member, old_name)
+        ]
+        unplanned = self._unplanned(
+            sites, [site for site, _module in imports], hierarchy, old_name, label
+        )
+        if (ambiguous or unplanned) and not allow_heuristic:
             raise RenameRefused(
-                cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous)),
+                _refusal_message(qn, old_name, ambiguous, unplanned),
                 ambiguous,
                 unlocatable,
+                unplanned,
             )
-        for member in hierarchy:
-            for site, module in self._import_sites(member, old_name):
-                sites.append(
-                    RenameSite(
-                        "import",
-                        site.path,
-                        site.line,
-                        site.col,
-                        module,
-                        cs.EdgeResolution.EXACT,
-                    )
-                )
+        sites.extend(unplanned)
+        sites.extend(
+            RenameSite(
+                "import",
+                site.path,
+                site.line,
+                site.col,
+                module,
+                cs.EdgeResolution.EXACT,
+            )
+            for site, module in imports
+        )
         return RenameReport(
             qualified_name=qn,
             old_name=old_name,
@@ -752,7 +781,80 @@ class Renamer:
             hierarchy=tuple(hierarchy),
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
+            unplanned=tuple(unplanned),
         )
+
+    def _unplanned(
+        self,
+        sites: list[RenameSite],
+        imports: list[ImportSite],
+        hierarchy: list[str],
+        old_name: str,
+        label: str | None,
+    ) -> list[RenameSite]:
+        """Occurrences of `old_name` in code that the plan does not cover.
+
+        The graph's sites are the plan, so an occurrence none of them covers
+        is one the index never saw: renaming around it leaves it under the
+        old name, and the build breaks while the rename reports success
+        (issue #2564). An occurrence the graph gives to ANOTHER symbol of the
+        same name is not one: that symbol keeps its name.
+        """
+        definition = next(s.path for s in sites if s.kind == "definition")
+        language = get_language_for_extension(Path(definition).suffix)
+        if language is None:
+            return []
+        planned = {(s.path, s.line, s.col) for s in sites}
+        # An import site records the statement, not the name inside it.
+        statements = [(site.path, site.line, site.end_line) for site in imports]
+        leftover = [
+            occurrence
+            for occurrence in find_occurrences(
+                self.repo_root, language, old_name, label in _CALLABLE_LABELS
+            )
+            if (occurrence.path, occurrence.line, occurrence.col) not in planned
+            and not any(
+                occurrence.path == path and first <= occurrence.line <= last
+                for path, first, last in statements
+            )
+        ]
+        if not leftover:
+            return []
+        elsewhere = self._sites_of_namesakes(old_name, hierarchy)
+        return [
+            RenameSite(
+                "call" if occurrence.called else "reference",
+                occurrence.path,
+                occurrence.line,
+                occurrence.col,
+                base_module_qn(Path(occurrence.path), self.project),
+                _UNPLANNED,
+            )
+            for occurrence in leftover
+            if (occurrence.path, occurrence.line, occurrence.col) not in elsewhere
+        ]
+
+    def _sites_of_namesakes(
+        self, old_name: str, hierarchy: list[str]
+    ) -> set[tuple[str, int, int]]:
+        """Where the graph writes `old_name` for a symbol outside `hierarchy`:
+        each same-named definition's own name and every site the graph gives
+        it, as a rename of that symbol would collect them."""
+        positions: set[tuple[str, int, int]] = set()
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+            except (RenameRefused, PatcherError):
+                # Its definition or one of its sites cannot be located in the
+                # tree: what it would cover stays unplanned, since refusing
+                # over a namesake's stale graph is safer than crediting it
+                # with an occurrence that may be ours.
+                continue
+            positions.update((s.path, s.line, s.col) for s in other_sites)
+        return positions
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
@@ -1264,6 +1366,25 @@ class Renamer:
             undone=True,
             message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
+
+
+def _refusal_message(
+    qn: str, old_name: str, ambiguous: list[RenameSite], unplanned: list[RenameSite]
+) -> str:
+    if not unplanned:
+        return cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous))
+    locations = list(dict.fromkeys(f"{s.path}:{s.line}" for s in unplanned))
+    shown = cs.SEPARATOR_COMMA_SPACE.join(locations[: cs.RENAME_UNPLANNED_SHOWN])
+    if len(locations) > cs.RENAME_UNPLANNED_SHOWN:
+        shown = cs.RENAME_UNPLANNED_MORE.format(
+            shown=shown, more=len(locations) - cs.RENAME_UNPLANNED_SHOWN
+        )
+    message = cs.RENAME_UNPLANNED.format(
+        qn=qn, count=len(unplanned), name=old_name, locations=shown
+    )
+    if ambiguous:
+        message += cs.RENAME_UNPLANNED_ALSO_GUESSED.format(count=len(ambiguous))
+    return message
 
 
 def rename(

@@ -19,7 +19,8 @@ same report as JSON.
 
 ## What gets rewritten
 
-Sites come from the graph, never from text search:
+Sites come from the graph, never from text search (the source is read only
+to [cross-check](#cross-check-against-the-source) the plan):
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
@@ -58,6 +59,29 @@ is only instantiated or called renames normally.
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's
 name token cannot be found at the recorded position (a stale graph).
+
+### Cross-check against the source
+
+The plan is only as complete as the index, and the index misses sites in
+known ways (a Rust re-export, a Java static import or method reference).
+Applying only the sites the graph knows would leave the others under the old
+name and break the build while reporting success (issue #2564). So before
+anything is written, the project's sources in the definition's language
+family are read (the indexer's own walk, under `.cgrignore` and
+`.gitignore`) for identifier tokens spelling the old name:
+
+- for a function or method, where it is called (`name(`, `.name(`) or
+  reached through a scope (`Type::name`, a method reference); a bare
+  `name` there is usually a local, a parameter or a field;
+- for anything else (a class, an interface, a type), every occurrence.
+
+Comments and strings are prose and never count. An occurrence counts as
+planned when a site of the plan or one of its import statements covers it,
+or when the graph gives it to another symbol of the same name (that
+symbol's own definition and sites, as its own rename would collect them).
+Whatever is left is `unplanned`: the rename refuses and lists each one, the
+way it refuses a guessed site. `--allow-heuristic` (`allow_heuristic: true`)
+rewrites them as guessed sites, and the report lists them in `unplanned`.
 
 ## Postcondition contract
 
@@ -102,6 +126,7 @@ history, so `cgr edits undo` reverses them.
   "files": ["pkg/__init__.py", "pkg/app.py", "pkg/util.py"],
   "sites": [{"kind": "call", "path": "pkg/app.py", "line": 4, "col": 11, "owner": "myproj.pkg.app.run", "resolution": "exact"}],
   "ambiguous": [],
+  "unplanned": [],
   "unlocatable": [],
   "doc_mentions": ["README.md:12"],
   "hierarchy": ["myproj.pkg.util.helper"],
@@ -110,6 +135,7 @@ history, so `cgr edits undo` reverses them.
 }
 ```
 
-`sites` and `ambiguous` are the located sites, `hierarchy` the definitions
-renamed together, and `diff` the unified diff of what was (or, on
-`--dry-run`, would be) written.
+`sites` and `ambiguous` are the located sites, `unplanned` the occurrences
+the graph had no site for (rewritten only under `--allow-heuristic`, and
+also listed in `sites`), `hierarchy` the definitions renamed together, and
+`diff` the unified diff of what was (or, on `--dry-run`, would be) written.
