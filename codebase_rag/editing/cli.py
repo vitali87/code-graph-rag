@@ -5,12 +5,16 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from .. import cli_help as ch
 from .. import constants as cs
-from .transaction import TransactionConflict, entry_diff, load_history, undo_last
+from .transaction import TransactionConflict, entry_diff, load_history, undo_steps
+
+if TYPE_CHECKING:
+    from ..services.graph_service import MemgraphIngestor
 
 
 @click.group(
@@ -88,31 +92,101 @@ def show_cmd(count: int, show_diff: bool, repo_path: Path) -> None:
     help=ch.HELP_EDITS_COUNT,
 )
 @_repo_option
-def undo_cmd(count: int, repo_path: Path) -> None:
+@click.option("--project", default=None, help=ch.HELP_GRAPH_PROJECT)
+def undo_cmd(count: int, repo_path: Path, project: str | None) -> None:
+    root = repo_path.resolve()
+    restored: set[str] = set()
+    seen = failed = False
     try:
-        outcomes = undo_last(repo_path.resolve(), count)
-    except TransactionConflict as error:
-        click.secho(str(error), fg="red", err=True)
-        sys.exit(1)
-    if not outcomes:
-        click.echo(cs.EDIT_UNDO_NONE)
-        return
-    failed = False
-    for outcome in outcomes:
-        if outcome.applied:
-            click.echo(
-                cs.EDIT_UNDO_DONE.format(
-                    tx=outcome.transaction_id, count=len(outcome.files)
+        for outcome in undo_steps(root, count):
+            seen = True
+            if outcome.applied:
+                restored.update(outcome.files)
+                click.echo(
+                    cs.EDIT_UNDO_DONE.format(
+                        tx=outcome.transaction_id, count=len(outcome.files)
+                    )
                 )
-            )
-        else:
-            failed = True
-            click.secho(
-                cs.EDIT_UNDO_STOPPED.format(
-                    tx=outcome.transaction_id, reason=outcome.message
-                ),
-                fg="red",
-                err=True,
-            )
+            else:
+                failed = True
+                click.secho(
+                    cs.EDIT_UNDO_STOPPED.format(
+                        tx=outcome.transaction_id, reason=outcome.message
+                    ),
+                    fg="red",
+                    err=True,
+                )
+    except TransactionConflict as error:
+        failed = True
+        click.secho(str(error), fg="red", err=True)
+    finally:
+        # Also when a later step stopped the run: what the earlier steps
+        # restored is on disk either way, and the graph has to follow it.
+        if restored:
+            _resync_graph(root, project, sorted(restored))
     if failed:
         sys.exit(1)
+    if not seen:
+        click.echo(cs.EDIT_UNDO_NONE)
+
+
+def _resync_graph(root: Path, project: str | None, paths: list[str]) -> None:
+    """Re-ingest the restored files, as the forward edit re-ingested its own.
+
+    Never raises: the undo has landed, and an error here would read as a
+    failed undo and invite a retry that reverses one more transaction. A
+    graph that cannot follow is reported with the command that resyncs it.
+    """
+    from ..cli_runtime import connect_memgraph
+    from ..config import settings
+    from ..utils.path_utils import derive_project_name
+
+    name = project or derive_project_name(root)
+    result: bool | Exception
+    try:
+        with connect_memgraph(batch_size=settings.resolve_batch_size(None)) as ingestor:
+            result = _reingest_restored(ingestor, root, name, paths)
+    except Exception as error:
+        result = error
+    if isinstance(result, Exception):
+        command = cs.EDIT_UNDO_RESYNC_COMMAND.format(repo=root)
+        if project is not None:
+            command += cs.EDIT_UNDO_RESYNC_PROJECT.format(project=project)
+        click.secho(
+            cs.EDIT_UNDO_GRAPH_STALE.format(error=result, command=command),
+            fg="yellow",
+            err=True,
+        )
+    elif result:
+        click.echo(cs.EDIT_UNDO_GRAPH_SYNCED.format(count=len(paths), project=name))
+    else:
+        click.echo(cs.EDIT_UNDO_GRAPH_NOT_INDEXED.format(project=name), err=True)
+
+
+def _reingest_restored(
+    ingestor: MemgraphIngestor, root: Path, name: str, paths: list[str]
+) -> bool | Exception:
+    """True once re-ingested; False when the project is not in the graph.
+
+    A project the graph does not hold is left out: a scoped re-ingest would
+    plant just these files as a partial project that looks indexed. A
+    failure is returned, not raised, because leaving the connection's
+    context on an exception logs it as a crash, traceback and all.
+    """
+    from ..graph_updater import GraphUpdater
+    from ..parser_loader import load_parsers
+
+    try:
+        if name not in ingestor.list_projects():
+            return False
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=ingestor,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        ).reingest(paths)
+    except Exception as error:
+        return error
+    return True

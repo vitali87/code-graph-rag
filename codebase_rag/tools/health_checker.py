@@ -6,16 +6,19 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import httpx
 import mgclient
 from loguru import logger
 
 from .. import constants as cs
+from .. import cypher_queries as cq
 from .. import graph_audit
-from ..config import PROVIDER_ENV_KEYS, settings
+from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
 from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
+from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
@@ -98,6 +101,39 @@ def _backend_endpoint() -> str:
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
         return settings.NEO4J_URI
     return f"{settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
+
+
+def _ollama_models(base_url: str) -> list[str] | None:
+    """The models an Ollama server has pulled, or None if none answered."""
+    try:
+        with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
+            response = client.get(join_endpoint_path(base_url, cs.OLLAMA_HEALTH_PATH))
+    except httpx.HTTPError:
+        return None
+    if response.status_code != cs.HTTP_OK:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        # Something other than Ollama is listening on the port.
+        return None
+    models = payload.get(cs.OLLAMA_TAGS_MODELS) if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return None
+    return [
+        str(entry.get(cs.OLLAMA_TAGS_NAME))
+        for entry in models
+        if isinstance(entry, dict) and entry.get(cs.OLLAMA_TAGS_NAME)
+    ]
+
+
+def _ollama_has_model(pulled: list[str], model_id: str) -> bool:
+    # An untagged name is what Ollama resolves to `:latest`; a tagged one
+    # names exactly one pull.
+    wanted = {model_id}
+    if cs.OLLAMA_TAG_SEPARATOR not in model_id:
+        wanted.add(f"{model_id}{cs.OLLAMA_TAG_SEPARATOR}{cs.OLLAMA_LATEST_TAG}")
+    return any(name in wanted for name in pulled)
 
 
 class HealthChecker:
@@ -250,10 +286,48 @@ class HealthChecker:
                 message=cs.HEALTH_CHECK_MODEL_KEY_MISSING_MSG,
                 error=error,
             )
+        if config.provider.lower() == cs.Provider.OLLAMA:
+            return self._check_ollama_model(config, role, label)
+        # Key-based providers are not called over the network here: what
+        # passed is the credentials, and the name says so (#2423).
+        return HealthCheckResult(
+            name=cs.HEALTH_CHECK_MODEL_CREDENTIALS.format(**label),
+            passed=True,
+            message=cs.HEALTH_CHECK_MODEL_OK_MSG.format(provider=config.provider),
+        )
+
+    def _check_ollama_model(
+        self, config: ModelConfig, role: cs.ModelRole, label: dict[str, str]
+    ) -> HealthCheckResult:
+        """Ready only when Ollama answers and has the model (#2423).
+
+        Ollama needs no key, so the credential rule alone passed with no
+        server running and no model pulled.
+        """
+        base_url = strip_v1_suffix(config.endpoint or settings.ollama_endpoint)
+        pulled = _ollama_models(base_url)
+        if pulled is None:
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_MODEL_UNREACHABLE.format(**label),
+                passed=False,
+                message=cs.HEALTH_CHECK_OLLAMA_UNREACHABLE_MSG,
+                error=cs.HEALTH_CHECK_OLLAMA_UNREACHABLE_ERROR.format(
+                    url=base_url, role=role.value.upper()
+                ),
+            )
+        if not _ollama_has_model(pulled, config.model_id):
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_MODEL_NOT_PULLED.format(**label),
+                passed=False,
+                message=cs.HEALTH_CHECK_OLLAMA_NOT_PULLED_MSG,
+                error=cs.HEALTH_CHECK_OLLAMA_NOT_PULLED_ERROR.format(
+                    model=config.model_id
+                ),
+            )
         return HealthCheckResult(
             name=cs.HEALTH_CHECK_MODEL_READY.format(**label),
             passed=True,
-            message=cs.HEALTH_CHECK_MODEL_OK_MSG.format(provider=config.provider),
+            message=cs.HEALTH_CHECK_OLLAMA_READY_MSG.format(url=base_url),
         )
 
     def check_model_roles(self) -> list[HealthCheckResult]:
@@ -337,6 +411,11 @@ class HealthChecker:
                 return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
             violations = graph_audit.collect_live_violations(fetch_all)
+            interrupted = sorted(
+                str(row["project"])
+                for row in fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+                if row.get("project")
+            )
         except Exception as e:
             return [
                 HealthCheckResult(
@@ -360,15 +439,7 @@ class HealthChecker:
                 except Exception as cleanup_error:
                     logger.warning(f"Graph audit cleanup failed: {cleanup_error}")
 
-        if not violations:
-            return [
-                HealthCheckResult(
-                    name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
-                    passed=True,
-                    message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
-                )
-            ]
-        return [
+        results = [
             HealthCheckResult(
                 name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
                 passed=False,
@@ -379,7 +450,28 @@ class HealthChecker:
                     v.detail for v in violations
                 ),
             )
+            if violations
+            else HealthCheckResult(
+                name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
+                passed=True,
+                message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
+            )
         ]
+        if interrupted:
+            results.append(
+                HealthCheckResult(
+                    name=cs.HEALTH_CHECK_INTERRUPTED_SYNC,
+                    passed=False,
+                    message=cs.HEALTH_CHECK_INTERRUPTED_SYNC_MSG.format(
+                        count=len(interrupted)
+                    ),
+                    error=cs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
+                        cs.HEALTH_CHECK_INTERRUPTED_SYNC_DETAIL.format(project=project)
+                        for project in interrupted
+                    ),
+                )
+            )
+        return results
 
     def run_all_checks(self) -> list[HealthCheckResult]:
         self.results = []
