@@ -482,6 +482,16 @@ Provide only the Cypher query.
 CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
 
 
+def build_cypher_repair_request(question: str, failed_query: str, error: str) -> str:
+    return (
+        f"{question}\n\n"
+        "Your previous query for this question was rejected by the database.\n"
+        f"Query: {failed_query}\n"
+        f"Error: {error}\n"
+        "Return a corrected query that answers the same question."
+    )
+
+
 # Stricter prompt for less capable open-source/local models (e.g., Ollama)
 def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""

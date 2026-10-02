@@ -101,18 +101,20 @@ the three shapes. All three below come from one function body:
 
 ```python
 def build():
-    return os.getenv("K")      # build returns a value read from ENV::K
+    return os.getenv("K")  # build returns a value read from ENV::K
+
 
 def forward(v):
     print(v)
 
+
 def leak():
-    x = os.getenv("K")         # x now carries ENV::K
-    print(x)                   # shape 1
+    x = os.getenv("K")  # x now carries ENV::K
+    print(x)  # shape 1
     t = os.getenv("T")
-    forward(t)                 # shape 2
+    forward(t)  # shape 2
     r = build()
-    print(r)                   # shape 3
+    print(r)  # shape 3
 ```
 
 The three `FLOWS_TO` edges that body produces:
