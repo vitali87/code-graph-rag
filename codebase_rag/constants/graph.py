@@ -159,6 +159,13 @@ KEY_TO_QN = "to_qn"
 KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
+# Trace-edge carry rows and parameters (issue #2429): each endpoint's
+# `anchor_hash` when the edge was read, and the qualified names whose static
+# edges are looked up after the re-parse.
+KEY_FROM_HASH = "from_hash"
+KEY_TO_HASH = "to_hash"
+KEY_FROM_QNS = "from_qns"
+KEY_TO_QNS = "to_qns"
 KEY_PROJECT_PREFIX = "project_prefix"
 KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"

@@ -1122,6 +1122,18 @@ class _StatefulIngestor:
                         }
                     )
                 return inbound
+            case cq.CYPHER_TRACE_EDGES_AT_PATHS:
+                # Trace-derived CALLS edges touching the re-parsed files, in
+                # both directions (issue #2429). Only an edge a test wrote
+                # with `dynamic` set matches, as in the store. The carry's
+                # follow-up reads are issued only for edges this returned,
+                # so they are deliberately not modelled: a test reaching
+                # them needs a real case here.
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                return self._trace_edge_rows(
+                    set(raw_paths) if isinstance(raw_paths, list) else set(),
+                    _str((params or {}).get(cs.KEY_PREFIX)),
+                )
             case cs.CYPHER_AFFECTED_CALLER_PATHS:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 prefix = str(params.get(cs.KEY_PROJECT_PREFIX, "")) if params else ""
@@ -1644,6 +1656,42 @@ class _StatefulIngestor:
                 )
             case _:
                 return None
+
+    def _trace_edge_rows(self, paths: set[str], prefix: str) -> list[ResultRow]:
+        touching: set[_EdgeKey] = set()
+        for node_id, props in self.nodes.items():
+            if props.get(cs.KEY_PATH) in paths:
+                touching.update(self._in.get(node_id, ()))
+                touching.update(self._out.get(node_id, ()))
+        rows: list[ResultRow] = []
+        for edge in sorted(touching, key=repr):
+            from_label, from_val, rel_type, to_label, to_val, _site = edge
+            props = self.edge_props.get(edge, {})
+            caller = self.nodes.get((from_label, from_val))
+            callee = self.nodes.get((to_label, to_val))
+            if (
+                rel_type != cs.RelationshipType.CALLS.value
+                or props.get(cs.TRACE_PROP_DYNAMIC) is not True
+                or caller is None
+                or callee is None
+                or not _str(from_val).startswith(prefix)
+                or not _str(to_val).startswith(prefix)
+            ):
+                continue
+            rows.append(
+                {
+                    cs.KEY_FROM_LABEL: from_label,
+                    cs.KEY_FROM_QN: _text(from_val),
+                    cs.KEY_FROM_PATH: _text(caller.get(cs.KEY_PATH)),
+                    cs.KEY_FROM_HASH: _text(caller.get(cs.KEY_ANCHOR_HASH)),
+                    cs.KEY_TO_LABEL: to_label,
+                    cs.KEY_TO_QN: _text(to_val),
+                    cs.KEY_TO_PATH: _text(callee.get(cs.KEY_PATH)),
+                    cs.KEY_TO_HASH: _text(callee.get(cs.KEY_ANCHOR_HASH)),
+                    cs.KEY_PROPS: _result_props(props),
+                }
+            )
+        return rows
 
     def _edges_into(self, paths: set[str]) -> list[_EdgeKey]:
         # Every edge whose TARGET node lives at one of `paths`, through the
