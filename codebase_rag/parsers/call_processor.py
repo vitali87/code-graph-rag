@@ -3834,6 +3834,7 @@ class CallProcessor:
             local_var_types = None
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
+            self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
@@ -3947,6 +3948,18 @@ class CallProcessor:
             self._resolver.python_local_names[caller_qn] = local
         else:
             self._resolver.python_local_names.pop(caller_qn, None)
+
+    def _record_python_name_typed_params(
+        self, caller_node: Node, caller_qn: str, module_qn: str
+    ) -> None:
+        # Parameters whose class only their name spells: a call through one
+        # is labelled heuristic (issue #2608).
+        python_inference = self._resolver.type_inference.python_type_inference
+        guessed = python_inference.name_typed_parameters(caller_node, module_qn)
+        if guessed:
+            self._resolver.python_name_typed_params[caller_qn] = guessed
+        else:
+            self._resolver.python_name_typed_params.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,

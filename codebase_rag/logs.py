@@ -825,7 +825,7 @@ PY_TYPE_INFER_ATTEMPT = (
     "Attempting to infer type for parameter '{param}' in module '{module}'"
 )
 PY_AVAILABLE_CLASSES = "Available classes in scope: {classes}"
-PY_BEST_MATCH = "Best match for '{param}' is '{match}' with score {score}"
+PY_NAME_MATCH = "Class named by parameter '{param}': {match}"
 PY_INSTANCE_VAR_INFERRED = "Inferred instance variable: {attr} -> {type}"
 PY_LOOP_VAR_INFERRED = "Inferred loop variable type: {var} -> {type}"
 PY_TYPE_SIMPLE = "Inferred type (simple): {var} -> {type}"

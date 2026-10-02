@@ -340,6 +340,28 @@ class PythonTypeInferenceEngine(
             return []
         return [receiver]
 
+    def name_typed_parameters(
+        self, caller_node: Node, module_qn: str
+    ) -> frozenset[str]:
+        """The untyped parameters of `caller_node` that only their name types.
+
+        `payload` typed as `Payload` is a guess about the receiver, so a call
+        through it is `heuristic`, never `exact` (issue #2608). A parameter
+        the body rebinds (`payload = Payload()`) holds what the binding says.
+        """
+        params_node = caller_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+        if params_node is None:
+            return frozenset()
+        return frozenset(
+            name
+            for param in params_node.named_children
+            if param.type == cs.TS_PY_IDENTIFIER
+            and param.text is not None
+            and (name := param.text.decode(cs.ENCODING_UTF8))
+            and self._infer_type_from_parameter_name(name, module_qn)
+            and not self._rebinds(caller_node, name)
+        )
+
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, class_context: str | None = None
     ) -> dict[str, str]:
