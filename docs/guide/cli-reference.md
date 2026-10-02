@@ -29,7 +29,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr optimize` | Run a language-focused code optimisation session |
 | `cgr mcp-server` | Serve cgr tools over stdio or HTTP |
 | `cgr index` | Write an offline protobuf index for a repository |
-| `cgr export` | Export the shared graph database to JSON |
+| `cgr export` | Export the shared graph, or chosen projects, to JSON |
 | `cgr graph-loader` | Summarise an exported graph JSON file |
 | `cgr stats` | Show graph node and relationship counts |
 | `cgr dead-code` | Report code that appears unreachable from known entry points |
@@ -76,7 +76,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
 | `--project-name` | Project name to store in the graph. Defaults to the repo directory name. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
-| `--capture` | Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE override. Repeatable; later values override CGR_CAPTURE. |
+| `--capture` | Capture GROUP (structure, calls, types, imports, io, findings, glosses, parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. A GROUP is added to the defaults (structure, calls, types, imports); use none first to capture only what follows (none,structure) and -GROUP to drop one. Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
 | `--ask-agent`, `-a` | Ask one question, write the answer to stdout, and exit. |
 | `--output-format` | Format --ask-agent output as table or json. [default: table] |
@@ -93,19 +93,24 @@ projects cannot be listed, it stops unless `--yes` is given.
 
 ### `cgr export`
 
-Export the knowledge graph to JSON.
+Export the knowledge graph to JSON. Without options the file holds every
+project in the shared graph.
 
 ```bash
-cgr export -o my_graph.json
+cgr export -o OUTPUT [OPTIONS]
 ```
 
 <!-- SECTION:cli_options_export -->
 | Option | Description |
 |------|-----------|
 | `--output`, `-o` | Write the exported graph to PATH. [required] |
-| `--json` / `--no-json` | Use JSON output. Other export formats are not supported. [default: json] |
-| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there and the nodes they reach. Repeatable; without it the whole shared graph is exported. |
+| `--workspace` | Export only the projects defined in workspace NAME. |
 <!-- /SECTION:cli_options_export -->
+
+A name that is not indexed is an error that lists the projects that are. A
+scoped file records its projects under `metadata.projects`. `--batch-size` and
+`--json` are deprecated and ignored with a warning; `--no-json` is an error.
 
 ### `cgr optimize`
 
@@ -231,7 +236,7 @@ cgr index -o ./index-output --repo-path ./my-project
 | `--output-proto-dir`, `-o` | Write protobuf index files under DIRECTORY. [required] |
 | `--split-index` | Write separate nodes.bin and relationships.bin files. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
-| `--capture` | Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE override. Repeatable; later values override CGR_CAPTURE. |
+| `--capture` | Capture GROUP (structure, calls, types, imports, io, findings, glosses, parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. A GROUP is added to the defaults (structure, calls, types, imports); use none first to capture only what follows (none,structure) and -GROUP to drop one. Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
 <!-- /SECTION:cli_options_index -->
 
@@ -243,7 +248,7 @@ Check that the services, credentials and tools a session needs are in place.
 cgr doctor
 ```
 
-It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher model credentials, judged by the same rule `cgr start` applies (a local Ollama model needs no key); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
+It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher models: for a key-based provider, whether its credentials pass the rule `cgr start` applies (reported as "credentials present", with no network call); for a local Ollama model, whether Ollama answers at `OLLAMA_BASE_URL` and has the model pulled (reported as "ready", "not reachable" or "not pulled", with the `ollama pull` command to run); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
 
 ### `cgr language`
 
