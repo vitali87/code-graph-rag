@@ -25,10 +25,10 @@ class FunctionRegistryTrie:
         "_ending_with_tails",
         "_duplicates",
         "_variant_columns",
-        "_member_aliases",
-        "_aliases_by_target",
         "_properties",
         "_property_names",
+        "_member_aliases",
+        "_aliases_by_target",
         "_object_members",
         "_abstracts",
         "_callable_params",
@@ -46,12 +46,12 @@ class FunctionRegistryTrie:
         self._ending_with_tails: dict[str, set[str]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
         self._variant_columns: dict[QualifiedName, int] = {}
+        self._properties: set[QualifiedName] = set()
+        self._property_names: set[str] = set()
         # `Class.run` -> the methods a class body bound `run` to (issue
         # #2620); the alias is no node, so it never enters the trie.
         self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
         self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
-        self._properties: set[QualifiedName] = set()
-        self._property_names: set[str] = set()
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
@@ -86,29 +86,6 @@ class FunctionRegistryTrie:
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._abstracts
-
-    def add_member_alias(
-        self, alias_qn: QualifiedName, target_qn: QualifiedName
-    ) -> None:
-        targets = self._member_aliases.setdefault(alias_qn, [])
-        if target_qn not in targets:
-            targets.append(target_qn)
-        self._aliases_by_target.setdefault(target_qn, set()).add(alias_qn)
-
-    def member_alias_targets(
-        self, alias_qn: QualifiedName
-    ) -> tuple[QualifiedName, ...]:
-        return tuple(self._member_aliases.get(alias_qn, ()))
-
-    def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
-        # A re-parsed file registers its aliases again with its methods, so a
-        # removed method takes its alias entries with it.
-        for alias_qn in self._aliases_by_target.pop(target_qn, ()):
-            targets = self._member_aliases.get(alias_qn, [])
-            if target_qn in targets:
-                targets.remove(target_qn)
-            if not targets:
-                self._member_aliases.pop(alias_qn, None)
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
@@ -200,9 +177,9 @@ class FunctionRegistryTrie:
         self._object_members.discard(qualified_name)
         self._abstracts.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
-        self._drop_member_alias_target(qualified_name)
 
         self._invalidate_ending_with_cache(simple_name)
+        self._drop_member_alias_target(qualified_name)
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -328,3 +305,26 @@ class FunctionRegistryTrie:
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
         return [] if node is None else self._collect_from_subtree(node)
+
+    def add_member_alias(
+        self, alias_qn: QualifiedName, target_qn: QualifiedName
+    ) -> None:
+        targets = self._member_aliases.setdefault(alias_qn, [])
+        if target_qn not in targets:
+            targets.append(target_qn)
+        self._aliases_by_target.setdefault(target_qn, set()).add(alias_qn)
+
+    def member_alias_targets(
+        self, alias_qn: QualifiedName
+    ) -> tuple[QualifiedName, ...]:
+        return tuple(self._member_aliases.get(alias_qn, ()))
+
+    def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
+        # A re-parsed file registers its aliases again with its methods, so a
+        # removed method takes its alias entries with it.
+        for alias_qn in self._aliases_by_target.pop(target_qn, ()):
+            targets = self._member_aliases.get(alias_qn, [])
+            if target_qn in targets:
+                targets.remove(target_qn)
+            if not targets:
+                self._member_aliases.pop(alias_qn, None)
