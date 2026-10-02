@@ -528,17 +528,24 @@ def _lua_exported(node: Node, name: str) -> bool:
         root = root.parent
         nested = nested or root.type in _LUA_FUNCTION_TYPES
     returned = _lua_returned_names(root)
+    return _lua_bracket_member_exported(node, returned) or _lua_binding_exported(
+        node, name, returned, nested
+    )
+
+
+def _lua_bracket_member_exported(node: Node, returned: frozenset[str]) -> bool:
     # A key no name spells (`M["a.b"] = function`) leaves the function
     # nameless, but it is still a member of the table it is stored in.
-    if (
-        (target := lua_utils.bracket_assignment_target(node)) is not None
-        and (table := lua_utils.bracket_table_path(target))
-        and any(
-            table == exported or _lua_is_member(table, exported)
-            for exported in returned
-        )
-    ):
-        return True
+    target = lua_utils.bracket_assignment_target(node)
+    table = lua_utils.bracket_table_path(target) if target is not None else None
+    return bool(table) and any(
+        table == exported or _lua_is_member(table, exported) for exported in returned
+    )
+
+
+def _lua_binding_exported(
+    node: Node, name: str, returned: frozenset[str], nested: bool
+) -> bool:
     binding = _lua_binding_name(node, name)
     if not binding:
         return False
