@@ -1334,6 +1334,8 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         pre_captures: dict | None = None,
+        *,
+        defer_edges: bool = True,
     ) -> None:
         if language not in queries:
             return
@@ -1418,7 +1420,7 @@ class ImportProcessor:
                 module=module_qn,
             )
 
-            if self.ingestor:
+            if self.ingestor and defer_edges:
                 self._defer_module_import_edges(module_qn, language)
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
@@ -1658,6 +1660,30 @@ class ImportProcessor:
         the bare calls of every re-parsed one (CodeRabbit, PR #2036).
         """
         self._recover_unparsed_csharp_namespaces(known_module_paths)
+
+    def restore_unparsed_imports(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+    ) -> None:
+        """Rebuild the import state of a module this run did not parse.
+
+        A re-parsed file types `from pkg import Client` by following the
+        re-export through `pkg`'s own import map, and an incremental run
+        parses only CHANGED files, so an unchanged `pkg` had no map and the
+        receiver fell to a name-only guess (issue #2559). The module's IMPORTS
+        edges are still in the graph, so none are queued for the flush.
+        """
+        self.parse_imports(root_node, module_qn, language, queries, defer_edges=False)
+        if language == cs.SupportedLanguage.RUST:
+            # The tail a parsed Rust file gets from the definition pass: body
+            # `use`s key on their functions' registered qns, and inline-mod
+            # maps wait for the flush-time arbitration like every file's.
+            self.finalise_rust_function_scope_uses(module_qn, function_locations)
+            self.retract_rust_mod_scope_uses(module_qn)
 
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
