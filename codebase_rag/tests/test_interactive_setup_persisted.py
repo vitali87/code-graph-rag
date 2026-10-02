@@ -29,11 +29,13 @@ from codebase_rag.utils.path_utils import should_skip_path
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "bin" / "cli.py").write_text("def main():\n    pass\n")
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "lib.py").write_text("def lib():\n    pass\n")
-    return tmp_path
+    # A subdirectory, so a test can place a file outside the repository.
+    root = tmp_path / "repo"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "cli.py").write_text("def main():\n    pass\n")
+    (root / "src").mkdir()
+    (root / "src" / "lib.py").write_text("def lib():\n    pass\n")
+    return root
 
 
 @pytest.fixture
@@ -75,7 +77,8 @@ def test_declining_keeps_it_for_this_run_and_says_how_to_keep_it(
     assert "bin" in kept
     assert not (repo / CGRIGNORE_FILENAME).exists()
     printed = _printed(console)
-    assert "this run" in printed and "!bin" in printed
+    assert "this run" in printed
+    assert "!bin" in printed
 
 
 def test_existing_cgrignore_lines_are_kept(repo: Path, console: MagicMock) -> None:
@@ -84,7 +87,8 @@ def test_existing_cgrignore_lines_are_kept(repo: Path, console: MagicMock) -> No
     _keep(repo, "1", confirm=True)
 
     lines = (repo / CGRIGNORE_FILENAME).read_text().splitlines()
-    assert lines[0] == "vendor" and "!bin" in lines
+    assert lines[0] == "vendor"
+    assert "!bin" in lines
     assert load_ignore_patterns(repo).exclude >= {"vendor"}
 
 
@@ -145,7 +149,8 @@ def test_keeping_a_cgrignore_exclusion_lifts_it_for_later_syncs(
     assert not _skipped_by_a_later_sync(vendored, "vendor/lib.py")
     assert not _skipped_by_a_later_sync(vendored, "build/out.py")
     lines = (vendored / CGRIGNORE_FILENAME).read_text().splitlines()
-    assert "vendor" not in lines and "build" not in lines
+    assert "vendor" not in lines
+    assert "build" not in lines
     assert lines[0] == "# third-party"
 
 
@@ -170,7 +175,8 @@ def test_declining_to_lift_an_exclusion_says_it_stays_excluded(
     assert (vendored / CGRIGNORE_FILENAME).read_text() == before
     assert _skipped_by_a_later_sync(vendored, "vendor/lib.py")
     printed = _printed(console)
-    assert "vendor" in printed and "still excluded" in printed
+    assert "vendor" in printed
+    assert "still excluded" in printed
 
 
 def test_this_run_honours_a_lifted_exclusion(
@@ -200,7 +206,8 @@ def test_this_run_honours_a_lifted_exclusion(
 
     assert result.exit_code == 0, result.output
     excluded = updater.call_args.kwargs["exclude_paths"] or frozenset()
-    assert "vendor" not in excluded and "build" in excluded
+    assert "vendor" not in excluded
+    assert "build" in excluded
 
 
 def test_a_failed_write_leaves_the_existing_rules_intact(
@@ -246,12 +253,13 @@ def test_a_failed_write_leaves_the_existing_rules_intact(
     sys.platform == "win32", reason="creating symlinks needs privileges"
 )
 def test_a_planted_temp_file_link_is_never_written_through(
-    vendored: Path, console: MagicMock, tmp_path_factory: pytest.TempPathFactory
+    vendored: Path, console: MagicMock, tmp_path: Path
 ) -> None:
     # Review of PR 2510 (CWE-377): the temp name was fixed, so a repository
     # that ships `.cgrignore.tmp` as a link made the save overwrite the file
     # it points at, anywhere the user can write.
-    outside = tmp_path_factory.mktemp("elsewhere") / "precious.txt"
+    outside = tmp_path / "elsewhere" / "precious.txt"
+    outside.parent.mkdir()
     outside.write_text("precious\n")
     (vendored / f"{CGRIGNORE_FILENAME}.tmp").symlink_to(outside)
 
