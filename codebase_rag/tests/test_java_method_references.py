@@ -337,6 +337,45 @@ def test_overloaded_method_reference_references_each_overload(
     assert set(overloads.values()) == {cs.EdgeResolution.OVERLOAD}, overloads
 
 
+def test_inherited_overloads_are_referenced_but_overridden_ones_are_not(
+    temp_repo: Path, mock_ingestor
+) -> None:
+    # `Leaf::of` may denote the overload `Leaf` declares or one it inherits;
+    # the lookup stops at the first class declaring any `of`, so the parent's
+    # other overload must still be referenced. An overridden parent overload
+    # is not what the reference denotes and stays unreferenced.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "Root.java": (
+                'public class Root {\n  String of(long n) { return ""; }\n}\n'
+            ),
+            "Base.java": (
+                "public class Base extends Root {\n"
+                '  String of(int n) { return ""; }\n'
+                "  String of(String s) { return s; }\n"
+                "}\n"
+            ),
+            "Leaf.java": (
+                "public class Leaf extends Base {\n"
+                '  @Override String of(int n) { return "leaf"; }\n'
+                "}\n"
+            ),
+            "User.java": (
+                "import java.util.function.BiFunction;\n"
+                "public class User {\n"
+                "  BiFunction<Leaf, String, String> pick() { return Leaf::of; }\n"
+                "}\n"
+            ),
+        },
+    )
+    refs = _targets(edges, "REFERENCES", ".User.pick()")
+    overloads = {t.rsplit(".", 2)[-2] + "." + t.rsplit(".", 1)[-1] for t in refs}
+    assert overloads == {"Leaf.of(int)", "Base.of(String)", "Root.of(long)"}, refs
+    assert set(refs.values()) == {cs.EdgeResolution.OVERLOAD}, refs
+
+
 def test_field_initializer_method_reference_is_referenced_from_the_module(
     temp_repo: Path, mock_ingestor
 ) -> None:

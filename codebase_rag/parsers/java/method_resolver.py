@@ -624,12 +624,33 @@ class JavaMethodResolverMixin:
             return []
         # Which overload a reference denotes is decided by the functional
         # interface it is assigned to, a type the parser never sees (the C#
-        # method-group shape), so the whole family on the declaring class is
+        # method-group shape), so the whole family visible on the receiver is
         # referenced rather than whichever overload the lookup met first.
         declaring_qn = (
             first[1].split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
         )
-        return self._methods_named(declaring_qn, method_name) or [first]
+        return self._overload_family(declaring_qn, method_name) or [first]
+
+    def _overload_family(
+        self, class_qn: str, method_name: str
+    ) -> list[tuple[str, str]]:
+        # The overloads of `method_name` a reference through `class_qn` can
+        # denote: those it declares plus those it inherits up the superclass
+        # chain. A parent overload with the signature of one already met is
+        # overridden by it, so it is not a separate target.
+        family: list[tuple[str, str]] = []
+        signatures: set[tuple[str, ...]] = set()
+        seen: set[str] = set()
+        current: str | None = class_qn
+        while current and current not in seen:
+            seen.add(current)
+            for entry in self._methods_named(current, method_name):
+                signature = tuple(_java_param_type_names(entry[1]))
+                if signature not in signatures:
+                    signatures.add(signature)
+                    family.append(entry)
+            current = self._find_parent_class(current)
+        return family
 
     def _search_method_in_alternate_modules(
         self,
