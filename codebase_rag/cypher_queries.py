@@ -932,18 +932,21 @@ WHERE subjects = 0
 OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
 RETURN {_GLOSS_ROW}"""
 # One row per call SITE (edges carry the site from issue #1522).
+# A call site sits in its caller's body, so both reads take `path` from the
+# caller: that is the file `line`/`col` index into, whichever endpoint the
+# row names. The callee's own file is `callee_path` (issue #2460).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
 RETURN labels(caller)[0] AS label, caller.qualified_name AS qualified_name,
-       caller.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
-       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.resolution AS resolution"""
+       caller.path AS path, callee.path AS callee_path, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.arg_count AS arg_count,
+       r.kwarg_names AS kwarg_names, r.resolution AS resolution"""
 CYPHER_GRAPH_CALLEES = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name = $qn AND callee.qualified_name STARTS WITH $project_prefix
 RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
-       callee.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
-       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.resolution AS resolution"""
+       caller.path AS path, callee.path AS callee_path, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.arg_count AS arg_count,
+       r.kwarg_names AS kwarg_names, r.resolution AS resolution"""
 # Cross-service edges as reads (issue #1603). The writers (`EXPOSES` from a
 # handler to its ENDPOINT/RPC/DISPATCH resource, `RESOLVES_TO` from a client
 # NETWORK resource to the endpoint, `READS_FROM`/`WRITES_TO` from a call site

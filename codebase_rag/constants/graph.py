@@ -104,6 +104,9 @@ KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
+# Call-site rows: where the invoked symbol is defined. `path` on those rows is
+# the file holding the site, which is the caller's (issue #2460).
+KEY_CALLEE_PATH = "callee_path"
 # IMPORTS only: the name the statement binds in the importing scope (the
 # `as` name when renamed, else the imported/module name) and, for
 # symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
