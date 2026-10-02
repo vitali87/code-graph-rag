@@ -365,23 +365,31 @@ class AstGrepTier:
         for kind, rules in group:
             for rule in rules:
                 for node in self._find_all(root, rule, file_path):
-                    name = self._definition_name(node, rule)
-                    if name is None:
-                        continue
-                    start = node.range().start
-                    # Keyed on (line, column), not line alone: overlapping
-                    # rules for the SAME declaration start at the same
-                    # column, so a specific pattern (def self.$NAME) still
-                    # wins over a general one (def $NAME), while two distinct
-                    # declarations sharing a line (`fun a() {}; fun b() {}`)
-                    # keep their own nodes instead of the second vanishing.
-                    position = (start.line, start.column)
-                    if position in claimed:
-                        continue
-                    claimed.add(position)
-                    if declaration := _declaration(kind, name, node, rule):
+                    if declaration := self._claim(kind, rule, node, claimed):
                         declarations.append(declaration)
         return declarations
+
+    def _claim(
+        self,
+        kind: DeclKind,
+        rule: _Rule,
+        node: SgNode,
+        claimed: set[tuple[int, int]],
+    ) -> Declaration | None:
+        name = self._definition_name(node, rule)
+        if name is None:
+            return None
+        start = node.range().start
+        # Keyed on (line, column), not line alone: overlapping rules for the
+        # SAME declaration start at the same column, so a specific pattern
+        # (def self.$NAME) still wins over a general one (def $NAME), while
+        # two distinct declarations sharing a line (`fun a() {}; fun b() {}`)
+        # keep their own nodes instead of the second vanishing.
+        position = (start.line, start.column)
+        if position in claimed:
+            return None
+        claimed.add(position)
+        return _declaration(kind, name, node, rule)
 
     def _definition_name(self, node: SgNode, rule: _Rule) -> str | None:
         """The declared name of a matched node, or None if it has none."""
