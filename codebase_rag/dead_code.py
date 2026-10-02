@@ -442,6 +442,62 @@ def is_well_known_symbol_member(name: str) -> bool:
     return m is not None and m.group("name") in cs.JS_WELL_KNOWN_SYMBOLS
 
 
+def _dispatch_registration(qn: str, decorator: str) -> str | None:
+    """The qualified name `@<generic>.register` names, beside `qn`, or None."""
+    head = decorator.replace(cs.DECORATOR_AT, "").strip().split(cs.CHAR_PAREN_OPEN)[0]
+    generic, dot, last = head.strip().rpartition(cs.SEPARATOR_DOT)
+    if not dot or last != cs.DISPATCH_REGISTER_DECORATOR or not generic:
+        return None
+    owner = qn_markers.natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+    return f"{owner}{cs.SEPARATOR_DOT}{generic}"
+
+
+def _is_singledispatch(props: PropertyDict | None) -> bool:
+    return props is not None and any(
+        _norm_decorator(d) in cs.SINGLEDISPATCH_DECORATORS
+        for d in _str_items(props.get(cs.KEY_DECORATORS))
+    )
+
+
+def _dispatch_generics(
+    props_by_qn: dict[str, PropertyDict],
+) -> dict[str, frozenset[str]]:
+    """Each singledispatch implementation mapped to its generics.
+
+    `@render.register` on an implementation names a `@singledispatch`
+    function (or `@singledispatchmethod` method) in the same scope; the
+    generic calls the implementation at runtime by argument type, so the
+    implementation is live exactly when the generic is (issue #2736). An
+    implementation stacked on several generics is live when any of them is.
+    """
+    generics: dict[str, frozenset[str]] = {}
+    for qn, props in props_by_qn.items():
+        confirmed = frozenset(
+            generic
+            for decorator in _str_items(props.get(cs.KEY_DECORATORS))
+            if (generic := _dispatch_registration(qn, decorator)) is not None
+            and _is_singledispatch(props_by_qn.get(generic))
+        )
+        if confirmed:
+            generics[qn] = confirmed
+    return generics
+
+
+def _without_dispatch_registration(
+    qn: str, props: PropertyDict, generics: frozenset[str]
+) -> PropertyDict:
+    """`props` minus the `@generic.register` decorators naming one of
+    `generics`, which must not root a singledispatch implementation on their
+    own: that would keep the implementations of a dead generic alive. Any
+    other `.register` decorator (`@atexit.register`) still roots."""
+    decorators = [
+        d
+        for d in _str_items(props.get(cs.KEY_DECORATORS))
+        if _dispatch_registration(qn, d) not in generics
+    ]
+    return {**props, cs.KEY_DECORATORS: decorators}
+
+
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
@@ -989,12 +1045,17 @@ def dead_code_from_graph(
     # Every rule in _is_root makes `qn` a root; they are alternatives, not a
     # priority order, so one membership test replaces a chain of identical
     # branches (Sonar S1871, #1669).
+    dispatch_generics = _dispatch_generics(scan.props_by_qn)
     roots |= {
         qn
         for qn in scan.candidates - roots
         if _is_root(
             qn,
-            scan.props_by_qn[qn],
+            _without_dispatch_registration(
+                qn, scan.props_by_qn[qn], dispatch_generics[qn]
+            )
+            if qn in dispatch_generics
+            else scan.props_by_qn[qn],
             config,
             scan.method_qns,
             protocol_stubs,
@@ -1010,6 +1071,9 @@ def dead_code_from_graph(
     }
 
     adjacency, override_rev = _traversal_maps(rels, traversal)
+    for implementation, generics in dispatch_generics.items():
+        for generic in generics:
+            adjacency[generic].add(implementation)
     live = set(roots)
     _walk(roots, adjacency, live)
 
