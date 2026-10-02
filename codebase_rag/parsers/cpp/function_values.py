@@ -93,24 +93,33 @@ def c_file_scope(root: Node) -> CFileScope:
     while stack:
         node = stack.pop()
         if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
-            if cpp_utils.cpp_declaration_has_internal_linkage(node) and (
-                name := cpp_utils.extract_function_name(node)
-            ):
-                tu_local.add(name)
+            _record_function_definition(node, tu_local)
         elif node.type == cs.CppNodeType.DECLARATION:
-            # `static int cmp(...);` makes the later plain `int cmp(...) {}`
-            # internal too, so a static prototype counts like a definition.
-            internal = cpp_utils.cpp_declaration_has_internal_linkage(node)
-            for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
-                name, is_function = _declared_name(declarator)
-                if name and is_function:
-                    if internal:
-                        tu_local.add(name)
-                elif name:
-                    objects.add(name)
+            _record_declaration(node, tu_local, objects)
         elif node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES:
             stack.extend(node.named_children)
     return CFileScope(frozenset(tu_local), frozenset(objects))
+
+
+def _record_function_definition(node: Node, tu_local: set[str]) -> None:
+    if not cpp_utils.cpp_declaration_has_internal_linkage(node):
+        return
+    if name := cpp_utils.extract_function_name(node):
+        tu_local.add(name)
+
+
+def _record_declaration(node: Node, tu_local: set[str], objects: set[str]) -> None:
+    # `static int cmp(...);` makes the later plain `int cmp(...) {}`
+    # internal too, so a static prototype counts like a definition.
+    internal = cpp_utils.cpp_declaration_has_internal_linkage(node)
+    for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
+        name, is_function = _declared_name(declarator)
+        if not name:
+            continue
+        if not is_function:
+            objects.add(name)
+        elif internal:
+            tu_local.add(name)
 
 
 def _declared_name(declarator: Node) -> tuple[str | None, bool]:
