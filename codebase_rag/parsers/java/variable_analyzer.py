@@ -414,6 +414,25 @@ class JavaVariableAnalyzerMixin:
                     if base_type := safe_decode_text(type_node):
                         return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
 
+            case cs.TS_JAVA_CAST_EXPRESSION:
+                # The cast names the static type the value has from here on,
+                # which is the type overload resolution goes by (issue #2548).
+                if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
+                    return safe_decode_text(type_node)
+
+            case cs.TS_PARENTHESIZED_EXPRESSION:
+                if inner := next(
+                    (
+                        c
+                        for c in expr_node.children
+                        if c.type not in cs.DELIMITER_TOKENS
+                    ),
+                    None,
+                ):
+                    return self._infer_java_type_from_expression(
+                        inner, module_qn, local_var_types
+                    )
+
         return None
 
     def _infer_java_method_return_type(

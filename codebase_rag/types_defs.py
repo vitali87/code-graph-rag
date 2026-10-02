@@ -340,6 +340,18 @@ class JavaClassInfo(TypedDict):
     type_parameters: list[str]
 
 
+class JavaOverloadRank(NamedTuple):
+    """How well one Java overload fits a call's argument types; smaller is
+    better. `unproven` counts the arguments whose conversion could be neither
+    proven nor ruled out, so it decides first; then the summed conversion
+    ranks (JLS 5.3); then the summed distances up the argument types'
+    hierarchies, which make the nearest supertype the most specific."""
+
+    unproven: int
+    conversions: int
+    distance: int
+
+
 class JavaMethodInfo(TypedDict):
     name: str | None
     type: str

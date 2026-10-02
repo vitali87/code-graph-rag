@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -9,8 +9,8 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_guard, recursion_guard
-from ...types_defs import ASTNode, NodeType
-from ..utils import safe_decode_text
+from ...types_defs import ASTNode, JavaOverloadRank, NodeType
+from ..utils import module_qn_for_entity, safe_decode_text
 from .utils import (
     extract_class_info,
     extract_method_call_info,
@@ -21,8 +21,16 @@ from .utils import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
+    from ...types_defs import (
+        ASTCacheProtocol,
+        FunctionRegistryTrieProtocol,
+        SimpleNameLookup,
+    )
     from ..import_processor import ImportProcessor
+
+# The registry kinds a Java type declaration takes; records and annotation
+# types register as CLASS.
+_JAVA_TYPE_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 
 
 def _java_signature_arity(qn_or_member: str) -> int | None:
@@ -75,18 +83,22 @@ def _java_param_type_names(qn: str) -> list[str]:
         else:
             cur += ch
     parts.append(cur)
-    return [
-        p.split(cs.CHAR_ANGLE_OPEN, 1)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1].strip()
-        for p in parts
-    ]
+    return [_simple_type_name(p) for p in parts]
 
 
 def _simple_type_name(type_text: str) -> str:
-    return (
-        type_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+    # A varargs `pkg.T...` reads `T...`: its dots are no package separator,
+    # and stripping them as one left an empty name no argument could match.
+    text = type_text.strip()
+    base = (
+        text.removesuffix(cs.JAVA_VARARGS_SUFFIX)
+        .split(cs.CHAR_ANGLE_OPEN, 1)[0]
         .rsplit(cs.SEPARATOR_DOT, 1)[-1]
         .strip()
     )
+    if text.endswith(cs.JAVA_VARARGS_SUFFIX):
+        return f"{base}{cs.JAVA_VARARGS_SUFFIX}"
+    return base
 
 
 def _pick_declared_overload(
@@ -109,40 +121,68 @@ def _pick_declared_overload(
     return declarations[0]
 
 
-def _overload_rank(qn: str, arg_types: tuple[str | None, ...]) -> int | None:
-    # How well a candidate fits the KNOWN argument types: the summed per-argument
-    # conversion rank, or None when some argument cannot reach its parameter at
-    # all. Unknown args (None) are wildcards and cost nothing. Summing lets the
-    # MOST SPECIFIC applicable overload win, so take(Integer) beats take(Object)
-    # for an int argument, the way the language resolves it.
+def _overload_rank(
+    qn: str,
+    arg_types: tuple[str | None, ...],
+    supertypes: Sequence[Mapping[str, int]] = (),
+) -> JavaOverloadRank | None:
+    # How well a candidate fits the KNOWN argument types, or None when some
+    # argument provably cannot reach its parameter. Unknown args (None) are
+    # wildcards and cost nothing. Summing lets the MOST SPECIFIC applicable
+    # overload win, so take(Integer) beats take(Object) for an int argument,
+    # the way the language resolves it. `supertypes[i]` maps argument i's
+    # known supertypes to their distance up its hierarchy.
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
         return None
-    total = 0
-    for at, pt in zip(arg_types, params, strict=False):
+    unproven = conversions = distance = 0
+    for index, (at, pt) in enumerate(zip(arg_types, params, strict=True)):
         if at is None:
             continue
-        rank = _argument_rank(at.split(cs.SEPARATOR_DOT)[-1], pt)
-        if rank is None:
+        known = supertypes[index] if index < len(supertypes) else {}
+        if (rank := _argument_rank(_simple_type_name(at), pt, known)) is None:
             return None
-        total += rank
-    return total
+        conversion, depth = rank
+        if conversion == cs.JAVA_RANK_UNPROVEN:
+            unproven += 1
+        else:
+            conversions += conversion
+            distance += depth
+    return JavaOverloadRank(unproven, conversions, distance)
 
 
-def _argument_rank(arg_type: str, param_type: str) -> int | None:
-    # The conversion the language would apply, ranked by preference (JLS 5.3).
+def _argument_rank(
+    arg_type: str, param_type: str, supertypes: Mapping[str, int]
+) -> tuple[int, int] | None:
+    # The conversion the language would apply, ranked by preference (JLS 5.3),
+    # with how far up the argument's hierarchy a widening reference
+    # conversion reaches.
+    if param_type.endswith(cs.JAVA_VARARGS_SUFFIX) and arg_type.endswith(
+        cs.JAVA_ARRAY_SUFFIX
+    ):
+        # A `T...` parameter takes a `T[]` argument as is (JLS 15.12.2.2).
+        param_type = (
+            f"{param_type.removesuffix(cs.JAVA_VARARGS_SUFFIX)}{cs.JAVA_ARRAY_SUFFIX}"
+        )
     if arg_type == param_type:
-        return cs.JAVA_RANK_EXACT
+        return cs.JAVA_RANK_EXACT, 0
     if param_type in cs.JAVA_WIDENING_PRIMITIVES.get(arg_type, ()):
-        return cs.JAVA_RANK_WIDENED
+        return cs.JAVA_RANK_WIDENED, 0
     boxed = cs.JAVA_BOXED_TYPES.get(arg_type, arg_type)
     if param_type == boxed:
-        return cs.JAVA_RANK_BOXED
+        return cs.JAVA_RANK_BOXED, 0
     if param_type in cs.JAVA_REFERENCE_SUPERTYPES.get(boxed, ()):
-        return cs.JAVA_RANK_SUPERTYPE
+        return cs.JAVA_RANK_SUPERTYPE, 0
     if param_type == cs.JAVA_TYPE_OBJECT_NAME:
-        return cs.JAVA_RANK_OBJECT
-    return None
+        return cs.JAVA_RANK_OBJECT, 0
+    if (depth := supertypes.get(param_type)) is not None:
+        return cs.JAVA_RANK_SUPERTYPE, depth
+    # A primitive, a boxed type, String and Object have no supertypes beyond
+    # the ones checked above, so no other parameter can take them. Any other
+    # type may reach the parameter through a supertype nobody indexed.
+    if boxed in cs.JAVA_REFERENCE_SUPERTYPES or arg_type == cs.JAVA_TYPE_OBJECT_NAME:
+        return None
+    return cs.JAVA_RANK_UNPROVEN, 0
 
 
 def _callable_visible_to_caller(
@@ -162,31 +202,54 @@ def _callable_visible_to_caller(
     return caller_qn == owner or caller_qn.startswith(f"{owner}{cs.SEPARATOR_DOT}")
 
 
+def _ranked_best(
+    matches: Sequence[tuple[str, str]],
+    arg_types: tuple[str | None, ...],
+    supertypes: Sequence[Mapping[str, int]] = (),
+) -> list[tuple[str, str]]:
+    # The candidates the argument types rank best, in declaration order;
+    # empty when no candidate can take them.
+    ranked = [
+        (rank, match)
+        for match in matches
+        if (rank := _overload_rank(match[1], arg_types, supertypes)) is not None
+    ]
+    if not ranked:
+        return []
+    best = min(rank for rank, _ in ranked)
+    return [match for rank, match in ranked if rank == best]
+
+
+def _best_overloads(
+    matches: Sequence[tuple[str, str]],
+    arg_count: int | None,
+    arg_types: tuple[str | None, ...],
+    supertypes: Sequence[Mapping[str, int]] = (),
+) -> list[tuple[str, str]]:
+    # The same-name candidates nothing tells apart from the best one, in
+    # declaration order: prefer an argument-TYPE match (resolves same-arity
+    # overloads like isX(String) vs isX(Class)), then an argument-COUNT match,
+    # then the first. A type match implies an arity match, so it is the most
+    # specific. More than one left means declaration order alone would choose.
+    if len(matches) > 1 and any(at is not None for at in arg_types):
+        if best := _ranked_best(matches, arg_types, supertypes):
+            return best
+    if len(matches) > 1 and arg_count is not None:
+        if same_arity := [
+            match for match in matches if _java_signature_arity(match[1]) == arg_count
+        ]:
+            return same_arity
+    return list(matches[:1])
+
+
 def _pick_overload(
     matches: Sequence[tuple[str, str]],
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
 ) -> tuple[str, str] | None:
-    # Choose among same-name candidates: prefer an argument-TYPE match (resolves
-    # same-arity overloads like isX(String) vs isX(Class)), then an argument-COUNT
-    # match, then the first. A type match implies an arity match, so it is the most
-    # specific.
-    if not matches:
-        return None
-    if len(matches) > 1 and any(at is not None for at in arg_types):
-        ranked = [
-            (rank, index, match)
-            for index, match in enumerate(matches)
-            if (rank := _overload_rank(match[1], arg_types)) is not None
-        ]
-        if ranked:
-            # Ties keep declaration order, so the choice stays deterministic.
-            return min(ranked)[2]
-    if len(matches) > 1 and arg_count is not None:
-        for match in matches:
-            if _java_signature_arity(match[1]) == arg_count:
-                return match
-    return matches[0]
+    # Ties keep declaration order, so the choice stays deterministic.
+    best = _best_overloads(matches, arg_count, arg_types)
+    return best[0] if best else None
 
 
 def _java_getter_return_type(method_lower: str) -> str | None:
@@ -222,6 +285,7 @@ class JavaMethodResolverMixin:
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
     class_inheritance: dict[str, list[str]]
+    simple_name_lookup: SimpleNameLookup
     _fqn_to_module_qn: dict[str, list[str]]
 
     @abstractmethod
@@ -534,6 +598,11 @@ class JavaMethodResolverMixin:
     ) -> tuple[str, str] | None:
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
+        if method_result := self._pick_from_overload_family(
+            resolved_type, method_name, module_qn, arg_types
+        ):
+            return method_result
+
         if method_result := self._find_method_with_any_signature(
             resolved_type, method_name, module_qn, arg_count, arg_types
         ):
@@ -576,6 +645,13 @@ class JavaMethodResolverMixin:
         arg_count: int | None = None,
         arg_types: tuple[str | None, ...] = (),
     ) -> tuple[str, str] | None:
+        return _pick_overload(
+            self._methods_named(class_qn, method_name), arg_count, arg_types
+        )
+
+    def _methods_named(self, class_qn: str, method_name: str) -> list[tuple[str, str]]:
+        # Every overload of `method_name` declared directly on `class_qn`; a
+        # nested class's member carries an extra segment and never matches.
         matches: list[tuple[str, str]] = []
         for qn, method_type in self._find_registry_entries_under(class_qn):
             if qn == class_qn:
@@ -586,7 +662,210 @@ class JavaMethodResolverMixin:
             member = suffix[1:]
             if self._is_matching_method(member, method_name):
                 matches.append((method_type, qn))
-        return _pick_overload(matches, arg_count, arg_types)
+        return matches
+
+    def _overload_family(
+        self, class_qn: str, method_name: str
+    ) -> list[tuple[str, str]]:
+        # The overloads of `method_name` a call through `class_qn` can reach:
+        # those it declares plus those it inherits up the superclass chain. A
+        # parent overload with the signature of one a subclass declares is
+        # overridden by it, so it is not a separate candidate. Signatures
+        # compare simple type names, so two overloads of ONE class can match
+        # (`of(javax...TypeVariable)`, `of(java.lang.reflect.TypeVariable)`);
+        # neither overrides the other, so both stay.
+        family: list[tuple[str, str]] = []
+        overridden: set[tuple[str, ...]] = set()
+        seen: set[str] = set()
+        current: str | None = class_qn
+        while current and current not in seen:
+            seen.add(current)
+            declared = [
+                (entry, tuple(_java_param_type_names(entry[1])))
+                for entry in self._methods_named(current, method_name)
+            ]
+            family.extend(entry for entry, sig in declared if sig not in overridden)
+            overridden.update(sig for _, sig in declared)
+            current = self._find_parent_class(current)
+        return family
+
+    def _pick_from_overload_family(
+        self,
+        class_qn: str,
+        method_name: str,
+        module_qn: str,
+        arg_types: tuple[str | None, ...],
+    ) -> tuple[str, str] | None:
+        # Overload resolution weighs the methods a class declares together
+        # with those it inherits (JLS 15.12.2.1): beside an inherited
+        # Base.conv(Shape,int), Hier.conv(Circle,int) is one candidate of two,
+        # not the end of a lookup that stops at the first class declaring the
+        # name. When the argument types rank no candidate, the class-first
+        # lookup decides as before.
+        if not any(at is not None for at in arg_types):
+            return None
+        family = self._overload_family(class_qn, method_name)
+        if len(family) < 2:
+            return None
+        best = _ranked_best(
+            family,
+            arg_types,
+            self._argument_supertypes(family, arg_types, module_qn),
+        )
+        return best[0] if best else None
+
+    def java_overload_ties(
+        self,
+        call_node: ASTNode,
+        method_qn: str,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> list[tuple[str, str]]:
+        # The overloads the call's argument types cannot tell apart from
+        # `method_qn`, the target it was bound to: declaration order alone chose
+        # among them. Empty when the types, or a lone candidate, decided.
+        unsignatured = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        declaring_qn, _, method_name = unsignatured.rpartition(cs.SEPARATOR_DOT)
+        if not declaring_qn or not (call_info := extract_method_call_info(call_node)):
+            return []
+        arg_count = call_info[cs.FIELD_ARGUMENTS]
+        family = self._overload_family(declaring_qn, method_name)
+        # Inferring argument types can resolve nested calls, so it waits until
+        # a second candidate of the call's arity makes it worth the cost.
+        if sum(_java_signature_arity(qn) == arg_count for _, qn in family) < 2:
+            return []
+        arg_types = self._infer_arg_types(call_node, local_var_types or {}, module_qn)
+        tied = _best_overloads(
+            family,
+            arg_count,
+            arg_types,
+            self._argument_supertypes(family, arg_types, module_qn),
+        )
+        if len(tied) < 2 or all(qn != method_qn for _, qn in tied):
+            return []
+        return tied
+
+    def _argument_supertypes(
+        self,
+        family: Sequence[tuple[str, str]],
+        arg_types: tuple[str | None, ...],
+        module_qn: str,
+    ) -> tuple[dict[str, int], ...]:
+        # Each argument's supertypes, walked only when some candidate's
+        # parameter could need them: one equal to the argument's own type, or
+        # Object, never does, and a primitive, boxed or String argument has no
+        # supertypes beyond the fixed ones.
+        params = [_java_param_type_names(qn) for _, qn in family]
+        supertypes: list[dict[str, int]] = []
+        for index, arg_type in enumerate(arg_types):
+            if arg_type is None:
+                supertypes.append({})
+                continue
+            simple = _simple_type_name(arg_type)
+            fixed = (
+                cs.JAVA_BOXED_TYPES.get(simple, simple) in cs.JAVA_REFERENCE_SUPERTYPES
+            )
+            needed = not fixed and any(
+                len(p) == len(arg_types)
+                and p[index] not in (simple, cs.JAVA_TYPE_OBJECT_NAME)
+                for p in params
+            )
+            supertypes.append(
+                self._java_supertype_depths(arg_type, module_qn) if needed else {}
+            )
+        return tuple(supertypes)
+
+    def _java_supertype_depths(self, type_name: str, module_qn: str) -> dict[str, int]:
+        # The supertypes a value of this static type widens to (JLS 4.10), by
+        # simple name, each at its distance up the hierarchy. A project type
+        # walks its declared superclass and interfaces, a JDK type the table
+        # of common ones; a type neither reaches adds nothing, which leaves its
+        # conversions unproven rather than impossible.
+        depths: dict[str, int] = {}
+        frontier = [self._java_type_ref(type_name, module_qn)]
+        seen = set(frontier)
+        depth = 0
+        while frontier:
+            depth += 1
+            parents = [p for ref in frontier for p in self._java_direct_supertypes(ref)]
+            frontier = []
+            for parent in parents:
+                depths.setdefault(_simple_type_name(parent), depth)
+                if parent not in seen:
+                    seen.add(parent)
+                    frontier.append(parent)
+        return depths
+
+    def _java_direct_supertypes(self, type_ref: str) -> list[str]:
+        if self.function_registry.get(type_ref) not in _JAVA_TYPE_NODE_TYPES or not (
+            owner := module_qn_for_entity(type_ref, self.module_qn_to_file_path)
+        ):
+            return list(cs.JAVA_LIBRARY_SUPERTYPES.get(_simple_type_name(type_ref), ()))
+        # class_inheritance holds a class's superclass and an interface's
+        # superinterfaces, resolved against the whole repo; the interfaces a
+        # class, enum or record implements are read from its declaration.
+        parents = list(self.class_inheritance.get(type_ref, ()))
+        if (declaration := self._java_type_declaration(type_ref, owner)) is not None:
+            parents.extend(
+                self._java_type_ref(name, owner)
+                for name in extract_class_info(declaration)[cs.FIELD_INTERFACES]
+            )
+        return parents
+
+    def _java_type_ref(self, type_name: str, module_qn: str) -> str:
+        # The registered project type `type_name` names from `module_qn`, or
+        # the name itself for a JDK or other external type.
+        base = type_name.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
+        resolved = self._resolve_java_type_name(base, module_qn)
+        if self.function_registry.get(resolved) in _JAVA_TYPE_NODE_TYPES:
+            return resolved
+        if resolved == base and (
+            sibling := self._same_package_type_qn(base, module_qn)
+        ):
+            return sibling
+        return resolved
+
+    def _same_package_type_qn(self, type_name: str, module_qn: str) -> str | None:
+        # A package-private top-level type declared in a sibling file (`class
+        # Square` inside Names.java) is visible to its whole package without an
+        # import, yet no file is named after it, so the per-file lookups miss
+        # it. Used only when exactly one sibling file declares the name.
+        if not (current_file := self.module_qn_to_file_path.get(module_qn)):
+            return None
+        found = [
+            qn
+            for qn in self.simple_name_lookup.get(type_name, ())
+            if self.function_registry.get(qn) in _JAVA_TYPE_NODE_TYPES
+            and (owner := module_qn_for_entity(qn, self.module_qn_to_file_path))
+            and qn == f"{owner}{cs.SEPARATOR_DOT}{type_name}"
+            and self.module_qn_to_file_path[owner].parent == current_file.parent
+        ]
+        return found[0] if len(found) == 1 else None
+
+    def _java_type_declaration(self, type_qn: str, owner: str) -> ASTNode | None:
+        # A registered type's declaration, top-level or nested
+        # (`module.Outer.Inner`), read from the tree of its file `owner`.
+        if not (entry := self.ast_cache.load(self.module_qn_to_file_path[owner])):
+            return None
+        scope: ASTNode | None = entry[0]
+        declaration: ASTNode | None = None
+        for name in type_qn[len(owner) + 1 :].split(cs.SEPARATOR_DOT):
+            if scope is None:
+                return None
+            declaration = next(
+                (
+                    child
+                    for child in scope.children
+                    if child.type in cs.JAVA_CLASS_NODE_TYPES
+                    and safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
+                    == name
+                ),
+                None,
+            )
+            if declaration is None:
+                return None
+            scope = declaration.child_by_field_name(cs.FIELD_BODY)
+        return declaration
 
     def _search_method_in_alternate_modules(
         self,
