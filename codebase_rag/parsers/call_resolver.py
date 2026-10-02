@@ -2966,8 +2966,10 @@ class CallResolver:
 
         Its head must be a toolchain crate, or a dependency the importing
         package's manifest fetches from outside the repo that is no crate
-        the repo itself holds. Any other raw head may still be first-party
-        in a layout the import half does not rewrite, so it proves nothing.
+        the repo itself holds, directly or through the file's import of the
+        head (`use std::io;` then `io::Result`). Any other raw head may
+        still be first-party in a layout the import half does not rewrite,
+        so it proves nothing.
         """
         if (
             cs.SEPARATOR_DOT in path
@@ -2975,9 +2977,21 @@ class CallResolver:
         ):
             return False
         head = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
-        return head in cs.RS_STDLIB_CRATES or (
-            not self.import_processor.rust_head_is_repo_crate(head)
-            and self.import_processor.rust_head_is_external_dep(head, module_qn)
+        if self._rust_crate_is_external(head, module_qn):
+            return True
+        mapped = self.import_processor.import_mapping.get(module_qn, {}).get(head)
+        return (
+            mapped is not None
+            and cs.SEPARATOR_DOT not in mapped
+            and self._rust_crate_is_external(
+                mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0], module_qn
+            )
+        )
+
+    def _rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
+        return crate in cs.RS_STDLIB_CRATES or (
+            not self.import_processor.rust_head_is_repo_crate(crate)
+            and self.import_processor.rust_head_is_external_dep(crate, module_qn)
         )
 
     def _rust_file_use_is_external(self, name: str, module_qn: str) -> bool:
@@ -3730,8 +3744,13 @@ class CallResolver:
         # graph does not hold; a same-named first-party type is not it
         # (issue #2622). Kept raw, it resolves to no class, so the receiver
         # reads as external instead of binding the lookalike's methods.
-        if module_qn is not None and self._rust_path_is_external(class_qn, module_qn):
-            return class_qn
+        if module_qn is not None:
+            if self._rust_path_is_external(class_qn, module_qn):
+                return class_qn
+            if (
+                spelled := self._rust_module_path_type(class_qn, module_qn)
+            ) is not None:
+                return spelled
         rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
         class_name = rust_parts[-1]
 
@@ -3748,6 +3767,34 @@ class CallResolver:
             ),
             class_qn,
         )
+
+    def _rust_module_path_type(self, path: str, module_qn: str) -> str | None:
+        """The registered type a module path written in `module_qn` names.
+
+        `crate::`, `self::`, `super::` and a workspace crate head rewrite the
+        way a `use` does, a sibling module head resolves beside the module,
+        and a head the file imports (`use crate::a;` then `a::Builder`)
+        expands through its import. Matching the leaf by name instead let a
+        receiver declared as `crate::a::Builder` bind whichever `Builder`
+        came first (PR #2791 review). None when the path leads to no type.
+        """
+        imports = self.import_processor
+        target: str | None = imports._rewrite_rust_local_use_path(path, module_qn)
+        if target is not None and cs.SEPARATOR_DOUBLE_COLON in target:
+            target = self._rust_local_qn(path, module_qn)
+        if target is None:
+            head, _, rest = path.partition(cs.SEPARATOR_DOUBLE_COLON)
+            mapped = imports.import_mapping.get(module_qn, {}).get(head)
+            base = self._rust_local_qn(mapped, module_qn) if mapped else None
+            if base is None:
+                return None
+            target = cs.SEPARATOR_DOT.join(
+                [base, *rest.split(cs.SEPARATOR_DOUBLE_COLON)]
+            )
+        if target == cs.RUST_UNRESOLVABLE_QN:
+            return None
+        hit = self._follow_rust_scope_target(target)
+        return hit[1] if hit is not None and hit[0] in _RS_TYPE_NODE_TYPES else None
 
     def _try_resolve_module_method(
         self, method_name: str, call_name: str, module_qn: str

@@ -301,6 +301,41 @@ def test_scoped_type_without_the_item_binds_no_other_type(
     assert not {c for c in callees if c.endswith(".reset")}, edges
 
 
+def _two_builders_lib(body: str) -> dict[str, str]:
+    return {
+        "Cargo.toml": '[package]\nname = "two_builders"\nversion = "0.1.0"\n',
+        "src/lib.rs": "pub mod a;\npub mod b;\n\n" + body,
+        "src/a.rs": _BUILDER_RS,
+        "src/b.rs": _BETA_LIB_RS,
+    }
+
+
+def test_qualified_declared_type_is_not_rebound_by_a_scoped_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `x` and `y` are declared as `crate::a::Builder`, a path that names one
+    # type wherever it is written; the body's `use crate::b::Builder;` binds
+    # only the bare name `Builder` (PR #2791 review).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_qualified",
+        _two_builders_lib(
+            "pub fn qualified(x: crate::a::Builder) -> u32 {\n"
+            "    use crate::b::Builder;\n"
+            "    let y: crate::a::Builder = crate::a::Builder::new();\n"
+            "    let _z = Builder::new();\n"
+            "    x.build() + y.build()\n"
+            "}\n"
+        ),
+    )
+    caller = "rs_use_qualified.src.lib.qualified"
+    assert edges.get((caller, "rs_use_qualified.src.a.Builder.build")) == {"exact"}, (
+        edges
+    )
+    assert (caller, "rs_use_qualified.src.b.Builder.build") not in edges, edges
+
+
 # --- what must keep resolving as before ---------------------------------------
 
 
@@ -409,3 +444,27 @@ def test_scoped_use_of_a_different_name_leaves_the_call_alone(
     assert edges.get((other_name, f"{alpha}.new")) == {"exact"}, edges
     assert edges.get((other_name, f"{alpha}.build")) == {"exact"}, edges
     assert (other_name, f"{beta}.new") not in edges, edges
+
+
+def test_bare_declared_type_follows_the_scoped_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Spelled bare, the declared type is whatever the scope binds `Builder`
+    # to, and the body's `use` shadows the module's import.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_bare_decl",
+        _two_builders_lib(
+            "use crate::a::Builder;\n\n"
+            "pub fn bare(y: Builder) -> u32 {\n"
+            "    use crate::b::Builder;\n"
+            "    let x: Builder = Builder::new();\n"
+            "    x.build() + y.build()\n"
+            "}\n"
+        ),
+    )
+    caller = "rs_use_bare_decl.src.lib.bare"
+    assert edges.get((caller, "rs_use_bare_decl.src.b.Builder.build")) == {"exact"}, (
+        edges
+    )
