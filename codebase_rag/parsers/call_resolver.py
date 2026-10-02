@@ -15,6 +15,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .import_processor import ImportProcessor
+from .lua import utils as lua_utils
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -1670,6 +1671,15 @@ class CallResolver:
             self._remember_cacheable(cache_key, result)
             return True, result
 
+        # The same probe for a Lua table member spelled with the other
+        # separator than its definition (`Account.deposit` for
+        # `function Account:deposit`), in a file the import probe skipped.
+        if call.language == cs.SupportedLanguage.LUA and (
+            result := self._try_resolve_lua_same_module_member(call_name, module_qn)
+        ):
+            self._remember_cacheable(cache_key, result)
+            return True, result
+
         # A Rust `module::item` call names its function through the module
         # path, so it binds inside that module: a direct item, or the
         # module's own `use` re-export (ripgrep's flags::parse() through
@@ -3264,11 +3274,21 @@ class CallResolver:
             import_map,
             module_qn,
             local_var_types,
+            language,
         ):
             return result
 
         if result := self._try_resolve_via_import(
-            object_name, method_name, separator, call_name, import_map
+            object_name, method_name, separator, call_name, import_map, language
+        ):
+            return result
+
+        # A Lua table defined in this module (`Account.deposit(acc, 1)`,
+        # `Account:new()`) names its member exactly, so it must answer before
+        # the same-module free-function guess below: a `local function
+        # deposit` is not `Account`'s member (issue #2481).
+        if language == cs.SupportedLanguage.LUA and (
+            result := self._try_resolve_lua_same_module_member(call_name, module_qn)
         ):
             return result
 
@@ -3326,6 +3346,7 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if not local_var_types or object_name not in local_var_types:
             return None
@@ -3336,7 +3357,13 @@ class CallResolver:
             var_type, import_map, module_qn
         ):
             if result := self._try_method_on_class(
-                class_qn, method_name, separator, call_name, object_name, var_type
+                class_qn,
+                method_name,
+                separator,
+                call_name,
+                object_name,
+                var_type,
+                language,
             ):
                 return result
 
@@ -3355,17 +3382,26 @@ class CallResolver:
         call_name: str,
         object_name: str,
         var_type: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
-        method_qn = f"{class_qn}{separator}{method_name}"
-        if method_qn in self.function_registry:
-            logger.debug(
-                ls.CALL_TYPE_INFERRED,
-                call_name=call_name,
-                method_qn=method_qn,
-                obj=object_name,
-                var_type=var_type,
-            )
-            return self.function_registry[method_qn], method_qn
+        # A Lua instance reaches its class's members under either spelling:
+        # `acc:deposit()` is `Account:deposit`, `s.area(s)` and `s:twice()`
+        # may name a member defined with the other separator.
+        method_qns = (
+            lua_utils.member_spellings(class_qn, method_name, separator)
+            if language == cs.SupportedLanguage.LUA
+            else (f"{class_qn}{separator}{method_name}",)
+        )
+        for method_qn in method_qns:
+            if method_qn in self.function_registry:
+                logger.debug(
+                    ls.CALL_TYPE_INFERRED,
+                    call_name=call_name,
+                    method_qn=method_qn,
+                    obj=object_name,
+                    var_type=var_type,
+                )
+                return self.function_registry[method_qn], method_qn
 
         if inherited := self._resolve_inherited_method(class_qn, method_name):
             logger.debug(
@@ -3385,9 +3421,15 @@ class CallResolver:
         separator: str,
         call_name: str,
         import_map: dict[str, str],
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if object_name not in import_map:
             return None
+
+        if language == cs.SupportedLanguage.LUA:
+            return self._try_resolve_lua_module_member(
+                import_map[object_name], object_name, method_name, separator, call_name
+            )
 
         class_qn = self._resolve_imported_class_qn(
             import_map[object_name], object_name, method_name, separator
@@ -3405,8 +3447,50 @@ class CallResolver:
             return self.function_registry[method_qn], method_qn
         return self._try_resolve_package_member(class_qn, method_name)
 
+    def _try_resolve_lua_module_member(
+        self,
+        imported_qn: str,
+        alias: str,
+        member: str,
+        separator: str,
+        call_name: str,
+    ) -> tuple[str, str] | None:
+        # `require` binds the table a module returns. The module usually names
+        # it after the alias (`local Storage = {}` in storage/Storage.lua);
+        # otherwise (`local M = {}`) the package-member search finds the one
+        # table holding the member. Both spellings throughout: `util:method()`
+        # reaches `M:method`, `util.add()` reaches `M.add` (issue #2481).
+        for owner_qn in (f"{imported_qn}{cs.SEPARATOR_DOT}{alias}", imported_qn):
+            if result := self._lua_table_member(owner_qn, member, separator, call_name):
+                return result
+        return self._try_resolve_package_member(
+            imported_qn, member, cs.SupportedLanguage.LUA
+        )
+
+    def _try_resolve_lua_same_module_member(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        if (split := lua_utils.split_member_call(call_name)) is None:
+            return None
+        table_path, separator, member = split
+        return self._lua_table_member(
+            f"{module_qn}{cs.SEPARATOR_DOT}{table_path}", member, separator, call_name
+        )
+
+    def _lua_table_member(
+        self, owner_qn: str, member: str, separator: str, call_name: str
+    ) -> tuple[str, str] | None:
+        for qn in lua_utils.member_spellings(owner_qn, member, separator):
+            if qn in self.function_registry:
+                logger.debug(ls.CALL_LUA_TABLE_MEMBER, call_name=call_name, qn=qn)
+                return self.function_registry[qn], qn
+        return None
+
     def _try_resolve_package_member(
-        self, package_qn: str, member_name: str
+        self,
+        package_qn: str,
+        member_name: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         # A Go package spans multiple files and cgr qualifies its members by
         # FILE (pkg.file.Func), so an import-mapped package qn plus member name
@@ -3421,12 +3505,26 @@ class CallResolver:
         ):
             return None
         member_depth = package_qn.count(cs.SEPARATOR_DOT) + 2
+        members = self.function_registry.find_with_prefix(package_qn)
         candidates = [
             qn
-            for qn, _ in self.function_registry.find_with_prefix(package_qn)
+            for qn, _ in members
             if qn.count(cs.SEPARATOR_DOT) == member_depth
             and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == member_name
         ]
+        if language == cs.SupportedLanguage.LUA:
+            # A Lua module's returned table holds `M.add` one segment below
+            # the file, like a Go file's function, but its colon-method
+            # `M:method` is that one segment itself (issue #2481).
+            candidates += [
+                qn
+                for qn, _ in members
+                if qn.count(cs.SEPARATOR_DOT) == member_depth - 1
+                and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].partition(
+                    cs.LUA_METHOD_SEPARATOR
+                )[2]
+                == member_name
+            ]
         if not candidates:
             return None
         member_qn = min(candidates)
