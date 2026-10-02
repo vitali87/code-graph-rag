@@ -261,8 +261,9 @@ Within a function body, taint moves and disappears by these rules:
 - **Transform.** A value built from a tainted one is still tainted, with the
   union of its operands' origins. In Python this covers a builtin or library
   call (`float(raw)`, `json.dumps(cfg)`), a method on the value
-  (`raw.strip().lower()`), string building (`f"token={t}"`, `"%s" % t`,
-  `"{}".format(t)`, `"k=" + t`, `s += t`, `", ".join(parts)`), arithmetic,
+  (`raw.strip().lower()`), string building (`f"token={t}"`, a dynamic
+  format spec such as `f"{'':{t}>8}"`, `"%s" % t`, `"{}".format(t)`,
+  `"k=" + t`, `s += t`, `", ".join(parts)`), arithmetic,
   containers (`[t]`, `{"k": t}`), a slice or attribute of the value (`t[:4]`,
   `resp.text`), `await`, and comprehensions (`"".join(c for c in t)`). This is
   the usual taint-engine default for code the analysis cannot see into. A

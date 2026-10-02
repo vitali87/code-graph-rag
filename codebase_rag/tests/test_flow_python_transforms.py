@@ -228,6 +228,11 @@ def test_crash_shape_inline_conversion_of_env_read_emits_return_edge(
         pytest.param("    emit('token=' + t)\n", id="concat"),
         pytest.param("    emit(', '.join(['a', t]))\n", id="join-list"),
         pytest.param("    emit(''.join(c for c in t))\n", id="join-generator"),
+        pytest.param("    emit(c for c in t)\n", id="generator-argument"),
+        pytest.param("    emit(f\"{'':{t}>10}\")\n", id="fstring-format-spec"),
+        pytest.param(
+            "    emit(f\"{'':{'*':{t}}>10}\")\n", id="fstring-nested-format-spec"
+        ),
         pytest.param("    emit(t.strip().lower().encode())\n", id="method-chain"),
         pytest.param("    emit(str(t))\n", id="builtin-str"),
         pytest.param("    emit(int(t))\n", id="builtin-int"),
@@ -321,6 +326,35 @@ def test_parameter_returned_through_a_transform_is_a_pass_through(
     assert _env_to_stdout(_run_flow(tmp_path, files))
 
 
+@pytest.mark.parametrize(
+    "arg",
+    [
+        pytest.param("[c for c in p]", id="list-comprehension"),
+        pytest.param("{k: v for k, v in p}", id="dict-comprehension"),
+        pytest.param("c for c in p", id="bare-generator"),
+    ],
+)
+def test_parameter_returned_through_a_comprehension_is_a_pass_through(
+    tmp_path: Path, arg: str
+) -> None:
+    # `wrap` hands its parameter to a first-party callee inside a
+    # comprehension; the returned call must still record `p` as reaching
+    # `redact`, or the caller's secret stops at `wrap`.
+    files = {
+        "app.py": (
+            "import os\n\n"
+            "def redact(v):\n"
+            "    return ''.join(v)\n\n"
+            "def wrap(p):\n"
+            f"    return redact({arg})\n\n"
+            "def caller():\n"
+            "    y = wrap(os.getenv('API_TOKEN'))\n"
+            "    print(y)\n"
+        )
+    }
+    assert _env_to_stdout(_run_flow(tmp_path, files))
+
+
 # Negative controls.
 
 
@@ -334,6 +368,9 @@ def test_parameter_returned_through_a_transform_is_a_pass_through(
             "    t = f'{t}'\n    t = 'x' + 'y'\n    emit(t)\n", id="clean-concat"
         ),
         pytest.param("    emit(f'static')\n", id="static-fstring"),
+        pytest.param(
+            "    emit(f\"{'':>{len(t)}}\")\n", id="format-spec-of-cleared-value"
+        ),
         pytest.param("    emit(str(42))\n", id="clean-builtin"),
         pytest.param("    emit(t == 'x')\n", id="comparison"),
         pytest.param("    emit(not t)\n", id="not"),

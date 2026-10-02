@@ -369,6 +369,14 @@ _PY_COMPREHENSIONS = frozenset(
         cs.TS_PY_GENERATOR_EXPRESSION,
     }
 )
+# A string and a format spec hold replacement fields (`{t:{w}}`); each
+# field's value and its own format spec reach the text.
+_PY_FORMATTED_TEXT = frozenset({cs.TS_PY_STRING, cs.TS_PY_FORMAT_SPECIFIER})
+_PY_REPLACEMENT_FIELDS = frozenset({cs.TS_PY_INTERPOLATION, cs.TS_PY_FORMAT_EXPRESSION})
+_PY_REPLACEMENT_FIELD_PARTS = (
+    cs.TS_PY_FIELD_EXPRESSION,
+    cs.TS_PY_FIELD_FORMAT_SPECIFIER,
+)
 # Registry-shaped, so a taint-clearing call matches through the same import
 # normalisation as the source/sink registry: `from hashlib import sha256`
 # still clears, while a `len` imported from project code does not.
@@ -389,15 +397,17 @@ def _py_value_operands(node: Node) -> list[Node] | None:
         # Named children are [consequence, condition, alternative].
         values = node.named_children
         return [values[0], values[2]] if len(values) == 3 else []
-    if node_type == cs.TS_PY_STRING:
-        # Only an f-string's interpolated values reach its text; a format spec
-        # (`{t:>{width}}`) shapes the text and is left out.
+    if node_type in _PY_FORMATTED_TEXT:
+        # An f-string's interpolated values reach its text, and so does a
+        # dynamic format spec: `f"{'':{fill}>8}"` pads with `fill` itself, as
+        # `"{:{}>8}".format("", fill)` does through its arguments. A spec's
+        # own `{...}` may nest one more spec, expanded the same way.
         return [
-            expr
+            operand
             for child in node.named_children
-            if child.type == cs.TS_PY_INTERPOLATION
-            and (expr := child.child_by_field_name(cs.TS_PY_FIELD_EXPRESSION))
-            is not None
+            if child.type in _PY_REPLACEMENT_FIELDS
+            for field in _PY_REPLACEMENT_FIELD_PARTS
+            if (operand := child.child_by_field_name(field)) is not None
         ]
     if node_type in _PY_ELEMENTWISE_TRANSFORMS:
         return [c for c in node.named_children if c.type != cs.TS_COMMENT]
@@ -421,6 +431,40 @@ def _py_target_names(target: Node | None) -> list[str]:
     if target.type in cs.PY_UNPACKING_TARGET_TYPES:
         return [name for c in target.named_children for name in _py_target_names(c)]
     return []
+
+
+def _py_call_arguments(call_node: Node) -> list[Node]:
+    # A Python call's arguments in order, comments left out. `f(x for x in
+    # xs)` has no argument list: the bare generator is its only argument.
+    args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    if args is None:
+        return []
+    if args.type != cs.TS_ARGUMENT_LIST:
+        return [args]
+    return [c for c in args.named_children if c.type != cs.TS_COMMENT]
+
+
+def _py_argument_values(call_node: Node) -> list[Node]:
+    # The value each argument passes: a keyword argument's value, any other
+    # argument as written.
+    values: list[Node] = []
+    for child in _py_call_arguments(call_node):
+        if child.type != cs.TS_PY_KEYWORD_ARGUMENT:
+            values.append(child)
+        elif (value := child.child_by_field_name(cs.FIELD_VALUE)) is not None:
+            values.append(value)
+    return values
+
+
+def _py_is_taint_clearing_method(func: Node) -> bool:
+    # `t.startswith("x")`, `t.count("a")`: a `str` predicate or lookup method,
+    # whose result reveals nothing of the receiver's content.
+    method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    return (
+        method is not None
+        and method.text is not None
+        and method.text.decode(cs.ENCODING_UTF8) in cs.PY_TAINT_CLEARING_METHODS
+    )
 
 
 class _FlowCtx(NamedTuple):
@@ -3906,30 +3950,11 @@ class FlowProcessor:
         operands: list[Node] = []
         func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is not None and func.type == cs.TS_PY_ATTRIBUTE:
-            method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
-            if (
-                method is not None
-                and method.text is not None
-                and method.text.decode(cs.ENCODING_UTF8) in cs.PY_TAINT_CLEARING_METHODS
-            ):
+            if _py_is_taint_clearing_method(func):
                 return []
             if (receiver := func.child_by_field_name(cs.FIELD_OBJECT)) is not None:
                 operands.append(receiver)
-        args = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return operands
-        if args.type != cs.TS_ARGUMENT_LIST:
-            # `f(x for x in xs)`: a bare generator is the call's only argument.
-            operands.append(args)
-            return operands
-        for child in args.named_children:
-            if child.type == cs.TS_COMMENT:
-                continue
-            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
-                if (value := child.child_by_field_name(cs.FIELD_VALUE)) is not None:
-                    operands.append(value)
-                continue
-            operands.append(child)
+        operands.extend(_py_argument_values(node))
         return operands
 
     def _py_env_member_seed(self, node: Node, ctx: _FlowCtx) -> HandleBinding | None:
@@ -4078,16 +4103,11 @@ class FlowProcessor:
         # expression, so an inline source or tainted call is tracked; positional
         # index counts positional args only (keywords never advance it), keeping
         # arg:<i> aligned with the callee's parameter order.
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return []
         out: list[tuple[Taint, str]] = []
         index = 0
-        for child in args.named_children:
-            # Comments are named children; skip them so they neither consume a
-            # positional index nor get evaluated as a value.
-            if child.type == cs.TS_COMMENT:
-                continue
+        # Comments are left out, so they neither consume a positional index
+        # nor get evaluated as a value.
+        for child in _py_call_arguments(call_node):
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 if (keyword := _keyword_argument(child)) is not None:
                     name, value = keyword
@@ -4164,14 +4184,9 @@ class FlowProcessor:
         # carries, tagged with the argument's `via`. Params-only (never touches
         # the deferred-candidate lists), because the value/return-edge side of the
         # returned call is already handled by the walk's descent into it.
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return []
         out: list[tuple[frozenset[str], str]] = []
         index = 0
-        for child in args.named_children:
-            if child.type == cs.TS_COMMENT:
-                continue
+        for child in _py_call_arguments(call_node):
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 if (keyword := _keyword_argument(child)) is not None:
                     name, value = keyword
@@ -4204,9 +4219,35 @@ class FlowProcessor:
                     params |= taint.params
             elif current.type == cs.TS_PY_CALL:
                 stack.extend(self._py_param_call_operands(current, ctx))
+            elif current.type in _PY_COMPREHENSIONS:
+                params |= self._py_comprehension_params(current, tainted, ctx)
             else:
                 stack.extend(_py_value_operands(current) or [])
         return params
+
+    def _py_comprehension_params(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> frozenset[str]:
+        # _py_comprehension_taint's scoping, reading only `params`: each `for`
+        # target carries the parameters its iterable does, so `return
+        # redact([c for c in p])` still hands `p` to redact.
+        scope = dict(tainted)
+        for clause in node.named_children:
+            if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+                continue
+            iterable = clause.child_by_field_name(cs.TS_FIELD_RIGHT)
+            params = (
+                self._value_params(iterable, scope, ctx)
+                if iterable is not None
+                else frozenset()
+            )
+            for name in _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT)):
+                if params:
+                    scope[name] = Taint(frozenset(), frozenset(), params)
+                else:
+                    scope.pop(name, None)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        return self._value_params(body, scope, ctx) if body is not None else frozenset()
 
     def _py_param_call_operands(self, node: Node, ctx: _FlowCtx) -> list[Node]:
         # A source or a resolved callee hands no parameter through its result
