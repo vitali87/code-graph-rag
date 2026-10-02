@@ -950,7 +950,7 @@ class FunctionIngestMixin:
                     )
                 )
 
-            logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
+            logger.debug(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
             emit_endpoints(
                 self.ingestor,
@@ -1395,6 +1395,14 @@ class FunctionIngestMixin:
         func_props = self._build_function_props(
             func_node, resolution, module_qn, lang_queries, language
         )
+        if language in cs.JS_TS_LANGUAGES and js_ts_utils.is_object_literal_method(
+            func_node
+        ):
+            # `{delay () {...}}` registers here, under its key, before the
+            # object-literal pass would; only its object reaches it (issue
+            # #2435), and the persisted mark keeps that across incremental runs.
+            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
+            self.function_registry.mark_object_member(resolution.qualified_name)
         is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
         if is_macro:
             # Rust macros live in a separate namespace from functions; Pass-3 gates
@@ -1402,7 +1410,7 @@ class FunctionIngestMixin:
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).
             func_props[cs.KEY_IS_MACRO] = True
-        logger.info(
+        logger.debug(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
