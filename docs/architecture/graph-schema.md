@@ -255,9 +255,9 @@ Methods of classes defined inside function bodies are captured only when `CGR_CA
 
 `qualified_name` uniquely identifies each `Function`, `Method`, and `Class` node. When the same qualified name is defined more than once in a module, every definition is kept as a distinct node. This happens with the `if has_x(): ... else: ...` import-fallback idiom, `typing.overload`, and `try/except ImportError` fallbacks.
 
-The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant.
+The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant. Source order decides across labels too: a Python `class Tool` followed by a same-named `def Tool` in an `if` block (a docs or `TYPE_CHECKING` shim) keeps `m.Tool` for the class, and the `def` becomes `m.Tool@<line>`.
 
-A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
+A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target. When a Python name has both a class and a function variant, a call such as `Tool()` records `INSTANTIATES` to each class variant and `CALLS` to each function variant, and a method call on the result (`Tool().run()`) resolves through the class.
 
 `Module` nodes are also identified by `qualified_name` (`File` and `Folder` nodes are keyed by `absolute_path` instead, so they stay per-checkout), but without the `@<start_line>` suffix mechanism: bodied modules that share one qualified name (for example mutually-exclusive `#[cfg]` twin `mod` blocks in one Rust file) merge into a single `Module` node whose location properties come from the last definition ingested. This is an accepted representational merge: call resolution is unaffected, because each twin's functions bind through their own module body's imports rather than a merged import map.
 

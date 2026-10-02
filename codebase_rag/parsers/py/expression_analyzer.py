@@ -229,13 +229,20 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 )
             )
         for qn in candidates:
-            match self.function_registry.get(qn):
-                case NodeType.CLASS:
-                    return qn
-                case NodeType.FUNCTION:
-                    return self._get_function_return_type_from_ast(qn)
-                case _:
-                    continue
+            # A class and a same-named def (a docs shim, an ImportError
+            # fallback) both bind the name. The class is the exact answer
+            # wherever it sits; the shim usually returns the class passed
+            # through, which types as nothing (issue #2621).
+            kinds = {
+                variant: self.function_registry.get(variant)
+                for variant in self.function_registry.variants(qn)
+            }
+            for variant, kind in kinds.items():
+                if kind == NodeType.CLASS:
+                    return variant
+            for variant, kind in kinds.items():
+                if kind == NodeType.FUNCTION:
+                    return self._get_function_return_type_from_ast(variant)
         return None
 
     @recursion_guard(
