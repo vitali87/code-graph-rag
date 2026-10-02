@@ -43,6 +43,7 @@ from .parameter_nodes import (
     csharp_call_shape,
     emit_declared_parameters,
 )
+from .php import utils as php_utils
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -1806,6 +1807,11 @@ class FunctionIngestMixin:
         # closure is orphaned and reports as dead.
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
             if name := self._extract_node_name(class_node):
+                return name
+            # A PHP anonymous class is named by position, as the definition
+            # pass names it; the callables it sits in are ancestors this walk
+            # names on its own (issue #2538).
+            if name := php_utils.anonymous_class_name(class_node):
                 return name
             # An anonymous class expression (`static Proxy = class {...}`) has no
             # `name` field; recover its binding name so a closure nested in its

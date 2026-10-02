@@ -350,6 +350,25 @@ def _csharp_get_name(node: Node) -> str | None:
     return name
 
 
+def _php_get_name(node: Node) -> str | None:
+    # An anonymous class has no `name` field; it is named by position. The
+    # implementation lives in parsers.php.utils, which the call pass reaches
+    # directly; deferred for the same import cycle as Dart's below.
+    if node.type == cs.TS_PHP_ANONYMOUS_CLASS:
+        from .parsers.php import utils as php_utils
+
+        return php_utils.anonymous_class_name(node)
+    return _generic_get_name(node)
+
+
+def _php_get_scope_name(node: Node) -> str | None:
+    if node.type == cs.TS_PHP_ANONYMOUS_CLASS:
+        from .parsers.php import utils as php_utils
+
+        return php_utils.anonymous_class_scope_name(node)
+    return _generic_get_name(node)
+
+
 def _dart_get_name(node: Node) -> str | None:
     # The single implementation lives in parsers.dart.utils, which the
     # parsers-internal callers (ingest_method) reach directly; the import is
@@ -439,8 +458,9 @@ SCALA_FQN_SPEC = FQNSpec(
 PHP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PHP_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PHP_FUNCTION_TYPES),
-    get_name=_generic_get_name,
+    get_name=_php_get_name,
     file_to_module_parts=_php_file_to_module,
+    get_scope_name=_php_get_scope_name,
 )
 
 CSHARP_FQN_SPEC = FQNSpec(
@@ -735,6 +755,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             name: (name) @name) @class
         (enum_declaration
             name: (name) @name) @class
+        (anonymous_class) @class
         """,
         call_query="""
         (function_call_expression
