@@ -96,8 +96,14 @@ from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
-from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
+from .services import (
+    FilteringIngestor,
+    IngestorProtocol,
+    QueryingIngestorProtocol,
+    QueryProtocol,
+)
 from .services.resource_cleanup import prune_unanchored_resources
+from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
@@ -1292,6 +1298,12 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The trace-derived CALLS edges `run()` read before deleting the
+        # re-parsed subtrees, re-applied once Pass 3 has rebuilt the static
+        # edges (issue #2429), and the files the run deleted, whose edges must
+        # not follow their qualified names onto a same-stem survivor.
+        self._captured_trace_edges: list[CapturedTraceEdge] = []
+        self._trace_gone_paths: frozenset[str] = frozenset()
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
@@ -1928,6 +1940,11 @@ class GraphUpdater:
         the same stages, or they vanish until a full update. Returns the
         module qn -> path map the IMPORTS flush verifies against.
         """
+        # First: every module of the run is named now, and everything below
+        # (inheritance, Pass 3) resolves through the import map.
+        self.factory.import_processor.point_imports_at_own_language_siblings(
+            self.factory.definition_processor.module_qn_to_file_path
+        )
         # Every File node of the pass is buffered by now, so a Markdown link
         # to a file parsed after its document finds its target (issue #2400).
         self.document_tier.emit_pending_links()
@@ -2133,6 +2150,8 @@ class GraphUpdater:
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
         self._pending_parser_fingerprint = None
+        self._captured_trace_edges = []
+        self._trace_gone_paths = frozenset()
         if not force and self._is_already_in_sync():
             self._finish_in_sync_run()
             return
@@ -2277,6 +2296,10 @@ class GraphUpdater:
 
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
+        # After that flush: the carry reads the static edges Pass 3 just
+        # wrote to decide which observations confirm one (issue #2429).
+        self._carry_trace_edges(self._captured_trace_edges, self._trace_gone_paths)
+        self._captured_trace_edges = []
 
         self._link_endpoint_resources()
 
@@ -3224,6 +3247,11 @@ class GraphUpdater:
         # @property defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_PROPERTY):
             self.function_registry.mark_property(qn)
+        # Restore the object-member set for unchanged files, or a re-parsed
+        # file's bare call binds by name to a JS/TS object literal's function
+        # value that only its object reaches (issue #2435).
+        if row.get(cs.KEY_IS_OBJECT_MEMBER):
+            self.function_registry.mark_object_member(qn)
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
@@ -3355,6 +3383,13 @@ class GraphUpdater:
             )
         else:
             self._forgotten_flux_claims.setdefault(path, (qn, survivor))
+            # A scoped re-ingest read the module qns back before this, and the
+            # survivor's old one need not come back: beside a sibling in another
+            # language neither file keeps the bare qn, so left here it is
+            # offered to import verification as a live module the re-parse
+            # just deleted (issue #2586). A re-parse that keeps the qn records
+            # it again; an unreadable survivor gets it back with its claim.
+            self._rehydrated_module_qns.discard(qn)
 
     def _delete_stale_subtrees(self, keys: Iterable[str]) -> None:
         """Delete the old subtree of every re-parsed or deleted file.
@@ -4154,6 +4189,46 @@ class GraphUpdater:
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
 
+    def _capture_trace_edges(self, keys: Iterable[str]) -> list[CapturedTraceEdge]:
+        # Read before the subtrees go, as the inbound edges are: a runtime
+        # observation lives only in the graph, so the delete would otherwise
+        # take it for good (issue #2429).
+        paths = sorted(set(keys))
+        if not paths or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            return capture_trace_edges(
+                self.ingestor, paths, self.project_name + cs.SEPARATOR_DOT
+            )
+        except Exception:
+            # The inbound capture's posture: a full build may go on over an
+            # unreadable graph, saying what it lost; an incremental run
+            # aborts rather than drop the observations without a word.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.TRACE_CARRY_CAPTURE_FAILED)
+            return []
+
+    def _carry_trace_edges(
+        self, captured: list[CapturedTraceEdge], gone_paths: Collection[str]
+    ) -> None:
+        """Re-apply the captured trace edges to the re-parsed graph.
+
+        Never raises, like `_reanchor_glosses`: the sync itself has landed,
+        and the observations come back by re-ingesting the trace, which the
+        warning tells the user to do.
+        """
+        if not captured or not isinstance(self.ingestor, QueryingIngestorProtocol):
+            return
+        try:
+            carry_trace_edges(
+                self.ingestor, captured, self.repo_path.resolve(), gone_paths
+            )
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                ls.TRACE_CARRY_FAILED.format(count=len(captured), error=error)
+            )
+
     def _restorable_edge(
         self, row: ResultRow
     ) -> tuple[tuple[str, str, str], str, tuple[str, str, str]] | None:
@@ -4292,14 +4367,19 @@ class GraphUpdater:
         # A file that was never parsed recorded nothing; the path-derived form
         # is the only prefix available for it, and it owns no recorded qn that
         # this could wipe.
-        recorded_qns = {
-            qn
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-            if path == file_path
-        }
-        module_qn_prefixes = recorded_qns or {path_derived_qn}
+        #
+        # Unless another file holds that qn now. A same-stem survivor re-parses
+        # with its claim dropped, after a sibling parsed earlier in the run took
+        # the bare qn (`util.c` beside `util.h`); sweeping it deregistered the
+        # sibling's fresh definitions, still unflushed and so not read back, and
+        # the sibling's calls resolved to nothing until a fresh index (reported
+        # on #2586). The survivor's own old state went before the parse.
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        recorded_qns = {qn for qn, path in module_map.items() if path == file_path}
+        holder = module_map.get(path_derived_qn)
+        module_qn_prefixes = recorded_qns or (
+            {path_derived_qn} if holder is None else set()
+        )
         self._drop_module_import_state(file_path, recorded_qns, module_qn_prefixes)
         owned_qns, foreign_qns = self._span_ownership(
             module_qn_prefixes, relative_path, frontend_current
@@ -5351,6 +5431,10 @@ class GraphUpdater:
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
+        self._captured_trace_edges = self._capture_trace_edges(
+            (*reindexed_keys, *deleted_before_parse)
+        )
+        self._trace_gone_paths = frozenset(deleted_set)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in scan.changed_entries
         }
@@ -7273,6 +7357,7 @@ class GraphUpdater:
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
+            captured_trace = self._capture_trace_edges(all_keys)
         except Exception as exc:
             raise ReingestAborted(str(exc)) from exc
         # The caller's last word before the first write. Still inside the
@@ -7354,6 +7439,9 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # `_reingest_resolve` ends on a flush, so the static edges the carry
+        # may confirm are in the store (issue #2429).
+        self._carry_trace_edges(captured_trace, gone.keys())
         # AFTER the re-parse, never before: the surviving node of the correct
         # kind and its re-pointed containment edges are written by the parse
         # above, so pruning first would delete the old node while every edge
