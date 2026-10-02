@@ -69,12 +69,13 @@ def test_the_pinned_qdrant_serves_cgrs_vector_store(pinned_qdrant_url: str) -> N
         patch.object(settings, "QDRANT_API_KEY", None),
     ):
         vs.close_vector_store_client()
+        symbols = {1: "proj.mod.a", 2: "proj.mod.b"}
         try:
             stored = vs.store_embedding_batch(
-                [(1, first, "proj.mod.a"), (2, second, "proj.mod.b")]
+                "proj", [(1, first, symbols[1]), (2, second, symbols[2])]
             )
             assert stored == 2
-            assert vs.verify_stored_ids({1, 2}) == {1, 2}
+            assert vs.verify_stored_ids("proj", symbols) == {1, 2}
             hits = vs.search_embeddings(first, top_k=1)
             assert [node_id for node_id, _score in hits] == [1]
         finally:
