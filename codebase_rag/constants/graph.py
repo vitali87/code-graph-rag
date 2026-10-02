@@ -69,6 +69,18 @@ KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
 # Occurrences of the old name in code that no graph site accounts for (#2564).
 KEY_UNPLANNED = "unplanned"
+
+
+class RenameTargetKind(StrEnum):
+    """Which occurrences of a renamed name the cross-check holds against the
+    plan (#2564): a function's every use, a method's calls and accesses
+    through its own receiver, a type's every occurrence."""
+
+    FUNCTION = "function"
+    METHOD = "method"
+    TYPE = "type"
+
+
 KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 

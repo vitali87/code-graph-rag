@@ -46,7 +46,7 @@ from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
-from .occurrences import find_occurrences
+from .occurrences import Occurrence, Target, find_occurrences
 from .patcher import Patcher, PatcherError, line_col_to_byte
 from .transaction import (
     EditTransaction,
@@ -75,10 +75,8 @@ _SITELESS = "siteless"
 _CHAIN = "chain"
 # An occurrence of the name in code that no graph site accounts for (#2564).
 _UNPLANNED = "unplanned"
-# A callable's name is shared by locals, parameters and fields everywhere, so
-# only its called or scoped occurrences are held against the plan; a type's
-# every occurrence is a reference to it.
-_CALLABLE_LABELS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
+# A file and the (line, col) start and exclusive end of a statement in it.
+_Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
@@ -804,23 +802,21 @@ class Renamer:
         language = get_language_for_extension(Path(definition).suffix)
         if language is None:
             return []
+        target = Target(
+            old_name, language, _target_kind(label), definition, _owners(hierarchy)
+        )
         planned = {(s.path, s.line, s.col) for s in sites}
-        # An import site records the statement, not the name inside it.
-        statements = [(site.path, site.line, site.end_line) for site in imports]
+        statements = [_statement(site) for site in imports]
         leftover = [
             occurrence
-            for occurrence in find_occurrences(
-                self.repo_root, language, old_name, label in _CALLABLE_LABELS
-            )
+            for occurrence in find_occurrences(self.repo_root, target)
             if (occurrence.path, occurrence.line, occurrence.col) not in planned
-            and not any(
-                occurrence.path == path and first <= occurrence.line <= last
-                for path, first, last in statements
-            )
+            and not _inside(occurrence, statements)
         ]
         if not leftover:
             return []
-        elsewhere = self._sites_of_namesakes(old_name, hierarchy)
+        foreign = self._foreign_paths(hierarchy)
+        namesakes = self._namesakes(old_name, hierarchy)
         return [
             RenameSite(
                 "call" if occurrence.called else "reference",
@@ -831,30 +827,64 @@ class Renamer:
                 _UNPLANNED,
             )
             for occurrence in leftover
-            if (occurrence.path, occurrence.line, occurrence.col) not in elsewhere
+            if occurrence.path not in foreign
+            and (occurrence.path, occurrence.line, occurrence.col)
+            not in namesakes.positions
+            and not _inside(occurrence, namesakes.statements)
+            and not (occurrence.bare and occurrence.path in namesakes.bound_paths)
         ]
 
-    def _sites_of_namesakes(
-        self, old_name: str, hierarchy: list[str]
-    ) -> set[tuple[str, int, int]]:
+    def _foreign_paths(self, hierarchy: list[str]) -> set[str]:
+        """Files whose sites the graph gives to a project whose name extends
+        this one: the plan leaves them alone (#1989), so its cross-check
+        does too."""
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        paths: set[str] = set()
+        for member in hierarchy:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: member,
+            }
+            for query in (
+                cq.CYPHER_GRAPH_CALLERS,
+                cq.CYPHER_GRAPH_REFERENCES,
+                cq.CYPHER_GRAPH_TYPE_EDGES,
+            ):
+                paths.update(
+                    path
+                    for row in self.fetch_all(query, params)
+                    if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+                    and isinstance(path := row.get(cs.KEY_PATH), str)
+                )
+        return paths
+
+    def _namesakes(self, old_name: str, hierarchy: list[str]) -> _Namesakes:
         """Where the graph writes `old_name` for a symbol outside `hierarchy`:
-        each same-named definition's own name and every site the graph gives
-        it, as a rename of that symbol would collect them."""
-        positions: set[tuple[str, int, int]] = set()
+        each same-named definition's own name, every site the graph gives it
+        and the import statements binding it, as a rename of that symbol
+        would collect them."""
+        namesakes = _Namesakes(set(), [], set())
         for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
             other = symbol["qualified_name"]
             if other in hierarchy:
                 continue
             try:
                 other_sites, _unlocatable, _name, _label = self._collect(other)
+                other_imports = self._import_sites(other, old_name)
             except (RenameRefused, PatcherError):
                 # Its definition or one of its sites cannot be located in the
                 # tree: what it would cover stays unplanned, since refusing
                 # over a namesake's stale graph is safer than crediting it
                 # with an occurrence that may be ours.
                 continue
-            positions.update((s.path, s.line, s.col) for s in other_sites)
-        return positions
+            namesakes.positions.update((s.path, s.line, s.col) for s in other_sites)
+            for site, _module in other_imports:
+                namesakes.statements.append(_statement(site))
+                # `from other import helper` makes every bare `helper` in
+                # that file the other symbol's.
+                if site.alias == old_name:
+                    namesakes.bound_paths.add(site.path)
+        return namesakes
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
@@ -1366,6 +1396,47 @@ class Renamer:
             undone=True,
             message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
+
+
+class _Namesakes(NamedTuple):
+    positions: set[tuple[str, int, int]]
+    statements: list[_Span]
+    bound_paths: set[str]
+
+
+def _target_kind(label: str | None) -> cs.RenameTargetKind:
+    match label:
+        case cs.NodeLabel.FUNCTION.value:
+            return cs.RenameTargetKind.FUNCTION
+        case cs.NodeLabel.METHOD.value:
+            return cs.RenameTargetKind.METHOD
+        case _:
+            return cs.RenameTargetKind.TYPE
+
+
+def _owners(hierarchy: list[str]) -> frozenset[str]:
+    # The class segment of each member's name; a Java or C# signature may
+    # hold dots of its own (`put(Map.Entry)`), so it is cut off first.
+    owners: set[str] = set()
+    for member in hierarchy:
+        segments = member.partition(cs.CHAR_PAREN_OPEN)[0].split(cs.SEPARATOR_DOT)
+        if len(segments) > 1:
+            owners.add(segments[-2])
+    return frozenset(owners)
+
+
+def _statement(site: ImportSite) -> _Span:
+    # The statement's own span, not its lines: `import x; helper(1)` puts a
+    # call on the import's line that the import does not cover.
+    return site.path, (site.line, site.col), (site.end_line, site.end_col)
+
+
+def _inside(occurrence: Occurrence, spans: list[_Span]) -> bool:
+    position = (occurrence.line, occurrence.col)
+    return any(
+        path == occurrence.path and start <= position < end
+        for path, start, end in spans
+    )
 
 
 def _refusal_message(

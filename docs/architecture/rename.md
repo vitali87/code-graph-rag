@@ -70,15 +70,26 @@ anything is written, the project's sources in the definition's language
 family are read (the indexer's own walk, under `.cgrignore` and
 `.gitignore`) for identifier tokens spelling the old name:
 
-- for a function or method, where it is called (`name(`, `.name(`) or
-  reached through a scope (`Type::name`, a method reference); a bare
-  `name` there is usually a local, a parameter or a field;
+- for a function, every use, called or not (`callback = helper`,
+  `map(helper, xs)`, `return helper`), but an attribute (`obj.helper`)
+  only when the object is the defining module (`util.helper`);
+- for a method, a call (`name(`, `.name(`), a scoped name (`Type::name`, a
+  method reference), or a read through its own receiver (`self.name` and
+  `cls.name` in Python, `this.name` in JavaScript and TypeScript,
+  `Class.name`); a bare `name` there is a local or a module-level function;
 - for anything else (a class, an interface, a type), every occurrence.
 
-Comments and strings are prose and never count. An occurrence counts as
-planned when a site of the plan or one of its import statements covers it,
-or when the graph gives it to another symbol of the same name (that
-symbol's own definition and sites, as its own rename would collect them).
+Comments and strings are prose and never count, and neither does a token
+that binds the name instead of using it (a parameter, an assignment or loop
+target, a definition), a bare use such a binding shadows in its function,
+or a keyword argument's name (`f(helper=1)`). An occurrence counts as
+planned when a site of the plan covers it, or the import statement of one
+(its own span, not its line: `from pkg.util import helper; helper(1)` still
+holds the call), or when the graph gives it to another symbol of the same
+name: that symbol's definition, sites and import statements, and every bare
+use in a file importing it under the name. Files whose sites the graph gives
+to a project whose name extends this one are left out, as the plan leaves
+them.
 Whatever is left is `unplanned`: the rename refuses and lists each one, the
 way it refuses a guessed site. `--allow-heuristic` (`allow_heuristic: true`)
 rewrites them as guessed sites, and the report lists them in `unplanned`.

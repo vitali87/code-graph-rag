@@ -143,6 +143,51 @@ FIELD_SUPERCLASS = "superclass"
 FIELD_SUPERCLASSES = "superclasses"
 FIELD_INTERFACES = "interfaces"
 
+# How the rename cross-check reads a name token (issue #2564). Each grammar
+# spells a binding its own way, so node types are matched by marker; a token
+# none of them recognises counts as a use, which refuses rather than misses.
+FIELD_PATTERN = "pattern"
+FIELD_DEFAULT = "default"
+# Fields whose content is evaluated, never bound: `x=helper`, `y: helper`.
+RENAME_VALUE_FIELDS = frozenset({FIELD_VALUE, FIELD_RIGHT, FIELD_DEFAULT, FIELD_TYPE})
+# Node types that only group the names one binding introduces: `a, helper = ...`.
+RENAME_WRAPPER_SUFFIXES = ("_pattern", "pattern_list", "expression_list")
+# A definition or declaration naming the token: `def helper`, `let helper`.
+RENAME_DEFINITION_SUFFIXES = (
+    "definition",
+    "declaration",
+    "declarator",
+    "_item",
+    "signature",
+    "_spec",
+)
+RENAME_DEFINITION_FIELDS = frozenset(
+    {FIELD_NAME, FIELD_PATTERN, FIELD_DECLARATOR, FIELD_PROPERTY}
+)
+# An assignment or loop target: `helper = 3`, `for helper in xs`.
+RENAME_REBINDING_MARKERS = ("assignment", "for", "declaration", "range")
+RENAME_REBINDING_FIELDS = frozenset({FIELD_LEFT, FIELD_PATTERN})
+RENAME_PARAMETER_MARKER = "parameter"
+RENAME_AS_TARGET = "as_pattern_target"
+# A name that labels an argument or a key instead of naming a value.
+RENAME_KEYWORD_ARGUMENT_MARKER = "keyword_argument"
+RENAME_LABEL_TYPES = frozenset({"label", "name_colon"})
+RENAME_PAIR = "pair"
+RENAME_INITIALIZER_MARKER = "initializer"
+# What opens a scope a local binding shadows; a class body does not, since a
+# method's bare names never resolve to its class's attributes in Python.
+RENAME_SCOPE_MARKERS = (
+    "func",
+    "lambda",
+    "method",
+    "closure",
+    "comprehension",
+    "generator_expression",
+)
+RENAME_CLASS_MARKER = "class"
+RENAME_NOT_SCOPE_MARKERS = ("call", "invocation", "type", "signature")
+RENAME_MEMBER_ACCESS = (".", "->")
+
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
 QUERY_CALLS = "calls"

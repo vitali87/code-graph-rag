@@ -270,7 +270,9 @@ def test_a_missed_java_method_reference_and_static_import_call_refuse(
 
     assert sorted((s.kind, s.path, s.line, s.col) for s in refused.value.unplanned) == [
         ("call", "src/main/java/b/Stat.java", 7, 15),
+        # The static import names the method through its class as well.
         ("reference", "src/main/java/a/Use.java", 7, 28),
+        ("reference", "src/main/java/b/Stat.java", 3, 24),
     ]
 
 
@@ -309,6 +311,104 @@ def test_a_type_is_held_to_every_occurrence_not_only_calls(tmp_path: Path) -> No
 
     assert [(s.kind, s.path, s.line, s.col) for s in refused.value.unplanned] == [
         ("reference", "pkg/use.py", 7, 11)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "col"),
+    [
+        ("    callback = helper\n    return callback(1, 2)\n", 15),
+        ("    return list(map(helper, xs, xs))\n", 20),
+        ("    return helper\n", 11),
+    ],
+    ids=["assigned", "passed", "returned"],
+)
+def test_a_function_named_without_a_call_is_held_to_the_plan(
+    tmp_path: Path, body: str, col: int
+) -> None:
+    # Review of PR #2797: renaming the import and leaving `callback = helper`
+    # is a NameError the moment the module loads.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    text = f"from pkg.util import helper\n\n\ndef use(xs):\n{body}"
+    store, _updater = _indexed(root, {**PY, "pkg/refs.py": text})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/refs.py"),
+            PROJECT,
+            HELPER,
+            "assist",
+            dry_run=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("reference", "pkg/refs.py", 5, col, "unplanned")]
+
+
+def test_a_call_on_an_import_line_is_not_covered_by_the_import(
+    tmp_path: Path,
+) -> None:
+    # The import site covers its own statement, not the rest of its line.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(
+        root, {**PY, "pkg/one.py": "from pkg.util import helper; helper(1, 2)\n"}
+    )
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/one.py"),
+            PROJECT,
+            HELPER,
+            "assist",
+            dry_run=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/one.py", 1, 29, "unplanned")]
+
+
+WORKER = {
+    "pkg/__init__.py": "",
+    "pkg/worker.py": (
+        "class Worker:\n"
+        "    def helper(self):\n"
+        "        return 1\n"
+        "\n"
+        "    def run(self):\n"
+        "        callback = self.helper\n"
+        "        return callback()\n"
+        "\n"
+        "\n"
+        "def peek(other):\n"
+        "    return other.helper\n"
+    ),
+}
+
+
+def test_a_method_read_through_self_is_held_to_the_plan(tmp_path: Path) -> None:
+    # `self.helper` is the method; `other.helper` on anything else is not.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, WORKER)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/worker.py"),
+            PROJECT,
+            f"{PROJECT}.pkg.worker.Worker.helper",
+            "assist",
+            dry_run=True,
+        )
+
+    assert [(s.kind, s.path, s.line, s.col) for s in refused.value.unplanned] == [
+        ("reference", "pkg/worker.py", 6, 24)
     ]
 
 
@@ -541,6 +641,74 @@ def test_a_same_named_symbol_the_graph_knows_is_not_unplanned(
     assert report.applied, report.message
     assert report.unplanned == ()
     assert (root / "pkg/other.py").read_text() == OTHER
+
+
+LOCALS = (
+    "from pkg.util import helper\n"
+    "\n"
+    "\n"
+    "def apply(helper, xs):\n"
+    "    return [helper(x, x) for x in xs] + [helper]\n"
+    "\n"
+    "\n"
+    "def attribute(obj):\n"
+    "    return obj.helper\n"
+    "\n"
+    "\n"
+    "def keyword(f):\n"
+    "    return f(helper=1)\n"
+    "\n"
+    "\n"
+    "def shadowed():\n"
+    "    helper = 3\n"
+    "    return helper + 1\n"
+)
+
+
+def test_parameters_attributes_keywords_and_locals_are_not_unplanned(
+    tmp_path: Path,
+) -> None:
+    # The graph knows nothing in this file but its import, and none of these
+    # names the function: a parameter and its uses, an attribute of another
+    # object, a keyword's name, and a local that shadows the import.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {**PY, "pkg/locals.py": LOCALS})
+
+    report = rename(root, _missing(store, "pkg/locals.py"), PROJECT, HELPER, "assist")
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/locals.py").read_text() == LOCALS.replace(
+        "from pkg.util import helper", "from pkg.util import assist"
+    )
+
+
+def test_a_multi_name_import_line_stays_clean(tmp_path: Path) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        **PY,
+        "pkg/util.py": (
+            "def helper(a, b):\n    return a + b\n\n\ndef other(a):\n    return a\n"
+        ),
+        "pkg/both.py": (
+            "from pkg.util import helper, other\n\n\ndef run():\n"
+            "    return other(helper(1, 2))\n"
+        ),
+    }
+    store, updater = _indexed(root, files)
+
+    report = rename(
+        root, _query(store), PROJECT, HELPER, "assist", reingest=updater.reingest
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/both.py").read_text() == (
+        "from pkg.util import assist, other\n\n\ndef run():\n"
+        "    return other(assist(1, 2))\n"
+    )
 
 
 def test_another_language_ignored_dirs_and_cgrignore_are_not_scanned(
