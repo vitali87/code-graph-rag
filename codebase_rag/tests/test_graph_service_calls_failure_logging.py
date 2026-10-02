@@ -63,10 +63,9 @@ def test_calls_failure_logging_single_batch(
         graph_service.flush_relationships()
 
     log_text = "\n".join(log_messages)
-    assert "Failed to create 2 CALLS relationships" in log_text
-    assert "nodes may not exist" in log_text
-
-    assert "Sample 1:" in log_text or "Sample 2:" in log_text
+    assert (
+        "Failed to create 2 of 3 (Method)-[:CALLS]->(Method) relationships" in log_text
+    )
 
 
 def test_calls_failure_logging_multiple_batches(
@@ -112,7 +111,7 @@ def test_calls_failure_logging_multiple_batches(
 
     log_text = "\n".join(log_messages)
 
-    failure_count = log_text.count("Failed to create 1 CALLS relationships")
+    failure_count = log_text.count("Failed to create 1 of 2 (")
 
     assert failure_count == 2, (
         f"Expected 2 batches to each report 1 failure, but found {failure_count} occurrences in logs:\n{log_text}"
@@ -145,7 +144,7 @@ def test_calls_success_no_failure_logging(
     assert "nodes may not exist" not in log_text
 
 
-def test_non_calls_relationships_no_failure_logging(
+def test_non_calls_relationship_failures_are_reported(
     graph_service: MemgraphIngestor, log_messages: list[str]
 ) -> None:
     graph_service.ensure_relationship_batch(
@@ -166,5 +165,10 @@ def test_non_calls_relationships_no_failure_logging(
     ):
         graph_service.flush_relationships()
 
+    # Every relationship type is reported, not only CALLS (issues #2400, #2438).
     log_text = "\n".join(log_messages)
-    assert "Failed to create" not in log_text or "CALLS" not in log_text
+    assert (
+        "Failed to create 1 of 2 (Module)-[:IMPORTS]->(Module) relationships"
+        in log_text
+    )
+    assert "CALLS" not in log_text

@@ -138,7 +138,7 @@ def test_a_failed_path_read_owes_the_next_run_a_prune(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     def fetch_all(query: str, params: object = None) -> list[dict[str, str]]:
-        if query == cs.CYPHER_ALL_FILE_PATHS:
+        if query == cs.CYPHER_REPO_FILE_PATHS:
             raise ConnectionError("path read failed")
         return []
 

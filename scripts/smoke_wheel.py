@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
+from datetime import timedelta
 from importlib.metadata import version
 
 
@@ -94,11 +95,60 @@ def check_agent_loop_reports_usage() -> None:
         raise SmokeFailure("agent run produced no messages to extend the history with")
 
 
+def check_mcp_server_lists_tools() -> None:
+    """Build the real MCP server and answer ``initialize`` + ``tools/list``.
+
+    Issue #2519: mcp 2.x removed the ``Server.list_tools()`` decorator that
+    ``codebase_rag/mcp/server.py`` registers its handlers with, so
+    ``cgr mcp-server`` died on start for every fresh install. Importing the
+    module still worked, since the attribute is only read while the server is
+    built, so this builds it and performs the handshake a host does, over an
+    in-memory transport. Memgraph is only connected when the server is served,
+    so the job needs no database.
+    """
+    from codebase_rag.config import settings
+    from codebase_rag.mcp.server import create_server
+
+    # A remote provider with a placeholder key builds its model offline; the
+    # default local provider would probe an Ollama endpoint the job lacks.
+    offline_model = ("openai", "gpt-4o-mini")
+    settings.set_orchestrator(*offline_model, api_key="smoke-offline")
+    settings.set_cypher(*offline_model, api_key="smoke-offline")
+
+    try:
+        server, _ = create_server()
+    except AttributeError as exc:
+        raise SmokeFailure(
+            f"codebase_rag/mcp/server.py cannot register its handlers on this "
+            f"SDK: {exc} (mcp {version('mcp')})"
+        ) from exc
+
+    # Imported only once the server is built: an SDK that also moved this
+    # client helper must still fail on the server's own break, the one a user
+    # hits, rather than on a test utility.
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def list_tool_names() -> list[str]:
+        async with create_connected_server_and_client_session(
+            server, read_timeout_seconds=timedelta(seconds=30)
+        ) as client:
+            listed = await client.list_tools()
+        return [tool.name for tool in listed.tools]
+
+    names = asyncio.run(list_tool_names())
+    if not names:
+        raise SmokeFailure(
+            f"the MCP server answered tools/list with no tools (mcp {version('mcp')})"
+        )
+    print(f"      mcp {version('mcp')}: initialize + tools/list -> {len(names)} tools")
+
+
 CHECKS = (
     check_package_imports,
     check_cli_entry_point,
     check_agent_run_result_usage_is_a_property,
     check_agent_loop_reports_usage,
+    check_mcp_server_lists_tools,
 )
 
 
