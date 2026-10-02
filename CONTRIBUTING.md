@@ -284,25 +284,30 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import NamedTuple, TypedDict
 
+
 # StrEnum - string constants
 class Status(StrEnum):
     PENDING = "pending"
     DONE = "done"
+
 
 # NamedTuple - immutable record
 class Point(NamedTuple):
     x: float
     y: float
 
+
 # TypedDict - dict shape
 class Result(TypedDict):
     success: bool
     data: str
 
+
 # dataclass - mutable with behavior
 @dataclass
 class User:
     name: str
+
     def greet(self) -> str:
         return f"Hello, {self.name}"
 ```
@@ -334,8 +339,10 @@ Forward references are type hints wrapped in quotes like `"ASTNode"`. These are 
 # Bad - forward reference with quotes (THIS IS NOT ALLOWED)
 def process(node: "ASTNode") -> "Result": ...
 
+
 # Good - add future import and remove quotes
 from __future__ import annotations
+
 
 def process(node: ASTNode) -> Result: ...
 ```
@@ -344,12 +351,15 @@ def process(node: ASTNode) -> Result: ...
 # Bad - loose dict type
 def process(args: dict[str, str | int | None]) -> dict[str, Any]: ...
 
+
 # Good - TypedDict with known shape
 class ProcessArgs(TypedDict):
     name: str
     count: int
 
+
 def process(args: ProcessArgs) -> Result: ...
+
 
 # Bad - dict literal
 return {"success": True, "data": data}
@@ -366,18 +376,22 @@ In Protocols and mixin classes, use regular method definitions instead of `Calla
 from abc import abstractmethod
 from typing import Callable, Protocol
 
+
 # Bad - Callable attribute (not bound, not recommended)
 class MyMixin:
     process: Callable[[str], int]
 
+
 class MyProtocol(Protocol):
     handler: Callable[[str, int], bool]
+
 
 # Good - regular method definition
 # Mixin classes: use @abstractmethod for method stubs
 class MyMixin:
     @abstractmethod
     def process(self, data: str) -> int: ...
+
 
 # Protocols: no decorator needed (structural typing)
 class MyProtocol(Protocol):
@@ -459,17 +473,26 @@ Use `StrEnum` when string values are used in code (defaults, comparisons, assign
 ```python
 from enum import StrEnum
 
+
 # Bad - hardcoded strings scattered in code
 def process(mode: str = "fast"): ...
-if status == "pending": ...
+
+
+if status == "pending":
+    ...
+
 
 # Good - centralized StrEnum
 class Mode(StrEnum):
     FAST = "fast"
     SLOW = "slow"
 
+
 def process(mode: Mode = Mode.FAST): ...
-if status == Status.PENDING: ...
+
+
+if status == Status.PENDING:
+    ...
 ```
 
 #### Centralised Error Messages
@@ -479,12 +502,14 @@ Use an Enum with `__call__` for parameterised error messages:
 ```python
 from enum import Enum
 
+
 class Error(str, Enum):
     NOT_FOUND = "Item '{id}' not found"
     INVALID = "Invalid value"
 
     def __call__(self, **kwargs) -> str:
         return self.value.format(**kwargs) if kwargs else self.value
+
 
 # Usage
 raise ValueError(Error.NOT_FOUND(id="abc"))
@@ -498,6 +523,7 @@ Use `StrEnum` for error type names passed to exception classes:
 class ErrorCode(StrEnum):
     VALIDATION = "ValidationError"
     NOT_FOUND = "NotFoundError"
+
 
 raise CustomError(ErrorCode.VALIDATION, Error.INVALID())
 ```
@@ -515,6 +541,7 @@ print(f"Error: {e}", file=sys.stderr)
 
 # Good
 from loguru import logger
+
 logger.info(f"Processing: {file}")
 logger.error(f"Error: {e}")
 logger.success("Done!")
@@ -535,11 +562,12 @@ args = parser.parse_args()
 from typing import Annotated
 import typer
 
+
 def main(
     name: Annotated[str, typer.Argument(help="Name")],
     count: Annotated[int, typer.Option(help="Count")] = 1,
-) -> None:
-    ...
+) -> None: ...
+
 
 typer.run(main)
 ```
@@ -559,6 +587,7 @@ Use `click` with `@click.group()` for nested subcommand groups that integrate wi
 def cli() -> None:
     pass
 
+
 @cli.command(help="Add a new resource.")
 def add(name: str) -> None:
     try:
@@ -568,8 +597,10 @@ def add(name: str) -> None:
         logger.error(f"Failed to add: {e}")  # loguru for logging
         click.secho(f"Error: {e}", fg="red")  # click for user output
 
+
 # main.py - typer main app bridges to click
 from .subcommands import cli as subcommand_cli
+
 
 @app.command(
     name="resource",
@@ -589,6 +620,7 @@ HANDLERS = {
     "create": lambda x: {"action": "create", "id": x.id},
 }
 
+
 # Good
 @dataclass
 class Handler:
@@ -597,6 +629,7 @@ class Handler:
 
     def build(self, x) -> ActionDict:
         return ActionDict(action=self.action, id=x.id)
+
 
 HANDLERS = {"create": Handler(action="create", template="...")}
 ```
@@ -715,17 +748,20 @@ def save_user(user):
     conn.commit()
     conn.close()
 
+
 def save_order(order):
     conn = db.connect()
     conn.execute(SQL_ORDER, order.dict())
     conn.commit()
     conn.close()
 
+
 def save_item(item):
     conn = db.connect()
     conn.execute(SQL_ITEM, item.dict())
     conn.commit()
     conn.close()
+
 
 # Good - helper + 3 one-liners (7 lines)
 def _save(sql: str, data: dict) -> None:
@@ -734,11 +770,14 @@ def _save(sql: str, data: dict) -> None:
     conn.commit()
     conn.close()
 
+
 def save_user(user):
     _save(SQL_USER, user.dict())
 
+
 def save_order(order):
     _save(SQL_ORDER, order.dict())
+
 
 def save_item(item):
     _save(SQL_ITEM, item.dict())
@@ -754,11 +793,13 @@ All repeated string literals should be constants or StrEnum members:
 
 ```python
 # Bad
-if node.type == "predicate_definition": ...
+if node.type == "predicate_definition":
+    ...
 artifact_type = "srg_v1"
 
 # Good
-if node.type == ElementType.PREDICATE: ...
+if node.type == ElementType.PREDICATE:
+    ...
 artifact_type = ARTIFACT_SRG
 ```
 
@@ -774,14 +815,14 @@ Files that are NOT `config.py`, `models.py`, `constants.py`, `logs.py`, or CLI m
 ```python
 # Bad - strings in service/tool files
 logger.info(f"Processing file: {path}")
-description="Reads file content from disk."
+description = "Reads file content from disk."
 
 # Good - import from dedicated modules
 from .. import logs
 from . import tool_descriptions as td
 
 logger.info(logs.PROCESSING_FILE.format(path=path))
-description=td.FILE_READER
+description = td.FILE_READER
 ```
 
 #### Function Signatures Use Proper Types
@@ -792,8 +833,11 @@ Use StrEnum types in function signatures, not `str`:
 # Bad
 def extract(guideline_type: str, outcome: str = "Approve"): ...
 
+
 # Good
-def extract(guideline_type: GuidelineType, outcome: OutcomeType = OutcomeType.APPROVE): ...
+def extract(
+    guideline_type: GuidelineType, outcome: OutcomeType = OutcomeType.APPROVE
+): ...
 ```
 
 ### Validation

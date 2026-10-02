@@ -17,8 +17,8 @@ from codebase_rag.editing import Patcher
 patcher = Patcher(repo_root)
 patcher.replace_span("pkg/a.py", (start_byte, end_byte), "new text")
 patcher.replace_identifier_at("pkg/a.py", line=12, col=4, old="helper", new="assist")
-results = patcher.apply()            # {rel_path: PatchResult}, nothing written
-results = patcher.stage_into(tx)     # or hand the patched files to an EditTransaction
+results = patcher.apply()  # {rel_path: PatchResult}, nothing written
+results = patcher.stage_into(tx)  # or hand the patched files to an EditTransaction
 ```
 
 - Positions follow the graph's convention: 1-based lines, 0-based byte
