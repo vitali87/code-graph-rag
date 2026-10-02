@@ -83,6 +83,15 @@ MSG_STACK_STOPPED = "Stack stopped."
 MSG_RESTARTING_STACK = "Restarting cgr stack..."
 MSG_RENDERING_COMPOSE = "Rendering compose file to {path}"
 MSG_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
+MSG_MEMGRAPH_PROBE_OUTPUT = "mgclient output while probing Memgraph: {output}"
+# The descriptor C code writes stderr to, whatever sys.stderr is bound to.
+NATIVE_STDERR_FD = 2
+# pymgclient's Windows wheels are MinGW builds, linked against this C runtime
+# rather than the UCRT that CPython and its os module use.
+MGCLIENT_WINDOWS_C_RUNTIME = "msvcrt"
+ERR_C_RUNTIME_CALL_FAILED = (
+    "The C runtime mgclient prints through could not move its stderr."
+)
 
 PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 
