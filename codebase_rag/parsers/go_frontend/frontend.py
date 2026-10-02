@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -95,14 +96,15 @@ _TOOL_SRC = Path(__file__).parent / "gotypes"
 _TOOL_SOURCES = ("main.go", "go.mod", "go.sum")
 _BINARY_NAME = "gotypes"
 _BUILD_LOCK = ".build-lock"
-# Written when a build fails and holding the `go env GOVERSION` it failed
-# with: a failed build is not retried every sync, only once Go or the helper's
-# sources change (issue #2395).
+# Written when a build fails, as JSON holding the `go env GOVERSION` it failed
+# with and when it failed: a failed build is not retried every sync, only once
+# Go or the helper's sources change or GO_FRONTEND_BUILD_FAILURE_TTL_S passes
+# (issue #2395). The time is stored in the file, not read from its mtime, which
+# copying or restoring the cache can reset (PR #2417 review).
 _BUILD_FAILED_MARKER = ".build-failed"
-# How long a failed build is remembered. A failure the environment caused (a
-# module proxy outage, a full disk) clears without Go or the helper changing,
-# so the next attempt waits a day rather than forever (PR #2417 review).
-_BUILD_FAILURE_RETRY_S = 24 * 60 * 60
+_MARKER_GO_VERSION = "go_version"
+_MARKER_FAILED_AT = "failed_at"
+_SECONDS_PER_MINUTE = 60
 _GO_MOD = "go.mod"
 _GO_DIRECTIVE = re.compile(r"^go\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
 _GO_VERSION = re.compile(r"^go(\d+(?:\.\d+)*)$")
@@ -253,16 +255,46 @@ def _too_old(version: str | None) -> tuple[int, ...] | None:
     return required if found < required else None
 
 
-def _failure_remembered(marker: Path, version: str | None) -> bool:
+def _failed_at(marker: Path, version: str | None) -> float | None:
+    """When the build failed with this Go, or None without a readable marker
+    for it."""
     try:
-        written = marker.stat().st_mtime
-        return (
-            written >= _newest_source_mtime()
-            and time.time() - written < _BUILD_FAILURE_RETRY_S
-            and marker.read_text(encoding=cs.ENCODING_UTF8) == (version or "")
-        )
+        payload = json.loads(marker.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get(_MARKER_GO_VERSION) != (version or ""):
+        return None
+    failed_at = payload.get(_MARKER_FAILED_AT)
+    # bool is an int subclass, but a `true` in the marker holds no time.
+    if isinstance(failed_at, bool) or not isinstance(failed_at, int | float):
+        return None
+    return float(failed_at)
+
+
+def _failure_retry_in(marker: Path, version: str | None) -> float | None:
+    """Seconds until a remembered failure with this Go is retried, or None to
+    build now."""
+    failed_at = _failed_at(marker, version)
+    try:
+        if failed_at is None or failed_at < _newest_source_mtime():
+            return None
     except OSError:
-        return False
+        return None
+    age = time.time() - failed_at
+    # A failure dated after now means the clock moved back since, and holding
+    # it would keep the build off until the clock caught up, plus the TTL.
+    if not 0 <= age < cs.GO_FRONTEND_BUILD_FAILURE_TTL_S:
+        return None
+    return cs.GO_FRONTEND_BUILD_FAILURE_TTL_S - age
+
+
+def _remember_failure(marker: Path, version: str | None) -> None:
+    marker.write_text(
+        json.dumps({_MARKER_GO_VERSION: version or "", _MARKER_FAILED_AT: time.time()}),
+        encoding=cs.ENCODING_UTF8,
+    )
 
 
 def _compile_and_remember(
@@ -273,7 +305,7 @@ def _compile_and_remember(
         if built:
             marker.unlink(missing_ok=True)
         elif built is False:
-            marker.write_text(version or "", encoding=cs.ENCODING_UTF8)
+            _remember_failure(marker, version)
     except OSError:
         pass
     return bool(built)
@@ -301,9 +333,13 @@ def _build_tool(go: str) -> Path | None:
         )
         return None
     marker = cache / _BUILD_FAILED_MARKER
-    if _failure_remembered(marker, version):
+    if (retry_in := _failure_retry_in(marker, version)) is not None:
         logger.warning(
-            ls.GO_FRONTEND_BUILD_FAILED_EARLIER.format(version=version, marker=marker)
+            ls.GO_FRONTEND_BUILD_FAILED_EARLIER.format(
+                version=version,
+                minutes=math.ceil(retry_in / _SECONDS_PER_MINUTE),
+                marker=marker,
+            )
         )
         return None
     return build_cached_artifact(

@@ -75,6 +75,24 @@ class _FakeGo:
         return subprocess.CompletedProcess(cmd, 0, stdout='{"calls": []}\n', stderr="")
 
 
+class _Clock:
+    """Stands in for the frontend's `time` module, so a test can age a failure
+    marker without sleeping."""
+
+    def __init__(self) -> None:
+        self.now = time.time()
+
+    def time(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(fe, "time", fake)
+    return fake
+
+
 @pytest.fixture
 def go_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
@@ -202,18 +220,64 @@ def test_a_timed_out_build_is_retried_on_the_next_sync(
     assert warnings == []
 
 
-def test_a_remembered_failure_expires(
-    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+def test_a_failure_older_than_the_ttl_is_rebuilt(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, clock: _Clock
 ) -> None:
-    # A failure the environment caused (a module proxy outage, a full disk)
-    # clears without Go or the helper changing, so the marker only holds for
-    # a while (PR #2417 review).
+    # A failure the environment caused (no network, a module proxy outage)
+    # clears without Go or the helper changing, and the marker sits in a cache
+    # every repository shares, so it must not keep go/types facts off for long
+    # after (PR #2417 review).
+    fake = _FakeGo("go1.26.0", build_ok=False)
+    _run(monkeypatch, go_repo, fake)
+    fake.build_ok = True
+    clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S + 1
+
+    _facts, warnings = _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 2
+    assert warnings == []
+
+
+def test_a_failure_within_the_ttl_skips_the_build_and_warns_once(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, clock: _Clock
+) -> None:
+    fake = _FakeGo("go1.26.0", build_ok=False)
+    _run(monkeypatch, go_repo, fake)
+    clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S - 1
+
+    _facts, warnings = _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 1
+    assert len(warnings) == 1
+    assert "go1.26.0" in warnings[0]
+
+
+def test_the_failure_time_comes_from_the_marker_not_its_mtime(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, clock: _Clock
+) -> None:
+    # Copying or restoring the cache can give the marker a fresh mtime, but the
+    # failure is still as old as the marker records.
     fake = _FakeGo("go1.26.0", build_ok=False)
     _run(monkeypatch, go_repo, fake)
     [marker] = cgr_home.rglob(fe._BUILD_FAILED_MARKER)
-    stale = time.time() - fe._BUILD_FAILURE_RETRY_S - 60
-    os.utime(marker, (stale, stale))
+    clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S + 1
+    os.utime(marker, (clock.now, clock.now))
     fake.build_ok = True
+
+    _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 2
+
+
+def test_a_failure_dated_after_now_is_rebuilt(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, clock: _Clock
+) -> None:
+    # After the clock moves back, a marker dated ahead of it would otherwise
+    # hold until real time caught up, plus the TTL.
+    fake = _FakeGo("go1.26.0", build_ok=False)
+    _run(monkeypatch, go_repo, fake)
+    fake.build_ok = True
+    clock.now -= 24 * cs.GO_FRONTEND_BUILD_FAILURE_TTL_S
 
     _run(monkeypatch, go_repo, fake)
 
