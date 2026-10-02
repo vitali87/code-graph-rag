@@ -14,6 +14,7 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, normalised_credential, settings
+from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
 
 # Each provider imports its pydantic-ai model and provider classes inside
 # `create_model`, so building one model loads one SDK rather than all of them
@@ -69,21 +70,6 @@ class ApiKeyProvider(ModelProvider):
 def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
     return normalised_credential(api_key) or normalised_credential(
         os.environ.get(env_var)
-    )
-
-
-def strip_v1_suffix(endpoint: str) -> str:
-    """`endpoint` without a trailing `/v1` path segment or slash.
-
-    OpenAI-compatible endpoints are configured with `/v1`, but health checks
-    live at the server root. `removesuffix`, not `rstrip`: the latter treats
-    its argument as a character set and would eat a port or hostname ending
-    in `1` or `v` (`http://host:4001/v1` -> `http://host:400`).
-    """
-    return (
-        endpoint.rstrip(cs.SEPARATOR_SLASH)
-        .removesuffix(cs.V1_PATH)
-        .rstrip(cs.SEPARATOR_SLASH)
     )
 
 
@@ -552,7 +538,7 @@ def list_providers() -> list[str]:
 def check_ollama_running(endpoint: str | None = None) -> bool:
     endpoint = endpoint or settings.OLLAMA_BASE_URL
     try:
-        health_url = urljoin(endpoint, cs.OLLAMA_HEALTH_PATH)
+        health_url = join_endpoint_path(endpoint, cs.OLLAMA_HEALTH_PATH)
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
             response = client.get(health_url)
             return response.status_code == cs.HTTP_OK

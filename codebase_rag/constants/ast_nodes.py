@@ -72,6 +72,16 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Sets of languages whose sources reach each other directly: the JS family
+# compiles to one runtime, C++ calls C, and Scala calls Java on the JVM. A
+# call may cross between them, and their same-stem files (a C source and its
+# header, a `.js` beside its `.ts`) are halves of one module that importers
+# name without an extension. Any language absent here is a family of its own.
+LANGUAGE_FAMILIES: tuple[frozenset[SupportedLanguage], ...] = (
+    JS_TS_LANGUAGES,
+    frozenset({SupportedLanguage.C, SupportedLanguage.CPP}),
+    frozenset({SupportedLanguage.JAVA, SupportedLanguage.SCALA}),
+)
 # Languages where a definition in another file is reachable only through an
 # import (or a Rust `use`): a call the resolver could not bind there waits
 # on an import, which the importer lookup finds from the graph, so recording
