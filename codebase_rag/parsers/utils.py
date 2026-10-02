@@ -348,6 +348,14 @@ def _is_bodiless_ts_member(
     )
 
 
+def _is_abstract_member(
+    decorators: list[str], method_node: ASTNode, language: cs.SupportedLanguage
+) -> bool:
+    return _is_abstract_decorator(decorators) or _is_bodiless_ts_member(
+        method_node, language
+    )
+
+
 _PY_NAMED_PARAMETERS = frozenset(
     {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
 )
@@ -1554,9 +1562,7 @@ def ingest_method(
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
-    if _is_abstract_decorator(decorators) or _is_bodiless_ts_member(
-        method_node, language
-    ):
+    if _is_abstract_member(decorators, method_node, language):
         function_registry.mark_abstract(method_qn)
     function_registry.mark_callable_params(
         method_qn, callable_parameter_indices(method_node, language)

@@ -409,5 +409,5 @@ def test_plain_javascript_class_methods_unchanged(tmp_path: Path) -> None:
         "export function use() { const r = new MemRepo(); return r.find('x'); }\n"
     )
     graph = _graph(tmp_path, {"i.js": src})
-    assert {"proj.i.MemRepo.find"} == graph.labelled(_METHOD)
+    assert graph.labelled(_METHOD) == {"proj.i.MemRepo.find"}
     assert ("proj.i.use", "proj.i.MemRepo.find") in graph.edges("CALLS")
