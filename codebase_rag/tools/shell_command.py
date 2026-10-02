@@ -204,6 +204,12 @@ def _rm_operands(args: list[str]) -> list[str]:
     return []
 
 
+# Python 3.12's Path.resolve raises RuntimeError on a symlink loop (3.13
+# stopped raising), so a loop inside the project must be caught alongside
+# the OS errors or it escapes the guard as an exception.
+_UNRESOLVABLE_PATH_ERRORS = (OSError, RuntimeError, ValueError)
+
+
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
@@ -223,7 +229,7 @@ def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
     # drive rather than the root's, the drive rm runs on.
     try:
         resolved = (project_root / path_arg).resolve()
-    except (OSError, ValueError):
+    except _UNRESOLVABLE_PATH_ERRORS:
         return f"rm with invalid path: {path_arg}"
     if resolved == project_root:
         return "rm targeting the project root"
@@ -285,7 +291,7 @@ def _git_target_escape(target: str, project_root: Path) -> str | None:
     # (its cwd is the root).
     try:
         resolved = (project_root / target).resolve()
-    except (OSError, ValueError):
+    except _UNRESOLVABLE_PATH_ERRORS:
         return f"git pointed at an unresolvable path: {target}"
     try:
         resolved.relative_to(project_root)
@@ -1502,6 +1508,13 @@ def _validate_xargs_launch(
                 "the program it would launch cannot be checked"
             ),
         )
+    launched = cmd_parts[launched_index].partition(".")[0]
+    if launched in cs.SHELL_XARGS_DESTRUCTIVE_PROGRAMS:
+        # xargs appends operands read from stdin, so no check of the visible
+        # arguments bounds what the launched program acts on.
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=cmd_parts[0], reason=cs.SHELL_XARGS_DESTRUCTIVE_REASON
+        )
     # Validate the launched command as a segment in its own right, in BOTH
     # modes. Checking only its name lets a launcher through, since every
     # launcher is itself allowlisted -- and nesting hides `git -c`, the
@@ -1725,39 +1738,36 @@ class ShellCommander:
 
         return last_return_code, "\n".join(all_stdout), "\n".join(all_stderr)
 
+    def refusal(self, command: str) -> str | None:
+        """The reason `execute` refuses `command` before spawning, or None.
+
+        This is the whole pre-spawn decision -- subshell syntax, pipeline
+        patterns, an empty command, then per-segment validation -- so a
+        caller can check a command without running it.
+        """
+        return self._screen(command)[0]
+
+    def _screen(self, command: str) -> tuple[str | None, list[CommandGroup]]:
+        # Returns the parsed groups alongside the verdict so `execute` spawns
+        # exactly the parse that was validated.
+        if subshell_pattern := _has_subshell(command):
+            return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern), []
+        if pattern_reason := _check_pipeline_patterns(command):
+            return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason), []
+        groups = _parse_command(command)
+        if not groups:
+            return te.COMMAND_EMPTY, []
+        return self._validation_error(groups), groups
+
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
-            if subshell_pattern := _has_subshell(command):
-                err_msg = te.COMMAND_SUBSHELL_NOT_ALLOWED.format(
-                    pattern=subshell_pattern
-                )
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
-                )
-
-            if pattern_reason := _check_pipeline_patterns(command):
-                err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=err_msg,
-                )
-
-            groups = _parse_command(command)
-            if not groups:
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=te.COMMAND_EMPTY,
-                )
-
-            if err_msg := self._validation_error(groups):
-                logger.error(err_msg)
+            err_msg, groups = self._screen(command)
+            if err_msg:
+                if err_msg != te.COMMAND_EMPTY:
+                    logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR,
                     stdout="",
@@ -2031,7 +2041,44 @@ def _noninteractive_path_escapes(parts: list[str], root: Path) -> bool:
             continue
         if _escapes_root(root / arg, root):
             return True
-    return False
+    return any(_path_value_escapes(value, root) for value in _file_option_values(parts))
+
+
+def _file_option_values(parts: list[str]) -> list[str]:
+    """Values of the options in `parts` that name a file the command reads."""
+    cmd = parts[0]
+    file_short = cs.SHELL_NONINTERACTIVE_FILE_SHORT_OPTIONS.get(cmd, "")
+    value_short = cs.SHELL_NONINTERACTIVE_VALUE_SHORT_OPTIONS.get(cmd, "") + file_short
+    file_long = cs.SHELL_NONINTERACTIVE_FILE_LONG_OPTIONS.get(cmd, ())
+    values: list[str] = []
+    args = iter(parts[1:])
+    for arg in args:
+        if arg == "--":
+            break
+        if arg.startswith("--"):
+            if "=" not in arg and any(_long_option_matches(arg, o) for o in file_long):
+                values.append(next(args, ""))
+            continue
+        if not arg.startswith("-"):
+            continue
+        for pos, letter in enumerate(arg[1:], start=2):
+            if letter not in value_short:
+                continue
+            # A value-taking letter consumes the rest of the cluster, or the
+            # next argument when it closes the cluster.
+            value = arg[pos:] or next(args, "")
+            if letter in file_short and value:
+                values.append(value)
+            break
+    return values
+
+
+def _path_value_escapes(value: str, root: Path) -> bool:
+    return (
+        bool(_ESCAPING_PATH_ARG.match(value))
+        or ".." in value.split("/")
+        or _escapes_root(root / value, root)
+    )
 
 
 def _option_value_escapes(arg: str, root: Path) -> bool:
@@ -2042,7 +2089,12 @@ def _option_value_escapes(arg: str, root: Path) -> bool:
 
 
 def _escapes_root(candidate: Path, root: Path) -> bool:
-    return os.path.lexists(candidate) and not candidate.resolve().is_relative_to(root)
+    if not os.path.lexists(candidate):
+        return False
+    try:
+        return not candidate.resolve().is_relative_to(root)
+    except _UNRESOLVABLE_PATH_ERRORS:
+        return True
 
 
 def create_noninteractive_shell_command_tool(

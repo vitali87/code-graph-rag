@@ -17,11 +17,10 @@ Run locally (Linux; atheris does not build against Apple Clang):
     uv run --extra fuzz python fuzz/fuzz_parse_source.py -max_total_time=60
 """
 
-from __future__ import annotations
-
 import sys
 
 import atheris
+from loguru import logger
 
 with atheris.instrument_imports():
     from tree_sitter import QueryCursor
@@ -29,6 +28,7 @@ with atheris.instrument_imports():
     from codebase_rag import constants as cs
     from codebase_rag.language_spec import LANGUAGE_FQN_SPECS, LANGUAGE_SPECS
     from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.cpp.preproc_recovery import parse_with_preproc_recovery
     from codebase_rag.parsers.utils import sorted_captures
 
 # Built once: loading a grammar per iteration would dominate the run and leave
@@ -225,6 +225,18 @@ def _name_span(node: object, name: str) -> tuple[int, int] | None:
     return None
 
 
+# Every compiled query slot of `LanguageQueries`. `highlights` feeds the
+# modifier and decorator extraction, and `locals` the JS/TS scope pass.
+_QUERY_SLOTS = (
+    cs.QUERY_FUNCTIONS,
+    cs.QUERY_CLASSES,
+    cs.QUERY_CALLS,
+    cs.QUERY_IMPORTS,
+    cs.QUERY_LOCALS,
+    cs.QUERY_HIGHLIGHTS,
+)
+
+
 def _run_queries(language: cs.SupportedLanguage, tree: object) -> None:
     """Execute the language's compiled queries against the tree.
 
@@ -236,7 +248,7 @@ def _run_queries(language: cs.SupportedLanguage, tree: object) -> None:
     if queries is None:
         return
     # LanguageQueries is a TypedDict; the query slots may each be None.
-    for key in (cs.QUERY_FUNCTIONS, cs.QUERY_CLASSES, cs.QUERY_CALLS, cs.QUERY_IMPORTS):
+    for key in _QUERY_SLOTS:
         query = queries.get(key)
         if query is None:
             continue
@@ -246,22 +258,35 @@ def _run_queries(language: cs.SupportedLanguage, tree: object) -> None:
                 _ = node.type, node.start_byte
 
 
+def _parsed_bytes(root: object) -> bytes:
+    """The bytes the tree's offsets index, which a recovery retry rewrote.
+
+    The C# retry deletes directive lines, so probing the fuzz input at the
+    retry tree's offsets reads other bytes. The root starts at the first token
+    rather than byte 0, so its leading padding is restored as the whitespace
+    it was.
+    """
+    return b" " * root.start_byte + root.text  # type: ignore[attr-defined]
+
+
 def fuzz_parse_source(data: bytes) -> None:
     fdp = atheris.FuzzedDataProvider(data)
     language = _LANGUAGES[fdp.ConsumeIntInRange(0, len(_LANGUAGES) - 1)]
     source = fdp.ConsumeBytes(fdp.remaining_bytes())
 
-    parser = _PARSERS[language]
-    tree = parser.parse(source)
+    # The route every indexed file takes: C, C++ and C# retry with directive
+    # and macro-marker lines blanked when the first parse has errors.
+    tree = parse_with_preproc_recovery(_PARSERS[language], source, language)
     if tree is None or tree.root_node is None:
         raise AssertionError(f"{language} parser returned no tree for {source!r}")
 
     _walk(tree.root_node)
     _run_queries(language, tree)
-    _extract_names(language, tree.root_node, source)
+    _extract_names(language, tree.root_node, _parsed_bytes(tree.root_node))
 
 
 def main() -> None:
+    logger.disable("codebase_rag")
     atheris.Setup(sys.argv, atheris.instrument_func(fuzz_parse_source))
     atheris.Fuzz()
 

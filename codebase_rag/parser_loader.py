@@ -13,6 +13,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
+from .query_predicates import compile_query
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
@@ -256,7 +257,7 @@ def _build_combined_import_pattern(lang_config: LanguageSpec) -> str:
 
 
 def _create_optional_query(language: Language, pattern: str | None) -> Query | None:
-    return Query(language, pattern) if pattern else None
+    return compile_query(language, pattern) if pattern else None
 
 
 def _create_locals_query(
@@ -266,21 +267,22 @@ def _create_locals_query(
     if not locals_pattern:
         return None
     try:
-        return Query(language, locals_pattern)
+        return compile_query(language, locals_pattern)
     except Exception as e:
         logger.debug(ls.LOCALS_QUERY_FAILED, lang=lang_name, error=e)
         return None
 
 
-def _create_highlights_query(
-    language: Language, lang_name: cs.SupportedLanguage
-) -> Query | None:
-    query_str = ""
-
+def _highlights_language(lang_name: cs.SupportedLanguage) -> cs.SupportedLanguage:
     # TSX shares the TypeScript grammar for highlights
-    query_lang_name = (
+    return (
         cs.SupportedLanguage.TS if lang_name == cs.SupportedLanguage.TSX else lang_name
     )
+
+
+def _highlights_source(lang_name: cs.SupportedLanguage) -> str:
+    query_str = ""
+    query_lang_name = _highlights_language(lang_name)
 
     try:
         module_name = (
@@ -294,18 +296,23 @@ def _create_highlights_query(
             f"Failed to load standard highlights query for {query_lang_name}: {e}"
         )
 
-    try:
-        fallback_path = (
-            Path(__file__).parent / "queries" / "highlights" / f"{query_lang_name}.scm"
-        )
-        if fallback_path.exists():
-            custom_queries = fallback_path.read_text(encoding="utf-8")
-            query_str = (
-                query_str + "\n" + custom_queries if query_str else custom_queries
-            )
+    fallback_path = (
+        Path(__file__).parent / "queries" / "highlights" / f"{query_lang_name}.scm"
+    )
+    if fallback_path.exists():
+        custom_queries = fallback_path.read_text(encoding="utf-8")
+        query_str = query_str + "\n" + custom_queries if query_str else custom_queries
+    return query_str
 
+
+def _create_highlights_query(
+    language: Language, lang_name: cs.SupportedLanguage
+) -> Query | None:
+    query_lang_name = _highlights_language(lang_name)
+    try:
+        query_str = _highlights_source(lang_name)
         if query_str:
-            return Query(language, query_str)
+            return compile_query(language, query_str)
     except Exception as e:
         logger.debug(
             f"Failed to load fallback highlights query for {query_lang_name}: {e}"
@@ -338,7 +345,9 @@ def _create_language_queries(
     combined_fc_pattern = f"{function_patterns} {class_patterns}".strip()
     try:
         COMBINED_FUNC_CLASS_QUERIES[lang_name] = (
-            Query(language, combined_fc_pattern) if combined_fc_pattern else None
+            compile_query(language, combined_fc_pattern)
+            if combined_fc_pattern
+            else None
         )
     except Exception:
         COMBINED_FUNC_CLASS_QUERIES[lang_name] = None
@@ -346,7 +355,9 @@ def _create_language_queries(
     combined_fci_pattern = f"{function_patterns} {class_patterns} {combined_import_patterns} {call_patterns}".strip()
     try:
         COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = (
-            Query(language, combined_fci_pattern) if combined_fci_pattern else None
+            compile_query(language, combined_fci_pattern)
+            if combined_fci_pattern
+            else None
         )
     except Exception:
         COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = None

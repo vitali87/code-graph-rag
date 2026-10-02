@@ -1005,3 +1005,162 @@ class TestPubspecYamlParser:
             Dependency("http", "^1.0.0"),
             Dependency("test", "^1.24.0"),
         ]
+
+
+def _triples(deps: list[Dependency]) -> list[tuple[str, str, dict[str, str]]]:
+    return [(d.name, d.spec, d.properties) for d in deps]
+
+
+class TestWrongTypedManifestValues:
+    """A manifest is repository content, so its values can have any type.
+
+    A section of the wrong type declares nothing, an entry of the wrong type
+    never costs its siblings, and a version that is not a string is dropped
+    rather than written to the graph as a number or a map.
+    """
+
+    @pytest.mark.parametrize(
+        ("file_name", "text", "expected"),
+        [
+            (
+                "package.json",
+                '{"dependencies": {"a": 1, "b": "^2"}}',
+                [("a", "", {}), ("b", "^2", {})],
+            ),
+            (
+                "composer.json",
+                '{"require": {"a/b": {"x": 1}, "c/d": "^1"}, "require-dev": {"e/f": 2}}',
+                [("a/b", "", {}), ("c/d", "^1", {}), ("e/f", "", {})],
+            ),
+            (
+                "Cargo.toml",
+                '[dependencies]\na = { version = 3 }\nb = "1.0"\n',
+                [("a", "", {}), ("b", "1.0", {})],
+            ),
+        ],
+        ids=["package-json-number", "composer-object", "cargo-number-version"],
+    )
+    def test_a_version_that_is_not_a_string_is_dropped(
+        self,
+        tmp_path: Path,
+        log_messages: list[str],
+        file_name: str,
+        text: str,
+        expected: list[object],
+    ) -> None:
+        (tmp_path / file_name).write_text(text)
+        assert _triples(parse_dependencies(tmp_path / file_name)) == expected
+        assert log_messages == []
+
+    @pytest.mark.parametrize(
+        ("file_name", "text", "expected"),
+        [
+            (
+                "package.json",
+                '{"dependencies": ["a"], "devDependencies": {"b": "^2"}}',
+                [("b", "^2", {})],
+            ),
+            (
+                "composer.json",
+                '{"require": "a/b", "require-dev": {"c/d": "^1"}}',
+                [("c/d", "^1", {})],
+            ),
+            (
+                "composer.json",
+                '{"require": {"a/b": "^1"}, "require-dev": ["c/d"]}',
+                [("a/b", "^1", {})],
+            ),
+            (
+                "Cargo.toml",
+                '[dependencies]\na = 1\nb = "1.0"\n[dev-dependencies]\nc = "2"\n',
+                [("a", "", {}), ("b", "1.0", {}), ("c", "2", {})],
+            ),
+            (
+                "Cargo.toml",
+                'dependencies = "a"\n[dev-dependencies]\nc = "2"\n',
+                [("c", "2", {})],
+            ),
+            (
+                "pyproject.toml",
+                '[project]\ndependencies = [1, "b>=1"]\n',
+                [("b", "b>=1", {})],
+            ),
+            (
+                "pyproject.toml",
+                '[tool]\npoetry = 1\n[project]\ndependencies = ["b>=1"]\n',
+                [("b", "b>=1", {})],
+            ),
+            (
+                "pyproject.toml",
+                'tool = 1\n[project]\ndependencies = ["b>=1"]\n',
+                [("b", "b>=1", {})],
+            ),
+            (
+                "pyproject.toml",
+                '[tool.poetry]\ndependencies = 1\n[project]\ndependencies = ["b>=1"]\n',
+                [("b", "b>=1", {})],
+            ),
+            (
+                "pyproject.toml",
+                'project = 1\n[tool.poetry.dependencies]\nb = "^1"\n',
+                [("b", "^1", {})],
+            ),
+            (
+                "pyproject.toml",
+                '[project]\ndependencies = ["b>=1"]\noptional-dependencies = 7\n',
+                [("b", "b>=1", {})],
+            ),
+        ],
+        ids=[
+            "package-json-list-section",
+            "composer-string-section",
+            "composer-list-dev-section",
+            "cargo-number-entry",
+            "cargo-string-section",
+            "pyproject-number-entry",
+            "pyproject-number-poetry",
+            "pyproject-number-tool",
+            "pyproject-number-poetry-dependencies",
+            "pyproject-number-project",
+            "pyproject-number-optional",
+        ],
+    )
+    def test_a_wrong_typed_value_does_not_cost_its_siblings(
+        self,
+        tmp_path: Path,
+        log_messages: list[str],
+        file_name: str,
+        text: str,
+        expected: list[object],
+    ) -> None:
+        # A parser stops at the first crash and keeps what it had, so a bad
+        # LAST section loses nothing and is visible only as a logged failure.
+        (tmp_path / file_name).write_text(text)
+        assert _triples(parse_dependencies(tmp_path / file_name)) == expected
+        assert log_messages == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '[project]\ndependencies = "requests>=2"\n',
+            '[project.optional-dependencies]\ng = "xy"\n',
+            '[project]\ndependencies = { requests = ">=2" }\n',
+        ],
+        ids=["string-dependencies", "string-group", "table-dependencies"],
+    )
+    def test_a_pyproject_list_of_the_wrong_type_declares_nothing(
+        self, tmp_path: Path, log_messages: list[str], text: str
+    ) -> None:
+        # Iterating a string reads one package per character: `r`, `e`, `q`...
+        (tmp_path / "pyproject.toml").write_text(text)
+        assert parse_dependencies(tmp_path / "pyproject.toml") == []
+        assert log_messages == []
+
+    @pytest.mark.parametrize("file_name", ["package.json", "composer.json"])
+    def test_a_manifest_that_is_not_an_object_declares_nothing(
+        self, tmp_path: Path, log_messages: list[str], file_name: str
+    ) -> None:
+        # Well-formed JSON of the wrong shape is not a parse failure.
+        (tmp_path / file_name).write_text('["a", "b"]')
+        assert parse_dependencies(tmp_path / file_name) == []
+        assert log_messages == []

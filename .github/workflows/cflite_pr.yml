@@ -1,8 +1,13 @@
 # ClusterFuzzLite on pull requests.
 #
 # Runs each harness in fuzz/ for a short budget against the PR's head, seeded
-# from the corpus in fuzz/corpus/. A crash fails the job with the reproducing
-# input attached as an artifact.
+# from the corpus the nightly batch has grown (or fuzz/corpus/ before there is
+# one). A crash fails the job with the reproducing input attached as an
+# artifact, and its report goes to code scanning.
+#
+# The job is bounded so it never holds a pull request for long: about ten
+# minutes of build and corpus download, ten of fuzzing on every core, and a
+# hard stop at thirty. The long runs belong to cflite_batch.yml.
 #
 # See https://google.github.io/clusterfuzzlite/
 
@@ -23,6 +28,7 @@ jobs:
   fuzzing:
     name: Fuzz (${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       security-events: write
     strategy:
@@ -51,4 +57,19 @@ jobs:
           # so dropping this risks real crashes being written off as
           # unreproducible.
           language: python
+          # -jobs/-workers on every core of the runner, for the same ten
+          # minutes of wall time.
+          parallel-fuzzing: true
           output-sarif: true
+
+      # output-sarif only writes the report into the workspace; this step is
+      # what puts it in front of code scanning. It runs after a crash has
+      # failed the step above, and is skipped when fuzzing never got as far
+      # as writing a report.
+      - name: Upload SARIF
+        if: always() && hashFiles('cifuzz-sarif/results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: cifuzz-sarif/results.sarif
+          checkout_path: cifuzz-sarif
+          category: clusterfuzzlite-pr
