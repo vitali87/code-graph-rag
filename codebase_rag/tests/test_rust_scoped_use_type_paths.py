@@ -270,6 +270,37 @@ def test_fn_scoped_use_of_first_party_type_shadows_the_module_type(
     assert (caller, f"{own}.build") not in edges, edges
 
 
+def test_scoped_type_without_the_item_binds_no_other_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # beta's `Builder` has no `reset` in the graph (a derive or a macro
+    # could supply it), while alpha's shadowed `Builder` and an unrelated
+    # `Parser` both define one. The path names beta's type, so neither of
+    # them is the target, however close it sits.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_mod_miss",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": _ALPHA_LIB_RS
+            + (
+                "\nimpl Builder {\n    pub fn reset() -> u32 {\n        0\n    }\n}\n\n"
+                "impl Parser {\n    pub fn reset() -> u32 {\n        1\n    }\n}\n\n"
+                "#[cfg(test)]\nmod tests {\n"
+                "    use my_beta::Builder;\n\n"
+                "    #[test]\n    fn missing() {\n"
+                "        let v = Builder::reset();\n"
+                "        assert_eq!(v, 0);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    callees = _callees(edges, "rs_use_mod_miss.crates.alpha.src.lib.tests.missing")
+    assert not {c for c in callees if c.endswith(".reset")}, edges
+
+
 # --- what must keep resolving as before ---------------------------------------
 
 

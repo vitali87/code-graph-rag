@@ -1639,19 +1639,12 @@ class CallResolver:
             return False, None
         if bound not in self.function_registry:
             return True, None
-        if result := self._try_method_on_class(
+        # The path names this type. When the graph holds no such method on it
+        # (a derive or a macro generated it), no other type's same-named
+        # item is the target: the bare-name guess would bind the shadowed
+        # type's own, the closest by import distance (PR #2791 review).
+        return True, self._try_method_on_class(
             bound, item, cs.SEPARATOR_DOT, call.call_name, type_name, type_name
-        ):
-            return True, result
-        # The type holds no such method in the graph (a derive, a macro, an
-        # impl block written in another module), so only the bare-name
-        # guess is left, as it is for a file-level import of the type.
-        return True, self._try_resolve_via_trie(
-            call.call_name,
-            call.module_qn,
-            call.language,
-            call.call_point,
-            call.constructing,
         )
 
     def _resolve_rust_prefixed_or_local(
