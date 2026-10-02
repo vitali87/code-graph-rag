@@ -48,6 +48,10 @@ TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
 TS_PY_DECORATED_DEFINITION = "decorated_definition"
 TS_PY_DECORATOR = "decorator"
+# `@x.setter`, `@x.getter` and `@x.deleter` add an accessor to the property
+# `x`; the decorated `def` takes the same name and so does the property.
+PY_PROPERTY_ACCESSOR_ATTRS = frozenset({"getter", "setter", "deleter"})
+PY_PROPERTY_DECORATOR = "property"
 TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"

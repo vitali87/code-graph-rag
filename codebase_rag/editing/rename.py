@@ -41,6 +41,7 @@ from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
+from ..utils.qn_markers import natural_qn, strip_dup_marker
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
@@ -95,7 +96,7 @@ _MAX_IMPORT_LINES = 200
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
 
-    kind: str  # definition | call | reference | import
+    kind: str  # definition | decorator | call | reference | import
     path: str
     line: int
     col: int
@@ -136,6 +137,72 @@ class RenameReport(NamedTuple):
 
 
 # --- site collection -----------------------------------------------------------
+
+
+def renamed_qualified_name(member: str, new_name: str) -> str:
+    # A property's setter is registered as `balance@10`, after its getter.
+    # The rename moves no line, so the marker stays: dropping it made the
+    # contract expect the getter's name for the setter (issue #2667).
+    natural = strip_dup_marker(member)
+    marker = member[len(natural) :]
+    owner = natural.rsplit(cs.SEPARATOR_DOT, 1)[0]
+    return f"{owner}{cs.SEPARATOR_DOT}{new_name}{marker}"
+
+
+def _node_text(node: Node | None) -> str | None:
+    if node is None or node.text is None:
+        return None
+    return node.text.decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _decorators(source: bytes, start_line: int, name: str) -> list[Node]:
+    """The decorator expressions of the Python `def name` on `start_line`."""
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    if parser is None:
+        return []
+    stack: list[Node] = [parser.parse(source).root_node]
+    while stack:
+        node = stack.pop()
+        if not node.start_point[0] < start_line <= node.end_point[0] + 1:
+            continue
+        if (
+            node.type == cs.TS_PY_FUNCTION_DEFINITION
+            and node.start_point[0] + 1 == start_line
+            and _node_text(node.child_by_field_name(cs.FIELD_NAME)) == name
+        ):
+            decorated = node.parent
+            if decorated is None or decorated.type != cs.TS_PY_DECORATED_DEFINITION:
+                return []
+            return [
+                decorator.named_children[0]
+                for decorator in decorated.children
+                if decorator.type == cs.TS_PY_DECORATOR and decorator.named_children
+            ]
+        stack.extend(node.children)
+    return []
+
+
+def _accessor_tokens(decorators: list[Node], name: str) -> list[tuple[int, int]]:
+    """(line, col) of `name` in each `@name.setter`, `@name.getter` or
+    `@name.deleter` among `decorators`.
+
+    The decorator names the property the `def` adds an accessor to, so it is
+    as much a site of the name as the `def` itself.
+    """
+    tokens: list[tuple[int, int]] = []
+    for expression in decorators:
+        if expression.type != cs.TS_PY_ATTRIBUTE:
+            continue
+        owner = expression.child_by_field_name(cs.FIELD_OBJECT)
+        accessor = expression.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        if (
+            owner is not None
+            and owner.type == cs.TS_PY_IDENTIFIER
+            and _node_text(owner) == name
+            and _node_text(accessor) in cs.PY_PROPERTY_ACCESSOR_ATTRS
+        ):
+            tokens.append((owner.start_point[0] + 1, owner.start_point[1]))
+    return tokens
 
 
 def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
@@ -407,6 +474,80 @@ class Renamer:
             return qn.rsplit(cs.SEPARATOR_DOT, 1)[0], None
         return base_module_qn(Path(path), self.project), path
 
+    def _rename_set(self, qn: str) -> list[str]:
+        """`qn`, its override hierarchy, and the other accessors of any
+        Python property among them, with their hierarchies in turn."""
+        members = _hierarchy(self.fetch_all, self.project, qn)
+        frontier = list(members)
+        while frontier:
+            for accessor in self._property_accessors(frontier.pop()):
+                for member in _hierarchy(self.fetch_all, self.project, accessor):
+                    if member not in members:
+                        members.append(member)
+                        frontier.append(member)
+        return members
+
+    def _property_accessors(self, qn: str) -> list[str]:
+        """The other accessors of the Python property `qn` is one of.
+
+        A property with a setter or deleter is several methods sharing one
+        name (`balance`, `balance@10`) that no OVERRIDES edge links. Renaming
+        one alone leaves `@balance.setter` naming a property that is gone, or
+        makes a second property beside it (issue #2667).
+        """
+        definition = graph_query.definition(self.fetch_all, self.project, qn, None)
+        path, name = definition["path"], definition["name"]
+        if (
+            not path
+            or not name
+            or definition["label"] != cs.NodeLabel.METHOD.value
+            or get_language_for_extension(Path(path).suffix)
+            != cs.SupportedLanguage.PYTHON
+        ):
+            return []
+        try:
+            source = Patcher(self.repo_root).source(path)
+        except PatcherError:
+            return []
+        own = _decorators(source, definition["start_line"] or 1, name)
+        # Only a `def` that is part of a property can have accessor twins;
+        # every other method skips the graph read below.
+        if not _accessor_tokens(own, name) and not any(
+            _node_text(expression) == cs.PY_PROPERTY_DECORATOR for expression in own
+        ):
+            return []
+        natural = natural_qn(qn)
+        twins: dict[str, int] = {}
+        for row in self.fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS,
+            {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(
+                    _longer_project_prefixes(self.fetch_all, self.project)
+                ),
+                cs.CYPHER_PARAM_PATHS: [path],
+            },
+        ):
+            other = row.get(cs.KEY_QUALIFIED_NAME)
+            line = row.get(cs.KEY_START_LINE)
+            if (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD.value
+                and isinstance(other, str)
+                and isinstance(line, int)
+                and natural_qn(other) == natural
+            ):
+                twins[other] = line
+        if len(twins) < 2:
+            return []
+        # Same-named methods are one property only when one of them adds an
+        # accessor to it; a getter redefined as a plain method is not.
+        if not any(
+            _accessor_tokens(_decorators(source, line, name), name)
+            for line in twins.values()
+        ):
+            return []
+        return sorted(other for other in twins if other != qn)
+
     def _collect(self, qn: str) -> tuple[list[RenameSite], list[str], str, str | None]:
         definition = graph_query.definition(
             self.fetch_all, self.project, qn, self.repo_root
@@ -420,6 +561,16 @@ class Renamer:
         sites: list[RenameSite] = [
             self._definition_site(qn, definition, path, old_name, patcher)
         ]
+        if get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON:
+            sites.extend(
+                RenameSite("decorator", path, line, col, qn, cs.EdgeResolution.EXACT)
+                for line, col in _accessor_tokens(
+                    _decorators(
+                        patcher.source(path), definition["start_line"] or 1, old_name
+                    ),
+                    old_name,
+                )
+            )
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             self._add_site(sites, unlocatable, "call", row, old_name, patcher)
@@ -678,7 +829,7 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        hierarchy = _hierarchy(self.fetch_all, self.project, qn)
+        hierarchy = self._rename_set(qn)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
@@ -1129,10 +1280,7 @@ class Renamer:
         self, report: RenameReport, new_name: str
     ) -> list[tuple[str, str]]:
         parents = [
-            (
-                member,
-                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
-            )
+            (member, renamed_qualified_name(member, new_name))
             for member in report.hierarchy
         ]
         pairs = list(parents)
