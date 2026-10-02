@@ -324,12 +324,7 @@ def arity_qualified_name(type_node: Node, name: str) -> str:
     root = type_node
     while root.parent is not None:
         root = root.parent
-    return clr_type_name(name, arity) if type_node.id in _arity_twin_ids(root) else name
-
-
-def clr_type_name(name: str, arity: int) -> str:
-    """`name` spelled for `arity` the CLR way: `Base`1`, or `Base` for 0."""
-    return f"{name}{GENERIC_ARITY_MARKER}{arity}" if arity else name
+    return type_ref(name, arity) if type_node.id in _arity_twin_ids(root) else name
 
 
 @lru_cache(maxsize=cs.CSHARP_ARITY_TWIN_CACHE_SIZE)
@@ -346,17 +341,9 @@ def _arity_twin_ids(root: Node) -> frozenset[int]:
     while stack:
         node, scope = stack.pop()
         for child in node.children:
-            if child.type in _CSHARP_TYPE_DECLARATIONS:
-                if name := _declared_name(child):
-                    arity = type_parameter_count(child)
-                    arities = by_name.setdefault((scope, name), {})
-                    arities.setdefault(arity, []).append(child.id)
-                    stack.append((child, (*scope, clr_type_name(name, arity))))
-            elif child.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
-                if name := _declared_name(child):
-                    stack.append((child, (*scope, *name.split(cs.SEPARATOR_DOT))))
-            elif child.type in cs.CSHARP_TYPE_DECLARATION_HOLDERS:
-                stack.append((child, scope))
+            child_scope = _declaration_scope(child, scope, by_name)
+            if child_scope is not None:
+                stack.append((child, child_scope))
     return frozenset(
         node_id
         for arities in by_name.values()
@@ -365,6 +352,29 @@ def _arity_twin_ids(root: Node) -> frozenset[int]:
         if arity
         for node_id in node_ids
     )
+
+
+def _declaration_scope(
+    child: Node,
+    scope: tuple[str, ...],
+    by_name: dict[tuple[tuple[str, ...], str], dict[int, list[int]]],
+) -> tuple[str, ...] | None:
+    # The scope the declarations inside `child` sit in, or None when it holds
+    # none. A type declaration is first recorded in `by_name` under its scope,
+    # name and arity.
+    if child.type in _CSHARP_TYPE_DECLARATIONS:
+        name = _declared_name(child)
+        if not name:
+            return None
+        arity = type_parameter_count(child)
+        by_name.setdefault((scope, name), {}).setdefault(arity, []).append(child.id)
+        return (*scope, type_ref(name, arity))
+    if child.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+        name = _declared_name(child)
+        return (*scope, *name.split(cs.SEPARATOR_DOT)) if name else None
+    if child.type in cs.CSHARP_TYPE_DECLARATION_HOLDERS:
+        return scope
+    return None
 
 
 def unique_carrier(
