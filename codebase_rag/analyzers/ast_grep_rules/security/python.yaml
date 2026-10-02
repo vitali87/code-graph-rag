@@ -16,11 +16,27 @@ rules:
             - has: { kind: string, stopBy: end }
   - id: sqli_fstring
     message: "Possible SQL injection: execute() called with an f-string"
+    # The callee is execute/executemany and the f-string is one of ITS
+    # arguments. Searching the whole subtree for each (issue #2691) matched a
+    # keyword argument named `execute`, an f-string beside a constant query,
+    # and every call enclosing a real one, once per enclosing call. The search
+    # descends only through parentheses and adjacent-literal concatenation, so
+    # `execute((f"..."))` and `execute(f"..." " LIMIT 1")` are still found
+    # while an f-string inside a parameter tuple or a nested call is not.
     rule:
       kind: call
       all:
-        - has: { pattern: "execute", stopBy: end }
-        - has: { kind: string, regex: '^f', stopBy: end }
+        - has: { field: function, regex: '(?:^|\.)execute(?:many)?$' }
+        - has:
+            field: arguments
+            has:
+              kind: string
+              regex: '^(?i:f|rf|fr)[\x27"]'
+              stopBy:
+                not:
+                  any:
+                    - kind: parenthesized_expression
+                    - kind: concatenated_string
   - id: hardcoded_secret
     # Security rule: favour recall. Value must be a non-trivial literal (>=8
     # chars) that is not a format/message template (an f-string/.format {..}
@@ -63,8 +79,18 @@ rules:
       has: { regex: 'shell\s*=\s*True', stopBy: end }
   - id: yaml_load
     message: "yaml.load() without SafeLoader can execute arbitrary code"
+    # A SafeLoader or CSafeLoader, by keyword or as the second positional
+    # argument, is the fix this message asks for (issue #2691).
     rule:
       pattern: "yaml.load($$$)"
+      not:
+        has:
+          field: arguments
+          has:
+            any:
+              - kind: keyword_argument
+                regex: '^Loader\s*=\s*(?:yaml\.)?C?SafeLoader$'
+              - regex: '^(?:yaml\.)?C?SafeLoader$'
   - id: pickle_loads
     message: "pickle.loads() on untrusted data executes arbitrary code"
     rule:
