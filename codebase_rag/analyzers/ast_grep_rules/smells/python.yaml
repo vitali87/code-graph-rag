@@ -10,18 +10,32 @@ rules:
       regex: '^except\s*:'
   - id: broad_except
     message: "Broad except Exception catches too much"
+    # The caught type itself, read from the clause's own children: a regex
+    # over the clause's text also read its body, so a specific handler with a
+    # nested `except Exception` matched, and so did `except ExceptionGroup`
+    # (issue #2693).
     rule:
       kind: except_clause
-      regex: 'except\s+Exception'
+      has:
+        any:
+          - { kind: identifier, regex: '^Exception$' }
+          - { kind: tuple, has: { kind: identifier, regex: '^Exception$' } }
+          - kind: as_pattern
+            has:
+              any:
+                - { kind: identifier, regex: '^Exception$' }
+                - { kind: tuple, has: { kind: identifier, regex: '^Exception$' } }
+  # An annotated default (`items: list = []`) is a typed_default_parameter
+  # (issue #2693).
   - id: mutable_default_list
     message: "Mutable default argument (list) is shared across calls"
     rule:
-      kind: default_parameter
+      any: [{ kind: default_parameter }, { kind: typed_default_parameter }]
       has: { field: value, kind: list }
   - id: mutable_default_dict
     message: "Mutable default argument (dict) is shared across calls"
     rule:
-      kind: default_parameter
+      any: [{ kind: default_parameter }, { kind: typed_default_parameter }]
       has: { field: value, kind: dictionary }
   - id: wildcard_import
     message: "Wildcard import pollutes the namespace"

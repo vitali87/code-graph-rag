@@ -8,8 +8,10 @@ from .lua import utils as lua_utils
 from .utils import safe_decode_text
 
 # Once inside a function body the declaration is a local, not a module-level
-# export, so an `export` ancestor beyond this boundary must not count.
-_JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK})
+# export, so an `export` ancestor beyond this boundary must not count. A
+# concise arrow (`() => class {}`) has no block, so the arrow itself is the
+# boundary for what its expression body builds.
+_JS_TS_EXPORT_STOP_TYPES = frozenset({cs.TS_STATEMENT_BLOCK, cs.TS_ARROW_FUNCTION})
 # Textual markers whose presence in a top-level statement makes a JS file a
 # CommonJS module rather than a classic page-scope script.
 _JS_REQUIRE_CALL = (cs.JS_REQUIRE_KEYWORD + cs.CHAR_PAREN_OPEN).encode()
@@ -17,6 +19,27 @@ _JS_MODULE_EXPORTS = (
     cs.JS_MODULE_KEYWORD + cs.SEPARATOR_DOT + cs.JS_EXPORTS_KEYWORD
 ).encode()
 _JS_EXPORTS_MEMBER = (cs.JS_EXPORTS_KEYWORD + cs.SEPARATOR_DOT).encode()
+_JS_MODULE_KEYWORD_BYTES = cs.JS_MODULE_KEYWORD.encode()
+_JS_EXPORTS_KEYWORD_BYTES = cs.JS_EXPORTS_KEYWORD.encode()
+# Declarations that bind the module-level name an export statement refers to.
+# A class expression is absent on purpose: `const X = class Y {}` binds X.
+_JS_TS_BINDING_DECLARATION_TYPES = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_FUNCTION_SIGNATURE,
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_ABSTRACT_CLASS_DECLARATION,
+        cs.TS_INTERFACE_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_TYPE_ALIAS_DECLARATION,
+        cs.TS_INTERNAL_MODULE,
+        cs.TS_VARIABLE_DECLARATOR,
+    }
+)
+_JS_TS_FIELD_DEFINITION_TYPES = frozenset(
+    {cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
 # Real function scopes. A bare `{ ... }` statement_block at top level
 # (django's core.js) is NOT one: prototype mutations and var/function
 # declarations inside it still land in page scope, so only a function
@@ -133,14 +156,53 @@ def _js_ts_exported(node: Node, name: str) -> bool:
     if _js_ts_private_member(node):
         return False
     # Two export forms: the declaration wrapped by `export` (caught by the
-    # ancestor walk), and a separate `export { name }` / `export { x as y }`
-    # list elsewhere in the module, which does not wrap the declaration and so
-    # must be matched by name against the module's export clauses.
+    # ancestor walk), and a separate `export { name }` / `export { x as y }` /
+    # `export default x` / CommonJS `module.exports = x` elsewhere in the
+    # module, which does not wrap the declaration and so must be matched by
+    # name against the module's export statements.
     if _has_export_ancestor(node):
         return True
-    if bool(name) and name in _module_export_list_names(node):
+    if _named_by_module_export(node, name):
         return True
     return _is_script_global(node)
+
+
+def _named_by_module_export(node: Node, name: str) -> bool:
+    # A separate export names a MODULE-LEVEL binding, and everything declared
+    # inside that binding's declaration is exported with it: the members of
+    # `class X {}` + `export { X }` exactly as `_has_export_ancestor` exports
+    # the members of `export class X {}` (honojs/hono's
+    # `export { Hono as HonoBase }`, issue #2591). A member's own name never
+    # counts, so `export { helper }` cannot root an unrelated `C.helper`. A
+    # declaration outside any module-level binding (a function-local) keeps
+    # being matched by its own name.
+    export_names = _module_export_list_names(node)
+    if not export_names:
+        return False
+    binding = _module_binding_name(node)
+    return (name if binding is None else binding) in export_names
+
+
+def _module_binding_name(node: Node) -> str | None:
+    # The outermost binding declaration enclosing `node` at module level, found
+    # by the same walk (and the same function-body boundary) as the `export`
+    # ancestor rule; None once the walk enters a function body. `node` itself
+    # is never a boundary: `const f = () => x` binds the arrow, it does not
+    # sit inside one.
+    binding = node if node.type in _JS_TS_BINDING_DECLARATION_TYPES else None
+    current = node.parent
+    while current is not None:
+        if current.type in _JS_TS_EXPORT_STOP_TYPES:
+            return None
+        if current.type in _JS_TS_BINDING_DECLARATION_TYPES:
+            binding = current
+        current = current.parent
+    if binding is None:
+        return None
+    name_node = binding.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.text is None:
+        return None
+    return name_node.text.decode()
 
 
 def _is_script_global(node: Node) -> bool:
@@ -194,14 +256,29 @@ def _js_ts_private_member(node: Node) -> bool:
     # while the ECMAScript form is a `#name` method whose name node is a
     # `private_property_identifier`; both are private regardless of an
     # exported enclosing class.
-    if any(c.type == cs.TS_PRIVATE_PROPERTY_IDENTIFIER for c in node.children):
+    member = _js_ts_member_declaration(node)
+    if any(c.type == cs.TS_PRIVATE_PROPERTY_IDENTIFIER for c in member.children):
         return True
     modifier = next(
-        (c for c in node.children if c.type == cs.TS_ACCESSIBILITY_MODIFIER), None
+        (c for c in member.children if c.type == cs.TS_ACCESSIBILITY_MODIFIER), None
     )
     return modifier is not None and any(
         c.type == cs.TS_PRIVATE for c in modifier.children
     )
+
+
+def _js_ts_member_declaration(node: Node) -> Node:
+    # A property-arrow member (`private hide = () => 1`) is ingested from the
+    # arrow itself, but its `private` modifier and `#name` sit on the enclosing
+    # field definition, so privacy is read there.
+    parent = node.parent
+    if (
+        parent is not None
+        and parent.type in _JS_TS_FIELD_DEFINITION_TYPES
+        and parent.child_by_field_name(cs.FIELD_VALUE) == node
+    ):
+        return parent
+    return node
 
 
 def _has_export_ancestor(node: Node) -> bool:
@@ -215,20 +292,32 @@ def _has_export_ancestor(node: Node) -> bool:
     return False
 
 
-def _module_export_list_names(node: Node) -> set[str]:
+# 1-slot memo of the last root's export-name scan, for the same reason and
+# with the same lifetime argument as `_last_script_scan`: every declaration of
+# a file asks, and the answer is per file.
+_last_export_scan: tuple[Node, frozenset[str]] | None = None
+
+
+def _module_export_list_names(node: Node) -> frozenset[str]:
     # Local names exported by module-level `export { ... }` / `export default`
-    # statements. `export { local as exported }` still makes `local` reachable,
-    # so the specifier's local name (its first identifier) is what counts.
-    # Rescanned per declaration; fine for real files, since a module rarely has
-    # enough top-level export statements for the linear scan to matter.
+    # / `export =` statements and CommonJS export assignments.
+    # `export { local as exported }` still makes `local` reachable, so the
+    # specifier's local name (its first identifier) is what counts.
+    global _last_export_scan
     root = node
     while root.parent is not None:
         root = root.parent
+    if _last_export_scan is not None and _last_export_scan[0] == root:
+        return _last_export_scan[1]
     names: set[str] = set()
     for statement in root.children:
         if statement.type == cs.TS_EXPORT_STATEMENT:
             names.update(_export_statement_local_names(statement))
-    return names
+        elif statement.type == cs.TS_EXPRESSION_STATEMENT:
+            names.update(_commonjs_export_local_names(statement))
+    result = frozenset(names)
+    _last_export_scan = (root, result)
+    return result
 
 
 def _first_child_of_type(node: Node, node_type: str) -> Node | None:
@@ -252,10 +341,80 @@ def _export_statement_local_names(statement: Node) -> list[str]:
             for local in locals_
             if local is not None and (text := local.text) is not None
         ]
-    if _first_child_of_type(statement, cs.TS_EXPORT_DEFAULT) is not None:
+    # `export default X` and TypeScript's `export = X` (the CommonJS
+    # `module.exports = X` spelling) both publish the module binding X.
+    if (
+        _first_child_of_type(statement, cs.TS_EXPORT_DEFAULT) is not None
+        or _first_child_of_type(statement, cs.CHAR_EQUALS) is not None
+    ):
         ident = _first_child_of_type(statement, cs.TS_IDENTIFIER)
         if ident is not None and ident.text is not None:
             return [ident.text.decode()]
+    return []
+
+
+def _commonjs_export_local_names(statement: Node) -> list[str]:
+    # A top-level `module.exports = X`, `module.exports = { X, Y: Z }`,
+    # `exports.Y = X` or `module.exports.Y = X` publishes the module bindings
+    # it names, like an export clause. Only top-level statements are passed
+    # in: an assignment inside a function runs when that function does, not at
+    # module load.
+    assignment = statement.named_children[0] if statement.named_children else None
+    if assignment is None or assignment.type != cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        return []
+    target = assignment.child_by_field_name(cs.FIELD_LEFT)
+    value = assignment.child_by_field_name(cs.FIELD_RIGHT)
+    if target is None or value is None:
+        return []
+    if _is_module_exports(target):
+        if value.type == cs.TS_OBJECT:
+            return _object_identifier_values(value)
+        return _identifier_names(value)
+    if target.type == cs.TS_MEMBER_EXPRESSION and _is_exports_object(
+        target.child_by_field_name(cs.FIELD_OBJECT)
+    ):
+        return _identifier_names(value)
+    return []
+
+
+def _is_module_exports(node: Node) -> bool:
+    if node.type != cs.TS_MEMBER_EXPRESSION:
+        return False
+    obj = node.child_by_field_name(cs.FIELD_OBJECT)
+    prop = node.child_by_field_name(cs.FIELD_PROPERTY)
+    return (
+        obj is not None
+        and prop is not None
+        and obj.text == _JS_MODULE_KEYWORD_BYTES
+        and prop.text == _JS_EXPORTS_KEYWORD_BYTES
+    )
+
+
+def _is_exports_object(node: Node | None) -> bool:
+    if node is None:
+        return False
+    if node.type == cs.TS_IDENTIFIER:
+        return node.text == _JS_EXPORTS_KEYWORD_BYTES
+    return _is_module_exports(node)
+
+
+def _object_identifier_values(obj: Node) -> list[str]:
+    # `{ X }` (shorthand) and `{ Y: X }` both export the binding X; a value
+    # that is not a bare identifier (`{ run() {} }`) names no binding.
+    names: list[str] = []
+    for child in obj.named_children:
+        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER and child.text:
+            names.append(child.text.decode())
+        elif child.type == cs.TS_PAIR:
+            value = child.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None:
+                names.extend(_identifier_names(value))
+    return names
+
+
+def _identifier_names(node: Node) -> list[str]:
+    if node.type == cs.TS_IDENTIFIER and node.text:
+        return [node.text.decode()]
     return []
 
 

@@ -40,6 +40,11 @@ make watch REPO_PATH=/path/to/your/repo HOST=localhost PORT=7687 BATCH_SIZE=1000
 
 ## Multi-Terminal Workflow
 
+The watcher names the project exactly as `cgr start --repo-path` does for the
+same directory (the directory name plus a hash of its resolved path), so its
+live updates land in the project `cgr start` and the other `cgr` commands read.
+If you name the project with `--project-name`, pass the same name to both.
+
 ```bash
 # Terminal 1: Start the real-time updater
 python realtime_updater.py ~/my-project
@@ -56,6 +61,7 @@ cgr start --repo-path ~/my-project
 | `--host` | No | `localhost` | Memgraph host |
 | `--port` | No | `7687` | Memgraph port |
 | `--batch-size` | No | | Number of buffered nodes/relationships before flushing to Memgraph |
+| `--project-name` | No | Same as `cgr start --repo-path` | Project name to store in the graph; give the one you gave `cgr start --project-name` |
 
 ## Performance Note
 
