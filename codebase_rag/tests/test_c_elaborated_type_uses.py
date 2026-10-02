@@ -172,6 +172,21 @@ def test_struct_named_by_other_structs_fields_is_one_node(
             "sigval",
             id="union-parameter",
         ),
+        pytest.param(
+            "extern struct foo bar;\n",
+            "foo",
+            id="extern-declaration",
+        ),
+        pytest.param(
+            "int f(void) { static struct stat st; return 0; }\n",
+            "stat",
+            id="static-local",
+        ),
+        pytest.param(
+            "int f(p) struct node *p; { return 0; }\n",
+            "node",
+            id="knr-parameter",
+        ),
     ],
 )
 def test_elaborated_use_positions_add_no_class(
@@ -229,6 +244,26 @@ def test_cpp_elaborated_class_use_adds_no_nested_class(
 
     assert set(_nodes(mock_ingestor, "Class")) == {"k.K", "k.H"}
     assert ("k.H.kp", "k.K") in _of_type_edges(mock_ingestor)
+
+
+def test_cpp_explicit_instantiation_adds_no_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "tinst"
+    _write(
+        project,
+        {
+            "t.cpp": (
+                "template <typename T> class Box { T t; };\ntemplate class Box<int>;\n"
+            )
+        },
+    )
+
+    run_updater(project, mock_ingestor)
+
+    # `template class Box<int>;` instantiates the template defined above; it
+    # declares no type of its own. Before the fix it added `t.Box<int>`.
+    assert set(_nodes(mock_ingestor, "Class")) == {"t.Box"}
 
 
 # Negative tests: what defines a type keeps doing so, and the uses of a type
