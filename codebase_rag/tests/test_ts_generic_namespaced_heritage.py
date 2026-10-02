@@ -330,3 +330,96 @@ def test_default_import_heritage_keeps_its_written_external_name(
         _EXTERNAL,
         "React.HTMLAttributes",
     ) in edges, sorted(edges)
+
+
+# A namespace import of a barrel (review of #2560): `r` names `index`, which
+# only re-exports the declarations, so the member must be followed through the
+# re-export to its declaring module before it is judged, or the project's own
+# interface is externalized as `r.Router`.
+BARREL_INDEX_TS = """\
+export { Router, Plain } from './router'
+export { Plain as Basic } from './router'
+export { Base } from './api'
+"""
+
+BARREL_API_TS = """\
+export { Base } from './router'
+"""
+
+BARREL_USER_TS = """\
+import * as r from '../index'
+export class Generic<T> implements r.Router<T> { add(p: string, h: T): void {} }
+export class Bare implements r.Plain { run(): void {} }
+export class Aliased implements r.Basic { run(): void {} }
+export interface Child extends r.Plain { more(): void }
+export class Chained extends r.Base { go(): void {} }
+"""
+
+
+@pytest.fixture(scope="module")
+def barrel_edges(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> set[tuple[str, str, str, str, str]]:
+    return _heritage(
+        _write(
+            tmp_path_factory.mktemp("issue2560barrel"),
+            {
+                "src/router.ts": ROUTER_TS,
+                "src/api.ts": BARREL_API_TS,
+                "src/index.ts": BARREL_INDEX_TS,
+                "src/impl/user.ts": BARREL_USER_TS,
+            },
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("child", "rel", "target"),
+    [
+        ("Generic", _IMPLEMENTS, (_INTERFACE, "src.router.Router")),
+        ("Bare", _IMPLEMENTS, (_INTERFACE, "src.router.Plain")),
+        ("Aliased", _IMPLEMENTS, (_INTERFACE, "src.router.Plain")),
+        ("Child", _INHERITS, (_INTERFACE, "src.router.Plain")),
+        ("Chained", _INHERITS, (_CLASS, "src.router.Base")),
+    ],
+)
+def test_namespace_member_of_a_barrel_follows_the_re_export(
+    barrel_edges: set[tuple[str, str, str, str, str]],
+    child: str,
+    rel: str,
+    target: tuple[str, str],
+) -> None:
+    targets = {
+        (tl, to)
+        for _fl, f, r, tl, to in barrel_edges
+        if f == f"src.impl.user.{child}" and r == rel
+    }
+    assert targets == {target}, sorted(barrel_edges)
+
+
+BARREL_WITHOUT_ROUTER_TS = """\
+export { Plain } from './router'
+"""
+
+BARREL_MISS_USER_TS = """\
+import * as r from './index'
+export class Missing<T> implements r.Router<T> { add(p: string, h: T): void {} }
+"""
+
+
+def test_name_the_barrel_does_not_re_export_stays_external(tmp_path: Path) -> None:
+    # `router.ts` declares `Router`, but `index` exports only `Plain`, so
+    # `r.Router` names nothing first-party and keeps today's written external.
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "router.ts": ROUTER_TS,
+                "index.ts": BARREL_WITHOUT_ROUTER_TS,
+                "user.ts": BARREL_MISS_USER_TS,
+            },
+        )
+    )
+    assert {e for e in edges if e[1] == "user.Missing"} == {
+        (_CLASS, "user.Missing", _IMPLEMENTS, _EXTERNAL, "r.Router")
+    }, sorted(edges)

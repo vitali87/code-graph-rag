@@ -45,6 +45,7 @@ from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
     extract_modifiers_and_decorators,
+    follow_reexports,
     function_span_key,
     ingest_method,
     module_qn_for_entity,
@@ -979,9 +980,16 @@ class ClassIngestMixin:
         # externalized under, which React dead-code rooting matches on.
         if entry.language not in cs.JS_TS_LANGUAGES:
             return None
+        import_mapping = self.import_processor.import_mapping
         candidate = pe.js_ts_namespace_member_qn(
-            raw_name, self.import_processor.import_mapping.get(entry.module_qn, {})
+            raw_name, import_mapping.get(entry.module_qn, {})
         )
+        if candidate is not None:
+            # `r` is often a barrel (`export { Router } from './router'`): the
+            # member is mapped on to its declaring module, not declared there.
+            candidate = follow_reexports(
+                candidate, import_mapping, self.function_registry
+            )
         if (
             candidate is None
             or candidate == entry.child_qn
