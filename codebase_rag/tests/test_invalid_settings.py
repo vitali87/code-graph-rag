@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import click
 import pytest
 from pydantic import ValidationError
 from pydantic_settings import EnvSettingsSource
@@ -395,9 +396,11 @@ class TestWhatStaysTheSame:
         errors = ("Invalid value for MEMGRAPH_PORT in ./.env: 'x' is not valid.",)
         with patch.object(cli, "settings_errors", errors):
             result = CliRunner().invoke(cli.app, ["help", "start"])
+        # CI forces colour, so rich wraps each option name in ANSI spans.
+        help_text = click.unstyle(result.output)
 
         assert result.exit_code == 0, result.output
-        assert "--batch-size" in result.output
+        assert "--batch-size" in help_text
 
     def test_a_command_is_refused_while_a_setting_is_invalid(self) -> None:
         errors = ("Invalid value for MEMGRAPH_PORT in ./.env: 'x' is not valid.",)
