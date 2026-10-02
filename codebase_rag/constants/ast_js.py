@@ -286,9 +286,26 @@ TS_TYPE_DECLARATION_NODES = frozenset(
         "enum_declaration",
     }
 )
-# Utility types whose value has the members of their first type argument.
+# Utility types whose value has every member of their first type argument.
 TS_MEMBER_PRESERVING_UTILITY_TYPES = frozenset(
-    {"Readonly", "Partial", "Required", "NonNullable", "Pick", "Omit"}
+    {"Readonly", "Partial", "Required", "NonNullable"}
+)
+# Utility types computing a type the declaration alone does not pin down:
+# `Pick`/`Omit` keep or drop keys, the rest map or extract. Their result may
+# or may not have a method, so they neither confirm nor rule out a binding.
+TS_UNSETTLED_UTILITY_TYPES = frozenset(
+    {
+        "Pick",
+        "Omit",
+        "Record",
+        "Exclude",
+        "Extract",
+        "ReturnType",
+        "InstanceType",
+        "Awaited",
+        "ThisType",
+        "NoInfer",
+    }
 )
 # `@param {Type} name` and `@param {Type} [name]` in a JSDoc block.
 JSDOC_PARAM_TAG_PATTERN = r"@param\s+\{([^{}]*)\}\s+\[?([A-Za-z_$][\w$]*)"

@@ -244,6 +244,105 @@ def test_jsdoc_naming_a_builtin_takes_no_edge(
     assert "models.A.count" not in _calls(mock_ingestor, ".svc.viaAny")
 
 
+def test_a_static_write_does_not_type_an_instance_field(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # In a static method `this` is the class itself, so `this.x = new A()`
+    # there sets a property of the constructor, never an instance's `x`;
+    # and a static method's own `this.x.count()` reads that property, not
+    # the field the constructor assigns.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.js": MODELS_JS,
+            "svc.js": (
+                "const { A } = require('./models')\n"
+                "class Inst {\n"
+                "  static init() { this.x = new A() }\n"
+                "  run() { return this.x.count(1) }\n"
+                "}\n"
+                "class Stat {\n"
+                "  constructor() { this.x = new A() }\n"
+                "  static run() { return this.x.count(1) }\n"
+                "}\n"
+                "class Block {\n"
+                "  static { this.x = new A() }\n"
+                "  run() { return this.x.count(1) }\n"
+                "}\n"
+                "module.exports = { Inst, Stat, Block }\n"
+            ),
+        },
+    )
+    for owner in ("Inst", "Stat", "Block"):
+        calls = _calls(mock_ingestor, f".svc.{owner}.run")
+        assert calls["models.A.count"] == {HEURISTIC}, owner
+
+
+def test_a_computed_or_destructured_write_unsettles_a_field(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `this['x'] = new Other()` replaces the field `this.x = new A()` set,
+    # and a computed key or a destructuring target may write any field, so
+    # no one class is proven for `this.x`.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.js": MODELS_JS,
+            "svc.js": (
+                "const { A } = require('./models')\n"
+                "class Other {}\n"
+                "class Literal {\n"
+                "  constructor() { this.x = new A(); this['x'] = new Other() }\n"
+                "  run() { return this.x.count(1) }\n"
+                "}\n"
+                "class Computed {\n"
+                "  constructor(k) { this.x = new A(); this[k] = new Other() }\n"
+                "  run() { return this.x.count(1) }\n"
+                "}\n"
+                "class Destructured {\n"
+                "  constructor() { this.x = new A(); [this.x] = [new Other()] }\n"
+                "  run() { return this.x.count(1) }\n"
+                "}\n"
+                "class Compound {\n"
+                "  constructor(o) { this.x = new A(); this.x ||= o }\n"
+                "  run() { return this.x.count(1) }\n"
+                "}\n"
+                "module.exports = { Literal, Computed, Destructured, Compound }\n"
+            ),
+        },
+    )
+    for owner in ("Literal", "Computed", "Destructured", "Compound"):
+        calls = _calls(mock_ingestor, f".svc.{owner}.run")
+        assert calls["models.A.count"] == {HEURISTIC}, owner
+
+
+def test_pick_and_omit_do_not_confirm_the_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `Pick<A, 'other'>` and `Omit<A, 'count'>` may leave `count` out, so
+    # A's ownership of `count` proves nothing about the receiver; the edge
+    # is kept but stays a guess.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.ts": MODELS_TS,
+            "svc.ts": (
+                "import { A } from './models'\n"
+                "export function picked(p: Pick<A, 'other'>) { return p.count(1) }\n"
+                "export function omitted(o: Omit<A, 'count'>) { return o.count(1) }\n"
+                "export function made(i: InstanceType<typeof A>) "
+                "{ return i.count(1) }\n"
+            ),
+        },
+    )
+    for caller in ("picked", "omitted", "made"):
+        calls = _calls(mock_ingestor, f".svc.{caller}")
+        assert calls["models.A.count"] == {HEURISTIC}, caller
+
+
 # --- negative: a receiver whose declaration names the owner stays exact ---------
 
 

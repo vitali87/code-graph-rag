@@ -187,6 +187,18 @@ _JS_DECL_PARAM = "param"
 _JS_TS_ANY_CLASS_NODES = frozenset(
     {*cs.JS_TS_CLASS_NODES, cs.TS_ABSTRACT_CLASS_DECLARATION}
 )
+# The class members whose `static` keyword decides what `this` is inside.
+_JS_CLASS_MEMBER_TYPES = frozenset(
+    {cs.TS_METHOD_DEFINITION, cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
+# Expressions that write their target.
+_JS_FIELD_WRITE_TYPES = frozenset(
+    {
+        cs.TS_JS_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_UPDATE_EXPRESSION,
+    }
+)
 
 
 class _ReceiverDeclaration(NamedTuple):
@@ -4648,7 +4660,7 @@ class CallProcessor:
             cast = receiver.named_children[-1] if receiver.named_children else None
             return self._ts_type_declaration(cast, ctx.module_qn) if cast else None
         if receiver.type == cs.TS_THIS:
-            if ctx.class_context and self._js_this_binds_to_enclosing_class(receiver):
+            if ctx.class_context and self._js_instance_this(receiver):
                 return _ReceiverDeclaration(ctx.class_context, foreign=False)
             return None
         if receiver.type == cs.TS_IDENTIFIER:
@@ -4756,20 +4768,20 @@ class CallProcessor:
     def _js_this_field_declaration(
         self, ctx: _CallScanContext, member: Node
     ) -> _ReceiverDeclaration | None:
-        # `this.f`: the field's declared type when it has one; otherwise the
-        # class every value it is given (initialiser, `this.f = ...` in the
-        # class's own methods) constructs, when they all agree.
+        # `this.f` on an instance: the field's declared type when it has one;
+        # otherwise the class every value instance code gives it (initialiser,
+        # `this.f = ...` in the class's own methods) constructs, when they all
+        # agree. A static member's `this` is the class, whose `f` is another
+        # property altogether.
         obj = member.child_by_field_name(cs.FIELD_OBJECT)
         prop = member.child_by_field_name(cs.FIELD_PROPERTY)
         if (
-            obj is None
-            or obj.type != cs.TS_THIS
+            not self._js_instance_this(obj)
             or prop is None
             or not (field := safe_decode_text(prop))
-            or not self._js_this_binds_to_enclosing_class(obj)
         ):
             return None
-        class_node = obj.parent
+        class_node = member.parent
         while class_node is not None and class_node.type not in _JS_TS_ANY_CLASS_NODES:
             class_node = class_node.parent
         if class_node is None:
@@ -4785,7 +4797,10 @@ class CallProcessor:
                 initial := declared.node.child_by_field_name(cs.FIELD_VALUE)
             ) is not None:
                 values.append(initial)
-        values.extend(self._js_this_field_assignments(class_node, field))
+        writes = self._js_this_field_writes(class_node, field)
+        if writes is None:
+            return None
+        values.extend(writes)
         class_qns = {
             self._js_value_type_class_qn(value, ctx.module_qn, depth=0)
             for value in values
@@ -4794,7 +4809,11 @@ class CallProcessor:
             return None
         return _ReceiverDeclaration(class_qn, foreign=False)
 
-    def _js_this_field_assignments(self, class_node: Node, field: str) -> list[Node]:
+    def _js_this_field_writes(self, class_node: Node, field: str) -> list[Node] | None:
+        # Every value instance code in the class body assigns to `this.f`, or
+        # None when some write to it gives no single value to type: a
+        # computed key (`this[k] = ...`, which may be `f`), a destructuring
+        # target, a compound operator or an update.
         body = class_node.child_by_field_name(cs.FIELD_BODY)
         values: list[Node] = []
         stack: list[Node] = list(body.children) if body is not None else []
@@ -4802,23 +4821,73 @@ class CallProcessor:
             node = stack.pop()
             if node.type in _JS_TS_ANY_CLASS_NODES:
                 continue
-            if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-                left = node.child_by_field_name(cs.FIELD_LEFT)
-                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-                if (
-                    left is not None
-                    and right is not None
-                    and left.type == cs.TS_MEMBER_EXPRESSION
-                    and (obj := left.child_by_field_name(cs.FIELD_OBJECT)) is not None
-                    and obj.type == cs.TS_THIS
-                    and (prop := left.child_by_field_name(cs.FIELD_PROPERTY))
-                    is not None
-                    and safe_decode_text(prop) == field
-                    and self._js_this_binds_to_enclosing_class(obj)
-                ):
-                    values.append(right)
+            if node.type in _JS_FIELD_WRITE_TYPES:
+                target = node.child_by_field_name(
+                    cs.TS_JS_FIELD_ARGUMENT
+                    if node.type == cs.TS_JS_UPDATE_EXPRESSION
+                    else cs.FIELD_LEFT
+                )
+                writes = self._js_writes_this_field(target, field)
+                if writes is None:
+                    return None
+                if writes:
+                    value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+                    if node.type != cs.TS_JS_ASSIGNMENT_EXPRESSION or value is None:
+                        return None
+                    values.append(value)
             stack.extend(node.children)
         return values
+
+    def _js_writes_this_field(self, target: Node | None, field: str) -> bool | None:
+        # Whether an assignment target writes the instance field `field`:
+        # None when it may or may not (a computed key, or the field inside a
+        # destructuring pattern, whose value is not the right-hand side).
+        if target is None:
+            return False
+        if target.type in (cs.TS_MEMBER_EXPRESSION, cs.TS_SUBSCRIPT_EXPRESSION):
+            return self._js_this_target_field(target, field)
+        stack = [target]
+        while stack:
+            node = stack.pop()
+            if node.type in (cs.TS_MEMBER_EXPRESSION, cs.TS_SUBSCRIPT_EXPRESSION):
+                if self._js_this_target_field(node, field) is not False:
+                    return None
+                continue
+            stack.extend(node.named_children)
+        return False
+
+    def _js_this_target_field(self, target: Node, field: str) -> bool | None:
+        if not self._js_instance_this(target.child_by_field_name(cs.FIELD_OBJECT)):
+            return False
+        if target.type == cs.TS_MEMBER_EXPRESSION:
+            prop = target.child_by_field_name(cs.FIELD_PROPERTY)
+            return prop is not None and safe_decode_text(prop) == field
+        index = target.child_by_field_name(cs.TS_FIELD_INDEX)
+        if index is None or index.type != cs.TS_STRING:
+            return None
+        parts = index.named_children
+        if any(part.type != cs.TS_STRING_FRAGMENT for part in parts):
+            return None
+        return "".join(safe_decode_text(part) or "" for part in parts) == field
+
+    def _js_instance_this(self, node: Node | None) -> bool:
+        # `this` naming an instance of the enclosing class: in an instance
+        # method or instance field (arrows inherit it), never in a static
+        # method, static field or static block, where it is the class.
+        if (
+            node is None
+            or node.type != cs.TS_THIS
+            or not self._js_this_binds_to_enclosing_class(node)
+        ):
+            return False
+        current = node.parent
+        while current is not None:
+            if current.type == cs.TS_CLASS_STATIC_BLOCK:
+                return False
+            if current.type in _JS_CLASS_MEMBER_TYPES:
+                return not any(child.type == cs.TS_STATIC for child in current.children)
+            current = current.parent
+        return True
 
     def _ts_annotation_declaration(
         self, annotation: Node, module_qn: str
@@ -4876,12 +4945,19 @@ class CallProcessor:
         name = safe_decode_text(name_node) if name_node is not None else None
         if not name:
             return None
+        declared = self._ts_type_name_declaration(name, node, module_qn)
+        # A global utility type is no value type of its own: it is read
+        # through, unless the project defines a type of that name.
+        if declared is None or not declared.foreign:
+            return declared
+        if name in cs.TS_UNSETTLED_UTILITY_TYPES:
+            return None
         if name in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
             # `Readonly<A>` and friends keep A's members: A is the declaration.
             arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
             first = next(iter(arguments.named_children), None) if arguments else None
             return self._ts_type_declaration(first, module_qn) if first else None
-        return self._ts_type_name_declaration(name, node, module_qn)
+        return declared
 
     def _ts_type_name_declaration(
         self, name: str, anchor: Node, module_qn: str
