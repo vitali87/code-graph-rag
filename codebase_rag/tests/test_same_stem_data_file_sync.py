@@ -424,3 +424,24 @@ def test_an_unparsed_source_file_still_falls_back_to_its_path_qn(
 
     assert "proj.pkg.shapes.make" not in updater.function_registry
     assert "proj.pkg.helpers.base" in updater.function_registry
+
+
+@pytest.mark.parametrize("data_file", ["shapes.txt", "shapes.md"])
+def test_a_fresh_updater_clearing_a_data_file_keeps_the_graph_read_source_state(
+    tmp_path: Path, data_file: str
+) -> None:
+    # A fresh updater has recorded no module for `shapes.py` either, so no
+    # module holds the qn the data file's path derives (the #2586 guard sees
+    # no holder). Only the data file being no tree-sitter source keeps the
+    # sweep off the definitions read back from the graph.
+    root = tmp_path / "proj"
+    _write(root, {**PYTHON, "pkg/shapes.md": "# Shapes\n"})
+    updater = _updater(_Buffered(), root, cs.SupportedLanguage.PYTHON)
+    updater.function_registry["proj.pkg.shapes.make"] = cs.NodeLabel.FUNCTION.value
+    assert "proj.pkg.shapes" not in (
+        updater.factory.definition_processor.module_qn_to_file_path
+    )
+
+    updater.remove_file_from_state(root / "pkg" / data_file)
+
+    assert "proj.pkg.shapes.make" in updater.function_registry
