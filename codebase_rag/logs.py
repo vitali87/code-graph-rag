@@ -1063,8 +1063,9 @@ HASH_CACHE_DISCARD_FAILED = (
 )
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
-    "A parser input changed since this graph was built: parser code, a grammar "
-    "or toolchain version, a frontend mode, or the capture selection. Every "
+    "A parser input changed since this graph was built: parser code, an "
+    "ast-grep rule, a grammar or toolchain version, a frontend mode, or the "
+    "capture selection. Every "
     "eligible file of this repository (excluded and ignored ones aside) is "
     "re-parsed on this run, so what the new inputs "
     "emit is written for files not touched since the last sync too, and the "
