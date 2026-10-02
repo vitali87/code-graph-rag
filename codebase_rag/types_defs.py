@@ -1133,7 +1133,7 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
     ),
     RelationshipPropertySchema(
         (RelationshipType.FLOWS_TO,),
-        "{kind: string, via: string?}",
+        "{kind: string, via: string?, scope: string?}",
     ),
     # Declaration order of the variant within its enum, so a query can restore
     # the source order the graph does not otherwise preserve. Always written

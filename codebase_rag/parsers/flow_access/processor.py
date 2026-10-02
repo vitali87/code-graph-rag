@@ -84,6 +84,7 @@ from ..utils import (
 )
 from .constants import (
     KEY_KIND,
+    KEY_SCOPE,
     KEY_VIA,
     VIA_ARG_FORMAT,
     VIA_KW_FORMAT,
@@ -759,8 +760,10 @@ class FlowProcessor:
         # Loop walkers push None to shield the collector: a break in a
         # nested loop targets that loop, not the enclosing switch.
         self._break_exit_stack: list[list[_LeanState] | None] = []
+        # (pending callees, sink kind, sink identity, scope): the scope is the
+        # function whose body wrote the sink, the flow's owner.
         self._deferred_resource_flows: list[
-            tuple[frozenset[str], ResourceKind, str]
+            tuple[frozenset[str], ResourceKind, str, str]
         ] = []
         self._deferred_arg_edges: list[
             tuple[frozenset[str], tuple[str, str, str], str, str, str]
@@ -794,7 +797,8 @@ class FlowProcessor:
         # callee returns enters resolved callee C as argument `via`; the fourth
         # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
-        self._param_call_sites: list[tuple[Taint, str, str, str]] = []
+        # The fifth element is the calling function, which owns the flow.
+        self._param_call_sites: list[tuple[Taint, str, str, str, str]] = []
         self._pending_captures: dict[str, _PendingCapture] = {}
         # Per-function positional parameter slots so a call site's arg:<index>
         # resolves to the right callee parameter. The Python path truncates at
@@ -1832,10 +1836,12 @@ class FlowProcessor:
             if taint is None:
                 continue
             for origin in taint.origins:
-                self._emit_resource_flow(origin, sink.kind, dst_identity)
+                self._emit_resource_flow(
+                    origin, sink.kind, dst_identity, jc.flow.caller_qn
+                )
             if taint.pending:
                 self._deferred_resource_flows.append(
-                    (taint.pending, sink.kind, dst_identity)
+                    (taint.pending, sink.kind, dst_identity, jc.flow.caller_qn)
                 )
             # A parameter reaching this sink is a parameter-to-sink summary
             # (issue #1169), composed at finalize against every call site
@@ -1875,7 +1881,9 @@ class FlowProcessor:
             # to this exact call so it is not shared across calls (issue #1168).
             if taint.origins or taint.pending:
                 token = _passthrough_result_token(jc.flow.caller_qn, node)
-                self._param_call_sites.append((taint, callee_qn, via, token))
+                self._param_call_sites.append(
+                    (taint, callee_qn, via, token, jc.flow.caller_qn)
+                )
             for pname in taint.params:
                 self._param_flow_edges.append(
                     (jc.flow.caller_qn, pname, callee_qn, via)
@@ -2608,7 +2616,9 @@ class FlowProcessor:
             )
         if taint.origins or taint.pending:
             token = _passthrough_result_token(jc.flow.caller_qn, selector)
-            self._param_call_sites.append((taint, callee_qn, via, token))
+            self._param_call_sites.append(
+                (taint, callee_qn, via, token, jc.flow.caller_qn)
+            )
         for pname in taint.params:
             self._param_flow_edges.append((jc.flow.caller_qn, pname, callee_qn, via))
 
@@ -2778,9 +2788,11 @@ class FlowProcessor:
         # A tainted value reaching a write sink: emit resolved origins now, defer
         # pending callee returns to the fixpoint (mirrors the _js_call write branch).
         for origin in taint.origins:
-            self._emit_resource_flow(origin, kind, identity)
+            self._emit_resource_flow(origin, kind, identity, caller_qn)
         if taint.pending:
-            self._deferred_resource_flows.append((taint.pending, kind, identity))
+            self._deferred_resource_flows.append(
+                (taint.pending, kind, identity, caller_qn)
+            )
         # A parameter reaching this macro/stream sink is a parameter-to-sink
         # summary (issue #1169), composed at finalize like the _js_call branch.
         for pname in taint.params:
@@ -3832,9 +3844,11 @@ class FlowProcessor:
         # Resolved origins emit resource flows now; pending callees defer to
         # finalize, when the (possibly forward) callee's origins resolve.
         for source in taint.origins:
-            self._emit_resource_flow(source, kind, dst_identity)
+            self._emit_resource_flow(source, kind, dst_identity, ctx.caller_qn)
         if taint.pending:
-            self._deferred_resource_flows.append((taint.pending, kind, dst_identity))
+            self._deferred_resource_flows.append(
+                (taint.pending, kind, dst_identity, ctx.caller_qn)
+            )
         # A parameter reaching this sink is a parameter-to-sink summary (issue
         # #1142): composed at finalize against every call site that passes a
         # tainted argument into this parameter.
@@ -3872,7 +3886,7 @@ class FlowProcessor:
         # exact call so it is not shared across calls (issue #1168).
         if taint.origins or taint.pending:
             token = _passthrough_result_token(ctx.caller_qn, node)
-            self._param_call_sites.append((taint, callee_qn, via, token))
+            self._param_call_sites.append((taint, callee_qn, via, token, ctx.caller_qn))
         for pname in taint.params:
             self._param_flow_edges.append((ctx.caller_qn, pname, callee_qn, via))
 
@@ -4075,7 +4089,7 @@ class FlowProcessor:
     ) -> tuple[dict[str, set[HandleBinding]], dict[str, set[str]]]:
         extra_origins: dict[str, set[HandleBinding]] = defaultdict(set)
         extra_pending: dict[str, set[str]] = defaultdict(set)
-        for arg_taint, callee_qn, via, token in self._param_call_sites:
+        for arg_taint, callee_qn, via, token, _scope in self._param_call_sites:
             pname = self._param_name_for_via(callee_qn, via)
             if pname is None or (callee_qn, pname) not in return_params:
                 continue
@@ -4088,14 +4102,14 @@ class FlowProcessor:
     def _emit_deferred_resource_flows(
         self, resolved: dict[str, frozenset[HandleBinding]]
     ) -> None:
-        for pending, sink_kind, sink_identity in self._deferred_resource_flows:
+        for pending, sink_kind, sink_identity, scope in self._deferred_resource_flows:
             # Union origins across pending callees first so a shared origin is
             # emitted once, not per callee.
             origins: set[HandleBinding] = set()
             for callee_qn in pending:
                 origins |= resolved.get(callee_qn, frozenset())
             for origin in origins:
-                self._emit_resource_flow(origin, sink_kind, sink_identity)
+                self._emit_resource_flow(origin, sink_kind, sink_identity, scope)
 
     def _emit_deferred_arg_edges(self, is_tainted: dict[str, bool]) -> None:
         for (
@@ -4117,7 +4131,7 @@ class FlowProcessor:
         self, resolved: dict[str, frozenset[HandleBinding]]
     ) -> None:
         param_sink_closure = self._resolve_param_sinks()
-        for arg_taint, callee_qn, via, _token in self._param_call_sites:
+        for arg_taint, callee_qn, via, _token, scope in self._param_call_sites:
             pname = self._param_name_for_via(callee_qn, via)
             if pname is None:
                 continue
@@ -4129,7 +4143,7 @@ class FlowProcessor:
                 origins |= resolved.get(p, frozenset())
             for origin in origins:
                 for sink_kind, sink_identity in reached:
-                    self._emit_resource_flow(origin, sink_kind, sink_identity)
+                    self._emit_resource_flow(origin, sink_kind, sink_identity, scope)
 
     def _resolve_summaries(
         self,
@@ -4280,7 +4294,9 @@ class FlowProcessor:
             via = VIA_KW_FORMAT.format(name=fv)
             if taint.origins or taint.pending:
                 token = _passthrough_result_token(record.caller_qn, record.def_node)
-                self._param_call_sites.append((taint, record.nested_qn, via, token))
+                self._param_call_sites.append(
+                    (taint, record.nested_qn, via, token, record.caller_qn)
+                )
             for pname in taint.params:
                 self._param_flow_edges.append(
                     (record.caller_qn, pname, record.nested_qn, via)
@@ -4387,7 +4403,11 @@ class FlowProcessor:
         return HandleBinding(kind=sink.kind, identity=identity)
 
     def _emit_resource_flow(
-        self, source: HandleBinding, dst_kind: ResourceKind, dst_identity: str
+        self,
+        source: HandleBinding,
+        dst_kind: ResourceKind,
+        dst_identity: str,
+        scope: str,
     ) -> None:
         src_qn = self._ensure_resource(source.kind, source.identity)
         dst_qn = self._ensure_resource(dst_kind, dst_identity)
@@ -4395,7 +4415,7 @@ class FlowProcessor:
             (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, src_qn),
             cs.RelationshipType.FLOWS_TO,
             (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, dst_qn),
-            properties={KEY_KIND: FlowKind.RESOURCE.value},
+            properties={KEY_KIND: FlowKind.RESOURCE.value, KEY_SCOPE: scope},
         )
 
     def _ensure_resource(self, kind: ResourceKind, identity: str) -> str:
