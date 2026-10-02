@@ -2969,12 +2969,7 @@ class CallResolver:
             owner_map = self.import_processor.import_mapping.get(owner)
             if not owner_map:
                 return None, False
-            hidden = (
-                self.import_processor.rust_private_use_names.get(owner, frozenset())
-                if via_glob_from is not None
-                and not self._rust_module_sees_private(via_glob_from, owner)
-                else frozenset()
-            )
+            hidden = self._rust_names_hidden_from_glob(owner, via_glob_from)
             if (hop := owner_map.get(item)) is not None:
                 if item in hidden:
                     return None, False
@@ -2988,6 +2983,17 @@ class CallResolver:
                 via_glob_from = None
                 continue
             return self._expand_rust_glob_hops(owner_map, owner, item, seen, hidden)
+
+    def _rust_names_hidden_from_glob(
+        self, owner: str, via_glob_from: str | None
+    ) -> Collection[str]:
+        # The names `owner` binds by a private `use`, when a glob from a
+        # module that cannot see them is what reached `owner`.
+        if via_glob_from is None or self._rust_module_sees_private(
+            via_glob_from, owner
+        ):
+            return frozenset()
+        return self.import_processor.rust_private_use_names.get(owner, frozenset())
 
     def _rust_module_sees_private(self, module_qn: str, owner: str) -> bool:
         # A module's private items are visible to itself and every module

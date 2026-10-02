@@ -775,20 +775,31 @@ class TypeInferenceEngine:
             if current_type in cs.RS_GUARD_WRAPPERS:
                 return None
             class_qn = self._resolve_rust_type_qn(current_type, module_qn)
-            if field_type := self.class_field_types.get(class_qn, {}).get(hop):
-                current_type = field_type
-                guard_inner = self.class_field_guard_inner.get(class_qn, {}).get(hop)
-            elif next_type := self.method_return_types.get(
-                f"{class_qn}{cs.SEPARATOR_DOT}{hop}"
-            ):
-                # A method returning its own type (`fn new() -> Get`) keeps the
-                # caller's spelling of it: through `pub use inner::Get as
-                # Fetch;` the caller only has `Fetch` in scope (issue #2542).
-                if next_type != class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]:
-                    current_type = next_type
-            elif hop not in cs.RS_IDENTITY_METHODS:
+            step = self._rust_member_hop(current_type, class_qn, hop)
+            if step is None:
                 return None
+            current_type, guard_inner = step
         return current_type
+
+    def _rust_member_hop(
+        self, current_type: str, class_qn: str, hop: str
+    ) -> tuple[str, str | None] | None:
+        # One field-type -> method-return -> identity hop off `class_qn`: the
+        # type it yields, plus the inner type of a guard-wrapped field for a
+        # guard accessor to unwrap next. None when the hop names nothing known.
+        if field_type := self.class_field_types.get(class_qn, {}).get(hop):
+            return field_type, self.class_field_guard_inner.get(class_qn, {}).get(hop)
+        next_type = self.method_return_types.get(f"{class_qn}{cs.SEPARATOR_DOT}{hop}")
+        if next_type:
+            # A method returning its own type (`fn new() -> Get`) keeps the
+            # caller's spelling of it: through `pub use inner::Get as
+            # Fetch;` the caller only has `Fetch` in scope (issue #2542).
+            if next_type == class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]:
+                return current_type, None
+            return next_type, None
+        if hop in cs.RS_IDENTITY_METHODS:
+            return current_type, None
+        return None
 
     def _rust_chain_base_type(
         self,
