@@ -23,6 +23,10 @@ LUA_STATEMENT_SUFFIX = "statement"
 LUA_DEFAULT_VAR_TYPES = (TS_LUA_IDENTIFIER,)
 
 LUA_METHOD_SEPARATOR = ":"
+LUA_FIELD_SEPARATOR = "."
+# `setmetatable(obj, T)` returns `obj` with `T` as its metatable: the idiom
+# that makes `obj` an instance of `T`.
+LUA_SETMETATABLE = "setmetatable"
 
 # Tree-sitter Lua node types for language_spec
 TS_LUA_CHUNK = "chunk"

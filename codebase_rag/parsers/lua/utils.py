@@ -210,3 +210,67 @@ def _field_valued_by(func_node: Node) -> Node | None:
     ):
         return None
     return parent
+
+
+def member_spellings(
+    owner_qn: str, member: str, separator: str = cs.LUA_FIELD_SEPARATOR
+) -> tuple[str, str]:
+    """Both qns a member of the Lua table `owner_qn` may be registered under,
+    the call's own spelling (`separator`) first.
+
+    `function T:m()` is sugar for `function T.m(self)`, but the definition
+    keeps its colon (`T:m`) while `function T.f()` and `T.f = function`
+    register `T.f`. A call spells either form whatever the definition used
+    (`obj:m()`, `T.m(obj)`, `T:f()`), so a lookup of a table's member must
+    accept both, or no call to a colon-method ever bound (issue #2481).
+    """
+    other = (
+        cs.LUA_FIELD_SEPARATOR
+        if separator == cs.LUA_METHOD_SEPARATOR
+        else cs.LUA_METHOD_SEPARATOR
+    )
+    return f"{owner_qn}{separator}{member}", f"{owner_qn}{other}{member}"
+
+
+def split_member_call(call_name: str) -> tuple[str, str, str] | None:
+    """(table path, separator, member) of a Lua call name: `a.b:m` gives
+    (`a.b`, `:`, `m`). None for a bare name, which indexes no table."""
+    cut = max(
+        call_name.rfind(cs.LUA_FIELD_SEPARATOR),
+        call_name.rfind(cs.LUA_METHOD_SEPARATOR),
+    )
+    if cut <= 0 or cut == len(call_name) - 1:
+        return None
+    return call_name[:cut], call_name[cut], call_name[cut + 1 :]
+
+
+def method_self_owner(func_node: Node) -> str | None:
+    """The table path `self` stands for inside `func_node`: `T` in the body
+    of `function T:m()`, whose colon declares `self` implicitly.
+
+    A closure nested in the method sees the method's `self` as an upvalue,
+    so the walk climbs through enclosing functions to the nearest method. It
+    stops with None at a function that declares its own `self` parameter
+    (that parameter shadows the method's and its type is unknown), and when
+    no method encloses the node at all.
+    """
+    current: Node | None = func_node
+    while current is not None:
+        if current.type in cs.FQN_LUA_FUNCTION_TYPES:
+            name = current.child_by_field_name(cs.FIELD_NAME)
+            if name is not None and name.type == cs.TS_LUA_METHOD_INDEX_EXPRESSION:
+                table = name.child_by_field_name(cs.TS_LUA_FIELD_TABLE)
+                return safe_decode_text(table) if table is not None else None
+            if _declares_self_parameter(current):
+                return None
+        current = current.parent
+    return None
+
+
+def _declares_self_parameter(func_node: Node) -> bool:
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    return params is not None and any(
+        param.type == cs.TS_LUA_IDENTIFIER
+        and safe_decode_text(param) == cs.KEYWORD_SELF
+        for param in params.named_children
+    )
