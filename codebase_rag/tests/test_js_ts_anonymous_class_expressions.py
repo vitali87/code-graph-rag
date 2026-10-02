@@ -501,6 +501,58 @@ class TestClassInsideAFunction:
             assert not graph.exported(qn), qn
 
 
+CHAINED_AND_COMPUTED_CJS = """\
+const x = require('./dep');
+module.exports = exports.Rule = class { run() { return 1; } };
+exports["Named"] = class { go() { return 2; } };
+module.exports['Other'] = class { put() { return 3; } };
+exports[pick()] = class { dyn() { return 4; } };
+a = b = class { w() { return 5; } };
+function pick() { return 'k'; }
+"""
+
+
+class TestChainedAndComputedCommonJsExports:
+    @pytest.fixture(scope="class")
+    def graph(self, tmp_path_factory: pytest.TempPathFactory) -> _Graph:
+        return _index(
+            tmp_path_factory.mktemp("cjs"),
+            {"dep.js": "module.exports = {};\n", "rules.js": CHAINED_AND_COMPUTED_CJS},
+        )
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            # `module.exports = exports.Rule = class`: the inner assignment is
+            # the value of the top-level export.
+            "rules.anonymous_1_32",
+            # A static computed property names the export as `.Named` does.
+            "rules.anonymous_2_19",
+            "rules.anonymous_3_26",
+        ],
+    )
+    def test_is_exported_with_its_members(self, graph: _Graph, cls: str) -> None:
+        assert graph.label(cls) == cs.NodeLabel.CLASS.value
+        assert graph.exported(cls)
+        members = graph.out(cls, _DEFINES_METHOD)
+        assert members
+        for member in members:
+            assert graph.exported(member), member
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            # A computed key names no export a caller can be found through.
+            "rules.anonymous_4_18",
+            # A chain of plain assignments exports nothing.
+            "rules.anonymous_5_8",
+        ],
+    )
+    def test_is_not_exported(self, graph: _Graph, cls: str) -> None:
+        assert graph.label(cls) == cs.NodeLabel.CLASS.value
+        assert not graph.exported(cls)
+
+
 PRIVATE_MEMBER_JS = """\
 const x = require('./dep');
 module.exports = class {

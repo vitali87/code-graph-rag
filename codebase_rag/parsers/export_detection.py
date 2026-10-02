@@ -283,24 +283,56 @@ def _in_commonjs_exported_class(node: Node) -> bool:
 
 
 def _is_top_level_commonjs_export(assignment: Node) -> bool:
+    # `module.exports = exports.Rule = value` chains assignments, each the
+    # value of the next; any CommonJS target on the chain publishes the value.
     # Only a module-level statement runs at load; the same assignment inside a
     # function exports nothing until that function is called.
-    statement = assignment.parent
-    if (
-        statement is None
-        or statement.type != cs.TS_EXPRESSION_STATEMENT
-        or statement.parent is None
-        or statement.parent.type != cs.TS_PROGRAM
-    ):
-        return False
-    target = assignment.child_by_field_name(cs.FIELD_LEFT)
-    if target is None or target.type != cs.TS_MEMBER_EXPRESSION:
-        return False
-    text = target.text or b""
+    exported = False
+    current = assignment
+    while True:
+        exported = exported or _is_commonjs_export_target(
+            current.child_by_field_name(cs.FIELD_LEFT)
+        )
+        outer = current.parent
+        if (
+            outer is None
+            or outer.type != cs.TS_JS_ASSIGNMENT_EXPRESSION
+            or outer.child_by_field_name(cs.FIELD_RIGHT) != current
+        ):
+            break
+        current = outer
+    statement = current.parent
     return (
-        text == _JS_MODULE_EXPORTS
-        or text.startswith(_JS_MODULE_EXPORTS_MEMBER)
-        or text.startswith(_JS_EXPORTS_MEMBER)
+        exported
+        and statement is not None
+        and statement.type == cs.TS_EXPRESSION_STATEMENT
+        and statement.parent is not None
+        and statement.parent.type == cs.TS_PROGRAM
+    )
+
+
+def _is_commonjs_export_target(target: Node | None) -> bool:
+    # `module.exports`, `module.exports.X`, `exports.X`, and the same with a
+    # string key (`exports["X"]`), which names the export as `.X` does. A
+    # computed key (`exports[pick()]`) names no export a caller could find.
+    if target is None:
+        return False
+    if target.type == cs.TS_MEMBER_EXPRESSION:
+        text = target.text or b""
+        return (
+            text == _JS_MODULE_EXPORTS
+            or text.startswith(_JS_MODULE_EXPORTS_MEMBER)
+            or text.startswith(_JS_EXPORTS_MEMBER)
+        )
+    if target.type != cs.TS_SUBSCRIPT_EXPRESSION:
+        return False
+    obj = target.child_by_field_name(cs.FIELD_OBJECT)
+    key = target.child_by_field_name(cs.TS_FIELD_INDEX)
+    return (
+        obj is not None
+        and obj.text in (_JS_MODULE_EXPORTS, _JS_EXPORTS_KEYWORD_BYTES)
+        and key is not None
+        and key.type == cs.TS_STRING
     )
 
 
