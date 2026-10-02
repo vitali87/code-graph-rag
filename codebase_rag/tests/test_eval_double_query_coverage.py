@@ -439,6 +439,7 @@ class TestTheModuleDeleteIsProjectScoped:
                 cs.KEY_PATH: path,
                 cs.KEY_PROJECT_NAME: project,
                 cs.KEY_PROJECT_PREFIX: f"{project}.",
+                cs.KEY_NESTED_PROJECTS: [],
             },
         )
 
@@ -463,9 +464,12 @@ class TestTheModuleDeleteIsProjectScoped:
 
         assert self._module_qns(store) == {"other"}
 
-    def test_a_delete_without_a_project_scope_matches_nothing(self) -> None:
+    def test_a_delete_without_a_project_scope_is_refused(self) -> None:
+        # Memgraph rejects the unbound `$project_name`; the double refuses it
+        # the same way rather than quietly matching nothing (issue #2392).
         store = self._store_with(("proj.api", "api.py"))
 
-        store.execute_write(cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: "api.py"})
+        with pytest.raises(ValueError, match="project_name"):
+            store.execute_write(cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: "api.py"})
 
         assert self._module_qns(store) == {"proj.api"}

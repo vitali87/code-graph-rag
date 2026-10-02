@@ -49,6 +49,7 @@ from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
@@ -171,6 +172,9 @@ _TYPED_LANGUAGES = frozenset(
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
+# Python callers whose own bindings shadow module and class names for the
+# whole body (issue #2666); a class body or module is excluded on purpose.
+_PY_LOCAL_SCOPE_CALLERS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 # Declarator kinds for the symbol-index value chase (issue #989). OPAQUE
 # marks an introduction whose value cannot be known statically (a parameter,
@@ -289,6 +293,10 @@ def _class_qn_for_calls(
     # node. Use the SAME builders the definition pass uses so the qns agree.
     if language == cs.SupportedLanguage.CPP:
         return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
+    if language == cs.SupportedLanguage.PHP and (
+        anonymous_qn := php_utils.anonymous_class_qn(class_node, module_qn)
+    ):
+        return anonymous_qn
     return (
         build_nested_qualified_name_for_class(
             class_node, module_qn, class_name, queries[language][cs.QUERY_CONFIG]
@@ -471,6 +479,25 @@ _FLOW_ARG_REF_TYPES = frozenset(
         cs.TS_MEMBER_EXPRESSION,
     }
 )
+# Node types of a value that hands a callable over BY NAME, in every language
+# the argument-reference path serves: the flow-arg names above, a C# member
+# access or generic method group, a Dart tear-off's `.name` selector (its
+# argument unwraps to the last selector), a C++ qualified, template or field
+# name, and a JS shorthand property. (C++ address-of is checked on its own in
+# `_names_a_callable`.) An operator expression is absent on purpose: it
+# computes a value, and its text resolved as a name against a builtin receiver
+# gave `builtin.Array.prototype.length - start` (issue #2438).
+_CALLBACK_REF_TYPES = _FLOW_ARG_REF_TYPES | frozenset(
+    {
+        cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_GENERIC_NAME,
+        cs.TS_DART_SELECTOR,
+        cs.TS_CPP_QUALIFIED_IDENTIFIER,
+        cs.TS_CPP_TEMPLATE_FUNCTION,
+        cs.TS_CPP_FIELD_EXPRESSION,
+        cs.TS_SHORTHAND_PROPERTY_IDENTIFIER,
+    }
+)
 # Qualified-name prefix marking a resolved callee as a builtin rather than a
 # first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
@@ -525,6 +552,12 @@ _ASSIGNMENT_RHS_REF_TYPES = frozenset(
 # closing element repeats the name, so a paired element emits once).
 _JSX_NAMED_ELEMENT_TYPES = frozenset(
     {cs.TS_JSX_SELF_CLOSING_ELEMENT, cs.TS_JSX_OPENING_ELEMENT}
+)
+# What a JSX tag can render: a function or class component (an arrow bound to
+# a const registers as a Function). An Interface/Type/Enum of the same name is
+# never renderable, so a tag resolving to one is a name collision (issue #2535).
+_JSX_COMPONENT_TARGET_TYPES = frozenset(
+    {cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD, cs.NodeLabel.CLASS}
 )
 # Inline function values in an object literal (`{ onSuccess: () => {} }`): the
 # JS/TS definition pass registers these as their own nodes named by the key
@@ -590,6 +623,16 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     if natural == scope_qn:
         return [scope_qn]
     return [scope_qn, natural]
+
+
+def _names_a_callable(node: Node) -> bool:
+    # C/C++ also hands a function over by its address (`run(&Cls::m)`), the
+    # one operator expression that names rather than computes; a dereference
+    # (`*p`) or any other operator does not.
+    if node.type == cs.TS_CPP_POINTER_EXPRESSION:
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return operator is not None and safe_decode_text(operator) == cs.CPP_ADDRESS_OF
+    return node.type in _CALLBACK_REF_TYPES
 
 
 def _first_class_value_children(
@@ -967,18 +1010,38 @@ def _go_innermost_block_end(node: Node, block_end: _Point | None) -> _Point | No
     if node.type in _GO_SCOPE_TYPES or (
         block_end is not None and node.type in _GO_BLOCK_TYPES
     ):
-        return (node.end_point.row, node.end_point.column)
+        return (node.end_point[0], node.end_point[1])
     return block_end
 
 
-def _go_type_spec_start(node: Node, name: str) -> _Point | None:
-    """The start point of `node` when it is a `type_spec` declaring `name`."""
-    if node.type != cs.TS_GO_TYPE_SPEC:
-        return None
-    spec_name = node.child_by_field_name(cs.FIELD_NAME)
-    if spec_name is None or safe_decode_text(spec_name) != name:
-        return None
-    return (node.start_point.row, node.start_point.column)
+def _go_type_declarations_by_name(
+    root: Node,
+) -> dict[str, list[tuple[int, _Span | None]]]:
+    """(1-based line, visible span or None) per `type` declaration, by name.
+
+    One walk answers every name in the file. Each composite literal of a
+    shadowed type used to walk the whole file for its own name, which cost
+    O(literals x file size) per file (issue #2393). Sorted by line, the
+    order the definition pass registered the variants in.
+    """
+    found: dict[str, list[tuple[int, _Span | None]]] = {}
+    # The second item is the end point of the innermost block, or None above
+    # every function.
+    stack: list[tuple[Node, _Point | None]] = [(root, None)]
+    while stack:
+        node, block_end = stack.pop()
+        block_end = _go_innermost_block_end(node, block_end)
+        if node.type == cs.TS_GO_TYPE_SPEC and (
+            name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+        ):
+            start: _Point = (node.start_point[0], node.start_point[1])
+            found.setdefault(name, []).append(
+                (start[0] + 1, None if block_end is None else (start, block_end))
+            )
+        stack.extend((child, block_end) for child in node.children)
+    for declarations in found.values():
+        declarations.sort(key=lambda item: item[0])
+    return found
 
 
 def _go_variant_spans(
@@ -1448,6 +1511,7 @@ class CallProcessor:
         "_resolver",
         "_string_call_specs",
         "_flow_param_names",
+        "_go_type_declarations",
         "_callable_flow",
         "_flow_bucket",
         "_io_processor",
@@ -1547,6 +1611,9 @@ class CallProcessor:
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
+        self._go_type_declarations: (
+            tuple[Node, dict[str, list[tuple[int, _Span | None]]]] | None
+        ) = None
         # Return-value / factory tracing rides along: functions each function
         # may return (nested closures), and call sites `x = factory(...); x(cb)`
         # where cb flows into the returned closure's callable parameter.
@@ -2271,6 +2338,112 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+        if language == cs.SupportedLanguage.JAVA:
+            # A constant runs its enum's constructor without any call
+            # expression, so a file holding only an enum has to be covered
+            # before the no-calls early return (issue #2547).
+            self._ingest_java_enum_constant_ctor_calls(
+                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
+            )
+
+    @_site_scoped
+    def _ingest_java_enum_constant_ctor_calls(
+        self,
+        module_qn: str,
+        class_nodes: list[Node],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        # Outside its own constructors, `CLASS("c")` is the only thing that runs
+        # a Java enum constructor (`new` on an enum is a compile error), and no
+        # call node names it, so every parameterised enum constructor looked
+        # dead. Each constant CALLS the constructors its argument count admits;
+        # one candidate is the compiler's choice, several (same arity) fan out
+        # as `overload`, the way `new X(...)` does. No INSTANTIATES: that edge
+        # only targets Class.
+        for enum_node in class_nodes:
+            if enum_node.type != cs.TS_ENUM_DECLARATION:
+                continue
+            constants = java_utils.enum_constants(enum_node)
+            if not constants:
+                continue
+            ctors = [
+                (ctor, target)
+                for ctor in java_utils.enum_constructors(enum_node)
+                if (
+                    target := self._java_enum_ctor_target(
+                        ctor, enum_node, module_qn, queries
+                    )
+                )
+                is not None
+            ]
+            if not ctors:
+                continue
+            caller_spec = self._java_enum_initializer(enum_node, module_qn)
+            for constant in constants:
+                arg_count = java_utils.argument_count(constant)
+                targets = [
+                    target
+                    for ctor, target in ctors
+                    if java_utils.accepts_argument_count(ctor, arg_count)
+                ]
+                self._site_node = constant
+                self._resolution = (
+                    cs.EdgeResolution.EXACT
+                    if len(targets) == 1
+                    else cs.EdgeResolution.OVERLOAD
+                )
+                for target_label, target_qn in targets:
+                    # A bare `NONE` has no argument list for the site to
+                    # count, yet it is a zero-argument invocation all the same.
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
+                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+                    )
+
+    def _java_enum_ctor_target(
+        self,
+        ctor_node: Node,
+        enum_node: Node,
+        module_qn: str,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> tuple[str, str] | None:
+        if loc := self._recorded_caller(ctor_node, module_qn):
+            return loc.label, loc.qualified_name
+        # The class pass's own derivation, for a run that did not re-record
+        # this file's definitions.
+        enum_name = self._get_node_name(enum_node)
+        ctor_name = self._get_node_name(ctor_node)
+        if not enum_name or not ctor_name:
+            return None
+        language = cs.SupportedLanguage.JAVA
+        target_qn, target_label = self._class_member_qn_and_label(
+            ctor_node,
+            _class_qn_for_calls(enum_node, module_qn, enum_name, language, queries),
+            ctor_name,
+            queries[language][cs.QUERY_CONFIG],
+            language,
+        )
+        if target_qn not in self._resolver.function_registry:
+            return None
+        return target_label, target_qn
+
+    def _java_enum_initializer(
+        self, enum_node: Node, module_qn: str
+    ) -> tuple[str, str, str]:
+        # A local enum initialises when its method first uses it, so that
+        # method runs the constructors: a dead method keeps them dead. Any
+        # other enum initialises at class load, which the graph attributes to
+        # the module, as it does a static field initializer.
+        current = enum_node.parent
+        while current is not None:
+            if current.type in cs.JAVA_METHOD_NODE_TYPES:
+                if loc := self._recorded_caller(current, module_qn):
+                    return (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name)
+                break
+            current = current.parent
+        return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
     def _ingest_dart_module_initializer_reads(
         self,
@@ -2814,6 +2987,12 @@ class CallProcessor:
     ) -> str | None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             return self._get_rust_impl_class_name(class_node)
+        if language == cs.SupportedLanguage.PHP and (
+            anonymous_name := php_utils.anonymous_class_name(class_node)
+        ):
+            # Named as the definition pass names it, so its methods get a
+            # class pass and the module pass leaves them alone (issue #2538).
+            return anonymous_name
         return self._get_node_name(class_node)
 
     def _class_method_name(
@@ -3150,6 +3329,11 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
+            # Attribute arguments share the token_tree shape (`skip(self)` in
+            # `#[instrument(skip(self))]`) but name no function; binding them
+            # by bare name invented module-level CALLS (issue #2541).
+            if rs_utils.in_attribute_arguments(call_node):
+                return None
             return self._macro_call_name(call_node)
         # A Dart call node is a selector/cascade_section holding the
         # argument_part; the target name lives in the PRECEDING sibling
@@ -3781,15 +3965,25 @@ class CallProcessor:
     ) -> None:
         # Names this caller binds that also name an import: the resolver
         # refuses to read the import map for them (issue #1907).
-        shadowed = (
-            self._resolver.type_inference.python_type_inference.shadowed_import_names(
-                caller_node, module_qn
-            )
-        )
+        python_inference = self._resolver.type_inference.python_type_inference
+        shadowed = python_inference.shadowed_import_names(caller_node, module_qn)
         if shadowed:
             self._resolver.python_shadowed_imports[caller_qn] = shadowed
         else:
             self._resolver.python_shadowed_imports.pop(caller_qn, None)
+        # Every name a function binds itself: a bare use of one never resolves
+        # to the module function or method it shadows (issue #2666). Only a
+        # function or lambda body: in a class body `alias = run` does read the
+        # class's own `run`, and a module's bindings are its definitions.
+        local = (
+            python_inference.locally_bound_names(caller_node, module_qn)
+            if caller_node.type in _PY_LOCAL_SCOPE_CALLERS
+            else frozenset()
+        )
+        if local:
+            self._resolver.python_local_names[caller_qn] = local
+        else:
+            self._resolver.python_local_names.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -4925,7 +5119,7 @@ class CallProcessor:
                 return
             callee_type, callee_qn = redirected
 
-        self._emit_resolved_callee_targets(ctx, callee_type, callee_qn)
+        self._emit_resolved_callee_targets(ctx, call_name, callee_type, callee_qn)
         self._emit_callee_fanouts(ctx, call_name, callee_type, callee_qn)
 
     def _emit_protocol_conformer_edges(
@@ -5046,9 +5240,13 @@ class CallProcessor:
             )
 
     def _emit_resolved_callee_targets(
-        self, ctx: _CallScanContext, callee_type: str, callee_qn: str
+        self, ctx: _CallScanContext, call_name: str, callee_type: str, callee_qn: str
     ) -> None:
-        targets = self._resolver.function_registry.variants(callee_qn)
+        targets = self._resolver.lexical_call_targets(
+            call_name,
+            ctx.module_qn,
+            self._resolver.function_registry.variants(callee_qn),
+        )
         if len(
             targets
         ) > 1 and not self._resolver.import_processor.rust_block_item_qns.isdisjoint(
@@ -5610,22 +5808,30 @@ class CallProcessor:
         registry = self._resolver.function_registry
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         name_text = safe_decode_text(name_node) if name_node else None
-        if name_text and name_text[0].isupper():
-            resolved = scope.resolve_func(
-                name_text,
-                scope.module_qn,
-                scope.local_var_types,
-                scope.class_context,
-                scope.caller_qn,
+        if not name_text or not name_text[0].isupper():
+            return
+        # `<Prim.Item>` resolves `Prim` first: a package namespace renders the
+        # package's own member. The resolver is called without a language
+        # here, so the JS/TS member-call gate never sees the dotted tag and
+        # the bare-name fallback would bind `Item` anywhere in the project.
+        if self._resolver.js_member_head_is_external(name_text, scope.module_qn):
+            return
+        resolved = scope.resolve_func(
+            name_text,
+            scope.module_qn,
+            scope.local_var_types,
+            scope.class_context,
+            scope.caller_qn,
+        )
+        if not resolved or resolved[0] not in _JSX_COMPONENT_TARGET_TYPES:
+            return
+        res_type, res_qn = resolved
+        for target_qn in registry.variants(res_qn):
+            scope.ensure_rel(
+                scope.caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
             )
-            if resolved:
-                res_type, res_qn = resolved
-                for target_qn in registry.variants(res_qn):
-                    scope.ensure_rel(
-                        scope.caller_spec,
-                        cs.RelationshipType.REFERENCES,
-                        (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
-                    )
 
     def _emit_jsx_expression_refs(self, node: Node, scope: _RefEmitScope) -> None:
         for value in node.named_children:
@@ -6513,7 +6719,7 @@ class CallProcessor:
         # A point, not a row: `x := Local{}; type Local struct{}` on one line
         # puts the literal BEFORE the declaration, and rows alone attributed
         # it to the later local type (#1747 review).
-        point: _Point = (literal.start_point.row, literal.start_point.column)
+        point: _Point = (literal.start_point[0], literal.start_point[1])
         local = [
             variant
             for variant, span in zip(variants, spans, strict=True)
@@ -6549,21 +6755,13 @@ class CallProcessor:
         if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
             return []
         root_node, _ = entry
-        found: list[tuple[int, _Span | None]] = []
-        # The second item is the end point of the innermost block, or None
-        # above every function.
-        stack: list[tuple[Node, _Point | None]] = [(root_node, None)]
-        while stack:
-            node, block_end = stack.pop()
-            block_end = _go_innermost_block_end(node, block_end)
-            start = _go_type_spec_start(node, name)
-            if start is not None:
-                found.append(
-                    (start[0] + 1, None if block_end is None else (start, block_end))
-                )
-            stack.extend((child, block_end) for child in node.children)
-        found.sort(key=lambda item: item[0])
-        return found
+        # Keyed on the root node itself: literals of one file are resolved
+        # together, and a re-parsed file comes back as a new root.
+        cached = self._go_type_declarations
+        if cached is None or cached[0] is not root_node:
+            cached = (root_node, _go_type_declarations_by_name(root_node))
+            self._go_type_declarations = cached
+        return list(cached[1].get(name, ()))
 
     def _ingest_go_composite_function_references(
         self,
@@ -7219,6 +7417,11 @@ class CallProcessor:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
+        # Only a name can hand a callable over. The whole source text of any
+        # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
+        # as if it were one (issue #2438).
+        if not _names_a_callable(arg_node):
+            return
         if not (arg_text := safe_decode_text(arg_node)):
             return
         if language == cs.SupportedLanguage.CSHARP:
@@ -7255,6 +7458,14 @@ class CallProcessor:
         # resolves the cast's TYPE name in some paths), and emitting that
         # produces schema-invalid edges.
         if res_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+            return
+        # And only a callable the graph has a node for. A member read on a
+        # builtin-typed receiver (`error.customDelay` on an Error,
+        # `items.length` on an Array) resolves to a synthetic `builtin.*` qn
+        # that is never created, a property as often as a method, so the
+        # edge could only be dropped by the database and counted as a failed
+        # write on every index (issue #2438; #652 for the call form).
+        if res_qn not in registry:
             return
         # A Dart getter in argument position is a VALUE READ, not a tear-off:
         # the getter-read pass owns those edges (with shadow handling), so

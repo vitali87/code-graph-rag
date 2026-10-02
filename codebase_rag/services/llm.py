@@ -13,6 +13,7 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, load_cgr_instructions, settings
 from ..prompts import (
+    build_cypher_repair_request,
     build_cypher_system_prompt,
     build_local_cypher_system_prompt,
     build_rag_orchestrator_prompt,
@@ -201,6 +202,14 @@ class CypherGenerator:
         except Exception as e:
             logger.error(ls.CYPHER_ERROR.format(error=e))
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
+
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str:
+        """Ask for a new query after the database rejected `failed_query`."""
+        return await self.generate(
+            build_cypher_repair_request(natural_language_query, failed_query, error)
+        )
 
 
 def create_research_agent(tools: list[Tool]) -> Agent:
