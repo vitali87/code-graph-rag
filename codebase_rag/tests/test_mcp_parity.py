@@ -17,6 +17,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
+from codebase_rag.utils.path_utils import derive_project_name
 
 pytestmark = [pytest.mark.anyio]
 
@@ -121,14 +122,17 @@ class TestFindDuplicateCodeIsExposed:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Parity means the same call gives the same answer on both surfaces,
-        so the defaults must be the CLI's, not new numbers."""
+        so the defaults must be the CLI's, not new numbers. The project is the
+        one exception: an MCP server has a root of its own, and an omitted
+        project means that root's project, as for every other graph tool
+        (issue #2757)."""
         mcp_registry._find_duplicates_tool = MagicMock()
         mcp_registry._find_duplicates_tool.function = AsyncMock(return_value="ok")
 
         await mcp_registry.find_duplicate_code()
 
         mcp_registry._find_duplicates_tool.function.assert_awaited_once_with(
-            project=None,
+            project=derive_project_name(Path(mcp_registry.project_root)),
             threshold=cs.DUPLICATES_DEFAULT_THRESHOLD,
             min_size=cs.DUPLICATES_DEFAULT_MIN_NODES,
             limit=cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
