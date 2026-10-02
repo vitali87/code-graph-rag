@@ -303,6 +303,7 @@ def _start_update_graph(
     repo: Path,
     project_name: str,
     *,
+    workspace_config: WorkspaceConfig | None,
     project_named: bool,
     batch_size: int,
     exclude: list[str] | None,
@@ -313,7 +314,21 @@ def _start_update_graph(
     skip_embeddings: bool | None,
     assume_yes: bool,
 ) -> None:
-    # `start --update-graph`: sync the repo into the graph, then stop.
+    # `start --update-graph`: sync the repo, or with --workspace each of the
+    # workspace's repositories, into the graph, then stop.
+    if workspace_config is not None:
+        # The workspace's repositories, each under its own name: the set the
+        # chat's own sync uses. `--repo-path`, defaulting to the current
+        # directory, is not one of them (#2418).
+        _sync_workspace(
+            workspace_config,
+            batch_size,
+            exclude,
+            capture=capture,
+            skip_embeddings=skip_embeddings,
+        )
+        _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        return
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
@@ -426,11 +441,18 @@ def _launch_session(
 
 
 def _refuse_unsupported_workspace_update(
-    clean: bool, output: str | None, interactive_setup: bool
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    *,
+    clean: bool,
+    output: str | None,
+    interactive_setup: bool,
 ) -> None:
     # Each is defined for one repository: `--clean` wipes the graph before
     # that repository's sync, `-o` writes that sync's result, and the setup
     # prompt asks about that repository's directories.
+    if workspace_config is None or not update_graph:
+        return
     for option, given in (
         (cs.CLI_OPT_CLEAN, clean),
         (cs.CLI_OPT_OUTPUT, output is not None),
@@ -949,8 +971,13 @@ def start(
         _exit_if_unwritable(output)
 
     workspace_config = _load_workspace_or_exit(workspace)
-    if update_graph and workspace_config is not None:
-        _refuse_unsupported_workspace_update(clean, output, interactive_setup)
+    _refuse_unsupported_workspace_update(
+        workspace_config,
+        update_graph,
+        clean=clean,
+        output=output,
+        interactive_setup=interactive_setup,
+    )
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -968,24 +995,11 @@ def start(
     if not ask_agent and not update_graph:
         app_context.console.print(_create_configuration_table(target_repo_path))
 
-    if update_graph and workspace_config is not None:
-        # The workspace's repositories, each under its own name: the set the
-        # chat's own sync uses. `--repo-path`, defaulting to the current
-        # directory, is not one of them (#2418).
-        _sync_workspace(
-            workspace_config,
-            effective_batch_size,
-            exclude,
-            capture=capture,
-            skip_embeddings=no_embeddings or None,
-        )
-        _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
-        return
-
     if update_graph:
         _start_update_graph(
             resolved_repo,
             resolved_project_name,
+            workspace_config=workspace_config,
             project_named=project_name is not None,
             batch_size=effective_batch_size,
             exclude=exclude,
