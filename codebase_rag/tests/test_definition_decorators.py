@@ -134,7 +134,9 @@ class RecordedGraph:
 def indexed(tmp_path: Path, mock_ingestor: MagicMock) -> RecordedGraph:
     repo = tmp_path / "decor"
     repo.mkdir()
-    (repo / "svc.py").write_text(SOURCE, encoding="utf-8")
+    # LF pinned: `source` is the file's text as written, and Windows'
+    # write_text would turn every expected `\n` into `\r\n`.
+    (repo / "svc.py").write_text(SOURCE, encoding="utf-8", newline="\n")
     updater = create_and_run_updater(repo, mock_ingestor)
     return RecordedGraph(mock_ingestor, updater.project_name, repo)
 
@@ -373,7 +375,7 @@ export class Svc {
 def _index(tmp_path: Path, mock: MagicMock, name: str, text: str) -> RecordedGraph:
     repo = tmp_path / "annotated"
     repo.mkdir()
-    (repo / name).write_text(text, encoding="utf-8")
+    (repo / name).write_text(text, encoding="utf-8", newline="\n")
     updater = create_and_run_updater(repo, mock)
     return RecordedGraph(mock, updater.project_name, repo)
 

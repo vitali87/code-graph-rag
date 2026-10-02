@@ -56,7 +56,8 @@ def test_definition_reads_the_decorated_span_back_from_memgraph(
 ) -> None:
     repo = tmp_path / "decor"
     repo.mkdir()
-    (repo / "svc.py").write_text(SOURCE, encoding="utf-8")
+    # LF pinned: `source` is the file's text as written (see the unit tests).
+    (repo / "svc.py").write_text(SOURCE, encoding="utf-8", newline="\n")
     project = _index(memgraph_ingestor, repo)
     fetch_qn = f"{project}.svc.fetch"
 
