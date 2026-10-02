@@ -29,7 +29,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr optimize` | Run a language-focused code optimisation session |
 | `cgr mcp-server` | Serve cgr tools over stdio or HTTP |
 | `cgr index` | Write an offline protobuf index for a repository |
-| `cgr export` | Export the shared graph database to JSON |
+| `cgr export` | Export the shared graph, or chosen projects, to JSON |
 | `cgr graph-loader` | Summarise an exported graph JSON file |
 | `cgr stats` | Show graph node and relationship counts |
 | `cgr dead-code` | Report code that appears unreachable from known entry points |
@@ -74,11 +74,22 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 
 ### `cgr export`
 
-Export the knowledge graph to JSON.
+Export the knowledge graph to JSON. Without options the file holds every
+project in the shared graph.
 
 ```bash
-cgr export -o my_graph.json
+cgr export -o OUTPUT [OPTIONS]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `-o`, `--output` | File to write. Checked before the graph is read: a directory, or a path that cannot be written, is a one-line error. |
+| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, and the nodes they reach. Repeatable. |
+| `--workspace` | Export only the projects of workspace NAME. |
+
+A name that is not indexed is an error that lists the projects that are. A
+scoped file records its projects under `metadata.projects`. `--batch-size` and
+`--json` are deprecated and ignored with a warning; `--no-json` is an error.
 
 ### `cgr optimize`
 

@@ -37,6 +37,29 @@ def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
     return Path.cwd().resolve()
 
 
+def unwritable_output_reason(path: Path) -> str | None:
+    """Why no file can be written at `path`, or None when one can.
+
+    Run before the graph is read or indexed, so a mistyped `-o` fails at once
+    instead of after the work it was meant to save (issue #2410). Missing
+    parent directories are fine: the writer creates them.
+    """
+    if path.is_dir():
+        return cs.CLI_ERR_OUTPUT_IS_DIR.format(path=path)
+    if path.exists():
+        if os.access(path, os.W_OK):
+            return None
+        return cs.CLI_ERR_OUTPUT_NOT_WRITABLE.format(target=path)
+    ancestor = next((parent for parent in path.parents if parent.exists()), None)
+    if ancestor is None:
+        return None
+    if not ancestor.is_dir():
+        return cs.CLI_ERR_OUTPUT_PARENT_NOT_DIR.format(parent=ancestor)
+    if not os.access(ancestor, os.W_OK | os.X_OK):
+        return cs.CLI_ERR_OUTPUT_NOT_WRITABLE.format(target=ancestor)
+    return None
+
+
 @lru_cache(maxsize=4096)
 def cached_relative_path(file_path: Path, repo_path: Path) -> Path:
     return file_path.relative_to(repo_path)
