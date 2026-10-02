@@ -10,6 +10,7 @@ from ... import constants as cs
 from ... import logs as lg
 from ...decorators import recursion_guard
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType, SimpleNameLookup
+from ...utils import qn_markers
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
 from .utils import resolve_class_name
@@ -97,7 +98,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             and func_node.text is not None
             and (callee := safe_decode_text(func_node))
         ):
-            if callee[0].isupper():
+            if self._names_a_lone_class(callee, module_qn):
                 return callee
             # A lowercase callee is a free-function factory: type from its
             # return (annotation first), so `self.widgets = load_widgets()`
@@ -137,7 +138,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and func_node.type == cs.TS_PY_IDENTIFIER
                 and func_node.text is not None
                 and (class_name := safe_decode_text(func_node))
-                and class_name[0].isupper()
+                and self._names_a_lone_class(class_name, module_qn)
             ):
                 return class_name
 
@@ -229,32 +230,116 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 )
             )
         for qn in candidates:
-            # A class and a same-named def (a docs shim, an ImportError
-            # fallback) both bind the name. The class is the exact answer
-            # wherever it sits; the shim usually returns the class passed
-            # through, which types as nothing (issue #2621).
-            kinds = {
-                variant: self.function_registry.get(variant)
-                for variant in self.function_registry.variants(qn)
-            }
-            for variant, kind in kinds.items():
-                if kind == NodeType.CLASS:
-                    return variant
-            for variant, kind in kinds.items():
-                if kind == NodeType.FUNCTION:
-                    return self._get_function_return_type_from_ast(variant)
+            if (kinds := self._class_and_def_twins(qn)) is not None:
+                return self._live_binding_type(qn, kinds)
+            match self.function_registry.get(qn):
+                case NodeType.CLASS:
+                    return qn
+                case NodeType.FUNCTION:
+                    return self._get_function_return_type_from_ast(qn)
+                case _:
+                    continue
         return None
 
+    def _names_a_lone_class(self, callee: str, module_qn: str) -> bool:
+        # A capitalised callee is taken for a class, unless a same-named def
+        # may be what runs instead; the twin path then decides (issue #2621).
+        return callee[0].isupper() and (
+            self._class_and_def_twins(f"{module_qn}{cs.SEPARATOR_DOT}{callee}") is None
+        )
+
+    def _class_and_def_twins(self, qn: str) -> dict[str, NodeType | None] | None:
+        """The kind of each variant when a class and a def share `qn`."""
+        variants = self.function_registry.variants(qn)
+        if len(variants) < 2:
+            return None
+        kinds = {variant: self.function_registry.get(variant) for variant in variants}
+        if NodeType.CLASS in kinds.values() and NodeType.FUNCTION in kinds.values():
+            return kinds
+        return None
+
+    def _live_binding_type(
+        self, qn: str, kinds: dict[str, NodeType | None]
+    ) -> str | None:
+        """The one type `name()` has under every binding a caller may see.
+
+        A caller runs whichever definition the module bound last: the last
+        unconditional one, or a conditional one written after it. Those must
+        agree. A shim that returns the class it wraps types as nothing and
+        does not disagree (issue #2621), but a def returning another class
+        does, and picking either side bound `factory().m()` to a method that
+        never runs (PR #2789 review). Disagreement leaves the receiver
+        untyped rather than exactly wrong.
+        """
+        module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)
+        definitions = self._module_level_definitions(module_qn, name)
+        unconditional = [
+            index
+            for index, (_, conditional) in enumerate(definitions)
+            if not conditional
+        ]
+        live = definitions[unconditional[-1] :] if unconditional else definitions
+        types: set[str] = set()
+        for node, _ in live:
+            if (variant := _variant_at(node, kinds)) is None:
+                continue
+            if kinds[variant] == NodeType.CLASS:
+                types.add(variant)
+            elif kinds[variant] == NodeType.FUNCTION and (
+                returned := self._get_function_return_type_from_ast(variant, node)
+            ):
+                types.add(returned)
+        return types.pop() if len(types) == 1 else None
+
+    def _module_level_definitions(
+        self, module_qn: str, name: str
+    ) -> list[tuple[Node, bool]]:
+        """Module-scope `class name` / `def name` nodes in source order, each
+        with whether a branch, loop, `try` or `with` encloses it."""
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
+            return []
+        root_node, language = entry
+        if language != cs.SupportedLanguage.PYTHON:
+            return []
+        found: list[tuple[Node, bool]] = []
+        stack = [(child, False) for child in reversed(root_node.children)]
+        while stack:
+            node, conditional = stack.pop()
+            definition = (
+                node.child_by_field_name(cs.FIELD_DEFINITION)
+                if node.type == cs.TS_PY_DECORATED_DEFINITION
+                else node
+            )
+            if definition is not None and definition.type in (
+                cs.TS_PY_CLASS_DEFINITION,
+                cs.TS_PY_FUNCTION_DEFINITION,
+            ):
+                # A body is another scope: its definitions bind no module name.
+                if (
+                    safe_decode_text(definition.child_by_field_name(cs.FIELD_NAME))
+                    == name
+                ):
+                    found.append((definition, conditional))
+                continue
+            stack.extend((child, True) for child in reversed(node.children))
+        return found
+
     @recursion_guard(
-        key_func=lambda self, fn_qn: fn_qn,
+        key_func=lambda self, fn_qn, fn_node=None: fn_qn,
         guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
     )
-    def _get_function_return_type_from_ast(self, fn_qn: str) -> str | None:
+    def _get_function_return_type_from_ast(
+        self, fn_qn: str, fn_node: Node | None = None
+    ) -> str | None:
+        # `fn_node` is passed for an `@line` variant, whose qn names no
+        # definition the by-name lookup can find.
         if fn_qn in self._method_return_type_cache:
             return self._method_return_type_cache[fn_qn]
 
         fn_module_qn = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        fn_node = self._find_function_ast_node(fn_qn)
+        if fn_node is None:
+            fn_node = self._find_function_ast_node(fn_qn)
         result = (
             self._analyze_method_return_statements(fn_node, fn_qn, fn_module_qn)
             if fn_node
@@ -580,3 +665,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+
+
+def _variant_at(node: Node, kinds: dict[str, NodeType | None]) -> str | None:
+    # A twin registered after the first carries its start line as `@line`;
+    # the definition holding the plain name is the one no marker names.
+    line = node.start_point[0] + 1
+    plain = None
+    for variant in kinds:
+        marked = qn_markers.marker_line(variant)
+        if marked == line:
+            return variant
+        if marked is None:
+            plain = variant
+    return plain

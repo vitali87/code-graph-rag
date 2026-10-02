@@ -207,6 +207,60 @@ def use():
     return Tool().run()
 """
 
+# The PR #2789 review case: the unconditional def written after the class is
+# what every caller runs, and it returns a different class.
+FACTORY_SRC = """class Product:
+    def product_method(self):
+        return 1
+
+
+class factory:
+    def product_method(self):
+        return 2
+
+
+def factory():
+    return Product()
+
+
+def use():
+    return factory().product_method()
+
+
+def use_var():
+    v = factory()
+    return v.product_method()
+"""
+
+# Either binding may be live, and they construct different classes.
+DISAGREE_SRC = """import os
+
+
+class Other:
+    def run(self):
+        return 2
+
+
+class Tool:
+    def run(self):
+        return 1
+
+
+if os.environ.get("DOCS"):
+
+    def Tool():
+        return Other()
+
+
+def use():
+    return Tool().run()
+
+
+def use_var():
+    tool = Tool()
+    return tool.run()
+"""
+
 _Edge = tuple[str, str, str, PropertyValue]
 
 
@@ -467,6 +521,39 @@ class TestDefBeforeSameNamedClass:
             (cs.RelationshipType.INSTANTIATES, f"{m}.Tool{cs.DUP_QN_MARKER}9"),
             (cs.RelationshipType.CALLS, f"{m}.Tool{cs.DUP_QN_MARKER}9.run"),
         }
+
+
+class TestReceiverTypeFollowsTheLiveBinding:
+    # A method call on `X()` binds through ONE type. The class is only that
+    # type when no def that may run instead returns something else.
+
+    def test_later_unconditional_def_types_by_its_return(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        m = _index(temp_repo, mock_ingestor, FACTORY_SRC)
+        for caller in ("use", "use_var"):
+            methods = {
+                (qn, res)
+                for rel, label, qn, res in _edges_from(mock_ingestor, f"{m}.{caller}")
+                if rel == cs.RelationshipType.CALLS and label == cs.NodeLabel.METHOD
+            }
+            assert methods == {
+                (f"{m}.Product.product_method", cs.EdgeResolution.EXACT)
+            }, caller
+
+    def test_disagreeing_live_bindings_type_the_receiver_as_neither(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        m = _index(temp_repo, mock_ingestor, DISAGREE_SRC)
+        for caller in ("use", "use_var"):
+            exact_methods = {
+                qn
+                for rel, label, qn, res in _edges_from(mock_ingestor, f"{m}.{caller}")
+                if rel == cs.RelationshipType.CALLS
+                and label == cs.NodeLabel.METHOD
+                and res == cs.EdgeResolution.EXACT
+            }
+            assert exact_methods == set(), caller
 
 
 class TestNeighboursUnchanged:
