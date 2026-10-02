@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
+from pydantic_ai.exceptions import ModelAPIError
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
@@ -200,6 +201,32 @@ class TestQueryToolFailureShapes:
 
         assert data.error is None
         assert "model returned prose" in data.summary
+        ingestor.fetch_read_only.assert_not_called()
+
+    async def test_a_built_model_that_does_not_answer_is_a_refusal(self) -> None:
+        from codebase_rag.services import llm
+
+        # Built fine -- Ollama answered its health probe, or a hosted provider
+        # needs none -- and then the request itself never reached the model.
+        with (
+            patch.object(llm, "_create_provider_model"),
+            patch.object(llm, "Agent") as agent_cls,
+        ):
+            agent_cls.return_value.run = AsyncMock(
+                side_effect=ModelAPIError("llama3.2", "Connection error.")
+            )
+            ingestor = MagicMock()
+            tool = create_query_tool(
+                ingestor=ingestor, cypher_gen=llm.CypherGenerator()
+            )
+
+            data = await tool.function(
+                natural_language_query="Which functions call add?"
+            )
+
+        assert "Connection error." in (data.error or "")
+        assert "CYPHER_PROVIDER" in (data.error or "")
+        assert data.query_used == cs.QUERY_NOT_AVAILABLE
         ingestor.fetch_read_only.assert_not_called()
 
 

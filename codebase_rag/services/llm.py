@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.agent import AgentRetries, AgentRunResult
+from pydantic_ai.exceptions import ModelAPIError
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -200,6 +201,15 @@ class CypherGenerator:
             _validate_call_procedures(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
+        except ModelAPIError as e:
+            # The request never got an answer: the provider was unreachable,
+            # refused the key, or has no such model. Nothing was translated,
+            # so this is the same refusal as a model that could not be built
+            # (issue #2518), not a translation that went wrong.
+            logger.error(ls.CYPHER_ERROR.format(error=e))
+            raise ex.CypherModelUnavailableError(
+                ex.LLM_CYPHER_UNAVAILABLE.format(error=e)
+            ) from e
         except Exception as e:
             logger.error(ls.CYPHER_ERROR.format(error=e))
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
