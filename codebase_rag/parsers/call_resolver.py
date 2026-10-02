@@ -498,7 +498,7 @@ class CallResolver:
         names a TYPE and the simple-name fallback must not offer a method or
         function that merely shares the name."""
         self.last_resolution = cs.EdgeResolution.EXACT
-        return self._reject_class_via_value_receiver(
+        result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
                     call_name,
@@ -517,6 +517,19 @@ class CallResolver:
             local_var_types,
             language,
         )
+        # The probes filter their name-based candidates by crate already;
+        # this catches what reached a crate by another name-based route (a
+        # receiver typed by a recorded name, a match arm typed by its
+        # variant's), since no Rust call can land outside the caller's
+        # dependency closure, precise or not (issue #2622).
+        if (
+            result is not None
+            and language == cs.SupportedLanguage.RUST
+            and not self._rust_crate_reaches(module_qn, result[1])
+        ):
+            logger.debug(ls.CALL_RUST_OUTSIDE_CRATE, call_name=call_name, qn=result[1])
+            return None
+        return result
 
     def _is_python_local_name(self, call: _CallSite) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
@@ -3210,6 +3223,7 @@ class CallResolver:
             # alone, and the site-gated probe answered there already
             # (issue #1061); by simple name it is never a candidate.
             and not self._rust_block_item_hidden(qn, module_qn, call_point)
+            and self._rust_crate_reaches(module_qn, qn)
         ]
         # A definition scoped inside another function's body is named from
         # elsewhere only when it escapes (a factory returns it, CommonJS
@@ -3764,6 +3778,7 @@ class CallResolver:
                 qn
                 for qn in matching_qns
                 if self.function_registry.get(qn) in _RS_TYPE_NODE_TYPES
+                and (module_qn is None or self._rust_crate_reaches(module_qn, qn))
             ),
             class_qn,
         )
@@ -4463,6 +4478,7 @@ class CallResolver:
             qn
             for qn in self.function_registry.find_ending_with(type_path)
             if self.function_registry.get(qn) == cs.NodeLabel.CLASS
+            and self._rust_crate_reaches(module_qn, qn)
         ]
         if not matches and cs.SEPARATOR_DOT in type_path:
             simple = type_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -4470,6 +4486,7 @@ class CallResolver:
                 qn
                 for qn in self.function_registry.find_ending_with(simple)
                 if self.function_registry.get(qn) == cs.NodeLabel.CLASS
+                and self._rust_crate_reaches(module_qn, qn)
             ]
         if not matches:
             return None
@@ -4836,13 +4853,40 @@ class CallResolver:
         # class qn missing from the registry can never be a real node;
         # require registration so an import-map module entry (a C++ header
         # stem shadowing its class name) cannot mask the real class.
-        return resolve_class_name(
+        resolved = resolve_class_name(
             self._dealias_type(class_name),
             module_qn,
             self.import_processor,
             self.function_registry,
             require_registered=True,
         )
+        if resolved is None or self._rust_crate_reaches(module_qn, resolved):
+            return resolved
+        # Only the last step, the search by simple name, can land in a crate
+        # the caller cannot depend on; search again among those it can.
+        return self._rust_reachable_type(class_name, module_qn)
+
+    def _rust_reachable_type(self, name: str, module_qn: str) -> str | None:
+        matches = [
+            qn
+            for qn in self.function_registry.find_ending_with(name)
+            if self.function_registry.get(qn) in _RS_TYPE_NODE_TYPES
+            and self._rust_crate_reaches(module_qn, qn)
+        ]
+        own = [qn for qn in matches if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")]
+        if own:
+            return min(own, key=len)
+        return matches[0] if matches else None
+
+    def _rust_crate_reaches(self, module_qn: str, target_qn: str) -> bool:
+        # Rust to Rust only: every other language's candidates, and a module
+        # of unknown language, keep their behaviour.
+        if (
+            self._module_language(module_qn) != cs.SupportedLanguage.RUST
+            or self._module_language(target_qn) != cs.SupportedLanguage.RUST
+        ):
+            return True
+        return self.import_processor.rust_crate_reaches(module_qn, target_qn)
 
     def resolve_java_method_call(
         self,

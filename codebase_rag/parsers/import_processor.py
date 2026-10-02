@@ -835,6 +835,8 @@ class ImportProcessor:
         "_rust_auto_discovery_flags",
         "_rust_workspace_crates",
         "_rust_pkg_deps",
+        "_rust_dep_closures",
+        "_rust_qn_packages",
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
@@ -969,6 +971,14 @@ class ImportProcessor:
         self._rust_pkg_deps: dict[
             tuple[str, ...], dict[str, tuple[str, ...] | None]
         ] = {}
+        # Per-package dependency closure (the package itself, its
+        # dependencies of every kind and theirs), or None for a manifest
+        # without a [package] table; and the package each probed qn sits in.
+        # Both derive from the manifests, so they reset with the above.
+        self._rust_dep_closures: dict[
+            tuple[str, ...], frozenset[tuple[str, ...]] | None
+        ] = {}
+        self._rust_qn_packages: dict[str, tuple[str, ...] | None] = {}
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -2705,6 +2715,60 @@ class ImportProcessor:
         deps = self._rust_package_deps(pkg)
         return head in deps and deps[head] is None
 
+    def rust_crate_reaches(self, module_qn: str, target_qn: str) -> bool:
+        """Whether code in `module_qn` can call into the crate of `target_qn`.
+
+        Cargo lets a crate name items of itself and of the packages its
+        manifest depends on, directly or through them, dev- and
+        build-dependencies included, and nothing else. A name-based
+        candidate in any other crate is impossible, however close its name
+        (issue #2622: ripgrep's `globset` "called" into `ignore`, which
+        depends on it). A side outside every package manifest proves
+        nothing, so it reaches.
+        """
+        closure = self._rust_dependency_closure(self._rust_package_of(module_qn))
+        if closure is None:
+            return True
+        target = self._rust_package_of(target_qn)
+        return (
+            target is None
+            or target in closure
+            or self._rust_dependency_closure(target) is None
+        )
+
+    def _rust_package_of(self, qn: str) -> tuple[str, ...] | None:
+        if qn in self._rust_qn_packages:
+            return self._rust_qn_packages[qn]
+        package = self._rust_enclosing_package(qn)
+        self._rust_qn_packages[qn] = package
+        return package
+
+    def _rust_dependency_closure(
+        self, pkg: tuple[str, ...] | None
+    ) -> frozenset[tuple[str, ...]] | None:
+        if pkg is None:
+            return None
+        if pkg in self._rust_dep_closures:
+            return self._rust_dep_closures[pkg]
+        closure: frozenset[tuple[str, ...]] | None = None
+        manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
+        if isinstance(manifest.get(cs.RS_MANIFEST_PACKAGE_KEY), dict):
+            # A workspace member declared by version alone is still the
+            # member the repo holds (the published-workspace shape, #1048).
+            members = self._rust_workspace_crate_roots()
+            seen = {pkg}
+            pending = [pkg]
+            while pending:
+                for name, target in self._rust_package_deps(pending.pop()).items():
+                    if target is None and (member := members.get(name)) is not None:
+                        target = member[0]
+                    if target is not None and target not in seen:
+                        seen.add(target)
+                        pending.append(target)
+            closure = frozenset(seen)
+        self._rust_dep_closures[pkg] = closure
+        return closure
+
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.
 
@@ -4163,6 +4227,8 @@ class ImportProcessor:
         self._rust_auto_discovery_flags.clear()
         self._rust_workspace_crates = None
         self._rust_pkg_deps.clear()
+        self._rust_dep_closures.clear()
+        self._rust_qn_packages.clear()
 
     def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
         # The realtime watcher re-parses through process_file without
@@ -4280,6 +4346,8 @@ class ImportProcessor:
         self._rust_auto_discovery_flags.clear()
         self._rust_workspace_crates = None
         self._rust_pkg_deps.clear()
+        self._rust_dep_closures.clear()
+        self._rust_qn_packages.clear()
         for key, stems in self._rust_entry_mod_decls.items():
             allowed = {
                 name[: -len(cs.EXT_RS)] for name in self._rust_explicit_entry_files(key)
