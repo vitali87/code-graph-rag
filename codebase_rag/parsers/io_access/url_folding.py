@@ -168,29 +168,42 @@ def _js_candidates(root: Node) -> list[tuple[str, Node]]:
     # `var` can be reassigned anywhere and never qualifies.
     candidates: list[tuple[str, Node]] = []
     for statement in root.named_children:
-        declaration = (
-            statement.child_by_field_name(cs.FIELD_DECLARATION)
-            if statement.type == cs.TS_EXPORT_STATEMENT
-            else statement
-        )
-        if declaration is None or declaration.type != cs.TS_LEXICAL_DECLARATION:
-            continue
-        kind = declaration.child_by_field_name(cs.FIELD_KIND)
-        if kind is None or kind.type != cs.JS_CONST_KEYWORD:
+        declaration = _js_const_declaration(statement)
+        if declaration is None:
             continue
         for declarator in declaration.named_children:
-            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
-                continue
-            name = declarator.child_by_field_name(cs.FIELD_NAME)
-            value = declarator.child_by_field_name(cs.FIELD_VALUE)
-            if (
-                name is not None
-                and name.type == cs.TS_IDENTIFIER
-                and name.text is not None
-                and value is not None
-            ):
-                candidates.append((name.text.decode(cs.ENCODING_UTF8), value))
+            if (binding := _js_declarator_binding(declarator)) is not None:
+                candidates.append(binding)
     return candidates
+
+
+def _js_const_declaration(statement: Node) -> Node | None:
+    declaration = (
+        statement.child_by_field_name(cs.FIELD_DECLARATION)
+        if statement.type == cs.TS_EXPORT_STATEMENT
+        else statement
+    )
+    if declaration is None or declaration.type != cs.TS_LEXICAL_DECLARATION:
+        return None
+    kind = declaration.child_by_field_name(cs.FIELD_KIND)
+    if kind is None or kind.type != cs.JS_CONST_KEYWORD:
+        return None
+    return declaration
+
+
+def _js_declarator_binding(declarator: Node) -> tuple[str, Node] | None:
+    if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+        return None
+    name = declarator.child_by_field_name(cs.FIELD_NAME)
+    value = declarator.child_by_field_name(cs.FIELD_VALUE)
+    if (
+        name is None
+        or name.type != cs.TS_IDENTIFIER
+        or name.text is None
+        or value is None
+    ):
+        return None
+    return name.text.decode(cs.ENCODING_UTF8), value
 
 
 _JS_NAMED_DEFINITIONS = frozenset(
@@ -208,27 +221,33 @@ _JS_PATTERN_CONTAINERS = frozenset(
 )
 
 
-def _js_names_bound_by(node: Node) -> set[str]:
-    # The names one JS/TS node binds: declarators, parameters (a bare arrow
-    # parameter included), function/class names, catch and loop bindings,
-    # import bindings, and a plain `NAME = ...` reassignment.
-    field: str | None = None
-    if node.type == cs.TS_VARIABLE_DECLARATOR:
-        field = cs.FIELD_NAME
-    elif node.type == cs.TS_ARROW_FUNCTION:
-        field = cs.FIELD_PARAMETER
-    elif node.type in _JS_NAMED_DEFINITIONS:
-        field = cs.FIELD_NAME
-    elif node.type == cs.TS_JS_CATCH_CLAUSE:
-        field = cs.FIELD_PARAMETER
-    elif node.type in (cs.TS_JS_FOR_IN_STATEMENT, cs.TS_JS_ASSIGNMENT_EXPRESSION):
-        field = cs.FIELD_LEFT
-    elif node.type == cs.TS_IMPORT_SPECIFIER:
-        field = (
+# The field holding the pattern a node binds, for the node types whose
+# binding sits in one fixed field.
+_JS_BINDING_FIELDS: dict[str, str] = {
+    cs.TS_VARIABLE_DECLARATOR: cs.FIELD_NAME,
+    cs.TS_ARROW_FUNCTION: cs.FIELD_PARAMETER,
+    cs.TS_JS_CATCH_CLAUSE: cs.FIELD_PARAMETER,
+    cs.TS_JS_FOR_IN_STATEMENT: cs.FIELD_LEFT,
+    cs.TS_JS_ASSIGNMENT_EXPRESSION: cs.FIELD_LEFT,
+    **dict.fromkeys(_JS_NAMED_DEFINITIONS, cs.FIELD_NAME),
+}
+
+
+def _js_binding_field(node: Node) -> str | None:
+    if node.type == cs.TS_IMPORT_SPECIFIER:
+        return (
             cs.FIELD_ALIAS
             if node.child_by_field_name(cs.FIELD_ALIAS) is not None
             else cs.FIELD_NAME
         )
+    return _JS_BINDING_FIELDS.get(node.type)
+
+
+def _js_names_bound_by(node: Node) -> set[str]:
+    # The names one JS/TS node binds: declarators, parameters (a bare arrow
+    # parameter included), function/class names, catch and loop bindings,
+    # import bindings, and a plain `NAME = ...` reassignment.
+    field = _js_binding_field(node)
     if field is not None:
         return _js_pattern_names(node.child_by_field_name(field))
     if node.type == cs.TS_JS_FORMAL_PARAMETERS:

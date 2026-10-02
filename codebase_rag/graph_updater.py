@@ -2683,7 +2683,6 @@ class GraphUpdater:
         # read back from the graph for a module this run did not parse. A
         # re-parsed module's old subtree is deleted before its parse, so the
         # graph never answers for it with a previous parse's node.
-        dp = self.factory.definition_processor
         found: dict[FunctionSpanKey, tuple[cs.NodeLabel, str]] = {}
         unrecorded: set[str] = set()
         for module_qn, module_registrations in registrations.items():
@@ -2692,20 +2691,27 @@ class GraphUpdater:
                     continue
                 row, col = registration.handler_start
                 key = (module_qn, row + 1, col)
-                location = dp.function_locations.get(key)
-                node_type = (
-                    dp.function_registry.get(location.qualified_name)
-                    if location is not None
-                    else None
-                )
-                if location is not None and node_type is not None:
-                    found[key] = (_route_label(node_type), location.qualified_name)
+                if (source := self._recorded_function_at(key)) is not None:
+                    found[key] = source
                 else:
                     unrecorded.add(module_qn)
         if unrecorded:
             for key, source in self._graph_function_starts(unrecorded).items():
                 found.setdefault(key, source)
         return found
+
+    def _recorded_function_at(
+        self, key: FunctionSpanKey
+    ) -> tuple[cs.NodeLabel, str] | None:
+        # The function this run's definition pass recorded starting at `key`.
+        dp = self.factory.definition_processor
+        location = dp.function_locations.get(key)
+        if location is None:
+            return None
+        node_type = dp.function_registry.get(location.qualified_name)
+        if node_type is None:
+            return None
+        return _route_label(node_type), location.qualified_name
 
     def _graph_function_starts(
         self, module_qns: set[str]
