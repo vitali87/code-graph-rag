@@ -86,6 +86,9 @@ class MockFunctionRegistry:
     def is_abstract(self, qn: QualifiedName) -> bool:
         return qn in self._abstracts
 
+    def member_alias_targets(self, qn: QualifiedName) -> tuple[QualifiedName, ...]:
+        return ()
+
 
 @pytest.fixture
 def mock_function_registry() -> MockFunctionRegistry:

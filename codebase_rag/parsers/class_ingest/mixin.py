@@ -41,6 +41,7 @@ from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..py import external_stdlib_base_method_names, resolve_class_name
+from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
@@ -271,6 +272,20 @@ def _signatured_method_qn(
             param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
             return f"{class_qn}.{cs_name}({param_sig})"
     return None
+
+
+def _python_member_aliases(
+    body_node: Node, language: cs.SupportedLanguage
+) -> dict[int, tuple[str, ...]]:
+    # Method node id -> the other member names the class body binds it to
+    # (`run = _plain`, issue #2620), so the method registers under them too.
+    if language != cs.SupportedLanguage.PYTHON:
+        return {}
+    names: dict[int, list[str]] = {}
+    for alias, methods in scan_class_body_aliases(body_node).members.items():
+        for method in methods:
+            names.setdefault(method.id, []).append(alias)
+    return {method_id: tuple(aliases) for method_id, aliases in names.items()}
 
 
 class _MethodScope(NamedTuple):
@@ -1851,6 +1866,7 @@ class ClassIngestMixin:
             self._method_override_context(class_qn, language)
         )
         scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
+        member_aliases = _python_member_aliases(body_node, language)
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
@@ -1879,6 +1895,7 @@ class ClassIngestMixin:
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
                 parameter_type_sink=self.pending_parameter_types,
+                member_aliases=member_aliases.get(method_node.id, ()),
             )
             if ingested_qn is not None:
                 self._record_ingested_method(scope, method_node, ingested_qn)

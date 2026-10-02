@@ -106,12 +106,19 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `member_aliases` (issue #2620) lets an incremental run re-register the
+    # class-body aliases (`run = _plain`) of a file it does not re-parse. A
+    # graph round-tripped through protobuf loses them, so until that file is
+    # parsed again a call through the alias binds to nothing, exactly as it
+    # did before #2620; absent reads as "no aliases", never a wrong target.
+    # Exporting it needs a proto field and protoc, which #1490 carries.
     "Method": frozenset(
         {
             "absolute_path",
             "anchor_hash",
             "is_exported",
             "is_property",
+            "member_aliases",
             "modifiers",
             "name_start_col",
             "name_start_line",

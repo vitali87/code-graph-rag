@@ -3222,6 +3222,15 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # Restore the class-body aliases of an unchanged method (`run =
+        # _plain`), or a re-parsed file's `obj.run()` binds to nothing
+        # (issue #2620).
+        if isinstance(aliases := row.get(cs.KEY_MEMBER_ALIASES), list):
+            owner_qn = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            for alias in aliases:
+                self.function_registry.add_member_alias(
+                    f"{owner_qn}{cs.SEPARATOR_DOT}{alias}", qn
+                )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.

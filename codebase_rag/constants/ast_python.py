@@ -91,6 +91,9 @@ TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"
 TS_PY_EXCEPT_CLAUSE = "except_clause"
 TS_PY_FINALLY_CLAUSE = "finally_clause"
+# Every clause of a compound statement (elif/else/except/finally/case) ends
+# with this, so a class-body scan can reach the blocks under any of them.
+TS_PY_CLAUSE_SUFFIX = "_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
@@ -129,6 +132,8 @@ PY_DUNDER_SETITEM = "__setitem__"
 PY_DUNDER_CONTAINS = "__contains__"
 PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
+# `obj(...)` on an instance runs `type(obj).__call__`.
+PY_DUNDER_CALL = "__call__"
 # Operands with these characters are not simple attribute/name chains (calls,
 # nested subscripts, whitespace), so the operator-dispatch synthesiser skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "

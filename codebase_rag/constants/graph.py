@@ -28,6 +28,9 @@ KEY_IS_PROPERTY = "is_property"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
+# The other member names a Python class body binds a method to
+# (`run = _plain`), so a call through the alias reaches it (issue #2620).
+KEY_MEMBER_ALIASES = "member_aliases"
 KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -894,7 +897,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.member_aliases AS member_aliases"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

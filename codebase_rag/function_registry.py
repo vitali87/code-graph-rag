@@ -30,6 +30,8 @@ class FunctionRegistryTrie:
         "_object_members",
         "_abstracts",
         "_callable_params",
+        "_member_aliases",
+        "_aliases_by_target",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -49,6 +51,10 @@ class FunctionRegistryTrie:
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
+        # `Class.run` -> the methods a class body bound `run` to (issue
+        # #2620); the alias is no node, so it never enters the trie.
+        self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
+        self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -58,6 +64,29 @@ class FunctionRegistryTrie:
 
     def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
         return self._callable_params.get(qualified_name)
+
+    def add_member_alias(
+        self, alias_qn: QualifiedName, target_qn: QualifiedName
+    ) -> None:
+        targets = self._member_aliases.setdefault(alias_qn, [])
+        if target_qn not in targets:
+            targets.append(target_qn)
+        self._aliases_by_target.setdefault(target_qn, set()).add(alias_qn)
+
+    def member_alias_targets(
+        self, alias_qn: QualifiedName
+    ) -> tuple[QualifiedName, ...]:
+        return tuple(self._member_aliases.get(alias_qn, ()))
+
+    def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
+        # A re-parsed file registers its aliases again with its methods, so a
+        # removed method takes its alias entries with it.
+        for alias_qn in self._aliases_by_target.pop(target_qn, ()):
+            targets = self._member_aliases.get(alias_qn, [])
+            if target_qn in targets:
+                targets.remove(target_qn)
+            if not targets:
+                self._member_aliases.pop(alias_qn, None)
 
     def mark_property(self, qualified_name: QualifiedName) -> None:
         self._properties.add(qualified_name)
@@ -171,6 +200,7 @@ class FunctionRegistryTrie:
         self._object_members.discard(qualified_name)
         self._abstracts.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
+        self._drop_member_alias_target(qualified_name)
 
         self._invalidate_ending_with_cache(simple_name)
 

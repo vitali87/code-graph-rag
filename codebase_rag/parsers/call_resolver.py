@@ -1491,6 +1491,19 @@ class CallResolver:
             call.call_name, call.caller_qn, call.language
         ):
             return True, result
+        # `self.run()` where a class body aliases `run` (issue #2620) is a
+        # member of the enclosing class, which the module-keyed cache does
+        # not know about.
+        if (
+            call.language == cs.SupportedLanguage.PYTHON
+            and call.class_context
+            and (
+                result := self._resolve_self_member_alias(
+                    call.call_name, call.class_context
+                )
+            )
+        ):
+            return True, result
         return False, None
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
@@ -4435,7 +4448,9 @@ class CallResolver:
             logger.debug(ls.CALL_SUPER_NO_PARENTS, class_qn=current_class_qn)
             return None
 
-        if result := self._resolve_inherited_method(current_class_qn, method_name):
+        if result := self._resolve_inherited_method(
+            current_class_qn, method_name, own_alias=False
+        ):
             callee_type, parent_method_qn = result
             logger.debug(
                 ls.CALL_SUPER_RESOLVED,
@@ -4484,6 +4499,89 @@ class CallResolver:
         )
         return self.function_registry[method_qn], method_qn
 
+    def _member_alias(self, class_qn: str, member: str) -> tuple[str, str] | None:
+        # The alias is no node of its own, so a call through it binds to the
+        # first method it may hold; the call pass fans out to the others
+        # (member_alias_fanout).
+        for target_qn in self.function_registry.member_alias_targets(
+            f"{class_qn}{cs.SEPARATOR_DOT}{member}"
+        ):
+            if (kind := self.function_registry.get(target_qn)) is not None:
+                return kind, target_qn
+        return None
+
+    def _resolve_self_member_alias(
+        self, call_name: str, class_context: str
+    ) -> tuple[str, str] | None:
+        # The receiver is the enclosing class, so walk its MRO: a real def of
+        # the name met first leaves the call to the usual resolution.
+        receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+            or not member
+            or cs.SEPARATOR_DOT in member
+        ):
+            return None
+        for class_qn in self._mro(class_context):
+            owner = self._follow_reexports(class_qn)
+            if f"{owner}{cs.SEPARATOR_DOT}{member}" in self.function_registry:
+                return None
+            if alias := self._member_alias(owner, member):
+                return alias
+        return None
+
+    def member_alias_fanout(self, callee_qn: str, member: str) -> list[str]:
+        """Every method a call written as `.member` may run, given `callee_qn`.
+
+        A call resolved through a class-body alias lands on one method the
+        alias names; a conditional alias (`__call__ = _a if X else _b`)
+        names several and picks one at class creation, so each is a
+        candidate. Any other callee is returned alone.
+        """
+        owner, _, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not owner or leaf == member:
+            return [callee_qn]
+        targets = [
+            qn
+            for qn in self.function_registry.member_alias_targets(
+                f"{owner}{cs.SEPARATOR_DOT}{member}"
+            )
+            if qn in self.function_registry
+        ]
+        return targets if callee_qn in targets else [callee_qn]
+
+    def instance_call_targets(
+        self,
+        callee: str,
+        is_call_result: bool,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> set[tuple[str, str]]:
+        """What `callee(...)` runs when `callee` is an instance: its `__call__`.
+
+        A typed name or attribute is resolved like any operator operand; a
+        call result (`Dispatcher()(1)`) is typed by its return. Calling the
+        class itself constructs it and never gets here, because the class
+        name is no typed local.
+        """
+        if not is_call_result:
+            return self.operator_dunder_targets(
+                callee, cs.PY_DUNDER_CALL, module_qn, local_var_types
+            )
+        returned = (
+            self.type_inference.python_type_inference._infer_expression_return_type(
+                callee, module_qn, local_var_types
+            )
+        )
+        if not returned:
+            return set()
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(returned, import_map, module_qn)
+        if not class_qn or self.function_registry.get(class_qn) != NodeType.CLASS:
+            return set()
+        hit = self._try_resolve_method(class_qn, cs.PY_DUNDER_CALL)
+        return {hit} if hit else set()
+
     def _mro_method_qns(self, class_qn: str, method_name: str) -> set[str]:
         results: set[str] = set()
         visited: set[str] = set()
@@ -4521,8 +4619,14 @@ class CallResolver:
         return found
 
     def _resolve_inherited_method(
-        self, class_qn: str, method_name: str
+        self, class_qn: str, method_name: str, own_alias: bool = True
     ) -> tuple[str, str] | None:
+        # Every caller has already looked for a def of the name on class_qn
+        # itself; a class-body alias there (`run = _plain`, issue #2620) is
+        # still the class's own member and comes before any base. `super()`
+        # starts above the class, so it skips that alias.
+        if own_alias and (alias := self._member_alias(class_qn, method_name)):
+            return alias
         if class_qn not in self.class_inheritance:
             return None
 
@@ -4542,6 +4646,8 @@ class CallResolver:
                     self.function_registry[parent_method_qn],
                     parent_method_qn,
                 )
+            if alias := self._member_alias(parent_class_qn, method_name):
+                return alias
 
             if parent_class_qn in self.class_inheritance:
                 for grandparent_qn in self.class_inheritance[parent_class_qn]:
