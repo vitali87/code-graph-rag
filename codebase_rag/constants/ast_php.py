@@ -14,6 +14,10 @@ TS_PHP_NAME = "name"
 TS_PHP_QUALIFIED_NAME = "qualified_name"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
+# `new class (...) extends B implements I { ... }`: a class with no `name`
+# field. It is named after its position, like the closures beside it
+# (issue #2538).
+TS_PHP_ANONYMOUS_CLASS = "anonymous_class"
 TS_PHP_ARROW_FUNCTION = "arrow_function"
 TS_PHP_MEMBER_CALL_EXPRESSION = "member_call_expression"
 TS_PHP_SCOPED_CALL_EXPRESSION = "scoped_call_expression"
