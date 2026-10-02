@@ -71,6 +71,7 @@ from .services.llm import (
     CypherGenerator,
     create_rag_orchestrator,
     create_research_agent,
+    run_to_text_answer,
 )
 from .taint import ReadContentRecord
 from .tools.ast_grep_service import AstGrepService
@@ -2143,12 +2144,22 @@ def main_single_query(
         rag_agent, _, _ = _initialize_services_and_agent(
             repo_path, ingestor, active_projects=active_projects
         )
-        response = asyncio.run(rag_agent.run(question, message_history=[]))
+        # The same rule as the chat loop's prompt, with no one to prompt:
+        # --no-confirm (or YOLO) approves, anything else is denied.
+        approve = not app_context.session.confirm_edits or app_context.session.is_yolo()
+        answer = asyncio.run(
+            run_to_text_answer(
+                rag_agent,
+                question,
+                approve=approve,
+                denial=cs.ASK_AGENT_APPROVAL_DENIED,
+            )
+        )
         if output_format == cs.QueryFormat.JSON:
-            payload = QueryJsonOutput(query=question, response=str(response.output))
+            payload = QueryJsonOutput(query=question, response=answer)
             print(json.dumps(payload, ensure_ascii=False))  # noqa: T201
         else:
-            print(response.output)  # noqa: T201
+            print(answer)  # noqa: T201
 
 
 async def main_async(

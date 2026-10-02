@@ -384,6 +384,18 @@ UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
 UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
+# `cgr start -a` has no operator to ask: what the model is told when it asks
+# for an edit or a non-read-only command without --no-confirm (issue #2657).
+ASK_AGENT_APPROVAL_DENIED = (
+    "Edits and non-read-only commands are disabled in --ask-agent mode; "
+    "answer without them. The user can re-run with --no-confirm to allow them."
+)
+# A model that asks again after every answer would otherwise loop forever.
+NONINTERACTIVE_APPROVAL_ROUNDS = 10
+NONINTERACTIVE_APPROVAL_LOOP = (
+    "The agent still requested tool approval after {rounds} rounds of answers; "
+    "stopped without a text answer."
+)
 UI_OPTIMIZATION_START = (
     "[bold green]Starting {language} optimization session...[/bold green]"
 )

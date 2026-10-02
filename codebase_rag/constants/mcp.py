@@ -177,6 +177,10 @@ MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
 MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
+MCP_ASK_AGENT_APPROVAL_DENIED = (
+    "ask_agent cannot edit files or run non-read-only commands; answer "
+    "without them. The client can make the change with the MCP edit tools."
+)
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
