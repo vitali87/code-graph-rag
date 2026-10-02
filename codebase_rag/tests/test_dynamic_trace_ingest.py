@@ -198,6 +198,41 @@ def test_ingest_confirms_static_and_flags_missed_edges(tmp_path):
     assert missed[cs.TRACE_PROP_WORKLOAD_COUNT] == 2
 
 
+def test_ingest_marks_every_edge_fresh(tmp_path):
+    # An incremental sync grades a carried edge stale when an endpoint's
+    # definition changed (issue #2429); a new ingest is a new observation of
+    # the current code, so it must write the flag back to False rather than
+    # leave a previous sync's True on the edge it merges onto.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        repo,
+        trace_path,
+        [
+            _record(
+                repo,
+                ("pkg/entry.py", "run_all", 3),
+                ("pkg/registry.py", "handle", 5),
+                1,
+            ),
+            _record(
+                repo,
+                ("pkg/registry.py", "handle", 5),
+                ("pkg/registry.py", "greet", 9),
+                1,
+            ),
+        ],
+    )
+    graph = _graph()
+
+    ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert len(graph.edges) == 2
+    for _frm, _rel, _to, props in graph.edges:
+        assert props["dynamic_stale"] is False
+
+
 def test_ingest_flags_sampled_trace_edges_as_approximate(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

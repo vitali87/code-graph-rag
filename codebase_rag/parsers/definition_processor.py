@@ -9,6 +9,7 @@ from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..language_spec import has_other_language_sibling, own_extension_module_qn
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import (
     ASTNode,
@@ -386,7 +387,25 @@ class DefinitionProcessor(
         # yielded name is itself a qn like any other and can collide with a
         # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
         # to go through the check below rather than skip it.
-        if (declaration := declaration_extension(file_path.name)) and (
+        #
+        # A stem shared ACROSS language families (`util.py` beside `util.js`)
+        # has no bare name: every file on it takes its extension (issue
+        # #2586). Awarding it by walk order handed it to whichever file sorts
+        # first, so adding `util.js` beside an indexed `util.py` re-pointed
+        # `proj.util.helper`, and everything stored against it, at the JS
+        # function. Names stay a function of the tree (#1569), so one of the
+        # two must lose the name it had alone; retiring it for both is the one
+        # rule under which an addition never hands a name to another file.
+        # Importers still write the bare name and land on their own family's
+        # file (ImportProcessor.point_imports_at_own_language_siblings).
+        if has_other_language_sibling(
+            file_path,
+            self.repo_path,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        ):
+            module_qn = own_extension_module_qn(module_qn, file_path.name)
+        elif (declaration := declaration_extension(file_path.name)) and (
             has_implementation_sibling(
                 file_path,
                 self.repo_path,
