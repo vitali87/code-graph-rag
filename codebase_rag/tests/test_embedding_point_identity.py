@@ -117,26 +117,30 @@ def _sync(
     source: str | None = None,
     projects: tuple[str, ...] = (),
     embed: Callable[..., list[list[float]]] = _fake_embed_batch,
+    registry_error: Exception | None = None,
 ) -> None:
     """The embedding pass of one sync, with the graph holding `graph`.
 
     `graph` is what the project-prefixed embeddings query answers, which
     includes the functions of a registered project nested under this one;
-    `projects` are the registered project names.
+    `projects` are the registered project names, and `registry_error` is
+    raised by the read of them instead.
     """
     if source is not None:
         (repo / _MODULE).write_text(source)
     rows = [_row(n, qn) for n, qn in graph.items()]
-    registered = [{cs.KEY_NAME: name} for name in projects]
+    registered: list[ResultRow] = [{cs.KEY_NAME: name} for name in projects]
+
+    def _answer(query: str, params: object = None) -> list[ResultRow]:
+        if query != cq.CYPHER_LIST_PROJECTS:
+            return rows
+        if registry_error is not None:
+            raise registry_error
+        return registered
+
     ingestor.fetch_all.return_value = rows
     ingestor.fetch_all.side_effect = (
-        (
-            lambda query, params=None: (
-                registered if query == cq.CYPHER_LIST_PROJECTS else rows
-            )
-        )
-        if projects
-        else None
+        _answer if projects or registry_error is not None else None
     )
     with (
         patch(
@@ -416,6 +420,30 @@ class TestUpgradeFromNodeIdKeys:
         assert _points() == [(_KEEP, 1), (nested, 30)]
         assert 30 in _point_ids()
 
+    def test_an_unread_registry_defers_the_legacy_cleanup(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Negative: without the registry svc.v2's points pass as svc's, so no
+        # delete runs; the next sync that reads it cleans up.
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        _write_legacy({1: _KEEP, 2: _DELETE, 30: nested})
+
+        _sync(
+            repo,
+            ingestor,
+            {1: _KEEP, 30: nested},
+            registry_error=RuntimeError("registry down"),
+        )
+        assert {1, 2, 30} <= set(_point_ids())
+
+        _sync(
+            repo,
+            ingestor,
+            {1: _KEEP, 30: nested},
+            projects=(_PROJECT, f"{_PROJECT}.v2"),
+        )
+        assert _points() == [(_KEEP, 1), (nested, 30)]
+
     def test_delete_project_leaves_a_nested_projects_legacy_points(self) -> None:
         nested = f"{_PROJECT}.v2.m.keep_me"
         _write_legacy({1: _KEEP, 2: _DELETE, 30: nested})
@@ -490,6 +518,20 @@ class TestMilvus:
         _sync(repo, ingestor, {3: _KEEP, 30: nested}, projects=projects)
 
         assert self._rows() == [(_KEEP, 3), (nested, 30)]
+
+    def test_delete_project_leaves_a_nested_projects_rows(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Negative: delete-project's node-id read is prefix-scoped, so it
+        # names svc.v2's node 30 too; that row is still svc.v2's.
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        projects = (_PROJECT, f"{_PROJECT}.v2")
+        _sync(repo, ingestor, {30: nested}, project=f"{_PROJECT}.v2", projects=projects)
+        _sync(repo, ingestor, {1: _KEEP, 30: nested}, projects=projects)
+
+        vs.delete_project_embeddings(_PROJECT, [1, 30], [f"{_PROJECT}.v2"])
+
+        assert self._rows() == [(nested, 30)]
 
     def test_a_name_that_only_matches_as_a_pattern_is_not_this_project(
         self, repo: Path, ingestor: MagicMock

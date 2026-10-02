@@ -709,6 +709,7 @@ QN_PREFIX_RANGE_END = "/"
 MILVUS_PREFIX_RANGE_EXPR = "{field} >= {low} and {field} < {high}"
 MILVUS_STALE_ROWS_EXPR = "({scope}) and not ({field} in {ids})"
 MILVUS_EXCLUDE_EXPR = "({scope}) and not ({excluded})"
+MILVUS_IDS_EXPR = "{field} in {ids}"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 

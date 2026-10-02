@@ -8049,14 +8049,15 @@ class GraphUpdater:
         vector per edit and every deleted function's (issue #2447). A vector
         keyed the old way goes only once `stored_ids` says its replacement is
         in, and a nested project's vectors are its own sync's business.
+        With the registry unread a nested project's vectors pass as this
+        one's, so nothing goes until a sync that reads it.
         """
+        nested = self._nested_project_names()
+        if self._registry_unread:
+            logger.warning(ls.EMBEDDING_STALE_SKIPPED.format(project=self.project_name))
+            return
         try:
-            removed = delete_fn(
-                self.project_name,
-                current,
-                stored_ids,
-                self._nested_project_names(),
-            )
+            removed = delete_fn(self.project_name, current, stored_ids, nested)
         except Exception as e:
             logger.warning(
                 ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)

@@ -786,7 +786,10 @@ def _milvus_project_scope(project_name: str) -> str:
 def _milvus_owned_scope(project_name: str, nested_projects: Sequence[str]) -> str:
     # The project's prefix range less each nested project's, which `svc.`'s
     # range also covers.
-    scope = _milvus_project_scope(project_name)
+    return _milvus_excluding(_milvus_project_scope(project_name), nested_projects)
+
+
+def _milvus_excluding(scope: str, nested_projects: Sequence[str]) -> str:
     for nested in nested_projects:
         scope = cs.MILVUS_EXCLUDE_EXPR.format(
             scope=scope, excluded=_milvus_project_scope(nested)
@@ -836,10 +839,21 @@ class MilvusVectorStore(VectorStore):
         nested_projects: Sequence[str] = (),
     ) -> None:
         # Rows are keyed by node id alone, so the graph's node ids name them.
+        # The read is prefix-scoped, so they include a nested project's nodes,
+        # whose rows are that project's.
         def _delete(ids: list[PointId]) -> None:
+            if not nested_projects:
+                get_milvus_client().delete(
+                    collection_name=settings.MILVUS_COLLECTION_NAME,
+                    ids=ids,
+                )
+                return
+            owned = _milvus_excluding(
+                cs.MILVUS_IDS_EXPR.format(field=PAYLOAD_NODE_ID, ids=ids),
+                nested_projects,
+            )
             get_milvus_client().delete(
-                collection_name=settings.MILVUS_COLLECTION_NAME,
-                ids=ids,
+                collection_name=settings.MILVUS_COLLECTION_NAME, filter=owned
             )
 
         _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)

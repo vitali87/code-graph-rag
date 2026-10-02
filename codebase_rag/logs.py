@@ -202,6 +202,11 @@ EMBEDDING_STALE_REMOVED = (
 EMBEDDING_STALE_FAILED = (
     "Failed to remove stale embeddings for project '{project}': {error}"
 )
+EMBEDDING_STALE_SKIPPED = (
+    "Skipped removing stale embeddings for project '{project}': the project "
+    "registry could not be read, so a nested project's vectors cannot be told "
+    "from this one's; the next sync removes them"
+)
 VECTOR_STORE_REKEYED = (
     "Removed {count} {backend} vectors of project '{project}' that were keyed "
     "by Memgraph node id; its vectors are keyed by symbol now"
