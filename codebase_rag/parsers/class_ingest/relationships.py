@@ -81,13 +81,16 @@ def create_class_relationships(
     # `interfaces` field (a super_interfaces clause), so handle both. C#
     # struct/record types implement interfaces through their base_list too
     # (a C# class reuses the class_declaration node type already listed);
-    # a C# interface's base_list is inheritance, so it is excluded here.
+    # a C# interface's base_list is inheritance, so it is excluded here. A
+    # PHP anonymous class carries the same class_interface_clause as a named
+    # one (issue #2538).
     if class_node.type in (
         cs.TS_CLASS_DECLARATION,
         cs.TS_ENUM_DECLARATION,
         cs.TS_CSHARP_STRUCT_DECLARATION,
         cs.TS_CSHARP_RECORD_DECLARATION,
         cs.TS_DART_CLASS_DEFINITION,
+        cs.TS_PHP_ANONYMOUS_CLASS,
     ):
         _link_implemented_interfaces(
             pe.extract_implemented_interfaces(

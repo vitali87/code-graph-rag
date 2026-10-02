@@ -44,6 +44,7 @@ from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
@@ -287,6 +288,10 @@ def _class_qn_for_calls(
     # node. Use the SAME builders the definition pass uses so the qns agree.
     if language == cs.SupportedLanguage.CPP:
         return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
+    if language == cs.SupportedLanguage.PHP and (
+        anonymous_qn := php_utils.anonymous_class_qn(class_node, module_qn)
+    ):
+        return anonymous_qn
     return (
         build_nested_qualified_name_for_class(
             class_node, module_qn, class_name, queries[language][cs.QUERY_CONFIG]
@@ -2962,6 +2967,12 @@ class CallProcessor:
     ) -> str | None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             return self._get_rust_impl_class_name(class_node)
+        if language == cs.SupportedLanguage.PHP and (
+            anonymous_name := php_utils.anonymous_class_name(class_node)
+        ):
+            # Named as the definition pass names it, so its methods get a
+            # class pass and the module pass leaves them alone (issue #2538).
+            return anonymous_name
         return self._get_node_name(class_node)
 
     def _class_method_name(

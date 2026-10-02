@@ -7,27 +7,26 @@
 // Mapping (PHP construct -> cgr NodeLabel), matching how cgr models PHP:
 //
 //   class                       -> Class
+//   anonymous class             -> Class       (`new class {...}`)
 //   interface                   -> Interface  (+ its methods -> Method)
 //   trait                       -> Class       (cgr models a trait as a Class)
 //   enum                        -> Enum
-//   method (in named type)      -> Method
-//   method (in anonymous class) -> Function     (cgr models these as Functions)
+//   method                      -> Method
 //   function                    -> Function
 //   closure / arrow fn          -> Function     (anonymous)
 //
 // A declaration's line is the line of its first attribute (`#[Attr]`) when
-// present, matching cgr's node span; anonymous classes (`new class {...}`) get
-// no Class node, like cgr.
+// present, matching cgr's node span.
 //
 // Containment edges (matching how cgr models PHP containment):
 //
 //   DEFINES        : the file module -> every named type and top-level function
-//   DEFINES_METHOD : the enclosing named type -> Method
+//   DEFINES_METHOD : the enclosing type -> Method
 //
-// cgr keeps type containment flat (the file module DEFINES every named type,
-// keyed at line 0); a Method binds to its enclosing class/interface/trait/enum;
-// a Function/closure binds to its nearest enclosing function, else the module.
-// An anonymous-class member is a Function (no DEFINES_METHOD). Output is a
+// cgr keeps named-type containment flat (the file module DEFINES every named
+// type, keyed at line 0); a Method binds to its enclosing class, anonymous
+// class, interface, trait or enum; a Function/closure or an anonymous class
+// binds to its nearest enclosing function, else the module. Output is a
 // {nodes, edges} payload joining cgr on (kind, file, line).
 //
 // Run: node php_ast.js <dir>
@@ -139,7 +138,7 @@ function walkChildren(node, file, ctx) {
 }
 
 // ctx: { container, typeRef, funcRef }
-//   container: "module" | "class" | "anon" | "function"
+//   container: "module" | "class" | "function"
 //   typeRef:   enclosing named type {kind,line} (DEFINES_METHOD parent)
 //   funcRef:   enclosing function {kind,line} (DEFINES parent for nested fns)
 function defineFunctionEdge(file, ctx, kind, line) {
@@ -161,17 +160,16 @@ function walk(node, file, ctx) {
   }
   switch (node.kind) {
     case "class": {
-      if (isAnonymous(node)) {
-        // Anonymous class: no node; its methods are Functions bound to the
-        // enclosing function/module, so keep funcRef and mark the container.
-        walkChildren(node, file, { container: "anon", typeRef: null, funcRef: ctx.funcRef });
-      } else {
-        const line = declLine(node);
-        emit("Class", file, line, node.loc.end.line, nameOf(node.name));
-        emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
-        emitInheritance(node, file, "Class", line);
-        walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
-      }
+      const line = declLine(node);
+      emit("Class", file, line, node.loc.end.line, nameOf(node.name));
+      // An anonymous class is written inside a function or at file level,
+      // and is defined there; a named one is the module's.
+      const parent = isAnonymous(node)
+        ? ctx.funcRef || { kind: "Module", line: MODULE_LINE }
+        : { kind: "Module", line: MODULE_LINE };
+      emitEdge("DEFINES", file, parent.kind, parent.line, "Class", line);
+      emitInheritance(node, file, "Class", line);
+      walkChildren(node, file, { container: "class", typeRef: { kind: "Class", line }, funcRef: null });
       return;
     }
     case "interface": {
@@ -198,11 +196,10 @@ function walk(node, file, ctx) {
       return;
     }
     case "method": {
-      const kind = ctx.container === "anon" ? "Function" : "Method";
       const line = declLine(node);
-      emit(kind, file, line, node.loc.end.line, nameOf(node.name));
-      defineFunctionEdge(file, ctx, kind, line);
-      walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind, line } });
+      emit("Method", file, line, node.loc.end.line, nameOf(node.name));
+      defineFunctionEdge(file, ctx, "Method", line);
+      walkChildren(node, file, { container: "function", typeRef: null, funcRef: { kind: "Method", line } });
       return;
     }
     case "function": {
