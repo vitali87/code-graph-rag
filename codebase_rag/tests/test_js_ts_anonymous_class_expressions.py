@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.language_spec import get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyParams, ResultRow
 
@@ -129,6 +130,19 @@ def _index(tmp_path: Path, files: dict[str, str]) -> _Graph:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(src, encoding="utf-8")
     parsers, queries = load_parsers()
+    # The module-scoped `issue_graph` runs before the per-test grammar skip
+    # hook is installed, so a base install without these grammars must skip
+    # here rather than assert on an empty graph.
+    missing = sorted(
+        {
+            language.value
+            for name in files
+            if (language := get_language_for_extension(Path(name).suffix)) is not None
+            and language not in parsers
+        }
+    )
+    if missing:
+        pytest.skip(f"{', '.join(missing)} parser not available")
     graph = _Graph()
     GraphUpdater(
         ingestor=graph,
