@@ -69,6 +69,7 @@ class ProtobufFileIngestor:
         "_relationships",
         "split_index",
         "_repo_prefix",
+        "_unflushed",
     )
 
     def __init__(
@@ -94,6 +95,12 @@ class ProtobufFileIngestor:
             if repo_path
             else None
         )
+        # The updater flushes more than once per run and the artifact is
+        # rewritten whole each time, so a flush with nothing new since the
+        # last one rewrote the same bytes and reported the write again
+        # (issue #2401). True until the first write, so an empty index is
+        # still written.
+        self._unflushed = True
         logger.info(ls.PROTOBUF_INIT.format(path=self.output_dir))
 
     def _canonical_ref(self, value: str) -> str:
@@ -120,6 +127,7 @@ class ProtobufFileIngestor:
         return str(properties.get(cs.KEY_QUALIFIED_NAME, ""))
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        self._unflushed = True
         node_label = cs.NodeLabel(label)
         node_id = self._get_node_id(node_label, properties)
         if not node_id:
@@ -176,6 +184,7 @@ class ProtobufFileIngestor:
         to_spec: tuple[str, str, PropertyValue],
         properties: PropertyDict | None = None,
     ) -> None:
+        self._unflushed = True
         if rel_type in _REL_TYPE_CACHE:
             rel_type_enum = _REL_TYPE_CACHE[rel_type]
         else:
@@ -287,6 +296,9 @@ class ProtobufFileIngestor:
         )
 
     def flush_all(self) -> None:
+        if not self._unflushed:
+            logger.debug(ls.PROTOBUF_FLUSH_UNCHANGED.format(path=self.output_dir))
+            return
         logger.info(ls.PROTOBUF_FLUSHING.format(path=self.output_dir))
-
-        return self._flush_split() if self.split_index else self._flush_joint()
+        self._flush_split() if self.split_index else self._flush_joint()
+        self._unflushed = False

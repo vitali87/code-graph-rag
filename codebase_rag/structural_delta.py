@@ -1313,9 +1313,12 @@ def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
         delta["dangling_callers"]
+        # Only a definite verdict: the graph records no defaults, so a
+        # `possibly_missing` site (`send(msg)` becoming `send(msg,
+        # channel=None)`) is a hint the JSON keeps, not a finding (issue
+        # #2656, as structural-delta.md documents).
         or any(
-            site["verdict"] != cs.DELTA_ARITY_OK
-            and site["verdict"] != cs.DELTA_ARITY_UNKNOWN
+            site["verdict"] == cs.DELTA_ARITY_TOO_MANY
             for change in delta["signature_changes"]
             for site in change["sites"]
         )
