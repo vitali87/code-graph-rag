@@ -640,6 +640,24 @@ def _project_owner_refusal(
     )
 
 
+def _exit_if_project_owned_elsewhere(
+    batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
+) -> None:
+    """Stop before the sync when `_project_owner_refusal` refuses it (#2411).
+
+    A `--clean` rebuild is not checked: it wipes every project in the graph,
+    and `_confirm_destructive_clean` already asks before it does.
+    """
+    if clean:
+        return
+    # On its own connection: exiting inside the sync's would report the
+    # refusal as a failed session.
+    with connect_memgraph(batch_size) as ingestor:
+        refusal = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
+    if refusal is not None:
+        _exit_with_error(refusal)
+
+
 def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
     return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
 
@@ -711,13 +729,9 @@ def _run_graph_sync(
         unignore_paths = cgrignore.unignore or None
 
     elapsed = time.monotonic()
-    if not clean:
-        # On its own connection: exiting inside the sync's would report the
-        # refusal as a failed session.
-        with connect_memgraph(batch_size) as ingestor:
-            refusal = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
-        if refusal is not None:
-            _exit_with_error(refusal)
+    _exit_if_project_owned_elsewhere(
+        batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+    )
     with connect_memgraph(batch_size) as ingestor:
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
