@@ -3974,7 +3974,7 @@ class CallProcessor:
         python_inference = self._resolver.type_inference.python_type_inference
         guessed = python_inference.name_typed_parameters(caller_node, module_qn)
         if guessed:
-            self._resolver.python_name_typed_params[caller_qn] = guessed
+            self._resolver.python_name_typed_params[caller_qn] = frozenset(guessed)
         else:
             self._resolver.python_name_typed_params.pop(caller_qn, None)
 

@@ -201,13 +201,13 @@ class TestProcessTypedParameter:
 
 
 class TestProcessParameter:
-    def test_routes_identifier_to_untyped(
+    def test_leaves_untyped_identifier_to_name_guess(
         self, engine: PythonTypeInferenceEngine
     ) -> None:
         param = create_mock_node(cs.TS_PY_IDENTIFIER, "user")
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(param, local_var_types)
 
         assert local_var_types == {}
 
@@ -221,7 +221,7 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(param, local_var_types)
 
         assert local_var_types["count"] == "int"
 
@@ -236,7 +236,7 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(param, local_var_types)
 
         assert local_var_types["count"] == "int"
 

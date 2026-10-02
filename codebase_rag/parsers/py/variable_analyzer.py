@@ -70,6 +70,10 @@ if TYPE_CHECKING:
 
         def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
 
+        def name_typed_parameters(
+            self, caller_node: ASTNode, module_qn: str
+        ) -> dict[str, str]: ...
+
     _VarBase: type = _VariableAnalyzerDeps
 else:
     _VarBase = object
@@ -134,34 +138,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
 
         for param in params_node.children:
-            self._process_parameter(param, local_var_types, module_qn)
+            self._process_parameter(param, local_var_types)
+        # An untyped parameter's name guess comes from the one list the call
+        # resolver labels heuristic, so no guess binds a call exactly (#2608).
+        guessed = self.name_typed_parameters(caller_node, module_qn)
+        for param_name, class_name in guessed.items():
+            local_var_types[param_name] = class_name
+            logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=class_name)
 
     def _process_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
         match param.type:
-            case cs.TS_PY_IDENTIFIER:
-                self._process_untyped_parameter(param, local_var_types, module_qn)
             case cs.TS_PY_TYPED_PARAMETER:
                 self._process_typed_parameter(param, local_var_types)
             case cs.TS_PY_TYPED_DEFAULT_PARAMETER:
                 self._process_typed_default_parameter(param, local_var_types)
-
-    def _process_untyped_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if (
-            param.text is None
-            or (param_name := safe_decode_text(param)) is None
-            or not (
-                inferred_type := self._infer_type_from_parameter_name(
-                    param_name, module_qn
-                )
-            )
-        ):
-            return
-        local_var_types[param_name] = inferred_type
-        logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=inferred_type)
 
     def _process_typed_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]

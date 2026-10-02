@@ -216,6 +216,32 @@ class TestNameGuessIsStrict:
         }
         assert ("query.fetch", "query.Cache.load") not in calls
 
+    # A parameter the body rebinds to a value of unknown type is no longer
+    # what its name spells, so the name guess must not survive as the
+    # receiver's type and bind `payload.encode()` exactly (#2788 review).
+    @pytest.mark.parametrize(
+        "rebinding",
+        [
+            "    payload = unknown_factory()\n",
+            "    for payload in unknown_factory():\n        pass\n",
+            "    with unknown_factory() as payload:\n        pass\n",
+        ],
+        ids=["assignment", "for-target", "with-target"],
+    )
+    def test_rebinding_to_unknown_value_never_binds_exactly(
+        self, temp_repo: Path, mock_ingestor: MagicMock, rebinding: str
+    ) -> None:
+        expressions = "class Payload:\n    def encode(self): return 1\n"
+        query = (
+            "from pkg.expressions import Payload\n"
+            "from vendor import unknown_factory\n\n"
+            f"def send(payload):\n{rebinding}    return payload.encode()\n"
+        )
+        calls = _index(temp_repo, mock_ingestor, expressions, query)
+        assert cs.EdgeResolution.EXACT not in calls.get(
+            ("query.send", "expressions.Payload.encode"), set()
+        )
+
 
 class TestTypedReceiversUnchanged:
     def test_annotated_parameter_binds_exactly(
