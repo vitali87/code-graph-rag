@@ -2800,7 +2800,7 @@ class MCPToolsRegistry:
         )
 
     async def implementors(
-        self, qualified_name: str, depth: int | None = None, project: str | None = None
+        self, qualified_name: str, project: str | None = None, depth: int | None = None
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.IMPLEMENTORS,
@@ -2811,7 +2811,7 @@ class MCPToolsRegistry:
         )
 
     async def overrides(
-        self, qualified_name: str, depth: int | None = None, project: str | None = None
+        self, qualified_name: str, project: str | None = None, depth: int | None = None
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.OVERRIDES,

@@ -499,6 +499,15 @@ async def test_mcp_default_is_the_direct_rows(
     assert _json(rows) == _cli(tmp_path, "overrides", f"{GRAPH}.add_edge")
 
 
+async def test_mcp_positional_project_still_scopes_the_query(
+    registry: MCPToolsRegistry, tmp_path: Path
+) -> None:
+    rows = await registry.implementors(GRAPH, P)
+    assert _json(rows) == _cli(tmp_path, "implementors", GRAPH)
+    rows = await registry.overrides(f"{GRAPH}.add_edge", P)
+    assert _json(rows) == _cli(tmp_path, "overrides", f"{GRAPH}.add_edge")
+
+
 async def test_mcp_depth_is_clamped(registry: MCPToolsRegistry) -> None:
     rows = await registry.implementors(GRAPH, depth=99, project=P)
     assert isinstance(rows, list)
