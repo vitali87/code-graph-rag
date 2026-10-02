@@ -195,9 +195,9 @@ def _binds_identifier(target: Node, name: str) -> bool:
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
+        "python_name_typed_params",
         "python_shadowed_imports",
         "python_local_names",
-        "python_name_typed_params",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -241,15 +241,15 @@ class CallResolver:
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
         self._py_rel_to_module: dict[str, str] = {}
+        # caller qn -> untyped parameters typed only by their name (#2608);
+        # filled alongside python_shadowed_imports.
+        self.python_name_typed_params: dict[str, frozenset[str]] = {}
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
-        # caller qn -> untyped parameters typed only by their name (#2608);
-        # filled alongside python_shadowed_imports.
-        self.python_name_typed_params: dict[str, frozenset[str]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
