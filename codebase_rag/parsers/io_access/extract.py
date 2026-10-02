@@ -346,7 +346,7 @@ def is_require_alias(declarator: Node, call_type: str) -> bool:
 def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
     if name is None:
         return None
-    head, sep, rest = name.partition(cs.SEPARATOR_DOT)
+    head, _, rest = name.partition(cs.SEPARATOR_DOT)
     base = import_map.get(head)
     if base is None:
         return name

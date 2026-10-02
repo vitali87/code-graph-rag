@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Tool
 
 
-def extract_tool_names(tools: list["Tool"]) -> ToolNames:
+def extract_tool_names(tools: list["Tool[None]"]) -> ToolNames:
     registered = {t.name for t in tools}
 
     def resolve_tool_name(
@@ -221,7 +221,7 @@ def _format_active_projects_block(
 
 
 def build_rag_orchestrator_prompt(
-    tools: list["Tool"],
+    tools: list["Tool[None]"],
     project_instructions: str | None = None,
     active_projects: list[str] | None = None,
     backend: str | None = None,
@@ -480,6 +480,16 @@ Provide only the Cypher query.
 
 # Backwards-compatible default (no project scope injected)
 CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
+
+
+def build_cypher_repair_request(question: str, failed_query: str, error: str) -> str:
+    return (
+        f"{question}\n\n"
+        "Your previous query for this question was rejected by the database.\n"
+        f"Query: {failed_query}\n"
+        f"Error: {error}\n"
+        "Return a corrected query that answers the same question."
+    )
 
 
 # Stricter prompt for less capable open-source/local models (e.g., Ollama)

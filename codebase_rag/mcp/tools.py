@@ -8,8 +8,8 @@ from collections.abc import Callable, Collection
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import Agent, Tool
-from rich.console import Console
+from pydantic_ai import Agent, DeferredToolRequests, Tool
+from pydantic_ai.tools import ToolFuncPlain
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -66,6 +66,7 @@ from codebase_rag.types_defs import (
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
 
@@ -158,6 +159,13 @@ _READS_THE_GRAPH = frozenset(
         cs.MCPToolName.GLOSSES,
     }
 )
+
+
+def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
+    # pydantic-ai types `function` as taking a RunContext or not; every tool
+    # this registry calls directly is built without one, which this states
+    # once instead of at each call site.
+    return tool.function
 
 
 class MCPToolsRegistry:
@@ -288,7 +296,7 @@ class MCPToolsRegistry:
 
         # Kept on self: a scoped request builds its own query tool per call,
         # and that tool must print to the same console as the pre-built one.
-        self._stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
+        self._stderr_console = terminal_aware_console(file=sys.stderr)
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=self._stderr_console
         )
@@ -331,7 +339,7 @@ class MCPToolsRegistry:
             self._function_source_tool
         )
 
-        self._rag_agent: Agent | None = None
+        self._rag_agent: Agent[None, str | DeferredToolRequests] | None = None
 
         self._semantic_search_tool = None
         self._semantic_search_available = False
@@ -893,12 +901,13 @@ class MCPToolsRegistry:
         keeps the signature, which is the tool's schema."""
         if self.workspace is None:
             return tool
-        original = tool.function
+        original = _plain_function(tool)
 
         @functools.wraps(original)
         async def scoped(*args: object, **kwargs: object) -> object:
+            requested = kwargs.get(cs.MCPParamName.PROJECT)
             project, scope_error = self._workspace_scope(
-                kwargs.get(cs.MCPParamName.PROJECT)  # type: ignore[arg-type]
+                requested if isinstance(requested, str) else None
             )
             if scope_error is not None:
                 return scope_error
@@ -972,7 +981,7 @@ class MCPToolsRegistry:
         workspace; a no-op without a workspace."""
         if self.workspace is None:
             return tool
-        original = tool.function
+        original = _plain_function(tool)
 
         @functools.wraps(original)
         async def scoped(
@@ -996,7 +1005,7 @@ class MCPToolsRegistry:
         is left to the tool, which reports it unavailable."""
         if self.workspace is None:
             return tool
-        original = tool.function
+        original = _plain_function(tool)
 
         @functools.wraps(original)
         async def scoped(node_id: int, *args: object, **kwargs: object) -> object:
@@ -1015,7 +1024,7 @@ class MCPToolsRegistry:
         return Tool(scoped, name=tool.name, description=tool.description)
 
     @property
-    def rag_agent(self) -> Agent:
+    def rag_agent(self) -> Agent[None, str | DeferredToolRequests]:
         if self._rag_agent is None:
             tools = [
                 self._agent_query_tool(),
@@ -1045,7 +1054,7 @@ class MCPToolsRegistry:
 
     # Setter lets tests inject a mock agent without triggering LLM init
     @rag_agent.setter
-    def rag_agent(self, value: Agent) -> None:
+    def rag_agent(self, value: Agent[None, str | DeferredToolRequests]) -> None:
         self._rag_agent = value
 
     async def flow_verdict(
@@ -1078,6 +1087,8 @@ class MCPToolsRegistry:
             "verdict": result.verdict,
             "path": list(result.path),
             "gaps": list(result.gaps),
+            # Where the path crosses a service boundary (issue #1603).
+            "remote_hops": [list(hop) for hop in result.remote_hops],
         }
 
     async def explain_traceback(self, traceback_text: str) -> dict:
@@ -2278,7 +2289,7 @@ class MCPToolsRegistry:
                 self._incomplete_refusal, search_project, cs.MCPToolName.SEMANTIC_SEARCH
             ):
                 return refusal
-            result = await self._semantic_search_tool.function(
+            result = await _plain_function(self._semantic_search_tool)(
                 query=natural_language_query, top_k=top_k, project=project
             )
         return str(result)
@@ -2309,7 +2320,7 @@ class MCPToolsRegistry:
                 cs.MCPToolName.FIND_DUPLICATE_CODE,
             ):
                 return refusal
-            result = await self._find_duplicates_tool.function(
+            result = await _plain_function(self._find_duplicates_tool)(
                 project=project, threshold=threshold, min_size=min_size, limit=limit
             )
         return str(result)
@@ -2329,11 +2340,11 @@ class MCPToolsRegistry:
                 cs.MCPToolName.GET_FUNCTION_SOURCE,
             ):
                 return refusal
-            result = await self._function_source_tool.function(node_id=node_id)
+            result = await _plain_function(self._function_source_tool)(node_id=node_id)
         return str(result)
 
     async def structural_search(self, pattern: str, language: str | None = None) -> str:
-        result = await self._structural_search_tool.function(
+        result = await _plain_function(self._structural_search_tool)(
             pattern=pattern, language=language
         )
         return str(result)
@@ -2349,10 +2360,12 @@ class MCPToolsRegistry:
         # rebuild cannot land between the two (issue #1525).
         async with self._ingestor_lock:
             self._structural_written = []
-            result = await self._structural_editor_tool.function(
+            result = await _plain_function(self._structural_editor_tool)(
                 pattern=pattern, rewrite=rewrite, language=language, dry_run=dry_run
             )
             written = list(self._structural_written)
+            if isinstance(result, te.ToolFailure):
+                return result
             if dry_run or not written:
                 return str(result)
             return str(result) + await asyncio.to_thread(
@@ -3195,7 +3208,7 @@ class MCPToolsRegistry:
                         results=[],
                         summary=refusal,
                     )
-                graph_data = await query_tool.function(natural_language_query)
+                graph_data = await _plain_function(query_tool)(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
             # The error key marks a scoping refusal; absent it means success,
             # so a None must not leak into the wire shape as a present key.
@@ -3234,7 +3247,9 @@ class MCPToolsRegistry:
                     return CodeSnippetResultDict(
                         error=refusal, found=False, error_message=refusal
                     )
-                snippet = await self._code_tool.function(qualified_name=qualified_name)
+                snippet = await _plain_function(self._code_tool)(
+                    qualified_name=qualified_name
+                )
             if isinstance(snippet, str):
                 # The workspace guard answered instead of the retriever.
                 return CodeSnippetResultDict(
@@ -3262,18 +3277,18 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
         try:
             async with self._ingestor_lock:
-                result = await self._file_editor_tool.function(
+                result = await _plain_function(self._file_editor_tool)(
                     file_path=file_path,
                     target_code=target_code,
                     replacement_code=replacement_code,
                 )
                 if str(result) != cs.MSG_SURGICAL_SUCCESS.format(path=file_path):
-                    return str(result)
+                    return te.ToolFailure(result)
                 delta = await asyncio.to_thread(self._delta_after_write, [file_path])
                 return str(result) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
@@ -3286,46 +3301,47 @@ class MCPToolsRegistry:
                     full_path = (project_root / file_path).resolve()
                     full_path.relative_to(project_root)
                 except (ValueError, RuntimeError):
-                    return te.ERROR_WRAPPER.format(
-                        message=lg.FILE_OUTSIDE_ROOT.format(action="access")
-                    )
+                    return te.failure(lg.FILE_OUTSIDE_ROOT.format(action="access"))
                 start = offset if offset is not None else 0
                 return await asyncio.to_thread(
                     _read_file_slice, full_path, start, limit
                 )
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)
-                return str(result)
+                # Returned as is: a ToolFailure must stay one (issue #2650).
+                return await _plain_function(self._file_reader_tool)(
+                    file_path=file_path
+                )
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     async def write_file(self, file_path: str, content: str) -> str:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
         try:
             async with self._ingestor_lock:
-                result = await self._file_writer_tool.function(
+                result = await _plain_function(self._file_writer_tool)(
                     file_path=file_path, content=content
                 )
                 if not result.success:
-                    return te.ERROR_WRAPPER.format(message=result.error_message)
+                    return te.failure(result.error_message)
                 delta = await asyncio.to_thread(self._delta_after_write, [file_path])
                 return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_WRITE.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     async def list_directory(
         self, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
     ) -> str:
         logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
-            result = self._directory_lister_tool.function(directory_path=directory_path)
-            return str(result)
+            return _plain_function(self._directory_lister_tool)(
+                directory_path=directory_path
+            )
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [

@@ -5,6 +5,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     ItemsView,
+    Iterable,
     KeysView,
     Mapping,
     Sequence,
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     NamedTuple,
+    NotRequired,
     Protocol,
     TypedDict,
     runtime_checkable,
@@ -30,6 +32,8 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
+    from rich.console import JustifyMethod, OverflowMethod
+    from rich.style import Style
     from tree_sitter import Language, Node, Parser, Query
 
     from .models import LanguageSpec
@@ -38,6 +42,9 @@ type LanguageLoader = Callable[[], Language] | None
 
 PropertyValue = str | int | float | bool | list[str] | None
 PropertyDict = dict[str, PropertyValue]
+# Query parameters are only read, so callers may pass any mapping; a plain
+# dict parameter would reject a narrower dict such as dict[str, str].
+PropertyParams = Mapping[str, PropertyValue]
 
 # Any value a parsed JSON document can hold (a package.json manifest, a
 # tsconfig, an OpenAPI spec): recursive, so nested mappings stay typed.
@@ -46,7 +53,9 @@ type JsonValue = (
 )
 
 type ResultScalar = str | int | float | bool | None
-type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
+type ResultValue = (
+    ResultScalar | list[ResultScalar] | dict[str, ResultScalar | list[ResultScalar]]
+)
 type ResultRow = dict[str, ResultValue]
 
 
@@ -133,6 +142,10 @@ class FunctionRegistryTrieProtocol(Protocol):
     def items(self) -> ItemsView[QualifiedName, NodeType]: ...
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
 
+    def find_with_prefix_and_suffix(
+        self, prefix: str, suffix: str
+    ) -> list[QualifiedName]: ...
+
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
     def register_unique_qn(
@@ -146,6 +159,10 @@ class FunctionRegistryTrieProtocol(Protocol):
     def is_property(self, qualified_name: QualifiedName) -> bool: ...
 
     def property_names(self) -> set[str]: ...
+
+    def mark_object_member(self, qualified_name: QualifiedName) -> None: ...
+
+    def is_object_member(self, qualified_name: QualifiedName) -> bool: ...
 
     def mark_abstract(self, qualified_name: QualifiedName) -> None: ...
 
@@ -192,7 +209,8 @@ class CursorProtocol(Protocol):
     def close(self) -> None: ...
     @property
     def description(self) -> Sequence[ColumnDescriptor] | None: ...
-    def fetchall(self) -> list[tuple[PropertyValue, ...]]: ...
+    # What a query returns, which is wider than what a write binds.
+    def fetchall(self) -> list[tuple[ResultValue, ...]]: ...
 
 
 @runtime_checkable
@@ -213,13 +231,38 @@ class PathValidatorProtocol(Protocol):
     def project_root(self) -> Path: ...
 
 
+# What `validate_project_path` builds when it refuses a path: any result type
+# constructible from these two keywords, such as the file tools' models.
+class PathResultFactory[T](Protocol):
+    def __call__(self, *, file_path: str, error_message: str) -> T: ...
+
+
 class TreeSitterNodeProtocol(Protocol):
     @property
     def type(self) -> str: ...
+    # Read-only views, so a tree-sitter Node (list[Node], bytes | None) fits.
     @property
-    def children(self) -> list[TreeSitterNodeProtocol]: ...
+    def children(self) -> Sequence[TreeSitterNodeProtocol]: ...
     @property
-    def text(self) -> bytes: ...
+    def text(self) -> bytes | None: ...
+
+
+class ConsolePrintOptions(TypedDict, total=False):
+    # Rich's `Console.print` keywords, less `soft_wrap`, which the
+    # terminal-aware console decides itself.
+    sep: str
+    end: str
+    style: str | Style | None
+    justify: JustifyMethod | None
+    overflow: OverflowMethod | None
+    no_wrap: bool | None
+    emoji: bool | None
+    markup: bool | None
+    highlight: bool | None
+    width: int | None
+    height: int | None
+    crop: bool
+    new_line_start: bool
 
 
 class ModelConfigKwargs(TypedDict, total=False):
@@ -236,6 +279,8 @@ class GraphMetadata(TypedDict):
     total_nodes: int
     total_relationships: int
     exported_at: str
+    # Only on a scoped export (`cgr export -n`, issue #2410).
+    projects: NotRequired[list[str]]
 
 
 class NodeData(TypedDict):
@@ -572,7 +617,7 @@ class DuplicatesReport(NamedTuple):
 
 class GraphQueryClient(Protocol):
     def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]: ...
 
 
@@ -615,14 +660,9 @@ class DeleteProjectErrorResult(TypedDict):
 DeleteProjectResult = DeleteProjectSuccessResult | DeleteProjectErrorResult
 
 
-MCPResultType = (
-    str
-    | QueryResultDict
-    | CodeSnippetResultDict
-    | ListProjectsResult
-    | DeleteProjectResult
-)
-MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
+# The server hands a result straight to json.dumps or str(), so any value is a
+# valid handler result; a narrower union only disagreed with the handlers.
+MCPHandlerType = Callable[..., Awaitable[object]]
 
 
 class NodeSchema(NamedTuple):
@@ -702,6 +742,14 @@ class FunctionLocation(NamedTuple):
     is_named: bool = True
 
 
+# The source `dict.update` reads as a mapping: anything with keys() and
+# indexing, which is wider than Mapping.
+class KeysAndGetItem[KT, VT](Protocol):
+    def keys(self) -> Iterable[KT]: ...
+
+    def __getitem__(self, key: KT, /) -> VT: ...
+
+
 class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
     """`function_locations` that knows which module each span came from.
 
@@ -723,12 +771,17 @@ class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
         super().__setitem__(key, value)
         self._by_module.setdefault(key[0], set()).add(key)
 
-    def update(  # type: ignore[override]
-        self, other: Mapping[FunctionSpanKey, FunctionLocation]
+    def update(
+        self,
+        other: KeysAndGetItem[FunctionSpanKey, FunctionLocation]
+        | Iterable[tuple[FunctionSpanKey, FunctionLocation]] = (),
+        /,
     ) -> None:
         # dict.update bypasses __setitem__ on a subclass, which would leave
-        # the index blind to whatever it wrote.
-        for key, value in other.items():
+        # the index blind to whatever it wrote. dict() takes every source form
+        # dict.update does, and fails on a malformed one before any write.
+        pairs: dict[FunctionSpanKey, FunctionLocation] = dict(other)
+        for key, value in pairs.items():
             self[key] = value
 
     def setdefault(  # type: ignore[override]
@@ -823,6 +876,10 @@ class DeferredInherit(NamedTuple):
     registered node: a written path can be exact about where to look and
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
+
+    `written_ref` is a C# base as written (`NotificationHandler`1`): the
+    parse-time qn cannot say which name was written, and C# binds that
+    name by scope (namespace, enclosing namespaces, usings), issue #2534.
     """
 
     rel_type: RelationshipType
@@ -832,6 +889,7 @@ class DeferredInherit(NamedTuple):
     base_index: int
     language: SupportedLanguage
     alt_parent_qn: str | None = None
+    written_ref: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
@@ -879,6 +937,12 @@ class DeferredImportEdge(NamedTuple):
     # Import-site edge properties (statement span, alias, imported name;
     # issue #1522), or None for an import shape that records no site.
     site: PropertyDict | None = None
+
+
+LanguageFamily = frozenset[SupportedLanguage]
+# {bare module qn: {language family: its file's module qn}} for a stem whose
+# files carry their extension, the name each family's importers land on.
+StemSiblingModules = dict[str, dict[LanguageFamily, str]]
 
 
 class ReingestReport(NamedTuple):
@@ -990,7 +1054,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
@@ -1211,6 +1275,13 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.PROJECT,),
         RelationshipType.DEPENDS_ON_EXTERNAL,
         (NodeLabel.EXTERNAL_PACKAGE,),
+    ),
+    # A relative link in a Markdown document to a file in the repository
+    # (issue #2394: emitted by the document tier but never documented).
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.LINKS_TO,
+        (NodeLabel.FILE,),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),

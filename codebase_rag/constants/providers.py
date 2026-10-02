@@ -46,6 +46,11 @@ LITELLM_DEFAULT_ENDPOINT = "http://localhost:4000/v1"
 PYDANTIC_AI_LITELLM_MODULE = "pydantic_ai.providers.litellm"
 MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"
 OLLAMA_HEALTH_PATH = "/api/tags"
+# `/api/tags` answers {"models": [{"name": "llama3.2:latest", ...}, ...]}.
+OLLAMA_TAGS_MODELS = "models"
+OLLAMA_TAGS_NAME = "name"
+OLLAMA_TAG_SEPARATOR = ":"
+OLLAMA_LATEST_TAG = "latest"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 
@@ -176,6 +181,13 @@ MODULE_PYMILVUS = "pymilvus"
 # qdrant-client sends the `api-key` header in the clear only when the URL
 # names this scheme; a URL without a scheme switches to https once a key is set.
 QDRANT_INSECURE_URL_SCHEME = "http"
+# The embedded store's folder when QDRANT_DB_PATH is left alone; left alone
+# too, and with the bundled stack running, the stack's Qdrant is used instead
+# (issue #2355).
+QDRANT_DEFAULT_DB_PATH = "./.qdrant_code_embeddings"
+# The settings field that holds it. Whether it was supplied is read from the
+# fields the settings sources set, since a supplied value can equal the default.
+SETTING_QDRANT_DB_PATH = "QDRANT_DB_PATH"
 
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,

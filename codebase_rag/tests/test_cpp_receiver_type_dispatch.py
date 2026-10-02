@@ -93,7 +93,7 @@ def _first_function_node(source: str):
 # back to bare-name resolution. References are pervasive in C++, so a real coverage hole.
 def test_cpp_reference_parameter_maps_to_type() -> None:
     node = _first_function_node("void f(Alpha& ar, Zeta* zp) { }")
-    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node)
     assert var_types.get("ar") == "Alpha", (
         f"reference parameter ar should map to Alpha, got {var_types}"
     )
@@ -146,7 +146,7 @@ def test_cpp_local_reference_receiver_resolves(
 # recorded, so common-case recall is preserved.
 def test_cpp_conflicting_shadow_type_is_not_inferred() -> None:
     node = _first_function_node("void f() { Zeta z; { Alpha z; } }")
-    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node)
     assert "z" not in var_types, (
         f"a name shadowed by a different type must not be inferred, got {var_types}"
     )
@@ -154,7 +154,7 @@ def test_cpp_conflicting_shadow_type_is_not_inferred() -> None:
 
 def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
     node = _first_function_node("void f() { if (c) { Foo x; } }")
-    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node)
     assert var_types.get("x") == "Foo", (
         f"an inner-block local with no name collision should resolve, got {var_types}"
     )
@@ -166,7 +166,7 @@ def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
 # type and must be recorded, including mixed pointer/plain forms (`Foo* p, q;`).
 def test_cpp_multi_declarator_declaration_maps_all_names() -> None:
     node = _first_function_node("void f() { Zeta a, b; Foo* p, q; }")
-    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node)
     assert var_types.get("a") == "Zeta", (
         f"both a and b should map to Zeta, got {var_types}"
     )
@@ -224,7 +224,7 @@ def test_cpp_second_declarator_receiver_resolves(
 # outer `z.run()` would fall back to name-only (Alpha.run).
 def test_cpp_lambda_local_does_not_leak_into_enclosing_scope() -> None:
     node = _first_function_node("void f() { Zeta z; auto g = [](){ Alpha z; }; }")
-    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
+    var_types = CppTypeInferenceEngine().build_local_variable_type_map(node)
     assert var_types.get("z") == "Zeta", (
         f"outer z should stay Zeta despite a lambda-local Alpha z, got {var_types}"
     )

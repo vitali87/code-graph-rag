@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.agent import AgentRetries
+from pydantic_ai.agent import AgentRetries, AgentRunResult
 
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, load_cgr_instructions, settings
 from ..prompts import (
+    build_cypher_repair_request,
     build_cypher_system_prompt,
     build_local_cypher_system_prompt,
     build_rag_orchestrator_prompt,
@@ -105,7 +106,11 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
+# A relationship bracket (`-[...]`) holding a variable-length `*`; group 1
+# is everything after the first `*`, which may carry a properties map after
+# the bounds (`*1..3 {w: 1}`), so only its leading bounds are inspected.
+_VARLEN_PATTERN = re.compile(r"-\s*\[[^\]*]*\*([^\]]*)\]")
+_VARLEN_BOUNDS = re.compile(r"\s*(\d*)\s*(\.\.\s*(\d*))?")
 # Runs on masked text, where comments are spaces and backtick identifiers
 # are bare, so `CALL /*x*/ `mg.x`()` is seen as `CALL mg.x()`. Whitespace
 # around the dots is legal Cypher and removed before the allowlist check.
@@ -123,14 +128,16 @@ def _validate_cypher_read_only(query: str) -> None:
 
 
 def _validate_no_unbounded_paths(query: str) -> None:
-    for match in _VARLEN_PATTERN.finditer(query):
-        spec = match.group(1).strip()
-        if not spec:
+    # Masked text, so a `*` inside a string literal is never read as the
+    # operator. A bare `*`, an open range (`*1..`, `*..`) or a `*` followed
+    # only by a properties map (`*{w: 1}`) is unbounded; a lone hop count
+    # (`*5`) or a range with an upper bound (`*1..3`, `*..3`) is not.
+    for match in _VARLEN_PATTERN.finditer(mask_literals_and_comments(query)):
+        bounds = _VARLEN_BOUNDS.match(match.group(1))
+        if bounds is None or not (
+            bounds.group(3) if bounds.group(2) else bounds.group(1)
+        ):
             raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
-        if ".." in spec:
-            upper = spec.split("..", 1)[1].lstrip()
-            if not upper or not upper[0].isdigit():
-                raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
 
 
 def _validate_call_procedures(query: str) -> None:
@@ -140,6 +147,13 @@ def _validate_call_procedures(query: str) -> None:
             raise ex.LLMGenerationError(
                 ex.LLM_DISALLOWED_PROCEDURE.format(name=name, query=query)
             )
+
+
+class CypherAgent(Protocol):
+    """The one call CypherGenerator makes on its agent, so a wrapper can
+    stand in for it (the agentic QA eval meters its token spend)."""
+
+    async def run(self, user_prompt: str) -> AgentRunResult[str]: ...
 
 
 class CypherGenerator:
@@ -157,7 +171,7 @@ class CypherGenerator:
                 else build_cypher_system_prompt(active_projects)
             )
 
-            self.agent = Agent(
+            self.agent: CypherAgent = Agent(
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
@@ -189,6 +203,14 @@ class CypherGenerator:
             logger.error(ls.CYPHER_ERROR.format(error=e))
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
 
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str:
+        """Ask for a new query after the database rejected `failed_query`."""
+        return await self.generate(
+            build_cypher_repair_request(natural_language_query, failed_query, error)
+        )
+
 
 def create_research_agent(tools: list[Tool]) -> Agent:
     """Build the leaf research sub-agent, the trust boundary for external web
@@ -214,12 +236,12 @@ def create_research_agent(tools: list[Tool]) -> Agent:
 
 
 def create_rag_orchestrator(
-    tools: list[Tool],
+    tools: list[Tool[None]],
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
     backend: str | None = None,
-) -> tuple[Agent, str]:
+) -> tuple[Agent[None, str | DeferredToolRequests], str]:
     """Build the main agent and return it with its system prompt."""
     try:
         config = settings.active_orchestrator_config
@@ -235,7 +257,9 @@ def create_rag_orchestrator(
             backend=backend,
         )
 
-        agent = Agent(
+        # Specialised explicitly: the checker cannot infer the output type
+        # from a list of output types.
+        agent = Agent[None, str | DeferredToolRequests](
             model=llm,
             system_prompt=system_prompt,
             tools=tools,

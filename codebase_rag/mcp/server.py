@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
@@ -37,6 +37,8 @@ def setup_logging() -> None:
         sys.stderr,
         level=cs.MCP_LOG_LEVEL_INFO,
         format=cs.MCP_LOG_FORMAT,
+        backtrace=False,
+        diagnose=False,
     )
 
 
@@ -143,13 +145,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     server = Server(cs.MCP_SERVER_NAME)
 
-    def _create_error_content(message: str) -> list[TextContent]:
-        return [
-            TextContent(
-                type=cs.MCP_CONTENT_TYPE_TEXT,
-                text=te.ERROR_WRAPPER.format(message=message),
-            )
-        ]
+    def _create_error_content(message: str) -> CallToolResult:
+        return _failed_call(te.failure(message))
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -164,7 +161,9 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: MCPToolArguments) -> list[TextContent]:
+    async def call_tool(
+        name: str, arguments: MCPToolArguments
+    ) -> list[TextContent] | CallToolResult:
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
@@ -178,6 +177,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
             result = await handler(**arguments)
 
+            if isinstance(result, te.ToolFailure):
+                return _failed_call(result)
             if returns_json:
                 result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
             else:
@@ -191,6 +192,16 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             return _create_error_content(error_msg)
 
     return server, ingestor
+
+
+def _failed_call(message: str) -> CallToolResult:
+    # A returned content list reaches the client as `isError: false`; a
+    # failure the server or a tool detected must say so in the protocol, not
+    # only in its prose (issue #2650).
+    return CallToolResult(
+        content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=message)],
+        isError=True,
+    )
 
 
 @contextlib.contextmanager
