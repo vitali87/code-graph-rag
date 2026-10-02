@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -136,13 +137,10 @@ def _runs(source: str) -> bool:
     call that still raises passes too many whatever they hold, and one that
     runs is a call the graph cannot call wrong.
     """
-    namespace: dict[str, object] = {}
-    exec(LIB, namespace)
-    exec(source, namespace)
-    probe = namespace["probe"]
-    assert callable(probe)
+    module = ModuleType("probe")
+    exec(LIB + "\n\n" + source, module.__dict__)
     try:
-        probe()
+        module.probe()
     except TypeError:
         return False
     return True
