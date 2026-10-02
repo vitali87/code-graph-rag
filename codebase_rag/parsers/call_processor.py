@@ -166,6 +166,9 @@ _TYPED_LANGUAGES = frozenset(
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
+# Python callers whose own bindings shadow module and class names for the
+# whole body (issue #2666); a class body or module is excluded on purpose.
+_PY_LOCAL_SCOPE_CALLERS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 # Declarator kinds for the symbol-index value chase (issue #989). OPAQUE
 # marks an introduction whose value cannot be known statically (a parameter,
@@ -466,6 +469,25 @@ _FLOW_ARG_REF_TYPES = frozenset(
         cs.TS_MEMBER_EXPRESSION,
     }
 )
+# Node types of a value that hands a callable over BY NAME, in every language
+# the argument-reference path serves: the flow-arg names above, a C# member
+# access or generic method group, a Dart tear-off's `.name` selector (its
+# argument unwraps to the last selector), a C++ qualified, template or field
+# name, and a JS shorthand property. (C++ address-of is checked on its own in
+# `_names_a_callable`.) An operator expression is absent on purpose: it
+# computes a value, and its text resolved as a name against a builtin receiver
+# gave `builtin.Array.prototype.length - start` (issue #2438).
+_CALLBACK_REF_TYPES = _FLOW_ARG_REF_TYPES | frozenset(
+    {
+        cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_GENERIC_NAME,
+        cs.TS_DART_SELECTOR,
+        cs.TS_CPP_QUALIFIED_IDENTIFIER,
+        cs.TS_CPP_TEMPLATE_FUNCTION,
+        cs.TS_CPP_FIELD_EXPRESSION,
+        cs.TS_SHORTHAND_PROPERTY_IDENTIFIER,
+    }
+)
 # Qualified-name prefix marking a resolved callee as a builtin rather than a
 # first-party function whose body the call chain can be followed into.
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
@@ -585,6 +607,16 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     if natural == scope_qn:
         return [scope_qn]
     return [scope_qn, natural]
+
+
+def _names_a_callable(node: Node) -> bool:
+    # C/C++ also hands a function over by its address (`run(&Cls::m)`), the
+    # one operator expression that names rather than computes; a dereference
+    # (`*p`) or any other operator does not.
+    if node.type == cs.TS_CPP_POINTER_EXPRESSION:
+        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+        return operator is not None and safe_decode_text(operator) == cs.CPP_ADDRESS_OF
+    return node.type in _CALLBACK_REF_TYPES
 
 
 def _first_class_value_children(
@@ -2275,6 +2307,112 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+        if language == cs.SupportedLanguage.JAVA:
+            # A constant runs its enum's constructor without any call
+            # expression, so a file holding only an enum has to be covered
+            # before the no-calls early return (issue #2547).
+            self._ingest_java_enum_constant_ctor_calls(
+                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
+            )
+
+    @_site_scoped
+    def _ingest_java_enum_constant_ctor_calls(
+        self,
+        module_qn: str,
+        class_nodes: list[Node],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        # Outside its own constructors, `CLASS("c")` is the only thing that runs
+        # a Java enum constructor (`new` on an enum is a compile error), and no
+        # call node names it, so every parameterised enum constructor looked
+        # dead. Each constant CALLS the constructors its argument count admits;
+        # one candidate is the compiler's choice, several (same arity) fan out
+        # as `overload`, the way `new X(...)` does. No INSTANTIATES: that edge
+        # only targets Class.
+        for enum_node in class_nodes:
+            if enum_node.type != cs.TS_ENUM_DECLARATION:
+                continue
+            constants = java_utils.enum_constants(enum_node)
+            if not constants:
+                continue
+            ctors = [
+                (ctor, target)
+                for ctor in java_utils.enum_constructors(enum_node)
+                if (
+                    target := self._java_enum_ctor_target(
+                        ctor, enum_node, module_qn, queries
+                    )
+                )
+                is not None
+            ]
+            if not ctors:
+                continue
+            caller_spec = self._java_enum_initializer(enum_node, module_qn)
+            for constant in constants:
+                arg_count = java_utils.argument_count(constant)
+                targets = [
+                    target
+                    for ctor, target in ctors
+                    if java_utils.accepts_argument_count(ctor, arg_count)
+                ]
+                self._site_node = constant
+                self._resolution = (
+                    cs.EdgeResolution.EXACT
+                    if len(targets) == 1
+                    else cs.EdgeResolution.OVERLOAD
+                )
+                for target_label, target_qn in targets:
+                    # A bare `NONE` has no argument list for the site to
+                    # count, yet it is a zero-argument invocation all the same.
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
+                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+                    )
+
+    def _java_enum_ctor_target(
+        self,
+        ctor_node: Node,
+        enum_node: Node,
+        module_qn: str,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> tuple[str, str] | None:
+        if loc := self._recorded_caller(ctor_node, module_qn):
+            return loc.label, loc.qualified_name
+        # The class pass's own derivation, for a run that did not re-record
+        # this file's definitions.
+        enum_name = self._get_node_name(enum_node)
+        ctor_name = self._get_node_name(ctor_node)
+        if not enum_name or not ctor_name:
+            return None
+        language = cs.SupportedLanguage.JAVA
+        target_qn, target_label = self._class_member_qn_and_label(
+            ctor_node,
+            _class_qn_for_calls(enum_node, module_qn, enum_name, language, queries),
+            ctor_name,
+            queries[language][cs.QUERY_CONFIG],
+            language,
+        )
+        if target_qn not in self._resolver.function_registry:
+            return None
+        return target_label, target_qn
+
+    def _java_enum_initializer(
+        self, enum_node: Node, module_qn: str
+    ) -> tuple[str, str, str]:
+        # A local enum initialises when its method first uses it, so that
+        # method runs the constructors: a dead method keeps them dead. Any
+        # other enum initialises at class load, which the graph attributes to
+        # the module, as it does a static field initializer.
+        current = enum_node.parent
+        while current is not None:
+            if current.type in cs.JAVA_METHOD_NODE_TYPES:
+                if loc := self._recorded_caller(current, module_qn):
+                    return (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name)
+                break
+            current = current.parent
+        return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
     def _ingest_dart_module_initializer_reads(
         self,
@@ -3154,6 +3292,11 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
+            # Attribute arguments share the token_tree shape (`skip(self)` in
+            # `#[instrument(skip(self))]`) but name no function; binding them
+            # by bare name invented module-level CALLS (issue #2541).
+            if rs_utils.in_attribute_arguments(call_node):
+                return None
             return self._macro_call_name(call_node)
         # A Dart call node is a selector/cascade_section holding the
         # argument_part; the target name lives in the PRECEDING sibling
@@ -3785,15 +3928,25 @@ class CallProcessor:
     ) -> None:
         # Names this caller binds that also name an import: the resolver
         # refuses to read the import map for them (issue #1907).
-        shadowed = (
-            self._resolver.type_inference.python_type_inference.shadowed_import_names(
-                caller_node, module_qn
-            )
-        )
+        python_inference = self._resolver.type_inference.python_type_inference
+        shadowed = python_inference.shadowed_import_names(caller_node, module_qn)
         if shadowed:
             self._resolver.python_shadowed_imports[caller_qn] = shadowed
         else:
             self._resolver.python_shadowed_imports.pop(caller_qn, None)
+        # Every name a function binds itself: a bare use of one never resolves
+        # to the module function or method it shadows (issue #2666). Only a
+        # function or lambda body: in a class body `alias = run` does read the
+        # class's own `run`, and a module's bindings are its definitions.
+        local = (
+            python_inference.locally_bound_names(caller_node, module_qn)
+            if caller_node.type in _PY_LOCAL_SCOPE_CALLERS
+            else frozenset()
+        )
+        if local:
+            self._resolver.python_local_names[caller_qn] = local
+        else:
+            self._resolver.python_local_names.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -4922,7 +5075,7 @@ class CallProcessor:
                 return
             callee_type, callee_qn = redirected
 
-        self._emit_resolved_callee_targets(ctx, callee_type, callee_qn)
+        self._emit_resolved_callee_targets(ctx, call_name, callee_type, callee_qn)
         self._emit_callee_fanouts(ctx, call_name, callee_type, callee_qn)
 
     def _emit_protocol_conformer_edges(
@@ -5043,9 +5196,13 @@ class CallProcessor:
             )
 
     def _emit_resolved_callee_targets(
-        self, ctx: _CallScanContext, callee_type: str, callee_qn: str
+        self, ctx: _CallScanContext, call_name: str, callee_type: str, callee_qn: str
     ) -> None:
-        targets = self._resolver.function_registry.variants(callee_qn)
+        targets = self._resolver.lexical_call_targets(
+            call_name,
+            ctx.module_qn,
+            self._resolver.function_registry.variants(callee_qn),
+        )
         if len(
             targets
         ) > 1 and not self._resolver.import_processor.rust_block_item_qns.isdisjoint(
@@ -7125,6 +7282,11 @@ class CallProcessor:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
+        # Only a name can hand a callable over. The whole source text of any
+        # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
+        # as if it were one (issue #2438).
+        if not _names_a_callable(arg_node):
+            return
         if not (arg_text := safe_decode_text(arg_node)):
             return
         if language == cs.SupportedLanguage.CSHARP:
@@ -7161,6 +7323,14 @@ class CallProcessor:
         # resolves the cast's TYPE name in some paths), and emitting that
         # produces schema-invalid edges.
         if res_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
+            return
+        # And only a callable the graph has a node for. A member read on a
+        # builtin-typed receiver (`error.customDelay` on an Error,
+        # `items.length` on an Array) resolves to a synthetic `builtin.*` qn
+        # that is never created, a property as often as a method, so the
+        # edge could only be dropped by the database and counted as a failed
+        # write on every index (issue #2438; #652 for the call form).
+        if res_qn not in registry:
             return
         # A Dart getter in argument position is a VALUE READ, not a tear-off:
         # the getter-read pass owns those edges (with shadow handling), so

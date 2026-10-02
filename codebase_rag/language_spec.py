@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from functools import partial
+import os
+from functools import lru_cache, partial
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -9,11 +10,13 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
-from .utils.path_utils import module_stem
+from .utils.path_utils import module_extension, module_stem, should_skip_path
 from .utils.qn_markers import strip_dup_marker
 
 if TYPE_CHECKING:
     from tree_sitter import Node
+
+    from .types_defs import LanguageFamily
 
 
 def decode_node_text(raw: bytes) -> str:
@@ -826,3 +829,101 @@ def get_language_for_extension(file_extension: str) -> cs.SupportedLanguage | No
     if spec and isinstance(spec.language, cs.SupportedLanguage):
         return spec.language
     return None
+
+
+def language_family(language: cs.SupportedLanguage) -> LanguageFamily:
+    """The group of languages `language` shares definitions and modules with."""
+    for family in cs.LANGUAGE_FAMILIES:
+        if language in family:
+            return family
+    return frozenset({language})
+
+
+_PACKAGE_NAMED_FILES = frozenset({cs.INIT_PY, cs.MOD_RS})
+
+
+def _other_family_extensions(
+    family: LanguageFamily,
+) -> tuple[str, ...]:
+    # Every extension a same-stem module of another family can carry,
+    # compound ones included: a lone `util.d.ts` beside `util.py` shares the
+    # stem as surely as `util.ts` would.
+    return tuple(
+        sorted(
+            ext
+            for ext in {*_EXTENSION_TO_SPEC, *cs.JS_TS_MODULE_EXTENSIONS}
+            if (other := get_language_for_extension(PurePosixPath(f"_{ext}").suffix))
+            and other not in family
+        )
+    )
+
+
+# Built once per family: the probe below runs for every indexed file.
+_OTHER_FAMILY_EXTENSIONS: dict[cs.SupportedLanguage, tuple[str, ...]] = {
+    language: _other_family_extensions(language_family(language))
+    for language in cs.SupportedLanguage
+}
+
+
+def has_other_language_sibling(
+    path: Path,
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Will a same-stem module of ANOTHER language family be indexed beside it?
+
+    Asked of the filesystem rather than of what has been parsed so far, like
+    `has_implementation_sibling`: the parse order is the walk order, and the
+    answer must not depend on which of the two the walk reaches first. The
+    candidates go through `should_skip_path`, the predicate the walk prunes
+    with, so an excluded or ignored file counts for nothing.
+    """
+    language = get_language_for_extension(path.suffix)
+    # `__init__.py` and `mod.rs` are named after their directory, not their
+    # stem, so they share no name with a file of the same stem.
+    if language is None or path.name in _PACKAGE_NAMED_FILES:
+        return False
+    parent = os.fspath(path.parent)
+    try:
+        names = _directory_names(parent, os.stat(parent).st_mtime_ns)
+    except OSError:
+        return False
+    stem = module_stem(path.name)
+    for ext in _OTHER_FAMILY_EXTENSIONS[language]:
+        name = f"{stem}{ext}"
+        # `x.d` + `.ts` is `x.d.ts`, the declaration of `x`, not of `x.d`.
+        if (
+            name not in names
+            or name in _PACKAGE_NAMED_FILES
+            or module_stem(name) != stem
+        ):
+            continue
+        candidate = path.parent / name
+        if candidate.is_file() and not should_skip_path(
+            candidate,
+            repo_path,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        ):
+            return True
+    return False
+
+
+@lru_cache(maxsize=1024)
+def _directory_names(directory: str, mtime_ns: int) -> frozenset[str]:
+    # One listing per directory rather than a stat per candidate extension
+    # per file, which cost a full index seconds per ten thousand files. The
+    # mtime is in the key only: adding or removing an entry changes it, so a
+    # later run never reads a listing from before its tree changed.
+    try:
+        return frozenset(os.listdir(directory))
+    except OSError:
+        return frozenset()
+
+
+def own_extension_module_qn(module_qn: str, filename: str) -> str:
+    """`module_qn` with the file's module extension as its last segment."""
+    extension = module_extension(filename).lstrip(cs.SEPARATOR_DOT)
+    return f"{module_qn}{cs.SEPARATOR_DOT}{extension}"

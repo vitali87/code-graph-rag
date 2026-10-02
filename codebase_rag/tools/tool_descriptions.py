@@ -205,11 +205,14 @@ MCP_CALLERS = (
     "Call sites that invoke a qualified name, one row per site with the "
     "caller, file, line, column, argument count and keyword names taken from "
     "the CALLS edges; `depth` > 1 follows the callers' callers (`through` "
-    "names the callee each site invokes). " + _MCP_DETERMINISTIC_NOTE
+    "names the callee each site invokes, `callee_path` its file). "
+    + _MCP_DETERMINISTIC_NOTE
 )
 MCP_CALLEES = (
     "Call sites inside a qualified name, one row per site with the callee and "
-    "the location of the call; `depth` > 1 follows the callees' callees. "
+    "the location of the call: `path` is the file holding the site's `line` "
+    "and `col` (the caller's, named by `through`) and `callee_path` the file "
+    "defining the callee; `depth` > 1 follows the callees' callees. "
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_IMPLEMENTORS = (
