@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.context_slice import context
+from codebase_rag.context_slice import _doc_pieces, context
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
@@ -124,10 +124,10 @@ def test_four_thousand_token_budget_returns_the_neighbourhood_and_nothing_else(
     assert slice_["resolved"] == _qn("pkg.util.helper")
     grouped = _by_why(slice_)
     target = grouped[cs.CONTEXT_WHY_TARGET]
-    assert len(target) == 1 and target[0]["source"].startswith(
-        "def helper(items: list[int]) -> Total:"
-    )
-    assert target[0]["file"] == "pkg/util.py" and target[0]["span"] == [8, 13]
+    assert len(target) == 1
+    assert target[0]["source"].startswith("def helper(items: list[int]) -> Total:")
+    assert target[0]["file"] == "pkg/util.py"
+    assert target[0]["span"] == [8, 13]
     callers = grouped[cs.CONTEXT_WHY_CALLER]
     assert {(c["qualified_name"], c["source"]) for c in callers} == {
         (_qn("pkg.app.run"), "return helper([1, 2]).value"),
@@ -145,11 +145,13 @@ def test_four_thousand_token_budget_returns_the_neighbourhood_and_nothing_else(
     assert [t["qualified_name"] for t in tests] == [_qn("tests.test_app.test_run")]
     assert tests[0]["source"] == "def test_run():\n    assert run() == 6"
     docs = grouped[cs.CONTEXT_WHY_DOC]
-    assert len(docs) == 1 and docs[0]["file"] == "docs/guide.md"
+    assert len(docs) == 1
+    assert docs[0]["file"] == "docs/guide.md"
     assert "`helper` sums the scaled items" in docs[0]["source"]
     # Nothing from the unrelated module, in any role.
     assert all("unrelated" not in p["qualified_name"] for p in slice_["pieces"])
-    assert slice_["omitted"] == [] and not slice_["truncated"]
+    assert slice_["omitted"] == []
+    assert not slice_["truncated"]
     assert slice_["used_tokens"] == sum(p["tokens"] for p in slice_["pieces"])
     assert slice_["used_tokens"] <= 4000
 
@@ -172,7 +174,8 @@ def test_token_count_never_exceeds_the_budget(
     tiny = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 5, root)
     # Too small for even the first line: the target is named as omitted
     # rather than padded with nothing, and the budget still holds.
-    assert tiny["truncated"] and tiny["used_tokens"] <= 5
+    assert tiny["truncated"]
+    assert tiny["used_tokens"] <= 5
     assert tiny["omitted"][0].startswith(_qn("pkg.util.helper"))
 
 
@@ -209,7 +212,8 @@ def test_targets_by_bare_name_location_and_free_text(
         "resolved"
     ] == _qn("pkg.util.helper")
     missing = context(store.fetch_all, PROJECT, "sum the scaled items", 500, root)
-    assert missing["resolved"] is None and missing["pieces"] == []
+    assert missing["resolved"] is None
+    assert missing["pieces"] == []
 
     def search(text: str) -> list:
         return [
@@ -278,3 +282,85 @@ def test_the_markdown_skip_guard_tracks_the_real_loaders(
         f"guard says unavailable={_markdown_unavailable()} with "
         f"block={block_ok} inline={inline_ok}"
     )
+
+
+# --- doc sections, driven directly ------------------------------------------------
+#
+# A fake query feeds `_doc_pieces` section rows over real files, so the choice
+# of section is pinned without the markdown grammar.
+
+_GUIDE = (
+    "# Intro\n"
+    "Nothing to see.\n"
+    "# Usage\n"
+    "Call `helper` to sum.\n"
+    "# Elsewhere\n"
+    "obj.helper and helpers are other names.\n"
+)
+_NOTES = "# First\nNo mention.\n# Second\nStill none.\n"
+
+
+def _section(doc: str, path: str, start: object, end: object) -> dict:
+    return {
+        cs.KEY_FROM_QN: doc,
+        cs.KEY_QUALIFIED_NAME: f"{doc}#{start}",
+        cs.KEY_PATH: path,
+        cs.KEY_START_LINE: start,
+        cs.KEY_END_LINE: end,
+    }
+
+
+def _doc_slice(tmp_path: Path, rows: list[dict]) -> list:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/guide.md").write_text(_GUIDE, encoding="utf-8")
+    (tmp_path / "docs/notes.md").write_text(_NOTES, encoding="utf-8")
+    return _doc_pieces(
+        lambda _query, _params=None: rows, PROJECT, "pkg/util.py", "helper", tmp_path
+    )
+
+
+def test_only_the_doc_sections_naming_the_target_are_kept(tmp_path: Path) -> None:
+    pieces = _doc_slice(
+        tmp_path,
+        [
+            _section("guide", "docs/guide.md", 5, 6),
+            _section("guide", "docs/guide.md", 1, 2),
+            _section("guide", "docs/guide.md", 3, 4),
+        ],
+    )
+
+    assert [(p.qualified_name, p.span, p.source) for p in pieces] == [
+        ("guide#3", (3, 4), "# Usage\nCall `helper` to sum.")
+    ]
+
+
+def test_a_doc_that_never_names_the_target_offers_its_first_section(
+    tmp_path: Path,
+) -> None:
+    pieces = _doc_slice(
+        tmp_path,
+        [
+            _section("notes", "docs/notes.md", 3, 4),
+            _section("notes", "docs/notes.md", 1, 2),
+        ],
+    )
+
+    assert [(p.qualified_name, p.span) for p in pieces] == [("notes#1", (1, 2))]
+
+
+def test_a_section_without_an_end_line_spans_its_start(tmp_path: Path) -> None:
+    pieces = _doc_slice(tmp_path, [_section("guide", "docs/guide.md", 4, None)])
+
+    assert [(p.span, p.source) for p in pieces] == [((4, 4), "Call `helper` to sum.")]
+
+
+def test_a_section_row_without_a_start_line_is_skipped(tmp_path: Path) -> None:
+    pieces = _doc_slice(
+        tmp_path,
+        [
+            _section("notes", "docs/notes.md", None, 2),
+            _section("notes", "docs/notes.md", 3, 4),
+        ],
+    )
+
+    assert [p.qualified_name for p in pieces] == ["notes#3"]

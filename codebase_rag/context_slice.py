@@ -343,34 +343,43 @@ def _doc_pieces(
     for row in rows:
         by_doc.setdefault(str(row.get(cs.KEY_FROM_QN) or ""), []).append(row)
     for doc_qn, sections in by_doc.items():
-        mentioning: list[_Candidate] = []
-        first: _Candidate | None = None
+        out.extend(_doc_sections(repo_root, doc_qn, sections, name))
+    return out
+
+
+def _doc_sections(
+    repo_root: Path, doc_qn: str, sections: list[ResultRow], name: str
+) -> list[_Candidate]:
+    # The sections that mention `name`, or the document's first section when
+    # none does.
+    candidates = [
+        candidate
         for row in sorted(
             sections, key=lambda r: int(str(r.get(cs.KEY_START_LINE) or 0))
-        ):
-            section_path = row.get(cs.KEY_PATH)
-            start, end = row.get(cs.KEY_START_LINE), row.get(cs.KEY_END_LINE)
-            if not isinstance(section_path, str) or not isinstance(start, int):
-                continue
-            text = _lines(
-                repo_root, section_path, start, end if isinstance(end, int) else start
-            )
-            candidate = _Candidate(
-                2,
-                0,
-                0.0,
-                str(row.get(cs.KEY_QUALIFIED_NAME) or doc_qn),
-                section_path,
-                (start, end if isinstance(end, int) else start),
-                cs.CONTEXT_WHY_DOC,
-                text.rstrip("\n"),
-            )
-            if first is None:
-                first = candidate
-            if re.search(_IDENTIFIER % re.escape(name), text):
-                mentioning.append(candidate)
-        out.extend(mentioning or ([first] if first is not None else []))
-    return out
+        )
+        if (candidate := _doc_section(repo_root, doc_qn, row)) is not None
+    ]
+    pattern = _IDENTIFIER % re.escape(name)
+    mentioning = [c for c in candidates if re.search(pattern, c.source)]
+    return mentioning or candidates[:1]
+
+
+def _doc_section(repo_root: Path, doc_qn: str, row: ResultRow) -> _Candidate | None:
+    section_path = row.get(cs.KEY_PATH)
+    start, end = row.get(cs.KEY_START_LINE), row.get(cs.KEY_END_LINE)
+    if not isinstance(section_path, str) or not isinstance(start, int):
+        return None
+    stop = end if isinstance(end, int) else start
+    return _Candidate(
+        2,
+        0,
+        0.0,
+        str(row.get(cs.KEY_QUALIFIED_NAME) or doc_qn),
+        section_path,
+        (start, stop),
+        cs.CONTEXT_WHY_DOC,
+        _lines(repo_root, section_path, start, stop).rstrip("\n"),
+    )
 
 
 # --- the slice ---------------------------------------------------------------------
