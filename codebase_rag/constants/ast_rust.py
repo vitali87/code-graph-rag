@@ -66,6 +66,13 @@ TS_RS_FIELD_MACRO = "macro"
 # call inside `println!(..)` has no call_expression node.
 TS_RS_TOKEN_TREE = "token_tree"
 TS_RS_TOKEN_SCOPE = "::"
+# An attribute's arguments are a `token_tree` too (`attribute` owns it), and
+# inside a macro body an attribute is raw tokens: `#` (or `#!`) and a `[...]`
+# group. Neither holds calls (issue #2541).
+TS_RS_ATTRIBUTE = "attribute"
+TS_RS_TOKEN_HASH = "#"
+TS_RS_TOKEN_BANG = "!"
+TS_RS_TOKEN_BRACKET_OPEN = "["
 # `s.field` is a field_expression; `arr[i]` an index_expression. Inert for I/O
 # (Rust env access is a call), wired for correctness and future value sinks.
 TS_RS_INDEX_EXPRESSION = "index_expression"
