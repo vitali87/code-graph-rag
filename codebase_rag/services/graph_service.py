@@ -135,8 +135,10 @@ def _created_count(results: Sequence[ResultRow]) -> int:
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception types are bound once here.
+# TransientError first appears in 1.6.0, hence the `pymgclient>=1.6.0` floor.
 _MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
 _MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
+_MgclientTransientError: type[Exception] = mgclient.TransientError  # ty: ignore[unresolved-attribute]
 
 
 def is_query_rejection(error: BaseException) -> bool:
@@ -174,9 +176,6 @@ def _missing_endpoints(row: ResultRow) -> str:
 _COMMAND_EXITS = (typer.Exit, click.exceptions.Exit, SystemExit)
 
 
-_MgTransientError: type[Exception] = mgclient.TransientError  # ty: ignore[unresolved-attribute]
-
-
 def _retry_transient[T](execute: Callable[[], T]) -> T:
     """Run `execute`, again after a doubling wait while Memgraph reports a
     transient conflict (issue #2441).
@@ -188,7 +187,7 @@ def _retry_transient[T](execute: Callable[[], T]) -> T:
     for attempt in range(1, MG_TRANSIENT_RETRY_ATTEMPTS):
         try:
             return execute()
-        except _MgTransientError as exc:
+        except _MgclientTransientError as exc:
             delay = MG_TRANSIENT_RETRY_BASE_DELAY_S * 2 ** (attempt - 1)
             logger.warning(
                 ls.MG_TRANSIENT_RETRY.format(

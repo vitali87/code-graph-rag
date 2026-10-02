@@ -44,7 +44,7 @@ dependencies = [
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
-    "pymgclient>=1.5.1",
+    "pymgclient>=1.6.0",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
     "tomli-w>=1.2.0",
