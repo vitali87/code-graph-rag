@@ -174,7 +174,7 @@ under a broken conversion. It has to sit **before the asserted token on the
 same line**:
 
 ```python
-x = café_var.method()   # `method` is at char column 13, byte column 14
+x = café_var.method()  # `method` is at char column 13, byte column 14
 x = plain_var.method()  # both are 14 -- this line proves nothing
 ```
 

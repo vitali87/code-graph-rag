@@ -133,6 +133,12 @@ Before starting the stack, `cgr daemon up` asks `docker compose config` what eac
 - **A value written into the compose file.** It takes precedence over the settings.
 - **An `.env` file next to the compose file.** Compose reads it for any of these variables missing from its environment.
 
+#### Vendor telemetry
+
+Both bundled stores report usage to their vendors unless told not to: Memgraph sends the host's CPU and memory profile and the graph's vertex and edge counts, and Qdrant reports to `telemetry.qdrant.io` when it starts. A newly rendered compose file turns both off, with `command: ["--telemetry-enabled=false"]` on the `memgraph` service and `QDRANT__TELEMETRY_DISABLED=true` in the `qdrant` service's `environment` (issue [#2675](https://github.com/vitali87/code-graph-rag/issues/2675)). To share usage data with the vendors, delete the Memgraph line and set the Qdrant variable to `false`.
+
+A compose file rendered before this change keeps telemetry on, like the port bindings above. Re-render it with the same three steps, or add the two settings by hand and recreate the containers with `cgr daemon down` and `cgr daemon up`.
+
 ### External providers and data transmission
 
 Application-level data paths include:
