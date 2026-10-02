@@ -194,6 +194,12 @@ def _language_imports() -> list[LanguageImport]:
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.SQL,
         ),
+        LanguageImport(
+            cs.SupportedLanguage.JULIA,
+            cs.TreeSitterModule.JULIA,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.JULIA,
+        ),
     ]
 
     return language_imports
