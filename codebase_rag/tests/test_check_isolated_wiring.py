@@ -194,6 +194,7 @@ def test_an_isolated_check_refuses_before_writing_over_io_links(
     _edit(root)
     before = _state(store)
     parsers, queries = load_parsers()
+    capture = resolve_capture(["all"])
 
     with pytest.raises(CheckError):
         run_check(
@@ -204,7 +205,7 @@ def test_an_isolated_check_refuses_before_writing_over_io_links(
             parsers,
             queries,
             isolated=True,
-            capture=resolve_capture(["all"]),
+            capture=capture,
         )
 
     assert _state(store) == before
