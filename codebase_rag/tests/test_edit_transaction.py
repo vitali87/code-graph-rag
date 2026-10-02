@@ -49,6 +49,17 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.fixture(autouse=True)
+def _no_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `cgr edits undo` re-ingests what it restores (issue #2515). These tests
+    # are about the files, so the CLI must not reach whatever Memgraph the
+    # machine runs; test_edits_undo_graph.py covers the graph side.
+    def unreachable(batch_size: int) -> None:
+        raise ConnectionError(batch_size)
+
+    monkeypatch.setattr("codebase_rag.cli_runtime.connect_memgraph", unreachable)
+
+
 # --- acceptance ----------------------------------------------------------------
 
 

@@ -29,6 +29,7 @@ from codebase_rag import constants as cs
 from codebase_rag.config import PROVIDER_ENV_KEYS, settings
 from codebase_rag.console_marks import status_mark
 from codebase_rag.schemas import HealthCheckResult
+from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
 
 runner = CliRunner()
@@ -125,6 +126,11 @@ def bare_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "_active_cypher", None)
     for name in _KEY_VARIABLES:
         monkeypatch.delenv(name, raising=False)
+    # These tests are about credentials; a local model is also probed
+    # (#2423), so an Ollama holding every model a test names answers here.
+    monkeypatch.setattr(
+        health_checker, "_ollama_models", lambda _url: [cs.DEFAULT_MODEL, "test-model"]
+    )
 
 
 def _runtime_accepts(role: cs.ModelRole) -> bool:

@@ -32,6 +32,7 @@ from ..services import ReadOnlyQueryProtocol
 from ..services.graph_service import is_query_rejection
 from ..services.llm import CypherGenerator
 from ..types_defs import ResultRow
+from ..utils.terminal_console import terminal_aware_console
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
@@ -905,7 +906,7 @@ def create_query_tool(
     project_name: str | None = None,
 ) -> Tool:
     if console is None:
-        console = Console(width=None, stderr=True, force_terminal=True)
+        console = terminal_aware_console(stderr=True)
 
     async def query_codebase_knowledge_graph(
         natural_language_query: str,

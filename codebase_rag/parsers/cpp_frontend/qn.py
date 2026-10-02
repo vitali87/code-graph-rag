@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
+from ...language_spec import has_other_language_sibling, own_extension_module_qn
 from ...utils.path_utils import (
     base_module_qn,
     declaration_extension,
@@ -52,11 +53,18 @@ def build_module_qn_map(
     # ones, so a `.d.ts` is in this map and would otherwise claim `proj.foo`
     # here while the indexer gave it to `foo.ts` -- one module under two names,
     # which is the #1025 failure the mirror exists to prevent.
+    #
+    # Nor is a stem shared across language families: every file on it takes
+    # its extension, decided on the filesystem the same way (issue #2586).
     claimed: dict[str, str] = {}
     result: dict[str, str] = {}
     for rel in _eligible_rel_files(repo_path, exclude_paths, unignore_paths):
         base = base_module_qn(Path(rel), project_name)
-        if (declaration := declaration_extension(Path(rel).name)) and (
+        if has_other_language_sibling(
+            repo_path / rel, repo_path, exclude_paths, unignore_paths
+        ):
+            base = own_extension_module_qn(base, Path(rel).name)
+        elif (declaration := declaration_extension(Path(rel).name)) and (
             has_implementation_sibling(
                 repo_path / rel, repo_path, exclude_paths, unignore_paths
             )

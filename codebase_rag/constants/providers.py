@@ -46,6 +46,11 @@ LITELLM_DEFAULT_ENDPOINT = "http://localhost:4000/v1"
 PYDANTIC_AI_LITELLM_MODULE = "pydantic_ai.providers.litellm"
 MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"
 OLLAMA_HEALTH_PATH = "/api/tags"
+# `/api/tags` answers {"models": [{"name": "llama3.2:latest", ...}, ...]}.
+OLLAMA_TAGS_MODELS = "models"
+OLLAMA_TAGS_NAME = "name"
+OLLAMA_TAG_SEPARATOR = ":"
+OLLAMA_LATEST_TAG = "latest"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 

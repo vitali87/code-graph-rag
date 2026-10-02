@@ -1,6 +1,7 @@
 # Trie-backed registry of every defined function/method qualified name, with
 # the auxiliary indices resolution needs: simple-name lookup, ending-with
-# cache, duplicate-QN variants, property/abstract markers, callable params.
+# cache, duplicate-QN variants, property/object-member/abstract markers,
+# callable params.
 
 import sys
 from collections.abc import Callable, ItemsView, KeysView
@@ -26,6 +27,7 @@ class FunctionRegistryTrie:
         "_variant_columns",
         "_properties",
         "_property_names",
+        "_object_members",
         "_abstracts",
         "_callable_params",
     )
@@ -44,6 +46,7 @@ class FunctionRegistryTrie:
         self._variant_columns: dict[QualifiedName, int] = {}
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
+        self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
 
@@ -65,6 +68,12 @@ class FunctionRegistryTrie:
 
     def property_names(self) -> set[str]:
         return self._property_names
+
+    def mark_object_member(self, qualified_name: QualifiedName) -> None:
+        self._object_members.add(qualified_name)
+
+    def is_object_member(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._object_members
 
     def mark_abstract(self, qualified_name: QualifiedName) -> None:
         self._abstracts.add(qualified_name)
@@ -159,6 +168,7 @@ class FunctionRegistryTrie:
                 for p in self._properties
             ):
                 self._property_names.discard(simple_name)
+        self._object_members.discard(qualified_name)
         self._abstracts.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 

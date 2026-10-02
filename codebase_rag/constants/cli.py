@@ -43,13 +43,43 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
-CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
+# `-o` checks, made before a graph is read or indexed (issue #2410).
+CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
+CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
+    "Error: --output cannot be created, this is not a directory: {parent}"
+)
+CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
+# `cgr export` scope and retired options (issue #2410).
+CLI_EXPORT_SCOPE = "Scoped to: {projects}"
+CLI_ERR_EXPORT_UNKNOWN_PROJECTS = (
+    "Not indexed: {missing}. Indexed projects: {projects}."
+)
+CLI_ERR_EXPORT_EMPTY_SCOPE = (
+    "Error: --project-name/--workspace named no project. "
+    "Leave both out to export the whole graph."
+)
+CLI_WARN_EXPORT_BATCH_SIZE = (
+    "Warning: --batch-size is deprecated and ignored: an export only reads the "
+    "graph. It will be removed in a future release."
+)
+CLI_WARN_EXPORT_JSON = (
+    "Warning: --json is deprecated and does nothing: an export is always JSON. "
+    "It will be removed in a future release."
+)
+CLI_ERR_EXPORT_NO_JSON = (
+    "Error: --no-json is deprecated: JSON is the only export format. "
+    "Leave the option out."
+)
 CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
     "Error: --output-format json requires --ask-agent/-a; "
     "it only applies to single-query output."
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_CAPTURE_UNKNOWN = (
+    "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
+    "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
+)
 CLI_WARN_NOT_GIT_REPO = "Warning: --repo-path is not a Git repository: {path}"
 CLI_ERR_STARTUP = "Startup Error: {error}"
 CLI_ERR_CONFIG = "Configuration Error: {error}"
@@ -169,6 +199,15 @@ CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
 CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+CLI_ERR_STATS_EMPTY_WORKSPACE = (
+    "Workspace '{name}' has no repositories, so there is nothing to count. Add "
+    "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
+    "count every project."
+)
+CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
+    "--project-name was given without a project name. Name a project, or leave "
+    "out -n to count every project."
+)
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
@@ -617,6 +656,20 @@ EDIT_APPLIED = "Applied {count} file(s)"
 EDIT_UNDO_NONE = "No recorded edit transactions to undo"
 EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
 EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
+# The undo follows the restored files into the graph (issue #2515).
+EDIT_UNDO_GRAPH_SYNCED = (
+    "Re-ingested {count} restored file(s) into the graph ({project})"
+)
+EDIT_UNDO_GRAPH_NOT_INDEXED = (
+    "No graph to update: project {project} is not indexed "
+    "(pass --project if the edit was made under another name)"
+)
+EDIT_UNDO_GRAPH_STALE = (
+    "The files are restored but the graph was not updated ({error}); it still "
+    "describes the undone edit. Run '{command}' to bring it in line."
+)
+EDIT_UNDO_RESYNC_COMMAND = "cgr start --repo-path {repo} --update-graph"
+EDIT_UNDO_RESYNC_PROJECT = " --project-name {project}"
 EDIT_SHOW_NONE = "No recorded edit transactions"
 EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 # Rename (issue #1532).
