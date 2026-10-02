@@ -460,3 +460,67 @@ def test_removing_the_other_language_sibling_restores_the_original_graph(
         "extra": sorted(map(str, after[0] - before[0] | after[1] - before[1])),
         "missing": sorted(map(str, before[0] - after[0] | before[1] - after[1])),
     }
+
+
+def test_lone_other_language_file_takes_no_cross_language_imports_or_calls(
+    tmp_path: Path,
+) -> None:
+    # A JS require("./util") and a TS import from "./util" must not bind to
+    # a lone Python util.py (#2756).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "util.py": PY_UTIL,
+            "main.js": JS_APP,
+            "boot.ts": (
+                "import { helper } from './util';\n"
+                "export function boot(): number {\n"
+                "  return helper();\n"
+                "}\n"
+            ),
+        },
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    calls = _edges(store, cs.RelationshipType.CALLS)
+    assert not any(
+        "util.py" in dst for src, dst in calls if "main.js" in src or "boot.ts" in src
+    ), calls
+
+    imports = _edges(store, cs.RelationshipType.IMPORTS)
+    assert not any(
+        "util.py" in dst for src, dst in imports if "main.js" in src or "boot.ts" in src
+    ), imports
+
+
+@pytest.mark.parametrize("reuse", [False, True], ids=["fresh", "reused"])
+def test_deleting_sibling_on_incremental_path_drops_cross_language_calls(
+    tmp_path: Path, reuse: bool
+) -> None:
+    # Index util.py + util.js + main.js, then delete util.js: main.js must
+    # not re-point its CALLS or IMPORTS at util.py (#2756).
+    root = tmp_path / "proj"
+    _write(root, {"util.py": PY_UTIL, "util.js": JS_UTIL, "main.js": JS_APP})
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+
+    calls = _edges(store, cs.RelationshipType.CALLS)
+    assert ("main.js:proj.main.go", "util.js:proj.util.js.helper") in calls
+
+    (root / "util.js").unlink()
+    _bump(root)
+    (updater if reuse else _updater(store, root)).run(force=False)
+
+    calls_after = _edges(store, cs.RelationshipType.CALLS)
+    assert not any(
+        "util.py" in dst for src, dst in calls_after if "main.js" in src
+    ), calls_after
+
+    imports_after = _edges(store, cs.RelationshipType.IMPORTS)
+    assert not any(
+        "util.py" in dst for src, dst in imports_after if "main.js" in src
+    ), imports_after
+
