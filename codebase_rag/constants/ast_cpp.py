@@ -20,6 +20,7 @@ class CppNodeType(StrEnum):
     FUNCTION_DECLARATOR = "function_declarator"
     VARIADIC_PARAMETER = "variadic_parameter"
     POINTER_DECLARATOR = "pointer_declarator"
+    ARRAY_DECLARATOR = "array_declarator"
     REFERENCE_DECLARATOR = "reference_declarator"
     # An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)
     # bool sax_parse(...)`) parses as a parenthesized_declarator wrapping
@@ -201,6 +202,12 @@ TS_CPP_TEMPLATE_FUNCTION = "template_function"
 # `operator` field. Only address-of names a function it hands over.
 TS_CPP_POINTER_EXPRESSION = "pointer_expression"
 CPP_ADDRESS_OF = "&"
+CPP_DEREFERENCE = "*"
+# Declarators that put a pointer or an array between a declared type and its
+# name: the bound name holds an address, not a value of that type.
+CPP_INDIRECT_DECLARATOR_TYPES = frozenset(
+    {CppNodeType.POINTER_DECLARATOR, CppNodeType.ARRAY_DECLARATOR}
+)
 # `return {args};` -- a braced construction of the declared return type.
 TS_CPP_INITIALIZER_LIST = "initializer_list"
 # Stream-insertion operator; a `binary_expression` using it whose left-spine base

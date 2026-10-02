@@ -3867,6 +3867,11 @@ class CallResolver:
         # INHERITED from a base (Derived : Base with Base::operator==).
         if member := self._try_resolve_method(operand_type_qn, call_name):
             return member
+        return self.cpp_free_operator_for_type(call_name, operand_type_qn)
+
+    def cpp_free_operator_for_type(
+        self, call_name: str, operand_type_qn: str
+    ) -> tuple[str, str] | None:
         # ADL: a free overload may live in ANY enclosing namespace of the
         # operand's type, not only its immediate parent scope.
         parts = operand_type_qn.split(cs.SEPARATOR_DOT)
@@ -3885,8 +3890,7 @@ class CallResolver:
     ) -> str | None:
         # A bare-identifier operand with a locally inferred type resolves
         # to a REGISTERED first-party type qn, or nothing: only a known
-        # type may direct or suppress the operator binding; anything
-        # uninferable keeps the caller on the legacy best-candidate path.
+        # class type can select an operator overload (issue #2554).
         if not operand_name or not local_var_types:
             return None
         var_type = local_var_types.get(operand_name)

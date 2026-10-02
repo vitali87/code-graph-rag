@@ -144,6 +144,7 @@ class _CallScanContext:
     alias_map: dict[str, str] | None = None
     factory_aliases: dict[str, str] | None = None
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
+    cpp_indirection: dict[str, int] | None = None
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -3262,20 +3263,68 @@ class CallProcessor:
             return local_var_types
         return {**local_var_types, base: best[1]}
 
-    def _cpp_operator_operand_name(self, call_node: Node) -> str | None:
-        # The receiver-analog operand of an operator expression: the LEFT
-        # side of a binary op, the sole argument of a unary/update op. Only
-        # a bare identifier is returned; anything more complex stays with
-        # the legacy paths.
-        field = (
-            cs.FIELD_LEFT
-            if call_node.type == cs.TS_CPP_BINARY_EXPRESSION
-            else cs.TS_FIELD_ARGUMENT
-        )
-        operand = call_node.child_by_field_name(field)
+    def _cpp_operator_callee(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        var_types: dict[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # The left operand (the sole one of a unary/update op) selects a
+        # member or a free overload. The right one selects only a free
+        # overload (`os << v`, `2 * v`): a member operator takes its own
+        # class on the left.
+        if call_node.type == cs.TS_CPP_BINARY_EXPRESSION:
+            left = call_node.child_by_field_name(cs.FIELD_LEFT)
+            right = call_node.child_by_field_name(cs.FIELD_RIGHT)
+        else:
+            left = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+            right = None
+        resolver = self._resolver
+        if (left_qn := self._cpp_operand_class(ctx, left, var_types)) and (
+            callee_info := resolver.cpp_operator_for_type(call_name, left_qn)
+        ):
+            return callee_info
+        if right_qn := self._cpp_operand_class(ctx, right, var_types):
+            return resolver.cpp_free_operator_for_type(call_name, right_qn)
+        return None
+
+    def _cpp_operand_class(
+        self,
+        ctx: _CallScanContext,
+        operand: Node | None,
+        var_types: dict[str, str] | None,
+    ) -> str | None:
+        # The registered class an operand is a value of: a local or
+        # parameter of that type (not a pointer or array of it), `*p` on a
+        # single pointer to it, or `*this`. A field, a call result or a
+        # literal is never typed here, so it selects no overload.
+        while operand is not None and operand.type == cs.TS_PARENTHESIZED_EXPRESSION:
+            operand = operand.named_children[0] if operand.named_children else None
+        depth = 0
+        if (
+            operand is not None
+            and operand.type == cs.TS_CPP_POINTER_EXPRESSION
+            and safe_decode_text(operand.child_by_field_name(cs.FIELD_OPERATOR))
+            == cs.CPP_DEREFERENCE
+        ):
+            operand = operand.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+            depth = 1
+            if operand is not None and operand.type == cs.CppNodeType.THIS:
+                class_qn = ctx.class_context
+                if class_qn and class_qn in self._resolver.function_registry:
+                    return class_qn
+                return None
         if operand is None or operand.type != cs.TS_IDENTIFIER:
             return None
-        return safe_decode_text(operand)
+        name = safe_decode_text(operand)
+        if ctx.cpp_indirection is None:
+            ctx.cpp_indirection = CppTypeInferenceEngine().build_indirection_map(
+                ctx.caller_node
+            )
+        if name is None or ctx.cpp_indirection.get(name, 0) != depth:
+            return None
+        return self._resolver.cpp_operand_class_qn(name, var_types, ctx.module_qn)
 
     def _macro_call_name(self, ident: Node) -> str | None:
         # Reconstruct a `<recv>.method` chain from a macro token stream by walking
@@ -4454,32 +4503,27 @@ class CallProcessor:
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
 
-        cpp_operand_type_qn: str | None = None
         if (
             ctx.is_cpp
             and call_node.type in _CPP_OPERATOR_EXPRESSION_TYPES
             and call_name.startswith(cs.OPERATOR_PREFIX)
         ):
-            cpp_operand_type_qn = self._resolver.cpp_operand_class_qn(
-                self._cpp_operator_operand_name(call_node),
-                call_var_types,
-                ctx.module_qn,
-            )
-        if cpp_operand_type_qn is not None:
-            # The operand's type is KNOWN: the operator binds to that
-            # type's own overload or, when it has none, to nothing at
-            # all (a builtin enum/int operation), never rebound by bare
-            # name to an unrelated class's overload set. Only an untyped
-            # operand falls through to the legacy paths below.
-            callee_info = self._resolver.cpp_operator_for_type(
-                call_name, cpp_operand_type_qn
-            )
-            if callee_info is None:
-                return
-        else:
-            callee_info = self._resolve_call_callee(
+            # An operator expression calls an overload only through an
+            # operand of class type; on built-in or unknown operands it is
+            # the language's own operation. Resolving its synthesized name
+            # like a call bound `int + int` to any project operator+, and,
+            # in the class defining one, its own `x + o.x` field arithmetic
+            # to itself (issue #2554). A miss notes no unresolved name:
+            # most C++ projects define some operator_plus, so every file
+            # using `+` would re-parse whenever another one is added.
+            if callee_info := self._cpp_operator_callee(
                 ctx, call_node, call_name, call_var_types
-            )
+            ):
+                self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+            return
+        callee_info = self._resolve_call_callee(
+            ctx, call_node, call_name, call_var_types
+        )
         callee_info = self._fallback_callee(ctx, call_node, call_name, callee_info)
 
         if not callee_info and ctx.is_python and cs.SEPARATOR_DOT in call_name:

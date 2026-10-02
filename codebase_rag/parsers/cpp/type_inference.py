@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -18,10 +20,8 @@ class CppTypeInferenceEngine:
 
     def build_local_variable_type_map(self, caller_node: Node) -> dict[str, str]:
         decls: list[tuple[str, str]] = []
-        if declarator := self._function_declarator(caller_node):
-            self._collect_parameters(declarator, decls)
-        if body := caller_node.child_by_field_name(cs.FIELD_BODY):
-            self._collect_body_declarations(body, decls)
+        for declaration in self._local_declarations(caller_node):
+            self._record_declaration(declaration, decls)
         # The map is keyed by name only, with no knowledge of a call's lexical
         # position, so it cannot tell an outer `Zeta z` from an inner-block
         # `Alpha z` that shadows it. Rather than pick a write order wrong for
@@ -41,6 +41,22 @@ class CppTypeInferenceEngine:
                 continue
             var_types[name] = type_name
         return var_types
+
+    def build_indirection_map(self, caller_node: Node) -> dict[str, int]:
+        # The type map strips `*` and `[]` so `p->m()` dispatches on the
+        # pointee, but an operator applied to `p` itself (`p == nullptr`,
+        # `++p`, `arr + 1`) is built-in pointer arithmetic that no class
+        # overload can serve (issue #2554). Maps each local declared through
+        # pointers or arrays to that depth; a name declared at several depths
+        # keeps the deepest, so its value form is never assumed.
+        depths: dict[str, int] = {}
+        for declaration in self._local_declarations(caller_node):
+            for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR):
+                if (depth := self._indirection_depth(declarator)) and (
+                    name := self._declarator_name(declarator)
+                ):
+                    depths[name] = max(depth, depths.get(name, 0))
+        return depths
 
     def collect_type_aliases(
         self, root_node: Node, aliases: dict[str, str], conflicts: set[str]
@@ -254,23 +270,20 @@ class CppTypeInferenceEngine:
             declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
         return None
 
-    def _collect_parameters(
-        self, declarator: Node, decls: list[tuple[str, str]]
-    ) -> None:
-        params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
-        if params is None:
-            return
-        for param in params.children:
-            if param.type not in (
-                cs.CppNodeType.PARAMETER_DECLARATION,
-                cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
-            ):
-                continue
-            self._record_declaration(param, decls)
+    def _local_declarations(self, caller_node: Node) -> Iterator[Node]:
+        if (declarator := self._function_declarator(caller_node)) and (
+            params := declarator.child_by_field_name(cs.KEY_PARAMETERS)
+        ):
+            for param in params.children:
+                if param.type in (
+                    cs.CppNodeType.PARAMETER_DECLARATION,
+                    cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+                ):
+                    yield param
+        if body := caller_node.child_by_field_name(cs.FIELD_BODY):
+            yield from self._body_declarations(body)
 
-    def _collect_body_declarations(
-        self, node: Node, decls: list[tuple[str, str]]
-    ) -> None:
+    def _body_declarations(self, node: Node) -> Iterator[Node]:
         for child in node.children:
             # A lambda / nested function / local class body opens its own scope;
             # its declarations are not locals of the enclosing function, so stop
@@ -278,11 +291,11 @@ class CppTypeInferenceEngine:
             if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
                 continue
             if child.type == cs.CppNodeType.DECLARATION:
-                self._record_declaration(child, decls)
+                yield child
             # Recurse into ordinary nested blocks (if/for/while/try bodies) so a
             # variable declared only in an inner block still resolves; conflicting
             # redecls across scopes are reconciled by the caller (drop-on-conflict).
-            self._collect_body_declarations(child, decls)
+            yield from self._body_declarations(child)
 
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
@@ -338,6 +351,22 @@ class CppTypeInferenceEngine:
             # declarator-bearing child instead.
             current = self._first_declarator_child(current)
         return None
+
+    def _indirection_depth(self, declarator: Node) -> int:
+        # Pointer and array layers between a declarator and its identifier:
+        # `T* p` and `T a[2]` are 1, `T** pp` is 2, `T& r` and `T x` are 0.
+        depth = 0
+        current: Node | None = declarator
+        while current is not None and current.type not in (
+            cs.CppNodeType.IDENTIFIER,
+            cs.CppNodeType.FIELD_IDENTIFIER,
+        ):
+            if current.type in cs.CPP_INDIRECT_DECLARATOR_TYPES:
+                depth += 1
+            current = current.child_by_field_name(
+                cs.FIELD_DECLARATOR
+            ) or self._first_declarator_child(current)
+        return depth
 
     def _first_declarator_child(self, node: Node) -> Node | None:
         for child in node.children:
