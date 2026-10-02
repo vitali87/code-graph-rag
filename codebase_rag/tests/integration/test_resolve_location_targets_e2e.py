@@ -114,3 +114,35 @@ def test_location_spellings_resolve_and_unknown_files_are_refused(
         f"{BETA}.src.pkg.sessions.Session.__init__",
         f"{BETA}.src.pkg.sessions.Session",
     ]
+
+
+# Containment walks from a Project down Folder and File nodes, which are keyed
+# by absolute path (issue #897).
+_REACHES_FILE = """MATCH (:Project {name: $project_name})
+      -[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE*]->(f:File {path: $path})
+RETURN count(f) AS reached"""
+
+
+def test_a_file_only_another_project_indexed_from_one_root_is_refused(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    """Two projects indexed from one root share its Folder nodes, so alpha's
+    containment walk reaches a file only beta indexed (bot review): alpha
+    must still refuse it rather than answer [] for a file it never held."""
+    repo = _repo(tmp_path, "shared", {"pkg/first.py": "def first():\n    return 1\n"})
+    _index(memgraph_ingestor, repo, ALPHA)
+    (repo / "pkg" / "later.py").write_text("def later():\n    return 2\n")
+    _index(memgraph_ingestor, repo, BETA)
+    fetch = memgraph_ingestor.fetch_all
+    shared = fetch(_REACHES_FILE, {"project_name": ALPHA, "path": "pkg/later.py"})
+    assert shared and shared[0]["reached"], "precondition: the Folder is shared"
+
+    refused = graph_query.resolve_or_refuse(fetch, ALPHA, "pkg/later.py:1")
+    assert isinstance(refused, dict), refused
+    assert "pkg/later.py" in refused["error"]
+    assert _qns(graph_query.resolve_or_refuse(fetch, BETA, "pkg/later.py:1")) == [
+        f"{BETA}.pkg.later.later"
+    ]
+    assert _qns(graph_query.resolve_or_refuse(fetch, ALPHA, "pkg/first.py:1")) == [
+        f"{ALPHA}.pkg.first.first"
+    ]

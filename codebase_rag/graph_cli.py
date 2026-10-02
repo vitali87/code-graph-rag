@@ -79,12 +79,8 @@ def cli() -> None:
 @click.argument("target")
 @_graph_options
 def resolve_cmd(target: str, project: str | None, repo_path: Path) -> None:
-    # An absolute `path:line` is made relative to --repo-path as well as to
-    # the root the project was indexed from (issue #2611).
     _run_query_and_emit(
-        project,
-        repo_path,
-        lambda f, n: graph_query.resolve_or_refuse(f, n, target, (repo_path,)),
+        project, repo_path, lambda f, n: graph_query.resolve_or_refuse(f, n, target)
     )
 
 

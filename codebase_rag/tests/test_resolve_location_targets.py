@@ -39,6 +39,8 @@ INIT = f"{P}.src.pkg.sessions.Session.__init__"
 # line 2, column 3 of `src/odd` or as line 3 of `src/odd:2`.
 ODD = "src/odd:2"
 RENDER = f"{P}.src.odd.render"
+# The file `src/odd` itself, added by the tests that hold both readings.
+ODD_BASE = "src/odd"
 
 
 def _node(
@@ -62,6 +64,8 @@ NODES: list[ResultRow] = [
     _node("Method", INIT, SESSIONS, 12, 20),
     _node("Module", f"{P}.src.odd", ODD),
     _node("Function", RENDER, ODD, 1, 5),
+    # A document is a Module too (the document tier), with no definitions.
+    _node("Module", f"{P}.README", "README.md"),
     _node("Module", f"{EXTRA}.src.only_extra", "src/only_extra.py"),
     _node("Function", f"{EXTRA}.src.only_extra.f", "src/only_extra.py", 1, 5),
     _node("Module", f"{OTHER}.src.pkg.sessions", SESSIONS),
@@ -69,20 +73,21 @@ NODES: list[ResultRow] = [
     _node("Module", f"{OTHER}.src.pkg.adapters", "src/pkg/adapters.py"),
     _node("Function", f"{OTHER}.src.pkg.adapters.send", "src/pkg/adapters.py", 1, 9),
 ]
-# Every file a project holds, definitions or not: README.md has a File node
-# and no Module.
-FILES: dict[str, list[str]] = {
-    P: [SESSIONS, ODD, "README.md"],
-    EXTRA: ["src/only_extra.py"],
-    OTHER: [SESSIONS, "src/pkg/adapters.py"],
-}
 
 
 class Graph:
-    """The fixture graph; `roots` is where each project was indexed from."""
+    """The fixture graph; `roots` is where each project was indexed from.
 
-    def __init__(self, root: str = "/srv/proj") -> None:
+    A file is held by a project when the project has a Module at its path:
+    File and Folder nodes are keyed by absolute path, so two projects
+    indexed from one root share them and cannot say whose a file is.
+    """
+
+    def __init__(
+        self, root: str = "/srv/proj", extra: list[ResultRow] | None = None
+    ) -> None:
         self.roots = {P: root, EXTRA: "/srv/extra", OTHER: "/srv/other"}
+        self.nodes = [*NODES, *(extra or [])]
 
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
@@ -95,7 +100,9 @@ class Graph:
         if query == cq.CYPHER_PROJECT_ROOT_PATH:
             return [{cs.KEY_ROOT_PATH: self.roots[str(p[cs.KEY_PROJECT_NAME])]}]
         prefix = str(p[cs.KEY_PROJECT_PREFIX])
-        scoped = [n for n in NODES if str(n[cs.KEY_QUALIFIED_NAME]).startswith(prefix)]
+        scoped = [
+            n for n in self.nodes if str(n[cs.KEY_QUALIFIED_NAME]).startswith(prefix)
+        ]
         if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
             return [
                 n
@@ -118,18 +125,14 @@ class Graph:
         if query == cq.CYPHER_GRAPH_LOCATION_FILES:
             wanted = p[cs.CYPHER_PARAM_PATHS]
             assert isinstance(wanted, list)
-            project = str(p[cs.KEY_PROJECT_NAME])
-            modules: list[ResultRow] = [
-                {cs.KEY_QUALIFIED_NAME: n[cs.KEY_QUALIFIED_NAME]}
+            return [
+                {
+                    cs.KEY_PATH: n[cs.KEY_PATH],
+                    cs.KEY_QUALIFIED_NAME: n[cs.KEY_QUALIFIED_NAME],
+                }
                 for n in scoped
                 if n[cs.KEY_LABEL] == "Module" and n[cs.KEY_PATH] in wanted
             ]
-            files: list[ResultRow] = [
-                {cs.KEY_QUALIFIED_NAME: project}
-                for path in FILES.get(project, [])
-                if path in wanted
-            ]
-            return modules + files
         raise AssertionError(f"unexpected query: {query[:60]}")
 
 
@@ -238,9 +241,8 @@ def test_parse_location_drops_a_trailing_column() -> None:
 def test_cli_resolve_accepts_every_spelling_of_the_path(
     tmp_path: Path, spelling: str
 ) -> None:
-    # Indexed from another checkout: the absolute path is made relative to
-    # --repo-path, the checkout the caller is working in.
-    result = _cli_resolve(Graph(), spelling.format(repo=tmp_path), tmp_path)
+    graph = Graph(root=str(tmp_path))
+    result = _cli_resolve(graph, spelling.format(repo=tmp_path), tmp_path)
     assert result.exit_code == 0, result.output
     assert _qns(json.loads(result.stdout)) == INNERMOST
 
@@ -260,7 +262,7 @@ def test_cli_resolve_refuses_a_file_the_project_does_not_hold(tmp_path: Path) ->
 async def test_mcp_resolve_accepts_an_absolute_path_under_the_server_root(
     tmp_path: Path,
 ) -> None:
-    registry = _registry(Graph(), tmp_path)
+    registry = _registry(Graph(root=str(tmp_path)), tmp_path)
     rows = await registry.resolve(f"{tmp_path}/{SESSIONS}:15", project=P)
     assert _qns(rows) == INNERMOST
     rows = await registry.resolve(f"./{SESSIONS}:15:9", project=P)
@@ -293,7 +295,10 @@ class _GlossGraph(gt.FakeGraph):
         wanted = (params or {})[cs.CYPHER_PARAM_PATHS]
         assert isinstance(wanted, list)
         return [
-            {cs.KEY_QUALIFIED_NAME: n[cs.KEY_QUALIFIED_NAME]}
+            {
+                cs.KEY_PATH: n[cs.KEY_PATH],
+                cs.KEY_QUALIFIED_NAME: n[cs.KEY_QUALIFIED_NAME],
+            }
             for n in self.nodes.values()
             if n[cs.KEY_LABEL] == "Module" and n[cs.KEY_PATH] in wanted
         ]
@@ -309,7 +314,7 @@ async def test_mcp_annotate_and_glosses_accept_an_absolute_path_with_a_column(
     tmp_path: Path,
 ) -> None:
     # Line 12 of app.py is inside Store.get (11-13), the innermost definition.
-    graph = _GlossGraph()
+    graph = _GlossGraph(root=str(tmp_path))
     registry = _gloss_registry(graph, tmp_path)
     target = f"{tmp_path}/app.py:12:5"
     row = await registry.annotate(
@@ -446,6 +451,130 @@ def test_gloss_resolve_one_names_the_unknown_file() -> None:
     assert missing[cs.DICT_KEY_ERROR] == cs.MCP_GLOSS_TARGET_NOT_FOUND.format(
         target=f"{SESSIONS}:999", project=P
     )
+
+
+# --- a checkout that is not the project's root (bot review, P1) -----------------
+
+
+def test_cli_an_unrelated_repo_path_does_not_lend_its_files(tmp_path: Path) -> None:
+    # proj was indexed from /srv/proj; --repo-path is some other checkout
+    # that happens to have the same relative file.
+    result = _cli_resolve(Graph(), f"{tmp_path}/{SESSIONS}:15", tmp_path)
+    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE, result.output
+    assert result.stdout == ""
+    assert f"{tmp_path}/{SESSIONS}" in result.stderr
+
+
+async def test_mcp_an_unrelated_server_root_does_not_lend_its_files(
+    tmp_path: Path,
+) -> None:
+    registry = _registry(Graph(), tmp_path)
+    result = await registry.resolve(f"{tmp_path}/{SESSIONS}:15", project=P)
+    assert isinstance(result, dict), result
+    assert f"{tmp_path}/{SESSIONS}" in result[cs.DICT_KEY_ERROR]
+
+
+async def test_mcp_annotate_and_glosses_ignore_an_unrelated_server_root(
+    tmp_path: Path,
+) -> None:
+    # The gloss project was indexed from /elsewhere/foreign-checkout, not
+    # from this server's root, which holds its own app.py.
+    graph = _GlossGraph()
+    registry = _gloss_registry(graph, tmp_path)
+    target = f"{tmp_path}/app.py:12"
+    written = await registry.annotate(
+        target, gt.BODY, cs.GlossKind.SAFETY_PRECONDITION.value, project=gt.P
+    )
+    assert isinstance(written, dict)
+    assert f"{tmp_path}/app.py" in written.get(cs.DICT_KEY_ERROR, ""), written
+    assert graph.writes == [], "nothing is written on another checkout's file"
+    assert graph.glosses == {}
+    notes = await registry.glosses(target, project=gt.P)
+    assert isinstance(notes, dict)
+    assert "target" not in notes, notes
+    assert f"{tmp_path}/app.py" in notes[cs.DICT_KEY_ERROR]
+
+
+def test_the_projects_own_root_through_a_symlink_still_resolves(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    result = _cli_resolve(Graph(root=str(real)), f"{link}/{SESSIONS}:15", link)
+    assert result.exit_code == 0, result.output
+    assert _qns(json.loads(result.stdout)) == INNERMOST
+
+
+# --- `x:a:b` when both `x` and `x:a` are held (bot review, P2) -------------------
+
+
+def _both_odd_files(base_definitions: bool) -> Graph:
+    extra = [_node("Module", f"{P}.src.odd_base", ODD_BASE)]
+    if base_definitions:
+        extra.append(_node("Function", f"{P}.src.odd_base.top", ODD_BASE, 1, 4))
+    return Graph(extra=extra)
+
+
+@pytest.mark.parametrize("base_definitions", [False, True])
+def test_a_column_reading_never_switches_to_another_held_file(
+    tmp_path: Path, base_definitions: bool
+) -> None:
+    # `src/odd:2:3` is line 2 (column 3) of `src/odd` or line 3 of
+    # `src/odd:2`; with both files held, either answer may name the wrong
+    # file, so neither is given.
+    graph = _both_odd_files(base_definitions)
+    target = f"{ODD}:3"
+    assert graph_query.resolve(graph.fetch_all, P, target) == []
+    refused = graph_query.resolve_or_refuse(graph.fetch_all, P, target)
+    assert isinstance(refused, dict), refused
+    assert repr(ODD_BASE) in refused[cs.DICT_KEY_ERROR]
+    assert repr(ODD) in refused[cs.DICT_KEY_ERROR]
+    result = _cli_resolve(graph, target, tmp_path)
+    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE, result.output
+    assert result.stdout == ""
+    one = gloss.resolve_one(graph.fetch_all, P, target)
+    assert isinstance(one, dict) and cs.DICT_KEY_ERROR in one, one
+
+
+def test_the_ambiguous_files_can_each_still_be_named() -> None:
+    graph = _both_odd_files(base_definitions=True)
+    # An explicit column picks `src/odd:2` line 3 ...
+    assert _qns(graph_query.resolve(graph.fetch_all, P, f"{ODD}:3:1")) == [RENDER]
+    # ... and no column picks `src/odd` line 2.
+    assert _qns(graph_query.resolve(graph.fetch_all, P, f"{ODD_BASE}:2")) == [
+        f"{P}.src.odd_base.top"
+    ]
+
+
+def test_a_column_on_the_only_held_reading_still_resolves() -> None:
+    # Only `src/pkg/sessions.py` is held, not `src/pkg/sessions.py:15`.
+    assert _qns(graph_query.resolve(Graph().fetch_all, P, f"{SESSIONS}:15:9")) == (
+        INNERMOST
+    )
+
+
+# --- held files are the project's own Modules (bot review, P2) -------------------
+
+
+def test_a_file_without_a_module_of_this_project_is_refused() -> None:
+    # `src/pkg/adapters.py` has a Module only in `other`; a shared Folder
+    # in the real graph would reach its File node from proj's Project too.
+    refused = graph_query.resolve_or_refuse(
+        Graph().fetch_all, P, "src/pkg/adapters.py:3"
+    )
+    assert isinstance(refused, dict)
+    assert "src/pkg/adapters.py" in refused[cs.DICT_KEY_ERROR]
+
+
+def test_the_held_file_query_reads_only_the_projects_modules() -> None:
+    # File and Folder nodes are shared by absolute path between projects
+    # indexed from one root, so the lookup must not walk containment.
+    query = cq.CYPHER_GRAPH_LOCATION_FILES
+    assert cs.RelationshipType.CONTAINS_FOLDER.value not in query
+    assert f":{cs.NodeLabel.FILE.value}" not in query
+    assert "$project_prefix" in query
 
 
 def test_the_target_descriptions_name_the_accepted_path_forms() -> None:

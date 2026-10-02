@@ -317,53 +317,35 @@ def _stored_root(fetch_all: QueryFn, project_name: str) -> str | None:
     return _opt_str(rows[0].get(cs.KEY_ROOT_PATH)) if rows else None
 
 
-def _location_candidates(
-    fetch_all: QueryFn, project_name: str, target: str, checkouts: Sequence[Path]
-) -> list[Location]:
-    """Every stored `(path, line)` a location `target` may mean, likeliest
-    first; empty when `target` is a name.
-
-    An absolute path is made relative to the root the project was indexed
-    from (read only for an absolute path), then to each of `checkouts`, the
-    caller's own copies of it: a worktree or a second clone holds the same
-    repo-relative files under another root.
-    """
-    readings = _location_readings(target)
-    roots: list[str] = []
-    if any(_is_absolute(_posix_spelling(r.path)) for r in readings):
-        stored = _stored_root(fetch_all, project_name)
-        roots = [*([stored] if stored else []), *(str(c.absolute()) for c in checkouts)]
-    return list(
-        dict.fromkeys(
-            Location(path, reading.line)
-            for reading in readings
-            for path in _location_paths(reading.path, roots)
-        )
-    )
+def _location_roots(fetch_all: QueryFn, project_name: str) -> list[str]:
+    """Where an absolute location path is made relative from: only the root
+    the project was indexed from. A caller's checkout is not trusted for it:
+    an unrelated checkout holding the same relative file would turn its path
+    into this project's symbol, and `annotate` would write on it (bot
+    review). The project's own root reached through a symlink still
+    matches, since `_spellings` resolves the target as well as the root."""
+    stored = _stored_root(fetch_all, project_name)
+    return [stored] if stored else []
 
 
 # --- resolve ------------------------------------------------------------------
 
 
-def resolve(
-    fetch_all: QueryFn,
-    project_name: str,
-    target: str,
-    checkouts: Sequence[Path] = (),
-) -> list[SymbolRow]:
+def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRow]:
     """Definitions a name or `path:line` refers to, exact first, then suffix.
 
     `target` is a qualified name, a bare name (`helper`, `Store.get`), or
     `path:line[:col]` (1-based line; the path relative to the repository
-    root, or absolute inside the root the project was indexed from or one
-    of `checkouts`). Names match on the node's `name` or as a dotted suffix
-    of its qualified name; a location returns the innermost definitions
-    spanning that line.
+    root, or absolute inside the root the project was indexed from). Names
+    match on the node's `name` or as a dotted suffix of its qualified name;
+    a location returns the innermost definitions spanning that line, and
+    nothing when `resolve_or_refuse` would refuse it.
     """
     prefix = _prefix(project_name)
     owns = _owner_check(fetch_all, project_name)
     if parse_location(target) is not None:
-        return _resolve_location(fetch_all, project_name, target, checkouts, owns)
+        found = _resolve_location(fetch_all, project_name, target, owns)
+        return found if isinstance(found, list) else []
     rows = fetch_all(
         cq.CYPHER_GRAPH_RESOLVE_NAME,
         {
@@ -401,83 +383,119 @@ def resolve(
     return ordered
 
 
+def resolve_or_refuse(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> list[SymbolRow] | TargetRefusal:
+    """`resolve`, or a refusal when `target` is a location the project
+    cannot answer for: a file it does not hold, or two held files the target
+    could equally name (issue #2611). `cgr graph resolve` and the MCP
+    `resolve`, `annotate` and `glosses` tools all answer through this, so a
+    target is refused, or not, the same way everywhere."""
+    if parse_location(target) is None:
+        return resolve(fetch_all, project_name, target)
+    owns = _owner_check(fetch_all, project_name)
+    return _resolve_location(fetch_all, project_name, target, owns)
+
+
+def _held_paths(
+    fetch_all: QueryFn,
+    project_name: str,
+    paths: Sequence[str],
+    owns: Callable[[str], bool],
+) -> set[str]:
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_LOCATION_FILES,
+        {
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.CYPHER_PARAM_PATHS: sorted(set(paths)),
+        },
+    )
+    return {
+        path
+        for row in rows
+        if owns(_text_qn(row)) and (path := _opt_str(row.get(cs.KEY_PATH)))
+    }
+
+
+def _definitions_at(
+    fetch_all: QueryFn,
+    project_name: str,
+    location: Location,
+    owns: Callable[[str], bool],
+) -> list[SymbolRow]:
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_RESOLVE_LOCATION,
+        {
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_PATH: location.path,
+            cs.KEY_LINE: location.line,
+        },
+    )
+    symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
+    # Innermost first: the tightest span is what the line "is in".
+    symbols.sort(
+        key=lambda s: (
+            (s["end_line"] or 0) - (s["start_line"] or 0),
+            s["qualified_name"],
+        )
+    )
+    return symbols
+
+
 def _resolve_location(
     fetch_all: QueryFn,
     project_name: str,
     target: str,
-    checkouts: Sequence[Path],
     owns: Callable[[str], bool],
-) -> list[SymbolRow]:
-    # The first spelling that names definitions wins: the spellings are of
-    # one file, and a later one is a less likely reading of the target.
-    for path, line in _location_candidates(fetch_all, project_name, target, checkouts):
-        rows = fetch_all(
-            cq.CYPHER_GRAPH_RESOLVE_LOCATION,
-            {
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                cs.KEY_PATH: path,
-                cs.KEY_LINE: line,
-            },
-        )
-        symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
-        if symbols:
-            # Innermost first: the tightest span is what the line "is in".
-            symbols.sort(
-                key=lambda s: (
-                    (s["end_line"] or 0) - (s["start_line"] or 0),
-                    s["qualified_name"],
+) -> list[SymbolRow] | TargetRefusal:
+    readings = _location_readings(target)
+    absolute = any(_is_absolute(_posix_spelling(r.path)) for r in readings)
+    roots = _location_roots(fetch_all, project_name) if absolute else []
+    spelled = {r: _location_paths(r.path, roots) for r in readings}
+    every_path = [path for paths in spelled.values() for path in paths]
+    held: set[str] | None = None
+    if len(readings) > 1:
+        # `x:a:b` is line a of `x` or line b of `x:a`. Only a reading whose
+        # file the project holds is tried, and when it holds both neither
+        # is: falling through to the second reading when the first line has
+        # no definition would answer from the other file (bot review).
+        held = _held_paths(fetch_all, project_name, every_path, owns)
+        holding = [r for r in readings if held.intersection(spelled[r])]
+        if len(holding) > 1:
+            first, second = (
+                Location(next(p for p in spelled[r] if p in held), r.line)
+                for r in holding
+            )
+            return TargetRefusal(
+                error=cs.GRAPH_LOCATION_AMBIGUOUS.format(
+                    target=target,
+                    project=project_name,
+                    path=first.path,
+                    line=first.line,
+                    other_path=second.path,
+                    other_line=second.line,
                 )
             )
-            return symbols
-    return []
-
-
-def unknown_location_file(
-    fetch_all: QueryFn,
-    project_name: str,
-    target: str,
-    checkouts: Sequence[Path] = (),
-) -> str | None:
-    """Why a location `target` resolved to nothing, when the reason is that
-    the project holds no such file; None for a name, or for a held file,
-    where an empty answer means no definition spans the line.
-
-    Apart from `resolve` so that only an empty answer pays for the lookup.
-    """
-    candidates = _location_candidates(fetch_all, project_name, target, checkouts)
-    if not candidates:
-        return None
-    owns = _owner_check(fetch_all, project_name)
-    rows = fetch_all(
-        cq.CYPHER_GRAPH_LOCATION_FILES,
-        {
-            cs.KEY_PROJECT_NAME: project_name,
-            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-            cs.CYPHER_PARAM_PATHS: sorted({c.path for c in candidates}),
-        },
+        spelled = {r: spelled[r] for r in holding}
+    # The spellings of one reading are of one file: the first that names
+    # definitions wins.
+    for reading, paths in spelled.items():
+        for path in paths:
+            if symbols := _definitions_at(
+                fetch_all, project_name, Location(path, reading.line), owns
+            ):
+                return symbols
+    # Only an empty answer pays for the file lookup when it was not needed
+    # above: `[]` for a held file means no definition spans the line.
+    if held is None:
+        held = _held_paths(fetch_all, project_name, every_path, owns)
+    if held:
+        return []
+    return TargetRefusal(
+        error=cs.GRAPH_LOCATION_UNKNOWN_FILE.format(
+            path=every_path[0], project=project_name
+        )
     )
-    if any(owns(_text_qn(row)) for row in rows):
-        return None
-    return cs.GRAPH_LOCATION_UNKNOWN_FILE.format(
-        path=candidates[0].path, project=project_name
-    )
-
-
-def resolve_or_refuse(
-    fetch_all: QueryFn,
-    project_name: str,
-    target: str,
-    checkouts: Sequence[Path] = (),
-) -> list[SymbolRow] | TargetRefusal:
-    """`resolve`, or a refusal when `target` is a location in a file the
-    project does not hold (issue #2611). `cgr graph resolve` and the MCP
-    `resolve`, `annotate` and `glosses` tools all answer through this, so a
-    target is refused, or not, the same way everywhere."""
-    rows = resolve(fetch_all, project_name, target, checkouts)
-    if rows:
-        return rows
-    error = unknown_location_file(fetch_all, project_name, target, checkouts)
-    return rows if error is None else TargetRefusal(error=error)
 
 
 # --- definition ---------------------------------------------------------------

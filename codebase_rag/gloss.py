@@ -34,9 +34,8 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, NotRequired, TypedDict
 
 from . import constants as cs
@@ -108,10 +107,7 @@ def gloss_id(target_qn: str, kind: str, body: str) -> str:
 
 
 def resolve_one(
-    fetch_all: QueryFn,
-    project_name: str,
-    target: str,
-    checkouts: Sequence[Path] = (),
+    fetch_all: QueryFn, project_name: str, target: str
 ) -> SymbolRow | GlossRefusal:
     """The single definition `target` names, or why there is not one.
 
@@ -119,8 +115,7 @@ def resolve_one(
     match (`Store.get`), then a unique match of any kind. A location is an
     exception by design:
     `resolve` orders its rows innermost first, and the innermost is the one
-    the line "is in". A location reads its path the way `resolve` does, with
-    `checkouts` the caller's copies of the project (issue #2611).
+    the line "is in".
     """
     base, descriptor = _split_descriptor(target)
     if descriptor is not None:
@@ -133,17 +128,18 @@ def resolve_one(
             )
         # The base is resolved once, here; its refusal (not found, ambiguous)
         # is the descriptor target's refusal too.
-        natural = resolve_one(fetch_all, project_name, base, checkouts)
+        natural = resolve_one(fetch_all, project_name, base)
         if _is_refusal(natural):
             return natural
         natural_row: SymbolRow = natural
         return _resolve_descriptor(
             fetch_all, project_name, target, natural_row, descriptor
         )
-    found = graph_query.resolve_or_refuse(fetch_all, project_name, target, checkouts)
+    found = graph_query.resolve_or_refuse(fetch_all, project_name, target)
     if not isinstance(found, list):
-        # A location in a file the project does not hold: naming the file
-        # says more than "no definition matches".
+        # A location the project cannot answer for (a file it does not hold,
+        # or two held files it could name): saying which says more than "no
+        # definition matches" (issue #2611).
         return GlossRefusal(error=found["error"])
     rows = found
     if not rows:
@@ -228,20 +224,13 @@ def _resolve_descriptor(
     )
 
 
-def _orphaned_on(
-    fetch_all: QueryFn,
-    project_name: str,
-    target: str,
-    checkouts: Sequence[Path] = (),
-) -> list[GlossRow]:
+def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[GlossRow]:
     """The unattached notes written against `target`. A note on a
     descriptor target (`Store.x#setter`) was filed on the member's
     `x@<line>` name, so when the base still resolves the search covers
     every variant of it rather than the literal target (bot review)."""
     base, descriptor = _split_descriptor(target)
-    natural = (
-        resolve_one(fetch_all, project_name, base, checkouts) if descriptor else None
-    )
+    natural = resolve_one(fetch_all, project_name, base) if descriptor else None
     if natural is not None and not _is_refusal(natural):
         return _orphaned_under(fetch_all, project_name, natural["qualified_name"])
     params: PropertyDict = {
@@ -381,7 +370,6 @@ def write_gloss(
     author: str | None = None,
     commit_sha: str | None = None,
     read_source: SourceReader | None = None,
-    checkouts: Sequence[Path] = (),
 ) -> GlossRow | GlossRefusal:
     """Attach a note to the definition `target` names and return it as stored.
 
@@ -394,9 +382,7 @@ def write_gloss(
     becomes a `MENTIONS` edge and each is held to the same resolution rule as
     the subject. `read_source` supplies the subject's file text so the note
     can record its text-quote anchor (`gloss_anchor`); without it, or when
-    the file cannot be read, the note simply carries no quote. `checkouts`
-    are the caller's copies of the project, for `path:line` targets given as
-    absolute paths.
+    the file cannot be read, the note simply carries no quote.
     """
     text = body.strip()
     if not text:
@@ -408,13 +394,13 @@ def write_gloss(
                 kind=kind, kinds=cs.SEPARATOR_COMMA_SPACE.join(kinds)
             )
         )
-    subject = resolve_one(fetch_all, project_name, target, checkouts)
+    subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
         return subject
     subject_row: SymbolRow = subject
     mentioned: list[SymbolRow] = []
     for name in _split_mentions(mentions):
-        found = resolve_one(fetch_all, project_name, name, checkouts)
+        found = resolve_one(fetch_all, project_name, name)
         if _is_refusal(found):
             refusal: GlossRefusal = found
             refusal[cs.DICT_KEY_ERROR] = cs.MCP_GLOSS_MENTION_REFUSED.format(
@@ -465,10 +451,7 @@ def write_gloss(
 
 
 def glosses_for(
-    fetch_all: QueryFn,
-    project_name: str,
-    target: str,
-    checkouts: Sequence[Path] = (),
+    fetch_all: QueryFn, project_name: str, target: str
 ) -> GlossesResult | GlossRefusal:
     """Every gloss about the definition `target` names.
 
@@ -477,7 +460,7 @@ def glosses_for(
     node over a text field. Per-symbol by construction, so retrieval is
     relevance-gated rather than a dump.
     """
-    subject = resolve_one(fetch_all, project_name, target, checkouts)
+    subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
         refusal: GlossRefusal = subject
         # A name that matches nothing may still be one notes were written
@@ -486,7 +469,7 @@ def glosses_for(
         # visible, never re-bound to a lookalike. An ambiguous name is not
         # gone, so it gets no such list.
         if cs.KEY_CANDIDATES not in refusal:
-            orphaned = _orphaned_on(fetch_all, project_name, target, checkouts)
+            orphaned = _orphaned_on(fetch_all, project_name, target)
             if orphaned:
                 refusal[cs.KEY_ORPHANED] = orphaned
         return refusal
