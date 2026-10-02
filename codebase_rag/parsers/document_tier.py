@@ -611,6 +611,7 @@ class DocumentTier:
         "_project_name",
         "_parser",
         "_inline_parser",
+        "_pending_links",
     )
 
     def __init__(
@@ -621,6 +622,9 @@ class DocumentTier:
         self._project_name = project_name
         self._parser = _load_parser()
         self._inline_parser = _load_inline_parser()
+        # (module qn, target absolute path) per link, held until the pass has
+        # buffered every File node: see `emit_pending_links`.
+        self._pending_links: list[tuple[str, str]] = []
 
     def handles(self, suffix: str) -> bool:
         """True when this tier can parse the extension.
@@ -749,11 +753,28 @@ class DocumentTier:
             if resolved is None or resolved in emitted:
                 continue
             emitted.add(resolved)
+            self._pending_links.append((module_qn, resolved))
+
+    def emit_pending_links(self) -> int:
+        """Buffer the LINKS_TO edges held since the last call; how many.
+
+        A relationship is written by MATCHing both endpoints, and a link's
+        target File node is only buffered when the pass reaches that file.
+        Buffered as soon as the document was parsed, a link to a file parsed
+        later was dropped by any flush in between (a full batch, the periodic
+        file-interval flush), so the links a fresh index kept depended on
+        `--batch-size` and on parse order (issue #2400). The updater calls
+        this once every File node of the pass is buffered; every flush writes
+        nodes before relationships, so the targets then exist.
+        """
+        pending, self._pending_links = self._pending_links, []
+        for module_qn, resolved in pending:
             self._ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                 cs.RelationshipType.LINKS_TO,
                 (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, resolved),
             )
+        return len(pending)
 
     def _resolve_link(self, file_path: Path, target: str) -> str | None:
         """The absolute path a link target names, or None when it is not a file.
