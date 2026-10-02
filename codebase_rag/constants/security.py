@@ -134,6 +134,8 @@ CYPHER_BLOCK_COMMENT_OPEN = "/*"
 CYPHER_BLOCK_COMMENT_CLOSE = "*/"
 CYPHER_MASKED_LITERAL = "''"
 CYPHER_MASKED_COMMENT = " "
+# A backtick name, for a check that reads structure rather than names.
+CYPHER_MASKED_IDENTIFIER = "_"
 CYPHER_LINE_END = "\n"
 CYPHER_PLAN_OPERATOR_PATTERN = r"[A-Za-z]+"
 CYPHER_PLAN_PROCEDURE_PATTERN = r"CallProcedure<([^>]*)>"
@@ -677,6 +679,21 @@ SHELL_NONINTERACTIVE_DENIED_OPTIONS: dict[str, tuple[str, ...]] = {
     "rg": tuple(sorted(SHELL_RG_EXEC_FLAGS)),
 }
 
+# Options whose value names a file a non-interactive read command opens. The
+# value can attach to a short flag (`rg -fFILE`), close a cluster
+# (`rg -nfFILE`), or follow as its own argument that starts with `-`, and in
+# none of those spellings is it an operand the containment loop checks, so
+# each value gets the same absolute, parent-traversal and symlink checks.
+SHELL_NONINTERACTIVE_FILE_SHORT_OPTIONS: dict[str, str] = {"rg": "f"}
+SHELL_NONINTERACTIVE_FILE_LONG_OPTIONS: dict[str, tuple[str, ...]] = {
+    "rg": ("--file", "--ignore-file"),
+}
+# Short options that take the rest of their cluster as a value, so a
+# file-option letter after one is data: `rg -ef/etc` searches for "f/etc".
+SHELL_NONINTERACTIVE_VALUE_SHORT_OPTIONS: dict[str, str] = {
+    "rg": "ABCdEefgjMmrTt",
+}
+
 # git subcommands that run a caller-supplied command. `filter-branch
 # --tree-filter 'cmd'` was verified executing in a scratch repo; `bisect run`
 # and `submodule foreach` are documented executors that need a bisect in
@@ -994,6 +1011,16 @@ SHELL_SYSTEM_DIRECTORIES = frozenset(
 )
 
 # Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
+SHELL_XARGS_DESTRUCTIVE_REASON = "xargs with destructive command"
+
+# The programs the xargs pattern below names, matched on the launched argv
+# rather than the raw text: a backslash-escaped `\r\m` is the same argv to
+# exec but not the same characters to a regex. A dotted suffix (`mkfs.ext4`)
+# names the same program.
+SHELL_XARGS_DESTRUCTIVE_PROGRAMS = frozenset(
+    {"chmod", "chown", "dd", "mkfs", "mv", "rm", "rmdir"}
+)
+
 SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
     (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
@@ -1059,7 +1086,7 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     # flag, so `sed -n '/start/,/end/p'` -- an ordinary range print -- was
     # refused. _sed_exec_construct covers s///e structurally, on a skeleton
     # with the substitution bodies blanked, so nothing is lost.
-    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
+    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", SHELL_XARGS_DESTRUCTIVE_REASON),
     (r"xargs\s+-I.*sh", "xargs shell execution"),
     (r"xargs\s+.*bash", "xargs bash execution"),
 )

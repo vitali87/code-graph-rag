@@ -7,15 +7,30 @@
 # fuzz_parse_source refuses to start with no grammars, which would otherwise
 # show up as a target that builds and then exits immediately.
 
-# OSS-Fuzz exports sanitizer CFLAGS/CXXFLAGS for the fuzz targets, but pip
-# also hands them to every C extension it builds from source, and pymgclient's
-# cmake rejects them outright ("invalid integral value '1 -fno-omit-frame-
-# pointer ...'", because -O1 and the rest arrive as one token). Nothing the
-# harnesses import touches pymgclient -- it is the Memgraph driver -- and a
-# fuzz target gets its instrumentation from atheris, not from these flags. So
-# install dependencies with a clean environment.
+cd "$SRC/code-graph-rag"
+
+# Fuzz the dependency set the project ships, not whatever pip resolves on the
+# day: the export is the lockfile's, `--frozen` refuses to re-resolve, and a
+# failed export stops the build rather than falling back to an unlocked
+# install. The export pins tree-sitter-c and -cpp to git commits, and pip
+# refuses a hashed requirements file that holds a VCS requirement, so uv
+# installs it; the project itself then goes in with --no-deps on top.
+LOCKED_REQUIREMENTS="$(mktemp)"
+uv export --frozen --no-dev --no-emit-project --extra treesitter-full \
+  --no-header --output-file "$LOCKED_REQUIREMENTS"
+
+# OSS-Fuzz exports sanitizer CFLAGS/CXXFLAGS for the fuzz targets, but the
+# installer also hands them to every C extension it builds from source, and
+# pymgclient's cmake rejects them outright ("invalid integral value '1 -fno-
+# omit-frame-pointer ...'", because -O1 and the rest arrive as one token).
+# Nothing the harnesses import touches pymgclient -- it is the Memgraph
+# driver -- and a fuzz target gets its instrumentation from atheris, not from
+# these flags. So install dependencies with a clean environment.
 env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
-  python3 -m pip install --break-system-packages ".[treesitter-full]"
+  uv pip install --python python3 --break-system-packages \
+  -r "$LOCKED_REQUIREMENTS"
+env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+  uv pip install --python python3 --break-system-packages --no-deps .
 
 # `evals` is NOT part of the installed wheel -- pyproject's package discovery
 # includes only codebase_rag*, codec* and cgr* -- but fuzz_incremental_update
@@ -75,11 +90,20 @@ done
 # modes above produced binaries that compiled and then raised on the first
 # input. ClusterFuzzLite's own build check catches this, but only after the
 # whole job; failing here names the target and the reason.
+#
+# Each target ships fuzz/<target>.dict, which ClusterFuzzLite passes to it by
+# name. libFuzzer refuses to start on a dictionary it cannot parse, so the
+# smoke run loads it too: a malformed dictionary fails this build, not the
+# first fuzzing run. The copy has no existence check on purpose -- a target
+# without a dictionary is a build error.
 for harness in "$SRC/code-graph-rag"/fuzz/fuzz_*.py; do
-  target="$OUT/$(basename -s .py "$harness")"
-  echo "Smoke-testing $(basename "$target")"
-  if ! "$target" -runs=1 -rss_limit_mb=4096 > /tmp/smoke.log 2>&1; then
-    echo "ERROR: $(basename "$target") failed to run a single input:" >&2
+  name="$(basename -s .py "$harness")"
+  target="$OUT/$name"
+  cp "$SRC/code-graph-rag/fuzz/$name.dict" "$OUT/$name.dict"
+  echo "Smoke-testing $name"
+  if ! "$target" -runs=1 -rss_limit_mb=4096 -dict="$OUT/$name.dict" \
+      > /tmp/smoke.log 2>&1; then
+    echo "ERROR: $name failed to run a single input:" >&2
     tail -25 /tmp/smoke.log >&2
     exit 1
   fi

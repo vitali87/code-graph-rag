@@ -128,11 +128,13 @@ def _validate_cypher_read_only(query: str) -> None:
 
 
 def _validate_no_unbounded_paths(query: str) -> None:
-    # Masked text, so a `*` inside a string literal is never read as the
-    # operator. A bare `*`, an open range (`*1..`, `*..`) or a `*` followed
-    # only by a properties map (`*{w: 1}`) is unbounded; a lone hop count
-    # (`*5`) or a range with an upper bound (`*1..3`, `*..3`) is not.
-    for match in _VARLEN_PATTERN.finditer(mask_literals_and_comments(query)):
+    # Masked text, so a `*` inside a string literal or a backtick name is never
+    # read as the operator, nor a `]` in one as the bracket closing. A bare
+    # `*`, an open range (`*1..`, `*..`) or a `*` followed only by a
+    # properties map (`*{w: 1}`) is unbounded; a lone hop count (`*5`) or a
+    # range with an upper bound (`*1..3`, `*..3`) is not.
+    masked = mask_literals_and_comments(query, unquote_identifiers=False)
+    for match in _VARLEN_PATTERN.finditer(masked):
         bounds = _VARLEN_BOUNDS.match(match.group(1))
         if bounds is None or not (
             bounds.group(3) if bounds.group(2) else bounds.group(1)

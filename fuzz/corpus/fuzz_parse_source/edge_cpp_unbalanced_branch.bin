@@ -1,0 +1,12 @@
+int f() {
+#if X
+  if (a) {
+#else
+  if (b) {
+#endif
+    g();
+  }
+}
+int h() { return 0; }
+int k() { return 1; }
+

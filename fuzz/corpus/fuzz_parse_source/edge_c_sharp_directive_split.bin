@@ -1,0 +1,9 @@
+public interface ILogger {
+    void M()
+#if NET
+        => Impl()
+#endif
+    ;
+    void N() { }
+}
+

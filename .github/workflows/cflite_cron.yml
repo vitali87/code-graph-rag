@@ -1,0 +1,106 @@
+# ClusterFuzzLite corpus maintenance.
+#
+# Runs after the nightly batch has added to each target's corpus:
+#
+# * prune merges every corpus down to the inputs that still add coverage, so
+#   the PR job does not spend its short budget replaying redundant inputs.
+#   Each target prunes in a job of its own: a merge that outlasts its budget
+#   raises before the replacement corpus is uploaded, so it loses nothing,
+#   but cifuzz does not catch it, and in a shared job every target after the
+#   slow one would go unpruned for good.
+# * coverage then replays the pruned corpora under coverage.py and uploads
+#   the HTML report as the `cifuzz-coverage-latest` artifact, which shows
+#   what the fuzzers actually reach. The PR job reads the same artifact to
+#   skip the targets a change cannot affect.
+
+name: ClusterFuzzLite Cron
+
+on:
+  schedule:
+    # 06:17 daily, after the 03:17 batch has finished and uploaded.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  pruning:
+    name: Prune ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_cypher_guard
+          - fuzz_dependency_manifest
+          - fuzz_incremental_update
+          - fuzz_parse_source
+          - fuzz_shell_command
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          sanitizer: address
+          language: python
+
+      # The run action prunes every target it finds in build-out, so leave
+      # it only this job's. The build runs as root in a container, hence
+      # sudo. A target missing from the build fails the job rather than
+      # leaving it to prune nothing.
+      - name: Keep only ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd build-out
+          if [ ! -x "$TARGET" ]; then
+            echo "::error::$TARGET is not in the fuzz build" >&2
+            exit 1
+          fi
+          for file in *; do
+            stem="${file%%.*}"
+            stem="${stem%_seed_corpus}"
+            if [ "$stem" != "$TARGET" ] && [ "$file" != llvm-symbolizer ]; then
+              sudo rm -rf -- "$file"
+            fi
+          done
+          ls -la
+
+      - name: Prune ${{ matrix.target }}
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 1500
+          mode: 'prune'
+          sanitizer: address
+          language: python
+
+  coverage:
+    name: Measure coverage
+    needs: pruning
+    # Still measure the corpora that did prune when one target's prune
+    # failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # A coverage build prepends coverage.py's tracer to every harness,
+      # which is why no harness may use `from __future__` imports.
+      - name: Build fuzzers (coverage)
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          sanitizer: coverage
+          language: python
+
+      - name: Measure coverage
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: 'coverage'
+          sanitizer: coverage
+          language: python
