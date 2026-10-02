@@ -8,9 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.capture import ALL_ENABLED
+from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
+    CYPHER_FLOW_REMOTE_EDGES,
     FLOW_VERDICT_FOUND,
     FLOW_VERDICT_NO_FLOW,
     FLOW_VERDICT_UNKNOWN,
@@ -20,12 +22,36 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 
-def _query_fn(edges: list[tuple[str, str]], gaps: list[str]):
+def _query_fn(
+    edges: list[tuple[str, str]],
+    gaps: list[str] | dict[str, list[str]],
+    remote: list[tuple[str, str]] | None = None,
+    other_edges: dict[str, list[tuple[str, str]]] | None = None,
+    calls: list[tuple[str, dict | None]] | None = None,
+    projects: list[str] | None = None,
+):
+    """`remote` rows are (source, target) with the handler's project read
+    off its name, as the graph has it; `other_edges` holds the flow edges of
+    every project other than the asked one, keyed by project name; `gaps`
+    is the asked project's list, or one per project; `calls` records every
+    (query, params) issued."""
+
     def fetch_all(query: str, params=None):
+        if calls is not None:
+            calls.append((query, params))
+        project = params["project_name"] if params else None
         if query == CYPHER_FLOW_EDGES:
+            if other_edges and project in other_edges:
+                return [{"source": s, "target": t} for s, t in other_edges[project]]
             return [{"source": s, "target": t} for s, t in edges]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
-            return [{"path": p} for p in gaps]
+            if isinstance(gaps, dict):
+                return [{"path": p} for p in gaps.get(project or "", [])]
+            return [{"path": p} for p in gaps] if project == "p" else []
+        if query == CYPHER_FLOW_REMOTE_EDGES:
+            return [{"source": s, "target": t} for s, t in remote or []]
+        if query == CYPHER_LIST_PROJECTS and projects is not None:
+            return [{"name": name} for name in projects]
         raise AssertionError(query)
 
     return fetch_all
@@ -44,6 +70,141 @@ def test_found_returns_the_path() -> None:
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.path == ("p.a.src", "p.a.mid", "p.a.sink")
     assert result.gaps == ()
+
+
+def test_a_network_resource_continues_into_the_handler_of_another_project() -> None:
+    """A client's NETWORK resource resolves to an endpoint another project's
+    handler exposes; the walk continues into that handler and along that
+    project's own flow edges, and names the hop that crossed the boundary
+    (issue #1603). Before, the path ended at the resource: NO_FLOW with
+    full coverage, a verified absence that was not one."""
+    remote = [("p.client.net", "q.api.handler")]
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.client.net")],
+            [],
+            remote=remote,
+            other_edges={"q": [("q.api.handler", "q.db.sink")]},
+        ),
+        "p",
+        "p.a.src",
+        "q.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == ("p.a.src", "p.client.net", "q.api.handler", "q.db.sink")
+    assert result.remote_hops == (("p.client.net", "q.api.handler"),)
+
+
+def test_an_rpc_resource_continues_into_its_handler_directly() -> None:
+    """RPC and dispatch resources are exposed by their handler with no
+    RESOLVES_TO in between, so the resource itself is the hop's source; the
+    resource node carries no project, so the handler's is read off its name
+    and that project's edges are loaded (local review P1)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "resource::RPC::Greeter.Hello")],
+            [],
+            remote=[("resource::RPC::Greeter.Hello", "q.server.greet")],
+            other_edges={"q": [("q.server.greet", "q.db.sink")]},
+        ),
+        "p",
+        "p.a.src",
+        "q.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (
+        "p.a.src",
+        "resource::RPC::Greeter.Hello",
+        "q.server.greet",
+        "q.db.sink",
+    )
+    assert result.remote_hops == (("resource::RPC::Greeter.Hello", "q.server.greet"),)
+
+
+def test_a_path_inside_one_service_has_no_remote_hops() -> None:
+    """A purely local path reports no hops, and reads no other project: an
+    unrelated hop into `q` exists in the graph, and `q`'s edges are loaded
+    only when the walk reaches it (bot review on PR #1978)."""
+    calls: list[tuple[str, dict | None]] = []
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.a.sink")],
+            [],
+            remote=[("p.other.net", "q.api.handler")],
+            other_edges={"q": []},
+            calls=calls,
+        ),
+        "p",
+        "p.a.src",
+        "p.a.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.remote_hops == ()
+    edge_reads = [params for query, params in calls if query == CYPHER_FLOW_EDGES]
+    assert [p["project_name"] for p in edge_reads if p] == ["p"]
+
+
+def test_a_service_calling_itself_is_not_a_boundary() -> None:
+    """A NETWORK resource resolving to a handler of the SAME project is
+    followed like any hop, but it is not remote: the project before the
+    resource and the handler's are one (bot review on PR #1978)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.client.net"), ("p.api.handler", "p.db.sink")],
+            [],
+            remote=[("p.client.net", "p.api.handler")],
+        ),
+        "p",
+        "p.a.src",
+        "p.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == ("p.a.src", "p.client.net", "p.api.handler", "p.db.sink")
+    assert result.remote_hops == ()
+
+
+def test_coverage_of_every_project_the_walk_entered_counts() -> None:
+    """No path, and the walk entered `q`: `q`'s uncovered module may hold
+    the continuation, so its gaps make the verdict UNKNOWN even when the
+    asked project is fully covered (bot review on PR #1978, P1). Gaps and
+    edges are read for exactly the projects entered, under their own
+    names (never `r`, which no reachable hop leads into), and the asked
+    project's gaps still count."""
+    calls: list[tuple[str, dict | None]] = []
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.client.net")],
+            {"q": ["q/uncovered.php"]},
+            remote=[("p.client.net", "q.api.handler"), ("p.never", "r.api.handler")],
+            other_edges={"q": [("q.api.handler", "q.other")], "r": []},
+            calls=calls,
+        ),
+        "p",
+        "p.a.src",
+        "q.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_UNKNOWN
+    assert result.gaps == ("q/uncovered.php",)
+    gap_reads = [
+        params for query, params in calls if query == CYPHER_FLOW_COVERAGE_GAPS
+    ]
+    assert [p["project_name"] for p in gap_reads if p] == ["p", "q"]
+    edge_reads = [params for query, params in calls if query == CYPHER_FLOW_EDGES]
+    assert [p["project_name"] for p in edge_reads if p] == ["p", "q"]
+
+    covered = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.client.net")],
+            {"q": [], "p": ["p/uncovered.php"]},
+            remote=[("p.client.net", "q.api.handler")],
+            other_edges={"q": [("q.api.handler", "q.other")]},
+        ),
+        "p",
+        "p.a.src",
+        "q.db.sink",
+    )
+    assert covered.verdict == FLOW_VERDICT_UNKNOWN
+    assert covered.gaps == ("p/uncovered.php",)
 
 
 def test_no_flow_requires_full_coverage() -> None:
@@ -218,3 +379,25 @@ def test_inline_modules_are_never_spurious_coverage_gaps(
         assert props.get("flow_covered") is True or str(props["path"]).startswith(
             cs.INLINE_MODULE_PATH_PREFIX
         ), props
+
+
+def test_a_handler_in_a_dotted_project_loads_that_projects_edges() -> None:
+    """Project names may contain dots: `svc.v2.api.handler` belongs to
+    `svc.v2`, not to `svc` as its first segment says, so the walk must load
+    `svc.v2`'s flow edges to continue (bot review; the ownership rule of
+    #1970)."""
+    remote = [("svc.client.net", "svc.v2.api.handler")]
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("svc.a.src", "svc.client.net")],
+            {},
+            remote=remote,
+            other_edges={"svc.v2": [("svc.v2.api.handler", "svc.v2.db.sink")]},
+            projects=["svc", "svc.v2"],
+        ),
+        "svc",
+        "svc.a.src",
+        "svc.v2.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.remote_hops == (("svc.client.net", "svc.v2.api.handler"),)

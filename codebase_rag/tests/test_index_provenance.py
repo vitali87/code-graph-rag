@@ -4,12 +4,18 @@
 # and on a manifest whose coverage claims disagree with the graph itself.
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
+
+import pytest
+from loguru import logger
 
 from codebase_rag.capture import ALL_ENABLED, resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services import provenance
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.services.provenance import (
     MANIFEST_FILE,
@@ -130,6 +136,51 @@ def test_manifest_records_source_state(tmp_path: Path) -> None:
     assert manifest["source"]["dirty"] is None
     assert manifest["analyzer_version"]
     assert manifest["codec_schema_sha256"]
+
+
+def _warnings_while(action: Callable[[], Path]) -> tuple[Path, list[str]]:
+    warnings: list[str] = []
+    sink = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        return action(), warnings
+    finally:
+        logger.remove(sink)
+
+
+def test_a_missing_codec_schema_still_writes_the_manifest_and_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #2399: an install without codec/schema.proto wrote a null hash in
+    # silence, and the user found out only when diff-index refused the index
+    # later. Indexing must still succeed, but say why the index is undiffable.
+    missing = tmp_path / "site-packages" / "codec" / "schema.proto"
+    monkeypatch.setattr(provenance, "_SCHEMA_FILE", missing)
+    out = tmp_path / "out"
+    out.mkdir()
+
+    path, warnings = _warnings_while(
+        lambda: write_manifest(out, source_state(tmp_path), {})
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["codec_schema_sha256"] is None
+    assert any(str(missing) in warning for warning in warnings), warnings
+
+
+def test_a_present_codec_schema_is_hashed_without_a_warning(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+
+    path, warnings = _warnings_while(
+        lambda: write_manifest(out, source_state(tmp_path), {})
+    )
+
+    expected = hashlib.sha256(provenance._SCHEMA_FILE.read_bytes()).hexdigest()
+    assert json.loads(path.read_text(encoding="utf-8"))["codec_schema_sha256"] == (
+        expected
+    )
+    assert not [w for w in warnings if str(provenance._SCHEMA_FILE) in w]
 
 
 def test_verify_rejects_foreign_artifact_names(tmp_path: Path) -> None:
