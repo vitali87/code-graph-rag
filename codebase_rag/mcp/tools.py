@@ -2648,17 +2648,6 @@ class MCPToolsRegistry:
             ),
         )
 
-    def _checkout_for(self, project_name: str) -> Path:
-        # Where this server holds the project's files: its workspace repo, or
-        # the server's own root. An agent's file tools hand it absolute paths
-        # under this directory, which a `path:line` target makes relative to
-        # it (issue #2611), and `definition` reads source from it.
-        if self.workspace is not None:
-            for repo in self.workspace.repos:
-                if repo.project_name == project_name:
-                    return repo.repo_path()
-        return Path(self.project_root)
-
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
         """(the project a request means, why it is refused) under a workspace.
 
@@ -2726,6 +2715,17 @@ class MCPToolsRegistry:
                 return repo.project_name
         names = self.workspace.project_names()
         return names[0] if len(names) == 1 else None
+
+    def _checkout_for(self, project_name: str) -> Path:
+        # Where this server holds the project's files: its workspace repo, or
+        # the server's own root. An agent's file tools hand it absolute paths
+        # under this directory, which a `path:line` target makes relative to
+        # it (issue #2611), and `definition` reads source from it.
+        if self.workspace is not None:
+            for repo in self.workspace.repos:
+                if repo.project_name == project_name:
+                    return repo.repo_path()
+        return Path(self.project_root)
 
     def _source_root_for(self, project_name: str) -> Path | None:
         # Source is read from disk only when the selected project was indexed

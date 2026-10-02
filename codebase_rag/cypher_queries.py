@@ -738,20 +738,6 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.name AS name, n.namespace AS namespace"""
-# Every definition registered under one natural name: the name itself and
-# its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
-# tell a property's getter, setter and deleter apart (issue #1808).
-CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
-  AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
-RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
-       n.start_line AS start_line, n.end_line AS end_line,
-       n.decorators AS decorators"""
-CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
-  AND n.start_line <= $line AND $line <= n.end_line
-RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
-       n.start_line AS start_line, n.end_line AS end_line"""
 # Which of $paths the project holds (issue #2611), asked only once a
 # location matched no definition: `[]` for a file the graph never saw read
 # as "no definition spans that line". A file with definitions has a Module
@@ -773,6 +759,20 @@ UNION
 MATCH (:{NodeLabel.PROJECT.value} {{name: $project_name}})-[:{_LOCATION_CONTAINMENT}*]->(f:{NodeLabel.FILE.value})
 WHERE f.path IN $paths
 RETURN $project_name AS qualified_name"""
+# Every definition registered under one natural name: the name itself and
+# its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
+# tell a property's getter, setter and deleter apart (issue #1808).
+CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.decorators AS decorators"""
+CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
+  AND n.start_line <= $line AND $line <= n.end_line
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line"""
 CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,

@@ -135,15 +135,6 @@ class ImporterRow(TypedDict):
     imported_name: str | None
 
 
-class TargetRefusal(TypedDict):
-    error: str
-
-
-class Location(NamedTuple):
-    path: str
-    line: int
-
-
 class TestReachRow(TypedDict):
     label: str
     qualified_name: str
@@ -213,6 +204,15 @@ def _symbol_row(row: ResultRow) -> SymbolRow:
 
 def _symbol_key(row: SymbolRow) -> tuple[str, str]:
     return (row["qualified_name"], row["path"] or "")
+
+
+class TargetRefusal(TypedDict):
+    error: str
+
+
+class Location(NamedTuple):
+    path: str
+    line: int
 
 
 def parse_location(target: str) -> Location | None:
