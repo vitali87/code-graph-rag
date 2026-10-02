@@ -51,30 +51,27 @@ def _load_indexes(index_dir: Path, names: tuple[str, ...]) -> list[pb.GraphCodeI
     return found
 
 
-def _schema_hash(index_dir: Path) -> str | None:
+def _schema_hash(index_dir: Path) -> str:
+    # An absent/malformed manifest or missing hash means compatibility cannot
+    # be verified at all; proceeding would produce a delta with unknowable
+    # field semantics.
     manifest_path = index_dir / MANIFEST_FILE
-    if not manifest_path.is_file():
-        return None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    except (OSError, ValueError) as error:
+        raise DiffError(cs.DIFF_ERR_NO_MANIFEST.format(path=index_dir)) from error
     value = manifest.get("codec_schema_sha256") if isinstance(manifest, dict) else None
-    return value if isinstance(value, str) else None
+    if not isinstance(value, str):
+        # The manifest is there, so "write one" is the wrong advice: the cgr
+        # that wrote it had no codec/schema.proto to hash, and re-exporting
+        # from that same install writes the same null again (#2399).
+        raise DiffError(cs.DIFF_ERR_NO_SCHEMA_HASH.format(manifest=manifest_path))
+    return value
 
 
 def _require_same_schema(old_dir: Path, new_dir: Path) -> None:
     old_hash = _schema_hash(old_dir)
     new_hash = _schema_hash(new_dir)
-    if old_hash is None or new_hash is None:
-        # An absent/malformed manifest or missing hash means compatibility
-        # cannot be verified at all; proceeding would produce a delta with
-        # unknowable field semantics.
-        missing = old_dir if old_hash is None else new_dir
-        raise DiffError(
-            f"schema metadata missing: no codec_schema_sha256 for {missing}; "
-            "re-export with a manifest before diffing"
-        )
     if old_hash != new_hash:
         raise DiffError(
             "schema mismatch: the artifacts were produced by different codec "

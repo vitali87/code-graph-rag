@@ -16,19 +16,21 @@ drive it directly.
 from codebase_rag.editing import EditTransaction, VerificationResult
 
 tx = EditTransaction(repo_root)
-tx.stage("pkg/models.py", new_models_source)   # full content, str or bytes
-tx.stage("pkg/old_helper.py", None)            # delete
-tx.stage("pkg/new_helper.py", helper_source)   # create
+tx.stage("pkg/models.py", new_models_source)  # full content, str or bytes
+tx.stage("pkg/old_helper.py", None)  # delete
+tx.stage("pkg/new_helper.py", helper_source)  # create
+
 
 def verify(tree):
     # `tree.read(rel)` answers from the overlay first, the disk second;
     # `tree.root` is a materialised copy for tools that need real files.
     return VerificationResult(ok=parses(tree.read("pkg/models.py")), message="")
 
+
 outcome = tx.commit(verify)
-outcome.applied      # True only if every file was written
-outcome.diff         # the combined unified diff (a/ b/ style, /dev/null for create and delete)
-outcome.files        # repo-relative paths, sorted
+outcome.applied  # True only if every file was written
+outcome.diff  # the combined unified diff (a/ b/ style, /dev/null for create and delete)
+outcome.files  # repo-relative paths, sorted
 ```
 
 - **Stage** collects the new content per file in an in-memory overlay keyed
@@ -74,3 +76,14 @@ undo never clobbers a later hand edit; the entry stays in the history until
 it is undone. History paths are validated against the repo root before they
 are staged (the file is data on disk, not a trusted instruction), and a
 reversal whose history update fails is put back so tree and history agree.
+
+`cgr edits undo` then re-ingests every file it restored (a file the edit
+created and the undo removed drops out of the graph), the same scoped
+re-ingest `cgr rename` runs on the files it rewrites, so the graph matches
+the working tree when the command returns. A run stopped part way by a
+refused step still re-ingests what the earlier steps restored. The project
+is the one derived from `--repo-path` unless `--project` names another; a
+project that is not in the graph is left alone. When the graph cannot be
+updated (Memgraph unreachable, a failed re-ingest) the undo still stands and
+exits 0, and a warning names the command that resyncs the graph:
+`cgr start --repo-path <repo> --update-graph`.
