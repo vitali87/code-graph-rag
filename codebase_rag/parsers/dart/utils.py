@@ -411,6 +411,23 @@ def dart_call_name(call_node: Node) -> str | None:
     return _assemble_chain(tokens)
 
 
+def dart_call_site_start(call_node: Node) -> Node:
+    """The first node of the expression a Dart call selector completes.
+
+    `dhelper(1)` is `identifier` + `selector(argument_part)`, and `a.b(1)`
+    adds a `.b` selector between them: the call node is only the argument
+    list. A site that should cover the callee, as every other language's
+    does, starts at the chain's first node: the run of selectors before the
+    call, then the primary they hang off (issue #2769).
+    """
+    start = call_node
+    prev = call_node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        start = prev
+        prev = prev.prev_named_sibling
+    return prev if prev is not None else start
+
+
 def _construction_name(node: Node) -> str | None:
     # `new X(...)`, `const X(...)`, `X<T>.named(...)`: the type_identifier,
     # then the named-constructor identifier when there is one; type and

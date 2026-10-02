@@ -63,6 +63,7 @@ _AMBIGUOUS = frozenset(
     }
 )
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
+_ANY_IDENTIFIER_RE = r"[^\W\d]\w*"
 
 
 _STRUCTURAL = "structural"
@@ -339,6 +340,24 @@ def _chain_link_sites(
     ]
 
 
+def _names_something(
+    source: bytes,
+    line: int,
+    col: int,
+    end_line: int | None,
+    end_col: int | None,
+) -> bool:
+    """Whether a site's callee text holds any identifier at all."""
+    if end_line is None or end_col is None:
+        return True
+    start = line_col_to_byte(source, line, col)
+    end = line_col_to_byte(source, end_line, end_col)
+    text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
+    paren = text.find("(")
+    callee = text[:paren] if paren >= 0 else text
+    return re.search(_ANY_IDENTIFIER_RE, callee) is not None
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -597,9 +616,30 @@ class Renamer:
             get_language_for_extension(Path(path).suffix),
         )
         if token is None:
-            # The site spells the symbol under an alias (`h(1, 2)` for
-            # `import helper as h`); the alias keeps binding, so nothing to
-            # rewrite here.
+            if _names_something(
+                source,
+                line,
+                col,
+                end_line if isinstance(end_line, int) else None,
+                end_col if isinstance(end_col, int) else None,
+            ):
+                # The site spells the symbol under an alias (`h(1, 2)` for
+                # `import helper as h`); the alias keeps binding, so nothing
+                # to rewrite here.
+                return
+            # A span with no name in it at all is a mislocated site, not an
+            # alias: dropping it would leave the caller under the old name
+            # and the plan silent about it (issue #2769).
+            self._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution=resolution_text or "unknown",
+                site_resolution=resolution_text or _SITELESS,
+            )
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
         if kind == "call":
