@@ -41,7 +41,13 @@ def _git(cwd: Path, *args: str) -> str:
     # another repository's GIT_DIR, as a hook or wrapper script would.
     env = {k: v for k, v in os.environ.items() if k not in cs.GIT_LOCATION_ENV_VARS}
     return subprocess.run(
-        ["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=cwd,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
     ).stdout
 
 
