@@ -41,7 +41,7 @@ PANEL_HELP = "Help"
 
 CMD_START = "Open the code assistant for a repository or workspace"
 CMD_INDEX = "Write an offline protobuf index for a repository"
-CMD_EXPORT = "Export the shared graph database to JSON"
+CMD_EXPORT = "Export the shared graph, or chosen projects, to JSON"
 CMD_OPTIMIZE = "Run a language-focused code optimisation session"
 CMD_MCP_SERVER = "Serve cgr tools over stdio or HTTP"
 CMD_GRAPH_LOADER = "Summarise an exported graph JSON file"
@@ -85,7 +85,11 @@ CMD_EDITS_GROUP = CMD_EDITS
 CMD_EDITS_SHOW = (
     "List the last N recorded edit transactions, newest first, with their diffs."
 )
-CMD_EDITS_UNDO = "Reverse the last N recorded edit transactions, newest first; stops at the first file that changed since."
+CMD_EDITS_UNDO = (
+    "Reverse the last N recorded edit transactions, newest first; stops at the "
+    "first file that changed since. The restored files are re-ingested into "
+    "the graph, as the edit's own files were."
+)
 EPILOG_EDITS = "Run 'cgr help edits COMMAND' for command-specific help."
 EXAMPLES_EDITS_SHOW = (
     "Examples:\n  cgr edits show\n  cgr edits show -n 5 --repo-path ~/proj"
@@ -130,8 +134,15 @@ HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
 )
 HELP_CHECK_FAIL_ON_FOUND = (
-    "Exit with status 1 when the delta reports dangling callers, arity "
-    "findings, new duplicates or new import cycles."
+    "Exit with status 1 when the delta reports dangling callers, calls with "
+    "too many arguments, new duplicates or new import cycles. A "
+    "possibly_missing site is reported but does not fail the check."
+)
+HELP_CHECK_ISOLATED = (
+    "Measure the edit, then put the graph and the hash cache back so the "
+    "same edit can be checked again. The graph does change while the check "
+    "runs; if the restore fails, the project stays marked incomplete until a "
+    "full update."
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
@@ -160,7 +171,12 @@ EXAMPLES_START = (
     '  cgr start --ask-agent "Where is authentication handled?"'
 )
 EXAMPLES_INDEX = "EXAMPLE\n\n  cgr index --repo-path ./my-repo -o ./index-out"
-EXAMPLES_EXPORT = "EXAMPLE\n\n  cgr export -o graph.json"
+EXAMPLES_EXPORT = (
+    "EXAMPLES\n\n"
+    "  cgr export -o graph.json\n\n"
+    "  cgr export -o my-project.json --project-name my-project\n\n"
+    "  cgr export -o shop.json --workspace shop"
+)
 EXAMPLES_OPTIMIZE = "EXAMPLE\n\n  cgr optimize python --repo-path ./my-repo"
 EXAMPLES_MCP_SERVER = (
     "EXAMPLES\n\n  cgr mcp-server\n\n  cgr mcp-server --transport http --port 8080"
@@ -168,6 +184,12 @@ EXAMPLES_MCP_SERVER = (
 EXAMPLES_GRAPH_LOADER = "EXAMPLE\n\n  cgr graph-loader graph.json"
 EXAMPLES_LANGUAGE_ADD = "EXAMPLE\n\n  cgr language add-grammar ruby"
 EXAMPLES_LANGUAGE_REMOVE = "EXAMPLE\n\n  cgr language remove-language ruby"
+EXAMPLES_STATS = (
+    "EXAMPLES\n\n"
+    "  cgr stats\n\n"
+    "  cgr stats --project-name my-project\n\n"
+    "  cgr stats --workspace my-workspace"
+)
 EXAMPLES_DEAD_CODE = (
     "EXAMPLE\n\n  cgr dead-code --project-name my-project --format json"
 )
@@ -330,6 +352,10 @@ HELP_REPO_PATH_RETRIEVAL = "Repository to open. Defaults to the current director
 HELP_REPO_PATH_INDEX = "Repository to index. Defaults to the current directory."
 HELP_REPO_PATH_OPTIMIZE = "Repository to optimise. Defaults to the current directory."
 HELP_REPO_PATH_WATCH = "Repository to watch."
+HELP_PROJECT_NAME_WATCH = (
+    "Project name to store in the graph. Defaults to the name "
+    "`cgr start --repo-path` gives the same repository, so both update one project."
+)
 HELP_VERSION = "Show the version and exit."
 HELP_QUIET = "Suppress progress, banners, and informational logs."
 
@@ -350,9 +376,14 @@ HELP_ASSUME_YES = (
 )
 HELP_OUTPUT_GRAPH = "Write the updated graph to PATH as JSON. Requires --update-graph."
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
+HELP_EXPORT_PROJECT_NAME = (
+    "Export only this project: what it owns, the relationships that start "
+    "there and the nodes they reach. Repeatable; without it the whole shared "
+    "graph is exported."
+)
+HELP_EXPORT_WORKSPACE = "Export only the projects defined in workspace NAME."
 HELP_OUTPUT_PROTO_DIR = "Write protobuf index files under DIRECTORY."
 HELP_SPLIT_INDEX = "Write separate nodes.bin and relationships.bin files."
-HELP_FORMAT_JSON = "Use JSON output. Other export formats are not supported."
 HELP_LANGUAGE_ARG = "Language to optimise, such as python, java, javascript, or cpp."
 HELP_REFERENCE_DOC = "Reference document to use during optimisation."
 HELP_GRAPH_FILE = "Exported graph JSON file to load."
@@ -374,8 +405,12 @@ HELP_EXCLUDE_PATTERNS = (
 )
 HELP_INTERACTIVE_SETUP = "Choose which detected directories remain included."
 HELP_CAPTURE = (
-    "Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE "
-    "override. Repeatable; later values override CGR_CAPTURE."
+    "Capture GROUP (structure, calls, types, imports, io, findings, glosses, "
+    "parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. "
+    "A GROUP is added to the defaults (structure, calls, types, imports); use "
+    "none first to capture only what follows (none,structure) and -GROUP to drop "
+    "one. Repeatable or comma-separated; later values override CGR_CAPTURE. An "
+    "unknown group or type is an error."
 )
 
 HELP_ASK_AGENT = "Ask one question, write the answer to stdout, and exit."
@@ -393,6 +428,11 @@ HELP_MCP_WORKSPACE = (
     "MCP_WORKSPACE environment variable."
 )
 
+HELP_STATS_PROJECT_NAME = (
+    "Count only this project's nodes and relationships. Repeatable; without it "
+    "the totals cover every project in the shared graph."
+)
+HELP_STATS_WORKSPACE = "Count only the projects defined in workspace NAME."
 HELP_DEADCODE_PROJECT_NAME = (
     "Project to scan. If omitted, cgr uses the only indexed project."
 )

@@ -12,18 +12,32 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import LANGUAGE_SPECS, LanguageSpec
+from ..language_spec import (
+    LANGUAGE_SPECS,
+    LanguageSpec,
+    get_language_for_extension,
+    language_family,
+    own_extension_module_qn,
+)
 from ..services import IngestorProtocol
 from ..types_defs import (
     DeferredImportEdge,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    LanguageFamily,
     LanguageQueries,
     PropertyDict,
+    StemSiblingModules,
 )
 from ..utils.json_io import loads_json
-from ..utils.path_utils import should_keep_dir, should_skip_rel_file
+from ..utils.path_utils import (
+    base_module_qn,
+    declaration_extension,
+    module_extension,
+    should_keep_dir,
+    should_skip_rel_file,
+)
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
@@ -1790,6 +1804,7 @@ class ImportProcessor:
         self._deferred_import_edges = []
         known_module_qns = set(known_module_paths)
         module_aliases = self._module_alias_map(known_module_qns)
+        siblings = self.stem_sibling_modules(known_module_paths)
         # namespace -> the indexed modules DECLARING it, from the per-file
         # scan done at parse time: C# namespaces need not mirror directory
         # names, so path-based guessing cannot answer "is this internal". An
@@ -1808,7 +1823,11 @@ class ImportProcessor:
             # the submodule is the true target.
             if entry.language == cs.SupportedLanguage.PYTHON and (
                 full_target := self._verify_internal_import_target(
-                    entry.full_name, known_module_paths, module_aliases, entry.language
+                    entry.full_name,
+                    known_module_paths,
+                    module_aliases,
+                    entry.language,
+                    siblings,
                 )
             ):
                 self._emit_import_edge(entry, cs.NodeLabel.MODULE, full_target)
@@ -1816,7 +1835,7 @@ class ImportProcessor:
                 continue
             if self._is_rust_project_import(entry):
                 emitted += self._flush_rust_project_import(
-                    entry, known_module_paths, module_aliases
+                    entry, known_module_paths, module_aliases, siblings
                 )
                 continue
             if entry.language == cs.SupportedLanguage.CSHARP and (
@@ -1827,7 +1846,7 @@ class ImportProcessor:
                 )
                 continue
             emitted += self._flush_resolved_import(
-                entry, known_module_paths, module_aliases
+                entry, known_module_paths, module_aliases, siblings
             )
         return emitted
 
@@ -1842,6 +1861,7 @@ class ImportProcessor:
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
         module_aliases: dict[str, str],
+        siblings: StemSiblingModules,
     ) -> int:
         # A crate::/super::/self:: use path was rewritten to a project
         # qn at parse time. The module target is the longest prefix
@@ -1854,7 +1874,7 @@ class ImportProcessor:
         target = None
         while True:
             target = self._verify_internal_import_target(
-                candidate, known_module_paths, module_aliases, entry.language
+                candidate, known_module_paths, module_aliases, entry.language, siblings
             )
             if target is not None:
                 break
@@ -1882,6 +1902,7 @@ class ImportProcessor:
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
         module_aliases: dict[str, str],
+        siblings: StemSiblingModules,
     ) -> int:
         module_path = self._resolve_module_path(entry.full_name, entry.language)
         target_label = self._module_label(module_path)
@@ -1892,7 +1913,11 @@ class ImportProcessor:
             self._ensure_external_module_node(module_path, entry.full_name)
         else:
             verified = self._verify_internal_import_target(
-                module_path, known_module_paths, module_aliases, entry.language
+                module_path,
+                known_module_paths,
+                module_aliases,
+                entry.language,
+                siblings,
             )
             if verified is None and entry.language == cs.SupportedLanguage.PYTHON:
                 # A package-anchored guess that names no sibling module is an
@@ -1922,6 +1947,108 @@ class ImportProcessor:
             full_name=entry.full_name,
         )
         return 1
+
+    def stem_sibling_modules(
+        self, module_paths: Mapping[str, Path | str]
+    ) -> StemSiblingModules:
+        """Each family's module on a stem whose files carry their extension.
+
+        A module qn that is its path-derived name plus its own extension was
+        suffixed by the disambiguator, and importers of its language still
+        write the bare name. Where one family has several such files (`util.js`
+        and `util.ts` beside `util.py`), the one the in-family rule would have
+        named bare is taken: an implementation over a declaration, then the
+        first in walk order.
+        """
+        found: list[tuple[tuple[bool, str], str, LanguageFamily, str]] = []
+        for qn, raw_path in module_paths.items():
+            if not raw_path:
+                continue
+            path = Path(raw_path)
+            language = get_language_for_extension(path.suffix)
+            # Most modules carry no extension segment; skip them before paying
+            # for the path arithmetic below.
+            if language is None or not qn.endswith(module_extension(path.name)):
+                continue
+            try:
+                rel = path.relative_to(self.repo_path)
+            except ValueError:
+                continue
+            base = base_module_qn(rel, self.project_name)
+            if qn == own_extension_module_qn(base, path.name):
+                rank = (declaration_extension(path.name) is not None, rel.as_posix())
+                found.append((rank, base, language_family(language), qn))
+        siblings: StemSiblingModules = {}
+        for _rank, base, family, qn in sorted(found, key=lambda item: item[0]):
+            siblings.setdefault(base, {}).setdefault(family, qn)
+        return siblings
+
+    def _own_language_target(
+        self,
+        name: str,
+        family: LanguageFamily,
+        module_paths: Mapping[str, Path | str],
+        siblings: StemSiblingModules,
+    ) -> str:
+        """`name` re-rooted on its stem's module of the importer's family.
+
+        The longest prefix that names a module decides: one the importer can
+        reach keeps the name as written, and a stem whose module is missing or
+        in another family is swapped for the family's own sibling. A name
+        under a real submodule (`proj.util.sub.f`) therefore stays put.
+        """
+        parts = name.split(cs.SEPARATOR_DOT)
+        for end in range(len(parts), 1, -1):
+            prefix = cs.SEPARATOR_DOT.join(parts[:end])
+            holder = module_paths.get(prefix)
+            if holder is not None and self._reachable_module(holder, family):
+                return name
+            own = siblings.get(prefix, {}).get(family)
+            if own is not None:
+                return f"{own}{name[len(prefix) :]}"
+            if holder is not None:
+                return name
+        return name
+
+    @staticmethod
+    def _reachable_module(path: Path | str, family: LanguageFamily) -> bool:
+        # A module with no file (an inline Rust `mod`, a rehydrated qn) or of
+        # an unknown language is given the benefit of the doubt.
+        if not path:
+            return True
+        language = get_language_for_extension(Path(path).suffix)
+        return language is None or language in family
+
+    def point_imports_at_own_language_siblings(
+        self, module_paths: Mapping[str, Path]
+    ) -> None:
+        """Re-point imports of a stem shared across languages.
+
+        `util.py` beside `util.js` leaves no `proj.util` module (each carries
+        its extension, issue #2586), yet `from util import helper` and
+        `require('./util')` both record the bare name. Each import lands on the
+        file of its own language family, the only one its import system can
+        reach, so CALLS and the edges resolved through the map follow it.
+        """
+        siblings = self.stem_sibling_modules(module_paths)
+        if not siblings:
+            return
+        for importer, mapping in self.import_mapping.items():
+            importer_path = module_paths.get(importer)
+            language = (
+                get_language_for_extension(importer_path.suffix)
+                if importer_path is not None
+                else None
+            )
+            if language is None:
+                continue
+            family = language_family(language)
+            for local_name, full_name in mapping.items():
+                target = self._own_language_target(
+                    full_name, family, module_paths, siblings
+                )
+                if target != full_name:
+                    mapping[local_name] = target
 
     def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
         # A module reached through its container's name: pkg/__init__.py,
@@ -1956,7 +2083,12 @@ class ImportProcessor:
         known_module_paths: dict[str, str],
         module_aliases: dict[str, str],
         language: cs.SupportedLanguage,
+        siblings: StemSiblingModules | None = None,
     ) -> str | None:
+        if siblings:
+            module_path = self._own_language_target(
+                module_path, language_family(language), known_module_paths, siblings
+            )
         if module_path in known_module_paths:
             return module_path
         if alias := module_aliases.get(module_path):
