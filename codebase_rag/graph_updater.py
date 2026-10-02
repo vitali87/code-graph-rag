@@ -2089,6 +2089,8 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
+        # Per-run for the same reason: the warning names THIS run's files.
+        self.ast_grep_tier.reset_unparsed()
         # Per-run for the same reason: the set records what THIS run parsed,
         # so a reused updater must not treat a previous run's interfaces as
         # unflushed writes that rehydration has to preserve.
@@ -2293,6 +2295,9 @@ class GraphUpdater:
             self.factory.definition_processor.module_qn_to_file_path
         )
 
+        # Once per sync, after every file was seen: files the ast-grep tier
+        # would parse but could not, for want of its extra (issue #2634).
+        self.ast_grep_tier.warn_unparsed()
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
         # After that flush: the carry reads the static edges Pass 3 just
@@ -6332,6 +6337,9 @@ class GraphUpdater:
         if self.document_tier.handles(filepath.suffix):
             self.document_tier.process_file(filepath, structural_elements)
             return True
+        # A file no tier took still gets its File node; the ast-grep tier
+        # counts the ones it only skipped for lack of its extra.
+        self.ast_grep_tier.note_unparsed(filepath.suffix)
         return False
 
     def _ast_for(self, file_path: Path) -> Node | None:
@@ -7274,6 +7282,7 @@ class GraphUpdater:
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
         self.reingest_scope = ()
+        self.ast_grep_tier.reset_unparsed()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
             logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))
@@ -7451,6 +7460,7 @@ class GraphUpdater:
             skipped=tuple(sorted(skipped)),
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
         )
+        self.ast_grep_tier.warn_unparsed()
         logger.info(
             ls.REINGEST_DONE,
             reparsed=len(report.reparsed),

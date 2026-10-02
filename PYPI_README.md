@@ -27,11 +27,14 @@ Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and D
 pip install code-graph-rag
 ```
 
-With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, C#, PHP, Lua, Dart):
+With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, C#, PHP, Lua, Dart) and the ast-grep tier (Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, Nix):
 
 ```bash
-pip install 'code-graph-rag[treesitter-full]'
+pip install 'code-graph-rag[treesitter-full,ast-grep]'
 ```
+
+Without `ast-grep`, files in the ast-grep tier's languages are indexed as bare `File`
+nodes, and a sync that meets them says so in a warning.
 
 With semantic code search (UniXcoder embeddings):
 
@@ -60,7 +63,7 @@ ships immediately rather than waiting for the cadence.
 To run code newer than the latest release, install from git with uv:
 
 ```bash
-uv tool install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
+uv tool install "code-graph-rag[treesitter-full,ast-grep] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
 Use uv for this: it applies the project's `[tool.uv.sources]`, which build the C
@@ -69,7 +72,7 @@ and C++ grammars from forks that keep the declarations upstream drops after a
 installs the upstream grammars.
 
 To upgrade, rerun the install with `--upgrade` and the extras you chose, for
-example `pip install --upgrade 'code-graph-rag[treesitter-full]'`. With uv or pipx,
+example `pip install --upgrade 'code-graph-rag[treesitter-full,ast-grep]'`. With uv or pipx,
 run `uv tool upgrade code-graph-rag` or `pipx upgrade code-graph-rag` instead; see the
 [installation guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#upgrade)
 for git installs and the other methods.

@@ -6,15 +6,18 @@
 # namespace qualification) and there is no call-graph resolution.
 from __future__ import annotations
 
-import logging
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from loguru import logger
+
 from .. import constants as cs
+from .. import logs as ls
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .flat_module import emit_flat_module
 
@@ -22,8 +25,6 @@ if TYPE_CHECKING:
     from ast_grep_py import SgNode
 
     from ..services import IngestorProtocol
-
-logger = logging.getLogger(__name__)
 
 _PATTERNS_DIR = Path(__file__).parent / "ast_grep_patterns"
 # leading bare name of a captured signature, for `name_head` rules
@@ -135,6 +136,8 @@ def _parse_rules(raw: object, path_name: str, section: str) -> tuple[_Rule, ...]
 
 @dataclass(frozen=True)
 class _LangConfig:
+    # the config's `language`, falling back to the file stem; only displayed
+    language: str
     ast_grep_id: str
     functions: tuple[_Rule, ...]
     classes: tuple[_Rule, ...]
@@ -157,6 +160,7 @@ def load_pattern_configs() -> dict[str, _LangConfig]:
         if isinstance(extensions, str):
             extensions = [ext.strip() for ext in extensions.split(",") if ext.strip()]
         config = _LangConfig(
+            language=str(data.get("language") or path.stem),
             ast_grep_id=str(ast_grep_id),
             functions=_parse_rules(data.get("functions"), path.name, "functions"),
             classes=_parse_rules(data.get("classes"), path.name, "classes"),
@@ -182,6 +186,21 @@ def structural_tier_extensions() -> frozenset[str]:
         return frozenset()
 
 
+def ast_grep_importable() -> bool:
+    """Whether ast-grep-py imports, which decides if this tier runs at all.
+
+    Probed by importing rather than by `find_spec`, so an install that is
+    present but broken counts as absent, exactly as the tier experiences it.
+    The parser fingerprint records the answer: installing the extra must
+    re-parse files an earlier sync could only give a File node (#2634).
+    """
+    try:
+        import ast_grep_py  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _leading_identifier(text: str) -> str | None:
     """The bare name at the head of a captured signature.
 
@@ -202,7 +221,14 @@ def _strip_quotes(text: str) -> str:
 class AstGrepTier:
     """Structural extractor for languages without a tree-sitter LanguageSpec."""
 
-    __slots__ = ("_ingestor", "_repo_path", "_project_name", "_configs")
+    __slots__ = (
+        "_ingestor",
+        "_repo_path",
+        "_project_name",
+        "_configs",
+        "_languages_without_extra",
+        "_unparsed",
+    )
 
     def __init__(
         self, ingestor: IngestorProtocol, repo_path: Path, project_name: str
@@ -210,22 +236,61 @@ class AstGrepTier:
         self._ingestor = ingestor
         self._repo_path = repo_path
         self._project_name = project_name
+        self._configs: dict[str, _LangConfig] = {}
+        # Extension -> language for the files this tier would parse, filled
+        # only while ast-grep-py is missing, so a sync can name what it left
+        # as bare File nodes instead of warning before it has seen a file.
+        self._languages_without_extra: dict[str, str] = {}
+        self._unparsed: Counter[str] = Counter()
         try:
-            import ast_grep_py  # noqa: F401
-
-            self._configs = load_pattern_configs()
+            configs = load_pattern_configs()
         except ImportError:
-            # ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
-            logger.warning("ast-grep-py unavailable; ast-grep language tier disabled")
-            self._configs = {}
+            # pyyaml belongs to the [ast-grep] extra as well; without it the
+            # tier cannot even tell which languages it would cover.
+            logger.debug(ls.AST_GREP_TIER_UNAVAILABLE)
+            return
         except Exception as exc:  # noqa: BLE001
             # a malformed shipped config must not crash GraphUpdater
             # construction; disable the tier and surface the reason.
-            logger.warning("ast-grep language tier disabled: %s", exc)
-            self._configs = {}
+            logger.warning(ls.AST_GREP_TIER_DISABLED, error=exc)
+            return
+        if ast_grep_importable():
+            self._configs = configs
+            return
+        logger.debug(ls.AST_GREP_TIER_UNAVAILABLE)
+        self._languages_without_extra = {
+            extension: config.language for extension, config in configs.items()
+        }
 
     def handles(self, suffix: str) -> bool:
         return suffix in self._configs
+
+    def note_unparsed(self, suffix: str) -> None:
+        """Count a file this tier would have parsed with the [ast-grep] extra."""
+        language = self._languages_without_extra.get(suffix)
+        if language is not None:
+            self._unparsed[language] += 1
+
+    def reset_unparsed(self) -> None:
+        self._unparsed.clear()
+
+    def warn_unparsed(self) -> None:
+        """Name, once per sync, the files left as bare File nodes.
+
+        Silent when the run met no such file, so a repository without any
+        tier language is never told about an extra it does not need.
+        """
+        if not self._unparsed:
+            return
+        languages = cs.SEPARATOR_COMMA_SPACE.join(
+            ls.AST_GREP_TIER_LANGUAGE_COUNT.format(language=language, count=count)
+            for language, count in sorted(self._unparsed.items())
+        )
+        logger.warning(
+            ls.AST_GREP_TIER_FILES_UNPARSED,
+            count=self._unparsed.total(),
+            languages=languages,
+        )
 
     def process_file(
         self, file_path: Path, structural_elements: dict[Path, str | None]
@@ -242,7 +307,7 @@ class AstGrepTier:
         try:
             root = SgRoot(source, config.ast_grep_id).root()
         except (RuntimeError, ValueError) as exc:
-            logger.warning("ast-grep failed to parse %s: %s", file_path, exc)
+            logger.warning(ls.AST_GREP_PARSE_FAILED, path=file_path, error=exc)
             return
 
         module_qn = self._emit_module(file_path, structural_elements)
@@ -361,7 +426,7 @@ class AstGrepTier:
             return matches
         except RuntimeError as exc:
             logger.warning(
-                "bad ast-grep rule %s for %s: %s", rule.label, file_path, exc
+                ls.AST_GREP_BAD_RULE, rule=rule.label, path=file_path, error=exc
             )
             return []
 

@@ -19,7 +19,7 @@ all: ## Install everything for full development environment (deps, grammars, hoo
 	@echo "✓ Tests passed successfully"
 
 install: ## Install project dependencies with full language support
-	uv sync --extra treesitter-full
+	uv sync --extra treesitter-full --extra ast-grep
 
 python: ## Install project dependencies for Python only
 	uv sync
