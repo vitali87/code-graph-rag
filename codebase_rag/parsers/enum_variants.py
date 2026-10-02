@@ -208,19 +208,24 @@ def _py_member_targets(assignment: Node) -> list[tuple[Node, Node | None]]:
         if left.type == cs.TS_PY_IDENTIFIER:
             out.append((left, value))
         elif left.type in cs.PY_UNPACKING_TARGET_TYPES:
-            targets = left.named_children
-            values = (
-                value.named_children
-                if value.type in _PY_VALUE_SEQUENCES
-                and len(value.named_children) == len(targets)
-                else None
-            )
-            out.extend(
-                (target, values[position] if values else None)
-                for position, target in enumerate(targets)
-                if target.type == cs.TS_PY_IDENTIFIER
-            )
+            out.extend(_py_unpacked_targets(left, value))
     return out
+
+
+def _py_unpacked_targets(left: Node, value: Node) -> list[tuple[Node, Node | None]]:
+    # `A, B = 3, 4` pairs by position; a value of another shape is unknown.
+    targets = left.named_children
+    values = (
+        value.named_children
+        if value.type in _PY_VALUE_SEQUENCES
+        and len(value.named_children) == len(targets)
+        else None
+    )
+    return [
+        (target, values[position] if values else None)
+        for position, target in enumerate(targets)
+        if target.type == cs.TS_PY_IDENTIFIER
+    ]
 
 
 def _py_ignored_names(assignments: list[Node]) -> frozenset[str]:
