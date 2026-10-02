@@ -73,7 +73,8 @@ def test_file_ownership_is_never_confirmed(tmp_path: Path) -> None:
     # Negative: no read means no evidence of sole ownership, so the legacy
     # sweep must never be allowed to delete the key.
     updater = _updater(_WriteOnlyIngestor(), tmp_path)
-    assert not updater._file_key_owned_only_by_this_project(str(tmp_path / "m.py"))
+    key = str(tmp_path / "m.py")
+    assert not updater._file_keys_owned_only_by_this_project([key], str(tmp_path))
 
 
 def test_a_readable_graph_is_still_read(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ ENSURING_PROJECT = "Ensuring Project: {name}"
 
 # Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
+STRUCTURE_IDENTIFIED = "Identified {packages} packages and {folders} folders"
 PASS_2_FILES = (
     "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
 )
@@ -118,6 +119,9 @@ EXCLUSION_STATE_MISSING = (
     "unchanged; re-running once to establish it. Expect this exactly once "
     "per existing index."
 )
+EXCLUSION_STATE_FIRST_INDEX = (
+    "First index of this repository; recording its exclusion set"
+)
 EXCLUSION_STATE_NOT_RECORDED = (
     "The graph could not be asked for its module paths, so newly excluded "
     "files may still be indexed; the exclusion set is not recorded and the "
@@ -177,6 +181,10 @@ CONTEXT_TOKEN_COUNT_AUTH_FAILED = (
 NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
+EMBEDDINGS_INTERRUPTED = (
+    "Semantic embedding generation interrupted; the graph is saved without the"
+    " remaining embeddings, which the next sync that finds a code change generates"
+)
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
 EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in vector store"
@@ -213,6 +221,20 @@ QDRANT_BUNDLED_WANTS_KEY = (
     "stay in the embedded store at '{path}'. Set QDRANT_URL and QDRANT_API_KEY to "
     "use the stack's Qdrant"
 )
+QDRANT_BUNDLED_NOT_RUNNING = (
+    "The cgr stack's Qdrant container is not running, so embeddings stay in the "
+    "embedded store at '{path}'. Run 'cgr daemon up' to store them in the "
+    "stack's Qdrant"
+)
+QDRANT_BUNDLED_UNVERIFIED = (
+    "Could not confirm through Docker Compose that the cgr stack's Qdrant is "
+    "running ({detail}), so embeddings stay in the embedded store at '{path}'"
+)
+QDRANT_BUNDLED_NOT_QDRANT = (
+    "The service at {url}, where the cgr stack publishes its Qdrant, does not "
+    "identify as Qdrant, so no embeddings are sent to it and they stay in the "
+    "embedded store at '{path}'"
+)
 QDRANT_LOCK_ERROR = (
     "Failed to open embedded Qdrant at '{path}': {error}. The storage folder is "
     "locked by another process; look for the '.lock' sentinel inside it. Embedded "
@@ -246,6 +268,14 @@ PROTOBUF_INVALID_REL = (
 )
 PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
 PROTOBUF_FLUSHING = "Flushing data to {path}..."
+PROTOBUF_FLUSH_UNCHANGED = "Nothing new since the last write to {path}; not rewriting"
+
+# Provenance manifest logs
+CODEC_SCHEMA_MISSING = (
+    "Codec schema {path} is missing from this install, so the manifest records "
+    "no codec_schema_sha256 and cgr diff-index will refuse this index; "
+    "upgrade code-graph-rag"
+)
 
 # Parser loader logs
 BUILDING_BINDINGS = "Building Python bindings for {lang}..."
@@ -382,7 +412,10 @@ SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 # Memgraph logs
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
+MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
+MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
+MG_COMMAND_EXIT = "Command exited. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
@@ -421,8 +454,17 @@ MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
 )
-MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
-MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
+MG_RELS_FAILED = (
+    "Failed to create {count} of {attempted} ({from_label})-[:{rel_type}]->"
+    "({to_label}) relationships - an endpoint node did not exist when they "
+    "were written"
+)
+MG_REL_FAILED_ROW = (
+    "  Failed {index}: {from_label}.{from_val} -> {to_label}.{to_val} "
+    "(missing {missing})"
+)
+MG_RELS_FAILED_MORE = "  ... and {count} more"
+MG_RELS_FAILED_LOOKUP = "Could not look up which {rel_type} rows were lost: {error}"
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )
@@ -466,6 +508,10 @@ TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
 )
 TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
 TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
+TOOL_QUERY_REPAIRING = (
+    "[Tool:QueryGraph] The database rejected the query ({error}); "
+    "asking for a corrected one"
+)
 TOOL_QUERY_TIMEOUT = (
     "[Tool:QueryGraph] Query exceeded {timeout:.1f}s and was cancelled: {query}"
 )
@@ -615,6 +661,7 @@ CALL_INSTANCE_QUALIFIED = "Instance-resolved qualified call: {call_name} -> {met
 CALL_INSTANCE_INHERITED = "Instance-resolved inherited call: {call_name} -> {method_qn} (via {class_name}:{var_type})"
 CALL_WILDCARD = "Wildcard-resolved call: {call_name} -> {qn}"
 CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
+CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
@@ -1076,6 +1123,22 @@ GLOSS_REANCHOR_FAILED = (
     "Could not re-attach Gloss notes to their symbols after the sync: {error}. "
     "Unattached notes are re-attached by the next run."
 )
+# Trace-derived CALLS edges carried across a re-parse (issue #2429).
+TRACE_EDGES_CARRIED = "Kept {carried} trace-derived CALLS edge(s) across the re-parse"
+TRACE_EDGES_OUTDATED = (
+    "Kept {carried} trace-derived CALLS edge(s) across the re-parse; "
+    "{stale} newly marked dynamic_stale (an endpoint's definition changed) and "
+    "{dropped} dropped (an endpoint no longer exists). Re-run the trace and "
+    "`cgr trace ingest` it to refresh them."
+)
+TRACE_CARRY_CAPTURE_FAILED = (
+    "Could not read trace-derived CALLS edges before the re-parse; this full "
+    "rebuild continues without them. Re-ingest the trace to restore them."
+)
+TRACE_CARRY_FAILED = (
+    "Could not re-apply {count} trace-derived CALLS edge(s) after the "
+    "re-parse: {error}. Re-ingest the trace to restore them."
+)
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
@@ -1131,6 +1194,11 @@ PROGRESS_FILES_PROCESSED = "{count} processed"
 
 # Capture selection logs
 CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
+CAPTURE_GROUP_ALREADY_ON = (
+    "Capture group '{group}' adds nothing: it is already captured. A group is "
+    "added to the defaults; use `--capture none --capture {group}` to capture "
+    "only it, or `-GROUP` to drop a group."
+)
 CAPTURE_DEPENDENCY_GAP = (
     "Capture selection keeps {rel} but its usual companion {missing} is disabled; "
     "obeying as requested (edges may be incomplete)"

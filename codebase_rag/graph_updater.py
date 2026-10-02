@@ -96,8 +96,14 @@ from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
-from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
+from .services import (
+    FilteringIngestor,
+    IngestorProtocol,
+    QueryingIngestorProtocol,
+    QueryProtocol,
+)
 from .services.resource_cleanup import prune_unanchored_resources
+from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
@@ -1107,7 +1113,6 @@ class _PruneTally:
     """What `_prune_orphan_nodes` leaves for after its per-label sweeps."""
 
     registry_skipped: int = 0
-    legacy_file_keys: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _reindexed_keys(changed_entries: list[tuple[Path, str, bool, bytes]]) -> list[str]:
@@ -1205,8 +1210,16 @@ class GraphUpdater:
         capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
         project_named: bool | None = None,
+        state_dir: Path | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
+        # Where the incremental-sync state (hash cache, dir mtimes, exclusion
+        # stamp, parser fingerprint, pending markers) is read and written.
+        # None keeps it in the repository, beside the graph it describes. A
+        # snapshot run points it at a throwaway directory so it neither
+        # builds incrementally from a sync's state nor leaves state claiming
+        # a live graph is current (issue #2401).
+        self._state_dir = state_dir
         # `ingestor` stays the raw object for DB queries (QueryProtocol),
         # flushes, and test introspection. `_sink` is a filtering wrapper that
         # drops disabled relationships/nodes at one choke point, so the ~20
@@ -1267,6 +1280,7 @@ class GraphUpdater:
         self.skip_embeddings = (
             settings.SKIP_EMBEDDINGS if skip_embeddings is None else skip_embeddings
         )
+        self._embeddings_interrupted = False
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
@@ -1291,6 +1305,12 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The trace-derived CALLS edges `run()` read before deleting the
+        # re-parsed subtrees, re-applied once Pass 3 has rebuilt the static
+        # edges (issue #2429), and the files the run deleted, whose edges must
+        # not follow their qualified names onto a same-stem survivor.
+        self._captured_trace_edges: list[CapturedTraceEdge] = []
+        self._trace_gone_paths: frozenset[str] = frozenset()
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
@@ -1927,6 +1947,14 @@ class GraphUpdater:
         the same stages, or they vanish until a full update. Returns the
         module qn -> path map the IMPORTS flush verifies against.
         """
+        # First: every module of the run is named now, and everything below
+        # (inheritance, Pass 3) resolves through the import map.
+        self.factory.import_processor.point_imports_at_own_language_siblings(
+            self.factory.definition_processor.module_qn_to_file_path
+        )
+        # Every File node of the pass is buffered by now, so a Markdown link
+        # to a file parsed after its document finds its target (issue #2400).
+        self.document_tier.emit_pending_links()
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
         # nodes and include IMPORTS emitted earlier would be deleted with
@@ -2045,6 +2073,10 @@ class GraphUpdater:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
 
+    @property
+    def state_dir(self) -> Path:
+        return self._state_dir if self._state_dir is not None else self.repo_path
+
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
 
@@ -2075,6 +2107,7 @@ class GraphUpdater:
         # report, so a stale True describes a run that did real work as
         # already in sync (#1620).
         self.skipped_because_in_sync = False
+        self._embeddings_interrupted = False
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -2129,6 +2162,8 @@ class GraphUpdater:
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
         self._pending_parser_fingerprint = None
+        self._captured_trace_edges = []
+        self._trace_gone_paths = frozenset()
         if not force and self._is_already_in_sync():
             self._finish_in_sync_run()
             return
@@ -2143,7 +2178,12 @@ class GraphUpdater:
         # nodes, so a read after it could not tell a new package from an old
         # one (issue #1570).
         self._packages_before_run = None if force else self._package_paths()
-        self.factory.structure_processor.identify_structure()
+        structure = self.factory.structure_processor.identify_structure()
+        logger.info(
+            ls.STRUCTURE_IDENTIFIED.format(
+                packages=structure.packages, folders=structure.folders
+            )
+        )
 
         # Cleared here, not only in _run_cpp_frontend: in HYBRID that method
         # runs AFTER Pass 2, so its reset is too late for a REUSED updater
@@ -2268,6 +2308,10 @@ class GraphUpdater:
 
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
+        # After that flush: the carry reads the static edges Pass 3 just
+        # wrote to decide which observations confirm one (issue #2429).
+        self._carry_trace_edges(self._captured_trace_edges, self._trace_gone_paths)
+        self._captured_trace_edges = []
 
         self._link_endpoint_resources()
 
@@ -2289,6 +2333,8 @@ class GraphUpdater:
         self._generate_semantic_embeddings()
 
         self._commit_run_state()
+        if self._embeddings_interrupted:
+            raise ex.EmbeddingsInterrupted
 
     def _clear_python_inference_caches(self) -> None:
         py_engine = self.factory.type_inference._python_type_inference
@@ -2318,7 +2364,7 @@ class GraphUpdater:
         # Single-file runs never commit it.
         if self._delombok_state_changed and self._single_file is None:
             _save_delombok_state(
-                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
+                self.state_dir / cs.DELOMBOK_STATE_FILENAME,
                 self._delombok_state_candidate,
             )
 
@@ -2334,7 +2380,7 @@ class GraphUpdater:
         # stamp and the warning with it.
         if self._pending_parser_fingerprint is not None:
             _save_parser_fingerprint(
-                self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
+                self.state_dir / cs.PARSER_FINGERPRINT_FILENAME,
                 self._pending_parser_fingerprint,
             )
             self._pending_parser_fingerprint = None
@@ -2438,7 +2484,7 @@ class GraphUpdater:
         `cgr check` reading the right owner; rewriting an identical stamp
         would only churn the file (CodeRabbit, PR #2251).
         """
-        path = self.repo_path / cs.EXCLUSION_STATE_FILENAME
+        path = self.state_dir / cs.EXCLUSION_STATE_FILENAME
         state = _exclusion_state(
             self.exclude_paths,
             self.unignore_paths,
@@ -2571,7 +2617,7 @@ class GraphUpdater:
         if not pending:
             return
         try:
-            (self.repo_path / cs.PRUNE_PENDING_FILENAME).touch()
+            (self.state_dir / cs.PRUNE_PENDING_FILENAME).touch()
         except OSError:
             # Best effort, like the EXPOSES marker: a read-only tree must not
             # lose the run to a marker it could not write.
@@ -2583,7 +2629,7 @@ class GraphUpdater:
             return
         self._prune_settled = False
         try:
-            (self.repo_path / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
+            (self.state_dir / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
         except OSError:
             logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
 
@@ -2594,7 +2640,7 @@ class GraphUpdater:
         its cleanups settles whatever an earlier run owed; any run that
         skipped one leaves the marker for the next (issue #2193).
         """
-        marker = self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        marker = self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
         try:
             if self._exposes_cleanup_skipped:
                 marker.touch()
@@ -3144,6 +3190,27 @@ class GraphUpdater:
             if isinstance(qn := row.get(key), str) and self._owns(qn)
         ]
 
+    def _project_module_rows(self) -> list[ResultRow]:
+        """This project's Module paths and qns, read from the graph.
+
+        Scoped to the project: the seeded-map prune read every module of every
+        project in the shared graph on each sync, which made a three-file
+        repo sync ten times slower beside thirty other projects (issue
+        #2404). Raises when the read fails; callers decide what that means.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        return self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_MODULE_PATHS,
+                {
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -3247,6 +3314,11 @@ class GraphUpdater:
         # @property defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_PROPERTY):
             self.function_registry.mark_property(qn)
+        # Restore the object-member set for unchanged files, or a re-parsed
+        # file's bare call binds by name to a JS/TS object literal's function
+        # value that only its object reaches (issue #2435).
+        if row.get(cs.KEY_IS_OBJECT_MEMBER):
+            self.function_registry.mark_object_member(qn)
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
@@ -3378,6 +3450,13 @@ class GraphUpdater:
             )
         else:
             self._forgotten_flux_claims.setdefault(path, (qn, survivor))
+            # A scoped re-ingest read the module qns back before this, and the
+            # survivor's old one need not come back: beside a sibling in another
+            # language neither file keeps the bare qn, so left here it is
+            # offered to import verification as a live module the re-parse
+            # just deleted (issue #2586). A re-parse that keeps the qn records
+            # it again; an unreadable survivor gets it back with its claim.
+            self._rehydrated_module_qns.discard(qn)
 
     def _delete_stale_subtrees(self, keys: Iterable[str]) -> None:
         """Delete the old subtree of every re-parsed or deleted file.
@@ -3491,7 +3570,16 @@ class GraphUpdater:
             return
         dp = self.factory.definition_processor
         module_map = dp.module_qn_to_file_path
-        if not module_map:
+        parsed_this_run = (
+            exempt_paths
+            if exempt_paths is not None
+            else {path for path, _lang in self._parsed_files}
+        )
+        # Only an entry this run did not parse can be dropped. On a first
+        # sync every entry is one it parsed, so there is nothing to decide
+        # and no read to make; reading anyway found the brand-new graph empty
+        # and warned on the first run every new user makes (issue #2404).
+        if not any(path not in parsed_this_run for path in module_map.values()):
             return
         # No rows is "no verdict", never "the graph is empty". A read that
         # fails or comes back empty against a populated map is the unflushed
@@ -3501,7 +3589,7 @@ class GraphUpdater:
         # _rehydrate_registry_from_graph, where a failed query leaves the
         # previous state intact.
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+            rows = self._project_module_rows()
         except Exception:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
@@ -3511,11 +3599,6 @@ class GraphUpdater:
         if not in_graph:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
-        parsed_this_run = (
-            exempt_paths
-            if exempt_paths is not None
-            else {path for path, _lang in self._parsed_files}
-        )
         for qn in [qn for qn in module_map if qn not in in_graph]:
             # A file this run parsed writes its own entry and its Module node
             # may still be unflushed, so the read above cannot see it.
@@ -3926,11 +4009,19 @@ class GraphUpdater:
         modified file's GAINED definitions can be told from the ones it had.
         A failed read marks every file fully known: nothing extra is offered."""
         known: dict[str, set[str]] = {}
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        # The query excludes rows a longer project (`proj.sub`) owns, the
+        # scoping `structural_delta.snapshot` passes too; without the list
+        # Memgraph rejects the read on every incremental sync (issue #2392).
+        longer_project_prefixes = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
         try:
             rows = self._graph_rows(
                 cq.CYPHER_DELTA_DEFINITIONS,
                 {
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_LONGER_PROJECT_PREFIXES: longer_project_prefixes,
                     cs.CYPHER_PARAM_PATHS: keys,
                 },
             )
@@ -4103,7 +4194,14 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return set()
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_PACKAGE_PATHS)
+            # Scoped: every sync read every project's Packages (issue #2405).
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_PACKAGE_PATHS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                },
+            )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
             return None
@@ -4157,6 +4255,46 @@ class GraphUpdater:
                 raise
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
+
+    def _capture_trace_edges(self, keys: Iterable[str]) -> list[CapturedTraceEdge]:
+        # Read before the subtrees go, as the inbound edges are: a runtime
+        # observation lives only in the graph, so the delete would otherwise
+        # take it for good (issue #2429).
+        paths = sorted(set(keys))
+        if not paths or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            return capture_trace_edges(
+                self.ingestor, paths, self.project_name + cs.SEPARATOR_DOT
+            )
+        except Exception:
+            # The inbound capture's posture: a full build may go on over an
+            # unreadable graph, saying what it lost; an incremental run
+            # aborts rather than drop the observations without a word.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.TRACE_CARRY_CAPTURE_FAILED)
+            return []
+
+    def _carry_trace_edges(
+        self, captured: list[CapturedTraceEdge], gone_paths: Collection[str]
+    ) -> None:
+        """Re-apply the captured trace edges to the re-parsed graph.
+
+        Never raises, like `_reanchor_glosses`: the sync itself has landed,
+        and the observations come back by re-ingesting the trace, which the
+        warning tells the user to do.
+        """
+        if not captured or not isinstance(self.ingestor, QueryingIngestorProtocol):
+            return
+        try:
+            carry_trace_edges(
+                self.ingestor, captured, self.repo_path.resolve(), gone_paths
+            )
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                ls.TRACE_CARRY_FAILED.format(count=len(captured), error=error)
+            )
 
     def _restorable_edge(
         self, row: ResultRow
@@ -4296,14 +4434,19 @@ class GraphUpdater:
         # A file that was never parsed recorded nothing; the path-derived form
         # is the only prefix available for it, and it owns no recorded qn that
         # this could wipe.
-        recorded_qns = {
-            qn
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-            if path == file_path
-        }
-        module_qn_prefixes = recorded_qns or {path_derived_qn}
+        #
+        # Unless another file holds that qn now. A same-stem survivor re-parses
+        # with its claim dropped, after a sibling parsed earlier in the run took
+        # the bare qn (`util.c` beside `util.h`); sweeping it deregistered the
+        # sibling's fresh definitions, still unflushed and so not read back, and
+        # the sibling's calls resolved to nothing until a fresh index (reported
+        # on #2586). The survivor's own old state went before the parse.
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        recorded_qns = {qn for qn, path in module_map.items() if path == file_path}
+        holder = module_map.get(path_derived_qn)
+        module_qn_prefixes = recorded_qns or (
+            {path_derived_qn} if holder is None else set()
+        )
         self._drop_module_import_state(file_path, recorded_qns, module_qn_prefixes)
         owned_qns, foreign_qns = self._span_ownership(
             module_qn_prefixes, relative_path, frontend_current
@@ -4938,7 +5081,7 @@ class GraphUpdater:
         incremental sync that trusts it would skip every file and leave the
         project silently empty.
         """
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
             return
         fetch_all = getattr(self.ingestor, "fetch_all", None)
@@ -4973,8 +5116,8 @@ class GraphUpdater:
         # to a file it only wanted to delete (issue #1647).
         for stale in (
             cache_path,
-            self.repo_path / cs.DIR_MTIMES_FILENAME,
-            self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
+            self.state_dir / cs.DIR_MTIMES_FILENAME,
+            self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
         ):
             try:
                 stale.unlink(missing_ok=True)
@@ -5003,10 +5146,10 @@ class GraphUpdater:
         this is not a clean rebuild; the warning says what survives.
         """
         # No hash cache means a full build is coming: nothing to compare.
-        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+        if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
             return
         stored = _load_parser_fingerprint(
-            self.repo_path / cs.PARSER_FINGERPRINT_FILENAME
+            self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
         )
         # A missing stamp on an existing graph means it was built by an
         # unknown (pre-fingerprint) parser: treat it as stale too, without
@@ -5023,7 +5166,7 @@ class GraphUpdater:
         # the same one the sync check acted on, logged once.
         if self._exclusion_match is not None:
             return self._exclusion_match
-        stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
+        stored = _load_exclusion_state(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
         current = _exclusion_state(self.exclude_paths, self.unignore_paths)
         if stored is not None:
             # The cache and directory mtimes are repository-scoped, but the
@@ -5055,7 +5198,13 @@ class GraphUpdater:
         # can tell which of the two they are looking at.
         if stored is None:
             self._cache_project_match = False
-            logger.info(ls.EXCLUSION_STATE_MISSING)
+            # Only an index built before the stamp existed is being upgraded;
+            # a repository never indexed has nothing to re-run "once", and a
+            # first-time user was told otherwise (issue #2404).
+            if (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+                logger.info(ls.EXCLUSION_STATE_MISSING)
+            else:
+                logger.debug(ls.EXCLUSION_STATE_FIRST_INDEX)
         else:
             logger.info(
                 ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
@@ -5066,9 +5215,9 @@ class GraphUpdater:
     def _is_already_in_sync(self) -> bool:
         if self._sync_state_forces_reparse():
             return False
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         cache_mtime = _trustworthy_cache_mtime(cache_path)
-        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
+        dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         old_hashes = (
             {}
             if self._cache_discarded_in_memory or self._parser_changed
@@ -5088,14 +5237,14 @@ class GraphUpdater:
             return True
         if self._single_file is not None:
             return True
-        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+        if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
             return True
         # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
         # hash below would send the run into the endpoint passes that owe it
         # (issue #2193).
-        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+        if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return True
-        if (self.repo_path / cs.PRUNE_PENDING_FILENAME).exists():
+        if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -5163,7 +5312,7 @@ class GraphUpdater:
         # so without forcing them through a reparse the graph would keep
         # stale (or never gain) generated members.
         self._delombok_overlay = build_delombok_overlay(self.repo_path)
-        previous = _load_delombok_state(self.repo_path / cs.DELOMBOK_STATE_FILENAME)
+        previous = _load_delombok_state(self.state_dir / cs.DELOMBOK_STATE_FILENAME)
         current = {
             "identity": overlay_identity(self._delombok_overlay),
             "keys": sorted(self._delombok_overlay),
@@ -5239,8 +5388,8 @@ class GraphUpdater:
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
-        dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
+        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
+        dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
@@ -5349,6 +5498,10 @@ class GraphUpdater:
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
+        self._captured_trace_edges = self._capture_trace_edges(
+            (*reindexed_keys, *deleted_before_parse)
+        )
+        self._trace_gone_paths = frozenset(deleted_set)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in scan.changed_entries
         }
@@ -7158,7 +7311,7 @@ class GraphUpdater:
             return []
         if prefix == ".":
             return []
-        hashes = _load_hash_cache(self.repo_path / cs.HASH_CACHE_FILENAME)
+        hashes = _load_hash_cache(self.state_dir / cs.HASH_CACHE_FILENAME)
         return [
             self.repo_path / key
             for key in sorted(hashes)
@@ -7236,7 +7389,7 @@ class GraphUpdater:
             # a watcher's updater lives across many events, so refresh them per
             # call (the batch path does the same through _delombok_stale_keys).
             self._register_generated_sources()
-            cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+            cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
             hashes = _load_hash_cache(cache_path)
 
             # Same-stem reconciliation, as the batch path does it (issue #1569):
@@ -7271,6 +7424,7 @@ class GraphUpdater:
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
+            captured_trace = self._capture_trace_edges(all_keys)
         except Exception as exc:
             raise ReingestAborted(str(exc)) from exc
         # The caller's last word before the first write. Still inside the
@@ -7352,6 +7506,9 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # `_reingest_resolve` ends on a flush, so the static edges the carry
+        # may confirm are in the store (issue #2429).
+        self._carry_trace_edges(captured_trace, gone.keys())
         # AFTER the re-parse, never before: the surviving node of the correct
         # kind and its re-pointed containment edges are written by the parse
         # above, so pruning first would delete the old node while every edge
@@ -7539,15 +7696,35 @@ class GraphUpdater:
         tally = _PruneTally()
 
         repo_abs = self.repo_path.resolve().as_posix()
-        prune_specs: list[tuple[str, str, str]] = [
-            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
+        # Scoped to this repository or project: unscoped, the reads pulled
+        # every node of every project in the shared graph on each sync with
+        # changes (issue #2405). The rows they no longer return were all
+        # skipped below anyway, as outside the repository or not owned.
+        repo_scope = self._repo_scope_params(repo_abs)
+        project_scope: PropertyParams = {
+            cs.KEY_PROJECT_NAME: self.project_name,
+            cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+        }
+        prune_specs: list[tuple[str, PropertyParams, str, str]] = [
+            (cs.CYPHER_REPO_FILE_PATHS, repo_scope, cs.CYPHER_DELETE_FILE, "File"),
             (
-                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL,
+                cs.CYPHER_PROJECT_PRUNABLE_MODULES,
+                project_scope,
                 cs.CYPHER_DELETE_MODULE,
                 "Module",
             ),
-            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
-            (cs.CYPHER_ALL_PACKAGE_PATHS, cs.CYPHER_DELETE_PACKAGE, "Package"),
+            (
+                cs.CYPHER_REPO_FOLDER_PATHS,
+                repo_scope,
+                cs.CYPHER_DELETE_FOLDER,
+                "Folder",
+            ),
+            (
+                cs.CYPHER_PROJECT_PACKAGE_PATHS,
+                project_scope,
+                cs.CYPHER_DELETE_PACKAGE,
+                "Package",
+            ),
         ]
         # A directory is represented by exactly one of Folder and Package,
         # decided by identify_structure this run; the node of the other kind
@@ -7559,9 +7736,9 @@ class GraphUpdater:
         }
 
         read_failed = False
-        for query_all, delete_query, label in prune_specs:
+        for query_all, scope, delete_query, label in prune_specs:
             try:
-                rows = self.ingestor.fetch_all(query_all)
+                rows = self.ingestor.fetch_all(query_all, scope)
             except Exception:
                 # A graph that cannot be read cannot be pruned safely; the
                 # next healthy run sweeps whatever this one left behind.
@@ -7583,7 +7760,7 @@ class GraphUpdater:
             # for the next healthy run.
             return
 
-        total_pruned += self._sweep_legacy_file_identities(tally.legacy_file_keys)
+        total_pruned += self._sweep_legacy_file_identities()
 
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.
@@ -7636,9 +7813,7 @@ class GraphUpdater:
         qn = r.get("qualified_name", "")
         # Component-aware containment: a bare prefix test would also
         # match a sibling root such as <repo>-old (issue #897).
-        if self._outside_repo_row(
-            path, abs_path, label, repo_abs, tally.legacy_file_keys
-        ):
+        if self._outside_repo_row(abs_path, repo_abs):
             return None
         # The root directory's own node is qualified as exactly the
         # project name, with no dot: testing only the dotted prefix
@@ -7663,31 +7838,16 @@ class GraphUpdater:
         key = self._stale_orphan_key(path, abs_path, label, packages_now)
         return None if key is None else (path, key)
 
-    def _outside_repo_row(
-        self,
-        path: str,
-        abs_path: ResultValue | None,
-        label: str,
-        repo_abs: str,
-        legacy_file_keys: list[tuple[str, str]],
-    ) -> bool:
+    @staticmethod
+    def _outside_repo_row(abs_path: ResultValue | None, repo_abs: str) -> bool:
         """Whether a row's absolute path lies outside this repository."""
-        if isinstance(abs_path, str) and not (
+        return isinstance(abs_path, str) and not (
             abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
-        ):
-            # An out-of-repo File key the containment gate would leak
-            # forever: legacy pre-GHSA-85gg nodes were keyed on a
-            # symlink's dereferenced TARGET. A key that disagrees with
-            # the identity derivable from the relative path is such a
-            # record; one that agrees is a file under a symlinked
-            # ancestor directory, legitimate under the current scheme
-            # (issue #1156).
-            if label == "File" and abs_path != (
-                cached_file_identity_posix(self.repo_path / path)
-            ):
-                legacy_file_keys.append((path, abs_path))
-            return True
-        return False
+        )
+
+    @staticmethod
+    def _repo_scope_params(repo_abs: str) -> PropertyParams:
+        return {cs.KEY_REPO_ROOT: repo_abs, cs.KEY_REPO_PREFIX: repo_abs + "/"}
 
     def _stale_orphan_key(
         self,
@@ -7737,19 +7897,55 @@ class GraphUpdater:
                     ingestor.execute_write(delete_query, {cs.KEY_PATH: orphan_key})
         return len(orphans)
 
-    def _sweep_legacy_file_identities(self, candidates: list[tuple[str, str]]) -> int:
+    def _sweep_legacy_file_identities(self) -> int:
         """Delete legacy target-resolved File records, sparing shared keys.
 
-        File nodes MERGE globally on absolute_path, so the stale key can be
-        the very node another project legitimately owns (its repo contains
-        the old link's target); any container from outside this repository
-        vetoes the delete (issue #1156).
+        Legacy pre-GHSA-85gg File nodes were keyed on an external symlink's
+        dereferenced TARGET, outside the repository, where the containment
+        gate would leak them forever. A key that disagrees with the identity
+        derivable from the relative path is such a record; one that agrees
+        is a file under a symlinked ancestor directory, legitimate under the
+        current scheme (issue #1156). File nodes MERGE globally on
+        absolute_path, so the stale key can be the very node another project
+        legitimately owns (its repo contains the old link's target); any
+        container from outside this repository vetoes the delete.
+
+        Candidates are only out-of-repo Files this project's own containers
+        hold, and their containers are read in one query. Every other
+        project's File used to be a candidate, each vetoed after its own
+        round trip: 5,697 of them for a one-line edit (issue #2405).
         """
         if not isinstance(self.ingestor, QueryProtocol):
             return 0
+        repo_abs = self.repo_path.resolve().as_posix()
+        try:
+            rows = self._graph_rows(
+                cs.CYPHER_PROJECT_OUTSIDE_FILE_KEYS,
+                {
+                    **self._repo_scope_params(repo_abs),
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="legacy File identities")
+            return 0
+        candidates = [
+            (path, abs_path)
+            for row in rows
+            if isinstance(path := row.get(cs.KEY_PATH), str)
+            and path
+            and isinstance(abs_path := row.get(cs.KEY_ABSOLUTE_PATH), str)
+            and abs_path
+            and abs_path != cached_file_identity_posix(self.repo_path / path)
+        ]
+        if not candidates:
+            return 0
+        owned = self._file_keys_owned_only_by_this_project(
+            [abs_path for _path, abs_path in candidates], repo_abs
+        )
         swept = 0
         for path, abs_path in candidates:
-            if not self._file_key_owned_only_by_this_project(abs_path):
+            if abs_path not in owned:
                 continue
             logger.debug(ls.PRUNE_DELETING, label="File", path=path)
             self.ingestor.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
@@ -7758,25 +7954,35 @@ class GraphUpdater:
             logger.info(ls.PRUNE_LEGACY_IDENTITIES, count=swept)
         return swept
 
-    def _file_key_owned_only_by_this_project(self, abs_path: str) -> bool:
-        """Positive attribution: every container is this project's, and at
-        least one exists. A sibling project's node can share both the key
-        and the relative path (issue #897), and a node whose containers are
-        missing or unreadable offers no evidence of sole ownership, so both
-        veto the sweep.
+    def _file_keys_owned_only_by_this_project(
+        self, keys: list[str], repo_abs: str
+    ) -> set[str]:
+        """The keys whose every container is this project's, with at least
+        one. A sibling project's node can share both the key and the relative
+        path (issue #897), and a node whose containers are missing or
+        unreadable offers no evidence of sole ownership, so both veto the
+        sweep.
         """
         try:
-            rows = self._graph_rows(cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path})
+            rows = self._graph_rows(
+                cs.CYPHER_FILE_CONTAINERS, {cs.CYPHER_PARAM_PATHS: keys}
+            )
         except Exception:
             # Unreadable ownership is unknown ownership: never delete a
             # globally merged key on a failed read, and never let the
             # failure escape mid-update.
             logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
-            return False
-        repo_abs = self.repo_path.resolve().as_posix()
-        if not all(self._container_is_ours(row, repo_abs) for row in rows):
-            return False
-        return bool(rows)
+            return set()
+        containers: dict[str, list[ResultRow]] = {}
+        for row in rows:
+            key = row.get(cs.KEY_FILE_KEY)
+            if isinstance(key, str):
+                containers.setdefault(key, []).append(row)
+        return {
+            key
+            for key, found in containers.items()
+            if all(self._container_is_ours(row, repo_abs) for row in found)
+        }
 
     def _container_is_ours(self, row: ResultRow, repo_abs: str) -> bool:
         """Whether one container row proves THIS project's ownership.
@@ -7876,8 +8082,28 @@ class GraphUpdater:
             get_embedding_cache().save()
             close_qdrant_client()
 
+        except KeyboardInterrupt:
+            self._stop_interrupted_embeddings()
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+
+    def _stop_interrupted_embeddings(self) -> None:
+        """Hold a Ctrl+C in the embeddings pass until `run` has committed.
+
+        The graph writes are flushed before this pass, so letting the
+        interrupt escape here would only skip `_commit_run_state`: with no
+        hash cache the next sync re-parses the whole repository, and after
+        `--clean` there is not even the old cache to fall back on. The next
+        sync that re-indexes embeds every function again, so saving the
+        embedding cache lets it reuse the vectors this pass already computed.
+        """
+        from .embedder import get_embedding_cache
+        from .vector_store import close_qdrant_client
+
+        logger.warning(ls.EMBEDDINGS_INTERRUPTED)
+        get_embedding_cache().save()
+        close_qdrant_client()
+        self._embeddings_interrupted = True
 
     def _reconcile_embeddings(
         self,

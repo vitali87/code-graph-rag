@@ -50,6 +50,11 @@ cgr start --workspace backend
 repository saved in the workspace. See `cgr help workspace` for the full
 workspace command set.
 
+A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
+identifier, not a path: it starts with a letter or digit and uses only
+letters, digits, `.`, `_` and `-`. Any other name (empty, `a/b`, `../x`) is
+refused with exit 1 before a file is touched.
+
 ## Semantic search within one project
 
 When several projects share the graph, semantic search can be confined to a
