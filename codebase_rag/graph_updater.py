@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple, cast
@@ -212,11 +212,14 @@ _ERROR_CANT_RESOLVE_FILENAME = 1921
 def _flush_embedding_batch(
     pending: list[tuple[int, str, str]],
     expected: dict[int, str],
+    stored_ids: set[int],
     embed_code_batch: Callable[[list[str]], list[list[float]]],
     store_embedding_batch: Callable[[list[tuple[int, list[float], str]]], int],
 ) -> int:
     # Embeds and stores the pending batch, then empties it in place so the
-    # caller keeps appending to the same list.
+    # caller keeps appending to the same list. `stored_ids` gains the nodes
+    # whose points the store confirmed, which `expected` cannot vouch for: it
+    # is filled before the store is asked.
     if not pending:
         return 0
     snippets = [item[2] for item in pending]
@@ -236,8 +239,17 @@ def _flush_embedding_batch(
     for node_id, qname, _src in pending:
         expected[node_id] = qname
     stored = store_embedding_batch(points)
+    if stored:
+        stored_ids.update(node_id for node_id, _emb, _qname in points)
     pending.clear()
     return stored
+
+
+def _under_any_project(qualified_name: object, projects: Sequence[str]) -> bool:
+    return isinstance(qualified_name, str) and any(
+        qualified_name.startswith(f"{project}{cs.SEPARATOR_DOT}")
+        for project in projects
+    )
 
 
 def _log_embedding_progress(embedded_count: int, total: int) -> None:
@@ -7948,16 +7960,26 @@ class GraphUpdater:
 
             logger.info(ls.PASS_5_EMBEDDINGS)
 
-            results = self.ingestor.fetch_all(
-                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
-            )
+            # The query is prefix-scoped, and `svc.` also selects a nested
+            # `svc.v2` project's functions, which that project embeds itself.
+            nested = self._nested_project_names()
+            results = [
+                row
+                for row in self.ingestor.fetch_all(
+                    cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
+                )
+                if not _under_any_project(row.get(cs.KEY_QUALIFIED_NAME), nested)
+            ]
             current = self._current_symbols(results)
+            stored_ids: set[int] = set()
 
             if not results:
                 logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
                 # The project's last function may just have gone; its point
                 # must go with it.
-                self._delete_stale_embeddings(current, delete_stale_embeddings)
+                self._delete_stale_embeddings(
+                    current, stored_ids, delete_stale_embeddings
+                )
                 close_qdrant_client()
                 return
 
@@ -7974,7 +7996,7 @@ class GraphUpdater:
 
             def flush() -> int:
                 return _flush_embedding_batch(
-                    pending, expected, embed_code_batch, store
+                    pending, expected, stored_ids, embed_code_batch, store
                 )
 
             for row in results:
@@ -7991,7 +8013,7 @@ class GraphUpdater:
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
             # Before the check, so it reads the store as the sync leaves it.
-            self._delete_stale_embeddings(current, delete_stale_embeddings)
+            self._delete_stale_embeddings(current, stored_ids, delete_stale_embeddings)
             self._reconcile_embeddings(expected, verify_stored_ids)
 
             get_embedding_cache().save()
@@ -8015,16 +8037,26 @@ class GraphUpdater:
     def _delete_stale_embeddings(
         self,
         current: Mapping[int, str],
-        delete_fn: Callable[[str, Mapping[int, str]], int],
+        stored_ids: Collection[int],
+        delete_fn: Callable[
+            [str, Mapping[int, str], Collection[int], Sequence[str]], int
+        ],
     ) -> None:
         """Drop the project's vectors of symbols `current` no longer holds.
 
         A re-parse re-creates a file's nodes, and a deleted function leaves
         nothing to overwrite its vector, so without this the store kept a
-        vector per edit and every deleted function's (issue #2447).
+        vector per edit and every deleted function's (issue #2447). A vector
+        keyed the old way goes only once `stored_ids` says its replacement is
+        in, and a nested project's vectors are its own sync's business.
         """
         try:
-            removed = delete_fn(self.project_name, current)
+            removed = delete_fn(
+                self.project_name,
+                current,
+                stored_ids,
+                self._nested_project_names(),
+            )
         except Exception as e:
             logger.warning(
                 ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)

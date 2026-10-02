@@ -15,7 +15,7 @@ back under new node ids, a deleted function does not come back at all.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag import vector_store as vs
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
@@ -114,16 +115,34 @@ def _sync(
     graph: Mapping[int, str],
     project: str = _PROJECT,
     source: str | None = None,
+    projects: tuple[str, ...] = (),
+    embed: Callable[..., list[list[float]]] = _fake_embed_batch,
 ) -> None:
-    """The embedding pass of one sync, with the graph holding `graph`."""
+    """The embedding pass of one sync, with the graph holding `graph`.
+
+    `graph` is what the project-prefixed embeddings query answers, which
+    includes the functions of a registered project nested under this one;
+    `projects` are the registered project names.
+    """
     if source is not None:
         (repo / _MODULE).write_text(source)
-    ingestor.fetch_all.return_value = [_row(n, qn) for n, qn in graph.items()]
+    rows = [_row(n, qn) for n, qn in graph.items()]
+    registered = [{cs.KEY_NAME: name} for name in projects]
+    ingestor.fetch_all.return_value = rows
+    ingestor.fetch_all.side_effect = (
+        (
+            lambda query, params=None: (
+                registered if query == cq.CYPHER_LIST_PROJECTS else rows
+            )
+        )
+        if projects
+        else None
+    )
     with (
         patch(
             "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
         ),
-        patch("codebase_rag.embedder.embed_code_batch", side_effect=_fake_embed_batch),
+        patch("codebase_rag.embedder.embed_code_batch", side_effect=embed),
     ):
         _updater(repo, ingestor, project)._generate_semantic_embeddings()
 
@@ -353,6 +372,58 @@ class TestUpgradeFromNodeIdKeys:
 
         assert [node_id for node_id, _ in hits] == [20]
 
+    @pytest.mark.parametrize("failure", ["embedding", "upsert"])
+    def test_a_failed_first_sync_keeps_the_legacy_points_it_did_not_replace(
+        self, repo: Path, ingestor: MagicMock, failure: str
+    ) -> None:
+        # Negative: the move to the new keys deletes a node-id keyed point
+        # only once its symbol's new point is stored. A point whose symbol
+        # is gone goes either way.
+        _write_legacy({1: _KEEP, 2: _DELETE})
+
+        def unavailable(
+            snippets: list[str], **_: bool | int | str
+        ) -> list[list[float]]:
+            raise RuntimeError("model unavailable")
+
+        if failure == "embedding":
+            _sync(repo, ingestor, {1: _KEEP}, source=_SOURCE_V2, embed=unavailable)
+        else:
+            with patch.object(
+                vs, "_upsert_with_retry", side_effect=RuntimeError("store down")
+            ):
+                _sync(repo, ingestor, {1: _KEEP}, source=_SOURCE_V2)
+
+        assert _points() == [(_KEEP, 1)]
+        assert _point_ids() == [1]
+
+    def test_a_nested_projects_legacy_points_are_left_for_its_own_sync(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Negative: `svc.` also prefixes `svc.v2`, a project of its own, so
+        # svc's sync neither embeds svc.v2's functions nor deletes its old
+        # points; the longest registered name owns a symbol (issue #1970).
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        _write_legacy({1: _KEEP, 30: nested})
+
+        _sync(
+            repo,
+            ingestor,
+            {1: _KEEP, 30: nested},
+            projects=(_PROJECT, f"{_PROJECT}.v2"),
+        )
+
+        assert _points() == [(_KEEP, 1), (nested, 30)]
+        assert 30 in _point_ids()
+
+    def test_delete_project_leaves_a_nested_projects_legacy_points(self) -> None:
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        _write_legacy({1: _KEEP, 2: _DELETE, 30: nested})
+
+        vs.delete_project_embeddings(_PROJECT, [1, 30], [f"{_PROJECT}.v2"])
+
+        assert _points() == [(nested, 30)]
+
     def test_delete_project_removes_the_projects_legacy_points_too(self) -> None:
         # Including those of nodes the graph no longer holds, which the node
         # ids delete-project reads from the graph cannot name.
@@ -405,6 +476,20 @@ class TestMilvus:
         _sync(repo, ingestor, {3: _KEEP}, source=_SOURCE_V2)
 
         assert self._rows() == [(_KEEP, 3)]
+
+    def test_a_sync_leaves_a_nested_projects_rows_alone(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Negative: `svc.v2` is a project of its own; svc's sync must not
+        # read its rows as svc's stale ones.
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        projects = (_PROJECT, f"{_PROJECT}.v2")
+        _sync(repo, ingestor, {30: nested}, project=f"{_PROJECT}.v2", projects=projects)
+
+        _sync(repo, ingestor, {1: _KEEP, 30: nested}, projects=projects)
+        _sync(repo, ingestor, {3: _KEEP, 30: nested}, projects=projects)
+
+        assert self._rows() == [(_KEEP, 3), (nested, 30)]
 
     def test_a_name_that_only_matches_as_a_pattern_is_not_this_project(
         self, repo: Path, ingestor: MagicMock

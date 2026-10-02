@@ -65,7 +65,7 @@ from codebase_rag.types_defs import (
     StructuralReplaceChange,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
-from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.path_utils import derive_project_name, nested_project_names
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
@@ -1181,9 +1181,16 @@ class MCPToolsRegistry:
                 result.append(node_id)
         return result
 
+    def _nested_projects(self, project_name: str) -> list[str]:
+        # A project nested under this one (`svc.v2` under `svc`) keeps its
+        # vectors, which the prefix-scoped node-id read also names.
+        return nested_project_names(project_name, self.ingestor.list_projects())
+
     def _cleanup_project_embeddings(self, project_name: str) -> None:
         node_ids = self._get_project_node_ids(project_name)
-        delete_project_embeddings(project_name, node_ids)
+        delete_project_embeddings(
+            project_name, node_ids, self._nested_projects(project_name)
+        )
 
     def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
         projects = self.ingestor.list_projects()
@@ -1701,12 +1708,13 @@ class MCPToolsRegistry:
         """
         try:
             node_ids = self._get_project_node_ids(project_name)
+            nested = self._nested_projects(project_name)
         except Exception:
             self._abandon_before_writing(project_name)
             raise
         if (refusal := self._require_writing(project_name)) is not None:
             raise RuntimeError(refusal)
-        delete_project_embeddings(project_name, node_ids)
+        delete_project_embeddings(project_name, node_ids, nested)
 
     def _invalidate_graph_for(self, project_name: str) -> None:
         """Raise the incomplete flag and attribute it to `project_name`.

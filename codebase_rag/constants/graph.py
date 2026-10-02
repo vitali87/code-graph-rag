@@ -708,6 +708,7 @@ EMBEDDING_POINT_ID_NAMESPACE = "4c6a2f1e-8d3b-5e7a-9f10-2b6c8d4e0a17"
 QN_PREFIX_RANGE_END = "/"
 MILVUS_PREFIX_RANGE_EXPR = "{field} >= {low} and {field} < {high}"
 MILVUS_STALE_ROWS_EXPR = "({scope}) and not ({field} in {ids})"
+MILVUS_EXCLUDE_EXPR = "({scope}) and not ({excluded})"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 

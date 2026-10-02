@@ -4,7 +4,7 @@ import atexit
 import json
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Required, TypedDict, cast
@@ -67,6 +67,16 @@ def _nodes_by_point(
 
 def _in_project(qualified_name: str, project_name: str) -> bool:
     return qualified_name.startswith(project_name + cs.SEPARATOR_DOT)
+
+
+def _owned_by(
+    qualified_name: str, project_name: str, nested_projects: Sequence[str]
+) -> bool:
+    # `svc.` also prefixes `svc.v2`'s symbols; the longest registered name a
+    # symbol sits under owns it, as GraphUpdater._owns decides (issue #1970).
+    return _in_project(qualified_name, project_name) and not any(
+        _in_project(qualified_name, nested) for nested in nested_projects
+    )
 
 
 def _filter_by_project(
@@ -133,11 +143,18 @@ class VectorStore(Protocol):
     ) -> int: ...
 
     def delete_project_embeddings(
-        self, project_name: str, node_ids: Sequence[int]
+        self,
+        project_name: str,
+        node_ids: Sequence[int],
+        nested_projects: Sequence[str] = (),
     ) -> None: ...
 
     def delete_stale_embeddings(
-        self, project_name: str, current: Mapping[int, str]
+        self,
+        project_name: str,
+        current: Mapping[int, str],
+        stored: Collection[int] = frozenset(),
+        nested_projects: Sequence[str] = (),
     ) -> int: ...
 
     def clear_all_embeddings(self) -> None: ...
@@ -528,11 +545,13 @@ def _qdrant_keyed_points(project_name: str) -> Iterator[Record]:
     return _qdrant_scroll(project, [PAYLOAD_NODE_ID])
 
 
-def _qdrant_legacy_point_ids(project_name: str) -> list[PointId]:
-    """The project's points written before issue #2447, keyed by node id.
+def _qdrant_legacy_points(project_name: str) -> list[Record]:
+    """The points under the project's prefix written before issue #2447,
+    keyed by node id.
 
-    They carry no project, so the project's are told by the qualified-name
-    prefix, as a project-scoped search tells them.
+    They carry no project, so they are told by the qualified-name prefix, as
+    a project-scoped search tells them; a project nested under this one owns
+    some of them, which the callers sort out.
     """
     from qdrant_client import models
 
@@ -544,16 +563,29 @@ def _qdrant_legacy_point_ids(project_name: str) -> list[PointId]:
         ]
     )
     return [
-        point.id
-        for point in _qdrant_scroll(unowned, [PAYLOAD_QUALIFIED_NAME])
-        if isinstance(
-            qualified_name := (point.payload or {}).get(PAYLOAD_QUALIFIED_NAME), str
-        )
-        and _in_project(qualified_name, project_name)
+        point
+        for point in _qdrant_scroll(unowned, [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME])
+        if _in_project(_payload_qualified_name(point), project_name)
     ]
 
 
-class QdrantVectorStore:
+def _payload_qualified_name(point: Record) -> str:
+    qualified_name = (point.payload or {}).get(PAYLOAD_QUALIFIED_NAME)
+    return qualified_name if isinstance(qualified_name, str) else ""
+
+
+def _legacy_point_superseded(
+    point: Record, current: Mapping[int, str], stored: Collection[int]
+) -> bool:
+    # A node-id keyed point goes once its symbol's new point is stored, or
+    # when it no longer names its symbol's current node. One whose new point
+    # failed to store still answers for the right node, so it stays until a
+    # sync stores the replacement.
+    node_id = (point.payload or {}).get(PAYLOAD_NODE_ID)
+    return node_id in stored or current.get(node_id) != _payload_qualified_name(point)
+
+
+class QdrantVectorStore(VectorStore):
     backend = VectorStoreBackend.QDRANT
 
     def store_embedding_batch(
@@ -576,11 +608,16 @@ class QdrantVectorStore:
         return _store_batch(point_structs, lambda: _upsert_with_retry(point_structs))
 
     def delete_project_embeddings(
-        self, project_name: str, node_ids: Sequence[int]
+        self,
+        project_name: str,
+        node_ids: Sequence[int],
+        nested_projects: Sequence[str] = (),
     ) -> None:
         # The node ids key only the points written before issue #2447, and
         # only those of nodes the graph still holds; the project's own points
-        # are found in the store, whatever node they last named.
+        # are found in the store, whatever node they last named. A project
+        # nested under this one keeps its old points, which the node ids of
+        # the prefix-scoped graph read name too.
         def _delete(ids: list[PointId]) -> None:
             get_qdrant_client().delete(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
@@ -589,7 +626,7 @@ class QdrantVectorStore:
 
         try:
             found = [p.id for p in _qdrant_keyed_points(project_name)]
-            found += _qdrant_legacy_point_ids(project_name)
+            legacy = _qdrant_legacy_points(project_name)
         except Exception as e:
             logger.warning(
                 ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
@@ -597,22 +634,34 @@ class QdrantVectorStore:
                 )
             )
             return
-        ids = list(dict.fromkeys([*node_ids, *found]))
+        kept: set[PointId] = set()
+        for point in legacy:
+            if _owned_by(_payload_qualified_name(point), project_name, nested_projects):
+                found.append(point.id)
+            else:
+                kept.add(point.id)
+        owned_ids = [node_id for node_id in node_ids if node_id not in kept]
+        ids = list(dict.fromkeys([*owned_ids, *found]))
         _delete_scoped_embeddings(self.backend, project_name, ids, _delete)
 
     def delete_stale_embeddings(
-        self, project_name: str, current: Mapping[int, str]
+        self,
+        project_name: str,
+        current: Mapping[int, str],
+        stored: Collection[int] = frozenset(),
+        nested_projects: Sequence[str] = (),
     ) -> int:
         """Delete the project's points that no longer match `current`.
 
         `current` maps every function and method the graph holds for the
         project to its qualified name. A point goes when its symbol is gone,
         or when it still names a node the symbol has since left, which
-        Memgraph may give to an unrelated node later. Points written before
-        issue #2447 all go too: the sync that calls this has just written
-        their symbols' points under the new keys. They are logged apart and
-        left out of the returned count of stale points, since they are the
-        one-off move to the new keys rather than drift.
+        Memgraph may give to an unrelated node later. A point written before
+        issue #2447 goes once the node in `stored` it names has its point
+        under the new key, or as soon as it is stale; one a project in
+        `nested_projects` owns is left for that project's sync. They are
+        logged apart and left out of the returned count of stale points,
+        since they are the one-off move to the new keys rather than drift.
         """
         expected = _nodes_by_point(project_name, current)
         stale: list[PointId] = [
@@ -621,7 +670,12 @@ class QdrantVectorStore:
             if (point.payload or {}).get(PAYLOAD_NODE_ID)
             not in expected.get(str(point.id), set())
         ]
-        legacy = _qdrant_legacy_point_ids(project_name)
+        legacy = [
+            point.id
+            for point in _qdrant_legacy_points(project_name)
+            if _owned_by(_payload_qualified_name(point), project_name, nested_projects)
+            and _legacy_point_superseded(point, current, stored)
+        ]
         doomed = stale + legacy
         if doomed:
             get_qdrant_client().delete(
@@ -729,6 +783,17 @@ def _milvus_project_scope(project_name: str) -> str:
     )
 
 
+def _milvus_owned_scope(project_name: str, nested_projects: Sequence[str]) -> str:
+    # The project's prefix range less each nested project's, which `svc.`'s
+    # range also covers.
+    scope = _milvus_project_scope(project_name)
+    for nested in nested_projects:
+        scope = cs.MILVUS_EXCLUDE_EXPR.format(
+            scope=scope, excluded=_milvus_project_scope(nested)
+        )
+    return scope
+
+
 def _milvus_deleted_count(result: dict[str, int] | list[int]) -> int:
     if isinstance(result, dict):
         count = result.get(cs.MILVUS_DELETE_COUNT_KEY)
@@ -736,7 +801,7 @@ def _milvus_deleted_count(result: dict[str, int] | list[int]) -> int:
     return len(result) if isinstance(result, list) else 0
 
 
-class MilvusVectorStore:
+class MilvusVectorStore(VectorStore):
     backend = VectorStoreBackend.MILVUS
 
     def store_embedding_batch(
@@ -765,8 +830,12 @@ class MilvusVectorStore:
         return _store_batch(rows, _upsert)
 
     def delete_project_embeddings(
-        self, project_name: str, node_ids: Sequence[int]
+        self,
+        project_name: str,
+        node_ids: Sequence[int],
+        nested_projects: Sequence[str] = (),
     ) -> None:
+        # Rows are keyed by node id alone, so the graph's node ids name them.
         def _delete(ids: list[PointId]) -> None:
             get_milvus_client().delete(
                 collection_name=settings.MILVUS_COLLECTION_NAME,
@@ -776,15 +845,21 @@ class MilvusVectorStore:
         _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def delete_stale_embeddings(
-        self, project_name: str, current: Mapping[int, str]
+        self,
+        project_name: str,
+        current: Mapping[int, str],
+        stored: Collection[int] = frozenset(),
+        nested_projects: Sequence[str] = (),
     ) -> int:
         """Delete the project's rows whose node is not in `current`.
 
         A re-parse re-creates a file's nodes under new ids, and the rows of
         the old ones would otherwise stay beside the new rows (issue #2447).
+        Rows keep their node-id key, so there is no move to new keys to wait
+        on `stored` for; a project in `nested_projects` keeps its rows.
         """
         stale = cs.MILVUS_STALE_ROWS_EXPR.format(
-            scope=_milvus_project_scope(project_name),
+            scope=_milvus_owned_scope(project_name, nested_projects),
             field=PAYLOAD_NODE_ID,
             ids=sorted(current),
         )
@@ -947,11 +1022,13 @@ def store_embedding_batch(
     return vector_store.store_embedding_batch(project_name, points)
 
 
-def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> None:
+def delete_project_embeddings(
+    project_name: str, node_ids: Sequence[int], nested_projects: Sequence[str] = ()
+) -> None:
     vector_store = _get_vector_store()
     if vector_store is None:
         return
-    vector_store.delete_project_embeddings(project_name, node_ids)
+    vector_store.delete_project_embeddings(project_name, node_ids, nested_projects)
 
 
 def clear_all_embeddings() -> None:
@@ -961,11 +1038,18 @@ def clear_all_embeddings() -> None:
     vector_store.clear_all_embeddings()
 
 
-def delete_stale_embeddings(project_name: str, current: Mapping[int, str]) -> int:
+def delete_stale_embeddings(
+    project_name: str,
+    current: Mapping[int, str],
+    stored: Collection[int] = frozenset(),
+    nested_projects: Sequence[str] = (),
+) -> int:
     vector_store = _get_vector_store()
     if vector_store is None:
         return 0
-    return vector_store.delete_stale_embeddings(project_name, current)
+    return vector_store.delete_stale_embeddings(
+        project_name, current, stored, nested_projects
+    )
 
 
 def verify_stored_ids(project_name: str, expected: Mapping[int, str]) -> set[int]:
