@@ -23,10 +23,17 @@ time rather than at import -- quieter still. The templates in THIS file are
 applies there.)
 """
 
+import re
+from collections.abc import Iterable
+
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
     DEFINITION_NODE_LABELS,
+    KEY_FROM_MISSING,
+    KEY_FROM_VAL,
+    KEY_TO_MISSING,
+    KEY_TO_VAL,
     SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
@@ -40,8 +47,11 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 # count instead of `WHERE NOT (n)--()`: Memgraph 3.x rejects pattern
 # expressions inside WHERE, and this form is accepted by both 2.x and 3.x
 # (issue #1257).
+# `:IncompleteRun` is the CLI's own sync marker, unattached to any project
+# tree on purpose (see CYPHER_MARK_PROJECT_INCOMPLETE); doctor reports it as
+# an interrupted sync, not as an orphan (issue #2394).
 CYPHER_AUDIT_ORPHANS = (
-    "MATCH (n) WHERE NOT n:Project "
+    "MATCH (n) WHERE NOT n:Project AND NOT n:IncompleteRun "
     "OPTIONAL MATCH (n)--(x) "
     "WITH n, count(x) AS degree "
     "WHERE degree = 0 "
@@ -306,6 +316,39 @@ MATCH (a)-[r]->(b)
 RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 
+# What a project owns is what deleting it removes: its containment tree and
+# everything the containers define (the walk of CYPHER_DELETE_PROJECT). Walking
+# from the Project node rather than matching a qualified-name prefix keeps
+# `foo.bar`'s nodes out of `foo`, and takes File and Folder nodes, which have
+# no qualified name. `cgr stats -n` (#2391) counts the same set.
+_CYPHER_PROJECT_OWNED_NODES = """
+MATCH (p:Project) WHERE p.name IN $project_names
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT n
+"""
+# A project's export is what it owns, the relationships that start there, and
+# the nodes those relationships reach (a shared ExternalModule, another
+# project's callee), so every relationship in the file has both of its ends
+# in it (issue #2410).
+CYPHER_EXPORT_PROJECT_NODES = (
+    _CYPHER_PROJECT_OWNED_NODES
+    + """OPTIONAL MATCH (n)-->(reached)
+WITH collect(DISTINCT n) + collect(DISTINCT reached) AS exported
+UNWIND exported AS node
+WITH DISTINCT node
+RETURN id(node) as node_id, labels(node) as labels, properties(node) as properties
+"""
+)
+CYPHER_EXPORT_PROJECT_RELATIONSHIPS = (
+    _CYPHER_PROJECT_OWNED_NODES
+    + """MATCH (n)-[r]->(b)
+RETURN id(n) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+"""
+)
+
 CYPHER_RETURN_COUNT = "RETURN count(r) as created"
 CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
 
@@ -397,6 +440,53 @@ WHERE a.qualified_name STARTS WITH $prefix
 RETURN a.qualified_name AS from_qn, b.qualified_name AS to_qn
 """
 
+# Trace-derived CALLS edges touching the files a sync is about to delete and
+# re-parse (issue #2429). An observation lives only in the graph, so it is
+# read here, before the subtrees go, and re-applied by qualified name once
+# the re-parse has rebuilt the static edges. Both directions: an edge out of
+# a re-parsed file dies with its caller's subtree, and one into it records
+# an observation of the callee as it was when traced. The endpoints'
+# `anchor_hash` rides along so the carry can tell which definitions changed.
+# Anchored on the nodes at the paths rather than on every CALLS edge: this
+# runs on every incremental sync, and most syncs touch a handful of files.
+CYPHER_TRACE_EDGES_AT_PATHS = """
+MATCH (n)-[r:CALLS]-()
+WHERE n.path IN $paths
+  AND n.qualified_name STARTS WITH $prefix
+  AND r.dynamic = true
+WITH DISTINCT r
+WITH r, startNode(r) AS a, endNode(r) AS b
+WHERE a.qualified_name STARTS WITH $prefix
+  AND b.qualified_name STARTS WITH $prefix
+RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
+       a.path AS from_path, a.anchor_hash AS from_hash,
+       labels(b)[0] AS to_label, b.qualified_name AS to_qn,
+       b.path AS to_path, b.anchor_hash AS to_hash,
+       properties(r) AS props
+"""
+
+# The re-parsed endpoints of the captured trace edges, in the shape
+# CYPHER_TRACE_CALLABLES returns plus the new `anchor_hash`. A name that
+# comes back missing is a definition the edit removed or renamed.
+CYPHER_TRACE_CARRY_ENDPOINTS = """
+MATCH (n)
+WHERE (n:Function OR n:Method OR n:Module)
+  AND n.qualified_name IN $qns
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
+       n.anchor_hash AS anchor_hash
+"""
+
+# CYPHER_TRACE_EXISTING_CALLS narrowed to the carried edges' endpoints, so a
+# sync reads the static edges it may confirm rather than the whole project's.
+CYPHER_TRACE_CARRY_STATIC_PAIRS = """
+MATCH (a)-[r:CALLS]->(b)
+WHERE a.qualified_name IN $from_qns
+  AND b.qualified_name IN $to_qns
+  AND coalesce(r.static_missed, false) = false
+RETURN DISTINCT a.qualified_name AS from_qn, b.qualified_name AS to_qn
+"""
+
 
 CYPHER_STATS_NODE_COUNTS = """
 MATCH (n)
@@ -408,6 +498,48 @@ CYPHER_STATS_RELATIONSHIP_COUNTS = """
 MATCH ()-[r]->()
 RETURN type(r) AS type, count(*) AS count
 ORDER BY count DESC
+"""
+
+# What a project owns is what deleting it removes: its containment tree and
+# everything the containers define (the same walk as CYPHER_DELETE_PROJECT).
+# That covers File and Folder nodes, which have no qualified name to match a
+# prefix against, and leaves out shared nodes (ExternalPackage, Resource)
+# another project may hold too. Relationships count when they START at an
+# owned node (issue #2391).
+_CYPHER_STATS_OWNED_NODES = """
+MATCH (p:Project) WHERE p.name IN $project_names
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT n
+"""
+CYPHER_STATS_PROJECT_NODE_COUNTS = (
+    _CYPHER_STATS_OWNED_NODES
+    + """RETURN labels(n) AS labels, count(*) AS count
+ORDER BY count DESC
+"""
+)
+CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS = (
+    _CYPHER_STATS_OWNED_NODES
+    + """MATCH (n)-[r]->()
+RETURN type(r) AS type, count(r) AS count
+ORDER BY count DESC
+"""
+)
+# One row per project, so unscoped totals over a shared graph can be
+# attributed; the same ownership walk as above, grouped by project.
+CYPHER_STATS_PER_PROJECT = """
+MATCH (p:Project)
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH p, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT p, n
+OPTIONAL MATCH (n)-[r]->()
+WITH p, n, count(r) AS outgoing
+RETURN p.name AS project, count(n) AS nodes, sum(outgoing) AS relationships
+ORDER BY project
 """
 
 
@@ -503,6 +635,31 @@ def build_merge_node_query(label: str, id_key: str) -> str:
     return f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
 
 
+def build_node_props_query(label: str, id_key: str) -> str:
+    """One node's full property map, addressed by its unique key."""
+    return f"MATCH (n:{label} {{{id_key}: $id}}) RETURN properties(n) AS props"
+
+
+# ASCII-only: `\w` alone would also accept non-ASCII letters and digits.
+_PROPERTY_KEY = re.compile(r"[A-Za-z_]\w*", re.ASCII)
+
+
+def build_remove_node_keys_query(label: str, id_key: str, keys: Iterable[str]) -> str:
+    """Remove the named properties from one node.
+
+    The batch merge adds and overwrites keys but never removes one, so it
+    cannot undo a property a later write added; the isolated check's restore
+    removes those by name (#1718). Cypher takes no parameter for a property
+    NAME, so each one is checked to be a plain identifier and backquoted.
+    """
+    names = sorted(keys)
+    for name in names:
+        if not _PROPERTY_KEY.fullmatch(name):
+            raise ValueError(f"not a property name: {name!r}")
+    removals = ", ".join(f"n.`{name}`" for name in names)
+    return f"MATCH (n:{label} {{{id_key}: $id}}) REMOVE {removals}"
+
+
 def build_merge_relationship_query(
     from_label: str,
     from_key: str,
@@ -549,6 +706,25 @@ def build_create_relationship_query(
     return query
 
 
+def build_missing_rel_endpoints_query(
+    from_label: str, from_key: str, to_label: str, to_key: str, limit: int
+) -> str:
+    """The rows of a relationship batch that have an endpoint node missing.
+
+    The write MATCHes both endpoints and returns only how many rows it wrote,
+    so this read over the same batch is what names the rows it lost and which
+    end of each was absent (issue #2438).
+    """
+    return (
+        f"OPTIONAL MATCH (a:{from_label} {{{from_key}: row.from_val}})\n"
+        f"OPTIONAL MATCH (b:{to_label} {{{to_key}: row.to_val}})\n"
+        "WITH row, a, b WHERE a IS NULL OR b IS NULL\n"
+        f"RETURN row.from_val AS {KEY_FROM_VAL}, row.to_val AS {KEY_TO_VAL}, "
+        f"a IS NULL AS {KEY_FROM_MISSING}, b IS NULL AS {KEY_TO_MISSING}\n"
+        f"LIMIT {limit}"
+    )
+
+
 # Deterministic graph queries for agents (issue #1523). All project-scoped
 # through $project_prefix; walks of depth > 1 run client-side in
 # codebase_rag/graph_query.py so each query stays linear.
@@ -562,6 +738,15 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.name AS name, n.namespace AS namespace"""
+# Every definition registered under one natural name: the name itself and
+# its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
+# tell a property's getter, setter and deleter apart (issue #1808).
+CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.decorators AS decorators"""
 CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
@@ -814,19 +999,34 @@ WITH g, count(subject) AS subjects
 WHERE subjects = 0
 OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
 RETURN {_GLOSS_ROW}"""
+# The same, for a definition and its `name@<line>` variants: a note filed
+# through a descriptor (`x#setter`) sits on a variant, so the literal target
+# names nothing once the member is gone (issue #1808).
+CYPHER_GLOSSES_ORPHANED_UNDER = f"""MATCH (g:{_GLOSS})
+WHERE (g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix))
+  AND (g.target_qn = $qn OR g.target_qn STARTS WITH $variant_prefix)
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
 # One row per call SITE (edges carry the site from issue #1522).
+# A call site sits in its caller's body, so both reads take `path` from the
+# caller: that is the file `line`/`col` index into, whichever endpoint the
+# row names. The callee's own file is `callee_path` (issue #2460).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
 RETURN labels(caller)[0] AS label, caller.qualified_name AS qualified_name,
-       caller.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
-       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.resolution AS resolution"""
+       caller.path AS path, callee.path AS callee_path, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.arg_count AS arg_count,
+       r.kwarg_names AS kwarg_names, r.resolution AS resolution"""
 CYPHER_GRAPH_CALLEES = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name = $qn AND callee.qualified_name STARTS WITH $project_prefix
 RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
-       callee.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
-       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.resolution AS resolution"""
+       caller.path AS path, callee.path AS callee_path, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.arg_count AS arg_count,
+       r.kwarg_names AS kwarg_names, r.resolution AS resolution"""
 # Cross-service edges as reads (issue #1603). The writers (`EXPOSES` from a
 # handler to its ENDPOINT/RPC/DISPATCH resource, `RESOLVES_TO` from a client
 # NETWORK resource to the endpoint, `READS_FROM`/`WRITES_TO` from a call site
@@ -939,6 +1139,25 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
+# The blast radius of a signature change crosses services (issue #1603): a
+# changed handler's endpoint is reached by call sites in OTHER projects,
+# through a NETWORK resource that RESOLVES_TO it, or directly for the RPC and
+# dispatch kinds. A caller inside the handler's own project is a local
+# site, whatever route it takes, and is excluded (bot review on PR #1978).
+CYPHER_DELTA_REMOTE_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name IN $qns
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource {kind: 'NETWORK'})-[:RESOLVES_TO]->(e)
+WHERE NOT c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT h.qualified_name AS handler, e.name AS endpoint,
+       labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url"""
+CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name IN $qns AND e.kind IN ['RPC', 'DISPATCH']
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(e)
+WHERE NOT c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT h.qualified_name AS handler, e.name AS endpoint,
+       labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       e.name AS url"""
 CYPHER_DELTA_CALLERS_OF = """MATCH (a)-[:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -979,11 +1198,125 @@ WHERE m.qualified_name STARTS WITH $project_prefix
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn"""
+# Context slice reads (issue #1536): trace hotness of the callers of one
+# symbol, the types it returns and accepts, and the sections of the
+# documents whose links point at its file.
+CYPHER_CONTEXT_HOTNESS = """MATCH (caller)-[r:CALLS]->(callee)
+WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
+  AND r.dynamic_call_count IS NOT NULL
+RETURN caller.qualified_name AS qualified_name, r.dynamic_call_count AS dynamic_call_count"""
+CYPHER_CONTEXT_TYPES = """MATCH (n)-[r:RETURNS|ACCEPTS]->(t)
+WHERE n.qualified_name = $qn AND t.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT type(r) AS rel_type, t.qualified_name AS qualified_name, t.path AS path,
+       t.start_line AS start_line, t.end_line AS end_line"""
+CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (doc:Module)-[:LINKS_TO]->(f:File {absolute_path: $absolute_path})
+MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
+WHERE doc.qualified_name STARTS WITH $project_prefix
+RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
+       s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
        r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
        r.alias AS alias, r.imported_name AS imported_name"""
+
+# Isolated check (issue #1718): the subgraph a scoped re-ingest is about to
+# replace, read in full so it can be put back afterwards. The scope is the
+# module subtrees at the re-parsed paths, walked exactly as
+# `CYPHER_DELETE_MODULE` walks them so the capture equals the delete -- the
+# relation list must be kept in step with that query's, or the re-ingest
+# deletes nodes the capture never saw and the restore cannot put them back
+# (HAS_FIELD was added to the delete by #1899 and missed here: CodeRabbit;
+# HAS_VARIANT likewise by #1807, and a test now pins the two lists equal),
+# plus
+# the File nodes at those paths and the containers above them (a package
+# indicator appearing or vanishing flips the directory's node kind).
+_CHECK_SCOPE = f"""MATCH (n)
+WHERE (n:{NodeLabel.MODULE.value} AND n.path IN $paths
+       AND (n.qualified_name = $project_name
+            OR n.qualified_name STARTS WITH $project_prefix))
+   OR ((n:{NodeLabel.FILE.value} OR n:{NodeLabel.FOLDER.value}
+        OR n:{NodeLabel.PACKAGE.value}) AND n.absolute_path IN $absolute_paths)
+MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*0..]->(c)
+WITH DISTINCT c"""
+CYPHER_CHECK_SCOPE_NODES = f"""{_CHECK_SCOPE}
+RETURN labels(c)[0] AS label, properties(c) AS props"""
+# Every relationship with at least one end in the scope, either direction,
+# with each end addressed by the three key fields the batch writer can key
+# a node on (the label decides which one applies). The far end's properties
+# come along only for the labels the check can prune, re-grade or rewrite:
+# an ExternalModule a new import created, a Resource an endpoint anchored, a
+# Gloss whose anchor the re-parse re-graded, and a finding whose qualified
+# name (file, line, column, rule) survives the re-parse while its snippet
+# and span move with the edited source -- that node is not deleted by the
+# cleanup, so only its captured properties can put it back (#1718).
+CYPHER_CHECK_SCOPE_EDGES = f"""{_CHECK_SCOPE}
+MATCH (c)-[r]-(x)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
+       c.absolute_path AS absolute_path, c.name AS name,
+       type(r) AS rel, startNode(r) = c AS outgoing, properties(r) AS props,
+       labels(x)[0] AS far_label, x.qualified_name AS far_qualified_name,
+       x.absolute_path AS far_absolute_path, x.name AS far_name,
+       CASE WHEN x:{NodeLabel.EXTERNAL_MODULE.value} OR x:{NodeLabel.RESOURCE.value}
+            OR x:{_GLOSS} OR x:{NodeLabel.CODE_SMELL.value}
+            OR x:{NodeLabel.SECURITY_ISSUE.value} OR x:{NodeLabel.PATTERN.value}
+            THEN properties(x) END AS far_props"""
+# Findings hang off a Module without being DEFINED by it, keyed on their
+# file, line, column and rule: the ones at the scope's paths that the
+# capture did not see were written by the check itself. Project-scoped for
+# the reason CYPHER_DELETE_MODULE is: `$paths` are repo-relative, two
+# projects in the shared graph can hold the same relative path, and a
+# path-only match would take the sibling project's findings with it
+# (greptile-local, #1718). A finding's qualified name starts with its
+# module qn, so the prefix test applies unchanged.
+CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLabel.SECURITY_ISSUE.value}|{NodeLabel.PATTERN.value})
+WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
+  AND (n.qualified_name = $project_name
+       OR n.qualified_name STARTS WITH $project_prefix)
+DETACH DELETE n"""
+
+# Every shared node (ExternalModule, Resource) with its properties and
+# inbound-edge count, snapshotted before the isolated check writes (#1718).
+# Three uses, one scan:
+# - the ones with no inbound edge are the orphans `reingest` itself sweeps
+#   repo-wide (CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES), so the restore puts
+#   those back;
+# - a shared node the scope reaches after the check but absent here was
+#   created by the check, and only those are deleted -- "newly reachable" is
+#   not "newly created": a pre-existing node another project imports
+#   becomes reachable the moment the check adds the same import (bot
+#   review);
+# - a pre-existing one the check re-emitted gets these properties back
+#   verbatim, since a re-parse merges its own (an ExternalModule's `path` is
+#   the importing name, not a function of the key).
+# The scan is graph-wide because the sweeps it answers to are. The OPTIONAL
+# MATCH + count rewrite, not `NOT ()-->(n)`: a pattern expression in a WHERE
+# clause is not portable to Memgraph 3, and
+# `test_no_pattern_expressions_in_where_clauses` enforces that repo-wide.
+CYPHER_CHECK_SHARED_NODES = f"""MATCH (n)
+WHERE n:{NodeLabel.EXTERNAL_MODULE.value} OR n:{NodeLabel.RESOURCE.value}
+OPTIONAL MATCH (x)-->(n)
+WITH n, count(x) AS inbound
+RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
+
+# Whether the graph already holds any IO resource link (FLOWS_TO,
+# RESOLVES_TO). An isolated check refuses on one: deleting a changed file's
+# subtree can leave a resource chain unanchored, and the re-ingest's
+# repo-wide `prune_unanchored_resources` would delete it, chain edges and all,
+# beyond what the capture holds (bot review, #1718). A typed pattern with
+# LIMIT 1 stops at the first such edge instead of scanning every relationship.
+CYPHER_CHECK_GRAPH_IO_LINKS = """MATCH ()-[r:FLOWS_TO|RESOLVES_TO]->()
+RETURN type(r) AS rel
+LIMIT 1"""
+
+# The shared nodes the isolated check created, by label and qualified name: the ones the scope reaches that the snapshot above did not hold.
+# Addressed by key rather than by an orphan sweep, so a pre-existing orphan
+# elsewhere in the graph -- which this check never touched -- stays (#1718).
+# Two parallel lists rather than pairs, so the parameters stay flat.
+CYPHER_CHECK_DELETE_SHARED_NODES = """UNWIND range(0, size($labels) - 1) AS i
+MATCH (n)
+WHERE head(labels(n)) = $labels[i] AND n.qualified_name = $qualified_names[i]
+DETACH DELETE n"""
 
 # Trace write-back (issue #1526): a static edge the runtime observed is
 # upgraded in place, on every site it has, so the upgrade never creates a
