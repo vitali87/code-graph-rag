@@ -155,7 +155,7 @@ Which parts of the schema above an index writes is chosen per capture group. Eve
 
 ### Choosing Groups
 
-Every indexing run reads the selection from the `CGR_CAPTURE` environment variable, whose tokens are separated by commas, semicolons or spaces. `cgr start --update-graph` and `cgr index` also take `--capture`, one token per flag and repeatable, applied after `CGR_CAPTURE`. Tokens apply left to right, starting from the default groups:
+Every indexing run reads the selection from the `CGR_CAPTURE` environment variable, whose tokens are separated by commas, semicolons or spaces. `cgr start --update-graph` and `cgr index` also take `--capture`, repeatable and comma-separated (`--capture none,structure`), applied after `CGR_CAPTURE`. Tokens apply left to right, starting from the default groups:
 
 | Token | Effect |
 |-------|--------|
@@ -166,7 +166,7 @@ Every indexing run reads the selection from the `CGR_CAPTURE` environment variab
 | `all` | Enable every group. |
 | `none` | Disable every group, so the tokens after it build the selection from nothing. |
 
-Names are case-insensitive. A name that is both a group and a relationship type is read as the group, so `-calls` and `-CALLS` both drop `CALLS`, `REFERENCES` and `INSTANTIATES`. Node labels are not tokens: `+Parameter` is not recognised, while the group `parameters` is. A token that names neither a group nor a relationship type is skipped with the warning `Ignoring unknown capture token`, and the rest of the selection still applies.
+Names are case-insensitive. A name that is both a group and a relationship type is read as the group, so `-calls` and `-CALLS` both drop `CALLS`, `REFERENCES` and `INSTANTIATES`. Node labels are not tokens: `+Parameter` is not recognised, while the group `parameters` is. A bare group is added to what is already enabled, so naming a default group changes nothing and logs a warning saying so; put `none` first to capture only that group. A `--capture` token that names neither a group nor a relationship type is a usage error, and the command stops before indexing anything. In `CGR_CAPTURE`, which long-running servers also read, such a token is skipped with the warning `Ignoring unknown capture token`, and the rest of the selection still applies.
 
 ```bash
 # The defaults plus Parameter and Field nodes
