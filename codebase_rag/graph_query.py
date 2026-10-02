@@ -9,7 +9,9 @@ sorted, so the same graph always yields the same JSON (issue #1523).
 `callers` and `callees` return one row per call SITE: the CALLS edges carry
 the site location from issue #1522, so an agent can jump to, check, or
 rewrite each call. Edges written without a site (libclang macro uses,
-Roslyn facts, trace write-back) return `null` positions.
+Roslyn facts, trace write-back) return `null` positions. In both directions
+`path` is the file the site sits in (its caller's), so `path:line` is always
+the call; `callee_path` is where the invoked symbol is defined (issue #2460).
 """
 
 from __future__ import annotations
@@ -102,6 +104,7 @@ class CallSiteRow(TypedDict):
     label: str
     qualified_name: str
     path: str | None
+    callee_path: str | None
     line: int | None
     col: int | None
     end_line: int | None
@@ -383,6 +386,7 @@ def _site_row(row: ResultRow, depth: int, through: str) -> CallSiteRow:
         label=str(row.get(cs.KEY_LABEL, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
         path=_opt_str(row.get(cs.KEY_PATH)),
+        callee_path=_opt_str(row.get(cs.KEY_CALLEE_PATH)),
         line=_opt_int(row.get(cs.KEY_LINE)),
         col=_opt_int(row.get(cs.KEY_COL)),
         end_line=_opt_int(row.get(cs.KEY_END_LINE)),
@@ -456,7 +460,11 @@ def callers(
 def callees(
     fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
 ) -> list[CallSiteRow]:
-    """Call sites inside `qualified_name`, one row per site (`through` = caller)."""
+    """Call sites inside `qualified_name`, one row per site (`through` = caller).
+
+    `path` is `through`'s file, where the site is, not the callee's: that
+    one is `callee_path`, so a hop past depth 1 still reads as `path:line`.
+    """
     return _walk_sites(
         fetch_all, project_name, cq.CYPHER_GRAPH_CALLEES, qualified_name, depth
     )
