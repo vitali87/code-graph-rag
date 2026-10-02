@@ -63,6 +63,9 @@ TS_PY_NAMED_EXPRESSION = "named_expression"
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
+# `if TYPE_CHECKING:` and `if typing.TYPE_CHECKING:` guard imports that only a
+# type checker runs (issue #2685).
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_GLOBAL_STATEMENT = "global_statement"
 TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"

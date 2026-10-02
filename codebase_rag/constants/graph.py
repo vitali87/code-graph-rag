@@ -71,6 +71,15 @@ KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
+class ImportScope(StrEnum):
+    """Why an import does not run at module import time: it is inside a
+    function body, which runs when called, or under `if TYPE_CHECKING:`,
+    which never runs. Only module-time imports can make an import cycle."""
+
+    FUNCTION = "function"
+    TYPE_CHECKING_BLOCK = "type_checking"
+
+
 class EdgeResolution(StrEnum):
     """Confidence of a call/reference edge, set where it is emitted.
 
@@ -113,6 +122,9 @@ KEY_CALLEE_PATH = "callee_path"
 # the symbol's own name. A whole-module import has no `imported_name`.
 KEY_ALIAS = "alias"
 KEY_IMPORTED_NAME = "imported_name"
+# On an IMPORTS edge whose statement does not run when its module is imported
+# (issue #2685); absent on one that does. Values are `ImportScope`.
+KEY_IMPORT_SCOPE = "import_scope"
 # `imported_name` of a wildcard import (`from x import *`, `export * from`).
 IMPORTED_NAME_WILDCARD = "*"
 KEY_PATH = "path"

@@ -533,6 +533,41 @@ def _is_conditional_import_node(import_node: Node) -> bool:
     return False
 
 
+def _python_import_scope(import_node: Node) -> cs.ImportScope | None:
+    """Why a Python import does not run when its module is imported, or None
+    when it does.
+
+    A function or lambda body runs when it is called, and an `if
+    TYPE_CHECKING:` body never runs; those imports are how two modules refer
+    to each other without a circular import (issue #2685). A class body, and
+    the `else` of a TYPE_CHECKING test, run at import time.
+    """
+    child = import_node
+    current = import_node.parent
+    while current is not None:
+        if current.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
+            return cs.ImportScope.FUNCTION
+        if (
+            current.type == cs.TS_PY_IF_STATEMENT
+            and child == current.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+            and _is_type_checking_test(
+                current.child_by_field_name(cs.TS_FIELD_CONDITION)
+            )
+        ):
+            return cs.ImportScope.TYPE_CHECKING_BLOCK
+        child = current
+        current = current.parent
+    return None
+
+
+def _is_type_checking_test(condition: Node | None) -> bool:
+    text = safe_decode_text(condition) if condition is not None else None
+    return text is not None and (
+        text == cs.PY_TYPE_CHECKING
+        or text.endswith(cs.SEPARATOR_DOT + cs.PY_TYPE_CHECKING)
+    )
+
+
 def _rust_norm_manifest_path(path: str) -> str:
     # Cargo normalises manifest paths (a ./ prefix, backslashes); the
     # matcher compares against repo-relative posix form, so mirror it.
@@ -2135,6 +2170,18 @@ class ImportProcessor:
                     self.conditional_imports.setdefault(module_qn, set()).update(
                         new_names
                     )
+            self._mark_import_scope(import_node, module_qn)
+
+    def _mark_import_scope(self, import_node: Node, module_qn: str) -> None:
+        """Tag the sites this statement recorded with why it does not run at
+        import time, so the IMPORTS edges they become say so too."""
+        scope = _python_import_scope(import_node)
+        if scope is None:
+            return
+        start = (import_node.start_point[0] + 1, import_node.start_point[1])
+        for site in self._import_sites.get(module_qn, {}).values():
+            if (site.get(cs.KEY_LINE), site.get(cs.KEY_COL)) == start:
+                site[cs.KEY_IMPORT_SCOPE] = scope.value
 
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str

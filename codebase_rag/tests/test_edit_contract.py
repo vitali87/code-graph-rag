@@ -1333,6 +1333,7 @@ def _snapshot(
         sites=(),
         imports={qn: frozenset(t) for qn, t in imports.items()},
         module_paths={qn: f"{qn.replace('.', '/')}.py" for qn in imports},
+        eager_imports={qn: frozenset(t) for qn, t in imports.items()},
     )
 
 
