@@ -10,6 +10,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.notebook import (
     NotebookSkipped,
     NotebookSource,
+    _Cursor,
     notebook_source_text,
     read_notebook,
 )
@@ -92,7 +93,8 @@ def test_outputs_are_skipped_without_being_read() -> None:
 
     text = notebook.source.decode()
     assert "in_output" not in text
-    assert "x = 1" in text and "y = 2" in text
+    assert "x = 1" in text
+    assert "y = 2" in text
 
 
 def test_a_continuation_line_is_not_taken_for_a_magic() -> None:
@@ -200,3 +202,41 @@ def test_whitespace_after_the_document_is_allowed() -> None:
     data = b'{"cells": [], "metadata": {}, "nbformat": 4}\r\n \t\n'
 
     assert read_notebook(data) == NotebookSource(b"", ())
+
+
+@pytest.mark.parametrize(
+    ("data", "token", "end"),
+    [
+        (b"0", b"0", 1),
+        (b"-0", b"-0", 2),
+        (b"12", b"12", 2),
+        (b"1.5", b"1.5", 3),
+        (b"1e5", b"1e5", 3),
+        (b"-2.5E-3", b"-2.5E-3", 7),
+        (b"0.5e+10,", b"0.5e+10", 7),
+        (b"true", b"true", 4),
+        (b"false", b"false", 5),
+        (b"null", b"null", 4),
+        (b" \n4}", b"4", 3),
+        # The grammar stops where JSON's does; what follows is the caller's.
+        (b"01", b"0", 1),
+        (b"-01", b"-0", 2),
+        (b"1.", b"1", 1),
+        (b"1e", b"1", 1),
+        (b"1e+", b"1", 1),
+        (b"nullx", b"null", 4),
+    ],
+)
+def test_a_json_scalar_is_read_where_its_grammar_ends(
+    data: bytes, token: bytes, end: int
+) -> None:
+    cursor = _Cursor(data)
+
+    assert cursor.scalar() == token
+    assert cursor.pos == end
+
+
+@pytest.mark.parametrize("data", [b"nul", b".5", b"+1", b"-", b"True", b"", b'"4"'])
+def test_text_that_starts_no_json_scalar_is_refused(data: bytes) -> None:
+    with pytest.raises(ValueError):
+        _Cursor(data).scalar()

@@ -33,7 +33,8 @@ from .. import constants as cs
 
 _BOM = b"\xef\xbb\xbf"
 _WHITESPACE = re.compile(rb"[ \t\r\n]*")
-_SCALAR = re.compile(rb"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null")
+_NUMBER = re.compile(rb"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?")
+_LITERAL = re.compile(rb"true|false|null")
 _STRUCTURAL = re.compile(rb'["\[\]{}]')
 _NEWLINE = re.compile(r"\r\n|\r|\n")
 _MAGIC_LINE = re.compile(cs.NB_MAGIC_LINE_PATTERN)
@@ -138,7 +139,11 @@ class _Cursor:
     def scalar(self) -> bytes:
         """The JSON text of the number, `true`, `false` or `null` here."""
         self.peek()
-        match = _SCALAR.match(self.data, self.pos)
+        # Tried in turn, as one alternation of the two would try them; no
+        # number starts like a literal, so neither can shadow the other.
+        match = _NUMBER.match(self.data, self.pos) or _LITERAL.match(
+            self.data, self.pos
+        )
         if match is None:
             raise ValueError(self.pos)
         self.pos = match.end()
@@ -352,22 +357,7 @@ def _lay_out(cells: list[_CodeCell]) -> NotebookSource:
 def _python_lines(fragments: list[_Fragment]) -> list[_Fragment]:
     """The cell's lines, each on the file line its text starts on, with
     IPython-only syntax neutralised; empty for a cell that is not Python."""
-    text = "".join(fragment.text for fragment in fragments)
-    starts: list[int] = []
-    offset = 0
-    for fragment in fragments:
-        starts.append(offset)
-        offset += len(fragment.text)
-    lines: list[_Fragment] = []
-    pos = 0
-    for newline in (*_NEWLINE.finditer(text), None):
-        end = newline.start() if newline else len(text)
-        if newline is None and pos == end:
-            break
-        file_line = fragments[bisect_right(starts, pos) - 1].file_line
-        lines.append(_Fragment(file_line, text[pos:end]))
-        if newline is not None:
-            pos = newline.end()
+    lines = _cell_lines(fragments)
     first = next((line.text for line in lines if line.text.strip()), "")
     if (magic := _CELL_MAGIC.match(first)) and (
         magic.group(1) not in cs.NB_PYTHON_BODY_CELL_MAGICS
@@ -384,6 +374,27 @@ def _python_lines(fragments: list[_Fragment]) -> list[_Fragment]:
             still_open.advance(line.text)
             python.append(line)
     return python
+
+
+def _cell_lines(fragments: list[_Fragment]) -> list[_Fragment]:
+    """The cell's lines as written, each on the file line its text starts on."""
+    text = "".join(fragment.text for fragment in fragments)
+    starts: list[int] = []
+    offset = 0
+    for fragment in fragments:
+        starts.append(offset)
+        offset += len(fragment.text)
+    lines: list[_Fragment] = []
+    pos = 0
+    for newline in (*_NEWLINE.finditer(text), None):
+        end = newline.start() if newline else len(text)
+        if newline is None and pos == end:
+            break
+        file_line = fragments[bisect_right(starts, pos) - 1].file_line
+        lines.append(_Fragment(file_line, text[pos:end]))
+        if newline is not None:
+            pos = newline.end()
+    return lines
 
 
 @dataclass
@@ -404,6 +415,17 @@ class _StillOpen:
         return self.string_end is None and self.depth == 0 and not self.backslash
 
     def advance(self, line: str) -> None:
+        if self._ends_in_comment(line):
+            self.backslash = False
+            return
+        continued = line.endswith(_PY_ESCAPE)
+        # A one-quote string ends with its line unless a backslash carries it.
+        if self.string_end is not None and len(self.string_end) == 1:
+            self.string_end = self.string_end if continued else None
+        self.backslash = continued and self.string_end is None
+
+    def _ends_in_comment(self, line: str) -> bool:
+        """Track the line's strings and brackets up to its end or its comment."""
         pos = 0
         while pos < len(line):
             if self.string_end is not None:
@@ -411,23 +433,21 @@ class _StillOpen:
                 continue
             char = line[pos]
             if char == _PY_COMMENT:
-                self.backslash = False
-                return
+                return True
             if char in _PY_QUOTES:
-                triple = char * _TRIPLE_QUOTE_LENGTH
-                self.string_end = triple if line.startswith(triple, pos) else char
-                pos += len(self.string_end)
+                pos = self._open_string(line, pos, char)
                 continue
             if char in _PY_OPEN_BRACKETS:
                 self.depth += 1
             elif char in _PY_CLOSE_BRACKETS:
                 self.depth = max(0, self.depth - 1)
             pos += 1
-        continued = line.endswith(_PY_ESCAPE)
-        # A one-quote string ends with its line unless a backslash carries it.
-        if self.string_end is not None and len(self.string_end) == 1:
-            self.string_end = self.string_end if continued else None
-        self.backslash = continued and self.string_end is None
+        return False
+
+    def _open_string(self, line: str, pos: int, quote: str) -> int:
+        triple = quote * _TRIPLE_QUOTE_LENGTH
+        self.string_end = triple if line.startswith(triple, pos) else quote
+        return pos + len(self.string_end)
 
     def _close_string(self, line: str, pos: int, end: str) -> int:
         while pos < len(line):

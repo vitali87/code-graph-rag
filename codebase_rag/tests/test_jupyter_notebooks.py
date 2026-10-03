@@ -260,7 +260,8 @@ class TestNotebookCellsAreIndexed:
         assert reloaded is not None
         node, language = reloaded
         assert language == cs.SupportedLanguage.PYTHON
-        assert node.text is not None and b"def summarize(xs):" in node.text
+        assert node.text is not None
+        assert b"def summarize(xs):" in node.text
         assert b'"cells"' not in node.text
 
 
