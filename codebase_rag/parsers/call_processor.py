@@ -4828,8 +4828,10 @@ class CallProcessor:
             name = safe_decode_text(function)
             if not name or (call_var_types and name in call_var_types):
                 return False, None
-            packages = [module_qn.rpartition(cs.SEPARATOR_DOT)[0]] + [
-                path
+            # (package, is the caller's own): a dot-import of the caller's own
+            # directory (`package m_test` importing `m`) is still an import.
+            packages = [(module_qn.rpartition(cs.SEPARATOR_DOT)[0], True)] + [
+                (path, False)
                 for key, path in import_map.items()
                 if key.startswith(cs.SEPARATOR_DOT)
             ]
@@ -4845,17 +4847,17 @@ class CallProcessor:
                 return False, None
             if self._go_import_is_external(target):
                 return True, None
-            packages = [target]
+            packages = [(target, False)]
         else:
             return False, None
-        for package_qn in packages:
+        for package_qn, own_package in packages:
             # Build-variant files may each declare the function; they count as
             # one when every copy returns the same struct.
             results = {
                 self._go_result_class((NodeType.FUNCTION, qn))
                 for qn in self._go_package_functions(package_qn, name)
                 if self._go_function_visible_to(
-                    qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn, module_qn
+                    qn.rpartition(cs.SEPARATOR_DOT)[0], module_qn, own_package
                 )
             }
             if results:
@@ -4863,15 +4865,16 @@ class CallProcessor:
         return True, None
 
     def _go_function_visible_to(
-        self, declaring_qn: str, package_qn: str, module_qn: str
+        self, declaring_qn: str, module_qn: str, own_package: bool
     ) -> bool:
-        # Whether a function declared in file `declaring_qn` of `package_qn` is
-        # one `module_qn` can call. The rules `_go_package_receiver_qn` uses: a
-        # `_test.go` file compiles only under `go test`, so only a test file
-        # of the same package sees it, and within the caller's own directory
-        # the `package` clauses must agree (`package m_test` is another
-        # package). An imported package is never the caller's own, so only the
-        # test-file rule applies to it.
+        # Whether a function declared in file `declaring_qn` is one `module_qn`
+        # can call, either in its own package (a bare call) or through an
+        # import. The rules `_go_package_receiver_qn` uses: a `_test.go` file
+        # compiles only under `go test`, so only a test file of the same
+        # package sees it, and in the caller's own package the `package`
+        # clauses must agree (`package m_test` is another package). Through an
+        # import, even of the caller's own directory (`package m_test`
+        # importing `m`), only that package's non-test files count.
         declaring_path = self.module_qn_to_file_path.get(declaring_qn)
         if declaring_path is None:
             return True
@@ -4879,7 +4882,6 @@ class CallProcessor:
         requester_is_test = requester is not None and requester.stem.endswith(
             cs.GO_TEST_FILE_SUFFIX
         )
-        own_package = package_qn == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
             requester_is_test and own_package
         ):

@@ -649,3 +649,30 @@ def test_build_variants_returning_one_struct_still_bind(tmp_path: Path) -> None:
     )
     calls = _calls(store, "proj.m.use.variants")
     assert calls.get("proj.m.box.Box.Bump") == EXACT, calls
+
+
+def test_an_external_test_package_sees_the_package_it_imports(
+    tmp_path: Path,
+) -> None:
+    # `package m_test` imports its own directory's `package m`, by name or
+    # with a dot. Through the import it sees m's production files, whose
+    # package clause is `m`, not its own `m_test`.
+    store = _project(
+        tmp_path,
+        {
+            "m/box.go": BOX_GO,
+            "m/ext_test.go": (
+                'package m_test\n\nimport "proj/m"\n\n'
+                "func TestExt() int { return m.NewBox().Bump() }\n"
+            ),
+            "m/dot_test.go": (
+                'package m_test\n\nimport . "proj/m"\n\n'
+                "func TestDot() int { return NewBox().With(1).Bump() }\n"
+            ),
+        },
+    )
+    named = _calls(store, "proj.m.ext_test.TestExt")
+    assert named.get("proj.m.box.Box.Bump") == EXACT, named
+    dotted = _calls(store, "proj.m.dot_test.TestDot")
+    assert dotted.get("proj.m.box.Box.With") == EXACT, dotted
+    assert dotted.get("proj.m.box.Box.Bump") == EXACT, dotted
