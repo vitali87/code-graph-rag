@@ -1122,9 +1122,7 @@ def _tests_reaching(
     for (_label, raw_qn), props in reach.nodes.items():
         qn = str(raw_qn)
         path = str(props.get(cs.KEY_PATH) or "")
-        if _is_test_symbol(
-            props, qn, path, cs.TEST_PATH_PATTERNS, rust_modules, rust_spans
-        ):
+        if _is_test_symbol(props, qn, path, rust_modules, rust_spans):
             out.append(
                 TestReach(
                     qualified_name=qn,

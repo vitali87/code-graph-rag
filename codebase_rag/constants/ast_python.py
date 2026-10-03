@@ -98,6 +98,87 @@ TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
+TS_PY_UNARY_OPERATOR = "unary_operator"
+TS_PY_CONCATENATED_STRING = "concatenated_string"
+TS_PY_AWAIT = "await"
+TS_PY_LIST_SPLAT = "list_splat"
+TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+# The `interpolation` node's value field (`f"{t!r:>8}"` -> `t`).
+TS_PY_FIELD_EXPRESSION = "expression"
+# A dynamic format spec (`f"{t:{fill}>{width}}"`): the interpolation's
+# `format_specifier` field holds a `format_expression` per nested `{...}`,
+# each with its own `expression` field and, nested once more, its own
+# `format_specifier`.
+TS_PY_FIELD_FORMAT_SPECIFIER = "format_specifier"
+TS_PY_FORMAT_SPECIFIER = "format_specifier"
+TS_PY_FORMAT_EXPRESSION = "format_expression"
+
+# The FLOWS_TO walk carries taint through any call it cannot see into, but
+# these results reveal nothing of their input's content (a size, a truth
+# value, an identity or type, a one-way digest), so taint stops at them
+# (issue #2588). Escaping and quoting are deliberately absent: FLOWS_TO
+# tracks where a value came from, and an escaped secret written to stdout
+# still leaks the secret.
+PY_TAINT_CLEARING_CALLS = frozenset(
+    {
+        "len",
+        "bool",
+        "id",
+        "hash",
+        "type",
+        "isinstance",
+        "issubclass",
+        "callable",
+        "hasattr",
+        "any",
+        "all",
+        "hashlib.new",
+        "hashlib.md5",
+        "hashlib.sha1",
+        "hashlib.sha224",
+        "hashlib.sha256",
+        "hashlib.sha384",
+        "hashlib.sha512",
+        "hashlib.sha3_256",
+        "hashlib.sha3_512",
+        "hashlib.blake2b",
+        "hashlib.blake2s",
+        "hashlib.pbkdf2_hmac",
+        "hashlib.scrypt",
+        "hmac.new",
+        "hmac.digest",
+        "hmac.compare_digest",
+        "secrets.compare_digest",
+    }
+)
+# Methods matched by name on any receiver, since the walk has no receiver
+# type: str predicates and position/count lookups return a bool or an int.
+PY_TAINT_CLEARING_METHODS = frozenset(
+    {
+        "startswith",
+        "endswith",
+        "isalnum",
+        "isalpha",
+        "isascii",
+        "isdecimal",
+        "isdigit",
+        "isidentifier",
+        "islower",
+        "isnumeric",
+        "isprintable",
+        "isspace",
+        "istitle",
+        "isupper",
+        "count",
+        "find",
+        "rfind",
+        "index",
+        "rindex",
+    }
+)
 
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
