@@ -25,6 +25,8 @@ from codebase_rag.flow_verdict import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
+from codebase_rag.parsers.flow_access.processor import FlowProcessor
+from codebase_rag.parsers.io_access import python_name_binding_sites
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
@@ -530,6 +532,364 @@ def test_lookup_on_a_name_bound_in_another_scope_keeps_its_argument_taint(
     assert _env_to_stdout(_run_flow(tmp_path, files))
 
 
+_PRINT_LABEL = "    print(label.find(t))\n"
+_MATCH = "    match external_client.Client():\n"
+
+
+def _rebinding_handler(form: str, *, is_async: bool = False) -> dict[str, str]:
+    # `label` starts as a string; `form` then binds it some other way.
+    keyword = "async def" if is_async else "def"
+    return {
+        "app.py": (
+            "import os\n"
+            "import external_client\n\n"
+            f"{keyword} handler():\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            "    label = 'sk-live-abc'\n"
+            f"{form}"
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("form", "is_async"),
+    [
+        pytest.param(
+            "    _, label = 1, external_client.Client()\n" + _PRINT_LABEL,
+            False,
+            id="tuple-unpacking",
+        ),
+        pytest.param(
+            "    [label] = [external_client.Client()]\n" + _PRINT_LABEL,
+            False,
+            id="list-unpacking",
+        ),
+        pytest.param(
+            "    *label, = external_client.clients()\n" + _PRINT_LABEL,
+            False,
+            id="starred-unpacking",
+        ),
+        pytest.param(
+            "    label += external_client.Client()\n" + _PRINT_LABEL,
+            False,
+            id="augmented",
+        ),
+        pytest.param(
+            "    label: object = external_client.Client()\n" + _PRINT_LABEL,
+            False,
+            id="annotated",
+        ),
+        pytest.param(
+            "    if label := external_client.Client():\n        pass\n" + _PRINT_LABEL,
+            False,
+            id="walrus",
+        ),
+        pytest.param(
+            "    [(label := c) for c in external_client.clients()]\n" + _PRINT_LABEL,
+            False,
+            id="walrus-in-comprehension",
+        ),
+        pytest.param(
+            "    def wrap(x=(label := external_client.Client())):\n"
+            "        pass\n" + _PRINT_LABEL,
+            False,
+            id="walrus-in-default",
+        ),
+        pytest.param(
+            "    for label in external_client.clients():\n        pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="for",
+        ),
+        pytest.param(
+            "    async for label in external_client.clients():\n        pass\n"
+            + _PRINT_LABEL,
+            True,
+            id="async-for",
+        ),
+        pytest.param(
+            "    with external_client.session() as label:\n        pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="with",
+        ),
+        pytest.param(
+            "    with external_client.session() as (_, label):\n        pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="with-tuple",
+        ),
+        pytest.param(
+            "    async with external_client.session() as label:\n        pass\n"
+            + _PRINT_LABEL,
+            True,
+            id="async-with",
+        ),
+        pytest.param(
+            "    try:\n        pass\n    except external_client.Error as label:\n"
+            "    " + _PRINT_LABEL,
+            False,
+            id="except",
+        ),
+        pytest.param(
+            "    try:\n        pass\n    except* external_client.Error as label:\n"
+            "    " + _PRINT_LABEL,
+            False,
+            id="except-star",
+        ),
+        pytest.param(
+            _MATCH + "        case label:\n            pass\n" + _PRINT_LABEL,
+            False,
+            id="match-capture",
+        ),
+        pytest.param(
+            _MATCH
+            + "        case object() as label:\n            pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="match-as",
+        ),
+        pytest.param(
+            _MATCH + "        case [*label]:\n            pass\n" + _PRINT_LABEL,
+            False,
+            id="match-star",
+        ),
+        pytest.param(
+            _MATCH + "        case {**label}:\n            pass\n" + _PRINT_LABEL,
+            False,
+            id="match-mapping-rest",
+        ),
+        pytest.param(
+            _MATCH
+            + "        case external_client.Box(item=label):\n            pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="match-class-keyword",
+        ),
+        pytest.param(
+            _MATCH
+            + "        case external_client.Pair(label, _):\n            pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="match-class-positional",
+        ),
+        pytest.param(
+            _MATCH + "        case [label, _]:\n            pass\n" + _PRINT_LABEL,
+            False,
+            id="match-sequence",
+        ),
+        pytest.param("    import label\n" + _PRINT_LABEL, False, id="import"),
+        pytest.param(
+            "    import external_client.sub as label\n" + _PRINT_LABEL,
+            False,
+            id="import-as",
+        ),
+        pytest.param(
+            "    from external_client import label\n" + _PRINT_LABEL,
+            False,
+            id="from-import",
+        ),
+        pytest.param(
+            "    def label():\n        pass\n" + _PRINT_LABEL, False, id="def"
+        ),
+        pytest.param(
+            "    class label:\n        pass\n" + _PRINT_LABEL, False, id="class"
+        ),
+        pytest.param(
+            "    @external_client.wrap\n    def label():\n        pass\n"
+            + _PRINT_LABEL,
+            False,
+            id="decorated-def",
+        ),
+        pytest.param("    del label\n" + _PRINT_LABEL, False, id="del"),
+        pytest.param(
+            "    type label = external_client.Client\n" + _PRINT_LABEL,
+            False,
+            id="type-alias",
+        ),
+        pytest.param(
+            "    def rebind():\n        nonlocal label\n"
+            "        label = external_client.Client()\n    rebind()\n" + _PRINT_LABEL,
+            False,
+            id="nested-nonlocal",
+        ),
+    ],
+)
+def test_lookup_after_any_other_binding_form_keeps_its_argument_taint(
+    tmp_path: Path, form: str, is_async: bool
+) -> None:
+    # A form the binding scan cannot judge leaves the name unknown, never a
+    # string, so the secret argument keeps its taint.
+    edges = _run_flow(tmp_path, _rebinding_handler(form, is_async=is_async))
+    assert _env_to_stdout(edges)
+
+
+def test_type_parameter_of_the_scope_makes_the_name_unknown() -> None:
+    parsers, _ = load_parsers()
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse(
+        b"def handler[label]():\n    label = 'x'\n"
+    )
+    handler = tree.root_node.children[0]
+    assert python_name_binding_sites(handler, "label") is None
+
+
+def test_lookup_on_a_self_rebound_name_keeps_its_argument_taint(
+    tmp_path: Path,
+) -> None:
+    # A name is unknown while its own bindings are checked, so a cycle
+    # (`t = t.strip()`) never proves itself a string.
+    edges = _run_flow(
+        tmp_path, _handler("    t = t.strip()\n    emit(t.startswith(t))\n")
+    )
+    assert _arg_edge(edges, "app.handler", "app.emit")
+
+
+def _builtin_call_handler(preamble: str, local: str, call: str) -> dict[str, str]:
+    return {
+        "app.py": (
+            "import os\n"
+            "import external_client\n"
+            f"{preamble}\n"
+            "def emit(v):\n"
+            "    print(v)\n\n"
+            "def handler():\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            f"{local}"
+            f"    receiver = {call}(t)\n"
+            "    emit(receiver.find(t))\n"
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("preamble", "local", "call"),
+    [
+        pytest.param(
+            "", "    str = lambda x: external_client.Client()\n", "str", id="local-str"
+        ),
+        pytest.param(
+            "str = lambda x: external_client.Client()\n", "", "str", id="module-str"
+        ),
+        pytest.param(
+            "def repr(x):\n    return external_client.Client()\n",
+            "",
+            "repr",
+            id="module-def-repr",
+        ),
+        pytest.param("from mylib import str\n", "", "str", id="import-str"),
+        pytest.param("from mylib import input\n", "", "input", id="import-input"),
+        pytest.param(
+            "", "    from mylib import repr\n", "repr", id="local-import-repr"
+        ),
+        pytest.param("from mylib import *\n", "", "str", id="star-import"),
+        pytest.param(
+            "import mylib as builtins\n", "", "builtins.str", id="fake-builtins"
+        ),
+    ],
+)
+def test_shadowed_str_builtin_does_not_make_a_string(
+    tmp_path: Path, preamble: str, local: str, call: str
+) -> None:
+    edges = _run_flow(tmp_path, _builtin_call_handler(preamble, local, call))
+    assert _arg_edge(edges, "app.handler", "app.emit")
+    assert _env_to_stdout(edges)
+
+
+@pytest.mark.parametrize(
+    ("preamble", "call"),
+    [
+        pytest.param("", "str", id="str"),
+        pytest.param("", "repr", id="repr"),
+        pytest.param("import builtins\n", "builtins.str", id="builtins-str"),
+        pytest.param(
+            "def typed(v: str, w: list[str]) -> str:\n"
+            "    return isinstance(v, str) and str(v)\n",
+            "str",
+            id="str-read-elsewhere",
+        ),
+    ],
+)
+def test_unshadowed_str_builtin_makes_a_string(
+    tmp_path: Path, preamble: str, call: str
+) -> None:
+    edges = _run_flow(tmp_path, _builtin_call_handler(preamble, "", call))
+    assert not _arg_edge(edges, "app.handler", "app.emit")
+    assert not _env_to_stdout(edges)
+
+
+def _env_label_handler(read: str) -> dict[str, str]:
+    return {
+        "app.py": (
+            "import os\n"
+            "import external_client\n\n"
+            "def handler():\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            f"    label = {read}\n"
+            "    print(label.find(t))\n"
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "os.getenv('LABEL', external_client.Client())",
+        "os.getenv('LABEL', default=external_client.Client())",
+        "os.environ.get('LABEL', external_client.Client())",
+    ],
+)
+def test_env_read_with_a_non_string_default_is_not_a_string(
+    tmp_path: Path, read: str
+) -> None:
+    assert _env_to_stdout(_run_flow(tmp_path, _env_label_handler(read)))
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "os.getenv('LABEL')",
+        "os.getenv('LABEL', 'fallback')",
+        "os.environ.get('LABEL', 'fallback')",
+        "os.environ['LABEL']",
+    ],
+)
+def test_env_read_without_a_non_string_default_is_a_string(
+    tmp_path: Path, read: str
+) -> None:
+    assert not _env_to_stdout(_run_flow(tmp_path, _env_label_handler(read)))
+
+
+class _ProofBudgetExceededError(Exception):
+    pass
+
+
+def test_alias_chain_is_classified_in_linear_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each level binds its alias twice from the level below. Without a kept
+    # answer per name the proof re-walks every level twice: 2**40 paths.
+    levels = 40
+    budget = 4 * levels
+    chain = "".join(
+        f"    a{i} = a{i - 1}\n    a{i} = a{i - 1}\n" for i in range(1, levels + 1)
+    )
+    body = f"    a0 = os.getenv('LABEL')\n{chain}    emit(a{levels}.find(t))\n"
+    calls = 0
+    original = FlowProcessor._py_binds_str
+
+    def counting(self: FlowProcessor, *args: object) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls > budget:
+            raise _ProofBudgetExceededError
+        return original(self, *args)
+
+    monkeypatch.setattr(FlowProcessor, "_py_binds_str", counting)
+    edges = _run_flow(tmp_path, _handler(body))
+    assert calls <= budget
+    assert not _arg_edge(edges, "app.handler", "app.emit")
+
+
 def test_lookup_on_an_untyped_parameter_reaches_the_callee(tmp_path: Path) -> None:
     files = {
         "app.py": (
@@ -593,8 +953,8 @@ def test_lookup_on_a_parameter_annotated_str_clears_its_argument(
             id="environ-get",
         ),
         pytest.param(
-            "    t = t.strip().lower()\n    emit(t.startswith('sk-'))\n",
-            id="str-method-rebind",
+            "    u = t.strip().lower()\n    emit(u.startswith('sk-'))\n",
+            id="str-method-chain",
         ),
         pytest.param(
             "    s = 'sk-live-abc'\n    emit(s.find(t))\n", id="literal-local"

@@ -102,6 +102,14 @@ TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
 TS_PY_UNARY_OPERATOR = "unary_operator"
 TS_PY_CONCATENATED_STRING = "concatenated_string"
+# Read positions the binding scan of `python_name_binding_sites` recognises.
+TS_PY_SLICE = "slice"
+TS_PY_ASSERT_STATEMENT = "assert_statement"
+TS_PY_RAISE_STATEMENT = "raise_statement"
+TS_PY_YIELD = "yield"
+TS_PY_WITH_ITEM = "with_item"
+TS_PY_IF_CLAUSE = "if_clause"
+TS_PY_TYPE = "type"
 TS_PY_AWAIT = "await"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
@@ -186,9 +194,23 @@ PY_TAINT_CLEARING_METHODS = frozenset(
 )
 # The annotation that makes a parameter or local a string.
 PY_TYPE_STR = "str"
+PY_BUILTINS_MODULE = "builtins"
 # Builtins whose result is always a string, so a name bound to one is a
-# string receiver for the lookups above.
-PY_STR_RESULT_CALLS = frozenset({"str", "repr", "input"})
+# string receiver for the lookups above, as long as nothing the call can see
+# rebinds the name (keyed by import-normalised name).
+PY_STR_RESULT_CALLS = frozenset(
+    {
+        "str",
+        "repr",
+        "input",
+        "builtins.str",
+        "builtins.repr",
+        "builtins.input",
+    }
+)
+# `os.getenv(key, default)` / `os.environ.get(key, default)`: the default is
+# returned when the variable is unset.
+PY_ENV_DEFAULT_KEYWORD = "default"
 # str (and bytes) methods that return a str or bytes when their receiver is
 # one: `t.strip().lower()` on a string is still a string.
 PY_STR_RESULT_METHODS = frozenset(

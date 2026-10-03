@@ -382,7 +382,6 @@ _PY_REPLACEMENT_FIELD_PARTS = (
 # normalisation as the source/sink registry: `from hashlib import sha256`
 # still clears, while a `len` imported from project code does not.
 _PY_TAINT_CLEARING_CALLS = dict.fromkeys(cs.PY_TAINT_CLEARING_CALLS, True)
-_PY_STR_RESULT_CALLS = dict.fromkeys(cs.PY_STR_RESULT_CALLS, True)
 
 
 def _py_value_operands(node: Node) -> list[Node] | None:
@@ -471,6 +470,7 @@ _PY_SCOPE_TYPES = frozenset(
 # Expressions that bind names of their own (lambda parameters, comprehension
 # targets) that the scope's binding scan does not see.
 _PY_INNER_BINDERS = frozenset({*_PY_COMPREHENSIONS, cs.TS_PY_LAMBDA})
+_PY_IMPORTS = frozenset({cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT})
 
 
 def _py_binding_scope(node: Node) -> Node | None:
@@ -962,6 +962,9 @@ class FlowProcessor:
         # Binding sites of a name in a Python scope, keyed by the scope's span
         # and the name; reset per caller, whose tree the spans belong to.
         self._py_binding_sites: dict[tuple[int, int, str], list[Node] | None] = {}
+        # Whether a name in a Python scope is known to be a string, under the
+        # same keys and reset with them.
+        self._py_str_names: dict[tuple[int, int, str], bool] = {}
 
     def process_flow_for_caller(
         self,
@@ -1050,6 +1053,7 @@ class FlowProcessor:
                 tainted[fv] = Taint(frozenset(), frozenset(), frozenset({fv}))
         self._pending_captures.clear()
         self._py_binding_sites.clear()
+        self._py_str_names.clear()
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
         self._flush_pending_captures()
@@ -3984,81 +3988,134 @@ class FlowProcessor:
         operands.extend(_py_argument_values(node))
         return operands
 
-    def _py_is_str_value(
-        self, node: Node | None, ctx: _FlowCtx, assumed: frozenset[str] = frozenset()
-    ) -> bool:
+    def _py_is_str_value(self, node: Node | None, ctx: _FlowCtx) -> bool:
         # Whether a value is known to be a string (or bytes): a literal or
         # f-string, an env read, a call that always returns one, or a name
-        # every binding of which is one. `assumed` holds the names whose
-        # bindings are being checked, so `t = t.strip()` keeps `t` a string.
+        # every binding of which is one.
         if node is None:
             return False
         if node.type in _PY_STRING_LITERALS:
             return True
         if node.type == cs.TS_PY_IDENTIFIER:
-            return self._py_is_str_name(node, ctx, assumed)
+            return self._py_is_str_name(node, ctx)
         if node.type == cs.TS_PY_SUBSCRIPT:
             return self._py_env_member_seed(node, ctx) is not None
-        return node.type == cs.TS_PY_CALL and self._py_is_str_call(node, ctx, assumed)
+        return node.type == cs.TS_PY_CALL and self._py_is_str_call(node, ctx)
 
-    def _py_is_str_call(
-        self, node: Node, ctx: _FlowCtx, assumed: frozenset[str]
-    ) -> bool:
-        # `t.strip()` on a string, `str(x)` / `input()`, or an env read
-        # (`os.getenv`, `os.environ.get`), which yields a string.
+    def _py_is_str_call(self, node: Node, ctx: _FlowCtx) -> bool:
+        # `t.strip()` on a string, the `str` / `repr` / `input` builtins, or
+        # an env read (`os.getenv`, `os.environ.get`) whose default, if any,
+        # is a string too.
         func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if (
             func is not None
             and func.type == cs.TS_PY_ATTRIBUTE
             and _py_method_name(func) in cs.PY_STR_RESULT_METHODS
         ):
-            receiver = func.child_by_field_name(cs.FIELD_OBJECT)
-            return self._py_is_str_value(receiver, ctx, assumed)
+            return self._py_is_str_value(func.child_by_field_name(cs.FIELD_OBJECT), ctx)
         raw = call_name(node)
         if raw is None:
             return False
-        if registry_match(_PY_STR_RESULT_CALLS, raw, ctx.import_map) is not None:
-            return True
+        if normalise(raw, ctx.import_map) in cs.PY_STR_RESULT_CALLS:
+            return self._py_builtin_is_visible(node, raw, ctx)
         source = self._source_binding(node, raw, ctx.import_map, ctx.read_sinks)
-        return source is not None and source.kind == ResourceKind.ENV
+        return (
+            source is not None
+            and source.kind == ResourceKind.ENV
+            and self._py_env_default_is_str(node, ctx)
+        )
 
-    def _py_is_str_name(
-        self, node: Node, ctx: _FlowCtx, assumed: frozenset[str]
-    ) -> bool:
+    def _py_env_default_is_str(self, node: Node, ctx: _FlowCtx) -> bool:
+        # `os.getenv("K", client)` returns the client when K is unset, so an
+        # env read is a string only when its default, if any, is one. A splat
+        # may pass any default.
+        for index, arg in enumerate(_py_call_arguments(node)):
+            if arg.type in (cs.TS_PY_LIST_SPLAT, cs.TS_PY_DICTIONARY_SPLAT):
+                return False
+            value: Node | None = arg
+            if arg.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                keyword = arg.child_by_field_name(cs.FIELD_NAME)
+                if safe_decode_text(keyword) != cs.PY_ENV_DEFAULT_KEYWORD:
+                    continue
+                value = arg.child_by_field_name(cs.FIELD_VALUE)
+            elif index == 0:
+                continue
+            if not self._py_is_str_value(value, ctx):
+                return False
+        return True
+
+    def _py_builtin_is_visible(self, node: Node, raw: str, ctx: _FlowCtx) -> bool:
+        # `str(x)` is the builtin only when no scope the call can see binds
+        # `str`: its own, each enclosing function, and the module (an import
+        # there is already normalised away by the import map). A class body
+        # is visible only to code directly in it, and a lambda or
+        # comprehension in between may bind the name itself. For
+        # `builtins.str(x)` the module's binding of `builtins` must be the
+        # import the import map resolved to the real module.
+        head, dot, _ = raw.partition(cs.SEPARATOR_DOT)
+        module_import_ok = bool(dot) and (
+            ctx.import_map.get(head) == cs.PY_BUILTINS_MODULE
+        )
+        innermost = True
+        scope = node.parent
+        while scope is not None:
+            if scope.type in _PY_INNER_BINDERS:
+                return False
+            if scope.type in _PY_SCOPE_TYPES and (
+                innermost or scope.type != cs.TS_PY_CLASS_DEFINITION
+            ):
+                if self._py_scope_binds(scope, head, module_import_ok):
+                    return False
+                innermost = False
+            scope = scope.parent
+        return True
+
+    def _py_scope_binds(self, scope: Node, name: str, module_import_ok: bool) -> bool:
+        sites = self._py_name_sites(scope, name)
+        if sites is None:
+            return True
+        if module_import_ok and scope.type == cs.TS_PY_MODULE:
+            return any(site.type not in _PY_IMPORTS for site in sites)
+        return bool(sites)
+
+    def _py_name_sites(self, scope: Node, name: str) -> list[Node] | None:
+        key = (scope.start_byte, scope.end_byte, name)
+        if key not in self._py_binding_sites:
+            self._py_binding_sites[key] = python_name_binding_sites(scope, name)
+        return self._py_binding_sites[key]
+
+    def _py_is_str_name(self, node: Node, ctx: _FlowCtx) -> bool:
         # A name is a string when EVERY binding of it in its scope makes it
-        # one, so a `str` parameter rebound to a client is not. A name with
-        # no binding in the scope, or one handed to another scope by
-        # `global` / `nonlocal`, is unknown.
+        # one, so a `str` parameter rebound to a client is not; a name with no
+        # binding in the scope, or one the scan cannot judge, is unknown. The
+        # answer is kept for the rest of the caller, so a chain of aliases
+        # costs one pass per name, and it reads unknown while it is being
+        # worked out, so a cycle (`t = t.strip()`) never proves itself.
         name = safe_decode_text(node)
         scope = _py_binding_scope(node)
         if not name or scope is None:
             return False
-        if name in assumed:
-            return True
         key = (scope.start_byte, scope.end_byte, name)
-        if key not in self._py_binding_sites:
-            self._py_binding_sites[key] = python_name_binding_sites(scope, name)
-        sites = self._py_binding_sites[key]
-        if not sites:
-            return False
-        inner = assumed | {name}
-        return all(self._py_binds_str(site, ctx, inner) for site in sites)
+        known = self._py_str_names.get(key)
+        if known is not None:
+            return known
+        self._py_str_names[key] = False
+        sites = self._py_name_sites(scope, name)
+        result = bool(sites) and all(
+            self._py_binds_str(site, ctx) for site in sites or ()
+        )
+        self._py_str_names[key] = result
+        return result
 
-    def _py_binds_str(self, site: Node, ctx: _FlowCtx, assumed: frozenset[str]) -> bool:
+    def _py_binds_str(self, site: Node, ctx: _FlowCtx) -> bool:
         # One binding site: a `str`-annotated parameter or assignment, or a
-        # plain `name = <string>`. Any other form (a for or with target, a
-        # walrus, `+=`, destructuring) leaves the name unknown.
+        # plain `name = <string>`. An import, or an unannotated parameter,
+        # leaves the name unknown.
         annotation = site.child_by_field_name(cs.TS_FIELD_TYPE)
         if annotation is not None:
             return safe_decode_text(annotation) == cs.PY_TYPE_STR
-        left = site.child_by_field_name(cs.TS_FIELD_LEFT)
-        return (
-            site.type == cs.TS_PY_ASSIGNMENT
-            and left is not None
-            and left.type == cs.TS_PY_IDENTIFIER
-            and self._py_is_str_value(
-                site.child_by_field_name(cs.TS_FIELD_RIGHT), ctx, assumed
-            )
+        return site.type == cs.TS_PY_ASSIGNMENT and self._py_is_str_value(
+            site.child_by_field_name(cs.TS_FIELD_RIGHT), ctx
         )
 
     def _py_env_member_seed(self, node: Node, ctx: _FlowCtx) -> HandleBinding | None:

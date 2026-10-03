@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from enum import Enum, auto
 
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import cpp_declarator_name
+from ..utils import cpp_declarator_name, python_import_bound_names
 from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
 from .descriptor import LanguageDescriptor
 
@@ -246,13 +247,215 @@ def _declares_name(node: Node, name: str) -> bool:
     )
 
 
+class _PyRef(Enum):
+    # How one identifier occurrence relates to the name it spells.
+    READ = auto()  # a read, or no reference at all (an attribute or keyword)
+    BINDING = auto()  # the target of a plain `name = value`
+    UNKNOWN = auto()  # any other position, which may bind the name
+
+
+# Python binds names in many forms (unpacking, `as` targets, match captures,
+# imports, type parameters, ...), so the scan lists READ positions instead:
+# an occurrence anywhere else may bind the name and makes it unknown. Parents
+# that read in any position:
+_PY_READ_PARENTS = frozenset(
+    {
+        cs.TS_ARGUMENT_LIST,
+        cs.TS_PY_SUBSCRIPT,
+        cs.TS_PY_SLICE,
+        cs.TS_PY_BINARY_OPERATOR,
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_PY_COMPARISON_OPERATOR,
+        cs.TS_PY_NOT_OPERATOR,
+        cs.TS_PY_UNARY_OPERATOR,
+        cs.TS_PY_CONDITIONAL_EXPRESSION,
+        cs.TS_PY_PAIR,
+        cs.TS_PY_SET,
+        cs.TS_PY_RETURN_STATEMENT,
+        cs.TS_PY_EXPRESSION_STATEMENT,
+        cs.TS_PY_ASSERT_STATEMENT,
+        cs.TS_PY_RAISE_STATEMENT,
+        cs.TS_PY_AWAIT,
+        cs.TS_PY_YIELD,
+        cs.TS_PY_DICTIONARY_SPLAT,
+        cs.TS_PY_DECORATOR,
+        cs.TS_PY_IF_CLAUSE,
+        cs.TS_PY_FORMAT_EXPRESSION,
+    }
+)
+# Parents that read only in some fields (the others bind, or name an
+# attribute or keyword rather than the variable).
+_PY_READ_FIELDS: dict[str, frozenset[str]] = {
+    cs.TS_PY_ATTRIBUTE: frozenset({cs.FIELD_OBJECT, cs.TS_PY_FIELD_ATTRIBUTE}),
+    cs.TS_PY_KEYWORD_ARGUMENT: frozenset({cs.FIELD_NAME, cs.FIELD_VALUE}),
+    cs.TS_PY_CALL: frozenset({cs.FIELD_FUNCTION}),
+    cs.TS_PY_ASSIGNMENT: frozenset({cs.FIELD_RIGHT}),
+    cs.TS_PY_AUGMENTED_ASSIGNMENT: frozenset({cs.FIELD_RIGHT}),
+    cs.TS_PY_NAMED_EXPRESSION: frozenset({cs.FIELD_VALUE}),
+    cs.TS_PY_FOR_STATEMENT: frozenset({cs.FIELD_RIGHT}),
+    cs.TS_PY_FOR_IN_CLAUSE: frozenset({cs.FIELD_RIGHT}),
+    cs.TS_PY_IF_STATEMENT: frozenset({cs.TS_FIELD_CONDITION}),
+    cs.TS_PY_ELIF_CLAUSE: frozenset({cs.TS_FIELD_CONDITION}),
+    cs.TS_PY_WHILE_STATEMENT: frozenset({cs.TS_FIELD_CONDITION}),
+    cs.TS_PY_EXCEPT_CLAUSE: frozenset({cs.FIELD_VALUE}),
+    cs.TS_PY_WITH_ITEM: frozenset({cs.FIELD_VALUE}),
+    cs.TS_PY_INTERPOLATION: frozenset({cs.TS_PY_FIELD_EXPRESSION}),
+    cs.TS_PY_LAMBDA: frozenset({cs.FIELD_BODY}),
+    cs.TS_PY_LIST_COMPREHENSION: frozenset({cs.FIELD_BODY}),
+    cs.TS_PY_SET_COMPREHENSION: frozenset({cs.FIELD_BODY}),
+    cs.TS_PY_DICTIONARY_COMPREHENSION: frozenset({cs.FIELD_BODY}),
+    cs.TS_PY_GENERATOR_EXPRESSION: frozenset({cs.FIELD_BODY}),
+}
+# Displays that hold either reads or, inside a target, bindings
+# (`with c as (a, b)`): the first ancestor outside them decides.
+_PY_TRANSPARENT = frozenset(
+    {
+        cs.TS_PY_LIST,
+        cs.TS_PY_TUPLE,
+        cs.TS_PY_PARENTHESIZED_EXPRESSION,
+        cs.TS_PY_EXPRESSION_LIST,
+        cs.TS_PY_LIST_SPLAT,
+    }
+)
+# A `type` node's wrappers inside an annotation (`list[str]`, `Optional[str]`).
+_PY_TYPE_WRAPPERS = frozenset({cs.TS_PY_TYPE, cs.TS_TYPE_PARAMETER, cs.TS_GENERIC_TYPE})
+# Where a `type` node is an annotation, which only reads; a type alias name or
+# a PEP 695 type parameter binds instead.
+_PY_ANNOTATION_SLOTS = frozenset(
+    {
+        (cs.TS_PY_TYPED_PARAMETER, cs.FIELD_TYPE),
+        (cs.TS_PY_TYPED_DEFAULT_PARAMETER, cs.FIELD_TYPE),
+        (cs.TS_PY_FUNCTION_DEFINITION, cs.FIELD_RETURN_TYPE),
+        (cs.TS_PY_ASSIGNMENT, cs.FIELD_TYPE),
+    }
+)
+_PY_IMPORTS = frozenset({cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT})
+
+
+def _child_field(parent: Node, child: Node) -> str | None:
+    for index, sibling in enumerate(parent.children):
+        if sibling.id == child.id:
+            return parent.field_name_for_child(index)
+    return None
+
+
+def _python_annotation_reference(type_node: Node) -> _PyRef:
+    node = type_node
+    while node.parent is not None and node.parent.type in _PY_TYPE_WRAPPERS:
+        node = node.parent
+    parent = node.parent
+    if (
+        node.type == cs.TS_PY_TYPE
+        and parent is not None
+        and (parent.type, _child_field(parent, node)) in _PY_ANNOTATION_SLOTS
+    ):
+        return _PyRef.READ
+    return _PyRef.UNKNOWN
+
+
+def _python_reference(ident: Node) -> _PyRef:
+    child, parent = ident, ident.parent
+    while parent is not None and parent.type in _PY_TRANSPARENT:
+        child, parent = parent, parent.parent
+    if parent is None:
+        return _PyRef.UNKNOWN
+    field = _child_field(parent, child)
+    if child is ident and parent.type == cs.TS_PY_ASSIGNMENT and field == cs.FIELD_LEFT:
+        return _PyRef.BINDING
+    if parent.type == cs.TS_PY_TYPE:
+        return _python_annotation_reference(parent)
+    if parent.type in _PY_READ_PARENTS or field in _PY_READ_FIELDS.get(
+        parent.type, frozenset()
+    ):
+        return _PyRef.READ
+    return _PyRef.UNKNOWN
+
+
+def _python_mentions(node: Node, name: str, types: frozenset[str]) -> bool:
+    # Whether any node of `types` under `node` names `name` directly.
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type in types and _declares_name(current, name):
+            return True
+        stack.extend(current.children)
+    return False
+
+
+def _python_header_values(definition: Node) -> list[Node]:
+    # What a nested definition's header evaluates in the ENCLOSING scope:
+    # defaults, annotations, the return annotation and base classes, never
+    # the parameter names, which bind in the definition's own scope.
+    values: list[Node] = []
+    params = definition.child_by_field_name(cs.FIELD_PARAMETERS)
+    for param in params.named_children if params is not None else ():
+        values.extend(
+            value
+            for field in (cs.FIELD_VALUE, cs.FIELD_TYPE)
+            if (value := param.child_by_field_name(field)) is not None
+        )
+    values.extend(
+        value
+        for field in (cs.FIELD_RETURN_TYPE, cs.FIELD_SUPERCLASSES)
+        if (value := definition.child_by_field_name(field)) is not None
+    )
+    return values
+
+
+def _python_nested_definition_step(node: Node, name: str) -> list[Node] | None:
+    # A nested def/class binds its NAME in this scope and evaluates its
+    # header here; its body is its own scope, except that a `global` /
+    # `nonlocal` there rebinds this scope's name.
+    decorators = [c for c in node.children if c.type == cs.TS_PY_DECORATOR]
+    definition = node.child_by_field_name(cs.FIELD_DEFINITION) or node
+    label = definition.child_by_field_name(cs.FIELD_NAME)
+    if (label is not None and label.text == name.encode(cs.ENCODING_UTF8)) or (
+        _python_mentions(definition, name, _PY_SCOPE_DECLARATIONS)
+    ):
+        return None
+    return decorators + _python_header_values(definition)
+
+
+def _python_import_step(node: Node, name: str, sites: list[Node]) -> list[Node] | None:
+    # An import binds the names it lists; `from m import *` may bind any.
+    if any(child.type == cs.TS_WILDCARD_IMPORT for child in node.children):
+        return None
+    if name in python_import_bound_names(node):
+        sites.append(node)
+    return []
+
+
+def _python_binding_step(node: Node, name: str, sites: list[Node]) -> list[Node] | None:
+    # One node of the binding scan: the nodes to scan next (recording any
+    # binding site of `name`), or None when the node may bind `name` in a way
+    # the scan cannot judge.
+    if node.type in PY_SCOPE_BOUNDARIES:
+        return _python_nested_definition_step(node, name)
+    if node.type in _PY_IMPORTS:
+        return _python_import_step(node, name, sites)
+    if node.type in _PY_SCOPE_DECLARATIONS:
+        return None if _declares_name(node, name) else []
+    if node.type != cs.TS_PY_IDENTIFIER or node.text != name.encode(cs.ENCODING_UTF8):
+        return node.children
+    reference = _python_reference(node)
+    if reference is _PyRef.BINDING and node.parent is not None:
+        sites.append(node.parent)
+    return None if reference is _PyRef.UNKNOWN else []
+
+
 def python_name_binding_sites(scope_node: Node, name: str) -> list[Node] | None:
     # Every node that binds `name` in this scope: the parameter declaring it,
-    # then each assignment / augmented assignment / walrus / with-as / for
-    # target in the scope's OWN body (nested defs/classes pruned), the same
-    # binding forms `python_locally_assigned_names` counts. None when a
-    # `global` or `nonlocal` statement hands the name to another scope, whose
-    # bindings this scan cannot see.
+    # each plain `name = value` assignment and each import of it. None when
+    # an occurrence may bind it in any other way (unpacking, `+=`, a walrus,
+    # a for / with / except target, a match capture, a nested def or class,
+    # `del`, a type parameter or alias, a `global` / `nonlocal` declaration
+    # here or in a nested scope, a star import): the caller then knows
+    # nothing about what the name holds.
+    type_parameters = scope_node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    if type_parameters is not None and _python_mentions(
+        type_parameters, name, frozenset({cs.TS_PY_TYPE})
+    ):
+        return None
     sites = [
         param
         for param in _python_parameter_nodes(scope_node)
@@ -260,15 +463,10 @@ def python_name_binding_sites(scope_node: Node, name: str) -> list[Node] | None:
     ]
     stack = list(scope_seed_nodes(scope_node))
     while stack:
-        node = stack.pop()
-        if node.type in PY_SCOPE_BOUNDARIES:
-            continue
-        if node.type in _PY_SCOPE_DECLARATIONS and _declares_name(node, name):
+        following = _python_binding_step(stack.pop(), name, sites)
+        if following is None:
             return None
-        target = _binding_target(node)
-        if target is not None and name in _binding_identifiers(target):
-            sites.append(node)
-        stack.extend(node.children)
+        stack.extend(following)
     return sites
 
 
