@@ -504,7 +504,8 @@ def _walk_related(
     prefix = _prefix(project_name)
     owns = _owner_check(fetch_all, project_name)
     reached = {start}
-    frontiers = dict.fromkeys(hop_queries, [start])
+    # One list per query: each frontier is that query's own.
+    frontiers = {query: [start] for query in hop_queries}
     out: list[TransitiveRelatedRow] = []
     for level in range(1, depth + 1):
         found: dict[str, set[str]] = {query: set() for query in hop_queries}
@@ -514,21 +515,9 @@ def _walk_related(
             rows = fetch_all(
                 query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier}
             )
-            for r in rows:
-                qn = _text_qn(r)
-                if qn in reached or not owns(qn):
-                    continue
-                out.append(
-                    TransitiveRelatedRow(
-                        label=str(r.get(cs.KEY_LABEL, "")),
-                        qualified_name=qn,
-                        path=_opt_str(r.get(cs.KEY_PATH)),
-                        relationship=str(r.get(cs.KEY_REL_TYPE, "")),
-                        depth=level,
-                        through=str(r.get(cs.KEY_THROUGH, "")),
-                    )
-                )
-                found[query].add(qn)
+            hop = _first_reached_rows(rows, reached, owns, level)
+            out.extend(hop)
+            found[query].update(row["qualified_name"] for row in hop)
         for qns in found.values():
             reached.update(qns)
         frontiers = {query: sorted(qns) for query, qns in found.items()}
@@ -543,6 +532,28 @@ def _walk_related(
             r["relationship"],
         ),
     )
+
+
+def _first_reached_rows(
+    rows: list[ResultRow],
+    reached: set[str],
+    owns: Callable[[str], bool],
+    level: int,
+) -> list[TransitiveRelatedRow]:
+    # The rows of one hop that reach a project node not reached at an
+    # earlier level, listed at `level`.
+    return [
+        TransitiveRelatedRow(
+            label=str(r.get(cs.KEY_LABEL, "")),
+            qualified_name=qn,
+            path=_opt_str(r.get(cs.KEY_PATH)),
+            relationship=str(r.get(cs.KEY_REL_TYPE, "")),
+            depth=level,
+            through=str(r.get(cs.KEY_THROUGH, "")),
+        )
+        for r in rows
+        if (qn := _text_qn(r)) not in reached and owns(qn)
+    ]
 
 
 def implementors(
