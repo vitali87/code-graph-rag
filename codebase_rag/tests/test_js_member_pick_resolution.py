@@ -343,6 +343,59 @@ def test_pick_and_omit_do_not_confirm_the_method(
         assert calls["models.A.count"] == {HEURISTIC}, caller
 
 
+def test_a_jsdoc_type_this_pass_cannot_resolve_keeps_the_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `@typedef` alias and a class-level `@template` name a type nothing
+    # registers, which is no proof it is foreign: the pick stays a guess.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.js": MODELS_JS,
+            "svc.js": (
+                "const { A } = require('./models')\n"
+                "/** @typedef {Object} Counter */\n"
+                "/** @param {Counter} c */\n"
+                "function viaTypedef(c) { return c.count(1) }\n"
+                "/** @template T */\n"
+                "class Box {\n"
+                "  /** @param {T} item */\n"
+                "  put(item) { return item.count(1) }\n"
+                "}\n"
+                "module.exports = { viaTypedef, Box }\n"
+            ),
+        },
+    )
+    assert _calls(mock_ingestor, ".svc.viaTypedef")["models.A.count"] == {HEURISTIC}
+    assert _calls(mock_ingestor, ".svc.Box.put")["models.A.count"] == {HEURISTIC}
+
+
+def test_package_imports_and_platform_globals_still_take_no_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Foreign takes proof, and these have it: a type imported from a package
+    # and a platform global. A first-party declaration still confirms.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "cache.ts": CACHE_TS,
+            "handlers.ts": (
+                "import { Cache } from './cache';\n"
+                "import { Store } from 'some-lib';\n"
+                "export function lib(s: Store) { return s.get('x'); }\n"
+                "export function keyed(m: Map<string, Cache>) { return m.get('x'); }\n"
+                "export function later(p: Promise<Cache>) { return p.get('x'); }\n"
+                "export function warm(c: Cache) { return c.get('x'); }\n"
+            ),
+        },
+    )
+    for caller in ("lib", "keyed", "later"):
+        assert "cache.Cache.get" not in _calls(mock_ingestor, f".handlers.{caller}")
+    assert _calls(mock_ingestor, ".handlers.warm")["cache.Cache.get"] == {EXACT}
+
+
 # --- negative: a receiver whose declaration names the owner stays exact ---------
 
 

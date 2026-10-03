@@ -4985,7 +4985,7 @@ class CallProcessor:
         declared = self._ts_type_name_declaration(name, node, module_qn)
         # A global utility type is no value type of its own: it is read
         # through, unless the project defines a type of that name.
-        if declared is None or not declared.foreign:
+        if declared is not None and not declared.foreign:
             return declared
         if name in cs.TS_UNSETTLED_UTILITY_TYPES:
             return None
@@ -5002,9 +5002,11 @@ class CallProcessor:
         # A type name is first-party when an enclosing scope declares it, an
         # import supplies it from the project, or the module registers it.
         # A type parameter or a nested declaration is first-party too but has
-        # no qn to compare, so it declares nothing usable. A name nothing in
-        # the project supplies (`Map`, `URLSearchParams`, `HTMLElement`, an
-        # ambient global) or one imported from a package is foreign.
+        # no qn to compare, so it declares nothing usable. Foreign takes
+        # proof: an import from a package, or a platform global (`Map`,
+        # `URLSearchParams`, `HTMLElement`). Any other name may be a type
+        # this pass cannot see (a JSDoc `@typedef`, a class-level `@template`,
+        # an ambient declaration), so it declares nothing usable either.
         head, _, rest = name.partition(cs.SEPARATOR_DOT)
         top_level = self._ts_lexical_type(anchor, head)
         if top_level is not None:
@@ -5027,9 +5029,9 @@ class CallProcessor:
         local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         if local_qn in self._resolver.function_registry:
             return _ReceiverDeclaration(local_qn, foreign=False)
-        if rest:
-            return None
-        return _ReceiverDeclaration(name, foreign=True)
+        if name in cs.JS_TS_GLOBAL_RECEIVER_TYPES:
+            return _ReceiverDeclaration(name, foreign=True)
+        return None
 
     @staticmethod
     def _ts_lexical_type(anchor: Node, name: str) -> bool | None:
