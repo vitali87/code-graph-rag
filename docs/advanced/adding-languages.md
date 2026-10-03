@@ -33,6 +33,10 @@ uv run cgr language add-grammar ruby
 uv run cgr language add-grammar kotlin
 ```
 
+![uv run cgr language add-grammar ruby in a clone of code-graph-rag, followed by uv run cgr language remove-language ruby](../assets/demos/adding-languages.gif)
+
+*Recorded in a fresh clone of code-graph-rag; the grammar is removed again with `remove-language`.*
+
 ## Custom Grammar Repositories
 
 For languages hosted outside the standard tree-sitter organisation:
@@ -157,6 +161,8 @@ uv run cgr language add-grammar --grammar-url https://github.com/custom/tree-sit
 ```
 
 **"modifies a code-graph-rag source checkout"**: the `cgr` you ran is an installed copy, so there is no checkout to edit. Clone the repository and run `uv run cgr language ...` inside the clone, or request the language.
+
+![cgr language add-grammar ruby refusing to run from an installed (non-checkout) cgr and changing nothing](../assets/demos/adding-languages-installed.gif)
 
 **Version incompatibility**: If you get "Incompatible Language version" errors:
 
