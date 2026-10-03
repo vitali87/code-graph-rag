@@ -10,9 +10,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -93,6 +96,19 @@ _TOOL_SRC = Path(__file__).parent / "gotypes"
 _TOOL_SOURCES = ("main.go", "go.mod", "go.sum")
 _BINARY_NAME = "gotypes"
 _BUILD_LOCK = ".build-lock"
+# Written when a build fails, as JSON holding the `go env GOVERSION` it failed
+# with and when it failed: a failed build is not retried every sync, only once
+# Go or the helper's sources change or GO_FRONTEND_BUILD_FAILURE_TTL_S passes
+# (issue #2395). The time is stored in the file, not read from its mtime, which
+# copying or restoring the cache can reset (PR #2417 review).
+_BUILD_FAILED_MARKER = ".build-failed"
+_MARKER_GO_VERSION = "go_version"
+_MARKER_FAILED_AT = "failed_at"
+_SECONDS_PER_MINUTE = 60
+_GO_MOD = "go.mod"
+_GO_DIRECTIVE = re.compile(r"^go\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
+_GO_VERSION = re.compile(r"^go(\d+(?:\.\d+)*)$")
+_VERSION_PROBE_TIMEOUT = 30
 # Same mkdir-lock discipline as the C# frontend: build the binary ONCE, then
 # parallel workers run it read-only and never race a shared build output.
 _LOCK_TRIES = 600
@@ -156,7 +172,9 @@ def _binary_fresh(binary: Path) -> bool:
     return binary.is_file() and binary.stat().st_mtime >= _newest_source_mtime()
 
 
-def _compile_tool(go: str, src: Path, out: Path) -> bool:
+def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
+    """True when the helper built, False when `go build` failed, and None when
+    it timed out, which says nothing about whether the helper builds."""
     # Build from a copy in the writable cache, never the bundled source dir,
     # which is read-only under a pip install (the build writes nothing there,
     # but a shared GOCACHE/module fetch wants a writable working tree).
@@ -184,22 +202,170 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool:
                 stderr=f"timed out after {_BUILD_TIMEOUT}s"
             )
         )
-        return False
+        return None
     if proc.returncode != 0:
         logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip()))
     return proc.returncode == 0
 
 
+def _dotted(version: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def _required_go_version() -> tuple[int, ...] | None:
+    """The helper module's `go` directive: the oldest Go that builds it."""
+    try:
+        text = (_TOOL_SRC / _GO_MOD).read_text(encoding=cs.ENCODING_UTF8)
+    except OSError:
+        return None
+    match = _GO_DIRECTIVE.search(text)
+    return tuple(int(part) for part in match.group(1).split(".")) if match else None
+
+
+def _toolchain_version(go: str) -> str | None:
+    """`go env GOVERSION` under the same env the build uses, or None."""
+    try:
+        proc = subprocess.run(
+            [go, "env", "GOVERSION"],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=_VERSION_PROBE_TIMEOUT,
+            env={**os.environ, **_GO_ENV},
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    version = (proc.stdout or "").strip()
+    return version if proc.returncode == 0 and version else None
+
+
+def _too_old(version: str | None) -> tuple[int, ...] | None:
+    """The version the helper needs when `version` is older than it, else None.
+
+    A devel build or an unreadable answer is not evidence of an old Go, so it
+    goes on to the build, which is the check that decides.
+    """
+    required = _required_go_version()
+    match = _GO_VERSION.match(version or "")
+    if required is None or match is None:
+        return None
+    found = tuple(int(part) for part in match.group(1).split("."))
+    return required if found < required else None
+
+
+def _failed_at(marker: Path, version: str | None) -> float | None:
+    """When the build failed with this Go, or None without a readable marker
+    for it."""
+    try:
+        payload = json.loads(marker.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get(_MARKER_GO_VERSION) != (version or ""):
+        return None
+    failed_at = payload.get(_MARKER_FAILED_AT)
+    # bool is an int subclass, but a `true` in the marker holds no time.
+    if isinstance(failed_at, bool) or not isinstance(failed_at, int | float):
+        return None
+    return float(failed_at)
+
+
+def _failure_retry_in(marker: Path, version: str | None) -> float | None:
+    """Seconds until a remembered failure with this Go is retried, or None to
+    build now."""
+    failed_at = _failed_at(marker, version)
+    try:
+        if failed_at is None or failed_at < _newest_source_mtime():
+            return None
+    except OSError:
+        return None
+    age = time.time() - failed_at
+    # A failure dated after now means the clock moved back since, and holding
+    # it would keep the build off until the clock caught up, plus the TTL.
+    if not 0 <= age < cs.GO_FRONTEND_BUILD_FAILURE_TTL_S:
+        return None
+    return cs.GO_FRONTEND_BUILD_FAILURE_TTL_S - age
+
+
+def _remember_failure(marker: Path, version: str | None) -> None:
+    marker.write_text(
+        json.dumps({_MARKER_GO_VERSION: version or "", _MARKER_FAILED_AT: time.time()}),
+        encoding=cs.ENCODING_UTF8,
+    )
+
+
+def _skip_for_recent_failure(marker: Path, version: str | None) -> bool:
+    """True, after one warning, while a failed build with this Go is
+    remembered and not yet due for a retry."""
+    retry_in = _failure_retry_in(marker, version)
+    if retry_in is None:
+        return False
+    logger.warning(
+        ls.GO_FRONTEND_BUILD_FAILED_EARLIER.format(
+            version=version,
+            minutes=math.ceil(retry_in / _SECONDS_PER_MINUTE),
+            marker=marker,
+        )
+    )
+    return True
+
+
+def _compile_and_remember(
+    go: str, src: Path, out: Path, marker: Path, version: str | None
+) -> bool:
+    # Runs under the build lock. A worker that passed `_build_tool`'s marker
+    # check while another worker's build held the lock checks again here:
+    # that build may just have failed and dated the marker, and building
+    # anyway would cost every queued sync one more failing build (PR #2417
+    # review). A build that succeeded meanwhile never gets here, because
+    # build_cached_artifact rechecks the binary's freshness under the lock.
+    if _skip_for_recent_failure(marker, version):
+        return False
+    built = _compile_tool(go, src, out)
+    try:
+        if built:
+            marker.unlink(missing_ok=True)
+        elif built is False:
+            _remember_failure(marker, version)
+    except OSError:
+        pass
+    return bool(built)
+
+
 def _build_tool(go: str) -> Path | None:
+    """The helper binary, or None after logging exactly one warning.
+
+    The version floor is checked before a build so an old Go is named plainly
+    instead of surfacing as `go build`'s stderr, and a failed build is not
+    retried on every sync (issue #2395).
+    """
     cache = _cache_dir()
     src = cache / "src"
     out = cache / "out"
     binary = out / _BINARY_NAME
+    if _binary_fresh(binary):
+        return binary
+    version = _toolchain_version(go)
+    if (required := _too_old(version)) is not None:
+        logger.warning(
+            ls.GO_FRONTEND_TOOLCHAIN_TOO_OLD.format(
+                required=_dotted(required), found=(version or "").removeprefix(_GO)
+            )
+        )
+        return None
+    marker = cache / _BUILD_FAILED_MARKER
+    # The fast path: a remembered failure skips the lock, and any wait on it,
+    # entirely. `_compile_and_remember` checks again once the lock is held.
+    if _skip_for_recent_failure(marker, version):
+        return None
     return build_cached_artifact(
         cache,
         binary,
         lambda: _binary_fresh(binary),
-        lambda: _compile_tool(go, src, out),
+        lambda: _compile_and_remember(go, src, out, marker, version),
         _BUILD_LOCK,
         _LOCK_TRIES,
         _LOCK_POLL_SECONDS,
@@ -361,7 +527,8 @@ def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
         return _empty_facts()
     binary = _build_tool(go)
     if binary is None:
-        logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=""))
+        # `_build_tool` has already said why, with the build's own stderr; a
+        # second warning here repeated it with an empty one (issue #2395).
         return _empty_facts()
     merged = _empty_facts()
     degraded: list[str] = []

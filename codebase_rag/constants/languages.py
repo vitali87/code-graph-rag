@@ -158,6 +158,17 @@ class GoFrontend(StrEnum):
     GOTYPES = "gotypes"
 
 
+# How long a failed build of the go/types helper is remembered (issue #2395).
+# Inside it, a sync skips the build and warns once instead of paying for
+# another `go build` that is likely to fail the same way. The marker lives in a
+# cache that later syncs and other repositories share, and most failures that
+# get past the Go version check come from the environment (no network, a module
+# proxy outage, a full disk). An hour bounds how long go/types facts stay off
+# after such a failure clears, while a lasting failure costs one build attempt
+# an hour (PR #2417 review).
+GO_FRONTEND_BUILD_FAILURE_TTL_S = 60 * 60
+
+
 # JS/TS import specifier schemes naming genuinely external code (node
 # builtins, registries, URLs). Any OTHER scheme (`ext:` deno aliases,
 # bundler virtual modules) points at first-party code under a non-file-path
