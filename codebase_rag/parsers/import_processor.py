@@ -463,9 +463,7 @@ def _parse_tsconfig_aliases(data: dict, dir_prefix: str) -> list[tuple[str, str,
     paths = options.get(cs.TS_PATHS_KEY)
     if not isinstance(paths, dict):
         return []
-    base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
-    base = str(base).strip(cs.SEPARATOR_SLASH)
-    base_prefix = "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+    base_prefix = _tsconfig_base_prefix(options)
     aliases: list[tuple[str, str, bool]] = []
     for pattern, targets in paths.items():
         if not isinstance(targets, list) or not targets:
@@ -486,6 +484,35 @@ def _parse_tsconfig_aliases(data: dict, dir_prefix: str) -> list[tuple[str, str,
     return aliases
 
 
+def _tsconfig_base_prefix(options: dict) -> str:
+    # `baseUrl` as a path prefix relative to the tsconfig's own directory.
+    base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
+    base = str(base).strip(cs.SEPARATOR_SLASH)
+    return "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+
+
+def _tsconfig_dir_prefix(cfg: Path, repo_path: Path) -> str:
+    parent = cfg.parent
+    if parent == repo_path:
+        return ""
+    return parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
+
+
+def _load_ts_base_urls(repo_path: Path) -> tuple[str, ...]:
+    # Every tsconfig `baseUrl`, repo-root-relative (`frontend/src/`). With one
+    # set, TypeScript resolves a bare specifier against it before node_modules,
+    # so `widgets` names `<baseUrl>/widgets.tsx` with no `paths` entry at all.
+    prefixes: list[str] = []
+    for cfg in _find_tsconfig_files(repo_path):
+        data = _load_jsonc(cfg)
+        options = data.get(cs.TS_COMPILER_OPTIONS_KEY) if data else None
+        if isinstance(options, dict) and options.get(cs.TS_BASE_URL_KEY):
+            prefixes.append(
+                _tsconfig_dir_prefix(cfg, repo_path) + _tsconfig_base_prefix(options)
+            )
+    return tuple(prefixes)
+
+
 def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
     # Aggregate `paths` aliases from every tsconfig at or below the repo root, each
     # target prefixed by the tsconfig's own directory so `@/util` resolves against
@@ -497,13 +524,9 @@ def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
         data = _load_jsonc(cfg)
         if not data:
             continue
-        parent = cfg.parent
-        dir_prefix = (
-            ""
-            if parent == repo_path
-            else parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
+        aliases.extend(
+            _parse_tsconfig_aliases(data, _tsconfig_dir_prefix(cfg, repo_path))
         )
-        aliases.extend(_parse_tsconfig_aliases(data, dir_prefix))
     return aliases
 
 
@@ -817,6 +840,7 @@ class ImportProcessor:
         "js_ts_bare_imports",
         "js_ts_package_imports",
         "js_path_aliases",
+        "js_base_urls",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -1116,6 +1140,7 @@ class ImportProcessor:
         self.js_path_aliases: list[tuple[str, str, bool]] = _load_ts_path_aliases(
             repo_path
         )
+        self.js_base_urls: tuple[str, ...] = _load_ts_base_urls(repo_path)
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
@@ -3717,6 +3742,16 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
+    def _js_base_url_names_file(self, import_path: str) -> bool:
+        # A bare specifier a tsconfig `baseUrl` resolves to a project file is
+        # first-party even though no `paths` alias maps it. Its qn stays the
+        # bare path it always had; only the package flag needs the disk's
+        # answer, so resolution beyond this flag is unchanged.
+        return any(
+            self._js_module_rel_on_disk(f"{base}{import_path}") is not None
+            for base in self.js_base_urls
+        )
+
     def _js_module_rel_on_disk(self, normalized: str) -> str | None:
         """The repo-relative module this path names on disk, or None.
 
@@ -3790,7 +3825,8 @@ class ImportProcessor:
                 )
             return JsImportTarget(
                 import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
-                not _has_aliased_scheme(import_path),
+                not _has_aliased_scheme(import_path)
+                and not self._js_base_url_names_file(import_path),
             )
         import_path = self._strip_js_extension(import_path)
 
@@ -3862,8 +3898,12 @@ class ImportProcessor:
     def _note_js_package_import(
         self, current_module: str, local_name: str, is_package: bool
     ) -> None:
+        # The last binding of a name wins, as it does in import_mapping: a
+        # second `var UI = require("./ui")` makes `UI` the project module's.
         if is_package:
             self.js_ts_package_imports.setdefault(current_module, set()).add(local_name)
+        elif names := self.js_ts_package_imports.get(current_module):
+            names.discard(local_name)
 
     def _record_js_named_import(
         self,

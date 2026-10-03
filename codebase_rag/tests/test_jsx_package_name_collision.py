@@ -179,3 +179,96 @@ def test_tsconfig_alias_named_like_the_project_still_links(tmp_path: Path) -> No
     }
     refs = _refs_from(tmp_path, "react", files, "tsx", "react.src.View.View")
     assert [e.target for e in refs] == ["react.src.lib.ui.Fragment"], refs
+
+
+# Review follow-ups: a bare specifier TypeScript resolves through `baseUrl`
+# alone (no `paths` entry) names a project file, and a name rebound to a
+# project module is that module's, whatever an earlier binding said.
+
+
+@pytest.mark.parametrize(
+    ("tsconfig", "files", "import_line", "tag", "expected"),
+    [
+        (
+            '{"compilerOptions":{"baseUrl":"."}}',
+            {"widgets.tsx": "export function Card() {\n  return <b />;\n}\n"},
+            'import * as Widgets from "widgets";',
+            "Widgets.Card",
+            "proj.widgets.Card",
+        ),
+        (
+            '{"compilerOptions":{"baseUrl":"."}}',
+            {"react.tsx": LOCAL_FRAGMENT},
+            'import * as React from "react";',
+            "React.Fragment",
+            "proj.react.Fragment",
+        ),
+    ],
+    ids=["local-module", "shadows-package-name"],
+)
+def test_base_url_import_of_a_project_file_still_links(
+    tmp_path: Path,
+    tsconfig: str,
+    files: dict[str, str],
+    import_line: str,
+    tag: str,
+    expected: str,
+) -> None:
+    # With `baseUrl` set, TypeScript resolves a bare specifier against it
+    # before node_modules, so a file there IS what the import names, even
+    # when it shares a package's name.
+    repo_files = {
+        "tsconfig.json": tsconfig,
+        "src/View.tsx": _view(import_line, tag),
+        **files,
+    }
+    refs = _refs_from(tmp_path, "proj", repo_files, "tsx", "proj.src.View.View")
+    assert [e.target for e in refs] == [expected], refs
+
+
+def test_name_rebound_to_a_project_module_links(tmp_path: Path) -> None:
+    # The second `require` replaces the package binding, as it replaces the
+    # import target: the last binding wins.
+    files = {
+        "src/View.jsx": _view(
+            'var UI = require("external-ui");\nvar UI = require("./widgets");',
+            "UI.Card",
+        ),
+        "src/widgets.jsx": "export function Card() {\n  return <b />;\n}\n",
+    }
+    refs = _refs_from(tmp_path, "proj", files, "javascript", "proj.src.View.View")
+    assert [e.target for e in refs] == ["proj.src.widgets.Card"], refs
+
+
+@pytest.mark.parametrize(
+    ("tsconfig", "project"),
+    [
+        ('{"compilerOptions":{"baseUrl":"."}}', "react"),
+        ('{"compilerOptions":{"baseUrl":"src"}}', "proj"),
+    ],
+    ids=["project-named-react", "base-url-without-the-file"],
+)
+def test_base_url_that_names_no_file_keeps_the_package_external(
+    tmp_path: Path, tsconfig: str, project: str
+) -> None:
+    # `baseUrl` only claims a specifier it resolves to a file: no
+    # `<baseUrl>/react.*` exists, so `react` is still the npm package.
+    files = {
+        "tsconfig.json": tsconfig,
+        "src/View.tsx": _view('import * as React from "react";', "React.Fragment"),
+        "src/frag.tsx": LOCAL_FRAGMENT,
+    }
+    refs = _refs_from(tmp_path, project, files, "tsx", f"{project}.src.View.View")
+    assert refs == [], refs
+
+
+def test_name_rebound_to_a_package_stays_external(tmp_path: Path) -> None:
+    files = {
+        "src/View.jsx": _view(
+            'var UI = require("./widgets");\nvar UI = require("external-ui");',
+            "UI.Card",
+        ),
+        "src/widgets.jsx": "export function Card() {\n  return <b />;\n}\n",
+    }
+    refs = _refs_from(tmp_path, "proj", files, "javascript", "proj.src.View.View")
+    assert refs == [], refs
