@@ -59,6 +59,15 @@ _CONSTRUCTIBLE_NODE_TYPES = frozenset(
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
 
 
+class _PhpCasedIndex(NamedTuple):
+    """PHP definitions declared with capitals, by ASCII-folded name."""
+
+    # (owner qn, folded method name) -> method qn
+    methods: dict[tuple[str, str], str]
+    # folded class name -> class qns
+    classes: dict[str, list[str]]
+
+
 class _CallSite(NamedTuple):
     """One `_resolve_function_call` request, handed whole to its phases."""
 
@@ -209,7 +218,7 @@ class CallResolver:
         "rust_function_modules",
         "declared_module_qns",
         "_php_class_namespaces",
-        "_php_cased_method_index",
+        "_php_cased_index",
     )
 
     def __init__(
@@ -280,7 +289,7 @@ class CallResolver:
         # {PHP module qn: {class qn: folded namespace it is declared in}},
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
-        self._php_cased_method_index: dict[tuple[str, str], str] | None = None
+        self._php_cased_index: _PhpCasedIndex | None = None
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -456,7 +465,7 @@ class CallResolver:
         self._module_language_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
-        self._php_cased_method_index = None
+        self._php_cased_index = None
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the
@@ -2337,9 +2346,8 @@ class CallResolver:
         wanted = tuple(_php_fold(part) for part in namespace)
         candidates = [
             qn
-            for qn in self.function_registry.find_ending_with(symbol)
-            if self.function_registry[qn] == NodeType.CLASS
-            and self._php_declared_namespace(qn) == wanted
+            for qn in self._php_class_candidates(symbol)
+            if self._php_declared_namespace(qn) == wanted
         ]
         if namespace:
             # Several files declaring one namespaced class is a conditional
@@ -2347,14 +2355,30 @@ class CallResolver:
             if len(candidates) != 1:
                 return None
             return self.function_registry[candidates[0]], candidates[0]
-        own = f"{module_qn}{cs.SEPARATOR_DOT}{symbol}"
-        if own in candidates:
+        if own := next(
+            (qn for qn in candidates if self._parent_qn(qn) == module_qn), None
+        ):
             return self.function_registry[own], own
         if not candidates:
             return None
         best = self._best_trie_candidate(candidates, module_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best], best
+
+    def _php_class_candidates(self, symbol: str) -> list[str]:
+        # Every class whose name PHP would match to `symbol`, which compares
+        # class names ASCII case-insensitively: as written, declared in lower
+        # case, or declared with capitals (`new box()` builds `Box`). Each is
+        # named as declared, which is what the edge must target.
+        folded = _php_fold(symbol)
+        found = dict.fromkeys(
+            [
+                *self.function_registry.find_ending_with(symbol),
+                *self.function_registry.find_ending_with(folded),
+                *self._php_cased_definitions().classes.get(folded, ()),
+            ]
+        )
+        return [qn for qn in found if self.function_registry[qn] == NodeType.CLASS]
 
     def _php_declared_namespace(self, class_qn: str) -> PhpClassPath | None:
         # The ASCII-folded namespace PHP declares `class_qn` in; None when its
@@ -2430,25 +2454,30 @@ class CallResolver:
             method_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{spelling}"
             if self.function_registry.get(method_qn) == NodeType.METHOD:
                 return method_qn
-        return self._php_cased_methods().get((owner_qn, folded))
+        return self._php_cased_definitions().methods.get((owner_qn, folded))
 
-    def _php_cased_methods(self) -> dict[tuple[str, str], str]:
-        # PHP methods declared with an upper-case letter, keyed by (owner qn,
-        # folded name): the lookups above miss `__CONSTRUCT` for
-        # `__construct`, and the registry's prefix walk cannot list it, since
-        # the trie skips every `__`-prefixed key as one of its own markers.
-        if self._php_cased_method_index is None:
-            index: dict[tuple[str, str], str] = {}
+    def _php_cased_definitions(self) -> _PhpCasedIndex:
+        # PHP classes and methods declared with an upper-case letter, by
+        # folded name. A lookup by the written or the folded spelling misses
+        # them (`box` for `Box`, `__construct` for `__CONSTRUCT`), and the
+        # registry's prefix walk cannot list a method like `__CONSTRUCT`,
+        # since the trie skips every `__`-prefixed key as one of its markers.
+        if self._php_cased_index is None:
+            index = _PhpCasedIndex({}, {})
             for qn, kind in self.function_registry.items():
-                if kind != NodeType.METHOD:
+                if kind not in (NodeType.CLASS, NodeType.METHOD):
                     continue
                 owner_qn, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
-                if (folded := _php_fold(leaf)) == leaf:
+                if (folded := _php_fold(leaf)) == leaf or (
+                    self._module_language(owner_qn) != cs.SupportedLanguage.PHP
+                ):
                     continue
-                if self._module_language(owner_qn) == cs.SupportedLanguage.PHP:
-                    index.setdefault((owner_qn, folded), qn)
-            self._php_cased_method_index = index
-        return self._php_cased_method_index
+                if kind == NodeType.METHOD:
+                    index.methods.setdefault((owner_qn, folded), qn)
+                else:
+                    index.classes.setdefault(folded, []).append(qn)
+            self._php_cased_index = index
+        return self._php_cased_index
 
     def _php_import_key(self, call_name: str, import_map: dict[str, str]) -> str | None:
         """The import-map key matching `call_name` under PHP case folding.

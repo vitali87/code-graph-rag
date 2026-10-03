@@ -460,3 +460,100 @@ def test_child_without_constructor_reaches_the_parents_in_any_casing(
     assert _targets(edges, caller, _CALLS) == {
         f"{PROJECT}.src.R.Root.__CONSTRUCT": "exact"
     }
+
+
+# --- PHP class and namespace names are case-insensitive --------------------------
+
+
+def test_global_class_written_in_another_case_is_instantiated(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    widget = "<?php\nclass Widget { public function __construct() {} }\n"
+    use = (
+        "<?php\nclass Local {}\n"
+        "function local() { return new LOCAL(); }\n"
+        "function other() { return new widget(); }\n"
+    )
+    edges = _graph(
+        temp_repo, mock_ingestor, {"lib/Widget.php": widget, "app/use.php": use}
+    )
+    caller = f"{PROJECT}.app.use"
+    widget_qn = f"{PROJECT}.lib.Widget.Widget"
+    assert _targets(edges, f"{caller}.local", _INST) == {f"{caller}.Local": "exact"}
+    assert set(_targets(edges, f"{caller}.other", _INST)) == {widget_qn}
+    assert set(_targets(edges, f"{caller}.other", _CALLS)) == {
+        f"{widget_qn}.__construct"
+    }
+
+
+def test_braced_namespace_class_written_in_another_case_is_instantiated(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    braced = (
+        "<?php\nnamespace App {\n"
+        "    class Box { public function __construct() {} }\n}\n"
+    )
+    use = "<?php\nnamespace Caller;\nfunction make() { return new \\app\\box(); }\n"
+    edges = _graph(
+        temp_repo, mock_ingestor, {"src/braced.php": braced, "src/use.php": use}
+    )
+    box = f"{PROJECT}.src.braced.App.Box"
+    caller = f"{PROJECT}.src.use.make"
+    assert _targets(edges, caller, _INST) == {box: "exact"}
+    assert _targets(edges, caller, _CALLS) == {f"{box}.__construct": "exact"}
+
+
+def test_use_import_in_another_case_resolves_the_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    braced = (
+        "<?php\nnamespace App\\Models {\n"
+        "    class Box { public function __construct() {} }\n}\n"
+    )
+    stated = "<?php\nnamespace App\\Stock;\nclass Crate {}\n"
+    use = (
+        "<?php\nnamespace Caller;\n"
+        "use app\\models\\box;\n"
+        "use APP\\STOCK\\CRATE as Parcel;\n"
+        "function braced() { return new Box(); }\n"
+        "function stated() { return new parcel(); }\n"
+    )
+    edges = _graph(
+        temp_repo,
+        mock_ingestor,
+        {"src/braced.php": braced, "src/Crate.php": stated, "src/use.php": use},
+    )
+    box = f"{PROJECT}.src.braced.App\\Models.Box"
+    assert _targets(edges, f"{PROJECT}.src.use.braced", _INST) == {box: "exact"}
+    assert _targets(edges, f"{PROJECT}.src.use.braced", _CALLS) == {
+        f"{box}.__construct": "exact"
+    }
+    assert _targets(edges, f"{PROJECT}.src.use.stated", _INST) == {
+        f"{PROJECT}.src.Crate.Crate": "exact"
+    }
+
+
+def test_names_differing_only_in_case_still_resolve_by_namespace(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Folding the name never merges two namespaces' classes, and a name that
+    # differs by more than case binds nothing.
+    first = "<?php\nnamespace A;\nclass Box {}\n"
+    second = "<?php\nnamespace B {\n    class BOX {}\n}\n"
+    use = (
+        "<?php\nnamespace Caller;\n"
+        "function a() { return new \\A\\box(); }\n"
+        "function b() { return new \\b\\Box(); }\n"
+        "function neither() { return new \\A\\Boxes(); }\n"
+        "function unqualified() { return new Box(); }\n"
+    )
+    edges = _graph(
+        temp_repo,
+        mock_ingestor,
+        {"src/A.php": first, "src/B.php": second, "src/use.php": use},
+    )
+    caller = f"{PROJECT}.src.use"
+    assert _targets(edges, f"{caller}.a", _INST) == {f"{PROJECT}.src.A.Box": "exact"}
+    assert _targets(edges, f"{caller}.b", _INST) == {f"{PROJECT}.src.B.B.BOX": "exact"}
+    assert _targets(edges, f"{caller}.neither", _INST) == {}
+    assert _targets(edges, f"{caller}.unqualified", _INST) == {}
