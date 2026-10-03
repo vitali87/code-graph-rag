@@ -407,6 +407,46 @@ def has_implementation_sibling(
     return False
 
 
+def python_stub_has_implementation(
+    path: Path,
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Is `path` a `.pyi` stub whose module an indexed `.py` already defines?
+
+    Such a stub is skipped rather than parsed. It strips to the same module qn
+    as its implementation, so parsing it would either overwrite the `.py`'s
+    Module or, disambiguated, add a `proj.x.pyi` twin carrying a second copy
+    of every signature (issue #2445). A stub with NO implementation is kept:
+    for a compiled extension it is the only source the module has.
+
+    The implementation is whatever `import` would load under the same name:
+    `x.py`, or the package `x/__init__.py`, which wins over `x.py` at runtime
+    and so owns `proj.x` in the graph. For `__init__.pyi` it is the
+    `__init__.py` beside it. As with `has_implementation_sibling`, this asks
+    the disk and the walk's own skip predicate, not the parse registry, so the
+    answer does not depend on which file was walked first.
+    """
+    if path.suffix != cs.EXT_PYI:
+        return False
+    if path.name == cs.INIT_PYI:
+        candidates = (path.with_name(cs.INIT_PY),)
+    else:
+        candidates = (path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY)
+    return any(
+        candidate.is_file()
+        and not should_skip_path(
+            candidate,
+            repo_path,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        )
+        for candidate in candidates
+    )
+
+
 def base_module_qn(rel_path: Path, project_name: str) -> str:
     """The module qualified name for a file, BEFORE collision disambiguation.
 
@@ -415,10 +455,10 @@ def base_module_qn(rel_path: Path, project_name: str) -> str:
     byte-for-byte: the whole graph keys on these names, and a disagreement
     silently splits one module into two nodes rather than raising (#1025).
 
-    ``__init__.py`` and ``mod.rs`` name their PACKAGE rather than themselves,
-    so they drop their own filename segment.
+    ``__init__.py`` (and its stub ``__init__.pyi``) and ``mod.rs`` name their
+    PACKAGE rather than themselves, so they drop their own filename segment.
     """
-    if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
+    if rel_path.name in (*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS):
         parts = rel_path.parent.parts
     else:
         parts = (*rel_path.parent.parts, module_stem(rel_path.name))
