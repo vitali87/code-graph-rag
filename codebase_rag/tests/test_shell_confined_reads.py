@@ -162,8 +162,10 @@ async def test_an_option_naming_an_outside_file_still_asks(
     project: Path, spawned: list[list[str]], outside_patterns: str, template: str
 ) -> None:
     tool = _tool(project)
+    context = _unapproved()
+    command = template.format(outside=outside_patterns)
     with pytest.raises(ApprovalRequired):
-        await tool.function(_unapproved(), template.format(outside=outside_patterns))
+        await tool.function(context, command)
 
     assert spawned == []
 
@@ -173,8 +175,10 @@ async def test_an_attached_option_value_through_an_outward_symlink_still_asks(
 ) -> None:
     (project / "linked_patterns").symlink_to(outside_patterns)
 
+    tool = _tool(project)
+    context = _unapproved()
     with pytest.raises(ApprovalRequired):
-        await _tool(project).function(_unapproved(), "rg -flinked_patterns pkg")
+        await tool.function(context, "rg -flinked_patterns pkg")
 
     assert spawned == []
 
@@ -196,8 +200,10 @@ async def test_an_attached_option_value_through_an_outward_symlink_still_asks(
 async def test_an_option_the_rules_do_not_know_asks(
     project: Path, spawned: list[list[str]], command: str
 ) -> None:
+    tool = _tool(project)
+    context = _unapproved()
     with pytest.raises(ApprovalRequired):
-        await _tool(project).function(_unapproved(), command)
+        await tool.function(context, command)
 
     assert spawned == []
 
