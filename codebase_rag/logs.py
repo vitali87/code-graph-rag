@@ -1062,6 +1062,11 @@ PROJECT_OWNER_REPLACED = (
     "Project '{project_name}' indexed {root}; --yes given, replacing it with "
     "this repository."
 )
+PROJECT_CLAIM_RELEASE_FAILED = (
+    "Could not release the claim on project '{project_name}' that this failed "
+    "sync made: {error}. Another repository syncing under that name will "
+    "need --yes."
+)
 HASH_CACHE_OTHER_ROOT = (
     "Project '{project}' in the graph was last indexed from {root}, not this "
     "repository; discarding the hash cache and rebuilding fully."

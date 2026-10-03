@@ -6,11 +6,16 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from unittest.mock import patch
 
 import pytest
 import typer
 
-from codebase_rag.cli import _exit_if_project_owned_elsewhere, _project_owner_refusal
+from codebase_rag.cli import (
+    _exit_if_project_owned_elsewhere,
+    _project_owner_refusal,
+    _run_graph_sync,
+)
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -119,9 +124,99 @@ def test_simultaneous_claims_let_exactly_one_sync_through(
         def claim(repo: Path, name: str = name, start: Barrier = start) -> bool:
             with MemgraphIngestor(host=host, port=port) as ingestor:
                 start.wait()
-                return _project_owner_refusal(ingestor, name, repo, False) is None
+                refusal, _ = _project_owner_refusal(ingestor, name, repo, False)
+                return refusal is None
 
         with ThreadPoolExecutor(max_workers=len(repos)) as pool:
             allowed = list(pool.map(claim, repos))
 
         assert allowed.count(True) == 1, (name, allowed)
+
+
+def _cli_sync(repo: Path) -> None:
+    _run_graph_sync(
+        repo=repo,
+        project_name="api2",
+        project_named=True,
+        batch_size=100,
+        exclude=None,
+        interactive_setup=False,
+        skip_embeddings=True,
+    )
+
+
+def _fails_before_writing(repo: Path) -> None:
+    # The marker write is the sync's first; failing it stops the sync there.
+    with (
+        patch("codebase_rag.cli._mark_sync_incomplete", side_effect=typer.Exit(1)),
+        pytest.raises(typer.Exit),
+    ):
+        _cli_sync(repo)
+
+
+def _claimed_by(ingestor: MemgraphIngestor) -> object:
+    rows = ingestor.fetch_all(
+        "MATCH (p:Project {name: 'api2'}) RETURN p.root_path AS root"
+    )
+    return rows[0]["root"] if rows else None
+
+
+def _refused(repo: Path) -> bool:
+    try:
+        _exit_if_project_owned_elsewhere(
+            100, "api2", repo, clean=False, assume_yes=False
+        )
+    except typer.Exit:
+        return True
+    return False
+
+
+def test_a_first_sync_that_fails_before_writing_releases_its_claim(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # Review of PR 2499: the claim outlived a first sync that wrote nothing,
+    # and refused every other repository the name.
+    org_a, org_b = _repos(tmp_path)
+
+    _fails_before_writing(org_a)
+
+    assert _claimed_by(memgraph_ingestor) is None
+    assert not _refused(org_b)
+
+
+def test_a_first_sync_that_fails_after_its_marker_keeps_its_claim(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # Negative: past the marker the graph may hold part of this repository,
+    # which its next sync finishes.
+    org_a, org_b = _repos(tmp_path)
+
+    with (
+        patch.object(GraphUpdater, "run", side_effect=RuntimeError("parse broke")),
+        pytest.raises(RuntimeError),
+    ):
+        _cli_sync(org_a)
+
+    assert _claimed_by(memgraph_ingestor) == str(org_a.resolve())
+    assert _refused(org_b)
+
+
+def test_a_failed_resync_keeps_the_project(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # Negative: only a claim the failed sync itself created is released.
+    org_a, org_b = _repos(tmp_path)
+    _cli_sync(org_a)
+
+    _fails_before_writing(org_a)
+
+    [row] = memgraph_ingestor.fetch_all(_FUNCTIONS)
+    assert row["root"] == str(org_a.resolve())
+    assert row["functions"] == ["api2.billing.charge_card"]
+    assert _refused(org_b)

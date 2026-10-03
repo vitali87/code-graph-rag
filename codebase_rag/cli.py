@@ -8,7 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
@@ -607,8 +608,9 @@ def _confirm_destructive_clean(
 
 def _project_owner_refusal(
     ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
-) -> str | None:
-    """Why a sync must not replace what another repository indexed (#2411).
+) -> tuple[str | None, bool]:
+    """Why a sync must not replace what another repository indexed (#2411),
+    and whether its claim created the project.
 
     A derived name carries a hash of its path, so only a chosen one can
     collide; the sync would delete the other repository's modules as stale
@@ -621,7 +623,7 @@ def _project_owner_refusal(
     the first one's graph (review of PR 2499).
     """
     if not repo.is_dir():
-        return None
+        return None, False
     try:
         rows = ingestor.fetch_all(
             cq.CYPHER_CLAIM_PROJECT_ROOT,
@@ -633,41 +635,81 @@ def _project_owner_refusal(
     except Exception as exc:
         logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
         if assume_yes:
-            return None
+            return None, False
         return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
             project_name=project_name, error=exc
-        )
+        ), False
     owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
     if not isinstance(owner, str) or not owner:
-        return None
+        return None, False
     if Path(owner).resolve() == repo.resolve():
-        return None
+        return None, rows[0].get(cs.KEY_CREATED) is True
     if assume_yes:
         logger.warning(
             ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
         )
-        return None
+        return None, False
     return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
         project_name=project_name, root=owner
-    )
+    ), False
 
 
 def _exit_if_project_owned_elsewhere(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
-) -> None:
+) -> bool:
     """Stop before the sync when `_project_owner_refusal` refuses it (#2411).
 
-    A `--clean` rebuild is not checked: it wipes every project in the graph,
-    and `_confirm_destructive_clean` already asks before it does.
+    True when this check's claim created the project. A `--clean` rebuild is
+    not checked: it wipes every project in the graph, and
+    `_confirm_destructive_clean` already asks before it does.
     """
     if clean:
-        return
+        return False
     # On its own connection: exiting inside the sync's would report the
     # refusal as a failed session.
     with connect_memgraph(batch_size) as ingestor:
-        refusal = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
+        refusal, created = _project_owner_refusal(
+            ingestor, project_name, repo, assume_yes
+        )
     if refusal is not None:
         _exit_with_error(refusal)
+    return created
+
+
+def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> None:
+    params: dict[str, PropertyValue] = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_ROOT_PATH: str(repo.resolve()),
+    }
+    # Best effort: the sync's own failure is what is being reported.
+    try:
+        with connect_memgraph(batch_size) as ingestor:
+            ingestor.execute_write(cq.CYPHER_RELEASE_PROJECT_CLAIM, params)
+    except Exception as exc:
+        logger.warning(
+            ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
+        )
+
+
+@contextmanager
+def _project_claim(
+    batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
+) -> Iterator[None]:
+    """Hold this sync's claim on its project name while the sync runs (#2411).
+
+    A claim the sync created is given back when the sync fails before its
+    incomplete-run marker or any code is written; the release query checks
+    that, so a failure further in keeps it (review of PR 2499).
+    """
+    created = _exit_if_project_owned_elsewhere(
+        batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+    )
+    try:
+        yield
+    except BaseException:
+        if created:
+            _release_project_claim(batch_size, project_name, repo)
+        raise
 
 
 def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
@@ -744,10 +786,12 @@ def _run_graph_sync(
         unignore_paths = cgrignore.unignore or None
 
     elapsed = time.monotonic()
-    _exit_if_project_owned_elsewhere(
-        batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
-    )
-    with connect_memgraph(batch_size) as ingestor:
+    with (
+        _project_claim(
+            batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+        ),
+        connect_memgraph(batch_size) as ingestor,
+    ):
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))

@@ -415,7 +415,7 @@ def _write_phase(repo: Path, store: _SyncedGraph) -> None:
     # The rest of a sync whose ownership check has already run.
     with (
         patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)),
-        patch("codebase_rag.cli._exit_if_project_owned_elsewhere"),
+        patch("codebase_rag.cli._exit_if_project_owned_elsewhere", return_value=False),
     ):
         _run_graph_sync(
             repo=repo,
@@ -473,6 +473,66 @@ def test_yes_still_takes_a_claimed_name(tmp_path: Path) -> None:
 
     assert _root(store) == str(org_b.resolve())
     assert _functions(store) == {"api2.users.list_users"}
+
+
+def _full_sync(repo: Path, store: _SyncedGraph) -> None:
+    # A whole sync, its ownership claim included.
+    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+        _run_graph_sync(
+            repo=repo,
+            project_name="api2",
+            project_named=True,
+            batch_size=10,
+            exclude=None,
+            interactive_setup=False,
+        )
+
+
+def _fails_before_writing(repo: Path, store: _SyncedGraph) -> None:
+    # The marker write is the sync's first; failing it stops the sync there.
+    with (
+        patch("codebase_rag.cli._mark_sync_incomplete", side_effect=typer.Exit(1)),
+        pytest.raises(typer.Exit),
+    ):
+        _full_sync(repo, store)
+
+
+def test_a_first_sync_that_fails_before_writing_releases_its_claim(
+    tmp_path: Path,
+) -> None:
+    # Greptile review of PR 2499: the claim outlived a first sync that wrote
+    # nothing, and refused every other repository the name.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+
+    _fails_before_writing(org_a, store)
+
+    assert (cs.NodeLabel.PROJECT, "api2") not in store.nodes
+    assert _owner_check(org_b, store)
+
+
+def test_a_failed_resync_keeps_the_project(tmp_path: Path) -> None:
+    # Negative: only a claim the failed sync itself created is released.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+    _full_sync(org_a, store)
+
+    _fails_before_writing(org_a, store)
+
+    assert _root(store) == str(org_a.resolve())
+    assert _functions(store) == {"api2.billing.charge_card"}
+    assert not _owner_check(org_b, store)
+
+
+def test_a_successful_first_sync_keeps_its_claim(tmp_path: Path) -> None:
+    # Negative.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+
+    _full_sync(org_a, store)
+
+    assert _root(store) == str(org_a.resolve())
+    assert not _owner_check(org_b, store)
 
 
 def _chat(repo: Path, *extra: str) -> list[str]:

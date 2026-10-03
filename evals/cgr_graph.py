@@ -690,12 +690,26 @@ class _StatefulIngestor:
         """The MERGE's ON CREATE: only a name nobody holds takes this root."""
         name = _str(params.get(cs.KEY_PROJECT_NAME))
         key = (cs.NodeLabel.PROJECT.value, name)
-        if key not in self.nodes:
+        created = key not in self.nodes
+        if created:
             self.nodes[key] = {
                 cs.KEY_NAME: name,
                 cs.KEY_ROOT_PATH: params.get(cs.KEY_ROOT_PATH),
             }
-        return self._project_root_rows(params)
+        return [
+            {**row, cs.KEY_CREATED: created} for row in self._project_root_rows(params)
+        ]
+
+    def _release_project_claim(self, params: PropertyDict) -> None:
+        # Never holds an incomplete-run marker (see CYPHER_PROJECT_IS_INCOMPLETE
+        # below), so only the root and the Project's edges decide.
+        key = (cs.NodeLabel.PROJECT.value, _str(params.get(cs.KEY_PROJECT_NAME)))
+        props = self.nodes.get(key)
+        if props is None or props.get(cs.KEY_ROOT_PATH) != params.get(cs.KEY_ROOT_PATH):
+            return
+        if self._out.get(key) or self._in.get(key):
+            return
+        del self.nodes[key]
 
     _GRAPH_RESOLVE_LABELS = frozenset(
         {
@@ -1618,6 +1632,8 @@ class _StatefulIngestor:
         _require_bound_params(query, params)
         path = params.get(cs.KEY_PATH) if params else None
         match query:
+            case cq.CYPHER_RELEASE_PROJECT_CLAIM:
+                self._release_project_claim(params or {})
             case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
                 # Modules with nothing unresolved this parse (issue #1568).
                 raw_qns = params.get(cs.KEY_QNS) if params else None
