@@ -447,11 +447,11 @@ def _launch_session(
                 )
             )
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        typer.echo(cs.CLI_MSG_APP_TERMINATED, err=True)
+        raise typer.Exit(130)
     except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
-        )
+        typer.echo(cs.CLI_ERR_STARTUP.format(error=e), err=True)
+        raise typer.Exit(1) from e
 
 
 def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
@@ -1355,11 +1355,11 @@ def optimize(
             )
         )
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        typer.echo(cs.CLI_MSG_APP_TERMINATED, err=True)
+        raise typer.Exit(130)
     except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
-        )
+        typer.echo(cs.CLI_ERR_STARTUP.format(error=e), err=True)
+        raise typer.Exit(1) from e
 
 
 def _mcp_server_notice(message: str) -> None:
