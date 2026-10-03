@@ -80,6 +80,7 @@ from .utils.path_utils import (
     resolve_repo_path,
     unwritable_output_reason,
 )
+from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
@@ -1330,6 +1331,15 @@ def optimize(
         )
 
 
+def _mcp_server_notice(message: str) -> None:
+    # On the stdio transport stdout IS the JSON-RPC stream: a diagnostic
+    # there reaches the client as a malformed message and hides the cause
+    # (issue #2518). stderr is where the server's logs already go. Hosts
+    # capture it to a log, not a terminal, so the message is not hard-wrapped
+    # there: a long repository path stays whole on one line.
+    terminal_aware_console(stderr=True).print(message)
+
+
 @app.command(
     name=ch.CLICommandName.MCP_SERVER,
     help=ch.CMD_MCP_SERVER,
@@ -1361,16 +1371,17 @@ def mcp_server(
 
             asyncio.run(serve_stdio(workspace=workspace))
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        _mcp_server_notice(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
-        )
-        _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        _mcp_server_notice(style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED))
+        if not settings.QUIET:
+            _mcp_server_notice(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        raise typer.Exit(1) from e
     except Exception as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)
-        )
+        _mcp_server_notice(style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED))
+        # Non-zero, so a host or supervisor can tell a server that never
+        # came up from a clean shutdown (issue #2518).
+        raise typer.Exit(1) from e
 
 
 @app.command(
