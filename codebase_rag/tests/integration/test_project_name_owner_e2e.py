@@ -3,16 +3,18 @@
 # while the graph holds the other repository's code under its root.
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING
+from threading import Barrier
 
 import pytest
+import typer
 
+from codebase_rag.cli import _exit_if_project_owned_elsewhere, _project_owner_refusal
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-
-if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import MemgraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -56,3 +58,70 @@ def test_the_repo_that_lost_its_project_is_rebuilt(
     [row] = memgraph_ingestor.fetch_all(_FUNCTIONS)
     assert row["root"] == str(org_a.resolve())
     assert row["functions"] == ["api2.billing.charge_card"]
+
+
+def _repos(tmp_path: Path) -> tuple[Path, Path]:
+    org_a = tmp_path / "orgA" / "api"
+    org_b = tmp_path / "orgB" / "api"
+    org_a.mkdir(parents=True)
+    org_b.mkdir(parents=True)
+    (org_a / "billing.py").write_text("def charge_card():\n    return 1\n")
+    (org_b / "users.py").write_text("def list_users():\n    return []\n")
+    return org_a, org_b
+
+
+@pytest.fixture
+def cli_graph(
+    memgraph_container: dict[str, str | int], monkeypatch: pytest.MonkeyPatch
+) -> dict[str, str | int]:
+    # The CLI opens its own connections from settings, as two processes do.
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", str(memgraph_container["host"]))
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", int(memgraph_container["port"]))
+    return memgraph_container
+
+
+def test_the_second_of_two_racing_syncs_is_refused(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # Review of PR 2499: both ownership checks ran before either sync wrote,
+    # and the later sync replaced the first one's graph without --yes.
+    org_a, org_b = _repos(tmp_path)
+
+    _exit_if_project_owned_elsewhere(100, "api2", org_a, clean=False, assume_yes=False)
+    with pytest.raises(typer.Exit):
+        _exit_if_project_owned_elsewhere(
+            100, "api2", org_b, clean=False, assume_yes=False
+        )
+    _sync(memgraph_ingestor, org_a)
+
+    [row] = memgraph_ingestor.fetch_all(_FUNCTIONS)
+    assert row["root"] == str(org_a.resolve())
+    assert row["functions"] == ["api2.billing.charge_card"]
+
+
+def test_simultaneous_claims_let_exactly_one_sync_through(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # The claims themselves at once, on two connections, against a graph a
+    # sync has run on before (so Project's unique name is enforced).
+    memgraph_ingestor.ensure_constraints()
+    repos = _repos(tmp_path)
+    host, port = str(cli_graph["host"]), int(cli_graph["port"])
+
+    for attempt in range(20):
+        name = f"race{attempt}"
+        start = Barrier(len(repos))
+
+        def claim(repo: Path, name: str = name, start: Barrier = start) -> bool:
+            with MemgraphIngestor(host=host, port=port) as ingestor:
+                start.wait()
+                return _project_owner_refusal(ingestor, name, repo, False) is None
+
+        with ThreadPoolExecutor(max_workers=len(repos)) as pool:
+            allowed = list(pool.map(claim, repos))
+
+        assert allowed.count(True) == 1, (name, allowed)

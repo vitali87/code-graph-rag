@@ -614,10 +614,21 @@ def _project_owner_refusal(
     collide; the sync would delete the other repository's modules as stale
     and leave that repository's hash cache describing code no longer there.
     Refused rather than asked: the chat's own sync runs behind a status bar.
+
+    The check claims the name for this repository in the same statement
+    that reads its owner. A separate read let two syncs of a name nobody
+    held both see no owner and both go ahead, and the later one replaced
+    the first one's graph (review of PR 2499).
     """
+    if not repo.is_dir():
+        return None
     try:
         rows = ingestor.fetch_all(
-            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
+            cq.CYPHER_CLAIM_PROJECT_ROOT,
+            {
+                cs.KEY_PROJECT_NAME: project_name,
+                cs.KEY_ROOT_PATH: str(repo.resolve()),
+            },
         )
     except Exception as exc:
         logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
@@ -627,7 +638,7 @@ def _project_owner_refusal(
             project_name=project_name, error=exc
         )
     owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
-    if not isinstance(owner, str) or not owner or not repo.is_dir():
+    if not isinstance(owner, str) or not owner:
         return None
     if Path(owner).resolve() == repo.resolve():
         return None

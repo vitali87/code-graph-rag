@@ -11,6 +11,7 @@ graph kept claiming `root_path: orgA/api` while holding orgB's code.
 from __future__ import annotations
 
 from collections.abc import Generator
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -21,7 +22,12 @@ from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.cli import _pre_chat_sync, app
+from codebase_rag.cli import (
+    _exit_if_project_owned_elsewhere,
+    _pre_chat_sync,
+    _run_graph_sync,
+    app,
+)
 from codebase_rag.cli_help import HELP_PROJECT_NAME
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -210,17 +216,18 @@ def graph() -> Generator[MagicMock, None, None]:
 
 
 def _owned_by(ingestor: MagicMock, root: Path | None) -> None:
-    # Matches on the exact name, as the Cypher lookup does.
+    # Matches on the exact name, as the Cypher lookup does. The claim answers
+    # a name nobody holds with the claimant's own root, as its MERGE does.
     def fetch_all(
         query: str, params: dict[str, str] | None = None
     ) -> list[dict[str, str]]:
-        if (
-            query == cq.CYPHER_PROJECT_ROOT_PATH
-            and root is not None
-            and params is not None
-            and params.get(cs.KEY_PROJECT_NAME) == "api2"
-        ):
+        params = params or {}
+        owned = root is not None and params.get(cs.KEY_PROJECT_NAME) == "api2"
+        if query == cq.CYPHER_PROJECT_ROOT_PATH and owned:
             return [{cs.KEY_ROOT_PATH: str(root)}]
+        if query == cq.CYPHER_CLAIM_PROJECT_ROOT:
+            claimed = str(root) if owned else params[cs.KEY_ROOT_PATH]
+            return [{cs.KEY_ROOT_PATH: claimed}]
         return []
 
     ingestor.fetch_all.side_effect = fetch_all
@@ -280,7 +287,7 @@ def test_a_name_this_repo_owns_or_nobody_owns_syncs(
 
 def _root_read_fails(ingestor: MagicMock) -> None:
     def fetch_all(query: str, params: object = None) -> list[dict[str, str]]:
-        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+        if query in (cq.CYPHER_PROJECT_ROOT_PATH, cq.CYPHER_CLAIM_PROJECT_ROOT):
             raise ConnectionError("lost connection")
         return []
 
@@ -383,6 +390,89 @@ def test_a_padded_workspace_name_this_repo_owns_syncs_under_the_stripped_name(
     _workspace_sync(org_a, " api2 ")
 
     assert graph.updater.call_args.kwargs["project_name"] == "api2"
+
+
+class _SyncedGraph(_StatefulIngestor):
+    """The in-memory graph behind a CLI sync's connections."""
+
+    def ensure_constraints(self) -> None:
+        return None
+
+
+def _owner_check(repo: Path, store: _SyncedGraph, *, assume_yes: bool = False) -> bool:
+    # One sync's ownership check on its own; True when the sync may go on.
+    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+        try:
+            _exit_if_project_owned_elsewhere(
+                10, "api2", repo, clean=False, assume_yes=assume_yes
+            )
+        except typer.Exit:
+            return False
+    return True
+
+
+def _write_phase(repo: Path, store: _SyncedGraph) -> None:
+    # The rest of a sync whose ownership check has already run.
+    with (
+        patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)),
+        patch("codebase_rag.cli._exit_if_project_owned_elsewhere"),
+    ):
+        _run_graph_sync(
+            repo=repo,
+            project_name="api2",
+            project_named=True,
+            batch_size=10,
+            exclude=None,
+            interactive_setup=False,
+        )
+
+
+def _root(store: _SyncedGraph) -> object:
+    return store.nodes[(cs.NodeLabel.PROJECT, "api2")][cs.KEY_ROOT_PATH]
+
+
+def test_two_syncs_racing_for_an_unowned_name_refuse_the_loser(
+    tmp_path: Path,
+) -> None:
+    # Greptile review of PR 2499: two syncs of a name nobody held both read
+    # "no owner" before either wrote, so both went ahead and the later one
+    # replaced the first one's graph without --yes. Both checks run first
+    # here, as they did in that run.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+
+    allowed = {repo: _owner_check(repo, store) for repo in (org_a, org_b)}
+    for repo in (org_a, org_b):
+        if allowed[repo]:
+            _write_phase(repo, store)
+
+    assert allowed == {org_a: True, org_b: False}
+    assert _root(store) == str(org_a.resolve())
+    assert _functions(store) == {"api2.billing.charge_card"}
+
+
+def test_the_repo_that_claimed_a_name_syncs_it_again(tmp_path: Path) -> None:
+    # Negative: a claim is this repository's own on every later sync.
+    org_a, _ = _repos(tmp_path)
+    store = _SyncedGraph()
+    assert _owner_check(org_a, store)
+    _write_phase(org_a, store)
+
+    assert _owner_check(org_a, store)
+
+
+def test_yes_still_takes_a_claimed_name(tmp_path: Path) -> None:
+    # Negative: --yes replaces the project whoever claimed it.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+    assert _owner_check(org_a, store)
+    _write_phase(org_a, store)
+
+    assert _owner_check(org_b, store, assume_yes=True)
+    _write_phase(org_b, store)
+
+    assert _root(store) == str(org_b.resolve())
+    assert _functions(store) == {"api2.users.list_users"}
 
 
 def _chat(repo: Path, *extra: str) -> list[str]:
