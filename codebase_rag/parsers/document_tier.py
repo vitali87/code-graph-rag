@@ -24,17 +24,22 @@ heading is a child of whatever heading is currently open above it.
 
 from __future__ import annotations
 
+import posixpath
 import re
-from pathlib import Path
-from typing import TYPE_CHECKING
+import unicodedata
+from bisect import bisect_right
+from collections.abc import Iterable
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import unquote
 
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
 from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
-from .flat_module import emit_flat_module
+from .flat_module import emit_flat_module, flat_module_qn
 
 if TYPE_CHECKING:
     from tree_sitter import Node, Parser
@@ -75,6 +80,26 @@ _BLOCK_SCALAR_HEADER = re.compile(r"^[|>](?:[-+]?\d*|\d*[-+]?)$")
 
 # `[a, b]` and `{k: v}` are YAML flow collections: structures on one line.
 _FLOW_COLLECTION_OPENERS: frozenset[str] = frozenset({"[", "{"})
+_FLOW_SEQUENCE_OPEN = "["
+_FLOW_SEQUENCE_CLOSE = "]"
+_FLOW_ITEM_SEPARATOR = ","
+_QUOTES: frozenset[str] = frozenset({'"', "'"})
+_INDENT: frozenset[str] = frozenset({" ", "\t"})
+# `- item` in a block sequence; a bare `-` is a null item.
+_BLOCK_ITEM_MARKER = "-"
+_BLOCK_ITEM_PREFIX = "- "
+# `key: value` inside an item makes the item a map, which has no flat
+# spelling; so does a key with nothing after its colon.
+_MAPPING_SEPARATOR = ": "
+_MAPPING_SUFFIX = ":"
+# A list is stored as ONE `key=a,b` entry, the spelling #2458 proposes: a
+# consumer that reads the entries into a dict keeps every item, where an
+# entry per item would keep only the last.
+_FRONT_MATTER_ASSIGN = "="
+_FRONT_MATTER_LIST_JOIN = ","
+
+# A declared value: a scalar, or the items of a list of scalars.
+type FrontMatterValue = str | tuple[str, ...]
 
 # Property names a document may NOT declare, because the ingestion layer owns
 # them. A front-matter `path:` would otherwise overwrite the node's real path
@@ -106,17 +131,16 @@ def _without_trailing_comment(value: str) -> str:
     return value
 
 
-def _front_matter_pair(line: str) -> tuple[str, str] | None:
-    """One top-level `key: value` scalar, or None if the line declares none.
+def _declared_key(line: str) -> tuple[str, str] | None:
+    """A top-level `key:` line's name and the raw text after its colon.
 
-    Extracted from `parse_front_matter` to keep each rule separately readable
-    and the caller's complexity down (Sonar S3776). Every `None` below is a
-    distinct reason a line is not a declaration, and the comments say which.
+    The guards every declaration shares, whether its value is a scalar on the
+    line or a list on the lines below.
     """
     # INDENTED lines belong to a parent key, not the document. Taking them
     # would hoist `child: v` under `parent:` to top level, inventing a
     # declaration the author never made at that level.
-    if line[:1] in {" ", "\t"}:
+    if line[:1] in _INDENT:
         return None
     # A comment declares nothing. `# note: x` would become the key "# note".
     if line.lstrip().startswith("#"):
@@ -127,10 +151,24 @@ def _front_matter_pair(line: str) -> tuple[str, str] | None:
     name = key.strip()
     if not name or name in _RESERVED_FRONT_MATTER_KEYS:
         return None
+    return name, value
+
+
+def _front_matter_pair(line: str) -> tuple[str, FrontMatterValue] | None:
+    """One top-level `key: value` declaration, or None if the line has none.
+
+    Extracted from `parse_front_matter` to keep each rule separately readable
+    and the caller's complexity down (Sonar S3776). Every `None` below is a
+    distinct reason a line is not a declaration, and the comments say which.
+    """
+    declared = _declared_key(line)
+    if declared is None:
+        return None
+    name, value = declared
     # An EMPTY value opens a nested block or a list (`parent:` / `tags:`)
     # rather than declaring a scalar. Recording it as an empty string would
     # assert the author declared it empty -- a different claim from declaring
-    # a structure this parser does not represent.
+    # a structure. A list beneath is read by `_block_list` instead.
     #
     # REDUNDANT with the unquoted check below, verified by mutation: removing
     # this leaves all 23 tests passing, because a value empty here is empty
@@ -159,7 +197,7 @@ def _front_matter_pair(line: str) -> tuple[str, str] | None:
     # This runs BEFORE the emptiness checks below on purpose: `status: #
     # planned` is a null value carrying a comment, and stripping it makes
     # that the same case as a bare `status:`, which already declares nothing.
-    if cleaned[:1] not in {'"', "'"}:
+    if cleaned[:1] not in _QUOTES:
         # A value that BEGINS with `#` is entirely a comment (`status: #
         # planned` is a null value plus a comment).
         # `_without_trailing_comment` cannot see this one: it requires
@@ -170,9 +208,12 @@ def _front_matter_pair(line: str) -> tuple[str, str] | None:
         cleaned = _without_trailing_comment(cleaned)
         if not cleaned:
             return None
-    # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure on one line.
-    # Storing its source text makes a list indistinguishable from a string
-    # that happens to look like one.
+    # A FLOW SEQUENCE (`[a, b]`) is a list on one line, kept as its items
+    # rather than as source text that would read like a string (#2458).
+    if cleaned.startswith(_FLOW_SEQUENCE_OPEN):
+        items = _flow_sequence_items(cleaned)
+        return None if items is None else (name, items)
+    # A FLOW MAPPING (`{k: v}`) is a structure with no `key=value` spelling.
     if cleaned[:1] in _FLOW_COLLECTION_OPENERS:
         return None
     # Quote-stripping can empty a value that passed the check above: `k: ""`
@@ -183,14 +224,118 @@ def _front_matter_pair(line: str) -> tuple[str, str] | None:
     return name, unquoted
 
 
-def parse_front_matter(text: str) -> dict[str, str]:
-    """Read declared YAML front-matter into flat string properties.
+def _list_item(raw: str) -> str | None:
+    """One list item as a scalar, or None when it is not one.
 
-    Deliberately NOT a YAML parser. Only top-level `key: value` scalars are
-    read; nested structures, lists and multi-line values are skipped rather
-    than flattened, because a graph node property is a scalar and inventing a
-    representation for a list would be a schema decision this issue does not
-    have (#1448).
+    An item that is itself a structure -- a nested list, a map such as
+    `- name: x`, a null `-` -- has no flat spelling, and the caller refuses
+    the whole list rather than store part of it as if it were all of it.
+    """
+    cleaned = raw.strip()
+    if cleaned[:1] not in _QUOTES:
+        cleaned = _without_trailing_comment(cleaned)
+        if (
+            not cleaned
+            or cleaned.startswith("#")
+            or cleaned[:1] in _FLOW_COLLECTION_OPENERS
+            or cleaned == _BLOCK_ITEM_MARKER
+            or cleaned.startswith(_BLOCK_ITEM_PREFIX)
+            or _MAPPING_SEPARATOR in cleaned
+            or cleaned.endswith(_MAPPING_SUFFIX)
+        ):
+            return None
+    return cleaned.strip("\"'") or None
+
+
+def _flow_sequence_items(text: str) -> tuple[str, ...] | None:
+    """The items of a one-line `[a, b]`, or None when it is not a flat list.
+
+    Split on the commas outside quotes, so `["a, b", c]` is two items. An
+    empty list declares nothing, as an empty scalar does.
+    """
+    if not text.endswith(_FLOW_SEQUENCE_CLOSE):
+        return None
+    raw_items: list[str] = []
+    current: list[str] = []
+    quote = ""
+    for char in text[1:-1]:
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in _QUOTES:
+            quote = char
+        elif char == _FLOW_ITEM_SEPARATOR:
+            raw_items.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    if quote:
+        return None
+    raw_items.append("".join(current))
+    items: list[str] = []
+    # A blank entry is `[]` itself or the trailing comma YAML allows.
+    for raw in (raw for raw in raw_items if raw.strip()):
+        item = _list_item(raw)
+        if item is None:
+            return None
+        items.append(item)
+    return tuple(items) or None
+
+
+def _block_list_key(line: str) -> str | None:
+    """The name of a top-level key whose value is the block beneath it."""
+    declared = _declared_key(line)
+    if declared is None:
+        return None
+    name, value = declared
+    rest = value.strip()
+    return name if not rest or rest.startswith("#") else None
+
+
+def _block_list(lines: list[str], index: int) -> tuple[tuple[str, ...] | None, int]:
+    """The `- item` list starting at `index`, and the index after its block.
+
+    The block runs to the next top-level line that is not an item: YAML lets
+    a list under a key sit at the key's own indentation. Anything else in it
+    -- an indented `child: v` (a map), a continuation line -- is a structure
+    this parser does not represent, so the key is refused, not truncated.
+    """
+    items: list[str] = []
+    flat = True
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        is_item = stripped == _BLOCK_ITEM_MARKER or stripped.startswith(
+            _BLOCK_ITEM_PREFIX
+        )
+        is_comment = stripped.startswith("#")
+        if stripped and not (is_item or is_comment) and line[:1] not in _INDENT:
+            break
+        index += 1
+        if not stripped or is_comment:
+            continue
+        item = _list_item(stripped[len(_BLOCK_ITEM_MARKER) :]) if is_item else None
+        if item is None:
+            flat = False
+        else:
+            items.append(item)
+    return (tuple(items) if flat and items else None), index
+
+
+def _front_matter_entry(key: str, value: FrontMatterValue) -> str:
+    """`key=value`, a list's items comma-joined: `tags=a,b`."""
+    text = value if isinstance(value, str) else _FRONT_MATTER_LIST_JOIN.join(value)
+    return f"{key}{_FRONT_MATTER_ASSIGN}{text}"
+
+
+def parse_front_matter(text: str) -> dict[str, FrontMatterValue]:
+    """Read declared YAML front-matter into flat properties.
+
+    Deliberately NOT a YAML parser. Only top-level keys are read, holding a
+    scalar or a list of scalars (`tags: [a, b]`, or `- a` lines beneath
+    `tags:`, issue #2458). Nested maps, lists of structures and multi-line
+    values are skipped rather than flattened, because a graph node property
+    is flat and inventing a representation for a map would be a schema
+    decision this parser does not make (#1448).
 
     Declared metadata, not inferred: #1448 lists five other bullets that need
     design decisions about inference and unprompted edits, and this one is
@@ -217,8 +362,17 @@ def parse_front_matter(text: str) -> dict[str, str]:
     )
     if closing is None:
         return {}
-    found: dict[str, str] = {}
-    for line in lines[1:closing]:
+    body = lines[1:closing]
+    found: dict[str, FrontMatterValue] = {}
+    index = 0
+    while index < len(body):
+        line = body[index]
+        index += 1
+        if (key := _block_list_key(line)) is not None:
+            items, index = _block_list(body, index)
+            if items is not None:
+                found[key] = items
+            continue
         pair = _front_matter_pair(line)
         if pair is not None:
             found[pair[0]] = pair[1]
@@ -227,8 +381,8 @@ def parse_front_matter(text: str) -> dict[str, str]:
 
 # Link grammar nodes. `inline_link` is ``[text](target)``; the destination sits
 # in a `link_destination` child. Reference-style links (``[text][label]``) name
-# a definition elsewhere and carry no destination of their own, so they are not
-# resolvable to a file here.
+# a definition elsewhere and carry no destination of their own: theirs is read
+# from the definition their label names.
 #
 # These come from the INLINE grammar, not the block one. tree-sitter-markdown
 # ships a split grammar: the block parser leaves every span of inline content
@@ -247,17 +401,20 @@ _LINK_LABEL = "link_label"
 _LINK_TEXT = "link_text"
 
 # The three reference-link forms. `[text][label]` names its label explicitly;
-# `[label][]` and `[label]` both use their own text as the label. A definition
-# no link names states no relationship, so all three are collected to decide
-# which definitions are live.
+# `[label][]` and `[label]` both use their own text as the label. Each use is
+# a link of its own, located where it is written rather than at the
+# definition; a definition no link names states no relationship.
 _FULL_REFERENCE_LINK = "full_reference_link"
 _COLLAPSED_REFERENCE_LINK = "collapsed_reference_link"
 _SHORTCUT_LINK = "shortcut_link"
 _TEXT_LABELLED_LINKS = frozenset({_COLLAPSED_REFERENCE_LINK, _SHORTCUT_LINK})
+_LINK_NODE_TYPES = frozenset(
+    {_INLINE_LINK, _FULL_REFERENCE_LINK, *_TEXT_LABELLED_LINKS}
+)
 
 # A destination that names something other than a file in this repository.
-# Scheme-bearing targets (http:, https:, mailto:, ftp:) are external, and a
-# bare fragment ("#section") points inside the current document.
+# Scheme-bearing targets (http:, https:, mailto:, ftp:) are external. A bare
+# fragment ("#section") is not: it names a heading of the current document.
 _URI_SCHEME_SEPARATOR = "://"
 _MAILTO_PREFIX = "mailto:"
 _FRAGMENT_PREFIX = "#"
@@ -268,6 +425,60 @@ _MIN_SCHEME_LENGTH = 2
 
 # A heading with no text (`##` alone) has nothing to name a node after.
 _UNTITLED = "(untitled)"
+
+# A leading "/" in a link means the repository root, not the filesystem's.
+_ROOT_RELATIVE_PREFIX = "/"
+# ``<a b.md>`` wraps a destination that contains spaces.
+_ANGLE_OPEN = "<"
+_ANGLE_CLOSE = ">"
+
+# GitHub's heading anchors (the github-slugger rules): lower-cased, every
+# character dropped except letters, digits, marks, `-`, `_` and spaces, and
+# each space turned into `-`. A repeated slug gets `-1`, `-2`, ... in order.
+_SLUG_KEPT: frozenset[str] = frozenset({"-", "_", " "})
+_SLUG_SPACE = " "
+_SLUG_DASH = "-"
+_UNICODE_MARK_PREFIX = "M"
+_LINE_BREAK = b"\n"
+
+
+class _Heading(NamedTuple):
+    """One heading, as its Section node and as an anchor target."""
+
+    qualified_name: str
+    name: str
+    level: int
+    start_line: int
+    end_line: int
+    parent_qn: str
+    parent_is_module: bool
+    slug: str
+
+
+class _LinkSite(NamedTuple):
+    """One link as written: its byte span, destination and words."""
+
+    start_byte: int
+    end_byte: int
+    destination: str
+    text: str
+
+
+class _LocatedLink(NamedTuple):
+    """A link whose target is a file of this repository."""
+
+    site: _LinkSite
+    target: str
+    fragment: str
+
+
+class _PendingLink(NamedTuple):
+    """A LINKS_TO edge held until every node it may end at is buffered."""
+
+    source: tuple[cs.NodeLabel, str, str]
+    target: str
+    fragment: str
+    properties: PropertyDict
 
 
 def _heading_level(node: Node) -> int | None:
@@ -432,119 +643,104 @@ def _label_used_by(node: Node, text: bytes) -> str | None:
     return None
 
 
-def _link_destinations_in(
-    inline_root: Node, text: bytes
-) -> tuple[list[tuple[int, str]], set[str]]:
-    """Inline destinations and the reference labels this span actually uses.
+def _link_site_destination(
+    node: Node, text: bytes, definitions: dict[str, str]
+) -> str | None:
+    """The destination a link node states, or None when it is not a link.
 
-    The labels are what makes a reference definition live: a definition whose
-    label no link names describes no relationship between the two documents,
-    and emitting an edge for it would invent one.
+    A reference link takes its definition's destination. One whose label no
+    definition names is not a link at all: `[x]` alone is bracketed text.
     """
-    found: list[tuple[int, str]] = []
-    used_labels: set[str] = set()
+    if node.type == _INLINE_LINK:
+        destination = _first_child(node, _LINK_DESTINATION)
+        return None if destination is None else _decode(destination, text)
+    label = _label_used_by(node, text)
+    return None if label is None else definitions.get(label)
+
+
+def _link_sites_in(
+    inline_root: Node, text: bytes, offset: int, definitions: dict[str, str]
+) -> list[_LinkSite]:
+    """Every link in one re-parsed inline span, at its byte span in the file."""
+    found: list[_LinkSite] = []
     stack = [inline_root]
     while stack:
         node = stack.pop()
-        if node.type == _INLINE_LINK:
-            destination = _first_child(node, _LINK_DESTINATION)
+        if node.type in _LINK_NODE_TYPES:
+            destination = _link_site_destination(node, text, definitions)
             if destination is not None:
-                found.append((destination.start_byte, _decode(destination, text)))
+                words = _first_child(node, _LINK_TEXT)
+                found.append(
+                    _LinkSite(
+                        offset + node.start_byte,
+                        offset + node.end_byte,
+                        destination,
+                        # Reflowed link text keeps one spelling.
+                        "" if words is None else " ".join(_decode(words, text).split()),
+                    )
+                )
             # A link cannot nest another link; no need to descend.
             continue
-        label = _label_used_by(node, text)
-        if label is not None:
-            used_labels.add(label)
-            continue
         stack.extend(reversed(node.children))
-    return found, used_labels
+    return found
 
 
-def _collect_link_destinations(
-    root: Node, source: bytes, inline_parser: Parser | None
-) -> list[str]:
-    """Every inline-link destination in the document, in source order.
+def _reference_definitions(root: Node, source: bytes) -> dict[str, str]:
+    """Each reference label's destination, by its normalised label.
 
-    Duplicates are kept: the same target linked twice is two link sites, and
-    de-duplication is the caller's business once targets are resolved.
-
-    Returns nothing when the inline grammar is unavailable, so heading
-    extraction still works on an install where only the block parser loaded.
+    Definitions are block-level, so they parse whether or not the inline
+    grammar loaded. CommonMark resolves a duplicated label to its FIRST
+    definition, so a document that redefines `[api]` links to one file
+    rather than to both; `_collect_by_type` returns definitions in source
+    order, which is what makes "first seen wins" the same as "first in the
+    document".
     """
-    found, used_labels = _scan_inline_spans(root, source, inline_parser)
-    found.extend(_resolve_definitions(root, source, used_labels))
-    found.sort()
-    return [destination for _, _, destination in found]
-
-
-def _scan_inline_spans(
-    root: Node, source: bytes, inline_parser: Parser | None
-) -> tuple[list[tuple[int, int, str]], set[str]]:
-    """Inline-link destinations across the document, and the labels they use.
-
-    Each `inline` span is re-parsed with the inline grammar, since the block
-    tree leaves inline content opaque. A span that fails to parse is skipped
-    rather than aborting the document.
-    """
-    found: list[tuple[int, int, str]] = []
-    used_labels: set[str] = set()
-    if inline_parser is None:
-        return found, used_labels
-
-    for span in _collect_inline_spans(root):
-        text = source[span.start_byte : span.end_byte]
-        try:
-            inline_root = inline_parser.parse(text).root_node
-        except (RuntimeError, ValueError):
-            continue
-        destinations, labels = _link_destinations_in(inline_root, text)
-        found.extend(
-            (span.start_byte, offset, destination)
-            for offset, destination in destinations
-        )
-        used_labels |= labels
-    return found, used_labels
-
-
-def _resolve_definitions(
-    root: Node, source: bytes, used_labels: set[str]
-) -> list[tuple[int, int, str]]:
-    """Destinations of the reference definitions some link actually names.
-
-    Reference definitions are block-level, so they parse whether or not the
-    inline grammar loaded — but a definition nothing references states no
-    relationship. With no inline pass `used_labels` is empty, which is the
-    correct answer rather than a degraded one: nothing can be shown to
-    reference them.
-    """
-    resolved: list[tuple[int, int, str]] = []
-    # CommonMark resolves a duplicated label to its FIRST definition, so a
-    # document that redefines `[api]` links to one file rather than to both.
-    # `_collect_by_type` returns definitions in source order, which is what
-    # makes "first seen wins" the same as "first in the document".
-    seen: set[str] = set()
+    definitions: dict[str, str] = {}
     for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
         label_node = _first_child(node, _LINK_LABEL)
         destination = _first_child(node, _LINK_DESTINATION)
         if label_node is None or destination is None:
             continue
         label = _normalise_label(_decode(label_node, source).strip("[]"))
-        if label in seen:
+        definitions.setdefault(label, _decode(destination, source))
+    return definitions
+
+
+def _collect_link_sites(
+    root: Node, source: bytes, inline_parser: Parser | None
+) -> list[_LinkSite]:
+    """Every link in the document, in source order, one entry per use.
+
+    The same target linked twice is two link sites. Each `inline` span is
+    re-parsed with the inline grammar, since the block tree leaves inline
+    content opaque; a span that fails to parse is skipped rather than
+    aborting the document. Returns nothing when the inline grammar is
+    unavailable, so heading extraction still works on an install where only
+    the block parser loaded.
+    """
+    if inline_parser is None:
+        return []
+    definitions = _reference_definitions(root, source)
+    sites: list[_LinkSite] = []
+    for span in _collect_inline_spans(root):
+        text = source[span.start_byte : span.end_byte]
+        try:
+            inline_root = inline_parser.parse(text).root_node
+        except (RuntimeError, ValueError):
             continue
-        seen.add(label)
-        if label in used_labels:
-            resolved.append((node.start_byte, 0, _decode(destination, source)))
-    return resolved
+        sites.extend(_link_sites_in(inline_root, text, span.start_byte, definitions))
+    sites.sort()
+    return sites
 
 
 def _is_external(destination: str) -> bool:
     """True when the destination does not name a file in this repository.
 
-    Absolute URLs, mail links, and bare fragments all resolve somewhere other
-    than a repo-relative path, so treating them as file links would invent
-    edges to files that do not exist.
+    Absolute URLs and mail links resolve somewhere other than a repo-relative
+    path, so treating them as file links would invent edges to files that do
+    not exist. A bare fragment is not external: it names the document itself.
     """
-    if not destination or destination.startswith(_FRAGMENT_PREFIX):
+    if not destination:
         return True
     # "//host/path" inherits the page's scheme; it names a host, not a file.
     # It begins with a slash, so root-relative resolution would otherwise map
@@ -577,18 +773,92 @@ def _percent_decode(target: str) -> str:
     return unquote(target)
 
 
-def _strip_target(destination: str) -> str:
-    """The path part of a destination, without any anchor or title.
+def _split_destination(destination: str) -> tuple[str, str]:
+    """The path a destination names, as written, and its fragment.
 
     ``guide.md#install`` points at a section of ``guide.md``; the file is the
     part before the fragment. Angle-bracket forms (``<a b.md>``) wrap targets
-    containing spaces.
+    containing spaces. The path keeps its percent escapes: it is what a
+    broken link is listed as, and `_percent_decode` turns it into a name.
     """
     target = destination.strip()
-    if target.startswith("<") and target.endswith(">"):
+    if target.startswith(_ANGLE_OPEN) and target.endswith(_ANGLE_CLOSE):
         target = target[1:-1]
-    target, _, _ = target.partition(_FRAGMENT_PREFIX)
-    return _percent_decode(target.strip())
+    path, _, fragment = target.partition(_FRAGMENT_PREFIX)
+    return path.strip(), fragment.strip()
+
+
+def broken_link_keys(document_key: str, written: Iterable[str]) -> set[str]:
+    """The repository paths a document's broken links name.
+
+    `written` is what the document's `broken_links` holds, relative to the
+    document (or to the repository root, with a leading "/"). A path that
+    climbs out of the repository names nothing a sync could create.
+    """
+    base = PurePosixPath(document_key).parent
+    keys: set[str] = set()
+    for entry in written:
+        path, _ = _split_destination(entry)
+        target = _percent_decode(path)
+        joined = (
+            target.lstrip(_ROOT_RELATIVE_PREFIX)
+            if target.startswith(_ROOT_RELATIVE_PREFIX)
+            else (base / target).as_posix()
+        )
+        key = posixpath.normpath(joined)
+        if key != posixpath.pardir and not key.startswith(
+            posixpath.pardir + posixpath.sep
+        ):
+            keys.add(key)
+    return keys
+
+
+def _github_slug(text: str) -> str:
+    """The anchor GitHub renders for a heading's text."""
+    kept = "".join(
+        char
+        for char in text.strip().lower()
+        if char.isalnum()
+        or char in _SLUG_KEPT
+        or unicodedata.category(char).startswith(_UNICODE_MARK_PREFIX)
+    )
+    return kept.replace(_SLUG_SPACE, _SLUG_DASH)
+
+
+def _unique_slug(base: str, seen: dict[str, int]) -> str:
+    """`base`, or `base-N` for its Nth repeat in the document."""
+    slug = base
+    while slug in seen:
+        seen[base] += 1
+        slug = f"{base}{_SLUG_DASH}{seen[base]}"
+    seen[slug] = 0
+    return slug
+
+
+def _anchor_key(fragment: str) -> str:
+    """A link fragment reduced to the slug it should match."""
+    return _percent_decode(fragment).strip().lower()
+
+
+def _anchor_map(outline: list[_Heading]) -> dict[str, str]:
+    """Each heading's anchor and the Section qn it names."""
+    return {heading.slug: heading.qualified_name for heading in outline if heading.slug}
+
+
+def _line_starts(source: bytes) -> list[int]:
+    """The byte offset each line starts at, for offset -> (line, col)."""
+    starts = [0]
+    index = source.find(_LINE_BREAK)
+    while index != -1:
+        starts.append(index + 1)
+        index = source.find(_LINE_BREAK, index + 1)
+    return starts
+
+
+def _position(line_starts: list[int], offset: int) -> tuple[int, int]:
+    """A byte offset as a 1-based line and a 0-based byte column."""
+    line = bisect_right(line_starts, offset)
+    return line, offset - line_starts[line - 1]
 
 
 def _sanitize(name: str) -> str:
@@ -602,16 +872,80 @@ def _sanitize(name: str) -> str:
     return collapsed.replace(cs.SEPARATOR_DOT, "_") or _UNTITLED
 
 
+def _outline(root: Node, source: bytes, module_qn: str) -> list[_Heading]:
+    """Every heading of a document as a Section, in source order.
+
+    Shared by the document's own parse and by an anchor resolved from
+    another document's link, so a link names exactly the qn the linked
+    heading's Section is emitted under.
+    """
+    # (heading node, level) for every heading, so each section's end can be
+    # read off the NEXT heading that closes it.
+    levelled: list[tuple[Node, int]] = []
+    for heading in _collect_headings(root):
+        level = _heading_level(heading)
+        if level is not None:
+            levelled.append((heading, level))
+    last_line = _last_line(source)
+
+    # (level, qualified_name) for the headings currently open above the one
+    # being named; the nearest shallower entry is its parent.
+    open_headings: list[tuple[int, str]] = []
+    # Sibling headings can repeat a name ("## Notes" twice under one parent).
+    # The qn is the node's identity, so a repeat would merge two distinct
+    # sections into one node; the shared "<qn>@<start_line>" convention keeps
+    # them apart, and consumers that split on the marker still recover the
+    # heading name.
+    claimed_qns: set[str] = set()
+    slugs: dict[str, int] = {}
+    outline: list[_Heading] = []
+    for index, (heading, level) in enumerate(levelled):
+        text = _heading_text(heading, source).strip()
+        while open_headings and open_headings[-1][0] >= level:
+            open_headings.pop()
+        parent_qn = open_headings[-1][1] if open_headings else module_qn
+        start_line = heading.start_point[0] + 1
+        qualified_name = f"{parent_qn}{cs.SEPARATOR_DOT}{_sanitize(text)}"
+        # A literal heading can already carry the marker ("## Notes@5"), so
+        # one suffix is not guaranteed to be free; keep suffixing until the
+        # name is unclaimed.
+        while qualified_name in claimed_qns:
+            qualified_name = f"{qualified_name}{cs.DUP_QN_MARKER}{start_line}"
+        claimed_qns.add(qualified_name)
+        outline.append(
+            _Heading(
+                qualified_name=qualified_name,
+                name=text or _UNTITLED,
+                level=level,
+                start_line=start_line,
+                end_line=_section_end_line(levelled, index, level, last_line),
+                parent_qn=parent_qn,
+                parent_is_module=not open_headings,
+                # Every heading takes its slug, an empty one included:
+                # GitHub numbers repeats across the whole document.
+                slug=_unique_slug(_github_slug(text), slugs),
+            )
+        )
+        open_headings.append((level, qualified_name))
+    return outline
+
+
 class DocumentTier:
     """Extracts a nested Section graph from heading-structured documents."""
 
     __slots__ = (
         "_ingestor",
         "_repo_path",
+        "_repo_root",
         "_project_name",
         "_parser",
         "_inline_parser",
         "_pending_links",
+        "_anchors",
+        "_sections_by_document",
+        "_live_sections",
+        "_broken_links",
+        "_broken_documents",
     )
 
     def __init__(
@@ -619,12 +953,27 @@ class DocumentTier:
     ) -> None:
         self._ingestor = ingestor
         self._repo_path = repo_path
+        self._repo_root = repo_path.resolve()
         self._project_name = project_name
         self._parser = _load_parser()
         self._inline_parser = _load_inline_parser()
-        # (module qn, target absolute path) per link, held until the pass has
-        # buffered every File node: see `emit_pending_links`.
-        self._pending_links: list[tuple[str, str]] = []
+        # One entry per link, held until the pass has buffered every File
+        # and Section node a link can end at: see `emit_pending_links`.
+        self._pending_links: list[_PendingLink] = []
+        # Anchor -> Section qn per document (by absolute path), filled by
+        # this pass's parses and, for a document this pass did not parse, on
+        # first use. Cleared with the pending links, so a reused updater
+        # never resolves against a document as it was on an earlier pass.
+        self._anchors: dict[str, dict[str, str]] = {}
+        # The Section qns each document's latest parse emitted, so a link
+        # into one captured before an incremental re-parse is restored only
+        # when the heading is still there (`emitted_section`).
+        self._sections_by_document: dict[str, frozenset[str]] = {}
+        self._live_sections: set[str] = set()
+        # This pass's broken links and the documents holding them, for the
+        # one summary line `emit_pending_links` writes.
+        self._broken_links = 0
+        self._broken_documents = 0
 
     def handles(self, suffix: str) -> bool:
         """True when this tier can parse the extension.
@@ -633,6 +982,10 @@ class DocumentTier:
         through to the generic File node rather than losing the file.
         """
         return self._parser is not None and suffix.lower() in DOCUMENT_EXTENSIONS
+
+    def emitted_section(self, qualified_name: str) -> bool:
+        """Whether the latest parse of its document emitted this Section."""
+        return qualified_name in self._live_sections
 
     def process_file(
         self, file_path: Path, structural_elements: dict[Path, str | None]
@@ -649,6 +1002,9 @@ class DocumentTier:
         except (RuntimeError, ValueError) as exc:  # noqa: BLE001
             logger.warning("markdown parse failed for {}: {}", file_path, exc)
             return
+
+        absolute_path = cached_resolve_posix(file_path)
+        located, broken = self._locate_links(root, source, file_path, absolute_path)
 
         # Declared front-matter becomes Module properties (issue #1448).
         # Decoded leniently: a document with an invalid byte should still be
@@ -669,91 +1025,106 @@ class DocumentTier:
         #
         # An empty list overwrites; omission cannot. That makes "no
         # front-matter" a value the re-ingest can actually store, rather than
-        # the absence of one.
-        front_matter: PropertyDict = {
-            cs.KEY_FRONT_MATTER: [f"{k}={v}" for k, v in sorted(declared.items())]
+        # the absence of one. `broken_links` is emitted the same way, so a
+        # link fixed since the last parse stops being listed (issue #2458).
+        module_props: PropertyDict = {
+            cs.KEY_FRONT_MATTER: [
+                _front_matter_entry(k, v) for k, v in sorted(declared.items())
+            ],
+            cs.KEY_BROKEN_LINKS: broken,
         }
-        module_qn = self._emit_module(file_path, structural_elements, front_matter)
+        module_qn = self._emit_module(file_path, structural_elements, module_props)
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
-        absolute_path = cached_resolve_posix(file_path)
 
-        # (level, qualified_name) for the headings currently open above the
-        # one being emitted; the nearest shallower entry is its parent.
-        open_headings: list[tuple[int, str]] = []
-        # Sibling headings can repeat a name ("## Notes" twice under one
-        # parent). The qn is the node's identity, so a repeat would merge two
-        # distinct sections into one node; the shared "<qn>@<start_line>"
-        # convention keeps them apart, and consumers that split on the marker
-        # still recover the heading name.
-        claimed_qns: set[str] = set()
+        outline = _outline(root, source, module_qn)
+        for heading in outline:
+            self._emit_section(heading, relative_path, absolute_path)
+        self._anchors[absolute_path] = _anchor_map(outline)
+        self._record_sections(absolute_path, outline)
+        self._queue_links(located, outline, module_qn, source)
+        if broken:
+            self._broken_links += len(broken)
+            self._broken_documents += 1
 
-        # (heading node, level) for every heading, so each section's end can
-        # be read off the NEXT heading that closes it.
-        levelled: list[tuple[Node, int]] = []
-        for heading in _collect_headings(root):
-            level = _heading_level(heading)
-            if level is not None:
-                levelled.append((heading, level))
-        last_line = _last_line(source)
+    def _locate_links(
+        self, root: Node, source: bytes, file_path: Path, absolute_path: str
+    ) -> tuple[list[_LocatedLink], list[str]]:
+        """The links that name a repository file, and the broken ones.
 
-        for index, (heading, level) in enumerate(levelled):
-            text = _heading_text(heading, source).strip()
-            name = _sanitize(text)
-
-            while open_headings and open_headings[-1][0] >= level:
-                open_headings.pop()
-
-            parent_qn = open_headings[-1][1] if open_headings else module_qn
-            start_line = heading.start_point[0] + 1
-            qualified_name = f"{parent_qn}{cs.SEPARATOR_DOT}{name}"
-            # A literal heading can already carry the marker ("## Notes@5"),
-            # so one suffix is not guaranteed to be free; keep suffixing
-            # until the name is unclaimed.
-            while qualified_name in claimed_qns:
-                qualified_name = f"{qualified_name}{cs.DUP_QN_MARKER}{start_line}"
-            claimed_qns.add(qualified_name)
-
-            self._emit_section(
-                qualified_name=qualified_name,
-                name=text or _UNTITLED,
-                level=level,
-                start_line=start_line,
-                end_line=_section_end_line(levelled, index, level, last_line),
-                parent_qn=parent_qn,
-                parent_is_module=not open_headings,
-                relative_path=relative_path,
-                absolute_path=absolute_path,
-            )
-            open_headings.append((level, qualified_name))
-
-        self._emit_links(root, source, file_path, module_qn)
-
-    def _emit_links(
-        self, root: Node, source: bytes, file_path: Path, module_qn: str
-    ) -> None:
-        """A LINKS_TO edge per relative link that resolves to a repo file.
-
-        Only links whose target exists on disk become edges. An unresolvable
-        target — a typo, a file deleted since the link was written, a path
-        outside the repository — would otherwise create an edge to a node
-        nobody emits, which reads in the graph as a file that does not exist.
-        Dropping them keeps a broken link out of the graph rather than
-        inventing a phantom.
+        A link becomes an edge only when its target exists on disk. A target
+        missing from the repository -- a typo, a file deleted since the link
+        was written -- would otherwise create an edge to a node nobody emits,
+        so it is listed as broken instead (issue #2458): the path as written,
+        once, in source order. A link outside the repository, to a directory,
+        or to an external URL names no file here and is neither.
         """
-        emitted: set[str] = set()
-        for destination in _collect_link_destinations(
-            root, source, self._inline_parser
-        ):
-            if _is_external(destination):
+        located: list[_LocatedLink] = []
+        broken: list[str] = []
+        for site in _collect_link_sites(root, source, self._inline_parser):
+            if _is_external(site.destination):
                 continue
-            target = _strip_target(destination)
-            if not target:
+            path, fragment = _split_destination(site.destination)
+            if not path:
+                # `#usage` names a heading of this very document; `#` alone
+                # (the top of the page) names nothing worth an edge.
+                if fragment:
+                    located.append(_LocatedLink(site, absolute_path, fragment))
                 continue
-            resolved = self._resolve_link(file_path, target)
-            if resolved is None or resolved in emitted:
-                continue
-            emitted.add(resolved)
-            self._pending_links.append((module_qn, resolved))
+            target, missing = self._resolve_link(file_path, _percent_decode(path))
+            if target is not None:
+                located.append(_LocatedLink(site, target, fragment))
+            elif missing and path not in broken:
+                broken.append(path)
+        return located, broken
+
+    def _queue_links(
+        self,
+        located: list[_LocatedLink],
+        outline: list[_Heading],
+        module_qn: str,
+        source: bytes,
+    ) -> None:
+        """One pending edge per link, from the innermost section holding it.
+
+        A section runs from its heading to the next heading at its level or
+        above, and a deeper heading's span sits inside it, so the innermost
+        section around a line is simply the last heading at or before it.
+        A link above the first heading belongs to the document itself.
+        """
+        line_starts = _line_starts(source)
+        heading_lines = [heading.start_line for heading in outline]
+        for link in located:
+            line, col = _position(line_starts, link.site.start_byte)
+            end_line, end_col = _position(line_starts, link.site.end_byte)
+            enclosing = bisect_right(heading_lines, line)
+            origin: tuple[cs.NodeLabel, str, str] = (
+                (
+                    cs.NodeLabel.SECTION,
+                    cs.KEY_QUALIFIED_NAME,
+                    outline[enclosing - 1].qualified_name,
+                )
+                if enclosing
+                else (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+            )
+            properties: PropertyDict = {
+                cs.KEY_LINE: line,
+                cs.KEY_COL: col,
+                cs.KEY_END_LINE: end_line,
+                cs.KEY_END_COL: end_col,
+                cs.KEY_LINK_TEXT: link.site.text,
+            }
+            if link.fragment:
+                properties[cs.KEY_ANCHOR] = link.fragment
+            self._pending_links.append(
+                _PendingLink(origin, link.target, link.fragment, properties)
+            )
+
+    def _record_sections(self, absolute_path: str, outline: list[_Heading]) -> None:
+        current = frozenset(heading.qualified_name for heading in outline)
+        previous = self._sections_by_document.get(absolute_path, frozenset())
+        self._live_sections.difference_update(previous - current)
+        self._live_sections.update(current)
+        self._sections_by_document[absolute_path] = current
 
     def emit_pending_links(self) -> int:
         """Buffer the LINKS_TO edges held since the last call; how many.
@@ -766,43 +1137,94 @@ class DocumentTier:
         `--batch-size` and on parse order (issue #2400). The updater calls
         this once every File node of the pass is buffered; every flush writes
         nodes before relationships, so the targets then exist.
+
+        Anchors resolve here for the same reason: a link into a document
+        parsed later in the pass needs that document's headings (#2458).
         """
         pending, self._pending_links = self._pending_links, []
-        for module_qn, resolved in pending:
-            self._ingestor.ensure_relationship_batch(
-                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                cs.RelationshipType.LINKS_TO,
-                (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, resolved),
+        for link in pending:
+            section = (
+                self._anchors_of(link.target).get(_anchor_key(link.fragment))
+                if link.fragment
+                else None
             )
+            target: tuple[cs.NodeLabel, str, str] = (
+                (cs.NodeLabel.SECTION, cs.KEY_QUALIFIED_NAME, section)
+                if section is not None
+                else (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, link.target)
+            )
+            self._ingestor.ensure_relationship_batch(
+                link.source, cs.RelationshipType.LINKS_TO, target, link.properties
+            )
+        if self._broken_links:
+            logger.info(
+                ls.MARKDOWN_BROKEN_LINKS,
+                count=self._broken_links,
+                documents=self._broken_documents,
+            )
+        self._broken_links = 0
+        self._broken_documents = 0
+        self._anchors.clear()
         return len(pending)
 
-    def _resolve_link(self, file_path: Path, target: str) -> str | None:
-        """The absolute path a link target names, or None when it is not a file.
+    def _anchors_of(self, target: str) -> dict[str, str]:
+        """Anchor -> Section qn for the document at `target`, or {}.
 
-        Targets are relative to the linking document's directory, except a
-        leading "/" which the common convention treats as repo-root-relative
-        rather than filesystem-absolute. Anything landing outside the
-        repository is rejected, so a "../../.." traversal cannot attach an
-        edge to a file the project does not contain.
+        A document this pass did not parse (an incremental sync re-parsing
+        only the one linking to it) is read from disk here, and named the
+        way `emit_flat_module` names it, so the qn matches the Section its
+        own last parse emitted.
+        """
+        cached = self._anchors.get(target)
+        if cached is not None:
+            return cached
+        anchors: dict[str, str] = {}
+        path = Path(target)
+        if self._parser is not None and path.suffix.lower() in DOCUMENT_EXTENSIONS:
+            try:
+                source = path.read_bytes()
+                root = self._parser.parse(source).root_node
+                relative = path.relative_to(self._repo_root)
+            except (OSError, RuntimeError, ValueError):
+                pass
+            else:
+                module_qn = flat_module_qn(
+                    self._project_name, relative, distinguish_suffix=True
+                )
+                anchors = _anchor_map(_outline(root, source, module_qn))
+        self._anchors[target] = anchors
+        return anchors
+
+    def _resolve_link(self, file_path: Path, target: str) -> tuple[str | None, bool]:
+        """The file a link target names, and whether the link is broken.
+
+        Returns (absolute path, False) for a repository file, (None, True)
+        for a repository path that does not exist, and (None, False) for
+        anything else: a directory, a path outside the repository, an
+        unreadable one. Targets are relative to the linking document's
+        directory, except a leading "/" which the common convention treats as
+        repo-root-relative rather than filesystem-absolute. Anything landing
+        outside the repository is rejected, so a "../../.." traversal cannot
+        attach an edge to a file the project does not contain.
         """
         try:
-            if target.startswith("/"):
-                candidate = self._repo_path / target.lstrip("/")
+            if target.startswith(_ROOT_RELATIVE_PREFIX):
+                candidate = self._repo_path / target.lstrip(_ROOT_RELATIVE_PREFIX)
             else:
                 candidate = file_path.parent / target
             resolved = candidate.resolve()
-            if not resolved.is_file():
-                return None
-            resolved.relative_to(self._repo_path.resolve())
+            resolved.relative_to(self._repo_root)
+            if resolved.is_file():
+                return resolved.as_posix(), False
+            return None, not resolved.exists()
         except (OSError, ValueError):
-            return None
-        return resolved.as_posix()
+            return None, False
 
     def _emit_module(
         self,
         file_path: Path,
         structural_elements: dict[Path, str | None],
-        front_matter: PropertyDict | None = None,
+        properties: PropertyDict | None = None,
     ) -> str:
         return emit_flat_module(
             self._ingestor,
@@ -814,39 +1236,31 @@ class DocumentTier:
             # would merge "guide.md" and "guide.markdown" onto one Module
             # node and merge their same-named sections with it.
             distinguish_suffix=True,
-            extra_properties=front_matter,
+            extra_properties=properties,
         )
 
     def _emit_section(
-        self,
-        *,
-        qualified_name: str,
-        name: str,
-        level: int,
-        start_line: int,
-        end_line: int,
-        parent_qn: str,
-        parent_is_module: bool,
-        relative_path: str,
-        absolute_path: str,
+        self, heading: _Heading, relative_path: str, absolute_path: str
     ) -> None:
         self._ingestor.ensure_node_batch(
             cs.NodeLabel.SECTION,
             {
-                cs.KEY_QUALIFIED_NAME: qualified_name,
-                cs.KEY_NAME: name,
-                cs.KEY_HEADING_LEVEL: level,
-                cs.KEY_START_LINE: start_line,
-                cs.KEY_END_LINE: end_line,
+                cs.KEY_QUALIFIED_NAME: heading.qualified_name,
+                cs.KEY_NAME: heading.name,
+                cs.KEY_HEADING_LEVEL: heading.level,
+                cs.KEY_START_LINE: heading.start_line,
+                cs.KEY_END_LINE: heading.end_line,
                 cs.KEY_PATH: relative_path,
                 cs.KEY_ABSOLUTE_PATH: absolute_path,
             },
         )
-        parent_label = cs.NodeLabel.MODULE if parent_is_module else cs.NodeLabel.SECTION
+        parent_label = (
+            cs.NodeLabel.MODULE if heading.parent_is_module else cs.NodeLabel.SECTION
+        )
         self._ingestor.ensure_relationship_batch(
-            (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
+            (parent_label, cs.KEY_QUALIFIED_NAME, heading.parent_qn),
             cs.RelationshipType.CONTAINS_SECTION,
-            (cs.NodeLabel.SECTION, cs.KEY_QUALIFIED_NAME, qualified_name),
+            (cs.NodeLabel.SECTION, cs.KEY_QUALIFIED_NAME, heading.qualified_name),
         )
 
 

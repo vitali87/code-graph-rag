@@ -141,6 +141,10 @@ _SITE_PROPS = frozenset(
         cs.KEY_KWARG_NAMES,
         cs.KEY_ALIAS,
         cs.KEY_IMPORTED_NAME,
+        # A Markdown link's words and fragment (issue #2458): two links from
+        # one section to one file collapse here, and their texts with them.
+        cs.KEY_LINK_TEXT,
+        cs.KEY_ANCHOR,
     }
 )
 
