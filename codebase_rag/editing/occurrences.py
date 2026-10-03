@@ -51,6 +51,9 @@ from .import_paths import (
     ImportRead,
     ImportReader,
     ModulePath,
+    PathKind,
+    ScriptConfigs,
+    crate_roots,
     module_key,
     resolves_above,
     resolves_to,
@@ -246,6 +249,11 @@ class _Modules(NamedTuple):
     # Each definition's file with the names that lead to it there:
     # `("pkg/widget.py", ("Widget", "spin"))`.
     declared: frozenset[tuple[str, tuple[str, ...]]] = frozenset()
+    # The target's Rust library by its crate's name, with the directory of
+    # its root module: what `use mini_redis::util` reaches outside it.
+    crates: dict[str, tuple[str, ...]] = {}
+    # The project's TypeScript and JavaScript configs (`paths`, `baseUrl`).
+    scripts: ScriptConfigs | None = None
 
 
 def _modules(repo_root: Path, target: Target) -> _Modules:
@@ -267,6 +275,10 @@ def _modules(repo_root: Path, target: Target) -> _Modules:
         rivals,
         _script_global(repo_root, target),
         _declared(repo_root, target),
+        crate_roots(repo_root, owner_paths)
+        if target.language is cs.SupportedLanguage.RUST
+        else {},
+        ScriptConfigs(repo_root) if target.language in cs.JS_TS_LANGUAGES else None,
     )
 
 
@@ -444,7 +456,9 @@ class _File:
         self.target = target
         self.modules = modules
         self.tokens = tokens
-        self.imports = ImportReader(repo_root, path, language)
+        self.imports = ImportReader(
+            repo_root, path, language, modules.crates, modules.scripts
+        )
         # The target's files this one is a `.pyi` stub of: it declares their
         # module's interface, so it names their symbols as they do (#2445).
         self.stub_of = frozenset(
@@ -656,13 +670,12 @@ class _File:
         name = self.target.name
         statement = _import_statement(token)
         if statement is not None:
-            paths = self._read(statement).paths
-            return True if self._is_home(name, paths) else None
+            return self._verdict(name, self._read(statement).paths)
         bound = self._bound_at(name, token.start_byte)
         if bound is None:
             return None
         if not isinstance(bound, _Unbound):
-            return True if self._is_home(name, bound) else None
+            return self._verdict(name, bound)
         if not self.wildcards:
             # A builtin (`sorted`), unless the function is a classic script's
             # global, which any script may call by its bare name.
@@ -682,11 +695,24 @@ class _File:
                 found[span] = self._read(statement).wildcards
         return tuple(paths for wildcards in found.values() for paths in wildcards)
 
-    def is_home_module(self, spelling: str, at: int) -> bool:
+    def _verdict(self, name: str, paths: tuple[ModulePath, ...]) -> bool | None:
+        """Whether an import's `paths` bring in the target: True where they
+        lead to it, False where an alias of the project's config may and its
+        file is not known (refusal-only evidence), None otherwise."""
+        if self._is_home(name, paths):
+            return True
+        return False if _possibly_project(paths) else None
+
+    def is_home_module(self, spelling: str, at: int) -> bool | None:
         """Whether a qualifier written at byte `at` (`util`, `u`, `pkg.util`)
-        is the module defining the target function."""
+        is the module defining the target function: None where it is not,
+        False where it comes through an alias of the project's config whose
+        file is not known."""
         segments = tuple(part.strip() for part in _SEPARATORS.split(spelling))
-        return _reaches(self._spelled(segments, at), self.modules.home)
+        paths = self._spelled(segments, at)
+        if _reaches(paths, self.modules.home):
+            return True
+        return False if _possibly_project(paths) else None
 
     @cached_property
     def imports_method(self) -> bool:
@@ -818,11 +844,9 @@ def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
     if access is _Access.BARE:
         return file.bare_function_use(token)
     receiver = _receiver_node(token)
-    if receiver is not None and file.is_home_module(
-        _text(receiver), receiver.start_byte
-    ):
-        return True
-    return None
+    if receiver is None:
+        return None
+    return file.is_home_module(_text(receiver), receiver.start_byte)
 
 
 def _method_use(file: _File, token: Node, access: _Access, called: bool) -> bool | None:
@@ -1026,6 +1050,10 @@ def _receiver_node(token: Node) -> Node | None:
 
 def _span_size(span: tuple[int, int]) -> int:
     return span[1] - span[0]
+
+
+def _possibly_project(paths: tuple[ModulePath, ...]) -> bool:
+    return any(path.kind is PathKind.UNKNOWN for path in paths)
 
 
 def _reaches(

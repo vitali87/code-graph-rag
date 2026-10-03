@@ -716,14 +716,16 @@ RENAME_UNPLANNED = (
     "as guessed sites"
 )
 RENAME_UNPLANNED_RECEIVER_UNKNOWN = (
-    ". {count} of them are calls through an object the source does not show to be "
-    "of its class, which allow_heuristic does not rewrite: check those by hand"
+    ". {count} of them may name another symbol (a call through an object the source "
+    "does not show to be of its class, or a name an import may bring in from a module "
+    "it does not resolve), which allow_heuristic does not rewrite: check those by hand"
 )
 RENAME_RECEIVER_UNKNOWN = (
-    "Refusing to rename {qn}: {count} call(s) of {name} go through an object the "
-    "source does not show to be of its class ({locations}), and the graph has no "
-    "site for them. They may call another type's {name}, so allow_heuristic does "
-    "not rewrite them: check them by hand"
+    "Refusing to rename {qn}: {count} use(s) of {name} may name another symbol "
+    "({locations}), and the graph has no site for them: a call through an object the "
+    "source does not show to be of its class, or a name an import may bring in from a "
+    "module it does not resolve. allow_heuristic does not rewrite them: check them by "
+    "hand"
 )
 RENAME_UNPLANNED_ALSO_GUESSED = (
     ". {count} graph site(s) were also resolved heuristically, by overload fan-out, "

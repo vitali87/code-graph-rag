@@ -101,7 +101,16 @@ family are read (the indexer's own walk, under `.cgrignore` and
   an import that names its module. A module is told by its path, not its
   last name: `pkg.cache`, `vendor.cache` and `pkg2.cache` are three modules.
   A relative import (`from .cache import x`, `'./cache.js'`) and a Rust path
-  from `crate`, `self` or `super` are resolved from the importing file; a
+  from `crate`, `self` or `super` are resolved from the importing file. So is
+  a Rust path from the library's own crate name, which is how `tests/`,
+  `examples/` and binaries reach it (`use mini_redis::util::helper`): the
+  name is the package manifest's `[lib] name`, else its `[package] name`
+  with `-` spelled `_`, and without a readable `Cargo.toml` there is none. A
+  TypeScript or JavaScript specifier that is not relative goes through the
+  nearest `tsconfig.json` or `jsconfig.json` (JSONC): its `paths`, then its
+  `baseUrl`. One that a `paths` alias of the project matches but the nearest
+  config does not resolve (an `extends` is not followed) may be the module,
+  and is held to the plan as uncertain; `lodash` or `@scope/pkg` is not. A
   Python import from a source root spells the module from its top-level
   package down (`pkg.cache` once `pkg/__init__.py` or `pkg/__init__.pyi`
   exists). Where two

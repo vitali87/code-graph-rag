@@ -493,7 +493,7 @@ def test_without_allow_heuristic_the_refusal_says_which_calls_it_cannot_take(
 
     message = str(refused.value)
     assert "2 occurrence(s) of get" in message
-    assert "1 of them are calls through an object" in message
+    assert "1 of them may name another symbol (a call through an object" in message
 
 
 def test_allow_heuristic_rewrites_a_call_on_a_receiver_declared_as_the_class(
@@ -2548,3 +2548,293 @@ def test_an_arrow_reaches_a_member_only_where_the_language_says_so(
     # A return annotation is not a member access: `def make() -> Widget`
     # in another module's stub is that module's `Widget`, hidden by its own.
     assert _access(source, source.index(b"Widget"), language) is access
+
+
+# --- review of PR #2797: crate names and tsconfig aliases -------------------
+
+CRATE_MANIFEST = '[package]\nname = "mini-redis"\nversion = "0.1.0"\nedition = "2021"\n'
+CRATE = {
+    "src/util.rs": "pub fn helper() -> i32 {\n    1\n}\n",
+    "Cargo.toml": CRATE_MANIFEST,
+    "src/lib.rs": "pub mod util;\n",
+}
+# Files outside the library that reach `helper` by the crate's name, as
+# Cargo builds them, with the lines that name it.
+CRATE_USERS = {
+    "test-use": (
+        "tests/it.rs",
+        "use mini_redis::util::helper;\n\nfn go() -> i32 {\n    helper()\n}\n",
+        [1, 4],
+    ),
+    "example-module": (
+        "examples/demo.rs",
+        "use mini_redis::util;\n\nfn go() -> i32 {\n    util::helper()\n}\n",
+        [4],
+    ),
+    "bin-path": (
+        "src/bin/cli.rs",
+        "fn go() -> i32 {\n    mini_redis::util::helper()\n}\n",
+        [2],
+    ),
+}
+
+
+def _user_occurrences(
+    root: Path,
+    files: dict[str, str],
+    user: str,
+    name: str,
+    language: cs.SupportedLanguage,
+) -> list[tuple[str, int, bool]]:
+    return [
+        found
+        for found in _function_occurrences(root, files, name, language)
+        if found[0] == user
+    ]
+
+
+@pytest.mark.parametrize("user", sorted(CRATE_USERS))
+def test_a_rust_use_through_the_crates_own_name_is_the_function(
+    tmp_path: Path, user: str
+) -> None:
+    # Review of PR #2797 (CodeRabbit): only `crate`, `self` and `super`
+    # rooted a path, so `use mini_redis::util::helper;` in `tests/` named no
+    # module, and both the use and the call were dropped.
+    path, text, lines = CRATE_USERS[user]
+
+    found = _user_occurrences(
+        tmp_path, {**CRATE, path: text}, path, "helper", cs.SupportedLanguage.RUST
+    )
+
+    assert found == [(path, line, True) for line in lines]
+
+
+def test_a_lib_name_in_the_manifest_is_the_name_code_imports(tmp_path: Path) -> None:
+    manifest = CRATE_MANIFEST + '\n[lib]\nname = "redis_core"\n'
+    user = "use redis_core::util::helper;\n\nfn go() -> i32 {\n    helper()\n}\n"
+    files = {**CRATE, "Cargo.toml": manifest, "tests/it.rs": user}
+
+    found = _user_occurrences(
+        tmp_path, files, "tests/it.rs", "helper", cs.SupportedLanguage.RUST
+    )
+
+    assert found == [("tests/it.rs", 1, True), ("tests/it.rs", 4, True)]
+
+
+# A crate-name path the project cannot resolve: another crate, a manifest
+# that is missing or unreadable. Each is read as before.
+UNRESOLVED_CRATES = {
+    "other-crate": (CRATE, "use other_crate::util::helper;\n"),
+    "no-manifest": (
+        {path: text for path, text in CRATE.items() if path != "Cargo.toml"},
+        "use mini_redis::util::helper;\n",
+    ),
+    "unreadable-manifest": (
+        {**CRATE, "Cargo.toml": "[package\nname = "},
+        "use mini_redis::util::helper;\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(UNRESOLVED_CRATES))
+def test_a_crate_name_the_project_does_not_give_is_not_the_function(
+    tmp_path: Path, case: str
+) -> None:
+    files, head = UNRESOLVED_CRATES[case]
+    user = f"{head}\nfn go() -> i32 {{\n    helper()\n}}\n"
+
+    found = _user_occurrences(
+        tmp_path,
+        {**files, "tests/it.rs": user},
+        "tests/it.rs",
+        "helper",
+        cs.SupportedLanguage.RUST,
+    )
+
+    assert found == []
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+def test_a_missed_call_through_the_crate_name_refuses_the_rename(
+    tmp_path: Path, allow_heuristic: bool
+) -> None:
+    path, text, _lines = CRATE_USERS["test-use"]
+    root = tmp_path / "mr"
+    root.mkdir()
+    store, _updater = _indexed(root, {**CRATE, path: text}, project="mr")
+
+    graph = _missing(store, path)
+    try:
+        report = rename(
+            root,
+            graph,
+            "mr",
+            "mr.src.util.helper",
+            "assist",
+            allow_heuristic=allow_heuristic,
+            dry_run=True,
+        )
+    except RenameRefused as refused:
+        assert not allow_heuristic
+        assert ("call", path, 4, 4) in {
+            (s.kind, s.path, s.line, s.col) for s in refused.unplanned
+        }
+        return
+    assert allow_heuristic
+    assert ("call", path, 4, 4, "unplanned") in {
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in report.unplanned
+    }
+
+
+TS_HELPER = "export function helper(): number {\n  return 1;\n}\n"
+TS_USER = "import { helper } from '%s';\n\nexport function go(): number {\n  return helper();\n}\n"
+# tsconfig is JSONC: a comment and trailing commas.
+TS_ALIAS_CONFIG = (
+    "{\n"
+    "  // the app's aliases\n"
+    '  "compilerOptions": {\n'
+    '    "baseUrl": ".",\n'
+    '    "paths": {\n'
+    '      "@/*": ["src/*"],\n'
+    "    },\n"
+    "  },\n"
+    "}\n"
+)
+# A config and the specifier that reaches `src/utils/helper.ts` through it.
+TS_CONFIGS = {
+    "paths-alias": ("tsconfig.json", TS_ALIAS_CONFIG, "@/utils/helper"),
+    "jsconfig-alias": ("jsconfig.json", TS_ALIAS_CONFIG, "@/utils/helper"),
+    "base-url": (
+        "tsconfig.json",
+        '{"compilerOptions": {"baseUrl": "src"}}\n',
+        "utils/helper",
+    ),
+}
+
+
+@pytest.mark.parametrize("config", sorted(TS_CONFIGS))
+def test_a_tsconfig_alias_import_is_the_function(tmp_path: Path, config: str) -> None:
+    # Review of PR #2797 (CodeRabbit): `@/utils/helper` was read as a package
+    # path, which names no file of the project, so the import and the call
+    # were dropped.
+    name, text, specifier = TS_CONFIGS[config]
+    files = {
+        "src/utils/helper.ts": TS_HELPER,
+        name: text,
+        "src/app.ts": TS_USER % specifier,
+    }
+
+    found = _user_occurrences(
+        tmp_path, files, "src/app.ts", "helper", cs.SupportedLanguage.TS
+    )
+
+    assert found == [("src/app.ts", 1, True), ("src/app.ts", 4, True)]
+
+
+def test_an_alias_the_nearest_config_cannot_resolve_is_held_as_uncertain(
+    tmp_path: Path,
+) -> None:
+    # `web/tsconfig.json` extends the root's, which `paths` are not read
+    # through: `@/utils/helper` may be the function, so it is held to the
+    # plan, never rewritten.
+    files = {
+        "src/utils/helper.ts": TS_HELPER,
+        "tsconfig.json": TS_ALIAS_CONFIG,
+        "web/tsconfig.json": '{"extends": "../tsconfig.json"}\n',
+        "web/app.ts": TS_USER % "@/utils/helper",
+    }
+
+    found = _user_occurrences(
+        tmp_path, files, "web/app.ts", "helper", cs.SupportedLanguage.TS
+    )
+
+    assert found == [("web/app.ts", 1, False), ("web/app.ts", 4, False)]
+
+
+# A non-relative specifier that is not the project's own, or a project
+# with no config to resolve one: read as before.
+EXTERNAL_SPECIFIERS = {
+    "npm-package": (TS_ALIAS_CONFIG, "lodash"),
+    "scoped-package": (TS_ALIAS_CONFIG, "@scope/utils/helper"),
+    "no-config": (None, "@/utils/helper"),
+    "unreadable-config": ('{"compilerOptions": {', "@/utils/helper"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(EXTERNAL_SPECIFIERS))
+def test_a_package_import_is_not_the_function(tmp_path: Path, case: str) -> None:
+    config, specifier = EXTERNAL_SPECIFIERS[case]
+    files = {
+        "src/utils/helper.ts": TS_HELPER,
+        "src/app.ts": TS_USER % specifier,
+        **({} if config is None else {"tsconfig.json": config}),
+    }
+
+    found = _user_occurrences(
+        tmp_path, files, "src/app.ts", "helper", cs.SupportedLanguage.TS
+    )
+
+    assert found == []
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+def test_a_missed_call_through_a_tsconfig_alias_refuses_the_rename(
+    tmp_path: Path, allow_heuristic: bool
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        "src/utils/helper.ts": TS_HELPER,
+        "tsconfig.json": TS_ALIAS_CONFIG,
+        "src/app.ts": TS_USER % "@/utils/helper",
+    }
+    store, _updater = _indexed(root, files)
+
+    graph = _missing(store, "src/app.ts")
+    try:
+        report = rename(
+            root,
+            graph,
+            PROJECT,
+            f"{PROJECT}.src.utils.helper.helper",
+            "assist",
+            allow_heuristic=allow_heuristic,
+            dry_run=True,
+        )
+    except RenameRefused as refused:
+        assert not allow_heuristic
+        assert ("call", "src/app.ts", 4, 9) in {
+            (s.kind, s.path, s.line, s.col) for s in refused.unplanned
+        }
+        return
+    assert allow_heuristic
+    assert ("call", "src/app.ts", 4, 9, "unplanned") in {
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in report.unplanned
+    }
+
+
+@pytest.mark.parametrize("case", ["npm-package", "no-config"])
+def test_an_external_import_does_not_refuse_the_rename(
+    tmp_path: Path, case: str
+) -> None:
+    config, specifier = EXTERNAL_SPECIFIERS[case]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        "src/utils/helper.ts": TS_HELPER,
+        "src/app.ts": TS_USER % specifier,
+        **({} if config is None else {"tsconfig.json": config}),
+    }
+    store, _updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.src.utils.helper.helper",
+        "assist",
+        dry_run=True,
+    )
+
+    assert report.unplanned == ()
+    assert "src/app.ts" not in {s.path for s in report.sites}
