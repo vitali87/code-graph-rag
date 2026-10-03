@@ -95,14 +95,16 @@ async def first_tool_call[OutputT](
     return None
 
 
-def summarize(records: list[FirstToolRecord]) -> FirstToolSummary:
+def count_graph_first(records: list[FirstToolRecord]) -> FirstToolSummary:
     return FirstToolSummary(
         graph_first=sum(is_graph_first(record.tool) for record in records),
         total=len(records),
     )
 
 
-async def _run[OutputT](agent: Agent[None, OutputT]) -> list[FirstToolRecord]:
+async def _record_first_tool_calls[OutputT](
+    agent: Agent[None, OutputT],
+) -> list[FirstToolRecord]:
     records: list[FirstToolRecord] = []
     for question in STRUCTURAL_QUESTIONS:
         records.append(
@@ -111,7 +113,7 @@ async def _run[OutputT](agent: Agent[None, OutputT]) -> list[FirstToolRecord]:
     return records
 
 
-def _render(records: list[FirstToolRecord]) -> None:
+def _print_first_tool_report(records: list[FirstToolRecord]) -> None:
     table = Table(title=ec.FIRST_TOOL_TABLE_TITLE)
     table.add_column(ec.FIRST_TOOL_COL_QUESTION)
     table.add_column(ec.FIRST_TOOL_COL_TOOL)
@@ -123,7 +125,7 @@ def _render(records: list[FirstToolRecord]) -> None:
             ec.FIRST_TOOL_PASS if is_graph_first(record.tool) else ec.FIRST_TOOL_MISS,
         )
     console.print(table)
-    summary = summarize(records)
+    summary = count_graph_first(records)
     console.print(
         ls.FIRST_TOOL_SUMMARY.format(
             graph_first=summary.graph_first, total=summary.total
@@ -147,9 +149,9 @@ def main(
     projects = [project_name] if project_name else None
     with connect_memgraph(settings.MEMGRAPH_BATCH_SIZE) as ingestor:
         agent, _, _ = _initialize_services_and_agent(root, ingestor, projects)
-        records = asyncio.run(_run(agent))
-    _render(records)
-    summary = summarize(records)
+        records = asyncio.run(_record_first_tool_calls(agent))
+    _print_first_tool_report(records)
+    summary = count_graph_first(records)
     if summary.graph_first < summary.total:
         sys.exit(1)
 

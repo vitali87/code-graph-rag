@@ -2025,7 +2025,9 @@ def _confined_option_denial(parts: list[str], root: Path) -> str | None:
     security review on PR #2485).
     """
     kinds = _CONFINED_READ_OPTION_KINDS.get(parts[0], {})
-    scan = _find_options if parts[0] == cs.SHELL_CMD_FIND else _getopt_options
+    scan = (
+        _parse_find_options if parts[0] == cs.SHELL_CMD_FIND else _parse_getopt_options
+    )
     for option in scan(parts, kinds):
         if option.kind is None:
             return te.NONINTERACTIVE_UNKNOWN_OPTION.format(option=option.name)
@@ -2036,7 +2038,7 @@ def _confined_option_denial(parts: list[str], root: Path) -> str | None:
     return None
 
 
-def _getopt_options(
+def _parse_getopt_options(
     parts: list[str], kinds: dict[str, cs.ReadOptionKind]
 ) -> Iterator[_ReadOption]:
     # GNU getopt and ripgrep alike: options may follow operands, `--` ends
@@ -2049,12 +2051,12 @@ def _getopt_options(
         if arg == "-" or not arg.startswith("-"):
             continue
         if arg.startswith("--"):
-            yield _long_option(parts[0], arg, kinds, rest)
+            yield _parse_long_option(parts[0], arg, kinds, rest)
         elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
-            yield from _short_options(arg, kinds, rest)
+            yield from _parse_short_option_cluster(arg, kinds, rest)
 
 
-def _long_option(
+def _parse_long_option(
     command: str,
     arg: str,
     kinds: dict[str, cs.ReadOptionKind],
@@ -2076,7 +2078,7 @@ def _long_option(
     return _ReadOption(name, kind, value)
 
 
-def _short_options(
+def _parse_short_option_cluster(
     arg: str, kinds: dict[str, cs.ReadOptionKind], rest: Iterator[str]
 ) -> Iterator[_ReadOption]:
     for offset in range(1, len(arg)):
@@ -2088,7 +2090,7 @@ def _short_options(
         yield _ReadOption(name, kind, "")
 
 
-def _find_options(
+def _parse_find_options(
     parts: list[str], kinds: dict[str, cs.ReadOptionKind]
 ) -> Iterator[_ReadOption]:
     # find's options are whole words, and each takes the next argument as
@@ -2108,13 +2110,13 @@ def _path_value_escapes(value: str, root: Path) -> bool:
     # ripgrep drops an `=` between a short option and its value (`-f=F`
     # reads F) where GNU getopt keeps it, so both readings are confined.
     return any(
-        _path_escapes(candidate, root)
+        _path_escapes_root(candidate, root)
         for candidate in (value, value.removeprefix("="))
         if candidate
     )
 
 
-def _path_escapes(path: str, root: Path) -> bool:
+def _path_escapes_root(path: str, root: Path) -> bool:
     if _ESCAPING_PATH_ARG.search(path) or ".." in path.split("/"):
         return True
     return _escapes_root(root / path, root)

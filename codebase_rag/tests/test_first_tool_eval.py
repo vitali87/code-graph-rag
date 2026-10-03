@@ -28,12 +28,14 @@ def _query_graph(natural_language_query: str) -> str:
     raise AssertionError("the eval must not run a tool")
 
 
-def _agent(
+def _orchestrator_answering_with(
     project: Path,
     first_call: ToolCallPart | None,
     seen: list[set[str]] | None = None,
 ) -> Agent[None, str]:
-    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def reply_with_first_call(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> ModelResponse:
         if seen is not None:
             seen.append({tool.name for tool in info.function_tools})
         if first_call is None:
@@ -41,7 +43,7 @@ def _agent(
         return ModelResponse(parts=[first_call])
 
     return Agent(
-        FunctionModel(model),
+        FunctionModel(reply_with_first_call),
         system_prompt="orchestrator",
         tools=[
             Tool(_query_graph, name=AgenticToolName.QUERY_GRAPH),
@@ -51,7 +53,7 @@ def _agent(
 
 
 async def test_a_graph_query_first_is_graded_graph_first(tmp_path: Path) -> None:
-    agent = _agent(
+    agent = _orchestrator_answering_with(
         tmp_path,
         ToolCallPart(
             AgenticToolName.QUERY_GRAPH,
@@ -68,7 +70,7 @@ async def test_a_graph_query_first_is_graded_graph_first(tmp_path: Path) -> None
 async def test_a_shell_command_first_is_a_miss_and_never_runs(tmp_path: Path) -> None:
     # Negative: the shell is graded a miss, and the probe stops before the
     # command runs or asks for approval.
-    agent = _agent(
+    agent = _orchestrator_answering_with(
         tmp_path,
         ToolCallPart(AgenticToolName.EXECUTE_SHELL, {"command": "touch ran.txt"}),
     )
@@ -82,7 +84,9 @@ async def test_a_shell_command_first_is_a_miss_and_never_runs(tmp_path: Path) ->
 
 async def test_an_answer_without_a_tool_is_a_miss(tmp_path: Path) -> None:
     # Negative: answering from memory is not answering from the graph.
-    call = await ft.first_tool_call(_agent(tmp_path, None), "Which classes inherit?")
+    call = await ft.first_tool_call(
+        _orchestrator_answering_with(tmp_path, None), "Which classes inherit?"
+    )
 
     assert call is None
     assert not ft.is_graph_first(call)
@@ -92,7 +96,7 @@ async def test_the_model_sees_every_tool_and_the_agent_keeps_them(
     tmp_path: Path,
 ) -> None:
     seen: list[set[str]] = []
-    agent = _agent(
+    agent = _orchestrator_answering_with(
         tmp_path,
         ToolCallPart(AgenticToolName.QUERY_GRAPH, {"natural_language_query": "q"}),
         seen,
@@ -112,7 +116,7 @@ def test_the_questions_are_the_structural_kinds_the_issue_lists() -> None:
 
 
 def test_the_summary_counts_the_graph_first_answers() -> None:
-    summary = ft.summarize(
+    summary = ft.count_graph_first(
         [
             ft.FirstToolRecord(question="a", tool=AgenticToolName.QUERY_GRAPH),
             ft.FirstToolRecord(question="b", tool=AgenticToolName.EXECUTE_SHELL),
@@ -150,7 +154,7 @@ def test_the_eval_passes_when_every_question_goes_to_the_graph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[_Built] = []
-    agent = _agent(
+    agent = _orchestrator_answering_with(
         tmp_path,
         ToolCallPart(AgenticToolName.QUERY_GRAPH, {"natural_language_query": "q"}),
     )
@@ -166,7 +170,7 @@ def test_the_eval_fails_when_a_question_goes_to_the_shell(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Negative: one shell-first answer fails the run.
-    agent = _agent(
+    agent = _orchestrator_answering_with(
         tmp_path,
         ToolCallPart(AgenticToolName.EXECUTE_SHELL, {"command": "ls"}),
     )
