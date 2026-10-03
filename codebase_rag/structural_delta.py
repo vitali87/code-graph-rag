@@ -63,6 +63,7 @@ class CallSite(NamedTuple):
     col: int | None
     arg_count: int | None
     kwarg_names: tuple[str, ...]
+    star_args: bool
 
 
 class Snapshot(NamedTuple):
@@ -254,6 +255,7 @@ def _site(row: ResultRow) -> CallSite:
         col=_opt_int(row.get(cs.KEY_COL)),
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
+        star_args=row.get(cs.KEY_STAR_ARGS) is True,
     )
 
 
@@ -662,12 +664,18 @@ def _arity_verdict(
         is_method,
     )
     declared_count = verdict.declared_count - (1 if is_method else 0)
-    if verdict.confirmed:
-        return declared_count, cs.DELTA_ARITY_OK
     if positional + (1 if is_method else 0) > verdict.declared_count:
         if _is_variadic(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
+    # `*rest` adds positionals the graph cannot count, so the written ones
+    # are a floor: over the declared list they are too many whatever `rest`
+    # holds (above), but at or under it nothing says whether the call fits
+    # (issue #2635). `**opts` adds no positional and needs no such care.
+    if site.star_args:
+        return declared_count, cs.DELTA_ARITY_UNKNOWN
+    if verdict.confirmed:
+        return declared_count, cs.DELTA_ARITY_OK
     if passed > verdict.declared_count:
         return declared_count, cs.DELTA_ARITY_OK
     return declared_count, cs.DELTA_ARITY_POSSIBLY_MISSING
@@ -1122,9 +1130,7 @@ def _tests_reaching(
     for (_label, raw_qn), props in reach.nodes.items():
         qn = str(raw_qn)
         path = str(props.get(cs.KEY_PATH) or "")
-        if _is_test_symbol(
-            props, qn, path, cs.TEST_PATH_PATTERNS, rust_modules, rust_spans
-        ):
+        if _is_test_symbol(props, qn, path, rust_modules, rust_spans):
             out.append(
                 TestReach(
                     qualified_name=qn,

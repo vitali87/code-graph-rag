@@ -5,7 +5,15 @@ LANG_CONFIG_FILE = "codebase_rag/language_spec.py"
 LANG_TREE_SITTER_JSON = "tree-sitter.json"
 LANG_NODE_TYPES_JSON = "node-types.json"
 LANG_SRC_DIR = "src"
-LANG_GIT_MODULES_PATH = ".git/modules/{path}"
+# Submodule repositories live under `modules/` in the checkout's own git dir:
+# `.git` itself in a plain checkout, or the directory a `.git` file names
+# (`gitdir: ...`) in a linked worktree or a checkout that is a submodule.
+LANG_GIT_MODULES_DIR = "modules"
+LANG_GITFILE_PREFIX = "gitdir:"
+LANG_GIT_DIR = ".git"
+LANG_TOML_KEY_NAME = "name"
+LANG_REPO_URL = "https://github.com/vitali87/code-graph-rag"
+LANG_ISSUES_URL = f"{LANG_REPO_URL}/issues"
 LANG_DEFAULT_GRAMMAR_URL = "https://github.com/tree-sitter/tree-sitter-{name}"
 LANG_TREE_SITTER_URL_MARKER = "github.com/tree-sitter/tree-sitter"
 
@@ -106,10 +114,10 @@ LANG_MSG_REMOVED_ORPHAN = "Removed orphaned module: {module}"
 LANG_MSG_CLEANUP_COMPLETE = "Cleanup complete!"
 LANG_MSG_CLEANUP_CANCELLED = "Cleanup cancelled."
 
-LANG_ERR_MISSING_ARGS = "Error: Either language_name or --grammar-url must be provided"
+LANG_ERR_MISSING_ARGS = "Either language_name or --grammar-url must be provided"
 LANG_ERR_REINSTALL_FAILED = "Failed to reinstall submodule: {error}"
 LANG_ERR_MANUAL_REMOVE_HINT = "You may need to remove it manually and try again:"
-LANG_ERR_REPO_NOT_FOUND = "Error: Repository not found at {url}"
+LANG_ERR_REPO_NOT_FOUND = "Repository not found at {url}"
 LANG_ERR_CUSTOM_URL_HINT = "Try using a custom URL with: --grammar-url <your-repo-url>"
 LANG_ERR_GIT = "Git error: {error}"
 LANG_ERR_NODE_TYPES_WARNING = (
@@ -118,7 +126,7 @@ LANG_ERR_NODE_TYPES_WARNING = (
 LANG_ERR_TREE_SITTER_JSON_WARNING = "Warning: tree-sitter.json not found in {path}"
 LANG_ERR_NO_GRAMMARS_WARNING = "Warning: No grammars found in tree-sitter.json"
 LANG_ERR_PARSE_NODE_TYPES = "Error parsing node-types.json: {error}"
-LANG_ERR_UPDATE_CONFIG = "Error updating config file: {error}"
+LANG_ERR_UPDATE_CONFIG = "Could not register '{name}' in {path}: {error}"
 LANG_ERR_CONFIG_NOT_FOUND = "Could not find LANGUAGE_SPECS dictionary end"
 LANG_ERR_REMOVE_CONFIG = "Failed to update config file: {error}"
 LANG_ERR_REMOVE_SUBMODULE = "Failed to remove submodule: {error}"
@@ -135,9 +143,18 @@ LANG_PROMPT_CALLS = "Select nodes representing FUNCTION CALLS (comma-separated)"
 LANG_PROMPT_CONTINUE = "Do you want to continue?"
 LANG_PROMPT_REMOVE_ORPHANS = "Do you want to remove these orphaned modules?"
 
-LANG_FALLBACK_MANUAL_ADD = (
-    "FALLBACK: Please manually add the following entry to "
-    "'LANGUAGE_SPECS' in 'codebase_rag/language_spec.py':"
+# Grammar management edits the checkout the running cgr was imported from
+# (issue #2422). An installed cgr has no such checkout, and the cwd is the
+# user's own project, so the commands refuse rather than guess.
+LANG_ERR_NOT_SOURCE_CHECKOUT = (
+    "'cgr language {command}' modifies a code-graph-rag source checkout, and this "
+    "cgr is installed at {package_dir}, outside any checkout. Nothing was changed.\n"
+    "To add or remove a grammar, clone {repo_url} and run "
+    "'uv run cgr language {command}' inside the clone.\n"
+    "To have a language supported, request it at {issues_url}."
+)
+LANG_MSG_ROLLING_BACK = (
+    "'{name}' was not registered; removing the grammar submodule this run added."
 )
 
 LANG_TABLE_TITLE = "Configured Languages"
@@ -180,3 +197,22 @@ LANG_SPECS_NAME = "LANGUAGE_SPECS"
 LANG_ENUM_KEY_TEMPLATE = "cs.SupportedLanguage.{member}"
 
 LANG_ERR_ENTRY_NOT_IN_CONFIG = "no config entry found for '{name}'"
+
+# Variables that point git at a repository, index or object store other than
+# the working directory's (git's own `local_repo_env`, less the config ones a
+# user may rely on for auth or proxies when the submodule is cloned).
+GIT_LOCATION_ENV_VARS = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    }
+)
