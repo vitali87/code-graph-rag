@@ -1904,20 +1904,29 @@ class ImportProcessor:
                     entry, declaring, known_module_qns
                 )
                 continue
-            if (
-                entry.language == cs.SupportedLanguage.SCALA
-                and (entry.module_qn, entry.full_name) in self._scala_resolved_edges
-            ):
-                # A path into the project's own packages lands on the module
-                # declaring its member; never on an ExternalModule.
-                if entry.full_name in known_module_qns:
-                    self._emit_import_edge(entry, cs.NodeLabel.MODULE, entry.full_name)
-                    emitted += 1
+            if self._is_scala_project_import(entry):
+                emitted += self._flush_scala_project_import(entry, known_module_qns)
                 continue
             emitted += self._flush_resolved_import(
                 entry, known_module_paths, module_aliases, siblings
             )
         return emitted
+
+    def _is_scala_project_import(self, entry: DeferredImportEdge) -> bool:
+        return (
+            entry.language == cs.SupportedLanguage.SCALA
+            and (entry.module_qn, entry.full_name) in self._scala_resolved_edges
+        )
+
+    def _flush_scala_project_import(
+        self, entry: DeferredImportEdge, known_module_qns: set[str]
+    ) -> int:
+        # A path into the project's own packages lands on the module
+        # declaring its member; never on an ExternalModule.
+        if entry.full_name not in known_module_qns:
+            return 0
+        self._emit_import_edge(entry, cs.NodeLabel.MODULE, entry.full_name)
+        return 1
 
     def _is_rust_project_import(self, entry: DeferredImportEdge) -> bool:
         return entry.language == cs.SupportedLanguage.RUST and (
@@ -2220,19 +2229,23 @@ class ImportProcessor:
         }
         if scan is None or not blocks:
             return None
-        registry = self.function_registry
         for block in scala_blocks_at(scan.blocks, position):
             mapping = blocks.get(block, {})
             if name in mapping:
                 return mapping[name]
-            for key, imported in mapping.items():
-                candidate = f"{imported}{cs.SEPARATOR_DOT}{name}"
-                if (
-                    key.startswith(cs.SCALA_WILDCARD_PREFIX)
-                    and registry is not None
-                    and candidate in registry
-                ):
-                    return candidate
+            if candidate := self._scala_wildcard_member(mapping, name):
+                return candidate
+        return None
+
+    def _scala_wildcard_member(self, mapping: dict[str, str], name: str) -> str | None:
+        # The first wildcard import whose package or object registers `name`.
+        registry = self.function_registry
+        if registry is None:
+            return None
+        for key, imported in mapping.items():
+            candidate = f"{imported}{cs.SEPARATOR_DOT}{name}"
+            if key.startswith(cs.SCALA_WILDCARD_PREFIX) and candidate in registry:
+                return candidate
         return None
 
     def scala_type_qn(
@@ -2251,14 +2264,29 @@ class ImportProcessor:
             imported := self.scala_block_import(module_qn, head, position)
         ):
             return f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported
-        scan = self._scala_scans.get(module_qn)
-        enclosing = scan.enclosing if scan is not None else ()
-        if scan is not None and position is not None:
-            blocks = scala_blocks_at(scan.blocks, position)
-            enclosing = blocks[0].enclosing if blocks else enclosing
+        enclosing = self._scala_enclosing_packages(module_qn, position)
         if rest:
             target = resolve_scala_import(written, enclosing, self._scala_package_index)
             return target.member_qn if target is not None else None
+        return self._scala_simple_type_qn(module_qn, written, enclosing)
+
+    def _scala_enclosing_packages(
+        self, module_qn: str, position: int | None
+    ) -> tuple[str, ...]:
+        # The packages of the innermost package block around `position`, or
+        # the file's own when no block holds it.
+        scan = self._scala_scans.get(module_qn)
+        if scan is None:
+            return ()
+        if position is not None and (blocks := scala_blocks_at(scan.blocks, position)):
+            return blocks[0].enclosing
+        return scan.enclosing
+
+    def _scala_simple_type_qn(
+        self, module_qn: str, written: str, enclosing: tuple[str, ...]
+    ) -> str | None:
+        # An undotted name, past the package blocks: the file's imports, its
+        # own definitions, its packages' other files, then wildcard imports.
         mapping = self.import_mapping.get(module_qn, {})
         if written in mapping:
             return mapping[written]
@@ -2271,15 +2299,7 @@ class ImportProcessor:
                 package, written, self._scala_package_index
             ):
                 return f"{owner}{cs.SEPARATOR_DOT}{written}"
-        for key, imported in mapping.items():
-            candidate = f"{imported}{cs.SEPARATOR_DOT}{written}"
-            if (
-                key.startswith(cs.SCALA_WILDCARD_PREFIX)
-                and registry is not None
-                and candidate in registry
-            ):
-                return candidate
-        return None
+        return self._scala_wildcard_member(mapping, written)
 
     def scala_base_qn(
         self, module_qn: str, child_qn: str, parent_qn: str, base_index: int

@@ -1114,10 +1114,12 @@ def test_destructuring_binders_bind_no_name_of_their_own() -> None:
 def test_a_package_object_declares_its_members_in_its_own_package() -> None:
     """`package object util` inside `package shop` holds shop.util's members.
 
-    A package object with no body declares nothing at all.
+    A destructuring `val (lo, hi)` declares no single member, and a package
+    object with no body declares nothing at all.
     """
     with_body = _parse_scala(
-        "package shop\npackage object util { def helper(): Int = 1; val rate = 2 }"
+        "package shop\npackage object util "
+        "{ def helper(): Int = 1; val rate = 2; val (lo, hi) = (0, 1) }"
     )
     bodiless = _parse_scala("package shop\npackage object util")
 
@@ -1206,24 +1208,38 @@ def test_a_selection_that_is_no_callee_reads_its_receiver(
     assert scala_selection(reparented) == ("c", "size")
 
 
+@pytest.mark.parametrize(
+    "app_source",
+    [
+        """package app
+import scala.collection.mutable._
+import shop._
+object App { def run(): Cart = new Cart() }
+""",
+        """package app {
+  import scala.collection.mutable._
+  import shop._
+  object App { def run(): Cart = new Cart() }
+}
+""",
+    ],
+    ids=["file", "package-block"],
+)
 def test_an_external_wildcard_before_a_project_one_does_not_hide_the_class(
-    project: Path, mock_ingestor: MagicMock
+    project: Path, mock_ingestor: MagicMock, app_source: str
 ) -> None:
     """`import scala.collection.mutable._` first, then `import shop._`.
 
     The library wildcard names no project class, so the lookup moves on to
-    the next wildcard and `new Cart()` still lands on shop's Cart.
+    the next wildcard and `new Cart()` still lands on shop's Cart, whether
+    the imports sit at the top of the file or in a package block.
     """
     _index(
         project,
         mock_ingestor,
         {
             "src/main/scala/shop/Cart.scala": CART_SCALA,
-            "src/main/scala/app/App.scala": """package app
-import scala.collection.mutable._
-import shop._
-object App { def run(): Cart = new Cart() }
-""",
+            "src/main/scala/app/App.scala": app_source,
         },
     )
 
@@ -1282,3 +1298,13 @@ def test_a_resolved_scala_edge_to_a_module_no_longer_known_is_dropped(
     assert emitted == 0
     assert get_relationships(mock_ingestor, "IMPORTS") == []
     assert get_nodes(mock_ingestor, cs.NodeLabel.EXTERNAL_MODULE) == []
+
+
+def test_a_wildcard_import_names_nothing_without_a_registry(tmp_path: Path) -> None:
+    """With no registry to confirm the member, `import shop._` binds no Cart."""
+    processor = ImportProcessor(repo_path=tmp_path, project_name="proj")
+    processor.import_mapping["proj.app.App"] = {
+        f"{cs.SCALA_WILDCARD_PREFIX}proj.shop.Cart": "proj.shop.Cart"
+    }
+
+    assert processor.scala_type_qn("proj.app.App", "Cart") is None

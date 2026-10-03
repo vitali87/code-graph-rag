@@ -42,13 +42,20 @@ def _joined(prefix: str, name: str) -> str:
     return f"{prefix}{cs.SEPARATOR_DOT}{name}" if prefix else name
 
 
+def _identifier_pattern(node: Node) -> str | None:
+    # The name a `val x`, `case x` or `x: T` pattern binds; a tuple or
+    # wildcard pattern binds no single name.
+    pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+    if pattern is None or pattern.type != cs.TS_SCALA_IDENTIFIER:
+        return None
+    return safe_decode_text(pattern)
+
+
 def _member_name(node: Node) -> str | None:
     if node.type in cs.SCALA_NAMED_PACKAGE_MEMBERS:
         return safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
     if node.type in cs.SCALA_BINDING_DEFINITIONS:
-        pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-        if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
-            return safe_decode_text(pattern)
+        return _identifier_pattern(node)
     return None
 
 
@@ -57,30 +64,44 @@ def _collect_packages(
 ) -> None:
     for child in container.named_children:
         if child.type == cs.TS_SCALA_PACKAGE_CLAUSE:
-            name = _dotted_name(child.child_by_field_name(cs.FIELD_NAME))
-            if name is None:
-                continue
-            body = child.child_by_field_name(cs.FIELD_BODY)
-            if body is None:
-                # A bodiless clause opens its package for the REST of the
-                # enclosing scope: every later sibling is declared in it.
-                package = _joined(package, name)
-                found.setdefault(package, set())
-            else:
-                found.setdefault(_joined(package, name), set())
-                _collect_packages(body, _joined(package, name), found)
+            package = _collect_package_clause(child, package, found)
         elif child.type == cs.TS_SCALA_PACKAGE_OBJECT:
-            name = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
-            body = child.child_by_field_name(cs.FIELD_BODY)
-            if name and body is not None:
-                members = found.setdefault(_joined(package, name), set())
-                members.update(
-                    member
-                    for grandchild in body.named_children
-                    if (member := _member_name(grandchild))
-                )
+            _collect_package_object(child, package, found)
         elif member := _member_name(child):
             found.setdefault(package, set()).add(member)
+
+
+def _collect_package_clause(
+    clause: Node, package: str, found: dict[str, set[str]]
+) -> str:
+    # Returns the package the clause's later siblings are declared in.
+    name = _dotted_name(clause.child_by_field_name(cs.FIELD_NAME))
+    if name is None:
+        return package
+    opened = _joined(package, name)
+    found.setdefault(opened, set())
+    body = clause.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        # A bodiless clause opens its package for the REST of the
+        # enclosing scope: every later sibling is declared in it.
+        return opened
+    _collect_packages(body, opened, found)
+    return package
+
+
+def _collect_package_object(
+    package_object: Node, package: str, found: dict[str, set[str]]
+) -> None:
+    name = safe_decode_text(package_object.child_by_field_name(cs.FIELD_NAME))
+    body = package_object.child_by_field_name(cs.FIELD_BODY)
+    if not name or body is None:
+        return
+    members = found.setdefault(_joined(package, name), set())
+    members.update(
+        member
+        for grandchild in body.named_children
+        if (member := _member_name(grandchild))
+    )
 
 
 def _enclosing_packages(root: Node) -> tuple[str, ...]:
@@ -325,51 +346,70 @@ def _ancestor(node: Node, node_type: str) -> Node | None:
     return current
 
 
+def _parameter_binding(node: Node) -> ScalaBinding | None:
+    # A def's parameters are visible in its whole definition, a
+    # lambda's typed ones in the lambda: the owner of the list.
+    owner = node.parent.parent if node.parent is not None else None
+    return _scoped(
+        safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
+        _type_name(node.child_by_field_name(cs.FIELD_TYPE)),
+        owner,
+    )
+
+
+def _lambda_binding(node: Node) -> ScalaBinding | None:
+    params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None or params.type != cs.TS_SCALA_IDENTIFIER:
+        return None
+    return _scoped(safe_decode_text(params), None, node)
+
+
+def _value_binding(node: Node) -> ScalaBinding | None:
+    name = _identifier_pattern(node)
+    if name is None:
+        return None
+    declared = _type_name(node.child_by_field_name(cs.FIELD_TYPE))
+    return _scoped(
+        name,
+        declared or _value_type_name(node.child_by_field_name(cs.FIELD_VALUE)),
+        node.parent,
+    )
+
+
+def _typed_pattern_binding(node: Node) -> ScalaBinding | None:
+    name = _identifier_pattern(node)
+    if name is None:
+        return None
+    return _scoped(
+        name,
+        _type_name(node.child_by_field_name(cs.FIELD_TYPE)),
+        _ancestor(node, cs.TS_SCALA_CASE_CLAUSE),
+    )
+
+
+def _enumerator_binding(node: Node) -> ScalaBinding | None:
+    first = node.named_children[0] if node.named_children else None
+    if first is None or first.type != cs.TS_SCALA_IDENTIFIER:
+        return None
+    return _scoped(
+        safe_decode_text(first), None, _ancestor(node, cs.TS_SCALA_FOR_EXPRESSION)
+    )
+
+
 def _binding(node: Node) -> ScalaBinding | None:
     match node.type:
         case cs.TS_SCALA_PARAMETER | cs.TS_SCALA_BINDING:
-            # A def's parameters are visible in its whole definition, a
-            # lambda's typed ones in the lambda: the owner of the list.
-            owner = node.parent.parent if node.parent is not None else None
-            return _scoped(
-                safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
-                _type_name(node.child_by_field_name(cs.FIELD_TYPE)),
-                owner,
-            )
+            return _parameter_binding(node)
         case cs.TS_SCALA_LAMBDA_EXPRESSION:
-            params = node.child_by_field_name(cs.FIELD_PARAMETERS)
-            if params is not None and params.type == cs.TS_SCALA_IDENTIFIER:
-                return _scoped(safe_decode_text(params), None, node)
+            return _lambda_binding(node)
         case cs.TS_SCALA_VAL_DEFINITION | cs.TS_SCALA_VAR_DEFINITION:
-            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-            if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
-                declared = _type_name(node.child_by_field_name(cs.FIELD_TYPE))
-                return _scoped(
-                    safe_decode_text(pattern),
-                    declared
-                    or _value_type_name(node.child_by_field_name(cs.FIELD_VALUE)),
-                    node.parent,
-                )
+            return _value_binding(node)
         case cs.TS_SCALA_TYPED_PATTERN:
-            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-            if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
-                return _scoped(
-                    safe_decode_text(pattern),
-                    _type_name(node.child_by_field_name(cs.FIELD_TYPE)),
-                    _ancestor(node, cs.TS_SCALA_CASE_CLAUSE),
-                )
+            return _typed_pattern_binding(node)
         case cs.TS_SCALA_CASE_CLAUSE:
-            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-            if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
-                return _scoped(safe_decode_text(pattern), None, node)
+            return _scoped(_identifier_pattern(node), None, node)
         case cs.TS_SCALA_ENUMERATOR:
-            first = node.named_children[0] if node.named_children else None
-            if first is not None and first.type == cs.TS_SCALA_IDENTIFIER:
-                return _scoped(
-                    safe_decode_text(first),
-                    None,
-                    _ancestor(node, cs.TS_SCALA_FOR_EXPRESSION),
-                )
+            return _enumerator_binding(node)
     return None
 
 
@@ -417,22 +457,28 @@ def scala_binding_at(
     return innermost[0]._replace(type_name=types.pop() if len(types) == 1 else None)
 
 
+def _is_callee_or_assigned(node: Node) -> bool:
+    # The call node names its callee; an assignment writes its target.
+    parent = node.parent
+    if parent is None:
+        return False
+    if parent.type in (cs.TS_SCALA_CALL_EXPRESSION, cs.TS_SCALA_GENERIC_FUNCTION):
+        slot = parent.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    elif parent.type == cs.TS_SCALA_ASSIGNMENT_EXPRESSION:
+        slot = parent.child_by_field_name(cs.FIELD_LEFT)
+    else:
+        return False
+    return slot is not None and slot.id == node.id
+
+
 def scala_selection(node: Node) -> tuple[str, str] | None:
     """`(receiver, member)` of a parameterless selection like `c.size`.
 
     None when the selection is the callee of a call (the call node names it),
     an assignment target, or has a receiver that is not a plain name.
     """
-    parent = node.parent
-    if parent is not None:
-        if parent.type in (cs.TS_SCALA_CALL_EXPRESSION, cs.TS_SCALA_GENERIC_FUNCTION):
-            callee = parent.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if callee is not None and callee.id == node.id:
-                return None
-        if parent.type == cs.TS_SCALA_ASSIGNMENT_EXPRESSION:
-            left = parent.child_by_field_name(cs.FIELD_LEFT)
-            if left is not None and left.id == node.id:
-                return None
+    if _is_callee_or_assigned(node):
+        return None
     receiver = node.child_by_field_name(cs.FIELD_VALUE)
     member = safe_decode_text(node.child_by_field_name(cs.FIELD_FIELD))
     if receiver is None or receiver.type != cs.TS_SCALA_IDENTIFIER or not member:
