@@ -973,25 +973,19 @@ def _is_php_framework_test_base(qn: str) -> bool:
 
 
 def _php_project_class_named(
-    external_qn: str, by_leaf: dict[str, list[str]], php_paths: dict[str, str]
+    external_qn: str, by_leaf: dict[str, list[str]], namespaces: dict[str, str]
 ) -> str | None:
     # The PHP inheritance pass leaves a base imported from another file's
     # namespace as an external name (`App.AdapterTestUtilities.X`). It is the
-    # project class of that name when exactly one sits in a directory named
-    # like the namespace's last segment, as PSR-4 lays classes out; a bare
-    # name carries no namespace to check and is left to the framework rule.
+    # project class only when exactly one class of that name declares that
+    # exact namespace: a shared name and directory do not make a vendor's
+    # `Acme\Shared\BaseTestCase` the project's `Tests\Shared` one, and a
+    # class whose file declares no single namespace is never matched.
     namespace, sep, leaf = external_qn.rpartition(cs.SEPARATOR_DOT)
     if not sep:
         return None
-    wanted = namespace.rpartition(cs.SEPARATOR_DOT)[2].lower()
-    matches = [qn for qn in by_leaf.get(leaf, ()) if _dir_name(php_paths[qn]) == wanted]
+    matches = [qn for qn in by_leaf.get(leaf, ()) if namespaces.get(qn) == namespace]
     return matches[0] if len(matches) == 1 else None
-
-
-def _dir_name(path: str) -> str:
-    return (
-        path.rpartition(cs.SEPARATOR_SLASH)[0].rpartition(cs.SEPARATOR_SLASH)[2].lower()
-    )
 
 
 def _php_test_classes(
@@ -1006,11 +1000,19 @@ def _php_test_classes(
     # sits in a test path, and follows first-party subclasses down any
     # depth. A `*TestCase` name alone proves nothing: a test-management app
     # has a `TestCase` entity, and its subclasses are production code.
-    php_paths = {
-        str(uid): str(props.get(cs.KEY_PATH, ""))
+    php_classes = {
+        str(uid): props
         for (label, uid), props in nodes.items()
         if label == _CLASS
         and str(props.get(cs.KEY_PATH, "")).endswith(cs.PHP_EXTENSIONS)
+    }
+    php_paths = {
+        qn: str(props.get(cs.KEY_PATH, "")) for qn, props in php_classes.items()
+    }
+    namespaces = {
+        qn: namespace
+        for qn, props in php_classes.items()
+        if isinstance(namespace := props.get(cs.KEY_NAMESPACE), str) and namespace
     }
     by_leaf: dict[str, list[str]] = defaultdict(list)
     for qn in php_paths:
@@ -1029,7 +1031,7 @@ def _php_test_classes(
         parent = (
             base
             if base in php_paths
-            else _php_project_class_named(base, by_leaf, php_paths)
+            else _php_project_class_named(base, by_leaf, namespaces)
         )
         if parent is not None:
             children[parent] |= php_subclasses
@@ -1200,6 +1202,8 @@ def _node_props(row: ResultRow) -> PropertyDict:
         # well-known-symbol name (`[Symbol.toStringTag]`) contains a dot and
         # cannot be recovered from the qn's last dotted segment.
         cs.KEY_NAME: str(row.get(cs.KEY_NAME) or ""),
+        # A PHP class's declared namespace links an imported base to it.
+        cs.KEY_NAMESPACE: str(row.get(cs.KEY_NAMESPACE) or ""),
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,

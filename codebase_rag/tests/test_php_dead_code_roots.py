@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import (
     _is_php_test_path,
     _node_props,
@@ -662,6 +663,84 @@ class FeatureChecks extends BaseTestCase
         {"tests/BaseTestCase.php": base, "src/Feature/FeatureChecks.php": checks},
     )
     members = _defined(ingestor, f"{_PROJECT}.src.Feature.FeatureChecks.FeatureChecks.")
+    dead = _dead(ingestor, include_tests)
+
+    assert not members & dead, sorted(members & dead)
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+def test_imported_base_names_a_project_class_only_through_its_namespace(
+    tmp_path: Path, include_tests: bool
+) -> None:
+    # `Acme\Shared\BaseTestCase` is a vendor class; the project's own
+    # `tests/Shared/BaseTestCase.php` declares `Tests\Shared`. Sharing the
+    # class name and the last directory does not make them one class, so
+    # the production subclass keeps its unused method reported.
+    base = r"""<?php
+namespace Tests\Shared;
+
+abstract class BaseTestCase extends \PHPUnit\Framework\TestCase {}
+"""
+    handler = r"""<?php
+namespace App\Handlers;
+
+use Acme\Shared\BaseTestCase;
+
+class ProductionHandler extends BaseTestCase
+{
+    private function unusedBusinessLogic(): void {}
+}
+"""
+    ingestor = _index(
+        tmp_path,
+        {
+            "tests/Shared/BaseTestCase.php": base,
+            "src/Handlers/ProductionHandler.php": handler,
+        },
+    )
+    qn = f"{_PROJECT}.src.Handlers.ProductionHandler.ProductionHandler"
+    dead = _dead(ingestor, include_tests)
+
+    assert f"{qn}.unusedBusinessLogic" in dead, sorted(dead)
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+def test_imported_base_is_followed_through_its_namespace_in_any_directory(
+    tmp_path: Path, include_tests: bool
+) -> None:
+    # The declared namespace, not the directory, is what a `use` import
+    # names: a base kept outside the PSR-4 layout is still the same class.
+    base = r"""<?php
+namespace Tests;
+
+abstract class IntegrationTestCase extends \PHPUnit\Framework\TestCase {}
+"""
+    checks = r"""<?php
+namespace App\Feature;
+
+use Tests\IntegrationTestCase;
+
+class ApiChecks extends IntegrationTestCase
+{
+    private function leftoverFixture(): void {}
+}
+"""
+    ingestor = _index(
+        tmp_path,
+        {
+            "tests/Support/Legacy/IntegrationTestCase.php": base,
+            "src/Feature/ApiChecks.php": checks,
+        },
+    )
+    base_qn = f"{_PROJECT}.tests.Support.Legacy.IntegrationTestCase.IntegrationTestCase"
+    # The engine reads the namespace from the dead-code fetch, so both the
+    # stored property and the query column must be there.
+    assert (
+        ingestor.nodes[(cs.NodeLabel.CLASS.value, base_qn)].get(cs.KEY_NAMESPACE)
+        == "Tests"
+    )
+    assert f" AS {cs.KEY_NAMESPACE}" in cq.CYPHER_DEAD_CODE_NODES
+    members = _defined(ingestor, f"{_PROJECT}.src.Feature.ApiChecks.ApiChecks.")
     dead = _dead(ingestor, include_tests)
 
     assert not members & dead, sorted(members & dead)
