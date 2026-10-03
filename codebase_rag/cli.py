@@ -246,7 +246,7 @@ def _global_options(
     if quiet:
         logger.remove()
         logger.add(
-            lambda msg: app_context.console.print(msg, end=""),
+            sys.stderr,
             level="ERROR",
             backtrace=False,
             diagnose=False,
