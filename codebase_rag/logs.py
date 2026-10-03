@@ -719,6 +719,12 @@ DEP_PARSE_ERROR_GEMFILE = "Error parsing Gemfile {path}: {error}"
 DEP_PARSE_ERROR_COMPOSER = "Error parsing composer.json {path}: {error}"
 DEP_PARSE_ERROR_CSPROJ = "Error parsing .csproj {path}: {error}"
 DEP_PARSE_ERROR_PUBSPEC = "Error parsing pubspec.yaml {path}: {error}"
+DEP_MANIFEST_EMPTY = "Dependency manifest {path} is empty; it declares no dependencies"
+DEP_MANIFEST_UNPARSABLE = "Dependency manifest {path} could not be parsed: {error}"
+DEP_MANIFESTS_UNPARSABLE = (
+    "{count} dependency manifest(s) could not be parsed, so their dependencies "
+    "are not in the graph (first: {path}: {error})"
+)
 
 # Import processor logs
 IMP_TOOL_NOT_AVAILABLE = "External tool '{tool}' not available for stdlib introspection"

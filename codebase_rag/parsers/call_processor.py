@@ -916,6 +916,12 @@ def _split_call_arguments(args_node: Node) -> tuple[list[Node], dict[str, Node]]
     return positional, keyword
 
 
+_PY_UNPACKING_FLAGS = {
+    cs.TS_PY_LIST_SPLAT: cs.KEY_STAR_ARGS,
+    cs.TS_PY_DICTIONARY_SPLAT: cs.KEY_STAR_KWARGS,
+}
+
+
 def call_site_properties(node: Node) -> PropertyDict:
     """Edge-site properties for the expression that produced an edge (#1522).
 
@@ -924,12 +930,25 @@ def call_site_properties(node: Node) -> PropertyDict:
     it passes, so a consumer can check arity at the site without re-parsing.
     A reference site (a bare function value, an attribute read) has no
     argument list and carries the span alone.
+
+    A Python `*rest` or `**opts` passes an unknown number of arguments, so
+    it is flagged instead of counted. Counted as one positional, it made
+    `send(req, **opts)` pass two positionals to `def send(request,
+    **kwargs)`, a `too_many` that failed `cgr check` on code that runs
+    (issue #2635). The split itself keeps the unpacking in `positional`:
+    the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
     args_node = _find_call_arguments_node(node)
     if args_node is not None:
         positional, keyword = _split_call_arguments(args_node)
-        props[cs.KEY_ARG_COUNT] = len(positional) + len(keyword)
+        written = 0
+        for argument in positional:
+            if (flag := _PY_UNPACKING_FLAGS.get(argument.type)) is not None:
+                props[flag] = True
+            else:
+                written += 1
+        props[cs.KEY_ARG_COUNT] = written + len(keyword)
         props[cs.KEY_KWARG_NAMES] = list(keyword)
     return props
 

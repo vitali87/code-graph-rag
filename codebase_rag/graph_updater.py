@@ -2115,6 +2115,7 @@ class GraphUpdater:
         # so a reused updater must not treat a previous run's interfaces as
         # unflushed writes that rehydration has to preserve.
         self.factory.definition_processor.cpp_interfaces_parsed_this_run.clear()
+        self.factory.definition_processor.unparsable_manifests.clear()
         # Per-run for the same reason: set on the in-sync early return below
         # and previously cleared only in `__init__`, so a reused instance kept
         # reporting a previous run's skip. `cli.py` reads it to decide what to
@@ -5533,6 +5534,7 @@ class GraphUpdater:
         self._restore_inbound_edges(captured_inbound)
 
         self._log_process_counts(scan, changed_count)
+        self._log_unparsable_manifests()
         if first_failure is not None:
             raise first_failure
 
@@ -6179,6 +6181,27 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_CHANGED, count=changed_count)
         if scan.unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=scan.unreadable_count)
+
+    def _log_unparsable_manifests(self) -> None:
+        """Name the manifests this run could not parse in one WARNING (#2568).
+
+        Each is a DEBUG line already: fixture and mock manifests are broken on
+        purpose often enough that a line apiece buried the run's own output,
+        so they are counted like the unreadable files above. The shallowest is
+        the one named, so a broken root manifest, which is the project's own
+        dependency list, is never hidden behind a fixture that sorts first.
+        """
+        unparsable = self.factory.definition_processor.unparsable_manifests
+        if not unparsable:
+            return
+        first = min(unparsable, key=lambda path: (len(path.parts), path))
+        logger.warning(
+            ls.DEP_MANIFESTS_UNPARSABLE,
+            count=len(unparsable),
+            path=cached_relative_path(first, self.repo_path).as_posix(),
+            error=unparsable[first],
+        )
+        unparsable.clear()
 
     def _stash_pending_caches(
         self,
@@ -7458,6 +7481,7 @@ class GraphUpdater:
         self._reingest_delete(reparse, gone, hashes)
         self._resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
+        self._log_unparsable_manifests()
         # After BOTH seed calls and after the re-parse, so a re-parsed file's
         # own entry is exempt while its Module node is still unflushed
         # (issue #1712). The exemption is the paths THIS call re-parsed, not

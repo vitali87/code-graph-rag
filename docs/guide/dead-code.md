@@ -139,6 +139,28 @@ so no name or path is cut to fit 80 columns.
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
 
+### What counts as test code
+
+`--include-tests`, `--no-include-tests`, `cgr graph tests-reaching` and
+`cgr check` all classify a symbol as test code the same way. Its file path is
+read as whole words of its directories and file name, never as a substring,
+so `shortest_paths/` and `latest_prices.py` stay production code:
+
+- a snake or kebab-case word, in any case: `test`, `tests`, `unittest`,
+  `unittests` or `conftest` (`tests/`, `Tests/`, `__tests__/`, `test_app.py`,
+  `server_test.go`, `snappy_unittest.cc`, `e2e-tests/`);
+- a CamelCase name ending in `Test` or `Tests`, or starting with `test`
+  followed by a capital (`ParserTests.cs`, `AppTests/`, `src/androidTest/`,
+  `src/integrationTest/`, `src/testFixtures/`);
+- a dotted qualifier `test`, `tests`, `spec` or `specs` (`app.test.ts`,
+  `app.spec.tsx`, `src/Acme.Tests/`, `src/Acme.Specs/`);
+- a `testing/` or `_testing/` directory, and a `spec/` or `specs/` directory
+  at the repository root (RSpec, Jasmine). A nested `spec/` is left alone,
+  since it is often a package such as `java/security/spec/`.
+
+Rust `#[test]` functions and `#[cfg(test)]` modules count as test code too,
+wherever they are.
+
 First-class functions matter for accuracy: a callback stored in an object, an
 inline arrow handed to `useMutation`/`.forEach`/`new Promise`, a function
 passed as an argument, or a Java method reference (`Acc::add`, `this::m`,

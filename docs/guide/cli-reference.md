@@ -64,7 +64,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--repo-path` | Path to repository (defaults to current directory) |
-| `--update-graph` | Parse and ingest the repository into the knowledge graph |
+| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts). Cannot be combined with `-a`/`--ask-agent`, `--no-sync` or `--projects`. |
 | `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
 | `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
 | `--batch-size` | Override Memgraph flush batch size |
@@ -202,7 +202,10 @@ cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
 cgr language remove-language <language-name>
+cgr language cleanup-orphaned-modules
 ```
+
+`add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
 
 ## Makefile Commands
 
