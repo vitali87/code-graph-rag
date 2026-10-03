@@ -298,6 +298,90 @@ void Writer::Flush() {}
     )
 
 
+# Two broken initialiser lists in one file that need DIFFERENT repairs:
+# Writer's branches carry no separator, so only its first branch may stay;
+# Reader's branches each end in `,`, so splicing both back in is valid and
+# its `#else` initialiser call must survive Writer's fallback.
+_MIXED = """\
+namespace ns {
+int MakeFast() { return 1; }
+int MakeSlow() { return 2; }
+
+class Writer {
+  int end_;
+  int begin_;
+ public:
+  Writer(int iov)
+      : end_(iov),
+#ifdef FOO
+        begin_(iov)
+#else
+        begin_(0)
+#endif
+  {
+  }
+  void Flush() {}
+};
+
+class Reader {
+  int a_;
+  int b_;
+  int c_;
+ public:
+  Reader()
+      : a_(0),
+#ifdef FAST
+        b_(MakeFast()),
+#else
+        b_(MakeSlow()),
+#endif
+        c_(0) {
+  }
+  int Get() { return b_; }
+};
+
+int Compress(int n) { Writer w(n); w.Flush(); return Reader().Get(); }
+}
+"""
+
+
+def test_fallback_is_decided_per_conditional(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    root = temp_repo / "mixed"
+    _write(root, "writer.cc", _MIXED)
+    run_updater(root, mock_ingestor, skip_if_missing="cpp")
+
+    calls = _calls(mock_ingestor)
+    ctor = "mixed.writer.ns.Reader.Reader"
+    assert (ctor, "mixed.writer.ns.MakeFast") in calls, sorted(calls)
+    assert (ctor, "mixed.writer.ns.MakeSlow") in calls, sorted(calls)
+
+    # both classes still close where they should
+    classes = get_qualified_names(get_nodes(mock_ingestor, cs.NodeLabel.CLASS))
+    methods = get_qualified_names(get_nodes(mock_ingestor, cs.NodeLabel.METHOD))
+    functions = get_qualified_names(get_nodes(mock_ingestor, cs.NodeLabel.FUNCTION))
+    assert {"mixed.writer.ns.Writer", "mixed.writer.ns.Reader"} <= classes
+    assert "mixed.writer.ns.Writer.Writer" in methods, sorted(methods)
+    assert "mixed.writer.ns.Reader.Get" in methods, sorted(methods)
+    assert "mixed.writer.ns.Compress" in functions, sorted(functions)
+
+
+def test_fallback_blanks_only_the_conditional_that_needs_it() -> None:
+    from codebase_rag.parsers.cpp.preproc_recovery import (
+        _retry_without_list_directives,
+    )
+
+    source = _MIXED.encode()
+    cpp = _parser("cpp")
+    tree, recovered = _retry_without_list_directives(cpp, cpp.parse(source), source)
+
+    assert not tree.root_node.has_error
+    assert b"b_(MakeFast())" in recovered and b"b_(MakeSlow())" in recovered
+    assert b"begin_(iov)" in recovered and b"begin_(0)" not in recovered
+    assert b"#ifdef" not in recovered and b"#else" not in recovered
+
+
 # --- what the recovery must leave alone ---
 
 

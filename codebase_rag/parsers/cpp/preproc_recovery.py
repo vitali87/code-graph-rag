@@ -283,16 +283,27 @@ def _directive_misparsed(root: Node, start: int, line: bytes) -> bool:
     return node.has_error or (node.parent is not None and node.parent.has_error)
 
 
-def _count_syntax_faults(root: Node) -> int:
-    count = 0
+def _syntax_faults(root: Node) -> list[tuple[int, int]]:
+    # the row span of every ERROR and MISSING node: the count ranks retries,
+    # the rows tie a leftover fault to the conditional that caused it
+    faults: list[tuple[int, int]] = []
     stack = [root]
     while stack:
         node = stack.pop()
         if node.type == cs.TS_ERROR or node.is_missing:
-            count += 1
+            faults.append((node.start_point[0], node.end_point[0]))
         if node.has_error:
             stack.extend(node.children)
-    return count
+    return faults
+
+
+def _touches(group: _Conditional, faults: list[tuple[int, int]]) -> bool:
+    # A fault starting or ending within one line of the group's span; a
+    # whole-file ERROR enclosing it from afar implicates every group alike
+    # and so singles out none.
+    first = group[0][0][0] - 1
+    last = group[0][-1][1] + 1
+    return any(first <= start <= last or first <= end <= last for start, end in faults)
 
 
 def _retry_without_list_directives(
@@ -306,11 +317,14 @@ def _retry_without_list_directives(
     # free functions become its methods, the constructor is lost and the
     # enclosing namespace turns into an ERROR. Blanking the directive lines
     # (offsets preserved) splices the branch back into the list. Keeping
-    # every branch loses nothing, so it is tried first; branches without
-    # their own separator (`#ifdef A x_(1) #else x_(2) #endif {`) still
-    # misparse that way, so the second try keeps only the FIRST branch, as a
-    # compiler with the condition set would. A retry survives only when it
-    # strictly reduces the ERROR and MISSING nodes.
+    # every branch loses nothing, so that is tried first, for every target
+    # at once. Branches without their own separator (`#ifdef A x_(1) #else
+    # x_(2) #endif {`) still misparse that way, so a conditional that a
+    # leftover fault touches then keeps only its FIRST branch, as a compiler
+    # with the condition set would. That choice is per conditional: a
+    # neighbour whose branches spliced in cleanly keeps its `#else` calls.
+    # Each step must strictly reduce the ERROR and MISSING nodes, and the
+    # result must have fewer than the original parse.
     if not tree.root_node.has_error:
         return tree, source_bytes
     lines = source_bytes.split(_CHAR_NEWLINE)
@@ -327,22 +341,30 @@ def _retry_without_list_directives(
     ]
     if not groups:
         return tree, source_bytes
-    directives = [span for group_directives, _ in groups for span in group_directives]
-    alternatives = [span for _, branches in groups for span in branches[1:]]
-    attempts = [directives]
-    if alternatives:
-        attempts.append(directives + alternatives)
-    best, best_source = tree, source_bytes
-    best_faults = _count_syntax_faults(tree.root_node)
-    for ranges in attempts:
-        blanked = _blank(lines, ranges)
-        retry = parser.parse(blanked)
-        faults = _count_syntax_faults(retry.root_node)
-        if faults < best_faults:
-            best, best_source, best_faults = retry, blanked, faults
-        if best_faults == 0:
+    ranges = [span for group_directives, _ in groups for span in group_directives]
+    source = _blank(lines, ranges)
+    retry = parser.parse(source)
+    faults = _syntax_faults(retry.root_node)
+    for group in groups:
+        alternatives = group[1][1:]
+        if not faults:
             break
-    return best, best_source
+        if not alternatives or not _touches(group, faults):
+            continue
+        trial_ranges = ranges + alternatives
+        trial_source = _blank(lines, trial_ranges)
+        trial = parser.parse(trial_source)
+        trial_faults = _syntax_faults(trial.root_node)
+        if len(trial_faults) < len(faults):
+            ranges, source, retry, faults = (
+                trial_ranges,
+                trial_source,
+                trial,
+                trial_faults,
+            )
+    if len(faults) < len(_syntax_faults(tree.root_node)):
+        return retry, source
+    return tree, source_bytes
 
 
 def _track_csharp_directive(stripped: bytes, skip_stack: list[bool]) -> bool:
