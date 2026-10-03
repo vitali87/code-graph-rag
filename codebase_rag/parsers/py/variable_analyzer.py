@@ -16,7 +16,7 @@ from ...types_defs import (
 )
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
-from .utils import resolve_class_name
+from .utils import python_literal_type, resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -374,6 +374,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # (already-seeded) parameter or local, so flow it onto the attribute.
             ident = safe_decode_text(right_node)
             assigned_type = local_var_types.get(ident) if ident else None
+        if (
+            not assigned_type
+            and assignment.child_by_field_name(cs.TS_FIELD_TYPE) is None
+        ):
+            # `self.cache = {}`: the builtin, so `self.cache.get(k)` is
+            # `dict.get` (issue #2859). An annotation says more, and wins.
+            assigned_type = python_literal_type(right_node)
         if not assigned_type:
             return
         local_var_types[attr_name] = assigned_type
@@ -996,7 +1003,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if (
             var_name in local_var_types
             and (var_type := local_var_types[var_name])
-            and var_type != cs.TYPE_INFERENCE_LIST
+            # A builtin value (`d = {}`) does not iterate as itself.
+            and var_type not in cs.PY_BUILTIN_VALUE_TYPES
         ):
             # A container-marked variable (`widgets = load_widgets()` with a
             # `-> list[Widget]` annotation) iterates as its element type.

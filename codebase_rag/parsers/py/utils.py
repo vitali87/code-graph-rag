@@ -1,12 +1,79 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from tree_sitter import Node
+
+from ... import constants as cs
 from ...constants import SEPARATOR_DOT
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 
 if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
+
+_LITERAL_RECEIVER_START = re.compile(cs.PY_LITERAL_RECEIVER_RE)
+
+
+def python_literal_type(
+    node: Node, types: Mapping[str, str] = cs.PY_LITERAL_BUILTIN_TYPES
+) -> str | None:
+    """The builtin a literal node evaluates to, or None for any other node.
+
+    A string is `bytes` when its prefix says so (`b"x"`, `rb'x'`); a
+    concatenation takes its first part's.
+    """
+    builtin = types.get(node.type)
+    if builtin != cs.PY_TYPE_STR:
+        return builtin
+    first = (
+        node.named_children[0]
+        if node.type == cs.TS_PY_CONCATENATED_STRING and node.named_children
+        else node
+    )
+    start = first.children[0] if first.children else None
+    prefix = (
+        start.text.decode(cs.ENCODING_UTF8, errors="replace")
+        if start is not None and start.type == cs.TS_PY_STRING_START and start.text
+        else ""
+    )
+    return (
+        cs.PY_TYPE_BYTES
+        if cs.PY_BYTES_PREFIX_CHAR in prefix.lower()
+        else cs.PY_TYPE_STR
+    )
+
+
+@lru_cache(maxsize=4096)
+def python_literal_text_type(text: str) -> str | None:
+    """The builtin a receiver written as a literal evaluates to.
+
+    A call reaches resolution as text (`"-".join`, `{}.get`), so the
+    receiver is parsed back; only text that can open a literal is.
+    """
+    if not _LITERAL_RECEIVER_START.match(text):
+        return None
+    # Local import: parser_loader pulls in the language grammars.
+    from ...parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+    parser = parsers.get(cs.SupportedLanguage.PYTHON)
+    if parser is None:
+        return None
+    root = parser.parse(text.encode(cs.ENCODING_UTF8)).root_node
+    if root.has_error or len(root.named_children) != 1:
+        return None
+    statement = root.named_children[0]
+    if (
+        statement.type != cs.TS_PY_EXPRESSION_STATEMENT
+        or len(statement.named_children) != 1
+    ):
+        return None
+    return python_literal_type(
+        statement.named_children[0], cs.PY_RECEIVER_LITERAL_TYPES
+    )
 
 
 def resolve_class_name(
