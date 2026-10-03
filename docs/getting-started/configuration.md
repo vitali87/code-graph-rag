@@ -8,6 +8,8 @@ Configuration is managed through environment variables in the `.env` file. The p
 
 Set a role's `*_PROVIDER` and `*_MODEL` together. If neither is set, that role uses the local Ollama default (`llama3.2`). Setting only one of them (for example `ORCHESTRATOR_PROVIDER=anthropic` without `ORCHESTRATOR_MODEL`) is an error: `cgr start` exits with a message naming the missing variable, and `cgr doctor` reports it as a failed check.
 
+![A .env with ORCHESTRATOR_PROVIDER but no ORCHESTRATOR_MODEL: cgr doctor fails the check and cgr start exits naming the missing variable](../assets/demos/configuration-provider-model-pair.gif)
+
 A value cgr cannot use (a port that is not a number, `MEMGRAPH_BATCH_SIZE=0`) stops every command before it runs, with one line per variable naming the value and whether it came from `./.env` or the environment, and exit status 2. `cgr --version`, `cgr --help` and `cgr help <command>` still work, so you can find the fix. A variable set to an empty value (`MEMGRAPH_HOST=`) counts as unset and takes its default. A `./.env` value the operating system will not hold in a variable (one with a NUL byte, or longer than the 32,767 characters Windows allows) is reported the same way, naming the variable but not the value, and the rest of the file still loads.
 
 ## Provider Examples
@@ -61,6 +63,10 @@ CYPHER_PROVIDER=ollama
 CYPHER_MODEL=qwen2.5-coder
 CYPHER_ENDPOINT=http://localhost:11434/v1
 ```
+
+![cgr doctor reading the mixed-provider .env: Google credentials present, local Ollama not reachable](../assets/demos/configuration-mixed-providers.gif)
+
+*The key is the placeholder above: `cgr doctor` only checks that one is present. No Ollama runs on the recording machine.*
 
 ### MiniMax Models
 
@@ -158,3 +164,5 @@ from cgr import settings
 settings.set_orchestrator("openai", "gpt-5.6-terra", api_key="sk-...")
 settings.set_cypher("google", "gemini-3.5-flash-lite", api_key="your-key")
 ```
+
+![The programmatic configuration snippet run in a Python REPL, showing the active orchestrator and Cypher configs change](../assets/demos/configuration-programmatic.gif)
