@@ -548,6 +548,9 @@ class DeadCodeRow(TypedDict):
     label: str
     name: str
     qualified_name: str
+    # Repo-relative, as a duplicates member's: a qualified name cannot be
+    # turned back into a file in general (issue #2561).
+    path: str
     start_line: int
     end_line: int
 
