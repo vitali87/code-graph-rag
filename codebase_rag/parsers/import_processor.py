@@ -787,6 +787,19 @@ def _kept_mod_scope_writers(
     return [] if len({w[0] for w in kept}) > 1 else kept
 
 
+def _import_site_props(
+    node: Node, local_name: str, imported_name: str | None
+) -> PropertyDict:
+    # Sentinel keys (`*pkg` wildcards, Go `.pkg` dot-imports) bind no name,
+    # so they carry no alias.
+    site = node_site_properties(node)
+    if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
+        site[cs.KEY_ALIAS] = local_name
+    if imported_name:
+        site[cs.KEY_IMPORTED_NAME] = imported_name
+    return site
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -1477,11 +1490,7 @@ class ImportProcessor:
         self._import_site_writers[(scope_qn, local_name)] = (
             owner_qn if owner_qn is not None else scope_qn
         )
-        site = node_site_properties(node)
-        if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
-            site[cs.KEY_ALIAS] = local_name
-        if imported_name:
-            site[cs.KEY_IMPORTED_NAME] = imported_name
+        site = _import_site_props(node, local_name, imported_name)
         self._import_sites.setdefault(scope_qn, {})[local_name] = site
         return site
 
@@ -1839,9 +1848,62 @@ class ImportProcessor:
         return emitted
 
     def _is_rust_project_import(self, entry: DeferredImportEdge) -> bool:
-        return entry.language == cs.SupportedLanguage.RUST and (
-            entry.full_name == self.project_name
-            or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+        return entry.language == cs.SupportedLanguage.RUST and self._is_project_qn(
+            entry.full_name
+        )
+
+    def _rust_use_takes_file_slot(
+        self,
+        module_qn: str,
+        name: str,
+        resolved: str,
+        use_node: Node,
+        source_name: str,
+    ) -> bool:
+        """Settle a second file-level `use` of a bound name (issue #2462).
+
+        Rust rejects two same-namespace imports of one name in one scope
+        (E0252), so a second `use` brings in another namespace (thiserror's
+        derive macro beside the crate's own `Error` type) or a cfg-exclusive
+        twin; both are real imports. The map keeps one binding per name, and
+        the module's IMPORTS edges are read from it alone, so the binding
+        left out queues its own edge here instead of vanishing.
+        """
+        held = self.import_mapping.get(module_qn, {}).get(name)
+        if held is None or held == resolved:
+            return True
+        if self._rust_held_use_keeps_slot(module_qn, name, held, resolved):
+            self.defer_import_edge(
+                module_qn,
+                resolved,
+                cs.SupportedLanguage.RUST,
+                site=_import_site_props(use_node, name, source_name),
+            )
+            return False
+        self.defer_import_edge(
+            module_qn,
+            held,
+            cs.SupportedLanguage.RUST,
+            site=self._import_sites.get(module_qn, {}).get(name),
+        )
+        return True
+
+    def _rust_held_use_keeps_slot(
+        self, module_qn: str, name: str, held: str, incoming: str
+    ) -> bool:
+        if self.rust_self_module_imports.get(module_qn, {}).get(name) == held:
+            # A `{self}` module stays reachable through its own map, so it
+            # yields the slot as before (issue #1054).
+            return False
+        # Name resolution only ever binds project items, which an external
+        # crate's item (a derive macro) can never be: letting it take the
+        # slot would just send the project binding's uses to a name-wide
+        # fallback. Two bindings on the same side keep the later one.
+        return self._is_project_qn(held) and not self._is_project_qn(incoming)
+
+    def _is_project_qn(self, qn: str) -> bool:
+        return qn == self.project_name or qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
         )
 
     def _flush_rust_project_import(
@@ -4365,12 +4427,17 @@ class ImportProcessor:
                     # binding from the other namespace, and evicting it would
                     # send that name's bare calls to the trie (issue #1054).
                     continue
+            source_name = full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
+            if not sub_scope and not self._rust_use_takes_file_slot(
+                module_qn, imported_name, resolved, use_node, source_name
+            ):
+                continue
             resolved_imports[imported_name] = resolved
             site = self._record_import_site(
                 effective_qn,
                 imported_name,
                 use_node,
-                full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1],
+                source_name,
                 owner_qn=module_qn,
             )
             if sub_scope:
