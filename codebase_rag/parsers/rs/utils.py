@@ -517,6 +517,31 @@ def is_body_local(node: Node) -> bool:
     return False
 
 
+def use_visibility_path(node: Node) -> str | None:
+    """The path a declaration's visibility is restricted to, None for `pub`.
+
+    No modifier is private, `self`, as `pub(self)` and `pub(in self)` spell
+    out; `pub(crate)`, `pub(super)` and `pub(in path)` name the module whose
+    subtree sees the item.
+    """
+    modifier = next(
+        (
+            child
+            for child in node.children
+            if child.type == cs.TS_RS_VISIBILITY_MODIFIER
+        ),
+        None,
+    )
+    if modifier is None:
+        return cs.KEYWORD_SELF
+    restriction = [
+        child
+        for child in modifier.children
+        if child.type not in cs.RS_VISIBILITY_SYNTAX_TOKENS
+    ]
+    return safe_decode_text(restriction[0]) if restriction else None
+
+
 def enclosing_mod_names(node: Node) -> frozenset[str]:
     """Names of `mod` items in scope at the node's own module level.
 
