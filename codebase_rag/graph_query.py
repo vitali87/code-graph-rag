@@ -633,6 +633,60 @@ def _new_names(
     return names - walked
 
 
+def _reexport_hops(
+    fetch_all: QueryFn,
+    project_name: str,
+    qns: list[str],
+    owns: Callable[[str], bool],
+) -> list[tuple[str, ImporterRow]]:
+    """(imported module, importer row) for every importer of `qns`, in order.
+
+    A foreign importer is neither listed nor a hop (issue #1982).
+    """
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_IMPORTERS_OF,
+        {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QNS: qns},
+    )
+    return sorted(
+        (
+            (str(r.get(cs.KEY_TO_QN, "")), _importer_row(r))
+            for r in rows
+            if owns(_text_qn(r))
+        ),
+        key=lambda hop: (hop[0], _importer_key(hop[1])),
+    )
+
+
+def _reexport_step(
+    hops: list[tuple[str, ImporterRow]],
+    frontier: dict[str, list[_ReexportEntry]],
+    walked: dict[str, frozenset[str] | None],
+    out: list[ReexportImporterRow],
+) -> dict[str, list[_ReexportEntry]]:
+    """One breadth-first hop: the next frontier, listing new modules in `out`."""
+    found: dict[str, list[_ReexportEntry]] = {}
+    for imported_qn, row in hops:
+        entries = frontier.get(imported_qn)
+        reach = _reach(row, imported_qn, entries) if entries else None
+        if reach is None:
+            continue
+        through, names = reach
+        module = row["module"]
+        via = [through["row"], *through["via"]]
+        if module in walked:
+            # Listed at an earlier depth: walked on only with what this path
+            # brings it that the earlier one did not.
+            names = _new_names(names, walked[module])
+            if names is not None and not names:
+                continue
+        else:
+            out.append(ReexportImporterRow(**row, via=via))
+        found.setdefault(module, []).append(
+            _ReexportEntry(row=row, via=via, names=names)
+        )
+    return found
+
+
 def importers_through_reexports(
     fetch_all: QueryFn, project_name: str, module_qn: str
 ) -> list[ReexportImporterRow]:
@@ -668,43 +722,8 @@ def importers_through_reexports(
         walked[module] = _union_names(entry["names"] for entry in entries)
     owns = _owner_check(fetch_all, project_name)
     while frontier:
-        rows = fetch_all(
-            cq.CYPHER_GRAPH_IMPORTERS_OF,
-            {
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                cs.KEY_QNS: sorted(frontier),
-            },
-        )
-        # A foreign importer is neither listed nor a hop (issue #1982).
-        hops = sorted(
-            (
-                (str(r.get(cs.KEY_TO_QN, "")), _importer_row(r))
-                for r in rows
-                if owns(_text_qn(r))
-            ),
-            key=lambda hop: (hop[0], _importer_key(hop[1])),
-        )
-        found: dict[str, list[_ReexportEntry]] = {}
-        for imported_qn, row in hops:
-            entries = frontier.get(imported_qn)
-            if not entries:
-                continue
-            if (reach := _reach(row, imported_qn, entries)) is None:
-                continue
-            through, names = reach
-            module = row["module"]
-            via = [through["row"], *through["via"]]
-            if module in walked:
-                # Listed at an earlier depth: walked on only with what this
-                # path brings it that the earlier one did not.
-                names = _new_names(names, walked[module])
-                if names is not None and not names:
-                    continue
-            else:
-                out.append(ReexportImporterRow(**row, via=via))
-            found.setdefault(module, []).append(
-                _ReexportEntry(row=row, via=via, names=names)
-            )
+        hops = _reexport_hops(fetch_all, project_name, sorted(frontier), owns)
+        found = _reexport_step(hops, frontier, walked, out)
         for module, entries in found.items():
             walked[module] = _union_names(
                 [walked.get(module, frozenset()), *(e["names"] for e in entries)]
