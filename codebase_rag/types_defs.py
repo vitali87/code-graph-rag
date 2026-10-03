@@ -352,6 +352,17 @@ class JavaOverloadRank(NamedTuple):
     distance: int
 
 
+class JavaSupertypes(NamedTuple):
+    """What one Java argument type widens to. `depths` maps each supertype
+    found, by simple name, to its distance up the hierarchy; `unreachable`
+    holds the candidates' parameter types it provably cannot reach, because
+    the whole hierarchy is visible or a JDK type cannot extend a project one.
+    Any other parameter type stays possible."""
+
+    depths: Mapping[str, int]
+    unreachable: frozenset[str]
+
+
 class JavaMethodInfo(TypedDict):
     name: str | None
     type: str

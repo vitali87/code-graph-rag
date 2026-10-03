@@ -312,6 +312,8 @@ JAVA_REFERENCE_SUPERTYPES: dict[str, tuple[str, ...]] = {
     "String": ("CharSequence", "Comparable", "Serializable"),
 }
 JAVA_TYPE_OBJECT_NAME = "Object"
+# What every array type widens to besides Object (JLS 4.10.3).
+JAVA_ARRAY_SUPERTYPES = frozenset({"Cloneable", "Serializable"})
 # How a variable-arity parameter's type reads in a method signature (`m(T...)`).
 JAVA_VARARGS_SUFFIX = "..."
 # Lower is more specific; the resolver prefers the smallest total across args.
@@ -321,8 +323,9 @@ JAVA_RANK_BOXED = 2
 JAVA_RANK_SUPERTYPE = 3
 JAVA_RANK_OBJECT = 4
 # A conversion that can be neither proven nor ruled out: the argument's type
-# hierarchy is not fully visible. It is counted apart from the ranks above, so
-# a candidate every argument provably reaches always wins over it.
+# hierarchy is not fully visible, or the parameter is a type variable. It is
+# counted apart from the ranks above, and a candidate that has one stays in
+# contention with a proven pick it could outrank (issue #2548).
 JAVA_RANK_UNPROVEN = 5
 
 # Direct supertypes of common JDK reference types, by simple name, so an

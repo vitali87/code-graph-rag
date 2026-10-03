@@ -169,18 +169,22 @@ def _extract_interfaces(class_node: ASTNode) -> list[str]:
     return interfaces
 
 
-def _extract_type_parameters(class_node: ASTNode) -> list[str]:
-    type_params_node = class_node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+def _extract_type_parameters(declaration: ASTNode) -> list[str]:
+    type_params_node = declaration.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
     if not type_params_node:
         return []
 
     type_parameters: list[str] = []
     for child in type_params_node.children:
-        if child.type == cs.TS_TYPE_PARAMETER:
-            if param_name := safe_decode_text(
-                child.child_by_field_name(cs.TS_FIELD_NAME)
-            ):
-                type_parameters.append(param_name)
+        if child.type != cs.TS_TYPE_PARAMETER:
+            continue
+        # The grammar gives a type parameter's name no field: it is the
+        # type_identifier after any annotations, before any bound.
+        name_node = child.child_by_field_name(cs.TS_FIELD_NAME) or next(
+            (c for c in child.children if c.type == cs.TS_TYPE_IDENTIFIER), None
+        )
+        if param_name := safe_decode_text(name_node):
+            type_parameters.append(param_name)
     return type_parameters
 
 
@@ -333,7 +337,7 @@ def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
         return_type=_extract_method_return_type(method_node),
         parameters=_extract_method_parameters(method_node),
         modifiers=mods_and_annots.modifiers,
-        type_parameters=[],
+        type_parameters=_extract_type_parameters(method_node),
         annotations=mods_and_annots.annotations,
     )
 

@@ -18,7 +18,7 @@ from codebase_rag.parsers.java.method_resolver import (
     _overload_rank,
 )
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.types_defs import JavaOverloadRank
+from codebase_rag.types_defs import JavaOverloadRank, JavaSupertypes
 
 PROJECT = "jover"
 
@@ -161,6 +161,7 @@ public class Prim {
 PROVEN = """package com.acme;
 
 import java.time.Instant;
+import java.time.temporal.Temporal;
 
 class Widget {}
 
@@ -168,7 +169,101 @@ public class Proven {
   static String hold(Object o) { return "object"; }
   static String hold(Widget w) { return "widget"; }
 
+  static String keep(Object o) { return "object"; }
+  static String keep(Temporal t) { return "temporal"; }
+
   static String viaUnrelated(Instant t) { return hold(t); }
+  static String viaUnindexedJdkSupertype(Instant t) { return keep(t); }
+}
+"""
+
+# Type-variable parameters (CodeRabbit on #2800). An unbounded `<T> f(T)` beside
+# `f(Object)` would clash by erasure, so the Object-beside-T shapes use bounds.
+GENERIC = """package com.acme;
+
+import java.util.function.Supplier;
+
+public class Generic {
+  static <T> String f(T x) { return "t"; }
+  static String f(String s) { return "s"; }
+
+  static <T extends CharSequence> String g(T x) { return "t"; }
+  static String g(Object o) { return "o"; }
+
+  static <T> String put(int k, T v) { return "int"; }
+  static <T> String put(String k, T v) { return "string"; }
+
+  static String viaUnknown(Supplier<String> s) { return f(s.get()); }
+  static String viaString(String s) { return f(s); }
+  static String viaBounded(String s) { return g(s); }
+  static String viaTypeVariableArgument() { return put(1, "x"); }
+}
+
+class Box<T extends Number> {
+  String put(T t) { return "t"; }
+  String put(Object o) { return "o"; }
+}
+
+class BoxUser {
+  String viaInteger(Box<Integer> box, Integer i) { return box.put(i); }
+}
+"""
+
+# A JDK type outside the supertype table: whether IOException reaches
+# Throwable is not visible, so handle(Object) is no certain pick.
+FAULTS = """package com.acme;
+
+import java.io.IOException;
+
+class AppError extends Exception {}
+
+class FaultBase {
+  String report(Object o) { return "object"; }
+}
+
+class FaultChild extends FaultBase {
+  String report(Throwable t) { return "throwable"; }
+
+  String viaIo(IOException e) { return report(e); }
+}
+
+public class Faults {
+  static String handle(Throwable t) { return "throwable"; }
+  static String handle(Object o) { return "object"; }
+
+  static String viaIo(IOException e) { return handle(e); }
+  static String viaAppError(AppError e) { return handle(e); }
+}
+"""
+
+# Greptile on #2800: a cast to a generic array type kept no array dimension.
+ARRAY_CAST = """package com.acme;
+
+import java.util.List;
+
+public class ArrayCast {
+  static String m(List<String> l) { return "list"; }
+  static String m(Object[] a) { return "array"; }
+
+  static String viaGenericArrayCast(Object value) { return m((List<String>[]) value); }
+}
+"""
+
+# Greptile on #2800: parameter types that share a simple name across a
+# hierarchy are different types, so neither method overrides the other.
+LIST_BASE = """package com.acme;
+
+public class ListBase {
+  public String m(java.util.List<String> l) { return "util"; }
+}
+"""
+
+LIST_CHILD = """package com.acme;
+
+public class ListChild extends ListBase {
+  public String m(java.awt.List l) { return "awt"; }
+
+  public String viaUtil(java.util.List<String> l) { return m(l); }
 }
 """
 
@@ -231,11 +326,19 @@ public class Twins {
 # ParameterSpec.builder(..., Modifier... modifiers).
 VARARGS = """package com.acme;
 
+import java.util.Set;
+
 public class Varargs {
   static String mods(String... names) { return "array"; }
   static String mods(Iterable<String> names) { return "iterable"; }
 
   static String forward(String... names) { return mods(names); }
+  static String viaSet(Set<String> names) { return mods(names); }
+
+  static String put(char c) { return "char"; }
+  static String put(CharSequence s) { return "chars"; }
+
+  static String viaBuilder(StringBuilder b) { return put(b); }
 }
 """
 
@@ -254,6 +357,11 @@ FILES = {
     "ArrayTypeName.java": ARRAY_TYPE_NAME,
     "Twins.java": TWINS,
     "Varargs.java": VARARGS,
+    "Generic.java": GENERIC,
+    "Faults.java": FAULTS,
+    "ArrayCast.java": ARRAY_CAST,
+    "ListBase.java": LIST_BASE,
+    "ListChild.java": LIST_CHILD,
 }
 
 ACME = f"{PROJECT}.com.acme"
@@ -438,6 +546,87 @@ def test_same_class_overloads_sharing_a_simple_name_both_stay_candidates(
     }
 
 
+def test_type_variable_overload_with_an_unknown_argument_ties(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "Generic.Generic.viaUnknown(Supplier<String>)") == {
+        "Generic.Generic.f(T)": cs.EdgeResolution.OVERLOAD,
+        "Generic.Generic.f(String)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_bounded_type_variable_overload_is_no_loss_to_object(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # javac picks g(T): T is bounded by CharSequence, which a String is.
+    assert _callees(calls, "Generic.Generic.viaBounded(String)") == {
+        "Generic.Generic.g(T)": cs.EdgeResolution.OVERLOAD,
+        "Generic.Generic.g(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_class_type_variable_overload_is_no_loss_to_object(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # javac picks put(T): the receiver is a Box<Integer>.
+    assert _callees(calls, "Generic.BoxUser.viaInteger(Box<Integer>,Integer)") == {
+        "Generic.Box.put(T)": cs.EdgeResolution.OVERLOAD,
+        "Generic.Box.put(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["Faults.Faults.viaIo(IOException)", "Faults.Faults.viaAppError(AppError)"],
+)
+def test_unindexed_jdk_supertype_is_no_loss_to_object(
+    calls: dict[str, dict[str, str]], caller: str
+) -> None:
+    # javac picks handle(Throwable); nothing indexed shows that IOException,
+    # or Exception above AppError, is a Throwable.
+    assert _callees(calls, caller) == {
+        "Faults.Faults.handle(Throwable)": cs.EdgeResolution.OVERLOAD,
+        "Faults.Faults.handle(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_unindexed_jdk_supertype_ties_with_an_inherited_object_overload(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "Faults.FaultChild.viaIo(IOException)") == {
+        "Faults.FaultChild.report(Throwable)": cs.EdgeResolution.OVERLOAD,
+        "Faults.FaultBase.report(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_unindexed_jdk_interface_is_no_loss_to_object(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "Proven.Proven.viaUnindexedJdkSupertype(Instant)") == {
+        "Proven.Proven.keep(Temporal)": cs.EdgeResolution.OVERLOAD,
+        "Proven.Proven.keep(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_generic_array_cast_keeps_its_array_type(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "ArrayCast.ArrayCast.viaGenericArrayCast(Object)") == {
+        "ArrayCast.ArrayCast.m(Object[])": cs.EdgeResolution.EXACT
+    }
+
+
+def test_same_simple_name_parameter_in_a_subclass_is_no_override(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # java.awt.List is not java.util.List, so ListBase.m is inherited, not
+    # overridden; with simple names alone the two cannot be told apart.
+    assert _callees(calls, "ListChild.ListChild.viaUtil(java.util.List<String>)") == {
+        "ListBase.ListBase.m(java.util.List<String>)": cs.EdgeResolution.OVERLOAD,
+        "ListChild.ListChild.m(java.awt.List)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
 # --- negative: what already resolved, or must not, stays as it was ----------
 
 
@@ -475,13 +664,49 @@ def test_unrelated_class_overload_is_not_a_candidate(
     assert "Hier.Stranger.conv(Square,int)" not in callees
 
 
-def test_proven_object_overload_beats_an_unprovable_one(
+def test_a_jdk_argument_never_reaches_a_project_parameter(
     calls: dict[str, dict[str, str]],
 ) -> None:
-    # Nothing says an Instant is a Widget, so hold(Widget) may not apply at
-    # all, while hold(Object) surely does.
+    # A JDK class cannot extend a class this project declares, so
+    # hold(Widget) cannot apply to an Instant and hold(Object) is certain.
     assert _callees(calls, "Proven.Proven.viaUnrelated(Instant)") == {
         "Proven.Proven.hold(Object)": cs.EdgeResolution.EXACT
+    }
+
+
+def test_exact_overload_still_beats_a_type_variable_one(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # javac prefers f(String) over <T> f(T) for a String: it is more specific.
+    assert _callees(calls, "Generic.Generic.viaString(String)") == {
+        "Generic.Generic.f(String)": cs.EdgeResolution.EXACT
+    }
+
+
+def test_type_variable_parameter_keeps_its_candidate_applicable(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # `"x"` fits `T` in both overloads; only the `1` decides, for put(int,T).
+    assert _callees(calls, "Generic.Generic.viaTypeVariableArgument()") == {
+        "Generic.Generic.put(int,T)": cs.EdgeResolution.EXACT
+    }
+
+
+def test_variable_arity_call_never_displaces_a_proven_pick(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # Whether a Set is a String is not proven, but mods(String...) would need
+    # a variable-arity call, which javac weighs only when nothing else applies.
+    assert _callees(calls, "Varargs.Varargs.viaSet(Set<String>)") == {
+        "Varargs.Varargs.mods(Iterable<String>)": cs.EdgeResolution.EXACT
+    }
+
+
+def test_a_reference_argument_never_reaches_a_primitive_parameter(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "Varargs.Varargs.viaBuilder(StringBuilder)") == {
+        "Varargs.Varargs.put(CharSequence)": cs.EdgeResolution.EXACT
     }
 
 
@@ -491,8 +716,35 @@ def test_proven_object_overload_beats_an_unprovable_one(
 def test_library_supertype_is_ranked_by_its_distance() -> None:
     depths = {"HashMap": 1, "AbstractMap": 2, "Cloneable": 2, "Map": 3}
     assert _overload_rank(
-        "C.put(Map<String, Integer>)", ("LinkedHashMap<>",), (depths,)
+        "C.put(Map<String, Integer>)",
+        ("LinkedHashMap<>",),
+        (JavaSupertypes(depths, frozenset()),),
     ) == JavaOverloadRank(unproven=0, conversions=cs.JAVA_RANK_SUPERTYPE, distance=3)
+
+
+def test_a_parameter_a_whole_hierarchy_misses_is_ruled_out() -> None:
+    walked = JavaSupertypes({"Shape": 1}, frozenset({"Widget"}))
+    assert _overload_rank("C.take(Widget)", ("Square",), (walked,)) is None
+
+
+@pytest.mark.parametrize(
+    ("param", "expected"),
+    [
+        ("Shape[]", JavaOverloadRank(0, cs.JAVA_RANK_SUPERTYPE, 1)),
+        ("Object", JavaOverloadRank(0, cs.JAVA_RANK_OBJECT, 0)),
+        ("Shape", None),
+    ],
+)
+def test_an_array_argument_widens_only_as_an_array(
+    param: str, expected: JavaOverloadRank | None
+) -> None:
+    walked = JavaSupertypes({"Shape": 1}, frozenset())
+    assert _overload_rank(f"C.take({param})", ("Square[]",), (walked,)) == expected
+
+
+def test_primitive_array_elements_neither_widen_nor_box() -> None:
+    assert _overload_rank("C.take(long[])", ("int[]",)) is None
+    assert _overload_rank("C.take(Integer[])", ("int[]",)) is None
 
 
 def test_a_conversion_through_an_unseen_hierarchy_stays_possible() -> None:
@@ -508,6 +760,13 @@ def test_types_with_fixed_supertypes_still_rule_out_other_parameters(
     arg_type: str,
 ) -> None:
     assert _overload_rank("C.take(Widget)", (arg_type,)) is None
+
+
+def test_generic_array_type_keeps_its_dimensions() -> None:
+    assert _java_param_type_names("C.m(List<String>[],java.util.Map<K, V>[][])") == [
+        "List[]",
+        "Map[][]",
+    ]
 
 
 def test_varargs_parameter_keeps_its_name() -> None:
