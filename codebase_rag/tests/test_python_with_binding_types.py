@@ -75,6 +75,8 @@ MANAGERS = (
     "        return 1\n"
     "    def fork(self) -> Other:\n"
     "        return Other()\n"
+    "    def pool(self) -> Pool:\n"
+    "        return Pool()\n"
     "\n"
     "class Pool:\n"
     "    def __enter__(self) -> Session:\n"
@@ -106,6 +108,9 @@ MANAGERS = (
     "\n"
     "def make_sub() -> Sub:\n"
     "    return Sub()\n"
+    "\n"
+    "def make_pool() -> Pool:\n"
+    "    return Pool()\n"
     "\n"
     "class SelfBase:\n"
     '    def __enter__(self) -> "Self":\n'
@@ -437,6 +442,62 @@ def test_a_local_assigned_from_the_target_is_typed(tmp_path: Path) -> None:
     assert types["forked"] == "Other"
 
 
+def test_a_local_assigned_from_a_late_typed_target_is_typed(tmp_path: Path) -> None:
+    # `pool` is typed only by the complex assignment pass, so `session` is
+    # typed by the retry after it; `forked = session.fork()` reads `session`
+    # and must be typed after the retry too, not left behind by the pass
+    # that ran before it.
+    source = (
+        "from managers import make_pool\n\n"
+        "def use():\n"
+        "    pool = make_pool()\n"
+        "    with pool as session:\n"
+        "        forked = session.fork()\n"
+        "    forked.send()\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source)
+    assert types["session"] == f"{PROJECT}.managers.Session"
+    assert types["forked"] == "Other"
+    assert calls["use"].get(f"{PROJECT}.managers.Other.send") == EXACT
+
+
+def test_a_chain_of_late_typed_targets_is_typed_to_the_end(tmp_path: Path) -> None:
+    # `again` reads the first late target and is the second one's manager:
+    # each retry types a target whose manager the re-run before it typed.
+    types = _local_types(
+        tmp_path,
+        "from managers import make_pool\n\n"
+        "def use():\n"
+        "    pool = make_pool()\n"
+        "    with pool as first:\n"
+        "        again = first.pool()\n"
+        "    with again as second:\n"
+        "        forked = second.fork()\n"
+        "    forked.send()\n",
+        "use",
+    )
+    assert types["second"] == f"{PROJECT}.managers.Session"
+    assert types["forked"] == "Other"
+
+
+def test_a_late_typed_target_does_not_retype_an_assignment_already_typed(
+    tmp_path: Path,
+) -> None:
+    types = _local_types(
+        tmp_path,
+        "from managers import make_pool, Reader\n\n"
+        "def use():\n"
+        "    pool = make_pool()\n"
+        "    with pool as session:\n"
+        "        forked = Reader()\n"
+        "    forked.read()\n",
+        "use",
+    )
+    assert types["session"] == f"{PROJECT}.managers.Session"
+    assert types["forked"] == "Reader"
+
+
 def test_a_with_binding_after_an_assignment_takes_over(tmp_path: Path) -> None:
     types = _local_types(
         tmp_path,
@@ -725,6 +786,69 @@ def test_only_the_function_that_shadows_the_import_keeps_the_written_type(
     assert calls["unshadowed"].get(f"{CLIENT}.send") == EXACT
     assert API_SEND not in calls["unshadowed"]
     assert f"{CLIENT}.send" not in calls.get("shadowed", {})
+
+
+# A module's own class named like an import rebinds the name when it comes
+# after the import: `pkg.Client` is then the class's nested class.
+
+LOCAL_PKG_CLASS = (
+    "class pkg:\n"
+    "    class Client:\n"
+    "        def send(self, request):\n"
+    "            return request\n"
+)
+
+
+def test_a_module_class_defined_after_the_import_wins(tmp_path: Path) -> None:
+    source = (
+        "import pkg\n\n" + LOCAL_PKG_CLASS + "\n"
+        "def use():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == f"{PROJECT}.app.pkg.Client"
+    assert calls["use"].get(f"{PROJECT}.app.pkg.Client.send") == EXACT
+    assert f"{CLIENT}.send" not in calls["use"]
+
+
+def test_an_import_after_a_module_class_of_that_name_wins(tmp_path: Path) -> None:
+    source = (
+        LOCAL_PKG_CLASS + "\n"
+        "import pkg\n\n"
+        "def use():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == CLIENT
+    assert calls["use"].get(f"{CLIENT}.send") == EXACT
+
+
+def test_a_with_on_a_module_class_defined_after_the_import_wins(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(
+        tmp_path,
+        "import pkg\n\n"
+        "class pkg:\n"
+        "    class Client:\n"
+        "        def __enter__(self):\n"
+        "            return self\n"
+        "        def __exit__(self, *exc):\n"
+        "            pass\n"
+        "        def send(self, request):\n"
+        "            return request\n"
+        "\n"
+        "def use():\n"
+        "    with pkg.Client() as client:\n"
+        "        client.send('x')\n",
+        managers=False,
+    )
+    assert calls["use"].get(f"{PROJECT}.app.pkg.Client.send") == EXACT
+    assert f"{CLIENT}.send" not in calls["use"]
 
 
 # --- incremental: the entered type is read from another file ----------------------

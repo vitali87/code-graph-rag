@@ -16,6 +16,7 @@ def resolve_dotted_class(
     module_qn: str,
     import_processor: ImportProcessor,
     function_registry: FunctionRegistryTrieProtocol,
+    own_class_rebinds: bool = False,
 ) -> str | None:
     """The indexed class a dotted path names from `module_qn`, else None.
 
@@ -24,12 +25,20 @@ def resolve_dotted_class(
     up under what that name refers to, following the package's re-exports
     (`pkg/__init__.py`'s `from ._client import Client`). A path into a module
     outside the project (`pd.DataFrame`) names no indexed class.
+    `own_class_rebinds`: the module's own class of that name is defined
+    after the import and rebinds it, so only the class is looked in.
     """
     head, _, rest = path.partition(SEPARATOR_DOT)
     if not rest:
         return None
     import_mapping = import_processor.import_mapping
-    for base in _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {})):
+    own_class = f"{module_qn}{SEPARATOR_DOT}{head}"
+    bases = (
+        [own_class]
+        if own_class_rebinds
+        else _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
+    )
+    for base in bases:
         qn = follow_reexports(
             f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
         )

@@ -50,6 +50,8 @@ if TYPE_CHECKING:
             self, text: str, owner_qn: str, module_qn: str
         ) -> str | None: ...
 
+        def own_class_rebinds_import(self, module_qn: str, name: str) -> bool: ...
+
     _WithBase: type = _WithBindingDeps
 else:
     _WithBase = object
@@ -265,7 +267,13 @@ class PythonWithBindingMixin(_WithBase):
             if self.function_registry.get(qn) == NodeType.CLASS:
                 return qn
             return resolve_dotted_class(
-                type_name, module_qn, self.import_processor, self.function_registry
+                type_name,
+                module_qn,
+                self.import_processor,
+                self.function_registry,
+                self.own_class_rebinds_import(
+                    module_qn, type_name.partition(cs.SEPARATOR_DOT)[0]
+                ),
             )
         qn = resolve_class_name(
             type_name, module_qn, self.import_processor, self.function_registry

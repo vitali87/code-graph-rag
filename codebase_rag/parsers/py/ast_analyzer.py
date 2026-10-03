@@ -809,6 +809,33 @@ class PythonAstAnalyzerMixin(_AstBase):
             caller
         )
 
+    def own_class_rebinds_import(self, module_qn: str, name: str) -> bool:
+        """Whether the module's own `class name` rebinds an imported `name`.
+
+        Module-level code has run by the time a function reads the name, so
+        the binding written last is the one it sees: a class defined after
+        `import pkg` makes `pkg.Client` the class's attribute, an import
+        written after the class makes it the package's again. Read only when
+        the module both imports the name and defines a class of it.
+        """
+        own_class = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (
+            name not in import_map
+            or self.function_registry.get(own_class) != NodeType.CLASS
+        ):
+            return False
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
+            return False
+        last: tuple[int, str] | None = None
+        for binder, identifier in _bindings_in(entry[0]):
+            if safe_decode_text(identifier) == name and (
+                last is None or identifier.start_byte > last[0]
+            ):
+                last = (identifier.start_byte, binder.type)
+        return last is not None and last[1] == cs.TS_PY_CLASS_DEFINITION
+
     def shadowed_import_names(self, caller: Node, module_qn: str) -> frozenset[str]:
         """The import-map names the caller's body binds as locals.
 
@@ -909,8 +936,17 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
-        if pending:
-            self._type_with_targets(pending, local_var_types, module_qn)
+        # The complex pass went by an assignment reading a target typed only
+        # by the retry (`forked = session.fork()`), so it runs again whenever
+        # a retry types a manager; it types only names still untyped. Each
+        # round types at least one more manager, so the loop ends.
+        while pending:
+            retried = self._type_with_targets(pending, local_var_types, module_qn)
+            if len(retried) == len(pending):
+                break
+            pending = retried
+            for assignment in assignments:
+                self._process_assignment_complex(assignment, local_var_types, module_qn)
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
