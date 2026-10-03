@@ -1668,6 +1668,8 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cs.CYPHER_DELETE_PACKAGE_BY_QN:
+                self._detach_delete(self._scoped_packages(params or {}))
             case cs.CYPHER_DELETE_PACKAGE:
                 self._detach_delete(
                     self._nodes_at_path(_PACKAGE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
@@ -1809,6 +1811,20 @@ class _StatefulIngestor:
             }
             rows.append(row)
         return rows
+
+    def _scoped_packages(self, params: PropertyDict) -> set[_NodeId]:
+        # Mirrors CYPHER_DELETE_PACKAGE_BY_QN: the named Package, only while
+        # it carries this project's name and the path the prune read.
+        node = (_PACKAGE_LABEL, params.get(cs.KEY_QUALIFIED_NAME))
+        props = self.nodes.get(node)
+        if props is None:
+            return set()
+        qn = _str(node[1])
+        in_project = qn == _str(params.get(cs.KEY_PROJECT_NAME)) or qn.startswith(
+            _str(params.get(cs.KEY_PROJECT_PREFIX))
+        )
+        as_read = props.get(cs.KEY_ABSOLUTE_PATH) == params.get(cs.KEY_ABSOLUTE_PATH)
+        return {node} if in_project and as_read else set()
 
     def _nodes_at_path(
         self, label: str, path: PropertyValue, key: str = cs.KEY_PATH

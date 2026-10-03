@@ -790,6 +790,20 @@ CYPHER_DELETE_MODULE = (
 CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_PACKAGE = "MATCH (p:Package {absolute_path: $path}) DETACH DELETE p"
+# The orphan prune removes a Package by its own name, the key its upsert
+# MERGEs on: one derived through an in-repo directory link carried its
+# target's absolute path, so removing it by that path took the target's
+# Package with it (issue #2451). Scoped to the node as the prune read it:
+# this project's name, and the absolute path the prune judged. A project name
+# two checkouts share puts both on one node holding the path of whichever
+# wrote it last, so the prune of one never matches the other's.
+CYPHER_DELETE_PACKAGE_BY_QN = (
+    "MATCH (p:Package {qualified_name: $qualified_name}) "
+    "WHERE (p.qualified_name = $project_name "
+    "OR p.qualified_name STARTS WITH $project_prefix) "
+    "AND p.absolute_path = $absolute_path "
+    "DETACH DELETE p"
+)
 # Which container kind the GRAPH records for a directory, independent of what
 # is on disk now. `_package_ness_changed` cannot ask the structure map for
 # this: on a fresh updater (the MCP tool builds one per project) the map has

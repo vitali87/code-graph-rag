@@ -106,6 +106,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.interruptible_thread import run_in_interruptible_thread
+from .utils.path_utils import is_symlink_entry
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -1808,7 +1809,9 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
         except PermissionError:
             continue
         for path in entries:
-            if not path.is_dir():
+            # Only directories the walk can reach are offered: it follows no
+            # link (issue #2451).
+            if not path.is_dir() or is_symlink_entry(path):
                 continue
             if path.name in cs.IGNORE_PATTERNS:
                 detected.add(path.relative_to(repo_path).as_posix())

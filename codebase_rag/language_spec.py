@@ -10,6 +10,7 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
+from .utils import path_utils
 from .utils.path_utils import module_extension, module_stem, should_skip_path
 from .utils.qn_markers import strip_dup_marker
 
@@ -932,6 +933,9 @@ def has_other_language_sibling(
         ):
             continue
         candidate = path.parent / name
+        # A linked file is no sibling: the walk leaves links out (#2451).
+        if path_utils.is_symlink_entry(candidate):
+            continue
         if candidate.is_file() and not should_skip_path(
             candidate,
             repo_path,
