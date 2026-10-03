@@ -520,6 +520,18 @@ def _has_aliased_scheme(specifier: str) -> bool:
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
 
+class JsImportTarget(NamedTuple):
+    """The module qn a JS/TS specifier resolves to, and whether it is a package."""
+
+    module_qn: str
+    # A bare or scoped specifier no tsconfig alias or workspace package maps
+    # to a project file. Its qn is the specifier itself, which can spell the
+    # project's own name (`react` in a repo named react) or a local module's
+    # path (`react` beside a repo-root `react.tsx`) without naming either, so
+    # only this flag, recorded while resolution still knows, marks it external.
+    is_package: bool
+
+
 def _is_conditional_import_node(import_node: Node) -> bool:
     # An import nested under an if/try (click's platform-conditional
     # `if WIN: from ._winconsole import X ... else: def X(...)`) binds its
@@ -803,6 +815,7 @@ class ImportProcessor:
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
+        "js_ts_package_imports",
         "js_path_aliases",
         "stdlib_extractor",
         "_is_local_module_cached",
@@ -1093,6 +1106,10 @@ class ImportProcessor:
         # being suppressed. Ordinary package specifiers (bare, scoped, node:/npm:)
         # are excluded, so genuine external calls stay suppressed.
         self.js_ts_bare_imports: dict[str, set[str]] = {}
+        # Local names a JS/TS import or `require` binds to a package (see
+        # JsImportTarget.is_package), keyed by module: what they name lives in
+        # node_modules, so a member of one never binds a first-party symbol.
+        self.js_ts_package_imports: dict[str, set[str]] = {}
         # tsconfig `paths` aliases (match_prefix, target_prefix, is_wildcard), parsed
         # once from the repo-root tsconfig so `@/util` imports resolve to the real
         # first-party module instead of being dropped as external.
@@ -1364,6 +1381,7 @@ class ImportProcessor:
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
+        self.js_ts_package_imports.pop(module_qn, None)
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
@@ -3755,13 +3773,25 @@ class ImportProcessor:
     def _resolve_js_module_path(
         self, import_path: str, current_module: str, require: bool = False
     ) -> str:
+        return self._resolve_js_import_target(
+            import_path, current_module, require
+        ).module_qn
+
+    def _resolve_js_import_target(
+        self, import_path: str, current_module: str, require: bool = False
+    ) -> JsImportTarget:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
-                return aliased
+                return JsImportTarget(aliased, False)
             if workspace := self._map_js_workspace_import(import_path, require):
                 dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
-            return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+                return JsImportTarget(
+                    f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
+                )
+            return JsImportTarget(
+                import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
+                not _has_aliased_scheme(import_path),
+            )
         import_path = self._strip_js_extension(import_path)
 
         current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
@@ -3776,7 +3806,7 @@ class ImportProcessor:
             elif part:
                 current_parts.append(part)
 
-        return cs.SEPARATOR_DOT.join(current_parts)
+        return JsImportTarget(cs.SEPARATOR_DOT.join(current_parts), False)
 
     def _parse_js_import_clause(
         self,
@@ -3784,6 +3814,7 @@ class ImportProcessor:
         source_module: str,
         current_module: str,
         is_aliased_scheme: bool = False,
+        is_package: bool = False,
     ) -> None:
         # The clause's parent is the import statement whose span the edge
         # records; the clause alone would drop the `from '...'` half.
@@ -3800,6 +3831,7 @@ class ImportProcessor:
                 self._note_js_bare_import(
                     current_module, imported_name, is_aliased_scheme
                 )
+                self._note_js_package_import(current_module, imported_name, is_package)
                 logger.debug(
                     ls.IMP_JS_DEFAULT, name=imported_name, module=source_module
                 )
@@ -3813,11 +3845,12 @@ class ImportProcessor:
                             current_module,
                             statement,
                             is_aliased_scheme,
+                            is_package,
                         )
 
             elif child.type == cs.TS_NAMESPACE_IMPORT:
                 self._record_js_namespace_import(
-                    child, source_module, current_module, statement
+                    child, source_module, current_module, statement, is_package
                 )
 
     def _note_js_bare_import(
@@ -3826,6 +3859,12 @@ class ImportProcessor:
         if is_aliased_scheme:
             self.js_ts_bare_imports.setdefault(current_module, set()).add(local_name)
 
+    def _note_js_package_import(
+        self, current_module: str, local_name: str, is_package: bool
+    ) -> None:
+        if is_package:
+            self.js_ts_package_imports.setdefault(current_module, set()).add(local_name)
+
     def _record_js_named_import(
         self,
         specifier: Node,
@@ -3833,6 +3872,7 @@ class ImportProcessor:
         current_module: str,
         statement: Node,
         is_aliased_scheme: bool,
+        is_package: bool,
     ) -> None:
         name_node = specifier.child_by_field_name(cs.FIELD_NAME)
         if not name_node:
@@ -3847,6 +3887,7 @@ class ImportProcessor:
         )
         self._record_import_site(current_module, local_name, statement, imported_name)
         self._note_js_bare_import(current_module, local_name, is_aliased_scheme)
+        self._note_js_package_import(current_module, local_name, is_package)
         logger.debug(
             ls.IMP_JS_NAMED,
             local=local_name,
@@ -3860,6 +3901,7 @@ class ImportProcessor:
         source_module: str,
         current_module: str,
         statement: Node,
+        is_package: bool,
     ) -> None:
         identifier = next(
             (c for c in namespace_node.children if c.type == cs.TS_IDENTIFIER), None
@@ -3874,6 +3916,7 @@ class ImportProcessor:
             statement,
             cs.IMPORTED_NAME_WILDCARD,
         )
+        self._note_js_package_import(current_module, namespace_name, is_package)
         logger.debug(
             ls.IMP_JS_NAMESPACE,
             name=namespace_name,
@@ -3911,15 +3954,15 @@ class ImportProcessor:
         # A CommonJS `require()` reads a dual-package exports map from the
         # require side.
         require_text = safe_decode_with_fallback(arg).strip("'\"")
-        resolved_module = self._resolve_js_module_path(
-            require_text, current_module, True
-        )
+        target = self._resolve_js_import_target(require_text, current_module, True)
+        resolved_module = target.module_qn
         self._note_unresolved_js_specifier(current_module, require_text)
         if name_node.type == cs.TS_IDENTIFIER:
             # `const fs = require('fs')`: bind the whole module.
             var_name = safe_decode_with_fallback(name_node)
             self.import_mapping[current_module][var_name] = resolved_module
             self._record_import_site(current_module, var_name, decl_node)
+            self._note_js_package_import(current_module, var_name, target.is_package)
             logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
         elif name_node.type == cs.TS_OBJECT_PATTERN:
             # `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
@@ -3928,38 +3971,43 @@ class ImportProcessor:
                 full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
                 self.import_mapping[current_module][local] = full
                 self._record_import_site(current_module, local, decl_node, imported)
+                self._note_js_package_import(current_module, local, target.is_package)
                 logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
 
     def _js_statement_source(
         self, statement: Node, module_qn: str
-    ) -> tuple[str, str | None] | None:
-        # The statement's source string (`from './x'`) and its resolved
-        # module; None when the statement names no source at all.
+    ) -> tuple[str, JsImportTarget] | None:
+        # The statement's source string (`from './x'`) and what it resolves
+        # to; None when the statement names no source at all.
         for child in statement.children:
             if child.type == cs.TS_STRING:
                 source_text = safe_decode_with_fallback(child).strip("'\"")
-                source_module = self._resolve_js_module_path(source_text, module_qn)
+                target = self._resolve_js_import_target(source_text, module_qn)
                 self._note_unresolved_js_specifier(module_qn, source_text)
-                return source_text, source_module
+                return source_text, target
         return None
 
     def _parse_js_import_statement(self, import_node: Node, module_qn: str) -> None:
         source = self._js_statement_source(import_node, module_qn)
         if source is None:
             return
-        source_text, source_module = source
-        if not source_module:
+        source_text, target = source
+        if not target.module_qn:
             return
         is_aliased_scheme = _has_aliased_scheme(source_text)
         for child in import_node.children:
             if child.type == cs.TS_IMPORT_CLAUSE:
                 self._parse_js_import_clause(
-                    child, source_module, module_qn, is_aliased_scheme
+                    child,
+                    target.module_qn,
+                    module_qn,
+                    is_aliased_scheme,
+                    target.is_package,
                 )
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
         source = self._js_statement_source(export_node, current_module)
-        source_module = source[1] if source is not None else None
+        source_module = source[1].module_qn if source is not None else None
         if not source_module:
             return
 
