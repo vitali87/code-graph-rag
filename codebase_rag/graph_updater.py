@@ -7797,14 +7797,7 @@ class GraphUpdater:
             return None
         abs_path = r.get("absolute_path")
         qn = r.get("qualified_name", "")
-        # Component-aware containment: a bare prefix test would also
-        # match a sibling root such as <repo>-old (issue #897). A node
-        # derived through one of this repository's own links by a build
-        # before #2451 carries its target's path, outside for an outside
-        # link; the link places it here, and nothing derives it any more.
-        if self._outside_repo_row(
-            abs_path, repo_abs
-        ) and not path_utils.is_symlink_entry(self.repo_path / path):
+        if self._foreign_row(path, abs_path, repo_abs):
             return None
         # The root directory's own node is qualified as exactly the
         # project name, with no dot: testing only the dotted prefix
@@ -7835,6 +7828,29 @@ class GraphUpdater:
         if label == cs.NodeLabel.PACKAGE and isinstance(qn, str) and qn:
             return _Orphan(path, qn, read_at)
         return _Orphan(path, key, read_at)
+
+    def _foreign_row(
+        self, path: str, abs_path: ResultValue | None, repo_abs: str
+    ) -> bool:
+        """Whether a row's node lies outside this repository, not this prune's.
+
+        Component-aware containment: a bare prefix test would also match a
+        sibling root such as <repo>-old (issue #897). A node a build before
+        #2451 derived through one of this repository's own links carries its
+        target's path, outside for an outside link; the link places it here,
+        and nothing derives it any more. Unless that path is `<root>/<path>`:
+        that is the node another checkout under this project name writes for
+        its own directory at the same relative path, and the upsert shares
+        one node between the two, so that checkout's stays even when this
+        repository's link points at it (#2451 review).
+        """
+        if not self._outside_repo_row(abs_path, repo_abs):
+            return False
+        if not path_utils.is_symlink_entry(self.repo_path / path):
+            return True
+        return isinstance(abs_path, str) and abs_path.endswith(
+            f"{cs.SEPARATOR_SLASH}{path}"
+        )
 
     @staticmethod
     def _outside_repo_row(abs_path: ResultValue | None, repo_abs: str) -> bool:

@@ -656,3 +656,56 @@ class TestPackagePruneScope:
         packages = _packages(store)
         assert "proj.pkg.linkdir" not in packages
         assert {"proj.pkg", "proj.vendor"} <= packages
+
+    def test_a_link_to_the_other_checkouts_package_leaves_it(
+        self, tmp_path: Path
+    ) -> None:
+        # `mine/pkg` links to `other/pkg`, which the other checkout under the
+        # same name indexed: the node at `pkg` holds `other/pkg`, the shape
+        # that checkout writes for its own directory, so it is not this
+        # repository's link-derived leftover (#2451 review).
+        store = _StatefulIngestor()
+        other = _package_repo(tmp_path, "other")
+        mine = tmp_path / "mine"
+        main = _write(mine / "main.py", "X = 1\n")
+        _link(mine / "pkg", "../other/pkg", directory=True)
+        _sync(mine, store, "shared", force=True)
+        _sync(other, store, "shared", force=True)
+        node = store.nodes[(cs.NodeLabel.PACKAGE.value, "shared.pkg")]
+        assert node[cs.KEY_ABSOLUTE_PATH] == (other / "pkg").resolve().as_posix()
+        _write(mine / "main.py", "X = 2\n")
+        force_mtime_after_cache(mine, main)
+
+        _sync(mine, store, "shared", force=False)
+
+        assert "shared.pkg" in _packages(store)
+
+    def test_a_link_derived_package_beside_the_other_checkouts_is_pruned(
+        self, tmp_path: Path
+    ) -> None:
+        # Negative: a node an older build derived through this repository's
+        # link to the same target still goes, and the other checkout's stays.
+        store = _StatefulIngestor()
+        other = _package_repo(tmp_path, "other")
+        mine = tmp_path / "mine"
+        main = _write(mine / "main.py", "X = 1\n")
+        _link(mine / "vendored", "../other/pkg", directory=True)
+        _sync(mine, store, "shared", force=True)
+        _sync(other, store, "shared", force=True)
+        store.ensure_node_batch(
+            cs.NodeLabel.PACKAGE.value,
+            {
+                cs.KEY_QUALIFIED_NAME: "shared.vendored",
+                cs.KEY_NAME: "vendored",
+                cs.KEY_PATH: "vendored",
+                cs.KEY_ABSOLUTE_PATH: (other / "pkg").resolve().as_posix(),
+            },
+        )
+        _write(mine / "main.py", "X = 2\n")
+        force_mtime_after_cache(mine, main)
+
+        _sync(mine, store, "shared", force=False)
+
+        packages = _packages(store)
+        assert "shared.vendored" not in packages
+        assert "shared.pkg" in packages

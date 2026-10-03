@@ -117,3 +117,26 @@ def test_the_package_delete_query_is_scoped(
 
     delete("shared", f"{other}/pkg")
     assert "shared.pkg" not in _packages(memgraph_ingestor)
+
+
+def test_a_link_to_the_other_checkouts_package_leaves_it(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # Two checkouts under one project name share the `shared.pkg` node, which
+    # holds the other's path. This checkout's `pkg` links to that directory,
+    # so the node is the other's own, not a link-derived leftover of this one.
+    other = _repo(tmp_path, "other")
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    (mine / "main.py").write_text("X = 1\n")
+    try:
+        (mine / "pkg").symlink_to("../other/pkg", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks need privileges on this host")
+    _updater(memgraph_ingestor, mine, "shared").run(force=True)
+    _updater(memgraph_ingestor, other, "shared").run(force=True)
+    (mine / cs.PARSER_FINGERPRINT_FILENAME).unlink()
+
+    _updater(memgraph_ingestor, mine, "shared").run()
+
+    assert "shared.pkg" in _packages(memgraph_ingestor)
