@@ -3222,6 +3222,11 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # Restore a C++ member's overload signature for unchanged headers, or
+        # a re-parsed out-of-class definition cannot tell which overload it
+        # defines and lands every one on the plain-named node (issue #2455).
+        if isinstance(signature := row.get(cs.KEY_SIGNATURE), str):
+            self.function_registry.restore_overload(qn, signature)
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.

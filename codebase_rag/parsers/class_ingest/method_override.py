@@ -8,7 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs
-from ...types_defs import NodeType
+from ...types_defs import NodeType, OverloadSignature
 from ...utils import qn_markers
 
 if TYPE_CHECKING:
@@ -317,10 +317,46 @@ def _csharp_override_gated(
     return csharp_override_methods is None or method_qn not in csharp_override_methods
 
 
+def _parent_overload_qn(
+    parent_class: str,
+    method_name: str,
+    signature: OverloadSignature,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str | None:
+    """The C++ base overload with the overriding member's signature.
+
+    Base overloads are one node each (issue #2455), and a name lookup finds
+    only the plain-named one: `f(double) override` would land on `f(int)`,
+    and an override named `f@13` would find nothing. None when no base
+    overload has this signature; the name lookup then stands, as it did.
+    """
+    natural = (
+        f"{parent_class}{cs.SEPARATOR_DOT}{qn_markers.strip_dup_marker(method_name)}"
+    )
+    for candidate in function_registry.variants(natural):
+        known = function_registry.overload_signature(candidate)
+        if (
+            known is not None
+            and known.text == signature.text
+            and function_registry.get(candidate) == NodeType.METHOD
+        ):
+            return candidate
+    return None
+
+
 def _parent_method_qn(
-    parent_class: str, method_name: str, function_registry: FunctionRegistryTrieProtocol
+    parent_class: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    signature: OverloadSignature | None = None,
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target."""
+    if signature is not None and (
+        overload := _parent_overload_qn(
+            parent_class, method_name, signature, function_registry
+        )
+    ):
+        return overload
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
         # Fall back to name+arity so a generic type-var rename in the override
@@ -362,12 +398,13 @@ def check_method_overrides(
 
     queue = deque([class_qn])
     visited = {class_qn}
+    signature = function_registry.overload_signature(method_qn)
 
     while queue:
         current_class = queue.popleft()
 
         parent_method_qn = (
-            _parent_method_qn(current_class, method_name, function_registry)
+            _parent_method_qn(current_class, method_name, function_registry, signature)
             if current_class != class_qn
             else None
         )

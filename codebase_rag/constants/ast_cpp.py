@@ -53,9 +53,16 @@ class CppNodeType(StrEnum):
     TYPE_DEFINITION = "type_definition"
     ALIAS_DECLARATION = "alias_declaration"
     TYPE_DESCRIPTOR = "type_descriptor"
+    FIELD_DECLARATION_LIST = "field_declaration_list"
+    REF_QUALIFIER = "ref_qualifier"
 
 
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
+
+# An optional parameter's `= value`, which is not part of its type.
+CPP_FIELD_DEFAULT_VALUE = "default_value"
+# `f(void)` declares no parameter: the same overload as `f()`.
+CPP_VOID_PARAMETER = "void"
 
 # C++ module declaration prefixes
 CPP_EXPORT_MODULE_PREFIX = "export module "
