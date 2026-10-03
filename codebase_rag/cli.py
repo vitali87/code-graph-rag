@@ -300,6 +300,34 @@ def _exit_with_error(message: str) -> NoReturn:
     raise typer.Exit(1)
 
 
+def _refuse_options_update_graph_drops(
+    update_graph: bool,
+    ask_agent: str | None,
+    output_format: cs.QueryFormat,
+    no_sync: bool,
+    projects: str | None,
+) -> None:
+    # `--update-graph` returns once its sync is done, before anything that
+    # reads these, so they were accepted and dropped with exit 0 (#2478).
+    # `--workspace` is left out: it decides what the sync covers (#2418).
+    if not update_graph:
+        return
+    for option, given, remedy in (
+        (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
+        (
+            cs.CLI_OPT_OUTPUT_FORMAT_JSON,
+            output_format == cs.QueryFormat.JSON,
+            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+        ),
+        (cs.CLI_OPT_NO_SYNC, no_sync, cs.CLI_REMEDY_SYNC_OR_NO_SYNC),
+        (cs.CLI_OPT_PROJECTS, projects is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
+    ):
+        if given:
+            _exit_with_error(
+                cs.CLI_ERR_UPDATE_GRAPH_CONFLICT.format(option=option, remedy=remedy)
+            )
+
+
 def _start_update_graph(
     repo: Path,
     project_name: str,
@@ -920,6 +948,9 @@ def start(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
+    _refuse_options_update_graph_drops(
+        update_graph, ask_agent, output_format, no_sync, projects
+    )
     if output_format == cs.QueryFormat.JSON and not ask_agent:
         _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
 

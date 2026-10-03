@@ -87,6 +87,24 @@ CLI_ERR_INDEXING = "An error occurred during indexing: {error}"
 CLI_ERR_EXPORT_FAILED = "Failed to export graph: {error}"
 CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
 CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
+# `start --update-graph` syncs and exits before the assistant starts, so an
+# option only the assistant reads was accepted and dropped (issue #2478).
+CLI_ERR_UPDATE_GRAPH_CONFLICT = (
+    "Error: {option} cannot be combined with --update-graph, which syncs the "
+    "graph and exits without starting the assistant. {remedy}"
+)
+CLI_REMEDY_DROP_UPDATE_GRAPH = (
+    "Drop --update-graph: cgr start syncs the graph before the assistant "
+    "starts unless --no-sync is given."
+)
+CLI_REMEDY_SYNC_OR_NO_SYNC = (
+    "Pass one of them: --update-graph to only sync, or --no-sync to start the "
+    "assistant without syncing."
+)
+CLI_OPT_ASK_AGENT = "--ask-agent"
+CLI_OPT_OUTPUT_FORMAT_JSON = "--output-format json"
+CLI_OPT_NO_SYNC = "--no-sync"
+CLI_OPT_PROJECTS = "--projects"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"

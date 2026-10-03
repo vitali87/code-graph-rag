@@ -365,7 +365,11 @@ HELP_MAX_WAIT = (
     "Maximum wait time in seconds before forcing an update during continuous edits."
 )
 
-HELP_UPDATE_GRAPH = "Parse the repository and sync its graph before continuing."
+HELP_UPDATE_GRAPH = (
+    "Parse the repository, sync its graph, then exit without starting the "
+    "assistant (cgr start already syncs before it starts). Cannot be combined "
+    "with --ask-agent, --no-sync or --projects."
+)
 HELP_CLEAN_DB = (
     "DESTRUCTIVE: Delete every project from the shared graph and clear the selected "
     "repository's sync cache. With --update-graph, rebuild after deletion. Asks for "
@@ -402,7 +406,9 @@ HELP_KEEP_SUBMODULE = (
 )
 
 HELP_PROJECT_NAME = (
-    "Project name to store in the graph. Defaults to the repo directory name."
+    "Project name to store in the graph. Defaults to the directory name plus a "
+    "hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the "
+    "names already stored."
 )
 HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
