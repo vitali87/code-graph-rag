@@ -298,6 +298,7 @@ class ClassIngestMixin:
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
     dart_constructor_qns: set[str]
+    dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -1338,6 +1339,10 @@ class ClassIngestMixin:
             )
         ):
             self.dart_extends_type_args[class_qn] = type_args
+        if language == cs.SupportedLanguage.DART and (
+            on_type := dart_utils.dart_extension_on_type(member_node)
+        ):
+            self.dart_extension_on_types[class_qn] = on_type
         self._record_class_field_types(
             class_node,
             member_node,

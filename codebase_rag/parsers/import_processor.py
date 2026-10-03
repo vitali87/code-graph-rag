@@ -41,6 +41,7 @@ from ..utils.path_utils import (
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
+    dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
     dart_local_name,
@@ -844,6 +845,7 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -1019,6 +1021,12 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {library module qn: [module qns it hands to ITS importers]}: the
+        # targets of its `export` and `part` directives. import_mapping holds
+        # those beside plain imports, which expose nothing, so an extension
+        # reached through a barrel file could not be told from one the barrel
+        # merely uses (issue #2482).
+        self.dart_exposed_libraries: dict[str, list[str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -1279,6 +1287,7 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def _defer_module_import_edges(
@@ -5147,37 +5156,21 @@ class ImportProcessor:
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                if dart_exposes_library(import_node):
+                    self.dart_exposed_libraries.setdefault(module_qn, []).append(
+                        full_name
+                    )
                 # `import 'lib.dart' as p;` binds the library's names under
                 # `p`, and the file-derived key never appears in the source,
                 # so a prefixed reference (`p.Box`) resolves only once the
                 # PREFIX is a key too (issue #2033). Both keys are kept: the
                 # file-derived one still serves an unprefixed import of the
                 # same file elsewhere in the module.
-                # An alias must not clobber a key another import already
-                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
-                # would otherwise drop the first import entirely, since the
-                # file-derived key and the alias collide. The prefix is the
-                # name the source uses for THIS import, so it is only added
-                # where it is free.
                 prefix = dart_import_prefix(import_node)
                 if prefix:
-                    # An explicit `as` prefix is the name the SOURCE uses for
-                    # this import, so it owns that name outright. Recorded in
-                    # its own map rather than overwriting import_mapping,
-                    # whose values carry the IMPORTS edges: writing it there
-                    # dropped the colliding unprefixed import entirely.
-                    # Several imports may SHARE a prefix (`import 'a.dart' as
-                    # p; import 'b.dart' as p;`), so every library is kept and
-                    # the fold picks the one defining the name (CodeRabbit,
-                    # PR #2040).
-                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
-                        prefix, []
-                    ).append(full_name)
-                    if prefix not in self.import_mapping[module_qn]:
-                        self.import_mapping[module_qn][prefix] = full_name
-                        # Its IMPORTS edge carries a span and alias like every
-                        # other binding (Copilot, PR #2040).
-                        self._record_import_site(module_qn, prefix, import_node, uri)
+                    self._bind_dart_import_prefix(
+                        module_qn, prefix, full_name, import_node, uri
+                    )
                     prefixes.add(prefix)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
@@ -5188,6 +5181,38 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _bind_dart_import_prefix(
+        self,
+        module_qn: str,
+        prefix: str,
+        full_name: str,
+        import_node: Node,
+        uri: str,
+    ) -> None:
+        # An explicit `as` prefix is the name the SOURCE uses for
+        # this import, so it owns that name outright. Recorded in
+        # its own map rather than overwriting import_mapping,
+        # whose values carry the IMPORTS edges: writing it there
+        # dropped the colliding unprefixed import entirely.
+        # Several imports may SHARE a prefix (`import 'a.dart' as
+        # p; import 'b.dart' as p;`), so every library is kept and
+        # the fold picks the one defining the name (CodeRabbit,
+        # PR #2040).
+        self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+            prefix, []
+        ).append(full_name)
+        # An alias must not clobber a key another import already
+        # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+        # would otherwise drop the first import entirely, since the
+        # file-derived key and the alias collide. The prefix is the
+        # name the source uses for THIS import, so it is only added
+        # where it is free.
+        if prefix not in self.import_mapping[module_qn]:
+            self.import_mapping[module_qn][prefix] = full_name
+            # Its IMPORTS edge carries a span and alias like every
+            # other binding (Copilot, PR #2040).
+            self._record_import_site(module_qn, prefix, import_node, uri)
 
     def _record_lua_require(
         self,
