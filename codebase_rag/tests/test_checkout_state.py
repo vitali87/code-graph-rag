@@ -15,9 +15,11 @@ keeps the hash cache: the first sync after it is still "already in sync".
 
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -282,6 +284,131 @@ def test_every_cgr_state_filename_is_registered() -> None:
     }
 
     assert names - cs.CGR_STATE_FILENAMES == set()
+
+
+def _replace_fails_for(
+    legacy: Path, error: OSError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `os.replace` refuses the move out of the tree, as across filesystems
+    # (EXDEV) or from a tree cgr may not change (EACCES); every other
+    # replace, the copy's own included, goes through.
+    real_replace = os.replace
+
+    def replace(src: str | Path, dst: str | Path) -> None:
+        if Path(src) == legacy:
+            raise error
+        real_replace(src, dst)
+
+    monkeypatch.setattr("codebase_rag.checkout_state.os.replace", replace)
+
+
+def _warnings_during(action: Callable[[], object]) -> list[str]:
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        action()
+    finally:
+        logger.remove(sink)
+    return messages
+
+
+def _left_in_tree(repo: Path) -> Path:
+    left = repo / cs.HASH_CACHE_FILENAME
+    left.write_bytes(b'{"kept": true}')
+    os.utime(left, (1_700_000_000, 1_700_000_000))
+    return left
+
+
+def test_state_on_another_filesystem_is_copied_with_its_mtime(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CGR_HOME on another disk than the checkout: no rename, so the state is
+    # copied, keeping the mtime the in-sync check compares files against.
+    left = _left_in_tree(repo)
+    _replace_fails_for(left, OSError(errno.EXDEV, "cross-device link"), monkeypatch)
+
+    moved = state_file(repo, cs.HASH_CACHE_FILENAME)
+
+    assert moved.read_bytes() == b'{"kept": true}'
+    assert moved.stat().st_mtime == 1_700_000_000
+    assert not left.exists()
+    assert sorted(p.name for p in moved.parent.iterdir()) == [cs.HASH_CACHE_FILENAME]
+
+
+def test_state_in_a_tree_cgr_cannot_change_is_copied_and_the_copy_stays_current(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A checkout that can be read but not changed: the state is copied out,
+    # the tree's copy stays where it is, and a later run keeps the current
+    # copy instead of rolling back to the one in the tree.
+    left = _left_in_tree(repo)
+    _replace_fails_for(left, PermissionError(errno.EACCES, "read-only"), monkeypatch)
+    real_unlink = Path.unlink
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == left:
+            raise PermissionError(errno.EACCES, "read-only")
+        real_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    moved = state_file(repo, cs.HASH_CACHE_FILENAME)
+    moved.write_text('{"kept": "since the upgrade"}')
+    prepare_state_dir(repo)
+
+    assert left.read_bytes() == b'{"kept": true}'
+    assert moved.read_text() == '{"kept": "since the upgrade"}'
+
+
+def test_state_another_process_moved_first_is_not_moved_again(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two syncs of one checkout upgrading at once: the other one's rename
+    # wins, and this one neither fails nor reports the file as its own.
+    left = _left_in_tree(repo)
+    target = state_dir(repo) / cs.HASH_CACHE_FILENAME
+    real_replace = os.replace
+
+    def raced(src: str | Path, dst: str | Path) -> None:
+        if Path(src) == left:
+            real_replace(src, dst)
+            raise FileNotFoundError(errno.ENOENT, "moved by another sync")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("codebase_rag.checkout_state.os.replace", raced)
+    adopted: list[str] = []
+    sink = logger.add(adopted.append, level="INFO", format="{message}")
+    try:
+        prepare_state_dir(repo)
+    finally:
+        logger.remove(sink)
+
+    assert target.read_bytes() == b'{"kept": true}'
+    assert not left.exists()
+    moved_note = ls.CHECKOUT_STATE_ADOPTED.split("{", 1)[0]
+    assert not any(m.startswith(moved_note) for m in adopted), adopted
+
+
+def test_a_failed_copy_keeps_the_state_in_the_tree_and_leaves_no_temp_file(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CGR_HOME fills up mid-copy: the tree's copy is all there is, so it
+    # stays, and the half-written temp file does not.
+    left = _left_in_tree(repo)
+    _replace_fails_for(left, OSError(errno.EXDEV, "cross-device link"), monkeypatch)
+
+    def disk_full(src: Path, dst: Path) -> None:
+        Path(dst).write_bytes(b"{")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr("codebase_rag.checkout_state.shutil.copy2", disk_full)
+
+    warnings = _warnings_during(lambda: prepare_state_dir(repo))
+
+    assert left.read_bytes() == b'{"kept": true}'
+    assert list(state_dir(repo).iterdir()) == []
+    failed = ls.CHECKOUT_STATE_ADOPT_FAILED.split("{", 1)[0]
+    assert any(w.startswith(failed) for w in warnings), warnings
 
 
 # --- negative: what stays as it was -------------------------------------------
