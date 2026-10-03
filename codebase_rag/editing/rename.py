@@ -46,7 +46,7 @@ from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
-from .occurrences import Occurrence, Target, find_occurrences
+from .occurrences import Occurrence, Target, binding_scope, find_occurrences
 from .patcher import Patcher, PatcherError, line_col_to_byte
 from .transaction import (
     EditTransaction,
@@ -814,12 +814,24 @@ class Renamer:
         (issue #2564). An occurrence the graph gives to ANOTHER symbol of the
         same name is not one: that symbol keeps its name.
         """
-        definition = next(s.path for s in sites if s.kind == "definition")
+        definitions = [s.path for s in sites if s.kind == "definition"]
+        definition = definitions[0]
         language = get_language_for_extension(Path(definition).suffix)
         if language is None:
             return []
+        kind = _target_kind(label)
+        owners = _owners(hierarchy)
+        owner_paths = frozenset(definitions)
         target = Target(
-            old_name, language, _target_kind(label), definition, _owners(hierarchy)
+            old_name,
+            language,
+            kind,
+            definition,
+            owners,
+            owner_paths,
+            self._rivals(hierarchy, owner_paths)
+            if kind is cs.RenameTargetKind.METHOD
+            else frozenset(),
         )
         planned = {(s.path, s.line, s.col) for s in sites}
         statements = [_statement(site) for site in imports]
@@ -847,8 +859,27 @@ class Renamer:
             and (occurrence.path, occurrence.line, occurrence.col)
             not in namesakes.positions
             and not _inside(occurrence, namesakes.statements)
-            and not (occurrence.bare and occurrence.path in namesakes.bound_paths)
+            and not (occurrence.bare and _inside(occurrence, namesakes.bound))
         ]
+
+    def _rivals(
+        self, hierarchy: list[str], owner_paths: frozenset[str]
+    ) -> frozenset[tuple[str, str]]:
+        """Every other symbol of the project named like a class a method is
+        declared in, with its file: what `Cache` may mean when it is not
+        the method's class."""
+        classes = {_owner_class(member) for member in hierarchy}
+        rivals: set[tuple[str, str]] = set()
+        for name in _owners(hierarchy):
+            for symbol in graph_query.resolve(self.fetch_all, self.project, name):
+                path = symbol["path"]
+                if (
+                    path is not None
+                    and path not in owner_paths
+                    and symbol["qualified_name"] not in classes
+                ):
+                    rivals.add((name, path))
+        return frozenset(rivals)
 
     def _foreign_paths(self, hierarchy: list[str]) -> set[str]:
         """Files whose sites the graph gives to a project whose name extends
@@ -879,7 +910,7 @@ class Renamer:
         each same-named definition's own name, every site the graph gives it
         and the import statements binding it, as a rename of that symbol
         would collect them."""
-        namesakes = _Namesakes(set(), [], set())
+        namesakes = _Namesakes(set(), [], [])
         for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
             other = symbol["qualified_name"]
             if other in hierarchy:
@@ -896,10 +927,15 @@ class Renamer:
             namesakes.positions.update((s.path, s.line, s.col) for s in other_sites)
             for site, _module in other_imports:
                 namesakes.statements.append(_statement(site))
-                # `from other import helper` makes every bare `helper` in
-                # that file the other symbol's.
-                if site.alias == old_name:
-                    namesakes.bound_paths.add(site.path)
+                # `from other import helper` makes every bare `helper` where
+                # it binds the other symbol's: the whole file at module
+                # level, the function around it inside one.
+                if site.alias == old_name and (
+                    scope := binding_scope(
+                        self.repo_root, site.path, site.line, site.col
+                    )
+                ):
+                    namesakes.bound.append((site.path, scope[0], scope[1]))
         return namesakes
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
@@ -1417,7 +1453,8 @@ class Renamer:
 class _Namesakes(NamedTuple):
     positions: set[tuple[str, int, int]]
     statements: list[_Span]
-    bound_paths: set[str]
+    # Where an import binds the bare name to the other symbol.
+    bound: list[_Span]
 
 
 def _target_kind(label: str | None) -> cs.RenameTargetKind:
@@ -1439,6 +1476,10 @@ def _owners(hierarchy: list[str]) -> frozenset[str]:
         if len(segments) > 1:
             owners.add(segments[-2])
     return frozenset(owners)
+
+
+def _owner_class(member: str) -> str:
+    return member.partition(cs.CHAR_PAREN_OPEN)[0].rpartition(cs.SEPARATOR_DOT)[0]
 
 
 def _statement(site: ImportSite) -> _Span:

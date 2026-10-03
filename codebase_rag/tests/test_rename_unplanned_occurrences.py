@@ -1033,3 +1033,416 @@ def test_a_js_key_is_a_label_and_shorthand_is_a_use(tmp_path: Path) -> None:
     assert [(s.kind, s.path, s.line, s.col) for s in refused.value.unplanned] == [
         ("reference", "src/app.js", 4, 23)
     ]
+
+
+# --- review of PR #2797, third round ----------------------------------------
+
+FACTORY = {
+    "pkg/__init__.py": "",
+    "pkg/cache.py": (
+        "class Cache:\n"
+        "    def get(self, key):\n"
+        "        return key\n"
+        "\n"
+        "\n"
+        "def make_cache():\n"
+        "    return Cache()\n"
+    ),
+}
+# `    return cache.` is 17 bytes: the column of `get` on line 6.
+FACTORY_USERS = {
+    "from-import": (
+        "from pkg.cache import make_cache\n"
+        "\n"
+        "\n"
+        "def read(key):\n"
+        "    cache = make_cache()\n"
+        "    return cache.get(key)\n"
+    ),
+    "module-alias": (
+        "import pkg.cache as pc\n"
+        "\n"
+        "\n"
+        "def read(key):\n"
+        "    cache = pc.make_cache()\n"
+        "    return cache.get(key)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+@pytest.mark.parametrize("user", sorted(FACTORY_USERS))
+def test_a_call_on_an_object_from_the_classs_module_is_held_to_the_plan(
+    tmp_path: Path, user: str, allow_heuristic: bool
+) -> None:
+    # Review of PR #2797: `cache` comes from a factory, so the file never
+    # names Cache, but it imports from the module that defines it. The call
+    # may be Cache.get and is held to the plan; nothing shows what `cache`
+    # is, so it is never rewritten either.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {**FACTORY, "pkg/use.py": FACTORY_USERS[user]})
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/use.py"),
+            PROJECT,
+            CACHE_GET,
+            "fetch",
+            allow_heuristic=allow_heuristic,
+            reingest=updater.reingest,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/use.py", 6, 17, "receiver_unknown")]
+    assert _tree(root) == before
+
+
+def test_a_module_that_only_shares_a_prefix_with_the_classs_is_not_held(
+    tmp_path: Path,
+) -> None:
+    # `pkg.cache_utils` is not `pkg.cache`: `d.get` there stays out.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store_py = (
+        "from pkg.cache_utils import size\n"
+        "\n"
+        "\n"
+        "def read(d, key):\n"
+        "    return d.get(key), size(d)\n"
+    )
+    files = {
+        **FACTORY,
+        "pkg/cache_utils.py": "def size(d):\n    return len(d)\n",
+        "pkg/store.py": store_py,
+    }
+    store, _updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _missing(store, "pkg/store.py"),
+        PROJECT,
+        CACHE_GET,
+        "fetch",
+        allow_heuristic=True,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/store.py").read_text() == store_py
+
+
+SCOPED_IMPORT = (
+    "from pkg.util import helper\n"
+    "\n"
+    "\n"
+    "def local():\n"
+    "    from pkg.other import helper\n"
+    "\n"
+    "    return helper()\n"
+    "\n"
+    "\n"
+    "def outer():\n"
+    "    return helper(1, 2)\n"
+)
+OTHER_HELPER = "def helper():\n    return 0\n"
+
+
+def test_a_function_scoped_import_of_a_namesake_binds_only_that_function(
+    tmp_path: Path,
+) -> None:
+    # Review of PR #2797: `from pkg.other import helper` inside `local`
+    # makes `helper` the other function there, and nowhere else. The call
+    # in `outer` is ours, and the graph has no site for it.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {**PY, "pkg/other.py": OTHER_HELPER, "pkg/mixed.py": SCOPED_IMPORT}
+    store, _updater = _indexed(root, files)
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/mixed.py"),
+            PROJECT,
+            HELPER,
+            "assist",
+        )
+
+    # The indexer keeps one binding per name and file, so the graph has the
+    # function's import and not line 1's: both of ours are listed. Line 7,
+    # the other function's call inside `local`, is not.
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [
+        ("reference", "pkg/mixed.py", 1, 21, "unplanned"),
+        ("call", "pkg/mixed.py", 11, 11, "unplanned"),
+    ]
+    assert _tree(root) == before
+
+
+def test_a_module_level_import_of_a_namesake_still_binds_the_whole_file(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    elsewhere = (
+        "from pkg.other import helper\n"
+        "\n"
+        "\n"
+        "def a():\n"
+        "    return helper()\n"
+        "\n"
+        "\n"
+        "def b():\n"
+        "    return helper()\n"
+    )
+    files = {**PY, "pkg/other.py": OTHER_HELPER, "pkg/elsewhere.py": elsewhere}
+    store, updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _missing(store, "pkg/elsewhere.py"),
+        PROJECT,
+        HELPER,
+        "assist",
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/elsewhere.py").read_text() == elsewhere
+
+
+RIVAL = {
+    **CACHE,
+    "pkg/other.py": "class Cache:\n    def get(self, key):\n        return key\n",
+}
+# Each reads `get` from the other module's Cache; the second element is the
+# (line, col) of `get`.
+RIVAL_USERS = {
+    "qualified-constructor": (
+        "from pkg import other\n"
+        "\n"
+        "\n"
+        "def read(key):\n"
+        "    o = other.Cache()\n"
+        "    return o.get(key)\n",
+        (6, 13),
+    ),
+    "qualified-annotation": (
+        "from pkg import other\n\n\ndef read(o: other.Cache, key):\n"
+        "    return o.get(key)\n",
+        (5, 13),
+    ),
+    "qualified-class": (
+        "from pkg import other\n\n\ndef read(o, key):\n"
+        "    return other.Cache.get(o, key)\n",
+        (5, 23),
+    ),
+    "imported-from-elsewhere": (
+        "from pkg.other import Cache\n"
+        "\n"
+        "\n"
+        "def read(key):\n"
+        "    o = Cache()\n"
+        "    return o.get(key)\n",
+        (6, 13),
+    ),
+    "subclass-of-the-other": (
+        "from pkg import other\n"
+        "\n"
+        "\n"
+        "class Sub(other.Cache):\n"
+        "    def read(self, key):\n"
+        "        return self.get(key)\n",
+        (6, 20),
+    ),
+}
+
+
+@pytest.mark.parametrize("user", sorted(RIVAL_USERS))
+def test_another_modules_same_named_class_is_not_the_target(
+    tmp_path: Path, user: str
+) -> None:
+    # Review of PR #2797: `Cache` alone does not say which Cache. One built,
+    # declared, extended or imported from another module is not the target,
+    # so `allow_heuristic` must not rewrite a call through it.
+    text, (line, col) = RIVAL_USERS[user]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {**RIVAL, "pkg/use.py": text})
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/use.py"),
+            PROJECT,
+            CACHE_GET,
+            "fetch",
+            allow_heuristic=True,
+            reingest=updater.reingest,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/use.py", line, col, "receiver_unknown")]
+    assert _tree(root) == before
+
+
+OWN_USERS = {
+    "module-qualified": (
+        "from pkg import cache\n\n\ndef read(key):\n"
+        "    c = cache.Cache()\n    return c.get(key)\n"
+    ),
+    "module-alias": (
+        "import pkg.cache as pc\n\n\ndef read(key):\n"
+        "    c = pc.Cache()\n    return c.get(key)\n"
+    ),
+    "imported": (
+        "from pkg.cache import Cache\n\n\ndef read(key):\n"
+        "    c = Cache()\n    return c.get(key)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("user", sorted(OWN_USERS))
+def test_the_targets_class_is_still_certain_beside_a_namesake(
+    tmp_path: Path, user: str
+) -> None:
+    # With another Cache in the project, a Cache reached through the
+    # target's own module is still the target, and the call is rewritten.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {**RIVAL, "pkg/use.py": OWN_USERS[user]})
+
+    report = rename(
+        root,
+        _missing(store, "pkg/use.py"),
+        PROJECT,
+        CACHE_GET,
+        "fetch",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col, s.resolution) for s in report.unplanned] == [
+        ("pkg/use.py", 6, 13, "unplanned")
+    ]
+    assert "return c.fetch(key)" in (root / "pkg/use.py").read_text()
+    assert (root / "pkg/other.py").read_text() == RIVAL["pkg/other.py"]
+
+
+JS_FACTORY = {
+    "package.json": '{"name": "web", "type": "module"}\n',
+    "src/cache.js": (
+        "export class Cache {\n"
+        "  get(key) {\n"
+        "    return key;\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        "export function makeCache() {\n"
+        "  return new Cache();\n"
+        "}\n"
+    ),
+    "src/use.js": (
+        "import { makeCache } from './cache.js';\n"
+        "\n"
+        "export function read(key) {\n"
+        "  const cache = makeCache();\n"
+        "  return cache.get(key);\n"
+        "}\n"
+    ),
+}
+
+
+def test_a_module_spelled_in_a_string_is_still_the_classs_module(
+    tmp_path: Path,
+) -> None:
+    # JavaScript names the module in a string, which is no identifier.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, JS_FACTORY)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "src/use.js"),
+            PROJECT,
+            f"{PROJECT}.src.cache.Cache.get",
+            "fetch",
+            dry_run=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "src/use.js", 5, 15, "receiver_unknown")]
+
+
+def _greeter(package: str) -> str:
+    return (
+        f"package {package};\n"
+        "\n"
+        "public class Greeter {\n"
+        "    public String greet(String n) {\n"
+        "        return n;\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+def _greeter_user(package: str) -> str:
+    return (
+        "package c;\n"
+        "\n"
+        f"import {package}.Greeter;\n"
+        "\n"
+        "public class Use {\n"
+        "    public String go() {\n"
+        "        Greeter g = new Greeter();\n"
+        '        return g.greet("y");\n'
+        "    }\n"
+        "}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("package", "resolution"), [("a", "unplanned"), ("b", "receiver_unknown")]
+)
+def test_a_java_class_is_told_from_its_namesake_by_its_package(
+    tmp_path: Path, package: str, resolution: str
+) -> None:
+    # A Java file is named after its class, so the import's package is what
+    # says which Greeter `g` is: `a.Greeter` is the target, `b.Greeter` not.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        "src/main/java/a/Greeter.java": _greeter("a"),
+        "src/main/java/b/Greeter.java": _greeter("b"),
+        "src/main/java/c/Use.java": _greeter_user(package),
+    }
+    store, _updater = _indexed(root, files)
+
+    try:
+        report = rename(
+            root,
+            _missing(store, "src/main/java/c/Use.java"),
+            PROJECT,
+            f"{PROJECT}.src.main.java.a.Greeter.Greeter.greet(String)",
+            "welcome",
+            allow_heuristic=True,
+            dry_run=True,
+        )
+        unplanned = list(report.unplanned)
+    except RenameRefused as refused:
+        unplanned = refused.unplanned
+
+    assert [(s.kind, s.path, s.line, s.col, s.resolution) for s in unplanned] == [
+        ("call", "src/main/java/c/Use.java", 8, 17, resolution)
+    ]

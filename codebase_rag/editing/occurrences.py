@@ -19,14 +19,17 @@ rename rather than lets one break the build.
 A call through an object is the exception, since every type may have a
 method of the name and `d.get(x)` on a dict is not `Cache.get`. A function
 is reached through its module only, and a method through an object only in
-a file that names its class. Such a method call is certain only where the
-source shows the object is of that class (`self` in its body, the class
-itself, a variable declared or built as one); the rest is held to the plan
-but never rewritten on a guess.
+a file that may hold one of its class: one that names the class or imports
+from the module defining it (`cache = make_cache()`). Such a method call is
+certain only where the source shows the object is of that class (`self` in
+its body, the class itself, a variable declared or built as one); the rest
+is held to the plan but never rewritten on a guess. A class name alone does
+not show which class it is when another one shares it, so a spelling counts
+as the class only where it reaches the class's own module.
 """
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from enum import Enum, auto
 from functools import cached_property
 from pathlib import Path
@@ -47,6 +50,11 @@ _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
 _TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
 _NAME = re.compile(rb"\w+")
+# A name as written, qualified or not: `Cache`, `other.Cache`, `a::Parse`.
+_SPELLING = re.compile(rb"\w+(?:\s*(?:::|\.|\\)\s*\w+)*")
+_SEPARATORS = re.compile(
+    "|".join(re.escape(separator) for separator in cs.RENAME_TYPE_SEPARATORS)
+)
 # How a method body reaches its own object: `self.name`, `this.name`,
 # `Self::name`, `super().name`.
 _SELF_RECEIVERS: dict[cs.SupportedLanguage, frozenset[str]] = {
@@ -98,6 +106,11 @@ class Target(NamedTuple):
     kind: cs.RenameTargetKind
     path: str  # the defining file, repo-relative
     owners: frozenset[str]  # the classes a method is declared in
+    # The files that define those classes.
+    owner_paths: frozenset[str] = frozenset()
+    # (name, file) of each other project symbol named like one of the
+    # classes: what a bare or qualified class name may mean instead.
+    rivals: frozenset[tuple[str, str]] = frozenset()
 
 
 class Occurrence(NamedTuple):
@@ -137,7 +150,9 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
       (`self.name`, `this.name()`), or through a variable declared or built
       as the class, all certain; a call through any other object, or a bare
       call where the language has an implicit `this`, only in a file that
-      names the class, and uncertain;
+      names the class or imports from its module, and uncertain. The class
+      is spelled by its name, bare or qualified, only where that spelling
+      reaches the class's module: `other.Cache()` is another Cache;
     - a type: every occurrence.
     """
     family = language_family(target.language)
@@ -210,10 +225,124 @@ class _File:
                 yield node
 
     @cached_property
-    def names_owner(self) -> bool:
-        """Whether the file names the method's class in code: defines it,
-        imports it, or declares something of it."""
-        return next(self._names(self.target.owners), None) is not None
+    def may_hold_owner(self) -> bool:
+        """Whether an object of the method's class may reach the file: it
+        names the class in code (defines, imports or declares one), or it
+        imports from the module defining it, where a factory may build one
+        (`from pkg.cache import make_cache`)."""
+        if next(self._names(self.target.owners), None) is not None:
+            return True
+        words = self._home_words - self.target.owners
+        if not words:
+            return False
+        alternatives = b"|".join(re.escape(word.encode()) for word in sorted(words))
+        pattern = re.compile(_WORD % (b"(?:" + alternatives + b")"))
+        # The module may be spelled in a string (`from './cache.js'`), so
+        # this looks at any node, not only identifier tokens.
+        return any(
+            (node := self.root.descendant_for_byte_range(match.start(), match.end()))
+            is not None
+            and _import_statement(node) is not None
+            for match in pattern.finditer(self.source)
+        )
+
+    @cached_property
+    def _home_words(self) -> frozenset[str]:
+        """The names an importer reaches a class's own module by: `cache`
+        for `pkg/cache.py`, `pc` for `import pkg.cache as pc`, and the
+        package where the file is named after the class (`a` for
+        `a/Greeter.java`)."""
+        owner_paths = self.target.owner_paths or {self.target.path}
+        words = set(self.module_aliases)
+        for path in owner_paths:
+            words |= _module_words(path, self.target.owners)
+        return frozenset(words)
+
+    @cached_property
+    def _rival_words(self) -> frozenset[str]:
+        words: set[str] = set()
+        for _name, path in self.target.rivals:
+            words |= _module_words(path, self.target.owners)
+        return frozenset(words - self._home_words)
+
+    @cached_property
+    def _ancestors(self) -> frozenset[str]:
+        """What a path into the project spells before a class it re-exports:
+        a package above a class's file (`from pkg import Cache`), or the
+        crate's root (`use crate::Parse`)."""
+        owner_paths = self.target.owner_paths or {self.target.path}
+        return frozenset(
+            {part for path in owner_paths for part in Path(path).parent.parts}
+            | cs.RENAME_PROJECT_ROOT_WORDS
+        )
+
+    def _contested(self, name: str) -> bool:
+        return any(rival == name for rival, _path in self.target.rivals)
+
+    def _reaches_home(self, words: set[str], name: str) -> bool:
+        """Whether a path spelling `words` leads to the class `name` of the
+        target rather than to another of the name: through its module,
+        never through another's, and through a package above it only when
+        no other symbol of the project shares the name."""
+        if words & self._home_words:
+            return True
+        if words & self._rival_words:
+            return False
+        return not self._contested(name) and bool(words & self._ancestors)
+
+    def is_owner(self, spelling: str) -> bool:
+        """Whether a class name as written (`Cache`, `cache.Cache`,
+        `crate::parse::Parse`) is the method's class, not another class of
+        the name: a qualified one through the class's module, a bare one as
+        the file binds it."""
+        segments = [
+            part.strip()
+            for part in _SEPARATORS.split(spelling.strip(cs.RENAME_TYPE_DECORATION))
+        ]
+        name = segments[-1] if segments else ""
+        if name not in self.target.owners:
+            return False
+        if len(segments) > 1:
+            return self._reaches_home({segments[-2]}, name)
+        return name in self._bare_owners
+
+    @cached_property
+    def _bare_owners(self) -> frozenset[str]:
+        """The class names that, written bare in this file, are the
+        method's classes: in a file defining one, or where the file imports
+        it from its module. A file that binds the name itself, or imports
+        it from somewhere else, means something else by it. With no import
+        of the name, it is the class unless another one shares it outside
+        the class's package."""
+        if self.path in self.target.owner_paths:
+            return self.target.owners
+        owner_dirs = {Path(path).parent for path in self.target.owner_paths}
+        bare: set[str] = set()
+        for name in self.target.owners:
+            tokens = list(self._names(frozenset({name})))
+            if any(_binds(token) for token in tokens):
+                continue
+            statements = {
+                (statement.start_byte, statement.end_byte): statement
+                for token in tokens
+                if (statement := _import_statement(token)) is not None
+            }
+            if statements:
+                if any(
+                    self._reaches_home(
+                        {
+                            word.decode(cs.ENCODING_UTF8)
+                            for word in _NAME.findall(statement.text or b"")
+                        }
+                        - {name},
+                        name,
+                    )
+                    for statement in statements.values()
+                ):
+                    bare.add(name)
+            elif not self._contested(name) or Path(self.path).parent in owner_dirs:
+                bare.add(name)
+        return frozenset(bare)
 
     @cached_property
     def module_aliases(self) -> frozenset[str]:
@@ -249,7 +378,8 @@ class _File:
         (`import static a.Greeter.greet;`), so a bare call reaches it."""
         return any(
             _access(self.source, token.start_byte) is not _Access.BARE
-            and _receiver(token) in self.target.owners
+            and (receiver := _receiver_node(token)) is not None
+            and self.is_owner(_text(receiver))
             and _within(token, cs.RENAME_IMPORT_MARKER)
             for token in self.tokens
         )
@@ -271,9 +401,8 @@ class _File:
                 while (bare := _TYPE_ARGUMENTS.sub(b"", header)) != header:
                     header = bare
                 return any(
-                    word.decode(cs.ENCODING_UTF8, errors="replace")
-                    in self.target.owners
-                    for word in _NAME.findall(header)
+                    self.is_owner(spelling.decode(cs.ENCODING_UTF8, errors="replace"))
+                    for spelling in _SPELLING.findall(header)
                 )
             node = node.parent
         return False
@@ -308,7 +437,7 @@ class _File:
         ]
         if not bindings:
             return None
-        return all(_declares(binding, self.target.owners) for binding in bindings)
+        return all(_declares(binding, self.is_owner) for binding in bindings)
 
 
 def _file_occurrences(file: _File) -> Iterator[Occurrence]:
@@ -362,16 +491,19 @@ def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
 def _method_use(file: _File, token: Node, access: _Access, called: bool) -> bool | None:
     """True where the source shows the token names the method, False where
     it only may (a call through an object of unknown type, in a file that
-    names the class), None where it does not."""
+    may hold one of the class), None where it does not."""
     if access is _Access.BARE:
         if not called or file.language not in _IMPLICIT_RECEIVER_LANGUAGES:
             return None
         if file.in_owner_class(token) or file.imports_method:
             return True
-        return False if file.names_owner else None
+        return False if file.may_hold_owner else None
     receiver = _receiver_node(token)
     name = None if receiver is None else _last_name(receiver)
-    if name in file.target.owners:
+    # `Cache().get()` builds one and calls it: the class itself.
+    if receiver is not None and file.is_owner(
+        _text(receiver).removesuffix(cs.EMPTY_PARENS)
+    ):
         return True
     invoked = called or access is _Access.SCOPED
     if invoked or file.language in _METHOD_READ_LANGUAGES:
@@ -382,7 +514,7 @@ def _method_use(file: _File, token: Node, access: _Access, called: bool) -> bool
             return True
     if not invoked:
         return None
-    return False if file.names_owner else None
+    return False if file.may_hold_owner else None
 
 
 def _module_names(path: str) -> frozenset[str]:
@@ -537,10 +669,10 @@ def _within(node: Node, marker: str) -> bool:
     return False
 
 
-def _declares(binding: Node, owners: frozenset[str]) -> bool:
-    """Whether a binding's declaration gives it one of `owners` as its type
-    or builds one as its value. A destructured name is a part of the value,
-    not the value, so it never qualifies."""
+def _declares(binding: Node, is_owner: Callable[[str], bool]) -> bool:
+    """Whether a binding's declaration gives it a class `is_owner` accepts
+    as its type, or builds one as its value. A destructured name is a part
+    of the value, not the value, so it never qualifies."""
     declared: Node | None = None
     value: Node | None = None
     node = binding
@@ -557,8 +689,12 @@ def _declares(binding: Node, owners: frozenset[str]) -> bool:
             or _other_field(parent, node, cs.FIELD_RIGHT)
         )
         node = parent
-    return (declared is not None and _type_name(declared) in owners) or (
-        value is not None and _constructed(value) in owners
+    if declared is not None and is_owner(_type_spelling(declared)):
+        return True
+    return (
+        value is not None
+        and (built := _constructed(value)) is not None
+        and (is_owner(built))
     )
 
 
@@ -567,17 +703,18 @@ def _other_field(parent: Node, child: Node, field: str) -> Node | None:
     return None if found is None or found == child else found
 
 
-def _type_name(node: Node) -> str:
+def _type_spelling(node: Node) -> str:
     # A reference or pointer nests the class under its own `type`; a
     # generic's is the container (`Box<Parse>` is a Box).
     while (inner := node.child_by_field_name(cs.FIELD_TYPE)) is not None:
         node = inner
-    return _last_segment(_text(node).strip(cs.RENAME_TYPE_DECORATION))
+    return _text(node).strip(cs.RENAME_TYPE_DECORATION)
 
 
 def _constructed(node: Node) -> str | None:
-    """The class an expression builds an object of: `Parse` for
-    `Parse(x)`, `new Parse()`, `Parse { .. }` or `Parse::new(x)?`."""
+    """The class an expression builds an object of, as written: `Parse`
+    for `Parse(x)`, `new Parse()`, `Parse { .. }` or `Parse::new(x)?`,
+    `other.Cache` for `other.Cache()`."""
     while node.type in cs.RENAME_TRANSPARENT_EXPRESSIONS and node.named_children:
         node = node.named_children[0]
     if not any(marker in node.type for marker in cs.RENAME_CONSTRUCTION_MARKERS):
@@ -588,11 +725,56 @@ def _constructed(node: Node) -> str | None:
             text = _text(callee)
             for suffix in cs.RENAME_CONSTRUCTOR_SUFFIXES:
                 text = text.removesuffix(suffix)
-            return _last_segment(text)
+            return text.strip()
     return None
 
 
-def _last_segment(text: str) -> str:
-    for separator in cs.RENAME_TYPE_SEPARATORS:
-        text = text.rpartition(separator)[2]
-    return text.strip()
+def _import_statement(node: Node) -> Node | None:
+    """The outermost import statement around a node: the whole of
+    `import { Cache } from './cache.js'`, not its specifier."""
+    found: Node | None = None
+    ancestor: Node | None = node
+    while ancestor is not None:
+        if any(marker in ancestor.type for marker in cs.RENAME_IMPORT_STATEMENTS):
+            found = ancestor
+        ancestor = ancestor.parent
+    return found
+
+
+def _module_words(path: str, owners: frozenset[str]) -> set[str]:
+    # A file named after its class (`a/Greeter.java`) is reached by its
+    # package: the class's name says nothing about which one it is.
+    words = set(_module_names(path))
+    if words & owners:
+        words = (words - owners) | {Path(path).parent.name}
+    return words - {""}
+
+
+def binding_scope(
+    repo_root: Path, path: str, line: int, col: int
+) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """The (line, col) start and exclusive end of where a statement at
+    `line`:`col` (1-based line, byte column) binds its names for a bare use:
+    the function around it, or the whole file at module level. None where
+    that is a class body, whose names a method's bare uses never see."""
+    language = get_language_for_extension(Path(path).suffix)
+    parsers, _queries = load_parsers()
+    if language is None or (parser := parsers.get(language)) is None:
+        return None
+    try:
+        source = (repo_root / path).read_bytes()
+    except OSError:
+        return None
+    root = parser.parse(source).root_node
+    point = (line - 1, col)
+    scope: Node | None = root.descendant_for_point_range(point, point)
+    while scope is not None and not _is_scope(scope):
+        scope = scope.parent
+    if scope is None:
+        return (1, 0), (root.end_point[0] + 2, 0)
+    if cs.RENAME_CLASS_MARKER in scope.type:
+        return None
+    return (
+        (scope.start_point[0] + 1, scope.start_point[1]),
+        (scope.end_point[0] + 1, scope.end_point[1]),
+    )

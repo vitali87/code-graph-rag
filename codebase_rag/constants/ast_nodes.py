@@ -201,6 +201,18 @@ RENAME_TYPE_SCOPE_MARKERS = (
     "extension",
 )
 RENAME_IMPORT_MARKER = "import"
+# The statement that brings a name in from another module, by marker:
+# `import` and `from ... import` (Python, JS/TS, Java, Go, Scala, Dart),
+# `use` (Rust, PHP) and `using` (C#, C++).
+RENAME_IMPORT_STATEMENTS = (
+    "import",
+    "use_declaration",
+    "using_directive",
+    "using_declaration",
+)
+# What a path into the project may start with in place of a package name:
+# `use crate::Parse`, `use super::Parse`.
+RENAME_PROJECT_ROOT_WORDS = frozenset({"crate", "self", "super"})
 # How far above a binding its declaration's type and value may sit:
 # `Parse* p = ...` puts `p` three levels under the declaration.
 RENAME_DECLARATION_DEPTH = 3

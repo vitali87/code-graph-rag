@@ -80,13 +80,25 @@ family are read (the indexer's own walk, under `.cgrignore` and
   names it (`self.name`, `this.name()`, `Self::name`, `super().name`), or
   through a variable every binding of which declares or builds the class
   (`parse: &mut Parse`, `Greeter g`, `let parse = Parse::new(frame)?`).
-  These are certain. A call through any other object, or a bare call in a
-  language with an implicit `this` (Java, C#, C++, Scala, Dart) outside the
-  class and without a static import of the method, counts only in a file
-  that names the class, and is uncertain: `d.get(key)` may be a dict's. A
-  read without a call counts only in Python, JavaScript and TypeScript,
-  where a method is an attribute; in Rust, Java or C++ `self.name` is the
-  field of the name;
+  These are certain. The class's name counts as the class only where it
+  reaches the class's own module: qualified through that module
+  (`cache.Cache()`, `pc.Cache()` after `import pkg.cache as pc`,
+  `crate::parse::Parse`), or bare in its own file, in its package, or after
+  an import that names its module. When another symbol of the project
+  shares the name, `other.Cache()`, `from pkg.other import Cache` and
+  `class Sub(other.Cache)` are that one; an import through a package above
+  the class (`use crate::Parse`, `from pkg import Cache`) counts only when
+  no other symbol shares it. A Java file is named after its class, so there
+  the import's package tells the two apart (`import a.Greeter`). A call
+  through any other object, or a bare call in a language with an implicit
+  `this` (Java, C#, C++, Scala, Dart) outside the class and without a static
+  import of the method, counts only in a file that may hold an object of
+  the class: one that names it, or imports from its module, where a factory
+  may build one (`cache = make_cache()` after
+  `from pkg.cache import make_cache`). It is uncertain: `d.get(key)` may be
+  a dict's. A read without a call counts only in Python, JavaScript and
+  TypeScript, where a method is an attribute; in Rust, Java or C++
+  `self.name` is the field of the name;
 - for anything else (a class, an interface, a type), every occurrence.
 
 Comments and strings are prose and never count, and neither does a token
@@ -99,8 +111,9 @@ occurrence counts as planned when a site of the plan covers it, or the
 import statement of one (its own span, not its line:
 `from pkg.util import helper; helper(1)` still holds the call), or when the
 graph gives it to another symbol of the same name: that symbol's
-definition, sites and import statements, and every bare use in a file
-importing it under the name. Files whose sites the graph gives to a project
+definition, sites and import statements, and every bare use where an import
+binds the name to it (the whole file at module level, only the function
+around an import written inside one). Files whose sites the graph gives to a project
 whose name extends this one are left out, as the plan leaves them.
 Whatever is left is `unplanned`: the rename refuses and lists each one, the
 way it refuses a guessed site. `--allow-heuristic` (`allow_heuristic: true`)
