@@ -557,23 +557,16 @@ class ReachIndex:
         self,
         nodes: dict[_NodeId, PropertyDict],
         reverse: dict[str, set[str]],
-        test_patterns: tuple[str, ...],
     ) -> None:
         self._by_qn: dict[str, tuple[str, PropertyDict]] = {
             str(qn): (label, props) for (label, qn), props in nodes.items()
         }
         self._reverse = reverse
-        self._patterns = test_patterns
         self._rust_modules = _rust_test_modules_from_nodes(nodes)
         self._rust_spans = _rust_test_fn_spans(nodes)
 
     @classmethod
-    def build(
-        cls,
-        fetch_all: QueryFn,
-        project_name: str,
-        test_patterns: tuple[str, ...] = cs.TEST_PATH_PATTERNS,
-    ) -> ReachIndex:
+    def build(cls, fetch_all: QueryFn, project_name: str) -> ReachIndex:
         params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
         nodes: dict[_NodeId, PropertyDict] = {}
         owns = _owner_check(fetch_all, project_name)
@@ -593,7 +586,7 @@ class ReachIndex:
             # nor be a hop the walk continues through (issue #1982).
             if src and dst and owns(src) and owns(dst):
                 reverse.setdefault(dst, set()).add(src)
-        return cls(nodes, reverse, test_patterns)
+        return cls(nodes, reverse)
 
     def _walk(self, qualified_name: str) -> tuple[dict[str, int], dict[str, str]]:
         depth_of: dict[str, int] = {qualified_name: 0}
@@ -622,9 +615,7 @@ class ReachIndex:
                 continue
             label, props = entry
             path = str(props.get(cs.KEY_PATH) or "")
-            if _is_test_symbol(
-                props, qn, path, self._patterns, self._rust_modules, self._rust_spans
-            ):
+            if _is_test_symbol(props, qn, path, self._rust_modules, self._rust_spans):
                 out.append(
                     TestReachRow(
                         label=label,
@@ -641,7 +632,6 @@ def tests_reaching(
     fetch_all: QueryFn,
     project_name: str,
     qualified_name: str,
-    test_patterns: tuple[str, ...] = cs.TEST_PATH_PATTERNS,
 ) -> list[TestReachRow]:
     """Test symbols from which `qualified_name` is reachable, with distance.
 
@@ -650,9 +640,7 @@ def tests_reaching(
     the reached definitions the dead-code root classifier calls tests, so
     Rust `#[cfg(test)]` modules count exactly as they do there.
     """
-    return ReachIndex.build(fetch_all, project_name, test_patterns).tests_reaching(
-        qualified_name
-    )
+    return ReachIndex.build(fetch_all, project_name).tests_reaching(qualified_name)
 
 
 # --- cross-service edges (issue #1603) ---------------------------------------

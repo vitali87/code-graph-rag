@@ -132,11 +132,13 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    python_stub_has_implementation,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
     walk_eligible_files,
 )
+from .utils.source_encoding import grammar_bytes
 from .utils.source_extraction import extract_source_with_fallback
 
 
@@ -829,6 +831,23 @@ class ReingestAborted(RuntimeError):
 def _stem_key(file_key: str) -> str:
     """The relative path without its extension: what same-stem siblings share."""
     return Path(file_key).with_suffix("").as_posix()
+
+
+def _flux_stems_of(file_key: str) -> set[str]:
+    """The stems a file added or deleted puts in flux.
+
+    Its own, and for a Python package initializer the stem of the module it
+    defines: `x/__init__.py` names `proj.x` as `x.py` and `x.pyi` do, so adding
+    or deleting it hands that module between them although the stems differ.
+    Without this, an added package left the stub holding `proj.x` and itself
+    suffixed to a twin, and a deleted one left `proj.x` with no Module, the
+    stub never re-parsed to take it back (issue #2445).
+    """
+    stems = {_stem_key(file_key)}
+    path = Path(file_key)
+    if path.name in cs.PY_PACKAGE_INIT_FILES and path.parent != Path("."):
+        stems.add(path.parent.as_posix())
+    return stems
 
 
 # Longest first, so `index.d.ts` loses `.d.ts` whole rather than being cut back
@@ -4057,7 +4076,9 @@ class GraphUpdater:
         if parser is None or query is None:
             return set()
         try:
-            tree = parser.parse(file_bytes)
+            tree = parser.parse(
+                grammar_bytes(file_bytes, language, self.repo_path / key)
+            )
             captures = sorted_captures(QueryCursor(query), tree.root_node)
         except Exception:
             return set()
@@ -4424,7 +4445,7 @@ class GraphUpdater:
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
             relative_path.parent.parts
-            if file_path.name == cs.INIT_PY
+            if file_path.name in cs.PY_PACKAGE_INIT_FILES
             else relative_path.with_suffix("").parts
         )
         path_derived_qn = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
@@ -4437,9 +4458,9 @@ class GraphUpdater:
         # registry and simple-name entries behind and Pass 3 kept resolving
         # calls into definitions that no longer exist. The Rust and C# import
         # blocks below already re-derive the recorded qn for this reason.
-        # A file that was never parsed recorded nothing; the path-derived form
-        # is the only prefix available for it, and it owns no recorded qn that
-        # this could wipe.
+        # A source file that was never parsed recorded nothing; the
+        # path-derived form is the only prefix available for it, and it owns
+        # no recorded qn that this could wipe.
         #
         # Unless another file holds that qn now. A same-stem survivor re-parses
         # with its claim dropped, after a sibling parsed earlier in the run took
@@ -4447,12 +4468,26 @@ class GraphUpdater:
         # sibling's fresh definitions, still unflushed and so not read back, and
         # the sibling's calls resolved to nothing until a fresh index (reported
         # on #2586). The survivor's own old state went before the parse.
+        #
+        # A file no tree-sitter language parses (`shapes.txt`, trybuild's
+        # `user.stderr`, a Markdown or ast-grep tier file) never records a
+        # module qn, and its path-derived form is the qn of the source file
+        # sharing its stem: clearing `pkg/shapes.txt` swept the definitions
+        # and class records `pkg/shapes.py` holds. A dependent re-parse of
+        # `shapes.py` earlier in the same run then resolved its calls against
+        # a registry that had lost them, and the next sync saw nothing to
+        # redo (issue #2463). Such a file owns no module state to sweep.
         module_map = self.factory.definition_processor.module_qn_to_file_path
         recorded_qns = {qn for qn, path in module_map.items() if path == file_path}
-        holder = module_map.get(path_derived_qn)
-        module_qn_prefixes = recorded_qns or (
-            {path_derived_qn} if holder is None else set()
-        )
+        if recorded_qns:
+            module_qn_prefixes = recorded_qns
+        elif (
+            get_language_for_extension(file_path.suffix) is not None
+            and module_map.get(path_derived_qn) is None
+        ):
+            module_qn_prefixes = {path_derived_qn}
+        else:
+            module_qn_prefixes = set()
         self._drop_module_import_state(file_path, recorded_qns, module_qn_prefixes)
         owned_qns, foreign_qns = self._span_ownership(
             module_qn_prefixes, relative_path, frontend_current
@@ -5770,9 +5805,10 @@ class GraphUpdater:
             set()
             if is_full_build
             else {
-                _stem_key(key)
+                stem
                 for key in (eligible_keys - old_hashes.keys())
                 | (old_hashes.keys() - eligible_keys)
+                for stem in _flux_stems_of(key)
             }
         )
         # Per run: a full build forgets nothing, and a reused updater must not
@@ -6343,14 +6379,9 @@ class GraphUpdater:
     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
         result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
         for filepath, _file_key, _is_new, file_bytes in changed_entries:
-            lang_config = get_language_spec(filepath.suffix)
-            if not (
-                lang_config
-                and isinstance(lang_config.language, cs.SupportedLanguage)
-                and lang_config.language in self.parsers
-            ):
+            language = self._tree_sitter_language(filepath)
+            if language is None:
                 continue
-            language = lang_config.language
             # `parsers` and `queries` arrive separately; a language one lacks
             # is left to the per-file path rather than aborting the run.
             language_queries = self.queries.get(language)
@@ -6359,7 +6390,9 @@ class GraphUpdater:
             parser = language_queries.get(cs.KEY_PARSER)
             if parser is None:
                 continue
-            tree = parse_with_preproc_recovery(parser, file_bytes, language)
+            tree = parse_with_preproc_recovery(
+                parser, grammar_bytes(file_bytes, language, filepath), language
+            )
             root_node = tree.root_node
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
@@ -6391,15 +6424,10 @@ class GraphUpdater:
                 )
                 return
 
-        lang_config = get_language_spec(filepath.suffix)
-        if (
-            lang_config
-            and isinstance(lang_config.language, cs.SupportedLanguage)
-            and lang_config.language in self.parsers
-        ):
+        if (language := self._tree_sitter_language(filepath)) is not None:
             result = self.factory.definition_processor.process_file(
                 filepath,
-                lang_config.language,
+                language,
                 self.queries,
                 self.factory.structure_processor.structural_elements,
                 source_bytes=file_bytes,
@@ -6415,6 +6443,29 @@ class GraphUpdater:
             self.process_with_secondary_tier(filepath)
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
+
+    def _tree_sitter_language(self, filepath: Path) -> cs.SupportedLanguage | None:
+        """The loaded grammar that defines `filepath`'s module, if any.
+
+        None for a `.pyi` stub whose implementation is indexed: it shares that
+        module's qn, and parsing it would claim or twin the Module. It still
+        falls through to the generic File node (issue #2445).
+        """
+        lang_config = get_language_spec(filepath.suffix)
+        if not (
+            lang_config
+            and isinstance(lang_config.language, cs.SupportedLanguage)
+            and lang_config.language in self.parsers
+        ):
+            return None
+        if python_stub_has_implementation(
+            filepath,
+            self.repo_path,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        ):
+            return None
+        return lang_config.language
 
     def process_with_secondary_tier(self, filepath: Path) -> bool:
         """Parse a file with whichever non-tree-sitter tier claims it.
@@ -6463,7 +6514,11 @@ class GraphUpdater:
         except OSError as e:
             logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None
-        root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
+        # Transcoded exactly as the first parse was, or a declared-encoding
+        # file's call pass would see names its definitions do not carry.
+        root_node = parse_with_preproc_recovery(
+            parser, grammar_bytes(file_bytes, language, file_path), language
+        ).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 
@@ -6685,8 +6740,8 @@ class GraphUpdater:
         # share them and are not named in the call. Those survivors re-parse
         # in walk order so the bare module qn goes to the file a clean index
         # gives it rather than to the file indexed first (issue #1569).
-        flux_stems = {_stem_key(key) for key in present if key not in hashes}
-        flux_stems |= {_stem_key(key) for key in gone}
+        added = [key for key in present if key not in hashes]
+        flux_stems = {stem for key in (*added, *gone) for stem in _flux_stems_of(key)}
         survivors: dict[str, Path] = {}
         for stem in flux_stems:
             self._collect_stem_survivors(stem, present, gone, survivors)
