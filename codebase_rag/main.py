@@ -9,8 +9,10 @@ import mimetypes
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 from collections import deque
@@ -46,7 +48,7 @@ from pydantic_ai.messages import (
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -56,12 +58,14 @@ from . import exceptions as ex
 from . import logs as ls
 from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import (
+    CGRIGNORE_FILENAME,
     ModelConfig,
     load_ignore_patterns,
     provider_env_api_key,
     settings,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
+from .editing.transaction import repo_write_lock
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -1967,21 +1971,135 @@ def prompt_for_unignored_directories(
     )
 
     if response.lower() == cs.INTERACTIVE_KEEP_ALL:
-        return frozenset(all_candidates) | cgrignore.unignore
+        kept = frozenset(all_candidates)
+    elif response.lower() == cs.INTERACTIVE_KEEP_NONE:
+        kept = frozenset()
+    else:
+        expand_requests, regular_selections = _parse_keep_selection(response)
+        selected: set[str] = set()
+        for root in _selected_roots(expand_requests, sorted_roots):
+            selected.update(_prompt_nested_selection(root, groups[root]))
+        for root in _selected_roots(regular_selections, sorted_roots):
+            selected.update(groups[root])
+        kept = frozenset(selected)
 
-    if response.lower() == cs.INTERACTIVE_KEEP_NONE:
-        return cgrignore.unignore
+    # A path both excluded and unignored in `.cgrignore` is still excluded
+    # (its excludes win), so it counts as new.
+    _offer_to_save_keeps(
+        repo_path, kept - (cgrignore.unignore - cgrignore.exclude), cgrignore.exclude
+    )
+    return kept | cgrignore.unignore
 
-    expand_requests, regular_selections = _parse_keep_selection(response)
-    selected: set[str] = set()
 
-    for root in _selected_roots(expand_requests, sorted_roots):
-        selected.update(_prompt_nested_selection(root, groups[root]))
+def _offer_to_save_keeps(
+    repo_path: Path, new_keeps: frozenset[str], cgrignore_excludes: frozenset[str]
+) -> None:
+    """Offer to save new keeps to `.cgrignore` so later syncs keep them too.
 
-    for root in _selected_roots(regular_selections, sorted_roots):
-        selected.update(groups[root])
+    Otherwise a choice made here holds for this run only: the next ordinary
+    sync reads the exclusions from `.cgrignore` alone and removes the kept
+    directories from the graph again (#2448). A kept path that `.cgrignore`
+    itself excludes needs that line removed, not a `!` line beside it:
+    `.cgrignore` excludes beat its `!` lines (review of PR 2510).
+    """
+    if not new_keeps:
+        return
+    lines = [f"{cs.CGRIGNORE_UNIGNORE_PREFIX}{path}" for path in sorted(new_keeps)]
+    listing = cs.SEPARATOR_COMMA_SPACE.join(lines)
+    lifted = sorted(new_keeps & cgrignore_excludes)
+    lifted_listing = cs.SEPARATOR_COMMA_SPACE.join(lifted)
+    prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS.format(lines=listing)
+    if lifted:
+        prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS_LIFTING.format(
+            lines=listing, lifted=lifted_listing
+        )
+    ignore_file = repo_path / CGRIGNORE_FILENAME
+    if not Confirm.ask(style(prompt, cs.Color.CYAN), default=True):
+        declined = cs.INTERACTIVE_MSG_KEEPS_THIS_RUN.format(
+            lines=listing, file=CGRIGNORE_FILENAME
+        )
+        if lifted:
+            declined = cs.INTERACTIVE_MSG_KEEPS_STILL_EXCLUDED.format(
+                lifted=lifted_listing, file=CGRIGNORE_FILENAME
+            )
+        app_context.console.print(style(declined, cs.Color.YELLOW))
+        return
+    try:
+        with repo_write_lock(repo_path):
+            _merge_keeps_into_ignore_file(ignore_file, lines, frozenset(lifted))
+    except OSError as e:
+        app_context.console.print(
+            style(
+                cs.INTERACTIVE_MSG_KEEPS_NOT_SAVED.format(
+                    file=CGRIGNORE_FILENAME, error=e
+                ),
+                cs.Color.YELLOW,
+            )
+        )
+        return
+    saved = cs.INTERACTIVE_MSG_KEEPS_SAVED.format(
+        lines=listing, file=CGRIGNORE_FILENAME
+    )
+    if lifted:
+        saved = cs.INTERACTIVE_MSG_KEEPS_SAVED_LIFTING.format(
+            lines=listing, lifted=lifted_listing, file=CGRIGNORE_FILENAME
+        )
+    app_context.console.print(style(saved, cs.Color.GREEN))
 
-    return frozenset(selected) | cgrignore.unignore
+
+def _merge_keeps_into_ignore_file(
+    ignore_file: Path, keep_lines: list[str], lifted: frozenset[str]
+) -> None:
+    """Add `keep_lines` to `ignore_file` and drop its `lifted` exclusions.
+
+    Called under the tree's write lock, and reads the file there rather than
+    reusing what the prompt saw: two setups saving at once each read the old
+    file before either replaced it, so the later save dropped the other's
+    keep (Greptile review of PR 2510).
+    """
+    existing = (
+        ignore_file.read_text(encoding=cs.ENCODING_UTF8)
+        if ignore_file.is_file()
+        else ""
+    )
+    original = existing.splitlines()
+    lines = [line for line in original if line.strip() not in lifted]
+    present = {line.strip() for line in lines}
+    added = [line for line in keep_lines if line not in present]
+    if added:
+        lines += [cs.CGRIGNORE_KEEPS_HEADER, *added]
+    if lines != original:
+        _replace_ignore_file(ignore_file, "".join(f"{line}\n" for line in lines))
+
+
+def _replace_ignore_file(ignore_file: Path, content: str) -> None:
+    """Replace `ignore_file` with `content`, or leave it as it was.
+
+    Written beside it and then moved over it: writing in place truncates
+    first, so a write that failed part-way (a full disk) would lose the
+    rules already there (review of PR 2510).
+    """
+    # Created exclusively under a fresh name: a fixed name could already be
+    # a link the repository ships, and writing through it would overwrite
+    # whatever it points at (review of PR 2510, CWE-377).
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f"{ignore_file.name}.", suffix=cs.TMP_EXTENSION, dir=ignore_file.parent
+    )
+    temp_file = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=cs.ENCODING_UTF8) as handle:
+            handle.write(content)
+        # mkstemp makes the file 0600; keep the mode a checkout file has.
+        mode = (
+            stat.S_IMODE(ignore_file.stat().st_mode)
+            if ignore_file.is_file()
+            else cs.CGRIGNORE_FILE_MODE
+        )
+        temp_file.chmod(mode)
+        os.replace(temp_file, ignore_file)
+    except OSError:
+        temp_file.unlink(missing_ok=True)
+        raise
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:

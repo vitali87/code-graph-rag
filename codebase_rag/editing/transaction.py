@@ -130,6 +130,18 @@ def _repo_lock(root: Path) -> Iterator[None]:
                 _unlock_file(handle)
 
 
+@contextmanager
+def repo_write_lock(root: Path) -> Iterator[None]:
+    """Hold the tree's write lock: one read-modify-write in `root` at a time.
+
+    The lock edit transactions take, for any other writer of a repository
+    file that must not lose a concurrent writer's change (`.cgrignore` keeps
+    saved by two interactive setups, review of PR 2510).
+    """
+    with _repo_lock(root):
+        yield
+
+
 def _decode(data: bytes | None) -> list[str]:
     if data is None:
         return []

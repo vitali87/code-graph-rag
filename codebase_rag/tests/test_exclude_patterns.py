@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -272,6 +273,13 @@ class TestGroupPathsByPattern:
 
 
 class TestPromptExcludeDirectories:
+    @pytest.fixture(autouse=True)
+    def _decline_saving(self) -> Iterator[None]:
+        # These tests are about what the prompt returns; saving the choice to
+        # .cgrignore is asked separately (#2448) and declined here.
+        with patch("codebase_rag.main.Confirm.ask", return_value=False):
+            yield
+
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")
     def test_empty_repo_returns_empty(
