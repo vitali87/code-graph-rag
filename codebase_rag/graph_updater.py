@@ -1035,13 +1035,31 @@ def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
     with os.scandir(dir_path_str) as it:
         for entry in it:
             name = entry.name
-            if name in cs.CGR_STATE_FILENAMES:
+            # The walk follows no link, file or directory (issue #2451), so
+            # neither may the listing compared against its cache: a file link
+            # here would read as a new file and refuse the fast path forever.
+            if name in cs.CGR_STATE_FILENAMES or _entry_flag(entry.is_symlink):
                 continue
-            is_dir_following = _entry_flag(entry.is_dir)
-            if is_dir_following and _entry_flag(entry.is_symlink):
-                continue
-            (dirs if is_dir_following else files).add(name)
+            (dirs if _entry_flag(entry.is_dir) else files).add(name)
     return files, dirs
+
+
+def _log_skipped_symlinks(repo_path: Path, rel_paths: list[str]) -> None:
+    # Each link at DEBUG and one count at INFO, so a module missing from the
+    # graph can be traced to the link that was not followed (issue #2451).
+    if not rel_paths:
+        return
+    root = repo_path.resolve()
+    for rel_path in sorted(rel_paths):
+        target = Path(os.path.realpath(repo_path / rel_path))
+        if target.is_relative_to(root):
+            inside = target.relative_to(root).as_posix()
+            logger.debug(ls.SYMLINK_SKIPPED_INSIDE.format(path=rel_path, target=inside))
+        else:
+            logger.debug(
+                ls.SYMLINK_SKIPPED_OUTSIDE.format(path=rel_path, target=target)
+            )
+    logger.info(ls.SYMLINKS_SKIPPED.format(count=len(rel_paths)))
 
 
 def _cached_file_unchanged(
@@ -5279,13 +5297,16 @@ class GraphUpdater:
 
         # One shared walk with the C++ module-qn map, so the two cannot drift
         # in ORDER as well as in membership (issues #1025, #1099).
+        skipped_links: list[str] = []
         for dirpath, fname, rel_path_str in walk_eligible_files(
             self.repo_path,
             self.exclude_paths,
             self.unignore_paths,
             on_dir=_record_dir_mtime,
+            on_symlink=skipped_links.append,
         ):
             eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
+        _log_skipped_symlinks(self.repo_path, skipped_links)
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
@@ -7625,7 +7646,7 @@ class GraphUpdater:
             (
                 cs.CYPHER_PROJECT_PACKAGE_PATHS,
                 project_scope,
-                cs.CYPHER_DELETE_PACKAGE,
+                cs.CYPHER_DELETE_PACKAGE_BY_QN,
                 "Package",
             ),
         ]
@@ -7739,7 +7760,13 @@ class GraphUpdater:
             if not owned:
                 return None
         key = self._stale_orphan_key(path, abs_path, label, packages_now)
-        return None if key is None else (path, key)
+        if key is None:
+            return None
+        # Package rows are read by qualified name, and one is deleted by it:
+        # two can share an absolute path (issue #2451).
+        if label == cs.NodeLabel.PACKAGE and isinstance(qn, str) and qn:
+            return path, qn
+        return path, key
 
     @staticmethod
     def _outside_repo_row(abs_path: ResultValue | None, repo_abs: str) -> bool:
@@ -7796,6 +7823,10 @@ class GraphUpdater:
                     # Module deletes are project-scoped; a sibling
                     # project's module can share the relative path.
                     self._delete_module_entities(orphan_path)
+                elif delete_query == cs.CYPHER_DELETE_PACKAGE_BY_QN:
+                    ingestor.execute_write(
+                        delete_query, {cs.KEY_QUALIFIED_NAME: orphan_key}
+                    )
                 else:
                     ingestor.execute_write(delete_query, {cs.KEY_PATH: orphan_key})
         return len(orphans)

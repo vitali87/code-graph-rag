@@ -1636,6 +1636,11 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cs.CYPHER_DELETE_PACKAGE_BY_QN:
+                qn = params.get(cs.KEY_QUALIFIED_NAME) if params else None
+                self._detach_delete(
+                    self._nodes_at_path(_PACKAGE_LABEL, qn, key=cs.KEY_QUALIFIED_NAME)
+                )
             case cs.CYPHER_DELETE_PACKAGE:
                 self._detach_delete(
                     self._nodes_at_path(_PACKAGE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
