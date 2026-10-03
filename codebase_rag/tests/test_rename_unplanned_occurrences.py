@@ -2062,3 +2062,166 @@ def test_commonjs_code_makes_the_file_a_module(tmp_path: Path, code: str) -> Non
     assert report.applied, report.message
     assert report.unplanned == ()
     assert (root / "web/page.js").read_text() == CLASSIC["web/page.js"]
+
+
+# --- review of PR #2797, seventh round --------------------------------------
+
+
+def _without_imports(store: _StatefulIngestor, *paths: str) -> QueryFn:
+    """The graph as an indexer that recorded no import statement in `paths`,
+    though it kept their calls."""
+
+    def fetch_all(query: str, params: PropertyParams | None) -> list[ResultRow]:
+        rows = store.fetch_all(query, None if params is None else dict(params))
+        if query == cq.CYPHER_GRAPH_IMPORTERS:
+            return [row for row in rows if row.get(cs.KEY_PATH) not in paths]
+        return rows
+
+    return fetch_all
+
+
+# An importer of the function, and where its import names it.
+UNRECORDED_IMPORTS = {
+    "python": (PY, PROJECT, HELPER, "pkg/app.py", (1, 21)),
+    "python-alias": (
+        {
+            **PY,
+            "pkg/app.py": (
+                "from pkg.util import helper as h\n\n\ndef run():\n    return h(1, 2)\n"
+            ),
+        },
+        PROJECT,
+        HELPER,
+        "pkg/app.py",
+        (1, 21),
+    ),
+    "javascript": (JS, PROJECT, f"{PROJECT}.src.util.helper", "src/app.js", (1, 9)),
+    "rust": (
+        {
+            "Cargo.toml": RUST["Cargo.toml"],
+            "src/lib.rs": "mod util;\nmod app;\n",
+            "src/util.rs": "pub fn helper() -> i32 {\n    1\n}\n",
+            "src/app.rs": (
+                "use crate::util::helper;\n\npub fn go() -> i32 {\n    helper()\n}\n"
+            ),
+        },
+        "mr",
+        "mr.src.util.helper",
+        "src/app.rs",
+        (1, 17),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(UNRECORDED_IMPORTS))
+def test_an_import_the_graph_did_not_record_is_held_to_the_plan(
+    tmp_path: Path, case: str
+) -> None:
+    # Review of PR #2797: with the IMPORTS row missing and the call known,
+    # renaming the definition and the call alone would leave the import
+    # naming a function that no longer exists. The import's own token is
+    # read like any other, so it is listed.
+    files, project, qn, importer, (line, col) = UNRECORDED_IMPORTS[case]
+    root = tmp_path / project
+    root.mkdir()
+    store, _updater = _indexed(root, files, project=project)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root, _without_imports(store, importer), project, qn, "assist", dry_run=True
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("reference", importer, line, col, "unplanned")]
+
+
+def test_allow_heuristic_rewrites_an_import_the_graph_did_not_record(
+    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, _updater = py_repo
+
+    report = rename(
+        root,
+        _without_imports(store, "pkg/app.py"),
+        PROJECT,
+        HELPER,
+        "assist",
+        allow_heuristic=True,
+    )
+
+    assert report.applied, report.message
+    assert (root / "pkg/app.py").read_text() == (
+        "from pkg.util import assist\n\n\ndef run():\n    return assist(1, 2)\n"
+    )
+
+
+# A classic script's own `exports`, `module` or `require`: a local of a
+# function, not the Node module's.
+LOCAL_COMMONJS_NAMES = {
+    "const-exports": (
+        "function make() {\n  const exports = {};\n  exports.x = 1;\n  return exports;\n}\n"
+    ),
+    "exports-parameter": "function prepare(exports) {\n  exports = {};\n}\n",
+    "require-parameter": "function load(require) {\n  return require('x');\n}\n",
+    "local-module": (
+        "function wrap() {\n  const module = { exports: {} };\n"
+        "  module.exports.x = 1;\n  return module;\n}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("local", sorted(LOCAL_COMMONJS_NAMES))
+def test_a_local_named_like_commonjs_leaves_the_script_classic(
+    tmp_path: Path, local: str
+) -> None:
+    # Review of PR #2797: `exports` declared or taken as a parameter in a
+    # function is that function's, so the file is still a classic script and
+    # its `helper` a global another script calls bare.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    lib = CLASSIC["web/lib.js"] + "\n" + LOCAL_COMMONJS_NAMES[local]
+    store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "web/page.js"),
+            PROJECT,
+            f"{PROJECT}.web.lib.helper",
+            "assist",
+            allow_heuristic=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "web/page.js", 2, 9, "receiver_unknown")]
+    assert _tree(root) == before
+
+
+FREE_COMMONJS_CODE = {
+    "require-in-a-function": "function load() {\n  return require('fs');\n}\n",
+    "module-exports-assigned": "module.exports = {};\n",
+}
+
+
+@pytest.mark.parametrize("code", sorted(FREE_COMMONJS_CODE))
+def test_free_commonjs_names_still_make_the_file_a_module(
+    tmp_path: Path, code: str
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    lib = CLASSIC["web/lib.js"] + "\n" + FREE_COMMONJS_CODE[code]
+    store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
+
+    report = rename(
+        root,
+        _missing(store, "web/page.js"),
+        PROJECT,
+        f"{PROJECT}.web.lib.helper",
+        "assist",
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()

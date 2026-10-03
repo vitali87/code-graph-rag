@@ -282,13 +282,38 @@ def _script_global(repo_root: Path, target: Target) -> bool:
 
 def _is_commonjs(root: Node, source: bytes) -> bool:
     """Whether a JS/TS file is a Node module by its code: a call of
-    `require`, or `module.exports` or `exports` read or assigned. A comment,
-    a string or a template literal that says so is prose, and has no
-    identifier to find."""
-    return any(
-        (token := _identifier_at(root, match.start(), match.end())) is not None
-        and _commonjs_use(token)
+    `require`, or `module.exports` or `exports` read or assigned, with the
+    name free (Node's own, not a function's parameter or local that shares
+    it). A comment, a string or a template literal that says so is prose,
+    and has no identifier to find."""
+    tokens = [
+        token
         for match in _COMMONJS_NAMES.finditer(source)
+        if (token := _identifier_at(root, match.start(), match.end())) is not None
+    ]
+    declared = [
+        (_text(token), span)
+        for token in tokens
+        if _declares_name(token) and (span := _binding_span(token, len(source)))
+    ]
+    return any(
+        _commonjs_use(token)
+        and not any(
+            name == _text(token) and start <= token.start_byte < end
+            for name, (start, end) in declared
+        )
+        for token in tokens
+    )
+
+
+def _declares_name(token: Node) -> bool:
+    # A declaration, parameter, catch binding or function name binds a name
+    # in JS; assigning to one that is not declared (`exports = {}`) does not.
+    parent = token.parent
+    return (
+        _binds(token)
+        and parent is not None
+        and cs.RENAME_ASSIGNMENT_MARKER not in parent.type
     )
 
 

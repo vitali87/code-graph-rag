@@ -83,8 +83,9 @@ family are read (the indexer's own walk, under `.cgrignore` and
   is the builtin. After a star import from another module it may still be
   the function, and is held to the plan as uncertain, as is a bare use of a
   top-level function of a classic JavaScript script (a file whose code has
-  no import or export and no `require()`, `module.exports` or `exports`; a
-  comment or a string saying so does not count), which every script on the
+  no import or export and no `require()`, `module.exports` or `exports`
+  of Node's own; a comment, a string, or a function's local or parameter of
+  that name does not count), which every script on the
   page shares. In Go, Java, C# and the
   like a same-package call needs no import, and every bare use counts;
 - for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),

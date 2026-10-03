@@ -167,6 +167,8 @@ RENAME_DEFINITION_FIELDS = frozenset(
 # An assignment or loop target: `helper = 3`, `for helper in xs`.
 RENAME_REBINDING_MARKERS = ("assignment", "for", "declaration", "range")
 RENAME_REBINDING_FIELDS = frozenset({FIELD_LEFT, FIELD_PATTERN})
+# The assignment among them: a JS name it targets is not declared by it.
+RENAME_ASSIGNMENT_MARKER = "assignment"
 RENAME_PARAMETER_MARKER = "parameter"
 RENAME_AS_TARGET = "as_pattern_target"
 # A name that labels an argument or a key instead of naming a value.
