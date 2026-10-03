@@ -73,8 +73,10 @@ KEY_UNPLANNED = "unplanned"
 
 class RenameTargetKind(StrEnum):
     """Which occurrences of a renamed name the cross-check holds against the
-    plan (#2564): a function's every use, a method's calls and accesses
-    through its own receiver, a type's every occurrence."""
+    plan (#2564): a function's bare uses and those through its module, a
+    method's uses through its class, its own object or a variable of its
+    class (and, uncertain, other calls in files naming the class), a type's
+    every occurrence."""
 
     FUNCTION = "function"
     METHOD = "method"

@@ -15,11 +15,20 @@ parameter, an assignment or loop target, a definition), a bare use such a
 binding shadows, and a token that labels an argument or a key. Whatever the
 markers below do not recognise counts, so an unfamiliar grammar refuses a
 rename rather than lets one break the build.
+
+A call through an object is the exception, since every type may have a
+method of the name and `d.get(x)` on a dict is not `Cache.get`. A function
+is reached through its module only, and a method through an object only in
+a file that names its class. Such a method call is certain only where the
+source shows the object is of that class (`self` in its body, the class
+itself, a variable declared or built as one); the rest is held to the plan
+but never rewritten on a guess.
 """
 
 import re
 from collections.abc import Iterator
 from enum import Enum, auto
+from functools import cached_property
 from pathlib import Path
 from typing import NamedTuple
 
@@ -36,13 +45,49 @@ _WORD = rb"(?<![\w])%s(?![\w])"
 _CALL_OPEN = re.compile(rb"\s*" + re.escape(cs.CHAR_PAREN_OPEN.encode()))
 _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
-# Where `self.name` without a call still names the method. Not Rust, Java or
-# C++: there a field and a method share a name routinely (`fn name(&self)`
-# returning `self.name`), and `self.name` is the field.
+_TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
+_NAME = re.compile(rb"\w+")
+# How a method body reaches its own object: `self.name`, `this.name`,
+# `Self::name`, `super().name`.
 _SELF_RECEIVERS: dict[cs.SupportedLanguage, frozenset[str]] = {
-    cs.SupportedLanguage.PYTHON: frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS}),
-    **dict.fromkeys(cs.JS_TS_LANGUAGES, frozenset({cs.TS_THIS})),
+    cs.SupportedLanguage.PYTHON: frozenset(
+        {cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS, cs.KEYWORD_SUPER}
+    ),
+    **dict.fromkeys(cs.JS_TS_LANGUAGES, frozenset({cs.TS_THIS, cs.TS_SUPER})),
+    cs.SupportedLanguage.RUST: frozenset({cs.TS_RS_SELF, cs.RS_SELF_TYPE}),
+    cs.SupportedLanguage.JAVA: frozenset({cs.TS_THIS, cs.TS_SUPER}),
+    cs.SupportedLanguage.SCALA: frozenset({cs.TS_THIS, cs.TS_SUPER}),
+    cs.SupportedLanguage.DART: frozenset({cs.TS_THIS, cs.TS_SUPER}),
+    cs.SupportedLanguage.CPP: frozenset({cs.TS_THIS}),
+    cs.SupportedLanguage.CSHARP: frozenset({cs.TS_THIS, cs.TS_CSHARP_BASE}),
+    cs.SupportedLanguage.PHP: cs.RENAME_PHP_RECEIVERS,
 }
+# Where `obj.name` without a call still names a method: a method is an
+# attribute like any other. In Rust, Java or C++ a field and a method share
+# a name routinely (`fn name(&self)` returning `self.name`), and the read
+# is the field.
+_METHOD_READ_LANGUAGES = frozenset({cs.SupportedLanguage.PYTHON, *cs.JS_TS_LANGUAGES})
+# Where a bare call reaches a method, through the implicit `this` of the
+# class it is written in or a static import of it. Elsewhere a bare call is
+# a function's.
+_IMPLICIT_RECEIVER_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.SCALA,
+        cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.CSHARP,
+        cs.SupportedLanguage.DART,
+    }
+)
+# The field of a construction that holds the class: `Parse(x)`,
+# `new Parse()` (JS, Java), `Parse { .. }`.
+_CONSTRUCTOR_FIELDS = (
+    cs.FIELD_FUNCTION,
+    cs.FIELD_CONSTRUCTOR,
+    cs.FIELD_TYPE,
+    cs.FIELD_NAME,
+)
+_IMPORTED_FIELDS = (cs.FIELD_NAME, cs.TS_RS_FIELD_PATH)
 
 
 class Target(NamedTuple):
@@ -63,6 +108,11 @@ class Occurrence(NamedTuple):
     # Neither after a `.` nor after a `::`: what a file-wide import of a
     # same-named symbol rebinds.
     bare: bool
+    # False for a method call through an object the source does not show to
+    # be of the method's class (`d.get(x)` in a file that names `Cache`): it
+    # may be the method, so it is held to the plan, but rewriting it would
+    # be a guess even `allow_heuristic` does not take.
+    certain: bool = True
 
 
 class _Access(Enum):
@@ -79,12 +129,15 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
     a vendored copy the index leaves out does not count. What counts by
     kind:
 
-    - a function: every use, called or not (`callback = helper`,
-      `map(helper, xs)`), but an attribute (`obj.helper`) only when the
-      object is the defining module;
-    - a method: a call, a scoped name (`Type::name`, a method reference),
-      or an access through its own receiver (`self.name`, `Class.name`);
-      a bare `name` there is a local or a module-level function;
+    - a function: every bare use, called or not (`callback = helper`,
+      `map(helper, xs)`), and a qualified one only through its module
+      (`util.helper`, `util::helper`, an alias of `util`);
+    - a method: a use through the class (`Greeter.greet`,
+      `Greeter::greet`), through its own object in its class's body
+      (`self.name`, `this.name()`), or through a variable declared or built
+      as the class, all certain; a call through any other object, or a bare
+      call where the language has an implicit `this`, only in a file that
+      names the class, and uncertain;
     - a type: every occurrence.
     """
     family = language_family(target.language)
@@ -115,28 +168,159 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
             if (node := _identifier_at(root, match.start(), match.end())) is not None
         ]
         found.extend(
-            _file_occurrences(tokens, source, rel_path, language, target, modules)
+            _file_occurrences(
+                _File(root, source, rel_path, language, target, modules, tokens)
+            )
         )
     return found
 
 
-def _file_occurrences(
-    tokens: list[Node],
-    source: bytes,
-    rel_path: str,
-    language: cs.SupportedLanguage,
-    target: Target,
-    modules: frozenset[str],
-) -> Iterator[Occurrence]:
-    bindings = [token for token in tokens if _binds(token)]
+class _File:
+    """One source file as the cross-check reads it. What a token's verdict
+    needs beyond the token itself is worked out on first use, once."""
+
+    def __init__(
+        self,
+        root: Node,
+        source: bytes,
+        path: str,
+        language: cs.SupportedLanguage,
+        target: Target,
+        modules: frozenset[str],
+        tokens: list[Node],
+    ) -> None:
+        self.root = root
+        self.source = source
+        self.path = path
+        self.language = language
+        self.target = target
+        self.modules = modules
+        self.tokens = tokens
+        self._typed: dict[tuple[int, int, bytes], bool | None] = {}
+
+    def _names(self, names: frozenset[str]) -> Iterator[Node]:
+        """The identifier tokens in code spelling one of `names`."""
+        if not names:
+            return
+        words = b"|".join(re.escape(name.encode()) for name in sorted(names))
+        pattern = re.compile(_WORD % (b"(?:" + words + b")"))
+        for match in pattern.finditer(self.source):
+            node = _identifier_at(self.root, match.start(), match.end())
+            if node is not None:
+                yield node
+
+    @cached_property
+    def names_owner(self) -> bool:
+        """Whether the file names the method's class in code: defines it,
+        imports it, or declares something of it."""
+        return next(self._names(self.target.owners), None) is not None
+
+    @cached_property
+    def module_aliases(self) -> frozenset[str]:
+        """What the file imports the defining module as: `u` for
+        `import pkg.util as u` or `use crate::util as u`."""
+        aliases: set[str] = set()
+        for node in self._names(self.modules):
+            clause = node.parent
+            for _ in range(cs.RENAME_DECLARATION_DEPTH):
+                if clause is None:
+                    break
+                alias = clause.child_by_field_name(cs.FIELD_ALIAS)
+                if alias is not None:
+                    imported = next(
+                        (
+                            child
+                            for field in _IMPORTED_FIELDS
+                            if (child := clause.child_by_field_name(field)) is not None
+                        ),
+                        None,
+                    )
+                    # The module must be the last name imported:
+                    # `import pkg.util.sub as u` binds `sub`.
+                    if imported is not None and imported.end_byte == node.end_byte:
+                        aliases.add(_text(alias))
+                    break
+                clause = clause.parent
+        return frozenset(aliases)
+
+    @cached_property
+    def imports_method(self) -> bool:
+        """Whether an import names the method through its class
+        (`import static a.Greeter.greet;`), so a bare call reaches it."""
+        return any(
+            _access(self.source, token.start_byte) is not _Access.BARE
+            and _receiver(token) in self.target.owners
+            and _within(token, cs.RENAME_IMPORT_MARKER)
+            for token in self.tokens
+        )
+
+    def in_owner_class(self, token: Node) -> bool:
+        """Whether the token is in the body of a class whose header names
+        the method's class: the class itself, or one that extends it."""
+        node = token.parent
+        while node is not None:
+            body = node.child_by_field_name(cs.FIELD_BODY)
+            if (
+                body is not None
+                and body.start_byte <= token.start_byte
+                and any(marker in node.type for marker in cs.RENAME_TYPE_SCOPE_MARKERS)
+            ):
+                header = self.source[node.start_byte : body.start_byte]
+                # A type argument is not what the class is or extends:
+                # `impl From<Parse> for Other`, `class A(Generic[Parse])`.
+                while (bare := _TYPE_ARGUMENTS.sub(b"", header)) != header:
+                    header = bare
+                return any(
+                    word.decode(cs.ENCODING_UTF8, errors="replace")
+                    in self.target.owners
+                    for word in _NAME.findall(header)
+                )
+            node = node.parent
+        return False
+
+    def typed_as_owner(self, receiver: Node) -> bool:
+        """Whether every binding of a receiver variable, in the nearest
+        scope that binds it, declares or builds it as the method's class:
+        `parse: &mut Parse`, `Greeter g`, `let parse = Parse::new(frame)?`."""
+        name = receiver.text
+        if receiver.type != cs.TS_IDENTIFIER or not name:
+            return False
+        scope = receiver.parent
+        while scope is not None:
+            if scope.parent is None or _is_scope(scope):
+                key = (scope.start_byte, scope.end_byte, name)
+                if key not in self._typed:
+                    self._typed[key] = self._bindings_declare_owner(scope, name)
+                verdict = self._typed[key]
+                if verdict is not None:
+                    return verdict
+            scope = scope.parent
+        return False
+
+    def _bindings_declare_owner(self, scope: Node, name: bytes) -> bool | None:
+        pattern = re.compile(_WORD % re.escape(name))
+        bindings = [
+            node
+            for match in pattern.finditer(self.source, scope.start_byte, scope.end_byte)
+            if (node := _identifier_at(self.root, match.start(), match.end()))
+            is not None
+            and _binds(node)
+        ]
+        if not bindings:
+            return None
+        return all(_declares(binding, self.target.owners) for binding in bindings)
+
+
+def _file_occurrences(file: _File) -> Iterator[Occurrence]:
+    source, target = file.source, file.target
+    bindings = [token for token in file.tokens if _binds(token)]
     bound = {(token.start_byte, token.end_byte) for token in bindings}
     shadows = [
         span
         for binding in bindings
-        if (span := _shadow(binding, rel_path, target, len(source))) is not None
+        if (span := _shadow(binding, file.path, target, len(source))) is not None
     ]
-    receivers = _SELF_RECEIVERS.get(language, frozenset()) | target.owners
-    for token in tokens:
+    for token in file.tokens:
         if (token.start_byte, token.end_byte) in bound or _labels(token):
             continue
         access = _access(source, token.start_byte)
@@ -147,27 +331,58 @@ def _file_occurrences(
         called = _CALL_OPEN.match(source, token.end_byte) is not None
         match target.kind:
             case cs.RenameTargetKind.TYPE:
-                counts = True
+                certain: bool | None = True
             case cs.RenameTargetKind.FUNCTION:
-                counts = (
-                    access is not _Access.MEMBER
-                    or called
-                    or _receiver(token) in modules
-                )
+                certain = _function_use(file, token, access)
             case _:
-                counts = (
-                    called
-                    or access is _Access.SCOPED
-                    or (access is _Access.MEMBER and _receiver(token) in receivers)
-                )
-        if counts:
+                certain = _method_use(file, token, access, called)
+        if certain is not None:
             yield Occurrence(
-                rel_path,
+                file.path,
                 token.start_point[0] + 1,
                 token.start_point[1],
                 called,
                 access is _Access.BARE,
+                certain,
             )
+
+
+def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
+    """A function by its bare name, or through its module (`util.helper`,
+    `util::helper`, a name the file imports the module as). Through anything
+    else it is another object's method: `d.get(x)`, `subprocess.run(...)`."""
+    if access is _Access.BARE:
+        return True
+    receiver = _receiver(token)
+    if receiver in file.modules or receiver in file.module_aliases:
+        return True
+    return None
+
+
+def _method_use(file: _File, token: Node, access: _Access, called: bool) -> bool | None:
+    """True where the source shows the token names the method, False where
+    it only may (a call through an object of unknown type, in a file that
+    names the class), None where it does not."""
+    if access is _Access.BARE:
+        if not called or file.language not in _IMPLICIT_RECEIVER_LANGUAGES:
+            return None
+        if file.in_owner_class(token) or file.imports_method:
+            return True
+        return False if file.names_owner else None
+    receiver = _receiver_node(token)
+    name = None if receiver is None else _last_name(receiver)
+    if name in file.target.owners:
+        return True
+    invoked = called or access is _Access.SCOPED
+    if invoked or file.language in _METHOD_READ_LANGUAGES:
+        if name in _SELF_RECEIVERS.get(file.language, frozenset()):
+            if file.in_owner_class(token):
+                return True
+        elif receiver is not None and file.typed_as_owner(receiver):
+            return True
+    if not invoked:
+        return None
+    return False if file.names_owner else None
 
 
 def _module_names(path: str) -> frozenset[str]:
@@ -220,7 +435,9 @@ def _binds(token: Node) -> bool:
 
 def _labels(token: Node) -> bool:
     """Whether the token names an argument, key or field, not a value:
-    `f(helper=1)`, `{helper: 1}`, `Point { helper: 1 }`."""
+    `f(helper=1)`, `{helper: 1}` in JS, `Point { helper: 1 }`. A key that
+    parses as a plain identifier is evaluated (`{MyError: on_error}` in
+    Python), and so is JS shorthand (`{helper}`)."""
     parent = token.parent
     if parent is None:
         return False
@@ -229,7 +446,11 @@ def _labels(token: Node) -> bool:
     return (
         kind in cs.RENAME_LABEL_TYPES
         or (field == cs.FIELD_NAME and cs.RENAME_KEYWORD_ARGUMENT_MARKER in kind)
-        or (field == cs.FIELD_KEY and kind == cs.RENAME_PAIR)
+        or (
+            field == cs.FIELD_KEY
+            and kind == cs.RENAME_PAIR
+            and token.type != cs.TS_IDENTIFIER
+        )
         or (field == cs.FIELD_FIELD and cs.RENAME_INITIALIZER_MARKER in kind)
     )
 
@@ -280,16 +501,98 @@ def _access(source: bytes, start: int) -> _Access:
     return _Access.MEMBER if before.endswith(_MEMBER) else _Access.BARE
 
 
-def _receiver(token: Node) -> str | None:
-    """The last name of the object a member token is read from: `util` in
-    `pkg.util.helper`, `self` in `self.helper`."""
+def _receiver_node(token: Node) -> Node | None:
+    """The object a member or scoped token is read from."""
     parent = token.parent
     if parent is None or not parent.named_children:
         return None
     owner = parent.named_children[0]
-    if owner == token or owner.text is None:
+    return None if owner == token else owner
+
+
+def _receiver(token: Node) -> str | None:
+    node = _receiver_node(token)
+    return None if node is None else _last_name(node)
+
+
+def _last_name(node: Node) -> str:
+    """The last name of an object: `util` in `pkg.util`, `Greeter` in
+    `a::Greeter`, `super` in `super()`."""
+    text = _text(node).removesuffix(cs.EMPTY_PARENS)
+    for separator in (*cs.RENAME_MEMBER_ACCESS, cs.SEPARATOR_DOUBLE_COLON):
+        text = text.rpartition(separator)[2]
+    return text.strip()
+
+
+def _text(node: Node) -> str:
+    return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _within(node: Node, marker: str) -> bool:
+    ancestor = node.parent
+    while ancestor is not None:
+        if marker in ancestor.type:
+            return True
+        ancestor = ancestor.parent
+    return False
+
+
+def _declares(binding: Node, owners: frozenset[str]) -> bool:
+    """Whether a binding's declaration gives it one of `owners` as its type
+    or builds one as its value. A destructured name is a part of the value,
+    not the value, so it never qualifies."""
+    declared: Node | None = None
+    value: Node | None = None
+    node = binding
+    for _ in range(cs.RENAME_DECLARATION_DEPTH):
+        parent = node.parent
+        if parent is None or _is_scope(parent):
+            break
+        if parent.type.endswith(cs.RENAME_WRAPPER_SUFFIXES):
+            return False
+        declared = declared or _other_field(parent, node, cs.FIELD_TYPE)
+        value = (
+            value
+            or _other_field(parent, node, cs.FIELD_VALUE)
+            or _other_field(parent, node, cs.FIELD_RIGHT)
+        )
+        node = parent
+    return (declared is not None and _type_name(declared) in owners) or (
+        value is not None and _constructed(value) in owners
+    )
+
+
+def _other_field(parent: Node, child: Node, field: str) -> Node | None:
+    found = parent.child_by_field_name(field)
+    return None if found is None or found == child else found
+
+
+def _type_name(node: Node) -> str:
+    # A reference or pointer nests the class under its own `type`; a
+    # generic's is the container (`Box<Parse>` is a Box).
+    while (inner := node.child_by_field_name(cs.FIELD_TYPE)) is not None:
+        node = inner
+    return _last_segment(_text(node).strip(cs.RENAME_TYPE_DECORATION))
+
+
+def _constructed(node: Node) -> str | None:
+    """The class an expression builds an object of: `Parse` for
+    `Parse(x)`, `new Parse()`, `Parse { .. }` or `Parse::new(x)?`."""
+    while node.type in cs.RENAME_TRANSPARENT_EXPRESSIONS and node.named_children:
+        node = node.named_children[0]
+    if not any(marker in node.type for marker in cs.RENAME_CONSTRUCTION_MARKERS):
         return None
-    text = owner.text.decode(cs.ENCODING_UTF8, errors="replace")
-    for separator in cs.RENAME_MEMBER_ACCESS:
+    for field in _CONSTRUCTOR_FIELDS:
+        callee = node.child_by_field_name(field)
+        if callee is not None:
+            text = _text(callee)
+            for suffix in cs.RENAME_CONSTRUCTOR_SUFFIXES:
+                text = text.removesuffix(suffix)
+            return _last_segment(text)
+    return None
+
+
+def _last_segment(text: str) -> str:
+    for separator in cs.RENAME_TYPE_SEPARATORS:
         text = text.rpartition(separator)[2]
     return text.strip()

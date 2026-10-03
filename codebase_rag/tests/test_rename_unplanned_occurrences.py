@@ -412,6 +412,144 @@ def test_a_method_read_through_self_is_held_to_the_plan(tmp_path: Path) -> None:
     ]
 
 
+CACHE = {
+    "pkg/__init__.py": "",
+    "pkg/cache.py": "class Cache:\n    def get(self, key):\n        return key\n",
+    "pkg/use.py": (
+        "from pkg.cache import Cache\n"
+        "\n"
+        "\n"
+        "def read(d, key):\n"
+        "    c = Cache()\n"
+        "    return c.get(key), d.get(key)\n"
+    ),
+}
+CACHE_GET = f"{PROJECT}.pkg.cache.Cache.get"
+
+
+def test_a_call_through_an_unknown_object_refuses_even_with_allow_heuristic(
+    tmp_path: Path,
+) -> None:
+    # Review of PR #2797: `d.get(key)` may be a dict's, and rewriting it as a
+    # guessed site broke code the postcondition cannot see. `c` is built as
+    # a Cache, so `c.get` is certain; `d` is unknown, so nothing is written.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, CACHE)
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/use.py"),
+            PROJECT,
+            CACHE_GET,
+            "fetch",
+            allow_heuristic=True,
+            reingest=updater.reingest,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [
+        ("call", "pkg/use.py", 6, 13, "unplanned"),
+        ("call", "pkg/use.py", 6, 25, "receiver_unknown"),
+    ]
+    assert "check them by hand" in str(refused.value)
+    assert _tree(root) == before
+
+
+def test_without_allow_heuristic_the_refusal_says_which_calls_it_cannot_take(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, CACHE)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/use.py"),
+            PROJECT,
+            CACHE_GET,
+            "fetch",
+            dry_run=True,
+        )
+
+    message = str(refused.value)
+    assert "2 occurrence(s) of get" in message
+    assert "1 of them are calls through an object" in message
+
+
+def test_allow_heuristic_rewrites_a_call_on_a_receiver_declared_as_the_class(
+    tmp_path: Path,
+) -> None:
+    # The issue's own shape: `parse: &mut Parse` shows what `parse` is, so
+    # the missed call is rewritten with the rest.
+    root = tmp_path / "mr"
+    root.mkdir()
+    store, updater = _indexed(root, RUST, project="mr")
+
+    report = rename(
+        root,
+        _missing(store, "src/cmd/get.rs"),
+        "mr",
+        NEXT_STRING,
+        "next_str",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.resolution) for s in report.unplanned] == [
+        ("src/cmd/get.rs", 5, "unplanned")
+    ]
+    assert "let key = parse.next_str()?;" in (root / "src/cmd/get.rs").read_text()
+    # The comment is prose, and stays as written.
+    assert "// parse.next_string() is the key" in (root / "src/cmd/get.rs").read_text()
+
+
+HANDLERS = (
+    "from pkg.errors import MyError\n"
+    "\n"
+    "\n"
+    "def on_error(e):\n"
+    "    return 0\n"
+    "\n"
+    "\n"
+    "HANDLERS = {MyError: on_error}\n"
+)
+
+
+def test_a_class_used_as_a_python_dict_key_is_held_to_the_plan(
+    tmp_path: Path,
+) -> None:
+    # Review of PR #2797: a Python dict key is evaluated, so leaving it
+    # under the old name is a NameError when the module loads.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        "pkg/__init__.py": "",
+        "pkg/errors.py": ERRORS["pkg/errors.py"],
+        "pkg/handlers.py": HANDLERS,
+    }
+    store, _updater = _indexed(root, files)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/handlers.py"),
+            PROJECT,
+            f"{PROJECT}.pkg.errors.MyError",
+            "Oops",
+            dry_run=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("reference", "pkg/handlers.py", 8, 12, "unplanned")]
+
+
 def test_the_refusal_names_ten_locations_and_counts_the_rest(tmp_path: Path) -> None:
     root = tmp_path / PROJECT
     root.mkdir()
@@ -758,3 +896,140 @@ def test_a_guessed_site_alone_still_refuses_with_the_heuristic_message(
     assert refused.value.unplanned == []
     assert [(s.path, s.line) for s in refused.value.ambiguous] == [("pkg/late.py", 5)]
     assert "heuristically" in str(refused.value)
+
+
+FUNCTIONS = {
+    "pkg/__init__.py": "",
+    "pkg/util.py": "def get(a):\n    return a\n\n\ndef run(a):\n    return a\n",
+    "pkg/app.py": (
+        "from pkg.util import get, run\n\n\ndef go():\n    return get(1), run(2)\n"
+    ),
+    "pkg/client.py": (
+        "import subprocess\n"
+        "\n"
+        "\n"
+        "def fetch(d, key):\n"
+        '    subprocess.run(["true"])\n'
+        "    return d.get(key)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+@pytest.mark.parametrize(("name", "new_name"), [("get", "fetch"), ("run", "execute")])
+def test_other_objects_methods_are_not_a_functions_occurrences(
+    tmp_path: Path, name: str, new_name: str, allow_heuristic: bool
+) -> None:
+    # Review of PR #2797: a project function `get` or `run` is reached
+    # through its module only; `d.get(key)` and `subprocess.run(...)` are
+    # not it, and must neither refuse the rename nor be rewritten by it.
+    # (The indexer links them to the function by name as a guess of its
+    # own; hidden here, they are what the cross-check alone sees.)
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, FUNCTIONS)
+
+    report = rename(
+        root,
+        _missing(store, "pkg/client.py"),
+        PROJECT,
+        f"{PROJECT}.pkg.util.{name}",
+        new_name,
+        allow_heuristic=allow_heuristic,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/client.py").read_text() == FUNCTIONS["pkg/client.py"]
+    assert f"{new_name}(" in (root / "pkg/app.py").read_text()
+
+
+def test_a_function_reached_through_a_module_alias_is_held_to_the_plan(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    aliased = "import pkg.util as u\n\n\ndef go():\n    return u.helper(1, 2)\n"
+    store, _updater = _indexed(root, {**PY, "pkg/aliased.py": aliased})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/aliased.py"),
+            PROJECT,
+            HELPER,
+            "assist",
+            dry_run=True,
+        )
+
+    assert [(s.kind, s.path, s.line, s.col) for s in refused.value.unplanned] == [
+        ("call", "pkg/aliased.py", 5, 13)
+    ]
+
+
+UNRELATED = (
+    "class Store(dict):\n"
+    "    def first(self, key):\n"
+    "        return self.get(key)\n"
+    "\n"
+    "\n"
+    "def read(d, key):\n"
+    "    return d.get(key)\n"
+)
+
+
+def test_a_file_that_never_names_the_class_is_not_held_to_its_method(
+    tmp_path: Path,
+) -> None:
+    # Neither `self.get` in a class that does not extend Cache nor `d.get`
+    # can be Cache.get in a file that never names Cache.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {**CACHE, "pkg/use.py": "", "pkg/store.py": UNRELATED}
+    store, _updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _missing(store, "pkg/store.py"),
+        PROJECT,
+        CACHE_GET,
+        "fetch",
+        allow_heuristic=True,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/store.py").read_text() == UNRELATED
+
+
+JS = {
+    "package.json": '{"name": "web", "type": "module"}\n',
+    "src/util.js": "export function helper(a, b) {\n  return a + b;\n}\n",
+    "src/app.js": (
+        "import { helper } from './util.js';\n"
+        "\n"
+        "export const options = { helper: 1 };\n"
+        "export const table = { helper };\n"
+    ),
+}
+
+
+def test_a_js_key_is_a_label_and_shorthand_is_a_use(tmp_path: Path) -> None:
+    # `{ helper: 1 }` names a property; `{ helper }` reads the function.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, JS)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "src/app.js"),
+            PROJECT,
+            f"{PROJECT}.src.util.helper",
+            "assist",
+            dry_run=True,
+        )
+
+    assert [(s.kind, s.path, s.line, s.col) for s in refused.value.unplanned] == [
+        ("reference", "src/app.js", 4, 23)
+    ]

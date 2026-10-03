@@ -75,6 +75,9 @@ _SITELESS = "siteless"
 _CHAIN = "chain"
 # An occurrence of the name in code that no graph site accounts for (#2564).
 _UNPLANNED = "unplanned"
+# One that may not even be the symbol: a method call through an object the
+# source does not show to be of its class. `allow_heuristic` never rewrites it.
+_RECEIVER_UNKNOWN = "receiver_unknown"
 # A file and the (line, col) start and exclusive end of a statement in it.
 _Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
@@ -742,9 +745,22 @@ class Renamer:
         unplanned = self._unplanned(
             sites, [site for site, _module in imports], hierarchy, old_name, label
         )
+        unknown = [s for s in unplanned if s.resolution == _RECEIVER_UNKNOWN]
+        if unknown and allow_heuristic:
+            raise RenameRefused(
+                cs.RENAME_RECEIVER_UNKNOWN.format(
+                    qn=qn,
+                    count=len(unknown),
+                    name=old_name,
+                    locations=_locations(unknown),
+                ),
+                ambiguous,
+                unlocatable,
+                unplanned,
+            )
         if (ambiguous or unplanned) and not allow_heuristic:
             raise RenameRefused(
-                _refusal_message(qn, old_name, ambiguous, unplanned),
+                _refusal_message(qn, old_name, ambiguous, unplanned, len(unknown)),
                 ambiguous,
                 unlocatable,
                 unplanned,
@@ -824,7 +840,7 @@ class Renamer:
                 occurrence.line,
                 occurrence.col,
                 base_module_qn(Path(occurrence.path), self.project),
-                _UNPLANNED,
+                _UNPLANNED if occurrence.certain else _RECEIVER_UNKNOWN,
             )
             for occurrence in leftover
             if occurrence.path not in foreign
@@ -1440,22 +1456,32 @@ def _inside(occurrence: Occurrence, spans: list[_Span]) -> bool:
 
 
 def _refusal_message(
-    qn: str, old_name: str, ambiguous: list[RenameSite], unplanned: list[RenameSite]
+    qn: str,
+    old_name: str,
+    ambiguous: list[RenameSite],
+    unplanned: list[RenameSite],
+    unknown: int,
 ) -> str:
     if not unplanned:
         return cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous))
-    locations = list(dict.fromkeys(f"{s.path}:{s.line}" for s in unplanned))
+    message = cs.RENAME_UNPLANNED.format(
+        qn=qn, count=len(unplanned), name=old_name, locations=_locations(unplanned)
+    )
+    if unknown:
+        message += cs.RENAME_UNPLANNED_RECEIVER_UNKNOWN.format(count=unknown)
+    if ambiguous:
+        message += cs.RENAME_UNPLANNED_ALSO_GUESSED.format(count=len(ambiguous))
+    return message
+
+
+def _locations(sites: list[RenameSite]) -> str:
+    locations = list(dict.fromkeys(f"{s.path}:{s.line}" for s in sites))
     shown = cs.SEPARATOR_COMMA_SPACE.join(locations[: cs.RENAME_UNPLANNED_SHOWN])
     if len(locations) > cs.RENAME_UNPLANNED_SHOWN:
         shown = cs.RENAME_UNPLANNED_MORE.format(
             shown=shown, more=len(locations) - cs.RENAME_UNPLANNED_SHOWN
         )
-    message = cs.RENAME_UNPLANNED.format(
-        qn=qn, count=len(unplanned), name=old_name, locations=shown
-    )
-    if ambiguous:
-        message += cs.RENAME_UNPLANNED_ALSO_GUESSED.format(count=len(ambiguous))
-    return message
+    return shown
 
 
 def rename(

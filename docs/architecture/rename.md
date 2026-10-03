@@ -70,29 +70,45 @@ anything is written, the project's sources in the definition's language
 family are read (the indexer's own walk, under `.cgrignore` and
 `.gitignore`) for identifier tokens spelling the old name:
 
-- for a function, every use, called or not (`callback = helper`,
-  `map(helper, xs)`, `return helper`), but an attribute (`obj.helper`)
-  only when the object is the defining module (`util.helper`);
-- for a method, a call (`name(`, `.name(`), a scoped name (`Type::name`, a
-  method reference), or a read through its own receiver (`self.name` and
-  `cls.name` in Python, `this.name` in JavaScript and TypeScript,
-  `Class.name`); a bare `name` there is a local or a module-level function;
+- for a function, every bare use, called or not (`callback = helper`,
+  `map(helper, xs)`, `return helper`), and a qualified one only through its
+  module (`util.helper`, `util::helper`, or `u.helper` after
+  `import pkg.util as u`): `d.get(key)` and `subprocess.run(...)` are other
+  objects' methods, whatever the function is called;
+- for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),
+  through its own object in the body of its class or of one whose header
+  names it (`self.name`, `this.name()`, `Self::name`, `super().name`), or
+  through a variable every binding of which declares or builds the class
+  (`parse: &mut Parse`, `Greeter g`, `let parse = Parse::new(frame)?`).
+  These are certain. A call through any other object, or a bare call in a
+  language with an implicit `this` (Java, C#, C++, Scala, Dart) outside the
+  class and without a static import of the method, counts only in a file
+  that names the class, and is uncertain: `d.get(key)` may be a dict's. A
+  read without a call counts only in Python, JavaScript and TypeScript,
+  where a method is an attribute; in Rust, Java or C++ `self.name` is the
+  field of the name;
 - for anything else (a class, an interface, a type), every occurrence.
 
 Comments and strings are prose and never count, and neither does a token
 that binds the name instead of using it (a parameter, an assignment or loop
 target, a definition), a bare use such a binding shadows in its function,
-or a keyword argument's name (`f(helper=1)`). An occurrence counts as
-planned when a site of the plan covers it, or the import statement of one
-(its own span, not its line: `from pkg.util import helper; helper(1)` still
-holds the call), or when the graph gives it to another symbol of the same
-name: that symbol's definition, sites and import statements, and every bare
-use in a file importing it under the name. Files whose sites the graph gives
-to a project whose name extends this one are left out, as the plan leaves
-them.
+a keyword argument's name (`f(helper=1)`), or a key that labels a property
+(`{ helper: 1 }` in JavaScript; a Python dict key, `{MyError: on_error}`, is
+evaluated and counts, as does JavaScript shorthand, `{ helper }`). An
+occurrence counts as planned when a site of the plan covers it, or the
+import statement of one (its own span, not its line:
+`from pkg.util import helper; helper(1)` still holds the call), or when the
+graph gives it to another symbol of the same name: that symbol's
+definition, sites and import statements, and every bare use in a file
+importing it under the name. Files whose sites the graph gives to a project
+whose name extends this one are left out, as the plan leaves them.
 Whatever is left is `unplanned`: the rename refuses and lists each one, the
 way it refuses a guessed site. `--allow-heuristic` (`allow_heuristic: true`)
-rewrites them as guessed sites, and the report lists them in `unplanned`.
+rewrites the certain ones as guessed sites, and the report lists them in
+`unplanned`. An uncertain one is listed with resolution `receiver_unknown`
+and refuses the rename even under `--allow-heuristic`: rewriting it could
+rename another type's method, which no postcondition would notice, so it is
+left to be checked by hand.
 
 ## Postcondition contract
 

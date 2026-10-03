@@ -187,6 +187,42 @@ RENAME_SCOPE_MARKERS = (
 RENAME_CLASS_MARKER = "class"
 RENAME_NOT_SCOPE_MARKERS = ("call", "invocation", "type", "signature")
 RENAME_MEMBER_ACCESS = (".", "->")
+# A node whose body holds methods, so `self`, `this` and a bare call inside
+# it reach the methods of the class its header names (it carries `body`).
+RENAME_TYPE_SCOPE_MARKERS = (
+    "class",
+    "impl",
+    "trait",
+    "interface",
+    "struct",
+    "enum",
+    "record",
+    "mixin",
+    "extension",
+)
+RENAME_IMPORT_MARKER = "import"
+# How far above a binding its declaration's type and value may sit:
+# `Parse* p = ...` puts `p` three levels under the declaration.
+RENAME_DECLARATION_DEPTH = 3
+# Characters around a declared type that do not change which class it
+# names: `: Parse`, `*Parse`, `'Parse'`, `Parse?`.
+RENAME_TYPE_DECORATION = " \t\r\n:&*?'\""
+# What separates a qualified name's segments: `a::Parse`, `a.Parse`, `A\Parse`.
+RENAME_TYPE_SEPARATORS = ("::", ".", "\\")
+# Expressions that hand on their operand's value: `Parse::new(frame)?`.
+RENAME_TRANSPARENT_EXPRESSIONS = frozenset(
+    {"try_expression", "await_expression", "await", "parenthesized_expression"}
+)
+# An expression that builds an object: `Parse(x)`, `new Parse()`,
+# `Parse { .. }`, and `Parse::new(x)` by convention.
+RENAME_CONSTRUCTION_MARKERS = (
+    "call",
+    "new_expression",
+    "creation_expression",
+    "struct_expression",
+)
+RENAME_CONSTRUCTOR_SUFFIXES = ("::new", ".new")
+RENAME_PHP_RECEIVERS = frozenset({"$this", "self", "static", "parent"})
 
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
