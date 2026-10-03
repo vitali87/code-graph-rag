@@ -16,6 +16,7 @@ from .types_defs import (
     TrieNode,
 )
 from .utils import qn_markers
+from .utils.cpp_signatures import overload_signature_from_text, pick_overload
 
 
 class FunctionRegistryTrie:
@@ -170,16 +171,16 @@ class FunctionRegistryTrie:
             return None
         # An out-of-class definition must define a member its class declares,
         # so one that matches no declaration verbatim is a respelling
-        # (`string` for `std::string` under a using-directive, a typedef):
-        # take the only declaration, or the only one of its arity.
-        declared = [qn for qn in held if qn in self._declared_overloads]
-        if len(declared) > 1:
-            declared = [
-                qn
-                for qn in declared
-                if self._overloads[qn].arity in (None, signature.arity)
-            ]
-        return declared[0] if len(declared) == 1 else None
+        # (`string` for `std::string` under a using-directive, `int` for a
+        # `Count` typedef) of one of them, when the spelling settles which.
+        return pick_overload(
+            signature,
+            [
+                (qn, self._overloads[qn])
+                for qn in held
+                if qn in self._declared_overloads
+            ],
+        )
 
     def overload_signature(
         self, qualified_name: QualifiedName
@@ -195,8 +196,11 @@ class FunctionRegistryTrie:
         not tell which of the class's overloads it defines, and a call from
         the re-parsed file would see only the plain-named one.
         """
+        # The arity is read off the text: without it two read-back
+        # declarations of different arity could not be told apart for a
+        # respelled definition, and it would mint a node a clean index has not.
         self._overloads.setdefault(
-            qualified_name, OverloadSignature(text=signature_text, arity=None)
+            qualified_name, overload_signature_from_text(signature_text)
         )
         # Its declaration was not re-parsed, so the record is the only
         # evidence of it: count it as declared, or a definition respelled

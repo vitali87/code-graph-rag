@@ -128,13 +128,12 @@ type FunctionRegistry = dict[QualifiedName, NodeType]
 
 
 class OverloadSignature(NamedTuple):
-    # What tells one C++ member overload from another: the normalized
-    # parameter types plus the cv/ref qualifiers (`(int) const`), and the
-    # parameter count for matching a definition spelled differently from its
-    # declaration. arity is None when only the text is known (read back from
-    # the graph).
+    # What tells one C++ member overload from another: the parameter types
+    # plus the cv/ref qualifiers (`(const std::string&) const`), and the
+    # parameter count for pairing a definition spelled differently from its
+    # declaration.
     text: str
-    arity: int | None
+    arity: int
 
 
 class FunctionRegistryTrieProtocol(Protocol):

@@ -3,10 +3,13 @@
 A member is keyed `Class.name`, so `f(int)` and `f(double)` shared one node
 and the last one ingested overwrote the rest. Its declaration and its
 out-of-class definition must still share one node, and the two are often
-spelled differently: parameter names, default arguments, `std::string`
-against `string` under a using-directive. The signature is therefore the
-parameter TYPES as written, with those differences normalized away, plus the
-cv and ref qualifiers that make `at(int)` and `at(int) const` two overloads.
+spelled differently. The signature is the parameter TYPES as written, plus
+the cv and ref qualifiers that make `at(int)` and `at(int) const` two
+overloads, with only what can never tell two overloads apart dropped:
+parameter names, default arguments, spacing, `struct`/`class`/`typename`
+keywords and a leading global `::`. Namespace qualifiers stay, since
+`f(a::T)` and `f(b::T)` are two members; `utils.cpp_signatures` pairs
+`std::string` with `string` when nothing closer matches.
 """
 
 import re
@@ -56,15 +59,17 @@ _OUTSIDE_CLASS = frozenset(
 
 # `struct S&` and `S&` name one parameter type.
 _ELABORATED_RE = re.compile(r"\b(?:struct|class|enum|union|typename)\s+")
-# A namespace or class qualifier before a name (`std::`, `::`), dropped so a
-# definition written under a using-directive matches its declaration.
-_SCOPE_RE = re.compile(r"\b[^\W\d]\w*\s*::\s*|(?<![\w>])::\s*")
 _SPACE_RE = re.compile(r"\s+")
-_PUNCTUATION_SPACE_RE = re.compile(r"\s*([*&<>,()\[\]])\s*")
+# `::` joins in the set so `std :: string`, as the tokens are rejoined, reads
+# `std::string`.
+_PUNCTUATION_SPACE_RE = re.compile(r"\s*([*&<>,()\[\]:])\s*")
+# A leading `::` (the global namespace) names what the bare name names: not
+# after a name or a template's `>`, where it qualifies.
+_GLOBAL_SCOPE_RE = re.compile(r"(?<![\w>])::")
 
 
 def cpp_overload_signature(method_node: Node) -> OverloadSignature | None:
-    """`(int,const string&) const` for `int f(int a, const std::string& s) const`.
+    """`(int,const std::string&) const` for `f(int a, const std::string &s) const`.
 
     None when no parameter list can be found (a declaration error recovery
     mangled), so the caller keeps the plain name.
@@ -177,6 +182,6 @@ def _tokens(node: Node, name: Node | None) -> list[str]:
 
 def _normalize(text: str) -> str:
     text = _ELABORATED_RE.sub("", text)
-    text = _SCOPE_RE.sub("", text)
     text = _SPACE_RE.sub(cs.CHAR_SPACE, text)
-    return _PUNCTUATION_SPACE_RE.sub(r"\1", text).strip()
+    text = _PUNCTUATION_SPACE_RE.sub(r"\1", text).strip()
+    return _GLOBAL_SCOPE_RE.sub("", text)

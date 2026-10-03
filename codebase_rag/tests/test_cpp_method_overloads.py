@@ -19,6 +19,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import _MockIngestor, get_relationships, run_updater
 from codebase_rag.types_defs import NodeType, OverloadSignature
+from codebase_rag.utils.cpp_signatures import signature_arity
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "ovl"
@@ -293,6 +294,82 @@ def test_an_override_links_to_the_base_overload_of_its_signature(
     }
 
 
+def test_overloads_on_same_named_types_of_two_namespaces_stay_apart(
+    temp_repo: Path,
+) -> None:
+    # The namespace is what tells these parameter types apart, so it stays in
+    # the signature: stripped, both read `(T)` and the second overload
+    # overwrote the first.
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "qual.h": (
+                "namespace a { struct T {}; }\n"
+                "namespace b { struct T {}; }\n"
+                "class Q {\n"
+                "public:\n"
+                "  void f(a::T x);\n"
+                "  void f(b::T x);\n"
+                "};\n"
+            ),
+            "qual.cpp": (
+                '#include "qual.h"\nvoid Q::f(a::T x) {}\nvoid Q::f(b::T x) {}\n'
+            ),
+        },
+    )
+    ingestor = _index(root)
+
+    methods = _final_methods(ingestor, ".Q.f")
+    plain = f"{PROJECT}.qual.h.Q.f"
+    variant = f"{PROJECT}.qual.h.Q.f@6"
+    assert set(methods) == {plain, variant}
+    assert (methods[plain][cs.KEY_START_LINE], methods[plain][cs.KEY_SIGNATURE]) == (
+        2,
+        "(a::T)",
+    )
+    assert (
+        methods[variant][cs.KEY_START_LINE],
+        methods[variant][cs.KEY_SIGNATURE],
+    ) == (3, "(b::T)")
+
+
+OVERRIDE_ALIAS_CPP = """typedef int Alias;
+class Base {
+public:
+  virtual int f(double a) { return 0; }
+  virtual int f(int a) { return a; }
+  virtual int g(double a) { return 0; }
+  virtual int g(int a, int b) { return a; }
+};
+class Derived : public Base {
+public:
+  int f(Alias a) override { return 1; }
+  int g(Alias a, Alias b) override { return 2; }
+};
+"""
+
+
+def test_an_override_matching_no_base_signature_is_not_given_the_plain_name(
+    temp_repo: Path,
+) -> None:
+    # `f(Alias)` overrides `f(int)` through a typedef the parser cannot see
+    # through, so neither base `f` matches it, and both take one argument:
+    # nothing tells them apart, so no edge beats one onto `f(double)`, which
+    # merely holds the plain name. `g(Alias, Alias)` has one base overload of
+    # its arity, and that one it overrides.
+    root = _write(temp_repo / PROJECT, {"alias.cpp": OVERRIDE_ALIAS_CPP})
+    ingestor = _index(root)
+
+    edges = {
+        edge
+        for edge in _overrides(ingestor)
+        if edge[0].startswith(f"{PROJECT}.alias.Derived.")
+    }
+    assert edges == {
+        (f"{PROJECT}.alias.Derived.g", f"{PROJECT}.alias.Base.g@7"),
+    }
+
+
 # --- negative: what must not change --------------------------------------
 
 
@@ -359,6 +436,87 @@ def test_definition_spelled_differently_from_its_declaration_stays_one_node(
     methods = _final_methods(ingestor, ".Cfg.set")
     assert set(methods) == {f"{PROJECT}.cfg.h.Cfg.set"}
     assert methods[f"{PROJECT}.cfg.h.Cfg.set"][cs.KEY_PATH] == "cfg.cpp"
+
+
+def test_declaration_unqualified_in_its_namespace_pairs_with_a_qualified_definition(
+    temp_repo: Path,
+) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "ns.h": (
+                "namespace a {\n"
+                "struct T {};\n"
+                "class N {\n"
+                "public:\n"
+                "  void f(T x);\n"
+                "  void f(int x);\n"
+                "};\n"
+                "}\n"
+            ),
+            "ns.cpp": (
+                '#include "ns.h"\nvoid a::N::f(a::T x) {}\nvoid a::N::f(int x) {}\n'
+            ),
+        },
+    )
+    ingestor = _index(root)
+
+    methods = _final_methods(ingestor, ".N.f")
+    assert len(methods) == 2, methods
+    assert {(m[cs.KEY_PATH], m[cs.KEY_START_LINE]) for m in methods.values()} == {
+        ("ns.cpp", 2),
+        ("ns.cpp", 3),
+    }
+
+
+def test_respelled_definitions_of_an_overloaded_member_pair_with_their_declarations(
+    temp_repo: Path,
+) -> None:
+    # Overloaded, so no lone declaration to fall back on: `string` pairs with
+    # `std::string` because the spellings agree up to qualification, and the
+    # default argument is not part of the type.
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "kv.h": (
+                "#include <string>\n"
+                "class Kv {\n"
+                "public:\n"
+                "  void put(const std::string& key, int ttl = 0);\n"
+                "  void put(int slot);\n"
+                "};\n"
+            ),
+            "kv.cpp": (
+                '#include "kv.h"\n'
+                "using namespace std;\n"
+                "void Kv::put(int slot) {}\n"
+                "void Kv::put(const string &k, int t) {}\n"
+            ),
+        },
+    )
+    ingestor = _index(root)
+
+    methods = _final_methods(ingestor, ".Kv.put")
+    assert {
+        qn: (m[cs.KEY_PATH], m[cs.KEY_START_LINE]) for qn, m in methods.items()
+    } == {
+        f"{PROJECT}.kv.h.Kv.put": ("kv.cpp", 4),
+        f"{PROJECT}.kv.h.Kv.put@5": ("kv.cpp", 3),
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "arity"),
+    [
+        ("()", 0),
+        ("(int)", 1),
+        ("(std::map<int,int>,int) const", 2),
+        ("(int(*)(int,int),double)", 2),
+        ("(const char*,...) &&", 2),
+    ],
+)
+def test_arity_read_back_from_a_stored_signature(text: str, arity: int) -> None:
+    assert signature_arity(text) == arity
 
 
 def test_same_name_in_different_classes_is_not_an_overload(temp_repo: Path) -> None:
@@ -488,18 +646,16 @@ def _state(store: _StatefulIngestor, root: Path) -> tuple[frozenset, frozenset, 
     return nodes, edges, methods
 
 
-@pytest.mark.parametrize("edited", sorted(EDITS))
-@pytest.mark.parametrize("mode", ["run", "reingest"])
-def test_incremental_update_matches_a_clean_index(
-    temp_repo: Path, edited: str, mode: str
-) -> None:
-    root = _write(temp_repo / PROJECT, {"sep.h": SEP_H, "sep.cpp": SEP_CPP})
+def _incremental_and_clean(
+    temp_repo: Path, files: dict[str, str], edited: str, text: str, mode: str
+) -> tuple[tuple, tuple]:
+    root = _write(temp_repo / PROJECT, files)
     store = _StatefulIngestor()
     _updater(store, root).run(force=True)
 
     path = root / edited
     cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
-    path.write_text(EDITS[edited], encoding="utf-8")
+    path.write_text(text, encoding="utf-8")
     # Past the hash cache's mtime, so a coarse clock cannot skip the file.
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
     # A FRESH updater each time: its registry holds only what it re-parses
@@ -512,21 +668,57 @@ def test_incremental_update_matches_a_clean_index(
 
     clean_root = _write(
         temp_repo / "clean" / PROJECT,
-        {
-            "sep.h": (root / "sep.h").read_text(),
-            "sep.cpp": (root / "sep.cpp").read_text(),
-        },
+        {rel: (root / rel).read_text() for rel in files},
     )
     clean_store = _StatefulIngestor()
     _updater(clean_store, clean_root).run(force=True)
+    return _state(store, root), _state(clean_store, clean_root)
 
-    incremental = _state(store, root)
-    clean = _state(clean_store, clean_root)
+
+@pytest.mark.parametrize("edited", sorted(EDITS))
+@pytest.mark.parametrize("mode", ["run", "reingest"])
+def test_incremental_update_matches_a_clean_index(
+    temp_repo: Path, edited: str, mode: str
+) -> None:
+    incremental, clean = _incremental_and_clean(
+        temp_repo, {"sep.h": SEP_H, "sep.cpp": SEP_CPP}, edited, EDITS[edited], mode
+    )
     assert incremental[2] == clean[2]
     assert {qn for qn in clean[2] if ".Sep.g" in qn} == {
         f"{PROJECT}.sep.h.Sep.g",
         f"{PROJECT}.sep.h.Sep.g@4",
     }
+    assert incremental[:2] == clean[:2]
+
+
+CNT_H = """typedef int Count;
+class Cnt {
+public:
+  int f(Count n);
+  int f(double a, double b);
+};
+"""
+CNT_CPP = """#include "cnt.h"
+int Cnt::f(Count n) { return n; }
+int Cnt::f(double a, double b) { return 0; }
+"""
+# `Count` respelled as the `int` it aliases: no declaration matches the text,
+# and only the arity read back from the graph can pair it with `f(Count)`.
+CNT_CPP_EDITED = CNT_CPP.replace("Cnt::f(Count n)", "Cnt::f(int n)")
+
+
+@pytest.mark.parametrize("mode", ["run", "reingest"])
+def test_incremental_respelled_definition_matches_a_clean_index(
+    temp_repo: Path, mode: str
+) -> None:
+    incremental, clean = _incremental_and_clean(
+        temp_repo, {"cnt.h": CNT_H, "cnt.cpp": CNT_CPP}, "cnt.cpp", CNT_CPP_EDITED, mode
+    )
+    assert {qn for qn in clean[2] if ".Cnt.f" in qn} == {
+        f"{PROJECT}.cnt.h.Cnt.f",
+        f"{PROJECT}.cnt.h.Cnt.f@5",
+    }
+    assert incremental[2] == clean[2]
     assert incremental[:2] == clean[:2]
 
 

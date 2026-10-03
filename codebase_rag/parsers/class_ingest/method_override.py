@@ -10,6 +10,7 @@ from ... import constants as cs
 from ... import logs
 from ...types_defs import NodeType, OverloadSignature
 from ...utils import qn_markers
+from ...utils.cpp_signatures import pick_overload
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -317,31 +318,32 @@ def _csharp_override_gated(
     return csharp_override_methods is None or method_qn not in csharp_override_methods
 
 
-def _parent_overload_qn(
+def _signed_base_overloads(
     parent_class: str,
     method_name: str,
-    signature: OverloadSignature,
     function_registry: FunctionRegistryTrieProtocol,
-) -> str | None:
-    """The C++ base overload with the overriding member's signature.
+) -> list[tuple[str, OverloadSignature]] | None:
+    """The base's C++ overloads of this name with their signatures.
 
-    Base overloads are one node each (issue #2455), and a name lookup finds
-    only the plain-named one: `f(double) override` would land on `f(int)`,
-    and an override named `f@13` would find nothing. None when no base
-    overload has this signature; the name lookup then stands, as it did.
+    Base overloads are one node each (issue #2455), and a lookup by name finds
+    only the plain-named one, whatever its signature: `f(double) override`
+    would land on `f(int)`, and an override named `f@13` would find nothing.
+    None when there is nothing to choose by signature (no such member, or a
+    graph written before signatures were stored), so the name lookup decides
+    as it always did.
     """
     natural = (
         f"{parent_class}{cs.SEPARATOR_DOT}{qn_markers.strip_dup_marker(method_name)}"
     )
+    overloads: list[tuple[str, OverloadSignature]] = []
     for candidate in function_registry.variants(natural):
+        if function_registry.get(candidate) != NodeType.METHOD:
+            continue
         known = function_registry.overload_signature(candidate)
-        if (
-            known is not None
-            and known.text == signature.text
-            and function_registry.get(candidate) == NodeType.METHOD
-        ):
-            return candidate
-    return None
+        if known is None:
+            return None
+        overloads.append((candidate, known))
+    return overloads or None
 
 
 def _parent_method_qn(
@@ -352,11 +354,13 @@ def _parent_method_qn(
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target."""
     if signature is not None and (
-        overload := _parent_overload_qn(
-            parent_class, method_name, signature, function_registry
+        overloads := _signed_base_overloads(
+            parent_class, method_name, function_registry
         )
     ):
-        return overload
+        # No settled match is no edge: the plain-named overload is not a
+        # default, it is whichever one happened to be seen first.
+        return pick_overload(signature, overloads)
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
         # Fall back to name+arity so a generic type-var rename in the override
