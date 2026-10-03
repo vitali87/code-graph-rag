@@ -212,14 +212,6 @@ def _enclosing_excludes(keep: str, exclude_paths: frozenset[str]) -> frozenset[s
     )
 
 
-def encloses_a_keep(rel_dir: str, unignore_paths: frozenset[str] | None) -> bool:
-    """Whether a nested keep lies below this directory, so a walk enters it."""
-    if not unignore_paths:
-        return False
-    prefix = f"{rel_dir}{cs.SEPARATOR_SLASH}"
-    return any(keep.startswith(prefix) for keep in nested_keeps(unignore_paths))
-
-
 def excludes_applying_to(
     rel_path_str: str,
     exclude_paths: frozenset[str] | None,
@@ -227,22 +219,29 @@ def excludes_applying_to(
 ) -> frozenset[str] | None:
     """The exclude patterns that decide `rel_path_str`.
 
-    Excludes win over unignores, with one exception: inside a nested keep,
-    the exclusion of a directory ENCLOSING the keep gives way. Otherwise
-    `!generated/node_modules` under a `.gitignore`d `generated/` could never
-    take effect -- the walk pruned `generated/` first -- although setup
-    reported it saved (Greptile review of PR 2510). A pattern that excludes
+    Excludes win over unignores, with one exception: the exclusion of a
+    directory ENCLOSING a nested keep gives way on the path down to the keep
+    and inside it. Otherwise `!generated/node_modules` under a `.gitignore`d
+    `generated/` could never take effect -- the walk pruned `generated/`
+    first -- although setup reported it saved (Greptile review of PR 2510).
+    The files beside that path stay excluded, and a pattern that excludes
     paths inside the keep itself (`*.js`) still wins there.
     """
     if not exclude_paths or not unignore_paths:
         return exclude_paths
     lifted: set[str] = set()
     for keep in nested_keeps(unignore_paths):
-        if rel_path_str == keep or rel_path_str.startswith(
-            f"{keep}{cs.SEPARATOR_SLASH}"
-        ):
+        if _on_the_way_to_or_inside(rel_path_str, keep):
             lifted |= _enclosing_excludes(keep, exclude_paths)
     return exclude_paths - lifted if lifted else exclude_paths
+
+
+def _on_the_way_to_or_inside(rel_path_str: str, keep: str) -> bool:
+    return (
+        rel_path_str == keep
+        or rel_path_str.startswith(f"{keep}{cs.SEPARATOR_SLASH}")
+        or keep.startswith(f"{rel_path_str}{cs.SEPARATOR_SLASH}")
+    )
 
 
 def should_keep_dir(
@@ -258,12 +257,9 @@ def should_keep_dir(
     cannot happen by construction (issue #1088).
     """
     rel_dir = f"{dir_prefix}{dirname}"
-    # A directory on the way down to a nested keep is entered whatever
-    # excludes it; the files beside that path stay excluded (PR 2510).
-    if encloses_a_keep(rel_dir, unignore_paths):
-        return True
-    # Otherwise an explicit exclude is never rescued by unignore (excludes
-    # win at the file level too), so prune the subtree outright.
+    # an explicit exclude can never be rescued by unignore (excludes win
+    # at the file level too), so prune the subtree outright -- unless it
+    # encloses a nested keep, whose way down stays open (PR 2510).
     exclude_paths = excludes_applying_to(rel_dir, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
         return False
@@ -334,12 +330,11 @@ def should_skip_path(
         return True
     rel_path = cached_relative_path(path, repo_path)
     rel_path_str = rel_path.as_posix()
-    # Mirrors should_keep_dir: the walk enters a directory enclosing a
-    # nested keep, so the graph gives the kept files their ancestry.
-    if not _is_file and encloses_a_keep(rel_path_str, unignore_paths):
-        return False
     # a trailing slash marks the path as a directory for dir-only patterns.
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
+    # A directory enclosing a nested keep loses its exclusion here and is
+    # then kept by the unignore-beneath rule below, as in should_keep_dir,
+    # so the kept files get their Folder ancestry.
     exclude_paths = excludes_applying_to(rel_path_str, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
