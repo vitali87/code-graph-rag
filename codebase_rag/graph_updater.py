@@ -80,6 +80,7 @@ from .parsers.frontends import (
     SemanticFacts,
 )
 from .parsers.frontends.protocol import QueryCall
+from .parsers.go import read_package_clause
 from .parsers.go_frontend import find_go_module
 from .parsers.java_generated import (
     discover_generated_source_roots,
@@ -1346,6 +1347,8 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Go files whose `package` clause a rehydration already read back.
+        self._go_clauses_read: set[str] = set()
         # Registered project names, read once per run (issue #1970).
         self._registered_projects: list[str] | None = None
         # Whether that read failed: the list then holds this project alone,
@@ -3123,6 +3126,7 @@ class GraphUpdater:
         # INSTANTIATES into any unchanged file (issue #532, outbound half).
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        self._go_clauses_read.clear()
         # Read afresh each run: a module may have gained or lost its suffix
         # since the last one, and the requeues below all consult this.
         self._module_qns_by_path = None
@@ -3265,6 +3269,25 @@ class GraphUpdater:
             self._rehydrated_cpp_spans.setdefault(path, []).append(
                 CppDefinitionSpan(start, end, node_type.value, qn)
             )
+        if path.endswith(cs.EXT_GO):
+            self._rehydrate_go_package_clause(path)
+
+    def _rehydrate_go_package_clause(self, path: str) -> None:
+        # Only parsing records a Go file's `package` clause, and Go package
+        # scope is (directory, clause): without it an unchanged
+        # `//go:build ignore` generator's `package main` beside `package p`
+        # competed, on an incremental run, with the function a re-parsed
+        # caller's bare call names (#2616 review). The file is unchanged
+        # since the graph recorded it, so its clause is read back from disk.
+        if path in self._go_clauses_read:
+            return
+        self._go_clauses_read.add(path)
+        clauses = self.factory.definition_processor.go_package_names
+        module_qn = self._recorded_module_qn(path)
+        if module_qn not in clauses and (
+            clause := read_package_clause(self.repo_path / path)
+        ):
+            clauses[module_qn] = clause
 
     def _rehydrate_csharp_declared_form(
         self, qn: str, path: str, row: ResultRow

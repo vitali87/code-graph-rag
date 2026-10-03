@@ -392,3 +392,145 @@ def test_a_broken_test_file_costs_only_the_test_files(tmp_path: Path) -> None:
 
     files = {fact["file"] for fact in payload["calls"]}
     assert files == {"gotest/app.go"}
+
+
+# A method signature naming a type of the package itself (`Msg`): each test
+# variant re-declares that type, so a test-only implementer and the
+# production interface it satisfies sit in different type universes, and
+# types.Implements across them is false (#2616 review).
+MSG_IMPL = (
+    "package impl\n"
+    "\n"
+    "type Msg struct{ text string }\n"
+    "\n"
+    "type Speaker interface{ Speak(m Msg) string }\n"
+    "\n"
+    "type Dog struct{}\n"
+    "\n"
+    "func (d Dog) Speak(m Msg) string { return m.text }\n"
+)
+MSG_IMPL_TEST = (
+    "package impl\n"
+    "\n"
+    'import "testing"\n'
+    "\n"
+    "type loud struct{}\n"
+    "\n"
+    'func (l loud) Speak(m Msg) string { return m.text + "!" }\n'
+    "\n"
+    "type echoer interface{ Speak(m Msg) string }\n"
+    "\n"
+    "func TestTalk(t *testing.T) {\n"
+    "\tvar s Speaker = loud{}\n"
+    "\tvar e echoer = Dog{}\n"
+    "\t_, _ = s, e\n"
+    "}\n"
+)
+MSG_EXTERNAL_TEST = (
+    "package impl_test\n"
+    "\n"
+    "import (\n"
+    '\t"testing"\n'
+    "\n"
+    '\t"example.com/impl"\n'
+    ")\n"
+    "\n"
+    "type quiet struct{}\n"
+    "\n"
+    'func (quiet) Speak(m impl.Msg) string { return "" }\n'
+    "\n"
+    "func TestQuiet(t *testing.T) {\n"
+    "\tvar s impl.Speaker = quiet{}\n"
+    "\t_ = s\n"
+    "}\n"
+)
+
+
+def _msg_repo(parent: Path) -> Path:
+    return _write(
+        parent / "impl",
+        {
+            "go.mod": "module example.com/impl\n\ngo 1.24\n",
+            "speak.go": MSG_IMPL,
+            "speak_test.go": MSG_IMPL_TEST,
+            "quiet_test.go": MSG_EXTERNAL_TEST,
+        },
+    )
+
+
+def test_a_test_type_implements_an_interface_over_a_package_type(
+    tmp_path: Path,
+) -> None:
+    binary = _helper()
+
+    payload = _raw_payload(binary, _msg_repo(tmp_path))
+
+    pairs = sorted((p["name"], p["iname"]) for p in payload["implements"])
+    assert ("loud", "Speaker") in pairs
+    assert ("quiet", "Speaker") in pairs
+
+
+def test_a_production_type_implements_a_test_interface_over_a_package_type(
+    tmp_path: Path,
+) -> None:
+    binary = _helper()
+
+    payload = _raw_payload(binary, _msg_repo(tmp_path))
+
+    pairs = sorted((p["name"], p["iname"]) for p in payload["implements"])
+    assert ("Dog", "echoer") in pairs
+    assert ("loud", "echoer") in pairs
+
+
+def test_cross_variant_pairs_come_out_once_and_production_pairs_stay(
+    tmp_path: Path,
+) -> None:
+    # Negative: the production pair is still there, every pair once, and the
+    # interfaces are never paired with themselves.
+    binary = _helper()
+
+    payload = _raw_payload(binary, _msg_repo(tmp_path))
+
+    pairs = [
+        (p["file"], p["line"], p["col"], p["ifile"], p["iline"], p["icol"])
+        for p in payload["implements"]
+    ]
+    assert len(pairs) == len(set(pairs)), pairs
+    assert sorted((p["name"], p["iname"]) for p in payload["implements"]) == [
+        ("Dog", "Speaker"),
+        ("Dog", "echoer"),
+        ("loud", "Speaker"),
+        ("loud", "echoer"),
+        ("quiet", "Speaker"),
+        ("quiet", "echoer"),
+    ]
+
+
+def test_a_test_type_implements_edge_reaches_the_graph(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The package sits below the module root, as in `_issue_repo`.
+    _helper()
+    root = _write(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "impl/speak.go": MSG_IMPL,
+            "impl/speak_test.go": MSG_IMPL_TEST,
+            "impl/quiet_test.go": MSG_EXTERNAL_TEST.replace(
+                '"example.com/impl"', '"example.com/proj/impl"'
+            ),
+        },
+    )
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    ingestor = MagicMock()
+    run_updater(root, ingestor)
+
+    edges = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(ingestor, cs.RelationshipType.IMPLEMENTS)
+    }
+    speaker = "proj.impl.speak.Speaker"
+    assert ("proj.impl.speak.Dog", speaker) in edges
+    assert ("proj.impl.speak_test.loud", speaker) in edges
+    assert ("proj.impl.quiet_test.quiet", speaker) in edges

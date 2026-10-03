@@ -200,7 +200,7 @@ class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
         "python_shadowed_imports",
-        "go_local_names",
+        "go_local_scopes",
         "python_local_names",
         "function_registry",
         "import_processor",
@@ -251,9 +251,10 @@ class CallResolver:
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
         # Go caller qn -> the names it binds for itself (params, locals,
-        # closures), filled by the call processor before the caller's calls
-        # resolve: a bare call to one of them calls that value (#2571).
-        self.go_local_names: dict[str, frozenset[str]] = {}
+        # closures) and the byte spans each is in scope over, filled by the
+        # call processor before the caller's calls resolve: a bare call to
+        # one of them inside its span calls that value (#2571).
+        self.go_local_scopes: dict[str, go_utils.GoLocalScopes] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
@@ -1650,16 +1651,24 @@ class CallResolver:
         # a same-named package function as the target (#2571). Caller-specific,
         # so it answers before the module-keyed cache; the name trie keeps
         # the edge it gave before, labelled for what it is.
-        if (
-            call.language == cs.SupportedLanguage.GO
-            and call.caller_qn
-            and cs.SEPARATOR_DOT not in call.call_name
-            and call.call_name in self.go_local_names.get(call.caller_qn, ())
-        ):
+        if call.language == cs.SupportedLanguage.GO and self._go_local_in_scope(call):
             return True, self._try_resolve_via_trie(
                 call.call_name, call.module_qn, call.language, call.call_point
             )
         return False, None
+
+    def _go_local_in_scope(self, call: _CallSite) -> bool:
+        # Only where the local is in scope: a `helper()` before an inner
+        # block's `helper := ...`, or after that block closes, is the
+        # package's function (#2616 review). A call with no position falls
+        # back to the whole function.
+        if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
+            return False
+        spans = self.go_local_scopes.get(call.caller_qn, {}).get(call.call_name)
+        if not spans:
+            return False
+        point = call.call_point
+        return point is None or any(start <= point < end for start, end in spans)
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn

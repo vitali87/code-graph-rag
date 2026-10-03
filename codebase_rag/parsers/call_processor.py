@@ -3973,16 +3973,17 @@ class CallProcessor:
     ) -> None:
         # A file's package-level names cannot collide with its functions'
         # (the compiler rejects it), so only a function or method binds
-        # names a bare call might mean instead of the package's (#2571).
-        names = (
-            frozenset()
+        # names a bare call might mean instead of the package's (#2571),
+        # and only where each is in scope (#2616 review).
+        scopes = (
+            {}
             if caller_type == cs.NodeLabel.MODULE
-            else go_utils.local_binding_names(caller_node)
+            else go_utils.local_binding_scopes(caller_node)
         )
-        if names:
-            self._resolver.go_local_names[caller_qn] = names
+        if scopes:
+            self._resolver.go_local_scopes[caller_qn] = scopes
         else:
-            self._resolver.go_local_names.pop(caller_qn, None)
+            self._resolver.go_local_scopes.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,

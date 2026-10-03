@@ -485,3 +485,153 @@ def test_an_incremental_run_sees_unchanged_siblings_by_their_path(
     assert calls == {
         ("proj.p.app.Build", "proj.p.router.NewRouter"): cs.EdgeResolution.EXACT
     }
+
+
+# --- #2616 review: a local shadows the package's name only where it is in
+# scope, and an incremental run keeps the `package` clauses apart. ---
+
+_SCOPED_LOCAL = (
+    "package gotest\n"
+    "\n"
+    "func Before() int {\n"
+    "\tn := helper()\n"
+    "\t{\n"
+    "\t\thelper := 2\n"
+    "\t\tn += helper\n"
+    "\t}\n"
+    "\treturn n\n"
+    "}\n"
+    "\n"
+    "func Inside() int {\n"
+    "\tif ok := true; ok {\n"
+    "\t\thelper := func() int { return 3 }\n"
+    "\t\treturn helper()\n"
+    "\t}\n"
+    "\treturn 0\n"
+    "}\n"
+    "\n"
+    "func After() int {\n"
+    "\ttotal := 0\n"
+    "\tfor _, helper := range []int{1} {\n"
+    "\t\ttotal += helper * 2\n"
+    "\t}\n"
+    "\treturn total + helper()\n"
+    "}\n"
+    "\n"
+    "func Self() int {\n"
+    "\thelper := helper()\n"
+    "\treturn helper\n"
+    "}\n"
+)
+
+
+def _scoped_calls(temp_repo: Path) -> dict[tuple[str, str], set[str]]:
+    return _calls(
+        temp_repo / "gotest",
+        {
+            "go.mod": GO_MOD,
+            "util.go": "package gotest\n\nfunc helper() int { return 1 }\n",
+            "app.go": _SCOPED_LOCAL,
+        },
+    )
+
+
+def test_a_call_before_a_later_inner_local_stays_exact(temp_repo: Path) -> None:
+    calls = _scoped_calls(temp_repo)
+
+    assert calls[("gotest.app.Before", "gotest.util.helper")] == {
+        cs.EdgeResolution.EXACT
+    }
+
+
+def test_a_call_after_the_local_block_closes_stays_exact(temp_repo: Path) -> None:
+    # `for _, helper := range` scopes `helper` to the loop; the call after it
+    # names the package function again. So does `helper := helper()`, whose
+    # right-hand side is read before the local exists.
+    calls = _scoped_calls(temp_repo)
+
+    exact = {cs.EdgeResolution.EXACT}
+    assert calls[("gotest.app.After", "gotest.util.helper")] == exact
+    assert calls[("gotest.app.Self", "gotest.util.helper")] == exact
+
+
+def test_a_call_inside_the_locals_scope_is_still_not_the_package_function(
+    temp_repo: Path,
+) -> None:
+    # Negative: within its block the local is what `helper()` calls.
+    calls = _scoped_calls(temp_repo)
+
+    assert cs.EdgeResolution.EXACT not in calls.get(
+        ("gotest.app.Inside", "gotest.util.helper"), set()
+    )
+
+
+def _incremental_calls(root: Path, files: dict[str, str], edit: tuple[str, str]):
+    from evals.cgr_graph import _StatefulIngestor
+
+    _write(root, files)
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+
+    def run(force: bool) -> None:
+        gu.GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).run(force=force)
+
+    run(True)
+    (root / edit[0]).write_text(edit[1], encoding="utf-8")
+    run(False)
+    return {
+        (key[1], key[4]): props.get(cs.KEY_RESOLUTION)
+        for key, props in store.edge_props.items()
+        if key[2] == cs.RelationshipType.CALLS
+    }
+
+
+def test_an_incremental_run_keeps_another_package_clause_out(
+    temp_repo: Path,
+) -> None:
+    # The unchanged `//go:build ignore` generator comes back from the graph
+    # without its `package main` clause; it must still not compete with the
+    # library's `helper` once only the caller is re-parsed.
+    calls = _incremental_calls(
+        temp_repo / "proj",
+        {
+            "p/gen.go": (
+                "//go:build ignore\n\npackage main\n\nfunc helper() int { return 0 }\n"
+            ),
+            "p/util.go": "package p\n\nfunc helper() int { return 1 }\n",
+            "p/app.go": "package p\n\nfunc Build() { helper() }\n",
+        },
+        ("p/app.go", "package p\n\nfunc Build() {\n\thelper()\n}\n"),
+    )
+
+    assert calls == {
+        ("proj.p.app.Build", "proj.p.util.helper"): cs.EdgeResolution.EXACT
+    }
+
+
+def test_an_incremental_run_keeps_build_tag_variants_heuristic(
+    temp_repo: Path,
+) -> None:
+    # Negative: two unchanged files of the SAME clause are build-tag
+    # variants, and stay two heuristic candidates after an incremental run.
+    calls = _incremental_calls(
+        temp_repo / "proj",
+        {
+            "p/v_a.go": "//go:build a\n\npackage p\n\nfunc helper() int { return 1 }\n",
+            "p/v_b.go": "//go:build !a\n\npackage p\n\nfunc helper() int { return 2 }\n",
+            "p/app.go": "package p\n\nfunc Build() { helper() }\n",
+        },
+        ("p/app.go", "package p\n\nfunc Build() {\n\thelper()\n}\n"),
+    )
+
+    assert set(calls) == {
+        ("proj.p.app.Build", "proj.p.v_a.helper"),
+        ("proj.p.app.Build", "proj.p.v_b.helper"),
+    }
+    assert cs.EdgeResolution.EXACT not in set(calls.values())

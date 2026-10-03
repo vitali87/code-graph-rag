@@ -89,6 +89,18 @@ type typeEntry struct {
 	line  int
 	col   int
 	name  string
+	// testOnly marks a type first declared by a test variant: no plain
+	// package holds it, so the plain pass has no same-universe twin for it.
+	testOnly bool
+}
+
+// variantTypes is every named type the variants of one test binary declare,
+// re-declarations of the package's own types included. A test variant
+// re-declares the package, so `Speak(m Msg)` on a test-only type names the
+// variant's Msg, and only that variant's interfaces can be satisfied by it.
+type variantTypes struct {
+	namedTypes []typeEntry
+	interfaces []typeEntry
 }
 
 type collector struct {
@@ -102,6 +114,8 @@ type collector struct {
 	// the same package; a later variant adds only what it alone holds.
 	seenFiles map[string]bool
 	seenTypes map[string]bool
+	// Test binary (`p.test`) -> the types its variants declare.
+	variants map[string]*variantTypes
 }
 
 func main() {
@@ -146,6 +160,7 @@ func main() {
 		},
 		seenFiles: map[string]bool{},
 		seenTypes: map[string]bool{},
+		variants:  map[string]*variantTypes{},
 	}
 	for _, pkg := range pkgs {
 		col.collectPackage(pkg)
@@ -186,27 +201,65 @@ func (c *collector) collectPackage(pkg *packages.Package) {
 // cleanly-typed, in-repo declarations are kept; empty interfaces are dropped
 // because everything satisfies them and the edge carries no signal.
 func (c *collector) gatherTypes(pkg *packages.Package) {
+	universe := testUniverse(pkg)
 	scope := pkg.Types.Scope()
 	for _, name := range scope.Names() {
 		entry, ok := c.namedTypeEntry(pkg, scope.Lookup(name))
 		if !ok {
 			continue
 		}
-		// Each test variant re-declares every type of its package; the pass
-		// pairs a type once, from the variant that first held it.
+		iface, isIface := entry.named.Underlying().(*types.Interface)
+		if isIface && iface.NumMethods() == 0 {
+			continue
+		}
+		// Each test variant re-declares every type of its package; the plain
+		// pass pairs a type once, from the variant that first held it.
 		key := fmt.Sprintf("%s:%d:%d", entry.rel, entry.line, entry.col)
-		if c.seenTypes[key] {
-			continue
-		}
+		first := !c.seenTypes[key]
 		c.seenTypes[key] = true
-		if iface, ok := entry.named.Underlying().(*types.Interface); ok {
-			if iface.NumMethods() > 0 {
-				c.interfaces = append(c.interfaces, entry)
-			}
+		entry.testOnly = first && universe != ""
+		if universe != "" {
+			c.variant(universe).add(entry, isIface)
+		}
+		if !first {
 			continue
 		}
-		c.namedTypes = append(c.namedTypes, entry)
+		if isIface {
+			c.interfaces = append(c.interfaces, entry)
+		} else {
+			c.namedTypes = append(c.namedTypes, entry)
+		}
 	}
+}
+
+func (c *collector) variant(universe string) *variantTypes {
+	v, ok := c.variants[universe]
+	if !ok {
+		v = &variantTypes{}
+		c.variants[universe] = v
+	}
+	return v
+}
+
+func (v *variantTypes) add(entry typeEntry, isIface bool) {
+	if isIface {
+		v.interfaces = append(v.interfaces, entry)
+	} else {
+		v.namedTypes = append(v.namedTypes, entry)
+	}
+}
+
+// testUniverse is the test binary a test variant is compiled into (`p.test`
+// for `p [p.test]` and `p_test [p.test]`), or "" for a plain package.
+func testUniverse(pkg *packages.Package) string {
+	if pkg.ID == pkg.PkgPath || !strings.HasSuffix(pkg.ID, "]") {
+		return ""
+	}
+	open := strings.LastIndex(pkg.ID, " [")
+	if open < 0 {
+		return ""
+	}
+	return pkg.ID[open+2 : len(pkg.ID)-1]
 }
 
 // namedTypeEntry returns obj as a typeEntry when it is a non-generic named
@@ -239,18 +292,52 @@ func (c *collector) namedTypeEntry(pkg *packages.Package, obj types.Object) (typ
 // first-party interface it satisfies (value- or pointer-receiver method set).
 // Both sides are proven by types.Implements, so an edge is emitted only when
 // the compiler agrees -- no structural guessing on the tree-sitter side.
+//
+// A test-only type is then paired again inside its own test binary: a
+// signature naming a type of the package (`Speak(m Msg)`) names the test
+// variant's re-declared Msg there, which the plain package's interface does
+// not, so only that binary's copy of the interface can prove the pair. The
+// same holds for a test-only interface and the package's own types. A pair of
+// two production types was already proven by the plain pass.
 func (c *collector) collectImplements() {
+	emitted := map[string]bool{}
 	for _, t := range c.namedTypes {
 		for _, i := range c.interfaces {
-			if t.named == i.named || !implementsIface(t.named, i.named) {
-				continue
-			}
-			c.out.Implements = append(c.out.Implements, implementsFact{
-				File: t.rel, Line: t.line, Col: t.col, Name: t.name,
-				IFile: i.rel, ILine: i.line, ICol: i.col, IName: i.name,
-			})
+			c.pairImplements(t, i, emitted)
 		}
 	}
+	universes := make([]string, 0, len(c.variants))
+	for universe := range c.variants {
+		universes = append(universes, universe)
+	}
+	sort.Strings(universes)
+	for _, universe := range universes {
+		v := c.variants[universe]
+		for _, t := range v.namedTypes {
+			for _, i := range v.interfaces {
+				if t.testOnly || i.testOnly {
+					c.pairImplements(t, i, emitted)
+				}
+			}
+		}
+	}
+}
+
+// pairImplements emits t IMPLEMENTS i once per declaration pair when the
+// compiler proves it.
+func (c *collector) pairImplements(t, i typeEntry, emitted map[string]bool) {
+	if t.named == i.named || !implementsIface(t.named, i.named) {
+		return
+	}
+	key := fmt.Sprintf("%s:%d:%d>%s:%d:%d", t.rel, t.line, t.col, i.rel, i.line, i.col)
+	if emitted[key] {
+		return
+	}
+	emitted[key] = true
+	c.out.Implements = append(c.out.Implements, implementsFact{
+		File: t.rel, Line: t.line, Col: t.col, Name: t.name,
+		IFile: i.rel, ILine: i.line, ICol: i.col, IName: i.name,
+	})
 }
 
 // implementsIface is true when t satisfies iface through either its value or

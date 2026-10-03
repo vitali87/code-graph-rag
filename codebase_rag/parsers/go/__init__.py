@@ -1,4 +1,8 @@
-from .module_paths import discover_go_module_paths, resolve_go_import_path
+from .module_paths import (
+    discover_go_module_paths,
+    read_package_clause,
+    resolve_go_import_path,
+)
 from .type_inference import GoTypeInferenceEngine
 from .utils import (
     extract_first_return_type_name,
@@ -16,5 +20,6 @@ __all__ = [
     "extract_return_type_name",
     "is_receiver_method",
     "package_level_definitions",
+    "read_package_clause",
     "resolve_go_import_path",
 ]
