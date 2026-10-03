@@ -610,6 +610,48 @@ def test_a_failed_exclusive_copy_keeps_the_state_in_the_tree(
     assert any(w.startswith(failed) for w in warnings), warnings
 
 
+_PUBLISHED_HISTORY = b'{"entries": ["published by an edit"]}'
+
+
+def test_a_failed_exclusive_copy_never_deletes_history_an_edit_published(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A sync moves the history while an edit, which holds the edit lock the
+    # sync does not take, publishes its own under the same name with
+    # `os.replace`. The copy then fails: its cleanup must remove only the
+    # file it created, never the history the edit just wrote (Greptile, PR
+    # #2557). The publish lands once the copy has closed its file, the one
+    # moment Windows lets another process replace it too.
+    left = repo / cs.EDIT_HISTORY_FILENAME
+    left.write_bytes(b'{"entries": ["from an older cgr"]}')
+    _no_hard_links(monkeypatch)
+    target = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+
+    real_copystat = shutil.copystat
+
+    def published_then_failed(source: Path, destination: Path, **kwargs: bool) -> None:
+        if Path(destination) != target:
+            # `copy2` stamping the temp copy beside the target.
+            real_copystat(source, destination, **kwargs)
+            return
+        fresh = target.with_name(f"{target.name}.edit")
+        fresh.write_bytes(_PUBLISHED_HISTORY)
+        os.replace(fresh, target)
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(
+        "codebase_rag.checkout_state.shutil.copystat", published_then_failed
+    )
+
+    prepare_state_dir(repo)
+
+    assert target.read_bytes() == _PUBLISHED_HISTORY
+    # The tree's copy is kept, as after any failed move; the next run finds
+    # the published history in place and drops it then.
+    assert left.read_bytes() == b'{"entries": ["from an older cgr"]}'
+    assert sorted(p.name for p in target.parent.iterdir()) == [target.name]
+
+
 def test_a_move_that_loses_its_destination_keeps_the_state_in_the_tree(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

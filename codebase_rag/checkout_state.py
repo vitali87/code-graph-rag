@@ -192,6 +192,10 @@ def _create_exclusive(source: Path, target: Path) -> None:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     descriptor = os.open(target, flags, cs.EDIT_TEMP_FILE_MODE)
+    # The file this call created, read back by name at once: on Windows no
+    # other process can replace a file this one holds open, and on POSIX a
+    # replace would have to land between these two calls.
+    created = target.lstat()
     try:
         with os.fdopen(descriptor, "wb") as out, source.open("rb") as data:
             shutil.copyfileobj(data, out)
@@ -200,8 +204,21 @@ def _create_exclusive(source: Path, target: Path) -> None:
         # Half written, or without the mtime the in-sync check relies on: it
         # must not pass for the state, or the next run drops the tree's copy
         # as stale.
-        target.unlink(missing_ok=True)
+        _unlink_if_created(target, created)
         raise
+
+
+def _unlink_if_created(target: Path, created: os.stat_result) -> None:
+    """Remove `target` only while it is still the file `created` describes.
+
+    An edit publishes its history with `os.replace` under the edit lock,
+    which a sync moving the tree's copy does not hold. A file it published
+    while the copy ran is the newest state there is, and the failed copy's
+    cleanup must leave it (Greptile, PR #2557).
+    """
+    with contextlib.suppress(OSError):
+        if os.path.samestat(created, target.lstat()):
+            target.unlink()
 
 
 def _discard(legacy: Path) -> None:
