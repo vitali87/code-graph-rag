@@ -308,7 +308,8 @@ def test_receiver_not_provably_one_class_keeps_the_name_fallback(
     for fn in ("param", "swapped", "looped"):
         calls = _targets(edges, f"{PROJECT}.src.r.{fn}", _CALLS)
         bumps = {qn: res for qn, res in calls.items() if qn.endswith(".bump")}
-        assert bumps and set(bumps.values()) == {"heuristic"}, (fn, calls)
+        assert bumps, (fn, calls)
+        assert set(bumps.values()) == {"heuristic"}, (fn, calls)
     calls = _targets(edges, f"{PROJECT}.src.r.missing", _CALLS)
     assert calls.get(f"{PROJECT}.src.Other.Other.only") == "heuristic", calls
 

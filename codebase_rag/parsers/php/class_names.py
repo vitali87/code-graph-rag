@@ -9,6 +9,8 @@ resolver maps that path onto the module that declares it.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -229,24 +231,9 @@ def _scope_variable_classes(scope: Node) -> dict[str, ClassPath]:
     )
     if body is None:
         return {}
-    untyped: set[str] = set()
-    if body is not scope:
-        # A parameter or a closure's `use ($v)` binds the variable from
-        # outside, with a type this scope cannot see.
-        for header in scope.named_children:
-            if header.start_byte < body.start_byte:
-                untyped.update(
-                    name
-                    for variable in _scope_variables(header)
-                    if (name := _variable_identifier(variable))
-                )
+    untyped = _header_variable_names(scope, body)
     typed: dict[str, set[ClassPath]] = {}
-    for variable in _scope_variables(body):
-        if (name := _variable_identifier(variable)) is None:
-            continue
-        bound = _bound_class_path(variable)
-        if bound is None:
-            continue
+    for name, bound in _variable_bindings(body):
         if bound:
             typed.setdefault(name, set()).add(bound)
         else:
@@ -256,6 +243,30 @@ def _scope_variable_classes(scope: Node) -> dict[str, ClassPath]:
         for name, paths in typed.items()
         if len(paths) == 1 and name not in untyped
     }
+
+
+def _header_variable_names(scope: Node, body: Node) -> set[str]:
+    # A parameter or a closure's `use ($v)` binds the variable from outside,
+    # with a type this scope cannot see.
+    if body is scope:
+        return set()
+    return {
+        name
+        for header in scope.named_children
+        if header.start_byte < body.start_byte
+        for variable in _scope_variables(header)
+        if (name := _variable_identifier(variable))
+    }
+
+
+def _variable_bindings(body: Node) -> Iterator[tuple[str, ClassPath]]:
+    # Each binding of a variable in `body`, with the class path it binds:
+    # empty when it binds anything other than one named class.
+    for variable in _scope_variables(body):
+        if (name := _variable_identifier(variable)) is None:
+            continue
+        if (bound := _bound_class_path(variable)) is not None:
+            yield name, bound
 
 
 def _variable_identifier(variable: Node) -> str | None:
