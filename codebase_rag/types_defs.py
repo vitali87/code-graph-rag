@@ -1134,7 +1134,8 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
             RelationshipType.INSTANTIATES,
         ),
         "{line: int?, col: int?, end_line: int?, end_col: int?, "
-        "arg_count: int?, kwarg_names: list[string]?, resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
+        "arg_count: int?, kwarg_names: list[string]?, star_args: boolean?, star_kwargs: boolean?, "
+        "resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
     ),
     RelationshipPropertySchema(
         (RelationshipType.IMPORTS,),

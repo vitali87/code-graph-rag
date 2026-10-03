@@ -104,6 +104,11 @@ KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
+# Call-site flags, present (true) only when the argument list unpacks a
+# sequence (`*rest`) or a mapping (`**opts`). Neither is counted in
+# `arg_count`: each passes an unknown number of arguments (issue #2635).
+KEY_STAR_ARGS = "star_args"
+KEY_STAR_KWARGS = "star_kwargs"
 # Call-site rows: where the invoked symbol is defined. `path` on those rows is
 # the file holding the site, which is the caller's (issue #2460).
 KEY_CALLEE_PATH = "callee_path"
