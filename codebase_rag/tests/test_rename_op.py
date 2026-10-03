@@ -82,12 +82,17 @@ class RecordedGraph:
                 cq.CYPHER_GRAPH_REFERENCES: {"REFERENCES", "INSTANTIATES"},
                 cq.CYPHER_GRAPH_TYPE_EDGES: {"INHERITS", "ACCEPTS", "RETURNS"},
             }[query]
+            # The callers read takes a whole level of the walk at once and
+            # names the callee each row hangs off (issue #2597).
+            callers = query == cq.CYPHER_GRAPH_CALLERS
+            targets = {str(t) for t in p[cs.KEY_QNS]} if callers else {qn}
             out: list[ResultRow] = []
             for src, rel, dst, props in self.edges:
-                if dst != qn or rel not in rels or src not in self.nodes:
+                if dst not in targets or rel not in rels or src not in self.nodes:
                     continue
                 out.append(
                     {
+                        **({cs.KEY_TO_QN: dst} if callers else {}),
                         cs.KEY_LABEL: self.nodes[src][cs.KEY_LABEL],
                         cs.KEY_QUALIFIED_NAME: src,
                         cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),

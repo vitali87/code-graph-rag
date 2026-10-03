@@ -190,14 +190,20 @@ def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[Resul
         out = [n for n in NODES if n[cs.KEY_QUALIFIED_NAME] == qn][:1]
     elif query in (cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLEES):
         callers = query == cq.CYPHER_GRAPH_CALLERS
+        # One read per level of the walk, for the whole frontier, each row
+        # naming the frontier node it hangs off (issue #2597).
+        frontier = p[cs.KEY_QNS]
+        assert isinstance(frontier, list)
         for src, dst, line, col, el, ec, argc, kws in CALLS:
-            if (dst if callers else src) != qn:
+            this = dst if callers else src
+            if this not in frontier:
                 continue
             other = _by_qn(src if callers else dst)
             # The site is in the caller's body whichever side the row names
             # (issue #2460).
             out.append(
                 {
+                    cs.KEY_TO_QN if callers else cs.KEY_FROM_QN: this,
                     cs.KEY_LABEL: other[cs.KEY_LABEL],
                     cs.KEY_QUALIFIED_NAME: other[cs.KEY_QUALIFIED_NAME],
                     cs.KEY_PATH: _by_qn(src)[cs.KEY_PATH],

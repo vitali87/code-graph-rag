@@ -26,7 +26,9 @@ def _edge(
 
 
 def _names(store: _StatefulIngestor, query: str, qn: str) -> set[str]:
-    rows = store.fetch_all(query, {cs.KEY_QN: qn, cs.KEY_PROJECT_PREFIX: "proj."})
+    # The call reads take the walk's frontier as `qns` (issue #2597).
+    params = {cs.KEY_QN: qn, cs.KEY_QNS: [qn], cs.KEY_PROJECT_PREFIX: "proj."}
+    rows = store.fetch_all(query, params)
     return {str(row[_QN]) for row in rows}
 
 

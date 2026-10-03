@@ -396,26 +396,35 @@ def _site_sort_key(row: CallSiteRow) -> tuple[int, str, str, int, int]:
 
 
 def _walk_sites(
-    fetch_all: QueryFn, project_name: str, query: str, start: str, depth: int
+    fetch_all: QueryFn,
+    project_name: str,
+    query: str,
+    through_key: str,
+    start: str,
+    depth: int,
 ) -> list[CallSiteRow]:
-    # Breadth-first over endpoints, one query per frontier node; a node's
-    # sites appear at the depth it was first reached and never again, so a
-    # cycle terminates and the output stays a finite, ordered list.
+    # Breadth-first over endpoints, one query per LEVEL for the whole
+    # frontier: one per node was 886 round trips for a depth-2 walk on django
+    # (issue #2597). `through_key` is the column naming the frontier node a
+    # row hangs off. A node's sites appear at the depth it was first reached
+    # and never again, so a cycle terminates and the output stays a finite,
+    # ordered list.
     prefix = _prefix(project_name)
     owns = _owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
     for level in range(1, max(1, depth) + 1):
+        rows = fetch_all(
+            query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: sorted(frontier)}
+        )
         next_frontier: list[str] = []
-        for qn in sorted(frontier):
-            rows = fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: qn})
-            for site in _owned_sites(rows, owns, level, qn):
-                out.append(site)
-                other = site["qualified_name"]
-                if other not in seen:
-                    seen.add(other)
-                    next_frontier.append(other)
+        for site in _owned_sites(rows, owns, level, through_key):
+            out.append(site)
+            other = site["qualified_name"]
+            if other not in seen:
+                seen.add(other)
+                next_frontier.append(other)
         frontier = next_frontier
         if not frontier:
             break
@@ -423,11 +432,15 @@ def _walk_sites(
 
 
 def _owned_sites(
-    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through: str
+    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through_key: str
 ) -> list[CallSiteRow]:
     """The sites among `rows` whose other endpoint this project owns: a
     foreign row is neither reported nor a hop the walk continues through."""
-    return [_site_row(row, level, through) for row in rows if owns(_text_qn(row))]
+    return [
+        _site_row(row, level, str(row.get(through_key, "")))
+        for row in rows
+        if owns(_text_qn(row))
+    ]
 
 
 def callers(
@@ -439,7 +452,12 @@ def callers(
     each row's site invokes, so a transitive row is still one exact site.
     """
     return _walk_sites(
-        fetch_all, project_name, cq.CYPHER_GRAPH_CALLERS, qualified_name, depth
+        fetch_all,
+        project_name,
+        cq.CYPHER_GRAPH_CALLERS,
+        cs.KEY_TO_QN,
+        qualified_name,
+        depth,
     )
 
 
@@ -452,7 +470,12 @@ def callees(
     one is `callee_path`, so a hop past depth 1 still reads as `path:line`.
     """
     return _walk_sites(
-        fetch_all, project_name, cq.CYPHER_GRAPH_CALLEES, qualified_name, depth
+        fetch_all,
+        project_name,
+        cq.CYPHER_GRAPH_CALLEES,
+        cs.KEY_FROM_QN,
+        qualified_name,
+        depth,
     )
 
 
