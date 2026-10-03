@@ -52,6 +52,12 @@ from ..io_access import (
     string_literal,
     unwrap_argument,
 )
+from ..io_access.env_bindings import (
+    destructured_pattern,
+    env_aliases,
+    env_mapping_kind,
+    object_pattern_reads,
+)
 from ..io_access.registry import (
     IO_ARG_HANDLE_SINKS,
     IO_IDENTITY_UNWRAP_CALLS,
@@ -796,6 +802,9 @@ class _JsCtx(NamedTuple):
     # declarator, so a later `out << x` / `out.write(..)` routes to that file
     # (issue #1220). Empty for languages without type-declaration stream handles.
     type_ctors: dict[str, ResourceKind]
+    # Names standing for an env mapping (`const env = process.env`), so
+    # `env.KEY` is a source like `process.env.KEY` (issue #2753).
+    env_aliases: dict[str, ResourceKind]
 
 
 @dataclass
@@ -1061,10 +1070,20 @@ class FlowProcessor:
             identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(ctx.language, {}),
             arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
             type_ctors=IO_TYPE_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
+            env_aliases={},
+        )
+        jc = jc._replace(
+            env_aliases=env_aliases(
+                caller_node,
+                descriptor,
+                member_reads,
+                lambda head: self._js_head_is_live(head, jc),
+            )
         )
         statements = self._lean_body_statements(caller_node, ctx, descriptor)
         state = _LeanState(taint={}, handles={})
         self._seed_lean_parameters(caller_node, ctx, state)
+        self._seed_env_destructured_parameters(caller_node, state, jc)
         if ctx.language in _HOISTED_DECL_LANGS:
             # Path-sensitive MAY walk (issue #714 follow-up): each JS/TS if/else,
             # loop, and try branch is evaluated against a COPY of the incoming
@@ -1121,6 +1140,41 @@ class FlowProcessor:
         self._positional_params[ctx.caller_qn] = lean_names
         if lean_variadic is not None:
             self._variadic_params[ctx.caller_qn] = lean_variadic
+
+    def _seed_env_destructured_parameters(
+        self, caller_node: Node, state: _LeanState, jc: _JsCtx
+    ) -> None:
+        # `function f({ PORT } = process.env)`: each destructured local holds
+        # the env value it names when the default applies (issue #2753).
+        params = caller_node.child_by_field_name(jc.descriptor.params_field)
+        if params is None or not jc.member_reads:
+            return
+        for param in params.named_children:
+            for slot in param.named_children:
+                for local, binding in self._js_env_destructure(slot, jc):
+                    state.taint[local] = Taint(frozenset({binding}), frozenset())
+
+    def _js_env_destructure(
+        self, value: Node, jc: _JsCtx
+    ) -> list[tuple[str, HandleBinding]]:
+        # The (local, env read) pairs of `const { PORT, DB: url } = process.env`
+        # when `value` is the destructured env mapping; empty otherwise.
+        pattern = destructured_pattern(value)
+        if pattern is None:
+            return []
+        kind = env_mapping_kind(
+            value, jc.member_reads, lambda head: self._js_head_is_live(head, jc)
+        )
+        if kind is None:
+            return []
+        return [
+            (local, HandleBinding(kind=kind, identity=key))
+            for local, key in object_pattern_reads(pattern)
+            if local is not None
+        ]
+
+    def _js_head_is_live(self, head: str, jc: _JsCtx) -> bool:
+        return head not in jc.local_names and not self._js_import_shadowed(head, jc)
 
     def _accumulate_lean_tail_return(
         self, caller_node: Node, ctx: _FlowCtx, state: _LeanState, jc: _JsCtx
@@ -1723,6 +1777,14 @@ class FlowProcessor:
         # `name`/`value` (declarator) or `left`/`right` (assignment); Go uses `left`/
         # `right` expression_lists (`:=`, `=`) or `name`/`value` (`var`/`const`).
         # Shared (LHS names, RHS values) extraction with the I/O handle walk.
+        value = node.child_by_field_name(cs.FIELD_VALUE) or node.child_by_field_name(
+            cs.FIELD_RIGHT
+        )
+        if value is not None and (env_reads := self._js_env_destructure(value, jc)):
+            # `const { PORT } = process.env` binds each local to its env key.
+            for local, binding in env_reads:
+                tainted[local] = Taint(frozenset({binding}), frozenset())
+            return
         targets, values = binding_targets_values(node, jc.descriptor)
         # `resp, err := http.Get(u)`: one RHS call feeding several LHS taints them
         # all (a tuple return can't be split statically, over-approximating err).
@@ -3414,6 +3476,11 @@ class FlowProcessor:
         if obj is None or obj.text is None:
             return None
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        if (alias_kind := jc.env_aliases.get(obj_text)) is not None:
+            # `env.KEY` where `const env = process.env` (issue #2753).
+            return HandleBinding(
+                kind=alias_kind, identity=self._js_member_identity(node, jc)
+            )
         for prefix, kind in jc.member_reads:
             if obj_text != prefix:
                 continue
