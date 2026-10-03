@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.capture import resolve_capture
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
@@ -77,6 +78,7 @@ USE = (
 
 FIRST_PART = f"{PROJECT}.Order.Shop.Order"
 SECOND_PART = f"{PROJECT}.Order.Tax.Shop.Order"
+BOTH_PARTS = {FIRST_PART, SECOND_PART}
 
 
 def _write(root: Path, files: dict[str, str]) -> None:
@@ -131,12 +133,10 @@ def test_parameters_typed_as_a_partial_class_accept_it(
     run_updater(root, mock_ingestor, skip_if_missing=SKIP)
 
     accepts = _edges(mock_ingestor, cs.RelationshipType.ACCEPTS)
-    # Both parameters name the one type, on the part every other reference
-    # to it binds (the constructor call below lands there too).
-    assert _targets_of(accepts, ".OrderExt.Doubled(") == {FIRST_PART}, accepts
-    assert _targets_of(accepts, ".OrderExt.Plain(") == {FIRST_PART}, accepts
-    instantiates = _edges(mock_ingestor, cs.RelationshipType.INSTANTIATES)
-    assert _targets_of(instantiates, ".Use.Run") == {FIRST_PART}, instantiates
+    # Both parameters name the one type, through every part of it: no one
+    # part is singled out, so none can go stale when a sync adds or drops one.
+    assert _targets_of(accepts, ".OrderExt.Doubled(") == BOTH_PARTS, accepts
+    assert _targets_of(accepts, ".OrderExt.Plain(") == BOTH_PARTS, accepts
 
 
 def test_return_and_generic_argument_types_name_the_partial_class(
@@ -160,11 +160,11 @@ def test_return_and_generic_argument_types_name_the_partial_class(
     run_updater(root, mock_ingestor, skip_if_missing=SKIP)
 
     returns = _edges(mock_ingestor, cs.RelationshipType.RETURNS)
-    assert _targets_of(returns, ".Factory.Make") == {FIRST_PART}, returns
-    assert _targets_of(returns, ".Factory.Many") == {FIRST_PART}, returns
-    # Inside the second part's own file the name still means the one type,
+    assert _targets_of(returns, ".Factory.Make") == BOTH_PARTS, returns
+    assert _targets_of(returns, ".Factory.Many") == BOTH_PARTS, returns
+    # Inside the second part's own file the name still means the whole type,
     # not that file's part of it.
-    assert _targets_of(returns, ".Order.Clone") == {FIRST_PART}, returns
+    assert _targets_of(returns, ".Order.Clone") == BOTH_PARTS, returns
 
 
 def test_an_incremental_sync_keeps_the_edge_to_unchanged_parts(
@@ -187,8 +187,135 @@ def test_an_incremental_sync_keeps_the_edge_to_unchanged_parts(
         for edge in store.keyed_edges
         if edge[2] == cs.RelationshipType.ACCEPTS
     }
-    assert _targets_of(accepts, ".OrderExt.Plain(") == {FIRST_PART}, accepts
-    assert _targets_of(accepts, ".OrderExt.Doubled(") == {FIRST_PART}, accepts
+    assert _targets_of(accepts, ".OrderExt.Plain(") == BOTH_PARTS, accepts
+    assert _targets_of(accepts, ".OrderExt.Doubled(") == BOTH_PARTS, accepts
+
+
+# What a reference reads must not depend on the order files were synced in:
+# an incremental sync has to leave the type edges a clean index draws.
+CAPTURE_TYPES = resolve_capture(["+parameters", "+fields"])
+TYPE_RELS = frozenset(
+    {
+        cs.RelationshipType.ACCEPTS,
+        cs.RelationshipType.RETURNS,
+        cs.RelationshipType.OF_TYPE,
+    }
+)
+HOLDER = (
+    "namespace Shop {\n"
+    "  public static class OrderExt {\n"
+    "    public static int Plain(Order o) { return 1; }\n"
+    "    public static Order Make() { return null; }\n"
+    "  }\n"
+    "  public class Holder { private Order cur; }\n"
+    "}\n"
+)
+# Sorts before both parts, so it is the lowest qualified name once added.
+EARLIER_PART = ORDER.replace("Total() { return Tax() + 1; }", "Early() { return 0; }")
+
+
+def _sync(root: Path, store: _StatefulIngestor, force: bool = False) -> None:
+    # A fresh updater per run, as each `cgr` invocation is: the unchanged
+    # files' partial groups come back from the graph, not from memory.
+    parsers, queries = load_parsers()
+    if SKIP not in parsers:
+        pytest.skip(f"{SKIP} parser not available")
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+        capture=CAPTURE_TYPES,
+    ).run(force=force)
+
+
+def _type_edges(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
+    return {
+        (edge[1], edge[2], edge[4])
+        for edge in store.keyed_edges
+        if edge[2] in TYPE_RELS
+    }
+
+
+def _synced_and_clean(
+    root: Path, before: dict[str, str], change: dict[str, str | None]
+) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]]]:
+    _write(root, before)
+    store = _StatefulIngestor()
+    _sync(root, store, force=True)
+    for rel, text in change.items():
+        if text is None:
+            (root / rel).unlink()
+        else:
+            _write(root, {rel: text})
+    _sync(root, store)
+    clean = _StatefulIngestor()
+    _sync(root, clean, force=True)
+    return _type_edges(store), _type_edges(clean)
+
+
+PARTS_AND_HOLDER = {"Order.cs": ORDER, "Order.Tax.cs": ORDER_TAX, "Ext.cs": HOLDER}
+
+
+THIRD_PART = f"{PROJECT}.A.Shop.Order"
+
+
+@pytest.mark.parametrize(
+    ("before", "change", "parts"),
+    [
+        (PARTS_AND_HOLDER, {"A.cs": EARLIER_PART}, {THIRD_PART, *BOTH_PARTS}),
+        ({**PARTS_AND_HOLDER, "A.cs": EARLIER_PART}, {"A.cs": None}, BOTH_PARTS),
+        (
+            PARTS_AND_HOLDER,
+            {"Order.Tax.cs": ORDER_TAX.replace("2;", "5;")},
+            BOTH_PARTS,
+        ),
+        (
+            PARTS_AND_HOLDER,
+            {"Ext.cs": HOLDER.replace("return 1;", "return 7;")},
+            BOTH_PARTS,
+        ),
+    ],
+    ids=["add-an-earlier-part", "remove-a-part", "edit-a-later-part", "edit-the-user"],
+)
+def test_a_sync_leaves_the_type_edges_a_clean_index_draws(
+    temp_repo: Path,
+    before: dict[str, str],
+    change: dict[str, str | None],
+    parts: set[str],
+) -> None:
+    synced, clean = _synced_and_clean(temp_repo / PROJECT, before, change)
+
+    assert synced == clean, (
+        f"only after the sync: {sorted(synced - clean)}; "
+        f"only in a clean index: {sorted(clean - synced)}"
+    )
+    for owner in (".Plain(", ".Make", ".cur"):
+        named = {dst for src, _rel, dst in synced if owner in src}
+        assert named == parts, (owner, named)
+
+
+def test_two_non_partial_twins_stay_two_types_after_a_sync(temp_repo: Path) -> None:
+    # `Box` and `Box<T>` share a directory, a namespace and a name but are
+    # two types, so a clean index draws no edge for a bare `Box`. A sync
+    # that reads them back from the graph must not merge them into one.
+    box = {
+        "Box.cs": "namespace Shop {\n  public class Box { }\n}\n",
+        "Box.Generic.cs": "namespace Shop {\n  public class Box<T> { }\n}\n",
+        "Use.cs": (
+            "namespace Shop {\n  public class Use {"
+            " public static int Plain(Box b) { return 1; } }\n}\n"
+        ),
+    }
+    synced, clean = _synced_and_clean(
+        temp_repo / PROJECT,
+        box,
+        {"Use.cs": box["Use.cs"].replace("return 1;", "return 2;")},
+    )
+
+    assert synced == clean
+    assert not any(".Use.Plain(" in src for src, _rel, _dst in synced), synced
 
 
 def test_a_non_partial_class_still_gets_its_edge(
@@ -250,9 +377,10 @@ def test_partial_classes_of_two_directories_stay_two_types(
     run_updater(root, mock_ingestor, skip_if_missing=SKIP)
 
     accepts = _edges(mock_ingestor, cs.RelationshipType.ACCEPTS)
-    assert _targets_of(accepts, ".Use.Plain(") == {f"{PROJECT}.A.Order.Shop.Order"}, (
-        accepts
-    )
+    assert _targets_of(accepts, ".Use.Plain(") == {
+        f"{PROJECT}.A.Order.Shop.Order",
+        f"{PROJECT}.A.Order.Tax.Shop.Order",
+    }, accepts
     assert _targets_of(accepts, ".Far.Plain(") == set(), accepts
 
 
@@ -271,10 +399,12 @@ def _resolver(*others: str, joined: bool) -> TypeReferenceResolver:
 
 def test_the_resolver_counts_the_parts_of_a_partial_type_once() -> None:
     # The issue's shape: from another file the two parts tie and the
-    # reference was dropped; joined, they are one type, named by its
-    # lowest part.
+    # reference was dropped; joined, they are one type, and an annotation
+    # naming it names every part.
     assert _resolver(joined=False).resolve("Order", "p.Ext") is None
     assert _resolver(joined=True).resolve("Order", "p.Ext") == "p.Order.Shop.Order"
+    joined = _resolver(joined=True)
+    assert joined.resolve_annotation("List<Order>", "p.Ext") == sorted(PARTS)
 
 
 def test_the_parts_are_as_near_as_their_nearest_part() -> None:

@@ -1502,6 +1502,7 @@ class _StatefulIngestor:
                         cs.KEY_QUALIFIED_NAME: qn,
                         cs.KEY_PATH: path,
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                        cs.KEY_MODIFIERS: _result(props.get(cs.KEY_MODIFIERS)),
                     }
                     for (label, _uid), props in self.nodes.items()
                     if label in _CSHARP_TYPE_LABELS

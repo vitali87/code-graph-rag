@@ -127,8 +127,8 @@ through the module's imports first, then the module and its enclosing
 modules, then a unique project type of that name (two equally near
 candidates stay unresolved rather than guessed). The parts of a C# `partial`
 type split across files count as one candidate, as near as its nearest part,
-and the edge names the part with the lowest qualified name, the one a base
-list binds. Each resolved name yields
+and its edge goes to every part, so no choice of part goes stale
+when a sync adds or drops one. Each resolved name yields
 one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.

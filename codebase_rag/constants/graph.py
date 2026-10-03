@@ -1058,7 +1058,7 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
     "AND n.qualified_name STARTS WITH $project_prefix "
     "AND n.path ENDS WITH '.cs' "
     "RETURN n.qualified_name AS qualified_name, n.path AS path, "
-    "n.start_line AS start_line"
+    "n.start_line AS start_line, n.modifiers AS modifiers"
 )
 
 # The labels a C# `partial` declaration registers under: a partial class,
