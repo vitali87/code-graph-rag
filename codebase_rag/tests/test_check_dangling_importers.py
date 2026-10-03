@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -285,6 +286,124 @@ def test_typescript_barrel_re_export_of_a_removed_function_is_a_finding(
     ]
 
 
+# A replacement import is only as good as its target (Greptile, PR #2574):
+# `binds` must look through an import into a module the edit did not touch,
+# both to reject one naming nothing and to accept a wildcard that works.
+
+
+def _add_unchanged_module(
+    root: Path, store: _StatefulIngestor, updater: GraphUpdater, rel: str, text: str
+) -> None:
+    # Indexed in its own step, so the edit under test leaves it alone and
+    # its definitions are absent from that edit's snapshots.
+    _write(root, rel, text)
+    _observe(root, store, updater, [rel])
+
+
+def _commit_base(root: Path) -> None:
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
+
+
+def _imports_cleanly(root: Path) -> bool:
+    # The ground truth the gate must agree with: does the package load?
+    result = subprocess.run(
+        [sys.executable, "-c", "from app import helper"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def test_re_export_from_an_unchanged_module_lacking_the_name_is_a_finding(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(root, store, updater, "app/empty.py", "VALUE = 1\n")
+    _write(
+        root, "app/core.py", "from app.empty import helper\n\n\n" + CORE_WITHOUT_HELPER
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["symbols"]["removed"] == [_qn("app.core.helper")]
+    assert has_findings(delta)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_check_fail_on_found_exits_nonzero_for_a_re_export_naming_nothing(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(root, store, updater, "app/empty.py", "VALUE = 1\n")
+    _commit_base(root)
+    _write(
+        root, "app/core.py", "from app.empty import helper\n\n\n" + CORE_WITHOUT_HELPER
+    )
+
+    result = _run_cli_check(root, store)
+
+    assert result.exit_code == 1, result.output
+    assert _qn("app.core.helper") in result.output
+
+
+def test_wildcard_re_export_from_an_unchanged_module_defining_it_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root, store, updater, "app/util.py", "def helper():\n    return 1\n"
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["symbols"]["removed"] == [_qn("app.core.helper")]
+    assert delta["dangling_importers"] == []
+    assert not has_findings(delta)
+
+
+def test_check_fail_on_found_passes_a_working_wildcard_re_export(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root, store, updater, "app/util.py", "def helper():\n    return 1\n"
+    )
+    _commit_base(root)
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    result = _run_cli_check(root, store)
+
+    assert result.exit_code == 0, result.output
+
+
+def test_name_in_a_comment_inside_all_is_not_an_export(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(root, "app/core.py", CORE_WITHOUT_HELPER)
+    _write(
+        root,
+        "app/__init__.py",
+        "from app.core import keep\n\n"
+        "__all__ = [\n    \"keep\",\n    # 'helper' was removed\n]\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py", "app/__init__.py"])
+
+    assert delta["symbols"]["removed"] == [_qn("app.core.helper")]
+    assert delta["dangling_importers"] == []
+    assert not has_findings(delta)
+
+
 # --- what must not change -----------------------------------------------------
 
 
@@ -302,6 +421,7 @@ def test_a_re_export_cycle_binds_nothing_and_terminates() -> None:
             bound="helper",
             line=1,
             col=0,
+            module_path=f"{module}.py",
         )
 
     after = Snapshot(
@@ -314,10 +434,15 @@ def test_a_re_export_cycle_binds_nothing_and_terminates() -> None:
         bindings=(binding("a", "b"), binding("b", "a")),
     )
 
-    still = _AfterBindings(after, gone={"a.helper", "b.helper"})
+    still = _AfterBindings(
+        after,
+        gone={"a.helper", "b.helper"},
+        load=lambda _path: (frozenset(), ()),
+        repo_root=None,
+    )
 
-    assert not still.binds("a", "helper")
-    assert not still.binds("b", "helper")
+    assert not still.binds("a", "a.py", "helper")
+    assert not still.binds("b", "b.py", "helper")
 
 
 def test_removing_a_symbol_nothing_imports_or_calls_passes(
@@ -402,6 +527,124 @@ def test_moved_symbol_re_exported_from_its_old_module_is_not_reported(
         }
     ]
     assert delta["dangling_importers"] == []
+
+
+def test_named_re_export_from_an_unchanged_module_defining_it_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root, store, updater, "app/util.py", "def helper():\n    return 1\n"
+    )
+    _write(
+        root, "app/core.py", "from app.util import helper\n\n\n" + CORE_WITHOUT_HELPER
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+    assert not has_findings(delta)
+
+
+def test_re_export_of_a_name_an_unchanged_module_assigns_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    # The graph records no node for a module-level assignment; the source
+    # still binds the name, so the import works and must not be reported.
+    _add_unchanged_module(root, store, updater, "app/util.py", "helper = int\n")
+    _write(
+        root, "app/core.py", "from app.util import helper\n\n\n" + CORE_WITHOUT_HELPER
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_removed_definition_replaced_by_an_assignment_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(root, "app/core.py", CORE_WITHOUT_HELPER + "\n\nhelper = keep\n")
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["symbols"]["removed"] == [_qn("app.core.helper")]
+    assert delta["dangling_importers"] == []
+
+
+def test_wildcard_re_export_from_an_unchanged_module_lacking_it_is_a_finding(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(root, store, updater, "app/empty.py", "VALUE = 1\n")
+    _write(root, "app/core.py", "from app.empty import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_re_export_from_outside_the_project_is_taken_at_its_word(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        "from os.path import basename as helper\n\n\n" + CORE_WITHOUT_HELPER,
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_re_export_of_a_submodule_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    # `from app import helpers` binds the submodule: its IMPORTS edge names
+    # `app.helpers` itself, which defines no `helpers`.
+    _add_unchanged_module(root, store, updater, "app/helpers.py", "VALUE = 1\n")
+    _write(
+        root,
+        "app/core.py",
+        "from app import helpers as helper\n\n\n" + CORE_WITHOUT_HELPER,
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_all_entry_with_a_trailing_comment_is_still_an_export(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/__init__.py",
+        "from app.core import helper, keep\n\n"
+        '__all__ = [\n    "helper",  # kept for callers\n    "keep",\n]\n',
+    )
+    _observe(root, store, updater, ["app/__init__.py"])
+    _write(root, "app/core.py", CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    entries = [e for e in delta["dangling_importers"] if e["kind"] == "__all__"]
+    assert [(e["line"], e["col"], e["name"]) for e in entries] == [(4, 5, "helper")]
 
 
 def _run_cli_check(root: Path, store: _StatefulIngestor) -> Result:

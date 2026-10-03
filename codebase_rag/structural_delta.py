@@ -17,6 +17,7 @@ found by walking its callers one hop at a time.
 
 from __future__ import annotations
 
+import ast
 import re
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -76,6 +77,8 @@ class ImportBinding(NamedTuple):
     bound: str
     line: int | None
     col: int | None
+    # The file of the module named; empty for one outside the project.
+    module_path: str = ""
 
     @property
     def symbol(self) -> str:
@@ -301,6 +304,7 @@ def _binding(row: ResultRow) -> ImportBinding:
         bound=_text(row.get(cs.KEY_ALIAS)) or imported_name,
         line=_opt_int(row.get(cs.KEY_LINE)),
         col=_opt_int(row.get(cs.KEY_COL)),
+        module_path=_text(row.get(cs.KEY_TO_PATH)),
     )
 
 
@@ -662,48 +666,241 @@ def _dangling(
 # --- dangling importers ------------------------------------------------------
 
 
-class _AfterBindings:
-    """Which names the modules of the after-snapshot still bind."""
+# What a module binds that the graph cannot show, read from its source
+# (Python only): its `def`s, classes and assignments, a `try`/`if` branch
+# included, and the names it takes by `from x import y`, which are only as
+# good as `x`. `*` among the latter marks a wildcard import.
+class _SourceNames(NamedTuple):
+    own: frozenset[str]
+    imported: frozenset[str]
 
-    def __init__(self, after: Snapshot, gone: set[str]) -> None:
-        self._definitions = after.definitions
+
+# The statement lists of a compound statement, walked as the module's own
+# top level; every other field is an expression that may bind a name.
+_PY_BLOCK_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
+
+
+def _stored_names(node: ast.AST) -> Iterator[str]:
+    """The names an expression or assignment target writes."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            yield child.id
+
+
+def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
+    """The names one top-level statement binds, other than by `from` import.
+
+    The statement lists nested in it (an `if` body, a `try` handler) are
+    queued on `pending`: they run at import time too.
+    """
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        yield node.name
+        return
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            yield alias.asname or alias.name.partition(cs.SEPARATOR_DOT)[0]
+        return
+    for field, value in ast.iter_fields(node):
+        if field in _PY_BLOCK_FIELDS:
+            pending.extend(value)
+            continue
+        for part in value if isinstance(value, list) else [value]:
+            if isinstance(part, ast.AST):
+                yield from _stored_names(part)
+
+
+def _python_top_level_names(text: str) -> _SourceNames | None:
+    """The names a Python module binds at import time, or None if unparsable."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    own: set[str] = set()
+    imported: set[str] = set()
+    pending: list[ast.AST] = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.ImportFrom):
+            imported.update(alias.asname or alias.name for alias in node.names)
+        else:
+            own.update(_names_bound_by(node, pending))
+    return _SourceNames(own=frozenset(own), imported=frozenset(imported))
+
+
+# A module the edit left alone is read on demand: the definitions the graph
+# records in its file, and that file's own by-name imports.
+_ModuleLoader = Callable[[str], tuple[frozenset[str], tuple[ImportBinding, ...]]]
+
+
+def _module_loader(fetch_all: QueryFn, params: PropertyDict) -> _ModuleLoader:
+    def load(path: str) -> tuple[frozenset[str], tuple[ImportBinding, ...]]:
+        scoped: PropertyDict = {**params, cs.CYPHER_PARAM_PATHS: [path]}
+        definitions = frozenset(
+            qn
+            for row in fetch_all(cq.CYPHER_DELTA_DEFINITIONS, scoped)
+            if (qn := _definition(row).qualified_name)
+        )
+        bindings = tuple(
+            binding
+            for binding in _named_import_bindings(fetch_all, scoped)
+            if binding.importer_path == path
+        )
+        return definitions, bindings
+
+    return load
+
+
+class _AfterBindings:
+    """Which names the modules of the project still bind after the edit.
+
+    The after-snapshot holds the touched files only; a module the edit left
+    alone is read through `load` the first time a re-export leads into it.
+    """
+
+    def __init__(
+        self,
+        after: Snapshot,
+        gone: set[str],
+        load: _ModuleLoader,
+        repo_root: Path | None,
+    ) -> None:
         self._gone = gone
-        self._by_importer: dict[str, list[ImportBinding]] = {}
-        for binding in after.bindings:
-            self._by_importer.setdefault(binding.importer, []).append(binding)
+        self._load = load
+        self._repo_root = repo_root
+        defined: dict[str, set[str]] = {path: set() for path in after.paths}
+        for qn, definition in after.definitions.items():
+            if definition.path in defined:
+                defined[definition.path].add(qn)
+        self._definitions = {path: frozenset(qns) for path, qns in defined.items()}
+        self._bindings: dict[str, tuple[ImportBinding, ...]] = {
+            path: tuple(b for b in after.bindings if b.importer_path == path)
+            for path in after.paths
+        }
+        self._sources: dict[str, str | None] = {}
+        self._names: dict[str, _SourceNames | None] = {}
+
+    def source(self, path: str) -> str | None:
+        if path not in self._sources:
+            self._sources[path] = (
+                _python_source(self._repo_root, path) if self._repo_root else None
+            )
+        return self._sources[path]
+
+    def _source_names(self, path: str) -> _SourceNames | None:
+        if path not in self._names:
+            text = self.source(path)
+            self._names[path] = None if text is None else _python_top_level_names(text)
+        return self._names[path]
+
+    def _facts(self, path: str) -> tuple[frozenset[str], tuple[ImportBinding, ...]]:
+        if path not in self._definitions:
+            self._definitions[path], self._bindings[path] = self._load(path)
+        return self._definitions[path], self._bindings[path]
 
     def binds(
         self,
         module: str,
+        path: str,
         name: str,
         seen: frozenset[tuple[str, str]] = frozenset(),
     ) -> bool:
-        """Whether `module` still binds `name` to something that exists.
+        """Whether `module` (in file `path`) still binds `name` to something.
 
         Its own definition counts, and so does an import of the name that
         still resolves: after a move, `from app.util import helper` left in
-        `app.core` keeps every `from app.core import helper` working. A chain
-        of re-exports is followed; a cycle in it binds nothing.
+        `app.core` keeps every `from app.core import helper` working, while
+        `from app.empty import helper` keeps nothing when `app.empty` has no
+        `helper`. A chain of re-exports is followed, into modules the edit
+        left alone too; a cycle in it binds nothing.
         """
         if (module, name) in seen:
             return False
         seen = seen | {(module, name)}
-        if f"{module}{cs.SEPARATOR_DOT}{name}" in self._definitions:
+        qn = f"{module}{cs.SEPARATOR_DOT}{name}"
+        if not path:
+            # Outside the project (`from os.path import join as helper`):
+            # nothing to check the name against, so the import is taken
+            # at its word unless it names a symbol the edit removed.
+            return qn not in self._gone
+        definitions, bindings = self._facts(path)
+        names = self._source_names(path)
+        if qn in definitions or (names is not None and _binds_itself(names, name)):
             return True
-        for binding in self._by_importer.get(module, ()):
-            if binding.imported_name == cs.IMPORTED_NAME_WILDCARD:
-                if self.binds(binding.module, name, seen):
-                    return True
-            elif binding.bound == name and (
-                binding.symbol not in self._gone
-                or self.binds(binding.module, binding.imported_name, seen)
-            ):
-                return True
-        return False
+        own = [binding for binding in bindings if binding.importer == module]
+        if any(self._resolves(binding, name, seen) for binding in own):
+            return True
+        return names is not None and _unfollowed_import(names, name, own)
+
+    def _resolves(
+        self, binding: ImportBinding, name: str, seen: frozenset[tuple[str, str]]
+    ) -> bool:
+        if binding.imported_name == cs.IMPORTED_NAME_WILDCARD:
+            return self.binds(binding.module, binding.module_path, name, seen)
+        return binding.bound == name and (
+            _imports_the_module_itself(binding, self._gone)
+            or self.binds(
+                binding.module, binding.module_path, binding.imported_name, seen
+            )
+        )
+
+
+# A module-level `__getattr__` (PEP 562) can answer for any name.
+_PY_MODULE_GETATTR = "__getattr__"
+
+
+def _binds_itself(names: _SourceNames, name: str) -> bool:
+    return name in names.own or _PY_MODULE_GETATTR in names.own
+
+
+def _unfollowed_import(
+    names: _SourceNames, name: str, bindings: list[ImportBinding]
+) -> bool:
+    """An import in the source that the graph holds no edge for.
+
+    An unresolvable relative import, say: it cannot be followed, so it is
+    taken at its word rather than reported.
+    """
+    wildcard = cs.IMPORTED_NAME_WILDCARD
+    if name in names.imported and not any(
+        b.bound == name and b.imported_name != wildcard for b in bindings
+    ):
+        return True
+    return wildcard in names.imported and not any(
+        b.imported_name == wildcard for b in bindings
+    )
+
+
+def _imports_the_module_itself(binding: ImportBinding, gone: set[str]) -> bool:
+    """`from app import helpers`: the edge names the submodule `app.helpers`.
+
+    Its `imported_name` is the module's own last segment, so the binding
+    holds the module, not a name inside it -- unless that symbol existed
+    and the edit removed it.
+    """
+    return (
+        binding.module.rpartition(cs.SEPARATOR_DOT)[2] == binding.imported_name
+        and binding.symbol not in gone
+    )
+
+
+def _opens_comment(line_prefix: str) -> bool:
+    """Whether a `#` outside a string literal starts a comment in the text."""
+    quote = ""
+    for char in line_prefix:
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char == "#":
+            return True
+    return False
 
 
 def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
-    """(line, byte column) of each `__all__` string entry that reads `name`."""
+    """(line, byte column) of each `__all__` string entry that reads `name`.
+
+    A string in a comment (`# 'helper' was removed`) exports nothing.
+    """
     found: list[tuple[int, int]] = []
     for block in re.finditer(cs.PY_DUNDER_ALL_BLOCK_PATTERN, text, re.S):
         for entry in re.finditer(cs.PY_DUNDER_ALL_ENTRY_PATTERN, block.group(1)):
@@ -711,6 +908,9 @@ def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
                 continue
             offset = block.start(1) + entry.start("name")
             line_start = text.rfind("\n", 0, offset) + 1
+            # The opening quote is not part of the prefix that is scanned.
+            if _opens_comment(text[line_start : block.start(1) + entry.start()]):
+                continue
             found.append(
                 (
                     text.count("\n", 0, offset) + 1,
@@ -757,7 +957,7 @@ def _import_findings(
         )
         for binding in candidates
         if binding.symbol in gone
-        and not still.binds(binding.module, binding.imported_name)
+        and not still.binds(binding.module, binding.module_path, binding.imported_name)
     ]
 
 
@@ -767,7 +967,6 @@ def _all_findings(
     gone: set[str],
     renamed_to: dict[str, str],
     still: _AfterBindings,
-    repo_root: Path,
 ) -> list[DanglingImporter]:
     # (module, path, the name it exported the symbol under, the symbol): the
     # defining module of each module-level gone symbol, plus every module
@@ -786,14 +985,11 @@ def _all_findings(
             exporters.add(
                 (binding.importer, binding.importer_path, binding.bound, binding.symbol)
             )
-    sources: dict[str, str | None] = {}
     out: list[DanglingImporter] = []
     for module, path, name, target in sorted(exporters):
-        if still.binds(module, name):
+        if still.binds(module, path, name):
             continue
-        if path not in sources:
-            sources[path] = _python_source(repo_root, path)
-        text = sources[path]
+        text = still.source(path)
         if text is None:
             continue
         out.extend(
@@ -817,6 +1013,7 @@ def _dangling_importers(
     after: Snapshot,
     symbols: SymbolDelta,
     repo_root: Path | None,
+    load: _ModuleLoader,
 ) -> list[DanglingImporter]:
     """Import statements and `__all__` entries naming a removed symbol.
 
@@ -831,10 +1028,10 @@ def _dangling_importers(
     if not gone:
         return []
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
-    still = _AfterBindings(after, gone)
+    still = _AfterBindings(after, gone, load, repo_root)
     found = _import_findings(before, after, gone, renamed_to, still)
     if repo_root is not None:
-        found.extend(_all_findings(before, after, gone, renamed_to, still, repo_root))
+        found.extend(_all_findings(before, after, gone, renamed_to, still))
     unique = {
         (d["kind"], d["path"], d["line"], d["col"], d["name"], d["target"]): d
         for d in found
@@ -1434,7 +1631,19 @@ def structural_delta(
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
         dangling_callers=_dangling(before, after, symbols),
-        dangling_importers=_dangling_importers(before, after, symbols, repo_root),
+        dangling_importers=_dangling_importers(
+            before,
+            after,
+            symbols,
+            repo_root,
+            _module_loader(
+                fetch_all,
+                {
+                    cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                    cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+                },
+            ),
+        ),
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
         ),

@@ -632,6 +632,7 @@ class _StatefulIngestor:
                         cs.KEY_FROM_QN: _result(fv),
                         cs.KEY_FROM_PATH: _result(from_path),
                         cs.KEY_TO_QN: _result(tv),
+                        cs.KEY_TO_PATH: _result(self._delta_path_of(tl, tv)),
                         cs.KEY_IMPORTED_NAME: _result(imported_name),
                         cs.KEY_ALIAS: _result(edge_props.get(cs.KEY_ALIAS)),
                         cs.KEY_LINE: _result(edge_props.get(cs.KEY_LINE)),

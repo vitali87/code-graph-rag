@@ -1202,6 +1202,8 @@ RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
 # touched files (issue #2516), one row per bound name: an importer of a
 # touched module still naming a symbol the edit removed, and a touched
 # module's own imports, which may re-export that name from its new home.
+# `to_path` lets a re-export be followed into a module the edit left alone,
+# which this same query then reads one file at a time.
 CYPHER_DELTA_NAMED_IMPORTS = """MATCH (m:Module)-[r:IMPORTS]->(t)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1210,7 +1212,8 @@ WHERE m.qualified_name STARTS WITH $project_prefix
   AND r.imported_name IS NOT NULL
   AND (m.path IN $paths OR t.path IN $paths)
 RETURN m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn, r.imported_name AS imported_name,
+       t.qualified_name AS to_qn, t.path AS to_path,
+       r.imported_name AS imported_name,
        r.alias AS alias, r.line AS line, r.col AS col"""
 # Context slice reads (issue #1536): trace hotness of the callers of one
 # symbol, the types it returns and accepts, and the sections of the
