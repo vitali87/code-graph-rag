@@ -135,7 +135,8 @@ LOCAL_TRIM = "local.src.text.pad.trim"
 LOCAL_UPPER = "local.src.text.pad.upper"
 
 # What must stay unbound: two star sources exporting one name, a default a
-# star does not carry, and a cycle of stars.
+# star does not carry, and a cycle of stars. `private/index.ts` imports `dup`
+# for its own use and exports another `dup` through `export *`.
 NEGATIVE_FILES = {
     "src/a.ts": (
         "export function dup(): number {\n  return 1;\n}\n\n"
@@ -152,13 +153,19 @@ NEGATIVE_FILES = {
     ),
     "src/loop1.ts": 'export * from "./loop2";\n',
     "src/loop2.ts": 'export * from "./loop1";\n',
+    "src/d.ts": "export function dup(): number {\n  return 6;\n}\n",
+    "src/private/index.ts": (
+        'import { dup } from "../a";\n\nexport * from "../d";\n\n'
+        "export function viaA(): number {\n  return dup();\n}\n"
+    ),
     "src/neg.ts": (
         'import { dup, onlyA } from "./stars";\n'
         'import starDefault from "./stars";\n'
         'import { dup as picked } from "./pick";\n'
-        'import { ghost } from "./loop1";\n\n'
+        'import { ghost } from "./loop1";\n'
+        'import { dup as hidden } from "./private";\n\n'
         "export function neg(): number {\n"
-        "  return dup() + onlyA() + starDefault() + picked() + ghost();\n}\n"
+        "  return dup() + onlyA() + starDefault() + picked() + ghost() + hidden();\n}\n"
     ),
 }
 
@@ -284,15 +291,27 @@ def test_the_barrel_maps_record_what_each_export_names(tmp_path: Path) -> None:
         "*maps.src.lib.math.add": "maps.src.lib.math.add",
         "times": "maps.src.lib.math.mul.default",
     }
-    bindings = updater.factory.import_processor.js_export_bindings
-    assert bindings["maps.src.lib.math.mul"] == {"default": "maps.src.lib.math.mul.mul"}
-    assert bindings["maps.src.text.pad"] == {
-        "strip": "maps.src.text.pad.trim",
-        "default": "maps.src.text.pad.upper",
+    # Only what a module exports may be followed through it: a re-export
+    # names another module's export, a local export (True) one of its own
+    # bindings.
+    exports = updater.factory.import_processor.js_export_bindings
+    assert exports["maps.src.lib.math.index"] == {
+        "times": ("maps.src.lib.math.mul.default", False)
     }
-    assert bindings["maps.src.text.index"] == {
-        "leftPad": "maps.src.text.index.pad",
-        "shout": "maps.src.text.index.upper",
+    assert exports["maps.src.lib.index"] == {
+        "plus": ("maps.src.lib.math.add.add", False)
+    }
+    assert exports["maps.src.lib.math.mul"] == {
+        "default": ("maps.src.lib.math.mul.mul", True)
+    }
+    assert exports["maps.src.text.pad"] == {
+        "strip": ("maps.src.text.pad.trim", True),
+        "default": ("maps.src.text.pad.upper", True),
+    }
+    assert exports["maps.src.text.index"] == {
+        "leftPad": ("maps.src.text.index.pad", True),
+        "strip": ("maps.src.text.index.strip", True),
+        "shout": ("maps.src.text.index.upper", True),
     }
 
 
@@ -375,17 +394,36 @@ def test_direct_imports_of_the_definition_stay_exact(
     assert calls.get(col) == (FORMAT_PRICE, EXACT), calls
 
 
-def test_a_star_barrel_does_not_import_itself(
-    issue_store: _StatefulIngestor,
-) -> None:
-    # `export * from "./add"` in `math/index.ts` names `math.add`, which the
-    # IMPORTS flush reads as the name `add` of the `math` barrel itself.
-    imports = {
+def _imports(store: _StatefulIngestor) -> set[tuple[str, str]]:
+    return {
         (str(edge[1]), str(edge[4]))
-        for edge in issue_store.keyed_edges
+        for edge in store.keyed_edges
         if edge[2] == cs.RelationshipType.IMPORTS.value
     }
-    assert all(source != target for source, target in imports), imports
+
+
+def test_a_star_barrel_imports_the_module_it_reexports(
+    issue_store: _StatefulIngestor, chain_store: _StatefulIngestor
+) -> None:
+    # `export * from "./add"` in `math/index.ts` names the module `math.add`,
+    # which the IMPORTS flush read as the name `add` of the `math` barrel:
+    # the barrel itself, so the edge to `add.ts` never existed.
+    assert ("barrel.src.lib.math.index", "barrel.src.lib.math.add") in _imports(
+        issue_store
+    )
+    # A star of a directory barrel, and one into a sibling file.
+    assert {
+        ("chain.src.api.index", "chain.src.core.index"),
+        ("chain.src.core.index", "chain.src.core.scale"),
+    } <= _imports(chain_store)
+
+
+def test_a_star_barrel_does_not_import_itself(
+    issue_store: _StatefulIngestor, chain_store: _StatefulIngestor
+) -> None:
+    for store in (issue_store, chain_store):
+        imports = _imports(store)
+        assert all(source != target for source, target in imports), imports
 
 
 def test_two_star_sources_exporting_one_name_bind_neither_exactly(
@@ -412,6 +450,22 @@ def test_a_star_reexport_does_not_carry_the_default(
     calls = _calls(negative_store, "neg.src.neg.neg")
     assert 27 not in calls, calls
     assert "neg.src.b.bdef" not in {target for target, _ in calls.values()}, calls
+
+
+def test_a_barrels_private_import_does_not_stand_in_for_its_export(
+    negative_store: _StatefulIngestor,
+) -> None:
+    # `private/index.ts` imports `dup` from `a` for its own use and exports
+    # `d`'s `dup` through `export *`; the consumer's `dup` is `d`'s.
+    calls = _calls(negative_store, "neg.src.neg.neg")
+    assert calls.get(64) == ("neg.src.d.dup", EXACT), calls
+
+
+def test_the_barrels_own_call_keeps_its_private_import(
+    negative_store: _StatefulIngestor,
+) -> None:
+    calls = _calls(negative_store, "neg.src.private.index.viaA")
+    assert calls == {9: ("neg.src.a.dup", EXACT)}, calls
 
 
 def test_an_explicit_reexport_outranks_a_star(
@@ -500,12 +554,14 @@ def test_a_default_import_call_keeps_the_importers_own_name(
     assert _read(temp_repo, "src/app/main.ts") == before
 
 
-def test_a_call_through_a_star_barrel_still_refuses_without_leave(
-    temp_repo: Path, mock_ingestor: MagicMock
+@pytest.mark.parametrize("allow_heuristic", [False, True])
+def test_a_call_through_a_star_barrel_refuses_even_with_allow_heuristic(
+    temp_repo: Path, mock_ingestor: MagicMock, allow_heuristic: bool
 ) -> None:
     # `import { add } from "../lib/math"` binds `add` through `export *`, an
     # import the rename cannot rewrite: renaming the call alone would leave
-    # the import naming a function the barrel no longer exports.
+    # the import naming a function the barrel no longer exports, so no
+    # leave to guess makes the rename safe.
     graph = _rename_graph(temp_repo, ISSUE_FILES, mock_ingestor)
     before = {rel: _read(temp_repo, rel) for rel in ISSUE_FILES}
     with pytest.raises(RenameRefused) as refused:
@@ -515,9 +571,11 @@ def test_a_call_through_a_star_barrel_still_refuses_without_leave(
             graph.project,
             f"{graph.project}.src.lib.math.add.add",
             "sum",
+            allow_heuristic=allow_heuristic,
         )
+    assert "src/lib/math/index.ts" in str(refused.value)
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.ambiguous] == [
-        ("src/app/main.ts", 6, 9, cs.EdgeResolution.HEURISTIC.value)
+        ("src/app/main.ts", 6, 9, cs.RENAME_SITE_STAR_REEXPORT)
     ]
     assert {rel: _read(temp_repo, rel) for rel in ISSUE_FILES} == before
 

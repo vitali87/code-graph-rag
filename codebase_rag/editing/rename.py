@@ -461,12 +461,15 @@ class Renamer:
         definition's name either way (issue #2464). A bare use in another
         file follows the rename only when its file imports the name by the
         definition's own name, so the import is rewritten with it. One whose
-        file binds a name of its own is left as it is, and one bound through
-        an import the rename cannot rewrite is a guess: rewriting the use
-        alone would leave the import naming what no longer exists.
+        file binds a name of its own is left as it is. One whose import goes
+        through an `export *` refuses outright: the rename cannot rewrite that
+        import, so rewriting the use would leave it naming what the barrel no
+        longer exports, whatever leave the caller gives. Any other is a guess.
         """
-        bindings: tuple[set[str], set[str]] | None = None
+        bindings: tuple[set[str], set[str], dict[str, str]] | None = None
         kept: list[RenameSite] = []
+        starred: list[RenameSite] = []
+        barrels: set[str] = set()
         for site in sites:
             if (
                 site.kind not in ("call", "reference")
@@ -479,11 +482,22 @@ class Renamer:
                 continue
             if bindings is None:
                 bindings = self._js_name_bindings(qn, old_name)
-            by_name, aliased = bindings
+            by_name, aliased, star_bound = bindings
             if site.path in by_name:
                 kept.append(site)
+            elif (barrel := star_bound.get(site.path)) is not None:
+                starred.append(site._replace(resolution=cs.RENAME_SITE_STAR_REEXPORT))
+                barrels.add(barrel)
             elif site.path not in aliased:
                 kept.append(site._replace(resolution=cs.EdgeResolution.HEURISTIC.value))
+        if starred:
+            raise RenameRefused(
+                cs.RENAME_STAR_REEXPORT.format(
+                    qn=qn, count=len(starred), barrels=", ".join(sorted(barrels))
+                ),
+                starred,
+                [],
+            )
         return kept
 
     @staticmethod
@@ -497,9 +511,12 @@ class Renamer:
             return False
         return source[:offset].rstrip().endswith(b".")
 
-    def _js_name_bindings(self, qn: str, name: str) -> tuple[set[str], set[str]]:
+    def _js_name_bindings(
+        self, qn: str, name: str
+    ) -> tuple[set[str], set[str], dict[str, str]]:
         """(files importing `name` by the definition's own name, files whose
-        `name` is a binding of their own for the definition)."""
+        `name` is a binding of their own for the definition, files importing
+        it through an `export *` with that barrel's path)."""
         module_qn, _path = self._module_of(qn)
         by_name = {
             site.path
@@ -528,7 +545,32 @@ class Renamer:
                 if row["module"] not in seen:
                     seen.add(row["module"])
                     pending.append((row["module"], True))
-        return by_name, aliased
+        return by_name, aliased, self._js_star_bound(module_qn, name)
+
+    def _js_star_bound(self, module_qn: str, name: str) -> dict[str, str]:
+        """Files importing `name` from a barrel that passes it on through
+        `export *` (from the module, or from a barrel that does), each with
+        the path of the barrel it imports from."""
+        bound: dict[str, str] = {}
+        pending = [(module_qn, "")]
+        seen = {module_qn}
+        while pending:
+            source, barrel = pending.pop()
+            for row in graph_query.importers(self.fetch_all, self.project, source):
+                path = row["path"]
+                if not path:
+                    continue
+                # `export * from` records `*` and binds no alias.
+                if (
+                    row["imported_name"] == cs.IMPORTED_NAME_WILDCARD
+                    and row["alias"] is None
+                ):
+                    if row["module"] not in seen:
+                        seen.add(row["module"])
+                        pending.append((row["module"], path))
+                elif barrel and row["alias"] == name and row["imported_name"] == name:
+                    bound.setdefault(path, barrel)
+        return bound
 
     def _definition_site(
         self,

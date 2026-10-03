@@ -43,9 +43,11 @@ that file imports the name by the definition's own name, so the import is
 rewritten with it. A file that binds a name of its own keeps both its import
 and its uses: `import mul from "./mul"`, `const mul = require("./mul")`, and a
 barrel's `export { default as mul } from "./mul"` together with the modules
-importing that `mul`. A use reached through an import the rename cannot
-rewrite, such as a barrel's `export * from`, is reported as `heuristic` and
-refuses like any guessed site (issue #2464).
+importing that `mul`. A use whose import goes through a barrel's
+`export * from` refuses even with `--allow-heuristic`, naming the barrel: the
+rename cannot rewrite that import, so rewriting the use would leave it naming
+what the barrel no longer exports. Any other use with no such import is
+reported as `heuristic` and refuses like a guessed site (issue #2464).
 
 ## Refusal
 
