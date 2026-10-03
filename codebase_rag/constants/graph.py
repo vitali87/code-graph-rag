@@ -123,6 +123,7 @@ class RenameTargetKind(StrEnum):
 KEY_UNMAPPED = "unmapped"
 KEY_VERDICT = "verdict"
 KEY_STRUCTURAL_DELTA = "structural_delta"
+KEY_CYCLE = "cycle"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
