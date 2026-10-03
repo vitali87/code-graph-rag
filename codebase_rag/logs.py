@@ -776,6 +776,10 @@ JAVA_RESOLVING_CALL = "Resolving Java method call: method={method}, object={obje
 JAVA_RESOLVING_STATIC = "Resolving static/local method: {method}"
 JAVA_FOUND_STATIC = "Found static/local method: {result}"
 JAVA_STATIC_NOT_FOUND = "Static/local method not found: {method}"
+JAVA_FOUND_STATIC_IMPORT = "Found statically imported method: {result}"
+JAVA_STATIC_IMPORT_EXTERNAL = (
+    "Statically imported {method} from {classes} is not in the repo: no edge"
+)
 JAVA_RESOLVING_OBJ_TYPE = "Resolving object type for: {object}"
 JAVA_OBJ_TYPE_UNKNOWN = "Could not determine type of object: {object}"
 JAVA_OBJ_TYPE_RESOLVED = "Object type resolved to: {type}"

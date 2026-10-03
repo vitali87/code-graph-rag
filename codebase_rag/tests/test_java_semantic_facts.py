@@ -80,24 +80,34 @@ def test_the_heuristics_alone_pick_the_wrong_overload(
     assert any(t.endswith("Widget.handle(Object)") for t in targets)
 
 
-# A static import makes the call UNQUALIFIED, so the heuristic's module-wide
-# name scan finds the same-named local static; javac knows it resolved to the
-# JDK.
-_JDK_CALLER = (
-    "package com.app;\n\n"
-    "import static java.lang.String.valueOf;\n\n"
-    "class Decoy {\n"
-    '    public static String valueOf(int n) {\n        return "decoy";\n    }\n}\n\n'
-    "public class JdkCaller {\n"
-    "    public String run() {\n"
-    "        return valueOf(42);\n    }\n}\n"
-)
+# An on-demand static import makes the call UNQUALIFIED without naming it, so
+# the heuristic cannot tell that the JDK class declares `valueOf` and its
+# module-wide name scan finds the same-named local static; javac knows it
+# resolved to the JDK.
+_JDK_IMPORT_ON_DEMAND = "import static java.lang.String.*;"
+# A single-static-import names the member, which the heuristic reads too
+# (issue #2544): it stays external without the compiler.
+_JDK_IMPORT_SINGLE = "import static java.lang.String.valueOf;"
 
 
-def _write_jdk_repo(repo: Path) -> None:
+def _jdk_caller(static_import: str) -> str:
+    return (
+        "package com.app;\n\n"
+        f"{static_import}\n\n"
+        "class Decoy {\n"
+        '    public static String valueOf(int n) {\n        return "decoy";\n    }\n}\n\n'
+        "public class JdkCaller {\n"
+        "    public String run() {\n"
+        "        return valueOf(42);\n    }\n}\n"
+    )
+
+
+def _write_jdk_repo(repo: Path, static_import: str = _JDK_IMPORT_ON_DEMAND) -> None:
     package = repo / "src/main/java/com/app"
     package.mkdir(parents=True)
-    (package / "JdkCaller.java").write_text(_JDK_CALLER, encoding="utf-8")
+    (package / "JdkCaller.java").write_text(
+        _jdk_caller(static_import), encoding="utf-8"
+    )
 
 
 @pytest.mark.skipif(
@@ -123,3 +133,13 @@ def test_the_heuristics_alone_fabricate_the_jdk_call(
     monkeypatch.setattr(settings, "JAVA_FRONTEND", cs.JavaFrontend.HEURISTIC)
     targets = _call_targets(repo)
     assert any(t.endswith("Decoy.valueOf(int)") for t in targets)
+
+
+def test_the_heuristics_keep_a_single_static_import_external(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "proj"
+    _write_jdk_repo(repo, _JDK_IMPORT_SINGLE)
+    monkeypatch.setattr(settings, "JAVA_FRONTEND", cs.JavaFrontend.HEURISTIC)
+    targets = _call_targets(repo)
+    assert not any(t.endswith("Decoy.valueOf(int)") for t in targets)
