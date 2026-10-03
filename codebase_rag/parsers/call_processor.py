@@ -120,6 +120,14 @@ class _GoValueReceiverCallee(NamedTuple):
     callee: tuple[str, str] | None
 
 
+class _GoPackageFunctionLookup(NamedTuple):
+    # A Go chain root that calls a package's function: the function's name
+    # and the (package, is the caller's own) pairs to look it up in, in
+    # order. No packages means a call owned here that types nothing.
+    name: str
+    packages: tuple[tuple[str, bool], ...]
+
+
 @dataclass(slots=True)
 class _CallScanContext:
     # Per-invocation state _ingest_function_calls hands every call node it
@@ -4825,48 +4833,79 @@ class CallProcessor:
             return False, None
         import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
         if function.type == cs.TS_GO_IDENTIFIER:
-            name = safe_decode_text(function)
-            if not name:
-                return False, None
-            if go_utils.binds_locally(root, name):
-                return True, None
-            # (package, is the caller's own): a dot-import of the caller's own
-            # directory (`package m_test` importing `m`) is still an import.
-            packages = [(module_qn.rpartition(cs.SEPARATOR_DOT)[0], True)] + [
-                (path, False)
-                for key, path in import_map.items()
-                if key.startswith(cs.SEPARATOR_DOT)
-            ]
+            lookup = self._go_bare_function_lookup(
+                root, function, module_qn, import_map
+            )
         elif function.type == cs.TS_GO_SELECTOR_EXPRESSION:
-            operand = function.child_by_field_name(cs.FIELD_OPERAND)
-            field = function.child_by_field_name(cs.FIELD_FIELD)
-            if operand is None or field is None or operand.type != cs.TS_GO_IDENTIFIER:
-                return False, None
-            alias = safe_decode_text(operand)
-            name = safe_decode_text(field)
-            if not alias or not name or go_utils.binds_locally(root, alias):
-                return False, None
-            target = import_map.get(alias)
-            if not target:
-                return False, None
-            if self._go_import_is_external(target):
-                return True, None
-            packages = [(target, False)]
+            lookup = self._go_imported_function_lookup(root, function, import_map)
         else:
+            lookup = None
+        if lookup is None:
             return False, None
-        for package_qn, own_package in packages:
+        return True, self._go_package_function_class(lookup, module_qn)
+
+    def _go_bare_function_lookup(
+        self,
+        root: Node,
+        function: Node,
+        module_qn: str,
+        import_map: dict[str, str],
+    ) -> _GoPackageFunctionLookup | None:
+        # `NewBox()`: the caller's own package, then each dot-imported one.
+        # None when the name is unreadable; a local of that name types nothing.
+        name = safe_decode_text(function)
+        if not name:
+            return None
+        if go_utils.binds_locally(root, name):
+            return _GoPackageFunctionLookup(name, ())
+        # (package, is the caller's own): a dot-import of the caller's own
+        # directory (`package m_test` importing `m`) is still an import.
+        packages = ((module_qn.rpartition(cs.SEPARATOR_DOT)[0], True),) + tuple(
+            (path, False)
+            for key, path in import_map.items()
+            if key.startswith(cs.SEPARATOR_DOT)
+        )
+        return _GoPackageFunctionLookup(name, packages)
+
+    def _go_imported_function_lookup(
+        self, root: Node, function: Node, import_map: dict[str, str]
+    ) -> _GoPackageFunctionLookup | None:
+        # `box.New()`: the package the import binds `box` to. None when `box`
+        # is no import (or a local shadows it); an external package's
+        # function types nothing.
+        operand = function.child_by_field_name(cs.FIELD_OPERAND)
+        field = function.child_by_field_name(cs.FIELD_FIELD)
+        if operand is None or field is None or operand.type != cs.TS_GO_IDENTIFIER:
+            return None
+        alias = safe_decode_text(operand)
+        name = safe_decode_text(field)
+        if not alias or not name or go_utils.binds_locally(root, alias):
+            return None
+        target = import_map.get(alias)
+        if not target:
+            return None
+        if self._go_import_is_external(target):
+            return _GoPackageFunctionLookup(name, ())
+        return _GoPackageFunctionLookup(name, ((target, False),))
+
+    def _go_package_function_class(
+        self, lookup: _GoPackageFunctionLookup, module_qn: str
+    ) -> str | None:
+        # The struct the function returns, from the first package declaring
+        # one `module_qn` can see.
+        for package_qn, own_package in lookup.packages:
             # Build-variant files may each declare the function; they count as
             # one when every copy returns the same struct.
             results = {
                 self._go_result_class((NodeType.FUNCTION, qn))
-                for qn in self._go_package_functions(package_qn, name)
+                for qn in self._go_package_functions(package_qn, lookup.name)
                 if self._go_function_visible_to(
                     qn.rpartition(cs.SEPARATOR_DOT)[0], module_qn, own_package
                 )
             }
             if results:
-                return True, results.pop() if len(results) == 1 else None
-        return True, None
+                return results.pop() if len(results) == 1 else None
+        return None
 
     def _go_function_visible_to(
         self, declaring_qn: str, module_qn: str, own_package: bool
