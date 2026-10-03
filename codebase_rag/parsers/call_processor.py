@@ -7407,27 +7407,12 @@ class CallProcessor:
         res_type, res_qn = resolved
         registry = self._resolver.function_registry
         if res_type == cs.NodeLabel.CLASS:
-            if any(
-                registry.get(variant) in (NodeType.FUNCTION, NodeType.METHOD)
-                for variant in registry.variants(res_qn)
-            ):
-                # A same-named def is passed on with the class (issue
-                # #2621); the fan-out gives each variant its own target.
-                self._emit_callback_targets(
-                    source_spec,
-                    res_type,
-                    res_qn,
-                    rel_type,
-                    ensure_rel,
-                    module_qn,
-                    language,
-                )
+            constructor = self._class_callback_target(
+                source_spec, res_qn, rel_type, ensure_rel, module_qn, language
+            )
+            if constructor is None:
                 return
-            init_qn = f"{res_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
-            if init_qn not in registry:
-                return
-            res_type = cs.NodeLabel.METHOD
-            res_qn = init_qn
+            res_type, res_qn = constructor
         # Only callables are meaningful callback/reference targets: a value can
         # resolve to an Interface/Type node (`selector = identity as Selector`
         # resolves the cast's TYPE name in some paths), and emitting that
@@ -7451,6 +7436,40 @@ class CallProcessor:
         self._emit_callback_targets(
             source_spec, res_type, res_qn, rel_type, ensure_rel, module_qn, language
         )
+
+    def _class_callback_target(
+        self,
+        source_spec: tuple[str, str, str],
+        class_qn: str,
+        rel_type: cs.RelationshipType,
+        ensure_rel: Callable[..., None],
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[str, str] | None:
+        # A class passed as a callback is called through its constructor.
+        # None when the edges were already fanned out here, or when the
+        # class has no `__init__` node to reference.
+        registry = self._resolver.function_registry
+        if any(
+            registry.get(variant) in (NodeType.FUNCTION, NodeType.METHOD)
+            for variant in registry.variants(class_qn)
+        ):
+            # A same-named def is passed on with the class (issue
+            # #2621); the fan-out gives each variant its own target.
+            self._emit_callback_targets(
+                source_spec,
+                cs.NodeLabel.CLASS,
+                class_qn,
+                rel_type,
+                ensure_rel,
+                module_qn,
+                language,
+            )
+            return None
+        init_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+        if init_qn not in registry:
+            return None
+        return cs.NodeLabel.METHOD, init_qn
 
     def _emit_csharp_method_group(
         self,
