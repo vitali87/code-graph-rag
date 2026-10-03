@@ -24,6 +24,7 @@ heading is a child of whatever heading is currently open above it.
 
 from __future__ import annotations
 
+import html
 import posixpath
 import re
 import unicodedata
@@ -412,6 +413,19 @@ _LINK_NODE_TYPES = frozenset(
     {_INLINE_LINK, _FULL_REFERENCE_LINK, *_TEXT_LABELLED_LINKS}
 )
 
+# Inline markup as GitHub renders it in a heading, which is the text its
+# anchor is slugged from: an image renders as its alt text, an autolink as
+# its address, an escape or a character reference as the character itself,
+# and delimiters and HTML tags as nothing.
+_IMAGE = "image"
+_IMAGE_DESCRIPTION = "image_description"
+_AUTOLINKS = frozenset({"uri_autolink", "email_autolink"})
+_BACKSLASH_ESCAPE = "backslash_escape"
+_CHARACTER_REFERENCES = frozenset({"entity_reference", "numeric_character_reference"})
+_UNRENDERED_INLINE = frozenset(
+    {"emphasis_delimiter", "code_span_delimiter", "html_tag"}
+)
+
 # A destination that names something other than a file in this repository.
 # Scheme-bearing targets (http:, https:, mailto:, ftp:) are external. A bare
 # fragment ("#section") is not: it names a heading of the current document.
@@ -499,8 +513,8 @@ def _heading_level(node: Node) -> int | None:
     return None
 
 
-def _heading_text(node: Node, source: bytes) -> str:
-    """The heading's own text, without its marker or underline.
+def _heading_inline(node: Node) -> Node | None:
+    """The `inline` node holding a heading's own text, or None.
 
     ATX puts the text in a direct `inline` child. Setext wraps it one level
     deeper, in a `paragraph` holding the `inline`, so a direct-children-only
@@ -508,12 +522,77 @@ def _heading_text(node: Node, source: bytes) -> str:
     """
     for child in node.children:
         if child.type == _INLINE:
-            return _decode(child, source)
+            return child
         if child.type == _PARAGRAPH:
             for grandchild in child.children:
                 if grandchild.type == _INLINE:
-                    return _decode(grandchild, source)
-    return ""
+                    return grandchild
+    return None
+
+
+def _heading_text(node: Node, source: bytes) -> str:
+    """The heading's own text as written, without its marker or underline."""
+    inline = _heading_inline(node)
+    return "" if inline is None else _decode(inline, source)
+
+
+def _rendered_heading_text(
+    node: Node, source: bytes, inline_parser: Parser | None
+) -> str:
+    """The heading's text as GitHub renders it, which is what it slugs.
+
+    The raw Markdown carries a link's destination, emphasis markers and HTML
+    tags that the rendered heading does not, and a slug built from them
+    misses every anchor written against the page (PR #2830 review). Without
+    the inline grammar the raw text is the best answer left.
+    """
+    inline = _heading_inline(node)
+    if inline is None:
+        return ""
+    raw = source[inline.start_byte : inline.end_byte]
+    if inline_parser is None:
+        return raw.decode(cs.ENCODING_UTF8, errors="replace")
+    try:
+        root = inline_parser.parse(raw).root_node
+    except (RuntimeError, ValueError):
+        return raw.decode(cs.ENCODING_UTF8, errors="replace")
+    return _rendered_text(root, raw)
+
+
+def _rendered_text(node: Node, text: bytes) -> str:
+    """The text an inline node renders to, markup removed.
+
+    A link or image renders as its words, an autolink as its address, an
+    escape or entity as the character it stands for; delimiters and HTML
+    tags render as nothing, while the text between two tags stays. Plain
+    text is not a node in this grammar but the gaps between child nodes,
+    so it is copied through as written.
+    """
+    kind = node.type
+    if kind in _UNRENDERED_INLINE:
+        return ""
+    if kind in _LINK_NODE_TYPES or kind == _IMAGE:
+        words = _first_child(node, _IMAGE_DESCRIPTION if kind == _IMAGE else _LINK_TEXT)
+        return "" if words is None else _rendered_text(words, text)
+    raw = _decode(node, text)
+    if kind in _AUTOLINKS:
+        return raw[1:-1]
+    if kind == _BACKSLASH_ESCAPE:
+        return raw[1:]
+    if kind in _CHARACTER_REFERENCES:
+        return html.unescape(raw)
+    parts: list[str] = []
+    cursor = node.start_byte
+    for child in node.children:
+        parts.append(_decode_span(text, cursor, child.start_byte))
+        parts.append(_rendered_text(child, text))
+        cursor = child.end_byte
+    parts.append(_decode_span(text, cursor, node.end_byte))
+    return "".join(parts)
+
+
+def _decode_span(text: bytes, start: int, end: int) -> str:
+    return text[start:end].decode(cs.ENCODING_UTF8, errors="replace")
 
 
 def _decode(node: Node, source: bytes) -> str:
@@ -872,12 +951,15 @@ def _sanitize(name: str) -> str:
     return collapsed.replace(cs.SEPARATOR_DOT, "_") or _UNTITLED
 
 
-def _outline(root: Node, source: bytes, module_qn: str) -> list[_Heading]:
+def _outline(
+    root: Node, source: bytes, module_qn: str, inline_parser: Parser | None
+) -> list[_Heading]:
     """Every heading of a document as a Section, in source order.
 
     Shared by the document's own parse and by an anchor resolved from
     another document's link, so a link names exactly the qn the linked
-    heading's Section is emitted under.
+    heading's Section is emitted under. The qn and name keep the heading as
+    written; only the slug is taken from the rendered text.
     """
     # (heading node, level) for every heading, so each section's end can be
     # read off the NEXT heading that closes it.
@@ -923,7 +1005,12 @@ def _outline(root: Node, source: bytes, module_qn: str) -> list[_Heading]:
                 parent_is_module=not open_headings,
                 # Every heading takes its slug, an empty one included:
                 # GitHub numbers repeats across the whole document.
-                slug=_unique_slug(_github_slug(text), slugs),
+                slug=_unique_slug(
+                    _github_slug(
+                        _rendered_heading_text(heading, source, inline_parser)
+                    ),
+                    slugs,
+                ),
             )
         )
         open_headings.append((level, qualified_name))
@@ -1036,7 +1123,7 @@ class DocumentTier:
         module_qn = self._emit_module(file_path, structural_elements, module_props)
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
 
-        outline = _outline(root, source, module_qn)
+        outline = _outline(root, source, module_qn, self._inline_parser)
         for heading in outline:
             self._emit_section(heading, relative_path, absolute_path)
         self._anchors[absolute_path] = _anchor_map(outline)
@@ -1191,7 +1278,9 @@ class DocumentTier:
                 module_qn = flat_module_qn(
                     self._project_name, relative, distinguish_suffix=True
                 )
-                anchors = _anchor_map(_outline(root, source, module_qn))
+                anchors = _anchor_map(
+                    _outline(root, source, module_qn, self._inline_parser)
+                )
         self._anchors[target] = anchors
         return anchors
 

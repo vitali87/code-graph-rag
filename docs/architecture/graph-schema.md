@@ -124,7 +124,7 @@ Edges emitted without a syntactic site (and trace-written edges without a dispat
 | `text: string` | The link text, whitespace collapsed; `""` for `[](x.md)`. |
 | `anchor: string?` | The fragment as written, without the `#`. Absent when the link has none. |
 
-Anchors match the way GitHub renders them: the heading text is lower-cased, every character except letters, digits, `-`, `_` and spaces is dropped, each space becomes `-`, and a repeated heading is numbered `-1`, `-2`, ... in document order. The fragment is percent-decoded and lower-cased before it is compared.
+Anchors match the way GitHub renders them, from the heading's rendered text: a link or image contributes only its text or alt text, an autolink its address, inline code its content, and emphasis markers and HTML tags nothing. That text is lower-cased, every character except letters, digits, `-`, `_` and spaces is dropped, each space becomes `-`, and a repeated heading is numbered `-1`, `-2`, ... in document order. The fragment is percent-decoded and lower-cased before it is compared.
 
 A link produces no edge when it is external (a URL with a scheme such as `https:` or `mailto:`, or a scheme-relative `//host/path`), when it is a bare `#`, when its path resolves outside the repository or to a directory, or when its path names nothing in the repository. Images (`![alt](src)`) are not links. A file that exists but is not indexed (ignored or excluded) has no `File` node, so a link to it is not written either.
 

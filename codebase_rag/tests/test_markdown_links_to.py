@@ -208,6 +208,77 @@ class TestAnchorsResolveToSections:
         assert props[cs.KEY_ANCHOR] == "nowhere"
 
 
+def _section_qn(mock: MagicMock, name: str) -> str:
+    """The qn of the one Section emitted under this heading text."""
+    found = [
+        str(c.args[1][cs.KEY_QUALIFIED_NAME])
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == SECTION and c.args[1].get(cs.KEY_NAME) == name
+    ]
+    assert len(found) == 1, (name, found)
+    return found[0]
+
+
+def _jump_target(tmp_path: Path, heading: str, anchor: str) -> tuple[Endpoint, str]:
+    """Where `[jump](#anchor)` lands in a document with one `## heading`."""
+    doc = f"# Doc\n\n## {heading}\n\n[jump](#{anchor})\n\n[api]: api.md\n"
+    mock = _run(tmp_path, {"doc.md": doc, "api.md": "# API\n", "guide.md": "# G\n"})
+    return _by_text(_links(mock), "jump")[1], _section_qn(mock, heading)
+
+
+class TestHeadingAnchorsUseTheRenderedText:
+    """A heading's anchor is slugged from the text GitHub renders (PR #2830).
+
+    Slugging the raw Markdown kept a link's destination, emphasis markers
+    and HTML tags in the slug, so a valid anchor fell back to the File.
+    """
+
+    @pytest.mark.parametrize(
+        ("heading", "anchor"),
+        [
+            ("See [the guide](guide.md) now", "see-the-guide-now"),
+            ("Read [Guide](guide.md)", "read-guide"),
+            ("Logo ![alt text](img.png)", "logo-alt-text"),
+            ("Read [the API][api]", "read-the-api"),
+            ("**Bold** and _em_", "bold-and-em"),
+            ("Hello <code>world</code>", "hello-world"),
+        ],
+    )
+    def test_markup_contributes_only_its_rendered_text(
+        self, tmp_path: Path, heading: str, anchor: str
+    ) -> None:
+        target, section = _jump_target(tmp_path, heading, anchor)
+
+        assert target == (SECTION, section)
+
+    @pytest.mark.parametrize(
+        ("heading", "anchor"),
+        [
+            # Negative: code keeps its content, `<div>` included; an autolink
+            # keeps its URL; a plain heading keeps the slug it had.
+            ("The `<div>` tag", "the-div-tag"),
+            ("See <https://x.io>", "see-httpsxio"),
+            ("Plain Heading", "plain-heading"),
+        ],
+    )
+    def test_text_that_renders_as_written_keeps_its_slug(
+        self, tmp_path: Path, heading: str, anchor: str
+    ) -> None:
+        target, section = _jump_target(tmp_path, heading, anchor)
+
+        assert target == (SECTION, section)
+
+    def test_a_repeat_of_a_rendered_heading_is_numbered(self, tmp_path: Path) -> None:
+        # Negative: `## [A](x.md)` renders as `A`, so the plain `## A` after
+        # it is the repeat and takes `a-1`, the duplicate rule as before.
+        doc = "# Doc\n\n## [A](x.md)\n\n## A\n\n[first](#a) [second](#a-1)\n"
+        mock = _run(tmp_path, {"doc.md": doc})
+        links = _links(mock)
+
+        assert _by_text(links, "first")[1] == (SECTION, _section_qn(mock, "[A](x.md)"))
+        assert _by_text(links, "second")[1] == (SECTION, _section_qn(mock, "A"))
+
+
 class TestLinksStartAtTheirSection:
     def test_a_link_starts_at_the_innermost_section_containing_it(
         self, tmp_path: Path
