@@ -112,6 +112,14 @@ class _RefEmitScope(NamedTuple):
     ensure_rel: Callable[..., None]
 
 
+class _GoValueReceiverCallee(NamedTuple):
+    # What a Go method call on a call result or a composite literal binds to.
+    # `decided` False leaves the call to the name-based resolver; True means
+    # `callee` is the answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
+
+
 @dataclass(slots=True)
 class _CallScanContext:
     # Per-invocation state _ingest_function_calls hands every call node it
@@ -4695,6 +4703,15 @@ class CallProcessor:
         callee_info = self._resolver.resolve_go_call_site(call_node, ctx.module_qn)
         if callee_info == go_ti.GO_EXTERNAL_TARGET:
             callee_info = None
+        elif (
+            callee_info is None
+            and (
+                chained := self._go_value_receiver_callee(
+                    ctx, call_node, call_var_types
+                )
+            ).decided
+        ):
+            callee_info = chained.callee
         elif callee_info is None:
             callee_info = ctx.resolve_func(
                 call_name,
@@ -4706,6 +4723,109 @@ class CallProcessor:
                 call_point=call_node.start_byte,
             )
         return callee_info
+
+    def _go_value_receiver_callee(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_var_types: dict[str, str] | None,
+    ) -> _GoValueReceiverCallee:
+        """`NewBox().With(1).Bump()`, `(&Box{}).Bump()`: bind through the
+        struct the receiver VALUE has (issue #2467).
+
+        `b := NewBox(); b.Bump()` typed `b` from NewBox's result, but the
+        chained spelling reached the resolver as one string with no local to
+        type, and a literal receiver had no name to type at all. The chain
+        is walked on the tree instead, which also keeps gofmt's line breaks
+        between hops out of the method names: the root value's struct, then
+        each method's single result, each read in the file declaring it.
+
+        Decided when the method is found on that struct. Otherwise the call
+        is left to the name-based resolver, which answered these shapes
+        before, except for two shapes it never typed, which are owned here:
+        a free function's result, whose type name it would now look up
+        project-wide (and find another package's same-named struct), and a
+        literal of an external package's type, whose methods are that
+        package's.
+        """
+        undecided = _GoValueReceiverCallee(False, None)
+        chain = go_utils.call_receiver_chain(call_node)
+        if chain is None:
+            return undecided
+        root, methods = chain
+        if root.type == cs.TS_GO_COMPOSITE_LITERAL:
+            class_qn, owned = self._go_literal_receiver_class(root, ctx.module_qn)
+        else:
+            root_name = self._get_call_target_name(root, ctx.language)
+            if not root_name:
+                return undecided
+            root_callee = self._resolve_go_callee(ctx, root, root_name, call_var_types)
+            if root_callee is None or root_callee[0] not in (
+                NodeType.FUNCTION,
+                NodeType.METHOD,
+            ):
+                return undecided
+            owned = root_callee[0] == NodeType.FUNCTION
+            if not owned and self._resolver.last_resolution != cs.EdgeResolution.EXACT:
+                # A method bound by its name alone (an untyped receiver) says
+                # nothing about the value it returns.
+                return undecided
+            class_qn = self._go_result_class(root_callee)
+        *hops, method = methods
+        for hop in hops:
+            if class_qn is None:
+                break
+            class_qn = self._go_result_class(
+                self._resolver._try_resolve_method(class_qn, hop)
+            )
+        # A struct lacking the method may still promote it from an embedded
+        # field, which this walk does not model; that stays the resolver's
+        # call, as it does for a typed variable (`_typed_receiver_lacks_method`).
+        callee = (
+            self._resolver._try_resolve_method(class_qn, method) if class_qn else None
+        )
+        return _GoValueReceiverCallee(owned or callee is not None, callee)
+
+    def _go_literal_receiver_class(
+        self, literal: Node, module_qn: str
+    ) -> tuple[str | None, bool]:
+        # (first-party struct, owned) for a composite literal receiver. A
+        # type of an EXTERNAL package (`bytes.Buffer{}`) is owned with no
+        # struct: its methods are that package's, never a first-party one
+        # sharing the name. Any other miss (a named slice type, an unknown
+        # name) is not owned.
+        type_name = _go_composite_type_name(literal.child_by_field_name(cs.FIELD_TYPE))
+        if not type_name:
+            return None, False
+        if class_qn := self._go_struct_class(type_name, module_qn):
+            return class_qn, False
+        package_alias = type_name.rpartition(cs.SEPARATOR_DOT)[0]
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
+        target = import_map.get(package_alias) if package_alias else None
+        if not target:
+            return None, False
+        # Local import paths were rewritten to project qns at import time, so
+        # a target outside the project's qn space is an external package.
+        project = self._resolver.import_processor.project_name
+        return None, not (
+            target == project or target.startswith(f"{project}{cs.SEPARATOR_DOT}")
+        )
+
+    def _go_result_class(self, callee: tuple[str, str] | None) -> str | None:
+        # The struct a Go function's or method's single result names. The
+        # name is read in the DECLARING file: `New() *Box` in package box
+        # returns box's Box, whatever the calling package calls `Box`. A
+        # method sits under its receiver struct (`file.Box.With`), a
+        # function directly under its file (`file.New`).
+        if callee is None:
+            return None
+        callee_type, callee_qn = callee
+        result = self._resolver.type_inference.method_return_types.get(callee_qn)
+        if not result:
+            return None
+        depth = 2 if callee_type == NodeType.METHOD else 1
+        declaring_module = callee_qn.rsplit(cs.SEPARATOR_DOT, depth)[0]
+        return self._go_struct_class(result, declaring_module)
 
     def _fallback_callee(
         self,

@@ -103,3 +103,54 @@ def type_identifier_text(type_node: Node) -> str | None:
         if name := type_identifier_text(child):
             return name
     return None
+
+
+def call_receiver_chain(call_node: Node) -> tuple[Node, list[str]] | None:
+    """`NewBox().With(1).Bump()` -> (the `NewBox()` call, ["With", "Bump"]).
+
+    The method names called along a receiver chain, innermost first, and the
+    node the chain starts from: a call, or a composite literal with its
+    parentheses and `&` taken off (`(&Box{}).Bump()`). None when the callee
+    is not a method on such a value; a variable, field or package receiver
+    (`b.Bump()`, `pkg.F()`) is what the name-based resolver types already.
+    """
+    methods: list[str] = []
+    node = call_node
+    while node.type == cs.TS_GO_CALL_EXPRESSION:
+        selector = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if selector is None or selector.type != cs.TS_GO_SELECTOR_EXPRESSION:
+            break
+        field = selector.child_by_field_name(cs.FIELD_FIELD)
+        receiver = _value_receiver(selector.child_by_field_name(cs.FIELD_OPERAND))
+        if field is None or receiver is None or not (name := safe_decode_text(field)):
+            break
+        methods.append(name)
+        node = receiver
+    if not methods:
+        return None
+    methods.reverse()
+    return node, methods
+
+
+def _value_receiver(operand: Node | None) -> Node | None:
+    # A call or a composite literal under any parentheses. A unary operand
+    # counts only around a literal, where `&Box{}` is Go's pointer to a fresh
+    # value; `(*p).M()` and `(&x).M()` start from a variable instead.
+    node = _unparenthesized(operand)
+    if node is not None and node.type == cs.TS_GO_UNARY_EXPRESSION:
+        inner = _unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
+        if inner is not None and inner.type == cs.TS_GO_COMPOSITE_LITERAL:
+            return inner
+        return None
+    if node is not None and node.type in (
+        cs.TS_GO_CALL_EXPRESSION,
+        cs.TS_GO_COMPOSITE_LITERAL,
+    ):
+        return node
+    return None
+
+
+def _unparenthesized(node: Node | None) -> Node | None:
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(iter(node.named_children), None)
+    return node
