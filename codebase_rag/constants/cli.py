@@ -148,7 +148,7 @@ CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: --name is required and must be a non-empty project name."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
-CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
+CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
 CLI_MSG_INDEXING_AT = "Indexing codebase at: {path}"
