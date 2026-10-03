@@ -66,6 +66,9 @@ class CSharpFrontend:
         files: Sequence[Path],
         rescued_files: frozenset[str] = frozenset(),
     ) -> SemanticFacts:
+        # The frontend loads the whole project in one run: a narrowed file
+        # list cannot bind calls whose targets live in the files it omits.
+        del files
         return _adapt_csharp_semantic_facts(
             run_csharp_frontend(
                 repo_path, ignored_dirs=frontend_ignored_dirs(rescued_files)
