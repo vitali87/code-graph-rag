@@ -8,7 +8,11 @@ anything it cannot read.
 
 import pytest
 
-from codebase_rag.parsers.rs.cargo_semver import all_below, satisfies
+from codebase_rag.parsers.rs.cargo_semver import (
+    all_below,
+    requirements_disjoint,
+    satisfies,
+)
 
 
 @pytest.mark.parametrize(
@@ -104,3 +108,32 @@ def test_satisfies(version: str, requirement: str, expected: bool) -> None:
 )
 def test_all_below(requirement: str, version: str, expected: bool) -> None:
     assert all_below(requirement, version) is expected
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        # Bounds that leave no version in common.
+        ("=2.0.0", "1", True),
+        ("=2.0.0", "=1.2.0", True),
+        (">=2", "^1", True),
+        ("<1.2", ">=1.2", True),
+        ("~1.2", "~1.3", True),
+        ("0.1", "0.2", True),
+        (">1.2.3", "<=1.2.3", True),
+        (">=1.0, <1.3", "1.3", True),
+        # Some version meets both.
+        ("1.5", "1", False),
+        ("=1.2.0", "1", False),
+        ("<=1.2.3", ">=1.2.3", False),
+        (">=1.2", "<2", False),
+        ("~1.2", "1.2.5", False),
+        # Unbounded or unreadable: never proved.
+        ("*", "1", False),
+        (">=1", ">=2", False),
+        ("1", "latest", False),
+    ],
+)
+def test_requirements_disjoint(first: str, second: str, expected: bool) -> None:
+    assert requirements_disjoint(first, second) is expected
+    assert requirements_disjoint(second, first) is expected

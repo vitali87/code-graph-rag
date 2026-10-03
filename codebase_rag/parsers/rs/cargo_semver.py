@@ -78,6 +78,31 @@ def all_below(requirement: str, version: str) -> bool:
     return ceiling < key if inclusive else ceiling <= key
 
 
+def requirements_disjoint(first: str, second: str) -> bool:
+    """Whether no version can meet both requirements.
+
+    Proved from bounds alone: every comparator of either requirement keeps
+    a version inside an interval, and the two hold no version in common
+    when the tightest floor passes the tightest ceiling. Pre-release rules
+    only ever exclude versions, so an empty interval is empty for Cargo
+    too. False when unsure, an unreadable requirement included.
+    """
+    a, b = _parse_requirement(first), _parse_requirement(second)
+    if a is None or b is None:
+        return False
+    comparators = a + b
+    floors = [f for c in comparators if (f := _comparator_floor(c)) is not None]
+    ceilings = [u for c in comparators if (u := _comparator_ceiling(c)) is not None]
+    if not floors or not ceilings:
+        return False
+    # The tightest bounds; at an equal key an exclusive one is tighter.
+    floor, floor_inclusive = max(floors, key=lambda f: (f[0], not f[1]))
+    ceiling, ceiling_inclusive = min(ceilings)
+    if floor != ceiling:
+        return floor > ceiling
+    return not (floor_inclusive and ceiling_inclusive)
+
+
 def version_key(version: str) -> _Key | None:
     """A sort key ordering versions as Cargo does; None when unreadable."""
     match = _VERSION_RE.match(version.strip())
@@ -156,6 +181,17 @@ def _tilde_ceiling(c: _Comparator) -> _Key:
     if c.minor is None:
         return major + 1, 0, 0, _RELEASE
     return major, c.minor + 1, 0, _RELEASE
+
+
+def _comparator_floor(c: _Comparator) -> tuple[_Key, bool] | None:
+    # The bound every version meeting `c` stays at or above, as (key,
+    # inclusive), or None when `c` sets no lower bound.
+    if c.major is None or c.op in ("<", "<="):
+        return None
+    if c.op == ">":
+        bump = _bump(c)
+        return (_floor(c), False) if bump is None else (bump, True)
+    return _floor(c), True
 
 
 def _comparator_ceiling(c: _Comparator) -> tuple[_Key, bool] | None:

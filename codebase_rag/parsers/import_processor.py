@@ -784,11 +784,11 @@ def _rust_patch_winner(
 ) -> tuple[str, ...] | None:
     # The repo dir Cargo builds against, given the qualifying in-repo
     # patches as (version, dir) and every other patch of the package by its
-    # own `version` requirement. Cargo takes the highest qualifying version
-    # wherever it comes from, and an out-of-repo patch's version cannot be
-    # read, so the local copy wins only when each of those is pinned below
-    # it; otherwise the dependency is external, as for any unreadable
-    # version.
+    # own `version` requirement, each one able to meet the dependency's.
+    # Cargo takes the highest qualifying version wherever it comes from,
+    # and an out-of-repo patch's version cannot be read, so the local copy
+    # wins only when each of those is pinned below it; otherwise the
+    # dependency is external, as for any unreadable version.
     if not local:
         return None
     version, target = max(local, key=lambda candidate: _rust_version_rank(candidate[0]))
@@ -800,6 +800,19 @@ def _rust_patch_winner(
     ):
         return None
     return target
+
+
+def _rust_patch_may_qualify(own: str | None, requirement: str | None) -> bool:
+    # Whether a patch whose version is unknown could meet the dependency's
+    # requirement. Its own `version` requirement says what it can be, and
+    # one that cannot overlap the dependency's is a patch Cargo leaves
+    # unused (`=2.0.0` against `=1.2.0`), so it never outranks the local
+    # copy (PR #2791 review).
+    return (
+        own is None
+        or requirement is None
+        or not cargo_semver.requirements_disjoint(own, requirement)
+    )
 
 
 def _rust_version_rank(version: str | None) -> tuple[bool, tuple]:
@@ -2925,7 +2938,9 @@ class ImportProcessor:
         for key, value in patches:
             target = self._rust_dep_target_dir((), key, value)
             if target is None:
-                foreign.append(_rust_dep_requirement(value))
+                own = _rust_dep_requirement(value)
+                if _rust_patch_may_qualify(own, requirement):
+                    foreign.append(own)
                 continue
             version = self._rust_package_version(target)
             if requirement is None or (

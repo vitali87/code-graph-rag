@@ -625,36 +625,41 @@ _FORK_URL = "https://example.com/fork/base.git"
 
 
 @pytest.mark.parametrize(
-    ("case", "local", "fork_version", "chosen"),
+    ("case", "local", "fork_version", "requirement", "chosen"),
     [
-        ("fork_unversioned", "base", None, None),
-        ("fork_higher", "base", "1.5", None),
-        ("fork_unbounded", "base15", ">=1.2", None),
-        ("fork_pinned_lower", "base15", "=1.2.0", "base15"),
-        ("fork_bounded_lower", "base15", "~1.2", "base15"),
+        ("fork_unversioned", "base", None, "1", None),
+        ("fork_higher", "base", "1.5", "1", None),
+        ("fork_unbounded", "base15", ">=1.2", "1", None),
+        ("fork_pinned_lower", "base15", "=1.2.0", "1", "base15"),
+        ("fork_bounded_lower", "base15", "~1.2", "1", "base15"),
+        ("fork_incompatible_exact", "base", "=2.0.0", "=1.2.0", "base"),
+        ("fork_incompatible_major", "base", "=2.0.0", "1", "base"),
+        ("fork_incompatible_floor", "base15", ">=2", "^1", "base15"),
     ],
 )
-def test_patch_from_another_source_wins_unless_certainly_lower(
+def test_patch_from_another_source_wins_unless_ruled_out(
     temp_repo: Path,
     mock_ingestor: MagicMock,
     case: str,
     local: str,
     fork_version: str | None,
+    requirement: str,
     chosen: str | None,
 ) -> None:
     # The table also patches the package from a git fork, whose version the
     # repo cannot read. Cargo takes the highest qualifying version wherever
     # it comes from, and the fork's was never compared: a local 1.2.0 took
     # the calls from a fork at 1.5.0 (PR #2791 review). The local copy wins
-    # only when the fork's own `version` keeps it below; otherwise the
-    # dependency stays external.
+    # only when the fork's own `version` keeps it below, or cannot meet the
+    # dependency's requirement at all, which leaves the fork unused (a
+    # second review); otherwise the dependency stays external.
     version = f', version = "{fork_version}"' if fork_version else ""
     patch = (
         f'{_PATCH_KEYS[local]} = {{ path = "crates/{local}", package = "my-base" }}\n'
         f'my-base-fork = {{ git = "{_FORK_URL}", package = "my-base"{version} }}\n'
     )
     _assert_patch_choice(
-        temp_repo, mock_ingestor, f"rs_dep_fork_{case}", patch, "1", chosen
+        temp_repo, mock_ingestor, f"rs_dep_fork_{case}", patch, requirement, chosen
     )
 
 
