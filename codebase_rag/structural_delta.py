@@ -674,10 +674,18 @@ _DEFINITE_RESOLUTIONS = frozenset(
 )
 
 
-def _is_receiver(entry: str) -> bool:
-    return entry == cs.POSITIONAL_RECEIVER_SELF or entry.startswith(
-        cs.POSITIONAL_RECEIVER_THIS_PREFIX
-    )
+def _is_receiver(entry: str, language: cs.SupportedLanguage | None) -> bool:
+    """Whether `entry` is the receiver marker of the definition's language.
+
+    Only Rust writes `self` and only C# writes `this name`: elsewhere, or
+    where the language is unknown, `self` is an ordinary parameter stored as
+    written, and counting it out would shrink the bounds by one.
+    """
+    if language == cs.SupportedLanguage.RUST:
+        return entry == cs.POSITIONAL_RECEIVER_SELF
+    if language == cs.SupportedLanguage.CSHARP:
+        return entry.startswith(cs.POSITIONAL_RECEIVER_THIS_PREFIX)
+    return False
 
 
 class _DeclaredBounds(NamedTuple):
@@ -689,14 +697,16 @@ class _DeclaredBounds(NamedTuple):
     most: int | None
 
 
-def _declared_bounds(declared: tuple[str, ...]) -> _DeclaredBounds:
+def _declared_bounds(
+    declared: tuple[str, ...], language: cs.SupportedLanguage | None
+) -> _DeclaredBounds:
     """The counts of the parameters a call fills, the receiver left out.
 
     A default before a required parameter still has to be passed to reach
     it, so the fewest runs to the last required one; a rest parameter
     lifts the most.
     """
-    receiver = bool(declared) and _is_receiver(declared[0])
+    receiver = bool(declared) and _is_receiver(declared[0], language)
     params = declared[1:] if receiver else declared
     fixed = [p for p in params if not p.startswith(cs.POSITIONAL_REST_PREFIX)]
     fewest = max(
@@ -792,7 +802,7 @@ def _declared_arity_verdict(site: CallSite, definition: Definition) -> tuple[int
     declared = definition.positional_params
     if declared is None:
         return -1, cs.DELTA_ARITY_UNKNOWN
-    bounds = _declared_bounds(declared)
+    bounds = _declared_bounds(declared, _language(definition.path))
     passed = site.arg_count
     if passed is None or site.spread_args:
         return bounds.fixed, cs.DELTA_ARITY_UNKNOWN

@@ -109,9 +109,10 @@ at the call, so `Util.Ext(1, 2)` on a string named `Util` stays an instance
 call. A site whose form cannot be read (a name that is neither, such as an
 inherited member) is judged both ways and keeps a verdict only when the two
 agree. A TypeScript `this:` parameter, Java's `C this` and Go's receiver
-field are never passed and are not listed. A change to the list is a
-signature change, and each site is judged by the number of arguments it
-passes:
+field are never passed and are not listed. Each marker is a receiver only in
+its own language: anywhere else a parameter named `self` is an ordinary one,
+counted like any other. A change to the list is a signature change, and
+each site is judged by the number of arguments it passes:
 
 | Verdict            | When |
 |--------------------|------|

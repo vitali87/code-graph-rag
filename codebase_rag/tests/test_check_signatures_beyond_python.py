@@ -519,6 +519,107 @@ def test_a_rust_receiver_counts_where_the_call_passes_it(
     assert has_findings(delta) is (verdict == cs.DELTA_ARITY_TOO_FEW)
 
 
+# A parameter only Rust could spell `self` as a receiver: elsewhere it is an
+# ordinary name, stored as `self` all the same (CodeRabbit on #2832).
+CS_SELF_UTIL = (
+    "public class Util {\n    public int M(int self, int b = 0) { return b; }\n}\n"
+)
+CS_SELF_VIEW = (
+    "public class View {\n"
+    "    public int Two(Util obj) { return obj.M(1, 2); }\n"
+    "    public int One(Util obj) { return obj.M(1); }\n"
+    "}\n"
+)
+TS_SELF_UTIL = (
+    "export function fmt(self: number, pad?: number): number { return self; }\n"
+)
+TS_SELF_VIEW = (
+    'import { fmt } from "./util";\n'
+    "export function two(): number { return fmt(1, 2); }\n"
+    "export function one(): number { return fmt(1); }\n"
+)
+
+
+def _verdicts_by_caller(delta: StructuralDelta, suffix: str) -> dict[str, str]:
+    return {
+        site["caller"].rsplit(cs.SEPARATOR_DOT, 1)[-1]: site["verdict"]
+        for site in _change(delta, suffix)["sites"]
+    }
+
+
+def test_a_csharp_parameter_named_self_is_not_a_receiver(temp_repo: Path) -> None:
+    """`M(int self, int b)` takes two arguments from `obj.M(...)`."""
+    delta = _delta(
+        temp_repo,
+        {"Util.cs": CS_SELF_UTIL, "View.cs": CS_SELF_VIEW},
+        {"Util.cs": CS_SELF_UTIL.replace("int b = 0", "int b")},
+    )
+
+    verdicts = _verdicts_by_caller(delta, ".Util.M(int, int)")
+    assert verdicts == {
+        "Two(Util)": cs.DELTA_ARITY_OK,
+        "One(Util)": cs.DELTA_ARITY_TOO_FEW,
+    }
+    assert has_findings(delta)
+
+
+def test_a_typescript_parameter_named_self_is_not_a_receiver(
+    temp_repo: Path,
+) -> None:
+    delta = _delta(
+        temp_repo,
+        {"src/util.ts": TS_SELF_UTIL, "src/view.ts": TS_SELF_VIEW},
+        {"src/util.ts": TS_SELF_UTIL.replace("pad?: number", "pad: number")},
+    )
+
+    verdicts = _verdicts_by_caller(delta, ".src.util.fmt")
+    assert verdicts == {"two": cs.DELTA_ARITY_OK, "one": cs.DELTA_ARITY_TOO_FEW}
+
+
+@pytest.mark.parametrize(
+    ("path", "short"),
+    [
+        pytest.param("util/util.go", cs.DELTA_ARITY_TOO_FEW, id="go"),
+        pytest.param("src/util.js", cs.DELTA_ARITY_POSSIBLY_MISSING, id="js"),
+        pytest.param("lib.php", cs.DELTA_ARITY_TOO_FEW, id="php"),
+        pytest.param("src/Util.java", cs.DELTA_ARITY_TOO_FEW, id="java"),
+    ],
+)
+def test_a_parameter_named_self_counts_outside_rust(path: str, short: str) -> None:
+    """Each extractor stores an ordinary `self` parameter as `self`."""
+    definition = _receiver_definition()._replace(
+        label=cs.NodeLabel.FUNCTION.value,
+        path=path,
+        positional_params=("self", "b"),
+    )
+    site = _receiver_site(2, None)._replace(caller_path=path)
+
+    assert _declared_arity_verdict(site, definition) == (2, cs.DELTA_ARITY_OK)
+    short_site = site._replace(arg_count=1)
+    assert _declared_arity_verdict(short_site, definition) == (2, short)
+
+
+@pytest.mark.parametrize(
+    ("entry", "path"),
+    [
+        pytest.param("this s", "src/lib.rs", id="this-marker-in-rust"),
+        pytest.param("this s", "src/util.ts", id="this-marker-in-typescript"),
+        pytest.param("self", "Util.cs", id="self-marker-in-csharp"),
+        pytest.param("self", "", id="unknown-language"),
+    ],
+)
+def test_a_receiver_marker_counts_only_in_its_own_language(
+    entry: str, path: str
+) -> None:
+    """Rust's `self` and C#'s `this name` mark a receiver nowhere else."""
+    definition = _receiver_definition()._replace(
+        path=path, positional_params=(entry, "b")
+    )
+    site = _receiver_site(2, None)._replace(caller_path=path)
+
+    assert _declared_arity_verdict(site, definition)[0] == 2
+
+
 CS_EXT_UTIL = (
     "public static class Util {\n"
     "    public static string Ext(this string s, int a, int b = 0) { return s; }\n"
