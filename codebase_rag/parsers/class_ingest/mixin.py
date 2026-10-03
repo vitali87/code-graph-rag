@@ -41,6 +41,7 @@ from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..py import external_stdlib_base_method_names, resolve_class_name
+from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
@@ -271,6 +272,32 @@ def _signatured_method_qn(
             param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
             return f"{class_qn}.{cs_name}({param_sig})"
     return None
+
+
+def _python_member_aliases(
+    body_node: Node, language: cs.SupportedLanguage
+) -> dict[int, tuple[str, ...]]:
+    # Method node id -> the other member names the class body binds it to
+    # (`run = _plain`, issue #2620), so the method registers under them too.
+    if language != cs.SupportedLanguage.PYTHON:
+        return {}
+    names: dict[int, list[str]] = {}
+    for alias, methods in scan_class_body_aliases(body_node).members.items():
+        for method in methods:
+            names.setdefault(method.id, []).append(alias)
+    return {method_id: tuple(aliases) for method_id, aliases in names.items()}
+
+
+def _python_non_method_members(
+    class_node: Node, language: cs.SupportedLanguage
+) -> list[str]:
+    # The names the class body binds to a value that is no method (`run =
+    # None`): they hide a base's `run` from attribute lookup (issue #2620).
+    if language != cs.SupportedLanguage.PYTHON:
+        return []
+    if (body := class_node.child_by_field_name(cs.FIELD_BODY)) is None:
+        return []
+    return sorted(scan_class_body_aliases(body).non_method)
 
 
 class _MethodScope(NamedTuple):
@@ -1243,8 +1270,13 @@ class ClassIngestMixin:
         class_props.update(anchor_hash_props(class_node, decorators))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
+        # Stored on the node so an incremental run that does not re-parse
+        # this file can register them again.
+        if non_method_members := _python_non_method_members(class_node, language):
+            class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        self.function_registry.set_non_method_members(class_qn, non_method_members)
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
 
@@ -1840,6 +1872,7 @@ class ClassIngestMixin:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
+        member_aliases = _python_member_aliases(body_node, language)
 
         method_nodes = _impl_body_method_nodes(
             body_node, lang_queries, sorted_func_nodes, func_node_starts
@@ -1879,6 +1912,7 @@ class ClassIngestMixin:
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
                 parameter_type_sink=self.pending_parameter_types,
+                member_aliases=member_aliases.get(method_node.id, ()),
             )
             if ingested_qn is not None:
                 self._record_ingested_method(scope, method_node, ingested_qn)

@@ -76,8 +76,21 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "unresolved_references",
         }
     ),
+    # `non_method_members` (issue #2620) lets an incremental run re-register
+    # the names an unchanged class body binds to a value (`run = None`), which
+    # hide a base class's `run`. A graph round-tripped through protobuf loses
+    # them (and `member_aliases` with them), so until that file is parsed
+    # again `Sub().run()` reaches the base's `def run` as it did before #2620.
+    # Exporting it needs a proto field and protoc, which #1490 carries.
     "Class": frozenset(
-        {"anchor_hash", "absolute_path", "modifiers", "path", "start_col"}
+        {
+            "anchor_hash",
+            "absolute_path",
+            "modifiers",
+            "non_method_members",
+            "path",
+            "start_col",
+        }
     ),
     "Field": frozenset({"absolute_path"}),
     "EnumVariant": frozenset({"absolute_path"}),
@@ -106,12 +119,19 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `member_aliases` (issue #2620) lets an incremental run re-register the
+    # class-body aliases (`run = _plain`) of a file it does not re-parse. A
+    # graph round-tripped through protobuf loses them, so until that file is
+    # parsed again a call through the alias binds to nothing, exactly as it
+    # did before #2620; absent reads as "no aliases", never a wrong target.
+    # Exporting it needs a proto field and protoc, which #1490 carries.
     "Method": frozenset(
         {
             "absolute_path",
             "anchor_hash",
             "is_exported",
             "is_property",
+            "member_aliases",
             "modifiers",
             "name_start_col",
             "name_start_line",

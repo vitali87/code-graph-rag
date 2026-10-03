@@ -25,6 +25,12 @@ KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+# The other member names a Python class body binds a method to
+# (`run = _plain`), so a call through the alias reaches it (issue #2620).
+KEY_MEMBER_ALIASES = "member_aliases"
+# The member names a Python class body binds to a value that is no method
+# (`run = None`), which hide a base class's `run` (issue #2620).
+KEY_NON_METHOD_MEMBERS = "non_method_members"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -893,6 +899,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
+    "n.member_aliases AS member_aliases, "
+    "n.non_method_members AS non_method_members, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member"
 )

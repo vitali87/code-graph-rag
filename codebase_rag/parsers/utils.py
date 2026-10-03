@@ -1392,6 +1392,24 @@ def _record_method_overrides(
         )
 
 
+def _record_member_aliases(
+    method_props: PropertyDict,
+    function_registry: FunctionRegistryTrieProtocol,
+    container_qn: str,
+    method_qn: str,
+    member_aliases: tuple[str, ...],
+) -> None:
+    if not member_aliases:
+        return
+    # Stored on the node so an incremental run that does not re-parse
+    # this file can register the aliases again (issue #2620).
+    method_props[cs.KEY_MEMBER_ALIASES] = list(member_aliases)
+    for alias in member_aliases:
+        function_registry.add_member_alias(
+            f"{container_qn}{cs.SEPARATOR_DOT}{alias}", method_qn
+        )
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1413,6 +1431,7 @@ def ingest_method(
     pending_endpoints: list | None = None,
     type_fact_sink: list | None = None,
     parameter_type_sink: list | None = None,
+    member_aliases: tuple[str, ...] = (),
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -1493,6 +1512,9 @@ def ingest_method(
     is_property = _method_is_property(method_node, language, decorators)
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
+    _record_member_aliases(
+        method_props, function_registry, container_qn, method_qn, member_aliases
+    )
 
     _record_method_overrides(
         method_props,

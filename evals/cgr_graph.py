@@ -1177,6 +1177,16 @@ class _StatefulIngestor:
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
+                        cs.KEY_MEMBER_ALIASES: [_text(a) for a in raw_aliases]
+                        if isinstance(
+                            raw_aliases := props.get(cs.KEY_MEMBER_ALIASES), list
+                        )
+                        else None,
+                        cs.KEY_NON_METHOD_MEMBERS: [_text(n) for n in raw_values]
+                        if isinstance(
+                            raw_values := props.get(cs.KEY_NON_METHOD_MEMBERS), list
+                        )
+                        else None,
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
