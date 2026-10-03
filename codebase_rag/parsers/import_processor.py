@@ -2047,22 +2047,32 @@ class ImportProcessor:
         siblings = self.stem_sibling_modules(module_paths)
         if not siblings:
             return
-        for importer, mapping in self.import_mapping.items():
-            importer_path = module_paths.get(importer)
-            language = (
-                get_language_for_extension(importer_path.suffix)
-                if importer_path is not None
-                else None
+        for importer in self.import_mapping:
+            self.point_module_imports_at_own_language_siblings(
+                importer, module_paths, siblings
             )
-            if language is None:
-                continue
-            family = language_family(language)
-            for local_name, full_name in mapping.items():
-                target = self._own_language_target(
-                    full_name, family, module_paths, siblings
-                )
-                if target != full_name:
-                    mapping[local_name] = target
+
+    def point_module_imports_at_own_language_siblings(
+        self,
+        importer: str,
+        module_paths: Mapping[str, Path],
+        siblings: StemSiblingModules,
+    ) -> None:
+        """`point_imports_at_own_language_siblings` for one importer's map."""
+        mapping = self.import_mapping.get(importer)
+        importer_path = module_paths.get(importer)
+        if not mapping or not siblings or importer_path is None:
+            return
+        language = get_language_for_extension(importer_path.suffix)
+        if language is None:
+            return
+        family = language_family(language)
+        for local_name, full_name in mapping.items():
+            target = self._own_language_target(
+                full_name, family, module_paths, siblings
+            )
+            if target != full_name:
+                mapping[local_name] = target
 
     def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
         # A module reached through its container's name: pkg/__init__.py,

@@ -2093,10 +2093,12 @@ class GraphUpdater:
         holds every map; without them the receiver lost its type and the call
         bound by name to whatever else carries it (issue #2559).
 
-        Only what resolution can walk is read. Each module an import names is
-        restored, and a name no definition owns (a re-export, or a whole
-        module) carries the walk on into that module's own imports. A module
-        no re-parsed file reaches is never opened, and a module whose imports
+        What is read is the import closure of the re-parsed files: each module
+        an import names is restored and then walked in turn. A reached
+        definition carries the walk on too, since resolving its own
+        annotations (`def make() -> Client` in an unchanged module) reads its
+        module's map, and that can lead to yet another re-export. A module no
+        re-parsed file reaches is never opened, and a module whose imports
         this updater already holds is not parsed again.
         """
         import_processor = self.factory.import_processor
@@ -2105,32 +2107,34 @@ class GraphUpdater:
         if all(module_qn in mapping for module_qn in module_paths):
             # A full build or a reused updater: every map is already held.
             return
+        # Read once: each restored map is re-pointed before the walk reads it.
+        siblings = import_processor.stem_sibling_modules(module_paths)
         # The walk is a closure, so the order scopes are taken in is moot.
         pending = list(mapping)
         walked = set(pending)
-        tried: set[str] = set()
         restored = 0
         while pending:
             scope = pending.pop()
             for target in list(mapping.get(scope, {}).values()):
                 holder = _module_holding(target, module_paths)
-                if holder is None:
-                    continue
-                if holder not in mapping and holder not in tried:
-                    tried.add(holder)
-                    if self._restore_module_imports(holder, module_paths[holder]):
-                        restored += 1
-                if (
-                    target in self.function_registry
-                    or holder in walked
-                    or holder not in mapping
-                ):
+                if holder is None or holder in walked:
                     continue
                 walked.add(holder)
+                if holder not in mapping:
+                    if not self._restore_module_imports(holder, module_paths[holder]):
+                        continue
+                    restored += 1
+                    # A restored map names a shared stem as written
+                    # (`proj.shim.Widget`), while the module carries its
+                    # suffix (`proj.shim.py`, issue #2586). The re-parsed
+                    # maps were re-pointed before this walk; a restored one
+                    # must be too before its targets are looked up, or the
+                    # suffixed module is never found and never restored.
+                    import_processor.point_module_imports_at_own_language_siblings(
+                        holder, module_paths, siblings
+                    )
                 pending.append(holder)
         if restored:
-            # The restored maps name stems as written, like any parsed file's.
-            import_processor.point_imports_at_own_language_siblings(module_paths)
             logger.info(ls.IMPORT_STATE_RESTORED, count=restored)
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:

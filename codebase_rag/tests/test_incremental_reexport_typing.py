@@ -63,6 +63,37 @@ PY_FIXTURE: dict[str, str] = {
 }
 PY_CONSUMER = "tests/test_client.py"
 
+# The consumer imports the factory straight from its module, so only the
+# factory's own map leads on to the package re-export its `-> Client` names.
+PY_FACTORY_FIXTURE: dict[str, str] = {
+    "pkg/__init__.py": "from ._client import Client\nfrom ._api import send\n",
+    "pkg/_client.py": PY_FIXTURE["pkg/_client.py"],
+    "pkg/_api.py": PY_FIXTURE["pkg/_api.py"],
+    "pkg/factory.py": (
+        "from pkg import Client\n\n\ndef make() -> Client:\n    return Client()\n"
+    ),
+    "tests/test_factory.py": (
+        "from pkg.factory import make\n\n\n"
+        "def test_factory():\n    client = make()\n    client.send('y')\n"
+    ),
+}
+PY_FACTORY_CONSUMER = "tests/test_factory.py"
+
+# `shim.py` shares its stem with `shim.js`, so its module carries the `.py`
+# suffix while `api.py` still writes `from shim import Widget` (issue #2586).
+PY_STEM_SIBLING_FIXTURE: dict[str, str] = {
+    "widgets.py": "class Widget:\n    def render(self) -> str:\n        return 'w'\n",
+    "decoy.py": "def render() -> str:\n    return 'd'\n",
+    "shim.py": "from widgets import Widget\n",
+    "shim.js": "export function helper() {\n  return 1;\n}\n",
+    "api.py": "from shim import Widget\n",
+    "app.py": (
+        "from api import Widget\n\n\n"
+        "def main():\n    widget = Widget()\n    widget.render()\n"
+    ),
+}
+PY_STEM_SIBLING_CONSUMER = "app.py"
+
 # `db.rs` is the decoy: it defines `into_frame` and `is_shutdown` too, so a
 # receiver that loses its type lands there by name.
 RS_FIXTURE: dict[str, str] = {
@@ -375,6 +406,54 @@ class TestPythonPackageReexport:
         _materialise(root, PY_FIXTURE)
         _updater(_StatefulIngestor(), root, "python").run(force=True)
         assert restored == []
+
+
+class TestPythonFactoryModule:
+    def test_factory_receiver_stays_exact(self, tmp_path: Path) -> None:
+        # The walk reaches `make`, a definition, and must still follow its
+        # module's own map on to `pkg`, where `Client` is re-exported.
+        synced = _sync_after_edit(
+            tmp_path, PY_FACTORY_FIXTURE, PY_FACTORY_CONSUMER, _UNRELATED_FN, "python"
+        )
+        calls = _calls_from(synced.store, "proj.tests.test_factory.test_factory")
+        assert calls.get("proj.pkg._client.Client.send") == _EXACT
+        assert "proj.pkg._api.send" not in calls
+
+    def test_incremental_graph_equals_a_clean_index(self, tmp_path: Path) -> None:
+        synced = _sync_after_edit(
+            tmp_path, PY_FACTORY_FIXTURE, PY_FACTORY_CONSUMER, _UNRELATED_FN, "python"
+        )
+        assert _snapshot(synced.store, synced.root) == _snapshot(
+            synced.clean, synced.root
+        )
+
+
+class TestStemSiblingReexport:
+    def test_receiver_through_suffixed_module_stays_exact(self, tmp_path: Path) -> None:
+        # `api.py`'s restored map names `proj.shim.Widget`; only once it reads
+        # `proj.shim.py.Widget` does the walk find `shim.py` to restore.
+        synced = _sync_after_edit(
+            tmp_path,
+            PY_STEM_SIBLING_FIXTURE,
+            PY_STEM_SIBLING_CONSUMER,
+            _UNRELATED_FN,
+            "javascript",
+        )
+        calls = _calls_from(synced.store, "proj.app.main")
+        assert calls.get("proj.widgets.Widget.render") == _EXACT
+        assert "proj.decoy.render" not in calls
+
+    def test_incremental_graph_equals_a_clean_index(self, tmp_path: Path) -> None:
+        synced = _sync_after_edit(
+            tmp_path,
+            PY_STEM_SIBLING_FIXTURE,
+            PY_STEM_SIBLING_CONSUMER,
+            _UNRELATED_FN,
+            "javascript",
+        )
+        assert _snapshot(synced.store, synced.root) == _snapshot(
+            synced.clean, synced.root
+        )
 
 
 class TestRustReexport:
