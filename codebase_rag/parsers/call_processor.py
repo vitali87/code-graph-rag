@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -34,7 +35,9 @@ from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
 from .dart import utils as dart_utils
+from .definition_docstring import extract_definition_docstring
 from .dispatch_registry import DispatchRegistryProcessor
+from .field_nodes import declared_fields
 from .flow_access import FlowProcessor
 from .go import type_inference as go_ti
 from .go import utils as go_utils
@@ -172,12 +175,43 @@ _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 _PY_LOCAL_SCOPE_CALLERS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 
 # Declarator kinds for the symbol-index value chase (issue #989). OPAQUE
-# marks an introduction whose value cannot be known statically (a parameter,
-# a loop or catch binding, an uninitialised declarator): it wins scoping and
-# refuses typing.
+# marks an introduction whose value cannot be known statically (a loop or
+# catch binding, an uninitialised declarator): it wins scoping and refuses
+# typing. PARAM is a parameter, carried with its callable so a declared type
+# (annotation or JSDoc) can be read; the value chase refuses it like OPAQUE.
 _JS_DECL_PLAIN = "plain"
 _JS_DECL_DESTRUCTURED = "destructured"
 _JS_DECL_OPAQUE = "opaque"
+_JS_DECL_PARAM = "param"
+# Every class shape whose body a `this.f` read can belong to.
+_JS_TS_ANY_CLASS_NODES = frozenset(
+    {*cs.JS_TS_CLASS_NODES, cs.TS_ABSTRACT_CLASS_DECLARATION}
+)
+# The class members whose `static` keyword decides what `this` is inside.
+_JS_CLASS_MEMBER_TYPES = frozenset(
+    {cs.TS_METHOD_DEFINITION, cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
+# Expressions that write their target.
+_JS_FIELD_WRITE_TYPES = frozenset(
+    {
+        cs.TS_JS_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_UPDATE_EXPRESSION,
+    }
+)
+
+
+class _ReceiverDeclaration(NamedTuple):
+    """What a JS/TS call site declares its receiver to be (issue #2609).
+
+    `foreign` means the declaration names a type the project does not define
+    (a built-in, a library type, `any`); otherwise `qn` is the first-party
+    type whose inheritance chain may confirm a method binding.
+    """
+
+    qn: str
+    foreign: bool
+
 
 # Ancestors bounding a `let`/`const` declaration's scope (mirrors the
 # type-inference engine's set).
@@ -4562,7 +4596,7 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
-        return ctx.resolve_func(
+        callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
             call_var_types,
@@ -4575,6 +4609,460 @@ class CallProcessor:
             in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
+        if ctx.is_js_ts and callee_info is not None:
+            return self._judge_js_member_pick(ctx, call_node, callee_info)
+        return callee_info
+
+    def _judge_js_member_pick(
+        self, ctx: _CallScanContext, call_node: Node, callee_info: tuple[str, str]
+    ) -> tuple[str, str] | None:
+        # The resolver binds `recv.m()` on a receiver it could not type to the
+        # one visible class defining `m`, and calls that a heuristic (issue
+        # #2609). What the receiver is declared as here decides further: a
+        # first-party type owning `m` (itself or a base) makes the binding
+        # the one the type implies, so it is exact; a type the project does
+        # not define (`Map`, a library class, `any`) cannot be that class, so
+        # there is no edge, as for a local `new Map()`. Anything else stays
+        # the heuristic it is.
+        if self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC:
+            return callee_info
+        func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is None or func.type != cs.TS_MEMBER_EXPRESSION:
+            return callee_info
+        declared = self._js_receiver_declaration(
+            ctx, func.child_by_field_name(cs.FIELD_OBJECT)
+        )
+        if declared is None:
+            return callee_info
+        if declared.foreign:
+            return None
+        owner_qn = callee_info[1].rpartition(cs.SEPARATOR_DOT)[0]
+        if owner_qn in self._resolver._mro(
+            self._resolver._follow_reexports(declared.qn)
+        ):
+            self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        return callee_info
+
+    def _js_receiver_declaration(
+        self, ctx: _CallScanContext, receiver: Node | None
+    ) -> _ReceiverDeclaration | None:
+        # Wrappers that keep the operand's type are looked through; an `as`
+        # cast asserts its own type, which is then the declaration.
+        while receiver is not None and receiver.type in (
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            cs.TS_NON_NULL_EXPRESSION,
+            cs.TS_SATISFIES_EXPRESSION,
+        ):
+            receiver = receiver.named_child(0)
+        if receiver is None:
+            return None
+        if receiver.type == cs.TS_AS_EXPRESSION:
+            cast = receiver.named_children[-1] if receiver.named_children else None
+            return self._ts_type_declaration(cast, ctx.module_qn) if cast else None
+        if receiver.type == cs.TS_THIS:
+            if ctx.class_context and self._js_instance_this(receiver):
+                return _ReceiverDeclaration(ctx.class_context, foreign=False)
+            return None
+        if receiver.type == cs.TS_IDENTIFIER:
+            return self._js_identifier_declaration(ctx, receiver)
+        if receiver.type == cs.TS_MEMBER_EXPRESSION:
+            return self._js_this_field_declaration(ctx, receiver)
+        return None
+
+    def _js_identifier_declaration(
+        self, ctx: _CallScanContext, ident: Node
+    ) -> _ReceiverDeclaration | None:
+        name = safe_decode_text(ident)
+        if not name:
+            return None
+        intro = self._js_innermost_introduction(ident, name)
+        if intro is None:
+            return None
+        kind, value = intro
+        if kind == _JS_DECL_PARAM and value is not None:
+            return self._js_param_declaration(ctx, value, name)
+        if kind == _JS_DECL_PLAIN and value is not None:
+            declarator = value.parent
+            annotation = (
+                declarator.child_by_field_name(cs.FIELD_TYPE)
+                if declarator is not None
+                and declarator.type == cs.TS_VARIABLE_DECLARATOR
+                else None
+            )
+            if annotation is not None:
+                return self._ts_annotation_declaration(annotation, ctx.module_qn)
+        class_qn = self._js_introduction_class_qn(
+            kind, value, name, ctx.module_qn, depth=0
+        )
+        return _ReceiverDeclaration(class_qn, foreign=False) if class_qn else None
+
+    def _js_param_declaration(
+        self, ctx: _CallScanContext, callable_node: Node, name: str
+    ) -> _ReceiverDeclaration | None:
+        annotation = self._js_param_annotation(callable_node, name)
+        if annotation is not None:
+            return self._ts_annotation_declaration(annotation, ctx.module_qn)
+        jsdoc_type = self._jsdoc_param_type(callable_node, name, ctx.language)
+        if jsdoc_type is None:
+            return None
+        return self._jsdoc_type_declaration(jsdoc_type, callable_node, ctx.module_qn)
+
+    def _js_param_annotation(self, callable_node: Node, name: str) -> Node | None:
+        for param in self._js_callable_params(callable_node):
+            if (
+                param.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER)
+                and self._js_param_binds_name(param, name)
+                and (annotation := param.child_by_field_name(cs.FIELD_TYPE)) is not None
+            ):
+                return annotation
+        return None
+
+    @staticmethod
+    def _js_callable_params(callable_node: Node) -> list[Node]:
+        # `(a, b) => ...` lists them under `parameters`; a bare `a => ...`
+        # holds its one identifier under `parameter`.
+        params: list[Node] = []
+        for field in (cs.FIELD_PARAMETERS, cs.FIELD_PARAMETER):
+            node = callable_node.child_by_field_name(field)
+            if node is None:
+                continue
+            if node.type == cs.TS_IDENTIFIER:
+                params.append(node)
+            else:
+                params.extend(node.named_children)
+        return params
+
+    @staticmethod
+    def _js_param_binds_name(param: Node, name: str) -> bool:
+        pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
+        return (
+            pattern is not None
+            and pattern.type == cs.TS_IDENTIFIER
+            and safe_decode_text(pattern) == name
+        )
+
+    @staticmethod
+    def _jsdoc_param_type(
+        callable_node: Node, name: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        doc = extract_definition_docstring(callable_node, language)
+        if not doc:
+            return None
+        templates = {
+            template.strip()
+            for names in re.findall(cs.JSDOC_TEMPLATE_TAG_PATTERN, doc)
+            for template in names.split(cs.CHAR_COMMA)
+        }
+        for type_text, param_name in re.findall(cs.JSDOC_PARAM_TAG_PATTERN, doc):
+            if param_name != name:
+                continue
+            # An `@template T` names no type the project or the platform
+            # defines, so `{T}` is left unread rather than taken as foreign.
+            bare = type_text.strip().strip(cs.JSDOC_TYPE_MODIFIER_CHARS)
+            return None if bare in templates else type_text.strip()
+        return None
+
+    def _jsdoc_type_declaration(
+        self, type_text: str, anchor: Node, module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        # Only the plain forms are read: `{A}`, `{?A}`, `{A=}`, `{ns.A}`, and
+        # `{*}` for any. A union, a record or a function type stays unread.
+        if type_text in cs.JSDOC_ANY_TYPES:
+            return _ReceiverDeclaration(type_text, foreign=True)
+        bare = type_text.strip(cs.JSDOC_TYPE_MODIFIER_CHARS)
+        if not re.fullmatch(cs.JSDOC_TYPE_NAME_PATTERN, bare):
+            return None
+        return self._ts_type_name_declaration(bare, anchor, module_qn)
+
+    def _js_this_field_declaration(
+        self, ctx: _CallScanContext, member: Node
+    ) -> _ReceiverDeclaration | None:
+        # `this.f` on an instance: the field's declared type when it has one;
+        # otherwise the class every value instance code gives it (initialiser,
+        # `this.f = ...` in the class's own methods) constructs, when they all
+        # agree. A static member's `this` is the class, whose `f` is another
+        # property altogether.
+        obj = member.child_by_field_name(cs.FIELD_OBJECT)
+        prop = member.child_by_field_name(cs.FIELD_PROPERTY)
+        if (
+            not self._js_instance_this(obj)
+            or prop is None
+            or not (field := safe_decode_text(prop))
+        ):
+            return None
+        class_node = member.parent
+        while class_node is not None and class_node.type not in _JS_TS_ANY_CLASS_NODES:
+            class_node = class_node.parent
+        if class_node is None:
+            return None
+        annotation, values = self._js_declared_field_parts(
+            class_node, field, ctx.language
+        )
+        if annotation is not None:
+            return self._ts_annotation_declaration(annotation, ctx.module_qn)
+        writes = self._js_this_field_writes(class_node, field)
+        if writes is None:
+            return None
+        return self._js_agreed_class(values + writes, ctx.module_qn)
+
+    @staticmethod
+    def _js_declared_field_parts(
+        class_node: Node, field: str, language: cs.SupportedLanguage
+    ) -> tuple[Node | None, list[Node]]:
+        # The instance field's type annotation, which is declared truth and
+        # ends the search, else the initialisers its declarations give it.
+        initials: list[Node] = []
+        for declared in declared_fields(class_node, language):
+            if declared.name != field or declared.is_static:
+                continue
+            annotation = declared.node.child_by_field_name(cs.FIELD_TYPE)
+            if annotation is not None:
+                return annotation, initials
+            if (
+                initial := declared.node.child_by_field_name(cs.FIELD_VALUE)
+            ) is not None:
+                initials.append(initial)
+        return None, initials
+
+    def _js_agreed_class(
+        self, values: list[Node], module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        # The one class every value constructs; none, or any disagreement or
+        # untypable value, proves nothing.
+        class_qns = {
+            self._js_value_type_class_qn(value, module_qn, depth=0) for value in values
+        }
+        if len(class_qns) != 1 or (class_qn := class_qns.pop()) is None:
+            return None
+        return _ReceiverDeclaration(class_qn, foreign=False)
+
+    def _js_this_field_writes(self, class_node: Node, field: str) -> list[Node] | None:
+        # Every value instance code in the class body assigns to `this.f`, or
+        # None when some write to it gives no single value to type: a
+        # computed key (`this[k] = ...`, which may be `f`), a destructuring
+        # target, a compound operator or an update.
+        body = class_node.child_by_field_name(cs.FIELD_BODY)
+        values: list[Node] = []
+        stack: list[Node] = list(body.children) if body is not None else []
+        while stack:
+            node = stack.pop()
+            if node.type in _JS_TS_ANY_CLASS_NODES:
+                continue
+            if node.type in _JS_FIELD_WRITE_TYPES:
+                written = self._js_field_write_values(node, field)
+                if written is None:
+                    return None
+                values.extend(written)
+            stack.extend(node.children)
+        return values
+
+    def _js_field_write_values(self, node: Node, field: str) -> list[Node] | None:
+        # What one write expression assigns to `this.f`: nothing when it
+        # writes elsewhere, its right-hand side for a plain `=`, and None
+        # when it may write `f` with no value to type (see the caller).
+        target = node.child_by_field_name(
+            cs.TS_JS_FIELD_ARGUMENT
+            if node.type == cs.TS_JS_UPDATE_EXPRESSION
+            else cs.FIELD_LEFT
+        )
+        writes = self._js_writes_this_field(target, field)
+        if writes is None:
+            return None
+        if not writes:
+            return []
+        value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if node.type != cs.TS_JS_ASSIGNMENT_EXPRESSION or value is None:
+            return None
+        return [value]
+
+    def _js_writes_this_field(self, target: Node | None, field: str) -> bool | None:
+        # Whether an assignment target writes the instance field `field`:
+        # None when it may or may not (a computed key, or the field inside a
+        # destructuring pattern, whose value is not the right-hand side).
+        if target is None:
+            return False
+        if target.type in (cs.TS_MEMBER_EXPRESSION, cs.TS_SUBSCRIPT_EXPRESSION):
+            return self._js_this_target_field(target, field)
+        stack = [target]
+        while stack:
+            node = stack.pop()
+            if node.type in (cs.TS_MEMBER_EXPRESSION, cs.TS_SUBSCRIPT_EXPRESSION):
+                if self._js_this_target_field(node, field) is not False:
+                    return None
+                continue
+            stack.extend(node.named_children)
+        return False
+
+    def _js_this_target_field(self, target: Node, field: str) -> bool | None:
+        if not self._js_instance_this(target.child_by_field_name(cs.FIELD_OBJECT)):
+            return False
+        if target.type == cs.TS_MEMBER_EXPRESSION:
+            prop = target.child_by_field_name(cs.FIELD_PROPERTY)
+            return prop is not None and safe_decode_text(prop) == field
+        index = target.child_by_field_name(cs.TS_FIELD_INDEX)
+        if index is None or index.type != cs.TS_STRING:
+            return None
+        parts = index.named_children
+        if any(part.type != cs.TS_STRING_FRAGMENT for part in parts):
+            return None
+        return "".join(safe_decode_text(part) or "" for part in parts) == field
+
+    def _js_instance_this(self, node: Node | None) -> bool:
+        # `this` naming an instance of the enclosing class: in an instance
+        # method or instance field (arrows inherit it), never in a static
+        # method, static field or static block, where it is the class.
+        if (
+            node is None
+            or node.type != cs.TS_THIS
+            or not self._js_this_binds_to_enclosing_class(node)
+        ):
+            return False
+        current = node.parent
+        while current is not None:
+            if current.type == cs.TS_CLASS_STATIC_BLOCK:
+                return False
+            if current.type in _JS_CLASS_MEMBER_TYPES:
+                return not any(child.type == cs.TS_STATIC for child in current.children)
+            current = current.parent
+        return True
+
+    def _ts_annotation_declaration(
+        self, annotation: Node, module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        inner = next(iter(annotation.named_children), None)
+        return self._ts_type_declaration(inner, module_qn) if inner else None
+
+    def _ts_type_declaration(
+        self, node: Node, module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        node_type = node.type
+        if node_type in (cs.TS_PREDEFINED_TYPE, cs.TS_ARRAY_TYPE, cs.TS_TUPLE_TYPE):
+            # `any`, `unknown`, `string`, `A[]`: nothing the project defines.
+            return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
+        if node_type == cs.TS_PARENTHESIZED_TYPE:
+            inner = next(iter(node.named_children), None)
+            return self._ts_type_declaration(inner, module_qn) if inner else None
+        if node_type == cs.TS_UNION_TYPE:
+            return self._ts_union_declaration(node, module_qn)
+        if node_type == cs.TS_TYPE_IDENTIFIER:
+            name = safe_decode_text(node)
+            return (
+                self._ts_type_name_declaration(name, node, module_qn) if name else None
+            )
+        if node_type == cs.TS_GENERIC_TYPE:
+            return self._ts_generic_declaration(node, module_qn)
+        if node_type == cs.TS_NESTED_TYPE_IDENTIFIER:
+            name = safe_decode_text(node)
+            return (
+                self._ts_type_name_declaration(name, node, module_qn) if name else None
+            )
+        return None
+
+    def _ts_union_declaration(
+        self, node: Node, module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        # `A | null` declares A. A wider union declares nothing usable unless
+        # no member is first-party (`string | number`).
+        members = [
+            child
+            for child in node.named_children
+            if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        if len(members) == 1:
+            return self._ts_type_declaration(members[0], module_qn)
+        declared = [self._ts_type_declaration(member, module_qn) for member in members]
+        if declared and all(d is not None and d.foreign for d in declared):
+            return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
+        return None
+
+    def _ts_generic_declaration(
+        self, node: Node, module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        name = safe_decode_text(name_node) if name_node is not None else None
+        if not name:
+            return None
+        declared = self._ts_type_name_declaration(name, node, module_qn)
+        # TypeScript's own utility types are no value type of their own and
+        # are read through. A name the project defines or a package exports
+        # (`Wrapper<Cache>`, or an imported `Readonly`) is that type, whatever
+        # its arguments, so only a name resolving to nothing is a utility.
+        if declared is not None or name in cs.TS_UNSETTLED_UTILITY_TYPES:
+            return declared
+        if name in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
+            # `Readonly<A>` and friends keep A's members: A is the declaration.
+            arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+            first = next(iter(arguments.named_children), None) if arguments else None
+            return self._ts_type_declaration(first, module_qn) if first else None
+        return None
+
+    def _ts_type_name_declaration(
+        self, name: str, anchor: Node, module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        # A type name is first-party when an enclosing scope declares it, an
+        # import supplies it from the project, or the module registers it.
+        # A type parameter or a nested declaration is first-party too but has
+        # no qn to compare, so it declares nothing usable. Foreign takes
+        # proof: an import from a package, or a platform global (`Map`,
+        # `URLSearchParams`, `HTMLElement`). Any other name may be a type
+        # this pass cannot see (a JSDoc `@typedef`, a class-level `@template`,
+        # an ambient declaration), so it declares nothing usable either.
+        head, _, rest = name.partition(cs.SEPARATOR_DOT)
+        top_level = self._ts_lexical_type(anchor, head)
+        if top_level is not None:
+            return (
+                _ReceiverDeclaration(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{name}", foreign=False
+                )
+                if top_level
+                else None
+            )
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
+        if head in import_map:
+            if self._resolver._is_external_import(head, module_qn):
+                return _ReceiverDeclaration(name, foreign=True)
+            head_qn = self._resolver._resolve_class_qn_from_type(
+                head, import_map, module_qn
+            )
+            qn = f"{head_qn}{cs.SEPARATOR_DOT}{rest}" if rest else head_qn
+            return _ReceiverDeclaration(qn, foreign=False) if qn else None
+        local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        if local_qn in self._resolver.function_registry:
+            return _ReceiverDeclaration(local_qn, foreign=False)
+        if name in cs.JS_TS_GLOBAL_RECEIVER_TYPES:
+            return _ReceiverDeclaration(name, foreign=True)
+        return None
+
+    @staticmethod
+    def _ts_lexical_type(anchor: Node, name: str) -> bool | None:
+        # Whether an enclosing scope declares the type `name`: True when the
+        # module itself does, False when only a nested scope (a function, a
+        # namespace) or a type-parameter list does, None when none does.
+        current = anchor.parent
+        while current is not None:
+            params = current.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+            if params is not None and any(
+                (param_name := param.child_by_field_name(cs.FIELD_NAME)) is not None
+                and safe_decode_text(param_name) == name
+                for param in params.named_children
+            ):
+                return False
+            for child in current.named_children:
+                declaration = (
+                    child.child_by_field_name(cs.TS_DECLARATION)
+                    if child.type == cs.TS_EXPORT_STATEMENT
+                    else child
+                )
+                if (
+                    declaration is not None
+                    and declaration.type in cs.TS_TYPE_DECLARATION_NODES
+                    and (decl_name := declaration.child_by_field_name(cs.FIELD_NAME))
+                    is not None
+                    and safe_decode_text(decl_name) == name
+                ):
+                    return current.parent is None
+            current = current.parent
+        return None
 
     def _resolve_java_callee(
         self, ctx: _CallScanContext, call_node: Node
@@ -9215,21 +9703,39 @@ class CallProcessor:
         name = safe_decode_text(ident)
         if not name:
             return None
-        intros: list[tuple[int, int, str, Node | None]] = []
+        intro = self._js_innermost_introduction(ident, name)
+        if intro is None:
+            return None
+        kind, value = intro
+        return self._js_introduction_class_qn(kind, value, name, module_qn, depth)
+
+    def _js_innermost_introduction(
+        self, ident: Node, name: str
+    ) -> tuple[str, Node | None] | None:
+        # The (kind, value) of the introduction of `name` that `ident` reads.
+        # Scopes are visited innermost first and the first one introducing
+        # the name around `ident` decides: an outer scope's introductions
+        # span all of the inner scope, so they can never be the innermost,
+        # and the whole-module scan runs only for a module-level name.
+        pos = ident.start_byte
         scope = ident.parent
         while scope is not None:
             if scope.type in cs.JS_TS_FUNCTION_NODES or scope.parent is None:
+                intros: list[tuple[int, int, str, Node | None]] = []
                 self._js_scope_introductions(scope, name, intros)
+                enclosing = [e for e in intros if e[0] <= pos < e[1]]
+                if enclosing:
+                    best_start = max(e[0] for e in enclosing)
+                    best = [e for e in enclosing if e[0] == best_start]
+                    if len(best) != 1:
+                        return None
+                    return best[0][2], best[0][3]
             scope = scope.parent
-        pos = ident.start_byte
-        enclosing = [e for e in intros if e[0] <= pos < e[1]]
-        if not enclosing:
-            return None
-        best_start = max(e[0] for e in enclosing)
-        best = [e for e in enclosing if e[0] == best_start]
-        if len(best) != 1:
-            return None
-        _s, _e, kind, value = best[0]
+        return None
+
+    def _js_introduction_class_qn(
+        self, kind: str, value: Node | None, name: str, module_qn: str, depth: int
+    ) -> str | None:
         if kind == _JS_DECL_PLAIN:
             return self._js_value_type_class_qn(value, module_qn, depth + 1)
         if kind == _JS_DECL_DESTRUCTURED and value is not None:
@@ -9246,7 +9752,7 @@ class CallProcessor:
         # root), each with the byte span of the scope it governs. Nested
         # callables own their locals and are skipped.
         if scope.type in cs.JS_TS_FUNCTION_NODES and self._js_params_bind(scope, name):
-            intros.append((scope.start_byte, scope.end_byte, _JS_DECL_OPAQUE, None))
+            intros.append((scope.start_byte, scope.end_byte, _JS_DECL_PARAM, scope))
         stack: list[Node] = list(scope.children)
         while stack:
             node = stack.pop()
