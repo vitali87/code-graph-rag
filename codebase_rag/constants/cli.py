@@ -752,6 +752,10 @@ RENAME_CONTRACT_UNMEASURED = (
 )
 # Change signature (issue #1533).
 SIGNATURE_PARAM_PROBE = "def _({text}): pass"
+SIGNATURE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 SIGNATURE_NOT_PYTHON = (
     "Cannot change the signature of {qn}: {path} is not Python, and only Python "
     "definitions are supported for now (issue #{issue})"
