@@ -113,6 +113,27 @@ def _run_git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
+def _git_dir(root: pathlib.Path) -> pathlib.Path:
+    # In a linked worktree, or a checkout that is itself a submodule, `.git`
+    # is a file naming the real git dir, relative to the checkout or not.
+    dot_git = root / cs.LANG_GIT_DIR
+    if not dot_git.is_file():
+        return dot_git
+    try:
+        text = dot_git.read_text(encoding=cs.ENCODING_UTF8).strip()
+    except (OSError, UnicodeDecodeError):
+        return dot_git
+    if not text.startswith(cs.LANG_GITFILE_PREFIX):
+        return dot_git
+    return root / text.removeprefix(cs.LANG_GITFILE_PREFIX).strip()
+
+
+def _modules_path(root: pathlib.Path, path: str) -> pathlib.Path:
+    # `modules/` is per worktree, as `git rev-parse --git-path modules`
+    # reports: a linked worktree's grammars are not the main checkout's.
+    return _git_dir(root) / cs.LANG_GIT_MODULES_DIR / path
+
+
 def _retry_writable(func: Callable[[str], None], target: str, _: BaseException) -> None:
     # Git stores objects read-only, and Windows refuses to unlink a read-only
     # file, so a submodule's git dir only goes once the bit is cleared.
@@ -168,7 +189,7 @@ def _reinstall_existing_submodule(
         _run_git(root, "submodule", "deinit", "-f", grammar_path)
         _run_git(root, "rm", "-f", grammar_path)
 
-        modules_path = root / cs.LANG_GIT_MODULES_PATH.format(path=grammar_path)
+        modules_path = _modules_path(root, grammar_path)
         if modules_path.exists():
             _rmtree(modules_path)
 
@@ -192,7 +213,7 @@ def _handle_reinstall_failure(
     click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
     click.echo(f"   git -C {root} submodule deinit -f {grammar_path}")
     click.echo(f"   git -C {root} rm -f {grammar_path}")
-    click.echo(f"   rm -rf {root / cs.LANG_GIT_MODULES_PATH.format(path=grammar_path)}")
+    click.echo(f"   rm -rf {_modules_path(root, grammar_path)}")
 
 
 def _parse_tree_sitter_json(
@@ -928,7 +949,7 @@ def _remove_language_submodule(root: pathlib.Path, submodule_path: str) -> bool:
         _run_git(root, "submodule", "deinit", "-f", submodule_path)
         _run_git(root, "rm", "-f", submodule_path)
 
-        modules_path = root / cs.LANG_GIT_MODULES_PATH.format(path=submodule_path)
+        modules_path = _modules_path(root, submodule_path)
         if modules_path.exists():
             _rmtree(modules_path)
             click.echo(
@@ -950,7 +971,7 @@ def _remove_language_submodule(root: pathlib.Path, submodule_path: str) -> bool:
 @cli.command(help=ch.CMD_LANGUAGE_CLEANUP_HELP, short_help=ch.CMD_LANGUAGE_CLEANUP)
 def cleanup_orphaned_modules() -> None:
     root = _require_source_checkout()
-    modules_dir = root / cs.LANG_GIT_MODULES_PATH.format(path=cs.LANG_GRAMMARS_DIR)
+    modules_dir = _modules_path(root, cs.LANG_GRAMMARS_DIR)
     if not modules_dir.exists():
         click.echo(f"Info: {cs.LANG_MSG_NO_MODULES_DIR}")
         return

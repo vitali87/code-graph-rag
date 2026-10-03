@@ -5,7 +5,11 @@ LANG_CONFIG_FILE = "codebase_rag/language_spec.py"
 LANG_TREE_SITTER_JSON = "tree-sitter.json"
 LANG_NODE_TYPES_JSON = "node-types.json"
 LANG_SRC_DIR = "src"
-LANG_GIT_MODULES_PATH = ".git/modules/{path}"
+# Submodule repositories live under `modules/` in the checkout's own git dir:
+# `.git` itself in a plain checkout, or the directory a `.git` file names
+# (`gitdir: ...`) in a linked worktree or a checkout that is a submodule.
+LANG_GIT_MODULES_DIR = "modules"
+LANG_GITFILE_PREFIX = "gitdir:"
 LANG_GIT_DIR = ".git"
 LANG_TOML_KEY_NAME = "name"
 LANG_REPO_URL = "https://github.com/vitali87/code-graph-rag"

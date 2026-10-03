@@ -470,3 +470,133 @@ class TestGitRepositoryVariablesAreIgnored:
         result = language._run_git(root, "var", "GIT_AUTHOR_IDENT")
 
         assert result.stdout.startswith("Hook Author ")
+
+
+def _linked_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, specs: str = EMPTY_SPECS
+) -> tuple[Path, Path]:
+    # `git worktree add` leaves a `.git` file in the new checkout that points
+    # at its own git dir under the main checkout's `.git/worktrees/`.
+    main = _make_checkout(tmp_path, monkeypatch, specs)
+    worktree = tmp_path / "linked"
+    _git(main, "worktree", "add", "-q", "-b", "linked", str(worktree))
+    _run_from_package(monkeypatch, worktree / "codebase_rag")
+    return main, worktree
+
+
+def _modules(repo: Path, path: str) -> Path:
+    # Where git itself keeps the repository of the submodule at `path`.
+    return repo / _git(repo, "rev-parse", "--git-path", f"modules/{path}").strip()
+
+
+class TestLinkedWorktree:
+    # Review of PR #2522: in a linked worktree `.git` is a file, and the
+    # grammar repositories live in the worktree's own git dir, not beneath it.
+    def test_cleanup_finds_and_removes_an_orphan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        main, worktree = _linked_worktree(tmp_path, monkeypatch)
+        orphan = _modules(worktree, "grammars/tree-sitter-orphan")
+        assert orphan.resolve().is_relative_to((main / ".git" / "worktrees").resolve())
+        orphan.mkdir(parents=True)
+        (orphan / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+        result = CliRunner().invoke(cli, ["cleanup-orphaned-modules"], input="y\n")
+
+        assert result.exit_code == 0, result.output
+        assert "tree-sitter-orphan" in result.output
+        assert not orphan.exists()
+
+    def test_add_grammar_rollback_removes_the_grammar_repository(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grammar_url: str
+    ) -> None:
+        _main, worktree = _linked_worktree(tmp_path, monkeypatch, UNPATCHABLE_SPECS)
+        monkeypatch.chdir(worktree)
+
+        exit_code, output, _ = _invoke(
+            ["add-grammar", LANG, "--grammar-url", grammar_url]
+        )
+
+        assert exit_code == 1, output
+        assert _git(worktree, "status", "--porcelain") == ""
+        assert not (worktree / "grammars").exists()
+        assert not _modules(worktree, GRAMMAR_PATH).exists()
+
+    def test_remove_language_removes_the_grammar_repository(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grammar_url: str
+    ) -> None:
+        specs = (
+            f'LANGUAGE_SPECS = {{\n    "{LANG}": LanguageSpec(language="{LANG}"),\n}}\n'
+        )
+        _main, worktree = _linked_worktree(tmp_path, monkeypatch, specs)
+        _git(worktree, "submodule", "add", "-q", grammar_url, GRAMMAR_PATH)
+        _git(worktree, "commit", "-q", "-m", "grammar")
+        grammar_repository = _modules(worktree, GRAMMAR_PATH)
+        assert grammar_repository.is_dir()
+        monkeypatch.chdir(worktree)
+        monkeypatch.setattr(language, "LANGUAGE_SPECS", {LANG: _spec(LANG)})
+
+        exit_code, output, _ = _invoke(["remove-language", LANG])
+
+        assert exit_code == 0, output
+        assert not grammar_repository.exists()
+        assert not (worktree / GRAMMAR_PATH).exists()
+
+    def test_cleanup_leaves_the_main_checkouts_grammars_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grammar_url: str
+    ) -> None:
+        # The main checkout's grammar is not on the linked worktree's branch,
+        # so its `.gitmodules` does not list it; it is still not an orphan of
+        # this worktree, whose own modules directory does not hold it.
+        main, worktree = _linked_worktree(tmp_path, monkeypatch)
+        _git(main, "submodule", "add", "-q", grammar_url, GRAMMAR_PATH)
+        _git(main, "commit", "-q", "-m", "grammar")
+        main_repository = _modules(main, GRAMMAR_PATH)
+        assert main_repository.is_dir()
+
+        result = CliRunner().invoke(cli, ["cleanup-orphaned-modules"], input="y\n")
+
+        assert result.exit_code == 0, result.output
+        assert "tree-sitter-mylang" not in result.output
+        assert main_repository.is_dir()
+        assert _git(main, "status", "--porcelain") == ""
+
+
+def test_cleanup_in_a_plain_checkout_removes_only_the_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grammar_url: str
+) -> None:
+    root = _make_checkout(tmp_path, monkeypatch)
+    _git(root, "submodule", "add", "-q", grammar_url, GRAMMAR_PATH)
+    _git(root, "commit", "-q", "-m", "grammar")
+    tracked = root / ".git" / "modules" / GRAMMAR_PATH
+    orphan = root / ".git" / "modules" / "grammars" / "tree-sitter-orphan"
+    orphan.mkdir(parents=True)
+
+    result = CliRunner().invoke(cli, ["cleanup-orphaned-modules"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert not orphan.exists()
+    assert tracked.is_dir()
+
+
+def test_cleanup_in_a_checkout_that_is_a_submodule_finds_its_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A checkout cloned as another repository's submodule has a `.git` file
+    # with a relative `gitdir: ../.git/modules/...`.
+    source = _make_checkout(tmp_path, monkeypatch)
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    _git(parent, "init", "-q")
+    _git(parent, "submodule", "add", "-q", source.as_uri(), "cgr")
+    checkout = parent / "cgr"
+    assert (checkout / ".git").is_file()
+    _run_from_package(monkeypatch, checkout / "codebase_rag")
+    orphan = _modules(checkout, "grammars/tree-sitter-orphan")
+    assert orphan.resolve().is_relative_to((parent / ".git" / "modules").resolve())
+    orphan.mkdir(parents=True)
+
+    result = CliRunner().invoke(cli, ["cleanup-orphaned-modules"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert not orphan.exists()
