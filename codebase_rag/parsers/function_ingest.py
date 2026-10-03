@@ -1703,7 +1703,7 @@ class FunctionIngestMixin:
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         return lua_utils.extract_assigned_name(
             func_node,
-            accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
+            accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS,
         )
 
     def _extract_lua_field_function_name(
