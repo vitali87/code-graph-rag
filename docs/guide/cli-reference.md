@@ -68,7 +68,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--update-graph` | Parse the repository and sync its graph before continuing. |
 | `--clean` | DESTRUCTIVE: Delete every project from the shared graph and clear the selected repository's sync cache. With --update-graph, rebuild after deletion. Asks for confirmation when other projects would be destroyed; use --yes to skip the prompt. |
 | `--yes`, `-y` | Answer yes to destructive confirmations, such as the one --clean asks before deleting other projects from the shared graph. |
-| `--output`, `-o` | Write the updated graph to PATH as JSON. Requires --update-graph. |
+| `--output`, `-o` | Write this repository's project graph to PATH as JSON. Requires --update-graph. Use cgr export for the whole shared graph. |
 | `--orchestrator` | Model for the planning assistant, in provider:model form (for example openai:gpt-5.6-terra or ollama:qwen2.5-coder). |
 | `--cypher` | Model used to generate Cypher, in provider:model form. |
 | `--no-confirm` | Skip edit confirmation prompts. |
@@ -90,6 +90,10 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 `--clean` asks for confirmation before it deletes other projects. When it runs
 non-interactively and other projects would be destroyed, or when the existing
 projects cannot be listed, it stops unless `--yes` is given.
+
+`-o` writes only this repository's project, scoped the way
+`cgr export --project-name` scopes it: what the project owns, the
+relationships that start there and the nodes they reach.
 
 ### `cgr export`
 
