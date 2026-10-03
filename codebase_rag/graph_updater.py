@@ -121,7 +121,7 @@ from .types_defs import (
     ResultValue,
     SimpleNameLookup,
 )
-from .utils import qn_markers
+from .utils import path_utils, qn_markers
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.json_io import load_json, loads_json
@@ -1070,10 +1070,16 @@ def _cached_file_unchanged(
         # pass, whatever its directory's mtime says (#1983).
         return False
     try:
-        stat = os.stat(file_path_str)
+        info = os.lstat(file_path_str)
     except OSError:
         return False
-    if stat.st_mtime <= cache_mtime:
+    # A cached path that is a link now, or was indexed through one before
+    # links stopped being followed (issue #2451), is not walked, so it is not
+    # unchanged: the sync must drop it. `lstat` costs what `stat` did, and
+    # equals it for every other file.
+    if stat.S_ISLNK(info.st_mode):
+        return False
+    if info.st_mtime <= cache_mtime:
         return True
     try:
         current_hash = _hash_file(Path(file_path_str))
@@ -1123,6 +1129,16 @@ class _PruneTally:
     """What `_prune_orphan_nodes` leaves for after its per-label sweeps."""
 
     registry_skipped: int = 0
+
+
+class _Orphan(NamedTuple):
+    """One node the prune deletes, as it read it."""
+
+    path: str
+    key: str
+    # A Package is deleted only while it still holds the path it was judged
+    # by, so a checkout sharing its project name keeps the one it wrote.
+    absolute_path: str
 
 
 def _reindexed_keys(changed_entries: list[tuple[Path, str, bool, bytes]]) -> list[str]:
@@ -6564,6 +6580,14 @@ class GraphUpdater:
                 continue
             (present if path.is_file() else gone)[key] = path
         for raw in deleted:
+            if path_utils.is_symlink_entry(self._reingest_absolute(raw)):
+                # A file replaced by a link (issue #2451): the file's own
+                # entry goes. Resolving the link would name its target, and
+                # the link itself is never indexed.
+                key, path = self._reingest_link_target(raw)
+                present.pop(key, None)
+                gone[key] = path
+                continue
             key, path = self._reingest_target(raw)
             present.pop(key, None)
             if self._reingest_ignored(path):
@@ -6574,6 +6598,25 @@ class GraphUpdater:
             # must not change.
             (present if path.is_file() else gone)[key] = path
         return present, gone, skipped
+
+    def _reingest_absolute(self, raw: Path | str) -> Path:
+        path = Path(raw)
+        return path if path.is_absolute() else self.repo_path / path
+
+    def _reingest_link_target(self, raw: Path | str) -> tuple[str, Path]:
+        """(relative posix key, absolute path) of a link's own entry.
+
+        Only its directories are resolved, as `cached_file_identity_posix`
+        keys a File: the entry is what was indexed at this path, wherever the
+        link now points.
+        """
+        path = self._reingest_absolute(raw)
+        entry = path.parent.resolve() / path.name
+        root = self.repo_path.resolve()
+        if not entry.is_relative_to(root):
+            raise ValueError(cs.REINGEST_OUTSIDE_REPO.format(path=raw))
+        key = entry.relative_to(root).as_posix()
+        return key, self.repo_path / key
 
     def _reingest_file_target(self, raw: Path | str) -> tuple[str, Path]:
         key, path = self._reingest_target(raw)
@@ -7221,6 +7264,19 @@ class GraphUpdater:
                     error=unlink_error,
                 )
 
+    def has_indexed(self, path: Path) -> bool:
+        """Whether the last run or re-ingest indexed the file at `path`.
+
+        Asked by the watcher about a path that is a link now (issue #2451):
+        the link is not indexed, but the file it replaced was, and its nodes
+        must go.
+        """
+        try:
+            key = path.relative_to(self.repo_path).as_posix()
+        except ValueError:
+            return False
+        return key in _load_hash_cache(self.state_dir / cs.HASH_CACHE_FILENAME)
+
     def indexed_files_under(self, directory: Path) -> list[Path]:
         """Files the last run or re-ingest indexed beneath `directory`.
 
@@ -7710,8 +7766,8 @@ class GraphUpdater:
         repo_abs: str,
         packages_now: set[str],
         tally: _PruneTally,
-    ) -> list[tuple[str, str]]:
-        """The (path, delete key) of every orphan among one label's rows."""
+    ) -> list[_Orphan]:
+        """Every orphan among one label's rows."""
         orphans = []
         for r in rows:
             orphan = self._orphan_row(r, label, repo_abs, packages_now, tally)
@@ -7726,8 +7782,8 @@ class GraphUpdater:
         repo_abs: str,
         packages_now: set[str],
         tally: _PruneTally,
-    ) -> tuple[str, str] | None:
-        """The (path, delete key) of one row when its node is an orphan."""
+    ) -> _Orphan | None:
+        """One row's node, when it is an orphan."""
         path = r.get("path")
         if not isinstance(path, str) or not path:
             return None
@@ -7736,8 +7792,13 @@ class GraphUpdater:
         abs_path = r.get("absolute_path")
         qn = r.get("qualified_name", "")
         # Component-aware containment: a bare prefix test would also
-        # match a sibling root such as <repo>-old (issue #897).
-        if self._outside_repo_row(abs_path, repo_abs):
+        # match a sibling root such as <repo>-old (issue #897). A node
+        # derived through one of this repository's own links by a build
+        # before #2451 carries its target's path, outside for an outside
+        # link; the link places it here, and nothing derives it any more.
+        if self._outside_repo_row(
+            abs_path, repo_abs
+        ) and not path_utils.is_symlink_entry(self.repo_path / path):
             return None
         # The root directory's own node is qualified as exactly the
         # project name, with no dot: testing only the dotted prefix
@@ -7762,11 +7823,12 @@ class GraphUpdater:
         key = self._stale_orphan_key(path, abs_path, label, packages_now)
         if key is None:
             return None
+        read_at = abs_path if isinstance(abs_path, str) and abs_path else key
         # Package rows are read by qualified name, and one is deleted by it:
         # two can share an absolute path (issue #2451).
         if label == cs.NodeLabel.PACKAGE and isinstance(qn, str) and qn:
-            return path, qn
-        return path, key
+            return _Orphan(path, qn, read_at)
+        return _Orphan(path, key, read_at)
 
     @staticmethod
     def _outside_repo_row(abs_path: ResultValue | None, repo_abs: str) -> bool:
@@ -7787,8 +7849,15 @@ class GraphUpdater:
         packages_now: set[str],
     ) -> str | None:
         """The delete key of a node that is stale or whose path is gone."""
-        stale_kind = (label == "Folder" and path in packages_now) or (
-            label == "Package" and path not in packages_now
+        stale_kind = (
+            (label == "Folder" and path in packages_now)
+            or (label == "Package" and path not in packages_now)
+            # No node is derived at a link's path any more (issue #2451). A
+            # Folder is exempt: one is keyed on its absolute path, and a link
+            # to a directory shared its target's node.
+            or (
+                label != "Folder" and path_utils.is_symlink_entry(self.repo_path / path)
+            )
         )
         # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
         # re-raises PermissionError instead of reading it as
@@ -7810,26 +7879,44 @@ class GraphUpdater:
     def _delete_orphans(
         self,
         ingestor: QueryProtocol,
-        orphans: list[tuple[str, str]],
+        orphans: list[_Orphan],
         label: str,
         delete_query: str,
     ) -> int:
         """Delete one label's orphans; how many were deleted."""
         if orphans:
             logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
-            for orphan_path, orphan_key in orphans:
-                logger.debug(ls.PRUNE_DELETING, label=label, path=orphan_path)
+            for orphan in orphans:
+                logger.debug(ls.PRUNE_DELETING, label=label, path=orphan.path)
                 if delete_query == cs.CYPHER_DELETE_MODULE:
                     # Module deletes are project-scoped; a sibling
                     # project's module can share the relative path.
-                    self._delete_module_entities(orphan_path)
+                    self._delete_module_entities(orphan.path)
                 elif delete_query == cs.CYPHER_DELETE_PACKAGE_BY_QN:
-                    ingestor.execute_write(
-                        delete_query, {cs.KEY_QUALIFIED_NAME: orphan_key}
-                    )
+                    self._delete_package(ingestor, orphan.key, orphan.absolute_path)
                 else:
-                    ingestor.execute_write(delete_query, {cs.KEY_PATH: orphan_key})
+                    ingestor.execute_write(delete_query, {cs.KEY_PATH: orphan.key})
         return len(orphans)
+
+    def _delete_package(
+        self, ingestor: QueryProtocol, qualified_name: str, absolute_path: str
+    ) -> None:
+        """Delete one orphan Package of this project, as the prune read it.
+
+        A project name that two checkouts share puts both on one Package
+        node, holding the path of whichever wrote it last; only the absolute
+        path the prune judged (in this repository, or behind one of its own
+        links) may be deleted, so the other checkout's stays (#2451 review).
+        """
+        ingestor.execute_write(
+            cs.CYPHER_DELETE_PACKAGE_BY_QN,
+            {
+                cs.KEY_QUALIFIED_NAME: qualified_name,
+                cs.KEY_PROJECT_NAME: self.project_name,
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                cs.KEY_ABSOLUTE_PATH: absolute_path,
+            },
+        )
 
     def _sweep_legacy_file_identities(self) -> int:
         """Delete legacy target-resolved File records, sparing shared keys.

@@ -165,6 +165,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return False
         return True
 
+    def _indexed_file_now_a_link(self, path_str: str) -> bool:
+        """Whether a link now stands where the graph holds an indexed file.
+
+        `_is_relevant` judges the path as it is now, so a file replaced by a
+        link before its events were handled lost its delete and its create
+        alike, and its definitions stayed until the next sync (Greptile
+        review, PR #2828). Its nodes go as a deletion; the link itself is
+        still never re-ingested. The hash cache names what was indexed.
+        """
+        return is_symlink_entry(path_str) and self.updater.has_indexed(Path(path_str))
+
     def _is_walked(self, directory: Path) -> bool:
         return is_walked_dir(
             self._repo_relative(directory).parts,
@@ -273,7 +284,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _dispatch_file(self, event: FileSystemEvent) -> None:
         src_path = _event_path(event.src_path)
         if not self._is_relevant(src_path):
-            return
+            if not self._indexed_file_now_a_link(src_path):
+                return
+            event = FileDeletedEvent(src_path)
 
         if not self.debounce_enabled:
             # No debouncing: process immediately (legacy behaviour)

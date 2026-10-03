@@ -110,7 +110,9 @@ directory and wherever it points:
 A dangling link is skipped the same way. The same rule applies to the
 incremental sync, the real-time watcher, the interactive setup's list of
 directories to keep, contract discovery, and the structural search and replace
-tools. A link that an ignore rule already excludes is excluded as before.
+tools. A link that an ignore rule already excludes is excluded as before. When
+an indexed file is replaced by a link, the watcher removes the file's nodes and
+does not index the link.
 
 Each skipped link is logged at DEBUG with its target (run with
 `LOGURU_LEVEL=DEBUG` to see them), and every sync logs one INFO line counting

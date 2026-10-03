@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 from loguru import logger
@@ -32,7 +32,11 @@ from codebase_rag.main import detect_excludable_directories
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.contracts import discover_contract_operations
-from codebase_rag.tests.conftest import create_and_run_updater, get_node_names
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    force_mtime_after_cache,
+    get_node_names,
+)
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.utils import path_utils
 from codebase_rag.utils.path_utils import (
@@ -156,8 +160,8 @@ class TestIndex:
     ) -> None:
         create_and_run_updater(layout, mock_ingestor)
         root = layout.resolve()
-        for call in mock_ingestor.ensure_node_batch.call_args_list:
-            properties = call.args[1]
+        for node_call in mock_ingestor.ensure_node_batch.call_args_list:
+            properties = node_call.args[1]
             absolute = properties.get(cs.KEY_ABSOLUTE_PATH)
             if isinstance(absolute, str):
                 assert Path(absolute).is_relative_to(root), properties
@@ -179,9 +183,9 @@ class TestIndex:
     ) -> None:
         create_and_run_updater(layout, mock_ingestor)
         containers = {
-            call.args[1].get(cs.KEY_PATH)
-            for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call.args[0] in (cs.NodeLabel.PACKAGE, cs.NodeLabel.FOLDER)
+            node_call.args[1].get(cs.KEY_PATH)
+            for node_call in mock_ingestor.ensure_node_batch.call_args_list
+            if node_call.args[0] in (cs.NodeLabel.PACKAGE, cs.NodeLabel.FOLDER)
         }
         assert "app/vendored" not in containers
         assert "pkg/linkdir" not in containers
@@ -251,6 +255,32 @@ def _function_qns(store: _StatefulIngestor) -> set[str]:
 
 
 class TestIncrementalSync:
+    def test_a_link_in_an_unchanged_directory_is_dropped_by_the_next_sync(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No link at the root, whose mtime the cache write itself moves: only
+        # the cached files' own check can see that `sub/linked.py` is a link.
+        _write(tmp_path / "outside" / "x.py", "def outside_fn():\n    return 1\n")
+        repo = tmp_path / "repo"
+        _write(repo / "main.py", "def main():\n    return 0\n")
+        _write(repo / "sub" / "own.py", "def own():\n    return 1\n")
+        _link(repo / "sub" / "linked.py", "../../outside/x.py")
+        store = _StatefulIngestor()
+        with monkeypatch.context() as patched:
+            for module in (path_utils, structure_processor):
+                patched.setattr(
+                    module, "is_symlink_entry", lambda _path: False, raising=False
+                )
+            _stateful_updater(repo, store).run(force=True)
+        assert "repo.sub.linked.outside_fn" in _function_qns(store)
+
+        _stateful_updater(repo, store).run()
+
+        assert "repo.sub.linked.outside_fn" not in _function_qns(store)
+        assert "repo.sub.own.own" in _function_qns(store)
+        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        assert "sub/linked.py" not in cache
+
     def test_a_repository_with_links_stays_in_sync(self, layout: Path) -> None:
         # Negative: the in-sync listing skips the links the walk skips, or
         # every later sync would see them as new files and re-run.
@@ -310,9 +340,22 @@ class TestWatcher:
         self, mock_updater: MagicMock, watched: Path
     ) -> None:
         handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        mock_updater.has_indexed.return_value = False
         handler.dispatch(FileCreatedEvent(str(watched / "linked.py")))
         handler.dispatch(FileCreatedEvent(str(watched / "alias.py")))
         mock_updater.reingest.assert_not_called()
+
+    def test_an_indexed_file_replaced_by_a_link_is_removed_not_reingested(
+        self, mock_updater: MagicMock, watched: Path
+    ) -> None:
+        # Both events arrive after the swap, so the path is a link by the
+        # time each is handled; the graph still holds the file it replaced.
+        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        mock_updater.has_indexed.return_value = True
+        path = watched / "alias.py"
+        handler.dispatch(FileDeletedEvent(str(path)))
+        handler.dispatch(FileCreatedEvent(str(path)))
+        assert mock_updater.reingest.call_args_list == [call((), deleted=(path,))] * 2
 
     def test_the_watcher_and_the_walk_agree_on_links(
         self, mock_updater: MagicMock, watched: Path
@@ -369,6 +412,29 @@ _OPENAPI = {
 }
 
 
+class TestWatcherReplacement:
+    def test_replacing_an_indexed_file_with_a_link_drops_its_definitions(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        _write(repo / "core.py", "def helper():\n    return 1\n")
+        _write(repo / "old.py", "def old_fn():\n    return 2\n")
+        store = _StatefulIngestor()
+        updater = _stateful_updater(repo, store)
+        updater.run(force=True)
+        assert "repo.old.old_fn" in _function_qns(store)
+
+        (repo / "old.py").unlink()
+        _link(repo / "old.py", "core.py")
+        handler = CodeChangeEventHandler(updater, debounce_seconds=0)
+        handler.dispatch(FileDeletedEvent(str(repo / "old.py")))
+        handler.dispatch(FileCreatedEvent(str(repo / "old.py")))
+
+        assert _function_qns(store) == {"repo.core.helper"}
+        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        assert sorted(cache) == ["core.py"]
+
+
 class TestOtherWalks:
     def test_a_linked_contract_is_read_once(self, tmp_path: Path) -> None:
         _write(tmp_path / "api" / "things.json", json.dumps(_OPENAPI))
@@ -393,3 +459,140 @@ class TestOtherWalks:
         _link(repo / "linked", "../shared", directory=True)
         # Negative half: a real directory is still offered.
         assert detect_excludable_directories(repo) == {"node_modules"}
+
+
+def _package_repo(root: Path, name: str) -> Path:
+    repo = root / name
+    _write(repo / "pkg" / "__init__.py", "")
+    _write(repo / "pkg" / "m.py", "X = 1\n")
+    return repo
+
+
+def _sync(repo: Path, store: _StatefulIngestor, project: str, force: bool) -> None:
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        project_name=project,
+    ).run(force=force)
+
+
+def _packages(store: _StatefulIngestor) -> set[str]:
+    return {
+        str(uid) for label, uid in store.nodes if label == cs.NodeLabel.PACKAGE.value
+    }
+
+
+class TestPackagePruneScope:
+    # The orphan prune now deletes a Package by qualified name (the key its
+    # upsert MERGEs on), scoped to the project and repository it read the
+    # row from, so it never reaches another project's or checkout's package.
+
+    def test_pruning_one_project_leaves_another_projects_package(
+        self, tmp_path: Path
+    ) -> None:
+        store = _StatefulIngestor()
+        alpha = _package_repo(tmp_path, "alpha")
+        beta = _package_repo(tmp_path, "beta")
+        _sync(alpha, store, "alpha", force=True)
+        _sync(beta, store, "beta", force=True)
+        assert {"alpha.pkg", "beta.pkg"} <= _packages(store)
+
+        # `pkg` is a Folder now, so alpha's Package is a stale orphan.
+        (alpha / "pkg" / "__init__.py").unlink()
+        _sync(alpha, store, "alpha", force=False)
+
+        assert "alpha.pkg" not in _packages(store)
+        assert "beta.pkg" in _packages(store)
+
+    def test_a_shared_project_name_leaves_the_other_checkouts_package(
+        self, tmp_path: Path
+    ) -> None:
+        # Two checkouts given one project name share every package qn, so the
+        # upsert puts both on one node; the one that wrote it last owns it.
+        store = _StatefulIngestor()
+        mine = _package_repo(tmp_path, "mine")
+        other = _package_repo(tmp_path, "other")
+        _sync(mine, store, "shared", force=True)
+        _sync(other, store, "shared", force=True)
+        node = store.nodes[(cs.NodeLabel.PACKAGE.value, "shared.pkg")]
+        assert node[cs.KEY_ABSOLUTE_PATH] == (other / "pkg").resolve().as_posix()
+
+        (mine / "pkg" / "__init__.py").unlink()
+        _sync(mine, store, "shared", force=False)
+
+        assert "shared.pkg" in _packages(store)
+
+    def test_the_package_delete_itself_is_scoped(self, tmp_path: Path) -> None:
+        # The delete query refuses on its own, not only through the rows the
+        # prune reads: another project's name or another checkout's path is
+        # left alone, and the owner's own delete goes through.
+        store = _StatefulIngestor()
+        other = _package_repo(tmp_path, "other")
+        _sync(other, store, "shared", force=True)
+        mine = _package_repo(tmp_path, "mine")
+
+        def updater(repo: Path, project: str) -> GraphUpdater:
+            parsers, queries = load_parsers()
+            return GraphUpdater(
+                ingestor=store,
+                repo_path=repo,
+                parsers=parsers,
+                queries=queries,
+                project_name=project,
+            )
+
+        mine_pkg = (mine / "pkg").resolve().as_posix()
+        other_pkg = (other / "pkg").resolve().as_posix()
+        updater(mine, "shared")._delete_package(store, "shared.pkg", mine_pkg)
+        updater(other, "elsewhere")._delete_package(store, "shared.pkg", other_pkg)
+        assert "shared.pkg" in _packages(store)
+
+        updater(other, "shared")._delete_package(store, "shared.pkg", other_pkg)
+        assert "shared.pkg" not in _packages(store)
+
+    def test_a_package_behind_an_outside_link_is_pruned(self, tmp_path: Path) -> None:
+        # Its absolute path is the link's target, outside the repository, so
+        # the prune passed over it before checking whether anything derives it.
+        repo = _package_repo(tmp_path, "repo")
+        target = tmp_path / "outside" / "lib"
+        _write(target / "__init__.py", "")
+        _link(repo / "pkg" / "linkdir", "../../outside/lib", directory=True)
+        store = _StatefulIngestor()
+        _sync(repo, store, "proj", force=True)
+        package = cs.NodeLabel.PACKAGE.value
+        store.ensure_node_batch(
+            package,
+            {
+                cs.KEY_QUALIFIED_NAME: "proj.pkg.linkdir",
+                cs.KEY_NAME: "linkdir",
+                cs.KEY_PATH: "pkg/linkdir",
+                cs.KEY_ABSOLUTE_PATH: target.resolve().as_posix(),
+            },
+        )
+        store.ensure_relationship_batch(
+            (package, cs.KEY_QUALIFIED_NAME, "proj.pkg"),
+            cs.RelationshipType.CONTAINS_PACKAGE,
+            (package, cs.KEY_QUALIFIED_NAME, "proj.pkg.linkdir"),
+        )
+        # Negative: an outside path with no link of this repository behind
+        # it (the package another checkout under this name wrote) stays.
+        store.ensure_node_batch(
+            package,
+            {
+                cs.KEY_QUALIFIED_NAME: "proj.vendor",
+                cs.KEY_NAME: "vendor",
+                cs.KEY_PATH: "vendor",
+                cs.KEY_ABSOLUTE_PATH: (tmp_path / "elsewhere" / "vendor").as_posix(),
+            },
+        )
+        edited = _write(repo / "pkg" / "m.py", "X = 2\n")
+        force_mtime_after_cache(repo, edited)
+
+        _sync(repo, store, "proj", force=False)
+
+        packages = _packages(store)
+        assert "proj.pkg.linkdir" not in packages
+        assert {"proj.pkg", "proj.vendor"} <= packages
