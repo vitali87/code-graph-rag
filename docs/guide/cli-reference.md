@@ -64,7 +64,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--repo-path` | Path to repository (defaults to current directory) |
-| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts). Cannot be combined with `-a`/`--ask-agent`, `--no-sync` or `--projects`. |
+| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts), so it cannot be combined with `-a`/`--ask-agent` or `--projects`. With `--workspace`, sync each of the workspace's repositories instead, then start the assistant scoped to the workspace. Cannot be combined with `--no-sync`. |
 | `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
 | `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
 | `--batch-size` | Override Memgraph flush batch size |

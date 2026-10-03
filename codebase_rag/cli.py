@@ -8,7 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
@@ -283,6 +284,7 @@ def _pre_chat_sync(
     exclude: list[str] | None,
     capture: list[str] | None,
     no_embeddings: bool,
+    assume_yes: bool,
 ) -> tuple[Callable[[], None], str]:
     # The sync to run before the chat opens: every workspace repo when a
     # workspace is active, else just the target repo.
@@ -295,6 +297,7 @@ def _pre_chat_sync(
         exclude,
         capture=capture,
         skip_embeddings=no_embeddings or None,
+        assume_yes=assume_yes,
     )
     return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
         name=workspace_config.name, count=len(workspace_config.repos)
@@ -312,11 +315,20 @@ def _refuse_options_update_graph_drops(
     output_format: cs.QueryFormat,
     no_sync: bool,
     projects: str | None,
+    *,
+    workspace_given: bool,
 ) -> None:
     # `--update-graph` returns once its sync is done, before anything that
     # reads these, so they were accepted and dropped with exit 0 (#2478).
-    # `--workspace` is left out: it decides what the sync covers (#2418).
+    # With `--workspace` it syncs the workspace's repositories and then opens
+    # the assistant, which reads `-a`, `--output-format` and `--projects`, so
+    # only `--no-sync` is refused there, by its own message: a sync asked for
+    # with `--no-sync` contradicts itself (#2418).
     if not update_graph:
+        return
+    if workspace_given:
+        if no_sync:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_NO_SYNC)
         return
     for option, given, remedy in (
         (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
@@ -338,6 +350,7 @@ def _start_update_graph(
     repo: Path,
     project_name: str,
     *,
+    workspace_config: WorkspaceConfig | None,
     project_named: bool,
     batch_size: int,
     exclude: list[str] | None,
@@ -347,8 +360,30 @@ def _start_update_graph(
     capture: list[str] | None,
     skip_embeddings: bool | None,
     assume_yes: bool,
-) -> None:
-    # `start --update-graph`: sync the repo into the graph, then stop.
+    defer_workspace_sync: bool,
+) -> bool:
+    """`start --update-graph`: sync, and say whether the assistant opens next.
+
+    A repository is synced and the command stops, as it always has. With
+    --workspace, each of the workspace's repositories is synced under its own
+    name, the set the chat's own sync uses, and the assistant then opens
+    scoped to the workspace (#2418). `--repo-path`, defaulting to the current
+    directory, is not one of them. With `-a` that sync is deferred: the
+    single query runs it, keeping stdout for the answer (see
+    `_run_single_query`).
+    """
+    if workspace_config is not None:
+        if not defer_workspace_sync:
+            _sync_workspace(
+                workspace_config,
+                batch_size,
+                exclude,
+                capture=capture,
+                skip_embeddings=skip_embeddings,
+                assume_yes=assume_yes,
+            )
+            _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        return True
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
@@ -366,6 +401,7 @@ def _start_update_graph(
         assume_yes=assume_yes,
     )
     _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+    return False
 
 
 def _clean_database_only(
@@ -402,6 +438,16 @@ def _start_active_projects(
     return active_projects
 
 
+@contextmanager
+def _console_on_stderr() -> Iterator[None]:
+    console = app_context.console
+    app_context.console = terminal_aware_console(stderr=True)
+    try:
+        yield
+    finally:
+        app_context.console = console
+
+
 def _run_single_query(
     target_repo_path: str,
     batch_size: int,
@@ -411,7 +457,11 @@ def _run_single_query(
     sync_task: Callable[[], None] | None,
 ) -> None:
     if sync_task is not None:
-        sync_task()
+        # stdout carries only the answer, which `main_single_query` prints
+        # after routing its logs to stderr: the sync reports there too
+        # (Greptile review of PR 2507).
+        with _console_on_stderr():
+            sync_task()
     main_single_query(
         target_repo_path,
         batch_size,
@@ -460,6 +510,58 @@ def _launch_session(
         )
 
 
+def _sync_before_session(no_sync: bool, update_graph: bool, answering: bool) -> bool:
+    # Past `_start_update_graph`, `update_graph` means a workspace's, which
+    # has synced every repository already unless `-a` deferred that sync.
+    return not no_sync and (answering or not update_graph)
+
+
+def _exit_if_output_unusable(output: str | None, update_graph: bool) -> None:
+    if output and not update_graph:
+        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
+    if output:
+        _exit_if_unwritable(output)
+
+
+def _refuse_unsupported_workspace_update(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    *,
+    clean: bool,
+    output: str | None,
+    interactive_setup: bool,
+) -> None:
+    # Each is defined for one repository: `--clean` wipes the graph before
+    # that repository's sync, `-o` writes that sync's result, and the setup
+    # prompt asks about that repository's directories.
+    if workspace_config is None or not update_graph:
+        return
+    for option, given in (
+        (cs.CLI_OPT_CLEAN, clean),
+        (cs.CLI_OPT_OUTPUT, output is not None),
+        (cs.CLI_OPT_INTERACTIVE_SETUP, interactive_setup),
+    ):
+        if given:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_OPTION.format(option=option))
+
+
+def _refuse_empty_workspace(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    active_projects: list[str],
+) -> None:
+    # A workspace with no repositories gives `--update-graph` nothing to sync,
+    # and leaves the assistant's scope empty unless `--projects` names one: an
+    # empty scope reads as every project in the shared graph (Greptile review
+    # of PR 2507). Refused before the stack starts or anything is synced.
+    if workspace_config is None or workspace_config.repos:
+        return
+    if update_graph or not active_projects:
+        _exit_with_error(
+            cs.CLI_ERR_START_EMPTY_WORKSPACE.format(name=workspace_config.name)
+        )
+
+
 def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
     if workspace is None:
         return None
@@ -476,6 +578,7 @@ def _sync_workspace(
     exclude: list[str] | None,
     capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
+    assume_yes: bool = False,
 ) -> None:
     total = len(config.repos)
     if total == 0:
@@ -511,6 +614,7 @@ def _sync_workspace(
             interactive_setup=False,
             capture=capture,
             skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
         )
 
 
@@ -677,6 +781,22 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _is_home_or_root(repo: Path) -> bool:
+    """Whether a sync of `repo` would crawl a whole home directory or disk.
+
+    `--repo-path` defaults to the current directory, so a sync started from
+    `$HOME` indexed every file under it and wrote sync state there (#2418).
+    """
+    resolved = repo.resolve()
+    return resolved == Path.home().resolve() or resolved == resolved.parent
+
+
+def _exit_if_syncing_home_or_root(repo: Path, assume_yes: bool) -> None:
+    # A home directory or disk root is synced only when `--yes` says so.
+    if not assume_yes and _is_home_or_root(repo):
+        _exit_with_error(cs.CLI_ERR_SYNC_HOME_OR_ROOT.format(path=repo.resolve()))
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -692,6 +812,8 @@ def _run_graph_sync(
 ) -> None:
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
+
+    _exit_if_syncing_home_or_root(repo, assume_yes)
 
     if clean:
         _import_vector_store()
@@ -955,7 +1077,12 @@ def start(
     app_context.session.load_cgr_instructions = not no_instructions
 
     _refuse_options_update_graph_drops(
-        update_graph, ask_agent, output_format, no_sync, projects
+        update_graph,
+        ask_agent,
+        output_format,
+        no_sync,
+        projects,
+        workspace_given=workspace is not None,
     )
     if output_format == cs.QueryFormat.JSON and not ask_agent:
         _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
@@ -964,10 +1091,20 @@ def start(
     target_repo_path = str(resolved_repo)
     resolved_project_name = project_name or derive_project_name(resolved_repo)
 
-    if output and not update_graph:
-        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
-    if output:
-        _exit_if_unwritable(output)
+    _exit_if_output_unusable(output, update_graph)
+
+    workspace_config = _load_workspace_or_exit(workspace)
+    _refuse_unsupported_workspace_update(
+        workspace_config,
+        update_graph,
+        clean=clean,
+        output=output,
+        interactive_setup=interactive_setup,
+    )
+    active_projects = _start_active_projects(
+        workspace_config, projects, resolved_project_name
+    )
+    _refuse_empty_workspace(workspace_config, update_graph, active_projects)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -985,27 +1122,26 @@ def start(
     if not ask_agent and not update_graph:
         app_context.console.print(_create_configuration_table(target_repo_path))
 
-    if update_graph:
-        _start_update_graph(
-            resolved_repo,
-            resolved_project_name,
-            project_named=project_name is not None,
-            batch_size=effective_batch_size,
-            exclude=exclude,
-            interactive_setup=interactive_setup,
-            clean=clean,
-            output=output,
-            capture=capture,
-            skip_embeddings=no_embeddings or None,
-            assume_yes=yes,
-        )
+    if update_graph and not _start_update_graph(
+        resolved_repo,
+        resolved_project_name,
+        workspace_config=workspace_config,
+        project_named=project_name is not None,
+        batch_size=effective_batch_size,
+        exclude=exclude,
+        interactive_setup=interactive_setup,
+        clean=clean,
+        output=output,
+        capture=capture,
+        skip_embeddings=no_embeddings or None,
+        assume_yes=yes,
+        defer_workspace_sync=bool(ask_agent),
+    ):
         return
-
-    workspace_config = _load_workspace_or_exit(workspace)
 
     sync_task: Callable[[], None] | None = None
     sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
-    if not no_sync:
+    if _sync_before_session(no_sync, update_graph, bool(ask_agent)):
         sync_task, sync_message = _pre_chat_sync(
             workspace_config,
             partial(
@@ -1018,16 +1154,14 @@ def start(
                 interactive_setup=interactive_setup,
                 capture=capture,
                 skip_embeddings=no_embeddings or None,
+                assume_yes=yes,
             ),
             effective_batch_size,
             exclude,
             capture,
             no_embeddings,
+            yes,
         )
-
-    active_projects = _start_active_projects(
-        workspace_config, projects, resolved_project_name
-    )
 
     _launch_session(
         target_repo_path,

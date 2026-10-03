@@ -50,6 +50,18 @@ cgr start --workspace backend
 repository saved in the workspace. See `cgr help workspace` for the full
 workspace command set.
 
+`cgr start --workspace backend --update-graph` syncs each of the workspace's
+repositories under its own project name, then opens the assistant scoped to
+the workspace, which `-a`, `--output-format` and `--projects` reach as they
+do without `--update-graph`; `--no-sync` is refused. `--repo-path` and the
+current directory play no part in it.
+`--clean`, `-o` and `--interactive-setup` apply to one repository, so they are
+refused with `--workspace --update-graph`. A sync of your home directory or
+the filesystem root is refused unless you pass `--yes`. A workspace with no
+repositories is refused too, since it has nothing to sync and no project to
+scope the assistant to; without `--update-graph`, `--projects` can still name
+the projects to chat about.
+
 A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
 identifier, not a path: it starts with a letter or digit and uses only
 letters, digits, `.`, `_` and `-`. Any other name (empty, `a/b`, `../x`) is

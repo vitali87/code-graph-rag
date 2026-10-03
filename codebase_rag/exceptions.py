@@ -62,6 +62,10 @@ MODEL_FORMAT_INVALID = (
 )
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
+EMPTY_PROJECT_SCOPE = (
+    "The assistant has no project to work on: an empty project scope would "
+    "cover every project in the graph."
+)
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "
     "Set both {role}_PROVIDER and {role}_MODEL, or neither to use the local "
