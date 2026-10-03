@@ -279,3 +279,30 @@ TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
 # A C or C++ enum body and its enumerators (issue #1807).
 TS_ENUMERATOR_LIST = "enumerator_list"
 TS_ENUMERATOR = "enumerator"
+
+# Where C names a function as a VALUE rather than calling it (issue #2529): an
+# initializer-list entry (positional, or `.field = f` in an initializer_pair),
+# a declarator's initial value, an assignment's right side, a call argument.
+TS_CPP_INITIALIZER_PAIR = "initializer_pair"
+TS_CPP_ASSIGNMENT_EXPRESSION = "assignment_expression"
+TS_CPP_ARGUMENT_LIST = "argument_list"
+# Wrappers a function designator keeps its identity through: `&f`, `(f)`,
+# `(handler_t)f` and either branch of `c ? f : g`.
+TS_CPP_POINTER_EXPRESSION = "pointer_expression"
+TS_CPP_CAST_EXPRESSION = "cast_expression"
+TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
+CPP_OP_ADDRESS_OF = "&"
+# Nodes that hold file-scope declarations without opening a scope of their
+# own: preprocessor conditionals and an `extern "C" { ... }` block.
+C_FILE_SCOPE_CONTAINER_TYPES = frozenset(
+    {
+        "translation_unit",
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_else",
+        "preproc_elif",
+        "preproc_elifdef",
+        "linkage_specification",
+        "declaration_list",
+    }
+)
