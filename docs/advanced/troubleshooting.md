@@ -24,12 +24,10 @@ imports cleanly.
 
 ## Check Memgraph Connection
 
-- Ensure Docker containers are running: `docker compose ps`
+- Ensure Docker containers are running: `cd ~/.cgr && docker compose ps` (the compose file `cgr daemon up` writes lives there), or `cgr daemon status`
 - Verify Memgraph is accessible on port 7687
 
 ![docker compose ps in ~/.cgr listing the memgraph, lab and qdrant containers, then cgr daemon status reporting both stores reachable](../assets/demos/troubleshooting-compose-ps.gif)
-
-*`docker compose ps` reads the compose file in the current directory; for the stack `cgr daemon up` starts, that is `~/.cgr`.*
 
 ## View Database in Memgraph Lab
 
