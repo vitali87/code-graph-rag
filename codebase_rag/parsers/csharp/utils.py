@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from types import MappingProxyType
 
@@ -631,46 +631,49 @@ def _member_binds(member: Node, name: str, site: Node) -> bool:
     )
 
 
+def _first_named_child(node: Node, node_type: str) -> Node | None:
+    return next((c for c in node.named_children if c.type == node_type), None)
+
+
+def _primary_parameters(type_node: Node) -> Node | None:
+    """A type's primary-constructor parameter list, if it declares one."""
+    params = type_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        params = _first_named_child(type_node, cs.TS_CSHARP_PARAMETER_LIST)
+    return params
+
+
+def _declarator_names(field: Node) -> Iterator[str | None]:
+    """The name of each declarator of a field or event field declaration."""
+    for declaration in field.named_children:
+        if declaration.type == cs.TS_CSHARP_VARIABLE_DECLARATION:
+            yield from (
+                _text(declarator.child_by_field_name(cs.FIELD_NAME))
+                for declarator in declaration.named_children
+                if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+            )
+
+
+def _value_names(member: Node) -> Iterator[str | None]:
+    """The value names a primary-constructor parameter or type member declares."""
+    if member.type in (cs.TS_CSHARP_PARAMETER, cs.TS_CSHARP_PROPERTY_DECLARATION):
+        yield _text(member.child_by_field_name(cs.FIELD_NAME))
+    elif member.type in _FIELD_DECLARATIONS:
+        yield from _declarator_names(member)
+
+
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
 def _type_values(type_node: Node) -> frozenset[str]:
     """The fields, properties and primary-constructor parameters of a type."""
-    names: set[str] = set()
-    params = type_node.child_by_field_name(cs.FIELD_PARAMETERS)
-    if params is None:
-        params = next(
-            (
-                c
-                for c in type_node.named_children
-                if c.type == cs.TS_CSHARP_PARAMETER_LIST
-            ),
-            None,
-        )
-    members = next(
-        (
-            c
-            for c in type_node.named_children
-            if c.type == cs.TS_CSHARP_DECLARATION_LIST
-        ),
-        None,
-    )
+    params = _primary_parameters(type_node)
+    members = _first_named_child(type_node, cs.TS_CSHARP_DECLARATION_LIST)
     candidates = [
         *(params.named_children if params is not None else ()),
         *(members.named_children if members is not None else ()),
     ]
-    for member in candidates:
-        if member.type in (cs.TS_CSHARP_PARAMETER, cs.TS_CSHARP_PROPERTY_DECLARATION):
-            if name := _text(member.child_by_field_name(cs.FIELD_NAME)):
-                names.add(name)
-        elif member.type in _FIELD_DECLARATIONS:
-            for declaration in member.named_children:
-                if declaration.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
-                    continue
-                for declarator in declaration.named_children:
-                    if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR and (
-                        name := _text(declarator.child_by_field_name(cs.FIELD_NAME))
-                    ):
-                        names.add(name)
-    return frozenset(names)
+    return frozenset(
+        name for member in candidates for name in _value_names(member) if name
+    )
 
 
 def binds_value(site: Node, name: str) -> bool:

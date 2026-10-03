@@ -254,15 +254,14 @@ def _definition(row: ResultRow) -> Definition:
 
 
 def _site(row: ResultRow) -> CallSite:
+    qualifier = row.get(cs.KEY_CALL_QUALIFIER)
     return CallSite(
         caller=_text(row.get(cs.KEY_FROM_QN)),
         caller_path=_text(row.get(cs.KEY_FROM_PATH)),
         rel=_text(row.get(cs.KEY_REL_TYPE)),
         resolution=_text(row.get(cs.KEY_RESOLUTION)),
         spread_args=row.get(cs.KEY_SPREAD_ARGS) is True,
-        call_qualifier=qualifier
-        if isinstance(qualifier := row.get(cs.KEY_CALL_QUALIFIER), str)
-        else None,
+        call_qualifier=qualifier if isinstance(qualifier, str) else None,
         callee=_text(row.get(cs.KEY_TO_QN)),
         callee_path=_text(row.get(cs.KEY_TO_PATH)),
         line=_opt_int(row.get(cs.KEY_LINE)),
@@ -742,14 +741,19 @@ def _receiver_passed(site: CallSite, definition: Definition) -> bool | None:
 
 def _filled_counts(
     passed: int, site: CallSite, definition: Definition, receiver: bool
-) -> tuple[int, ...]:
-    """The parameters the site fills, once per call form it may be."""
+) -> tuple[int, int]:
+    """The parameters the site fills, once per call form it may be.
+
+    Always a pair: a site whose form is known repeats its one count, which
+    the caller's set of verdicts collapses.
+    """
     if not receiver:
-        return (passed,)
+        return passed, passed
     explicit = _receiver_passed(site, definition)
     if explicit is None:
-        return (passed, passed - 1)
-    return (passed - 1,) if explicit else (passed,)
+        return passed, passed - 1
+    filled = passed - 1 if explicit else passed
+    return filled, filled
 
 
 def _rejected(

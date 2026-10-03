@@ -106,3 +106,38 @@ def test_a_go_function_records_its_declared_parameters(
 
     (props,) = _props_by_qn(mock_ingestor, cs.NodeLabel.FUNCTION).values()
     assert props[cs.KEY_POSITIONAL_PARAMS] == ["a", "...rest"]
+
+
+def test_an_unread_frontend_leaves_the_method_property_absent(
+    temp_repo: Path, mock_ingestor
+) -> None:
+    """The method route keeps the same rule: absent for a language not read."""
+    (temp_repo / "shape.cpp").write_text(
+        "class Shape {\npublic:\n    int area(int a, int b = 2) { return a; }\n};\n",
+    )
+    (temp_repo / "Shape.scala").write_text(
+        "class Shape {\n  def area(a: Int, b: Int = 2): Int = a\n}\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    methods = _props_by_qn(mock_ingestor, cs.NodeLabel.METHOD)
+    areas = {qn: props for qn, props in methods.items() if qn.endswith(".area")}
+    assert len(areas) == 2
+    for props in areas.values():
+        assert cs.KEY_POSITIONAL_PARAMS not in props
+
+
+def test_a_declared_language_method_records_its_marked_parameters(
+    temp_repo: Path, mock_ingestor
+) -> None:
+    (temp_repo / "Shape.java").write_text(
+        "public class Shape {\n"
+        "    public int area(int a, int... rest) { return a; }\n"
+        "}\n",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    methods = _props_by_qn(mock_ingestor, cs.NodeLabel.METHOD)
+    # A Java method's qualified name carries its parameter types.
+    (props,) = (props for qn, props in methods.items() if ".area(" in qn)
+    assert props[cs.KEY_POSITIONAL_PARAMS] == ["a", "...rest"]

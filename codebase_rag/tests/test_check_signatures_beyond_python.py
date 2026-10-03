@@ -39,6 +39,8 @@ from codebase_rag.structural_delta import (
     Definition,
     StructuralDelta,
     _declared_arity_verdict,
+    _filled_counts,
+    _site,
     has_findings,
 )
 from evals.cgr_graph import _StatefulIngestor
@@ -285,7 +287,9 @@ def test_a_required_parameter_gives_every_site_a_verdict(
     delta = _delta(temp_repo, LANGUAGES[language], _edit(language, *edit))
 
     (change,) = delta["signature_changes"]
-    assert (change["before"], change["after"]) == lists
+    before, after = lists
+    assert change["before"] == before
+    assert change["after"] == after
     assert [site["verdict"] for site in change["sites"]] == [verdict]
     assert has_findings(delta) is (verdict == cs.DELTA_ARITY_TOO_FEW)
 
@@ -731,6 +735,7 @@ def _receiver_site(arg_count: int, qualifier: str | None) -> CallSite:
         col=0,
         arg_count=arg_count,
         kwarg_names=(),
+        star_args=False,
     )
 
 
@@ -784,6 +789,40 @@ def test_an_undecided_csharp_name_keeps_only_a_verdict_both_forms_share() -> Non
     implicit = site._replace(call_qualifier="")
     assert _declared_arity_verdict(explicit, definition)[1] == cs.DELTA_ARITY_TOO_FEW
     assert _declared_arity_verdict(implicit, definition)[1] == cs.DELTA_ARITY_OK
+
+
+@pytest.mark.parametrize(
+    ("receiver", "qualifier", "counts"),
+    [
+        pytest.param(False, None, (2, 2), id="no-receiver"),
+        # `S::m(s, a)` or `s.m(a, b)`: the receiver may be among the two.
+        pytest.param(True, None, (2, 1), id="undecided-form"),
+        pytest.param(True, "S", (1, 1), id="receiver-written"),
+        pytest.param(True, "", (2, 2), id="receiver-implicit"),
+    ],
+)
+def test_the_filled_counts_are_one_pair_whatever_the_call_form(
+    receiver: bool, qualifier: str | None, counts: tuple[int, int]
+) -> None:
+    site = _receiver_site(2, qualifier)
+
+    assert _filled_counts(2, site, _receiver_definition(), receiver) == counts
+
+
+@pytest.mark.parametrize(
+    ("row", "qualifier"),
+    [
+        pytest.param({cs.KEY_CALL_QUALIFIER: "Util"}, "Util", id="type-name"),
+        pytest.param({cs.KEY_CALL_QUALIFIER: ""}, "", id="value"),
+        pytest.param({cs.KEY_CALL_QUALIFIER: None}, None, id="null"),
+        pytest.param({cs.KEY_CALL_QUALIFIER: 3}, None, id="not-a-string"),
+        pytest.param({}, None, id="absent"),
+    ],
+)
+def test_a_graph_row_keeps_only_a_string_call_qualifier(
+    row: dict[str, object], qualifier: str | None
+) -> None:
+    assert _site(row).call_qualifier == qualifier  # type: ignore[arg-type]
 
 
 def test_a_python_signature_change_is_reported_as_before(temp_repo: Path) -> None:
