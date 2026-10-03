@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from evals.cgr_graph import _capture
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _capture, _StatefulIngestor
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 _METHOD = "Method"
@@ -411,3 +414,153 @@ def test_plain_javascript_class_methods_unchanged(tmp_path: Path) -> None:
     graph = _graph(tmp_path, {"i.js": src})
     assert graph.labelled(_METHOD) == {"proj.i.MemRepo.find"}
     assert ("proj.i.use", "proj.i.MemRepo.find") in graph.edges("CALLS")
+
+
+# --- incremental: an unchanged declaration keeps its abstract mark ------------
+
+ABSTRACT_BASE_TS = """\
+export abstract class Base {
+  abstract find(id: string): string;
+}
+"""
+
+ONE_IMPL_TS = """\
+import { Base } from "./base";
+export class Impl extends Base {
+  find(id: string) { return id; }
+}
+"""
+
+TWO_IMPLS_TS = """\
+import { Base } from "./base";
+export class Impl extends Base {
+  find(id: string) { return id; }
+}
+export class Other extends Base {
+  find(id: string) { return "o" + id; }
+}
+"""
+
+INTERFACE_BASE_TS = """\
+export interface Base {
+  find(id: string): string;
+}
+"""
+
+INTERFACE_IMPL_TS = """\
+import { Base } from "./base";
+export class Impl implements Base {
+  find(id: string) { return id; }
+}
+"""
+
+UNTYPED_USE_TS = """\
+import { Base } from "./base";
+import { Impl } from "./impl";
+export function use(r) { return r.find("x"); }
+"""
+
+UNTYPED_USE_BOTH_TS = """\
+import { Base } from "./base";
+import { Impl, Other } from "./impl";
+export function use(r) { return r.find("x"); }
+"""
+
+
+def _use_calls_after_caller_only_sync(
+    tmp_path: Path, base: str, impl: str, use: str = UNTYPED_USE_TS
+) -> tuple[set[str], set[str]]:
+    """`use`'s callees from a fresh index, then after re-syncing `use.ts` only."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    for name, body in {
+        "base.ts": base,
+        "impl.ts": impl,
+        "use.ts": use,
+    }.items():
+        (root / name).write_text(body, encoding="utf-8")
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+
+    def run(force: bool) -> set[str]:
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).run(force=force)
+        return {
+            str(target)
+            for _sl, source, rel, _tl, target in store.edges
+            if str(source) == "proj.use.use" and rel == cs.RelationshipType.CALLS.value
+        }
+
+    fresh = run(force=True)
+    (root / "use.ts").write_text(f"{use}// touched\n", encoding="utf-8")
+    return fresh, run(force=False)
+
+
+def test_caller_only_sync_keeps_the_call_to_an_abstract_methods_sole_override(
+    tmp_path: Path,
+) -> None:
+    # base.ts is not re-parsed, so `Base.find` comes back from the graph; its
+    # abstract mark must come back with it, or it competes with `Impl.find`
+    # and the untyped call loses the edge a fresh index gives it.
+    fresh, synced = _use_calls_after_caller_only_sync(
+        tmp_path, ABSTRACT_BASE_TS, ONE_IMPL_TS
+    )
+    assert fresh == {"proj.impl.Impl.find"}
+    assert synced == fresh
+
+
+def test_caller_only_sync_keeps_the_call_to_an_interface_methods_sole_implementer(
+    tmp_path: Path,
+) -> None:
+    fresh, synced = _use_calls_after_caller_only_sync(
+        tmp_path, INTERFACE_BASE_TS, INTERFACE_IMPL_TS
+    )
+    assert fresh == {"proj.impl.Impl.find"}
+    assert synced == fresh
+
+
+def test_caller_only_sync_leaves_two_overrides_of_an_abstract_method_unbound(
+    tmp_path: Path,
+) -> None:
+    fresh, synced = _use_calls_after_caller_only_sync(
+        tmp_path, ABSTRACT_BASE_TS, TWO_IMPLS_TS, UNTYPED_USE_BOTH_TS
+    )
+    assert fresh == set()
+    assert synced == set()
+
+
+def test_caller_only_sync_restores_the_abstract_mark(tmp_path: Path) -> None:
+    # The registry a caller-only sync rebuilds marks the unchanged abstract
+    # declaration as a fresh parse does, and leaves its override unmarked.
+    root = tmp_path / "proj"
+    root.mkdir()
+    files = {
+        "base.ts": ABSTRACT_BASE_TS,
+        "impl.ts": ONE_IMPL_TS,
+        "use.ts": UNTYPED_USE_TS,
+    }
+    for name, body in files.items():
+        (root / name).write_text(body, encoding="utf-8")
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+
+    def updater() -> GraphUpdater:
+        return GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        )
+
+    updater().run(force=True)
+    (root / "use.ts").write_text(f"{UNTYPED_USE_TS}// touched\n", encoding="utf-8")
+    synced = updater()
+    synced.run()
+    assert synced.function_registry.is_abstract("proj.base.Base.find")
+    assert not synced.function_registry.is_abstract("proj.impl.Impl.find")

@@ -329,3 +329,6 @@ TS_INTERFACE_BODY = "interface_body"
 TS_BODILESS_METHOD_TYPES = frozenset(
     {TS_METHOD_SIGNATURE, TS_ABSTRACT_METHOD_SIGNATURE}
 )
+# The keyword an `abstract_method_signature` keeps in its stored modifiers, which
+# is how an incremental run tells the member apart without its tree.
+TS_ABSTRACT_MODIFIER = "abstract"

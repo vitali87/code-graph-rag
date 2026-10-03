@@ -356,6 +356,22 @@ def _is_abstract_member(
     )
 
 
+def is_stored_abstract_member(
+    decorators: list[str],
+    modifiers: list[str],
+    language: cs.SupportedLanguage | None,
+) -> bool:
+    """`_is_abstract_member` read back from a stored definition's properties.
+
+    An incremental run rehydrates unchanged members without their trees: a TS
+    `abstract` member is told by its modifier. An interface member is told by
+    its owner's label, which the call resolver reads itself.
+    """
+    return _is_abstract_decorator(decorators) or (
+        language in cs.JS_TS_LANGUAGES and cs.TS_ABSTRACT_MODIFIER in modifiers
+    )
+
+
 _PY_NAMED_PARAMETERS = frozenset(
     {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
 )
