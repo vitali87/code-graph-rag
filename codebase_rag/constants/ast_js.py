@@ -43,6 +43,9 @@ JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 # looked up in the file's tree to see whether it IS a construction (#2465).
 JS_NEW_KEYWORD = "new"
 JS_RECEIVER_LEADING_CHARS = "( \t\r\n"
+# The directive that makes a script or function strict, where a function
+# declared in a block is scoped to that block (no Annex B hoisting).
+JS_USE_STRICT_DIRECTIVE = "use strict"
 # `this.` receiver prefix of a call name; a prototype-assigned function
 # (`Date.prototype.strftime`) dispatches such calls to a sibling method of
 # the same prototype target before the module-receiver fallback applies.

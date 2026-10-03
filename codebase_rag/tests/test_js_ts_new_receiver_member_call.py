@@ -14,13 +14,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.js_ts import utils as js_ts_utils
+from codebase_rag.parsers.js_ts.type_inference import JsTypeInferenceEngine
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 _Edges = dict[tuple[str, str], str | None]
@@ -553,3 +554,134 @@ def test_module_class_still_binds_when_nothing_shadows_it(
     assert _callees(mock_ingestor, f"{project}.m.{caller}") == {
         f"{project}.m.Box.bump": cs.EdgeResolution.EXACT
     }, source
+
+
+# ---------------------------------------------------------------------------
+# A function declared in a nested block is block-scoped in strict code
+# ---------------------------------------------------------------------------
+#
+# ES modules, TypeScript, class bodies and "use strict" code scope a function
+# declared inside a block to that block, like `let`. Treating it as bound
+# through the whole function hid the module class after the block, and the
+# real `f -> Box.bump` edge was lost. Only a sloppy-mode script hoists it
+# (Annex B): there it really is visible after the block, so it still shadows.
+
+_BLOCK_FUNCTIONS = {
+    "bare-block": "export function f() { { function Box() {} } {use} }\n",
+    "if-block": "export function f(x) { if (x) { function Box() {} } {use} }\n",
+    "class-method": ("export class C { m() { { function Box() {} } {use} } }\n"),
+}
+
+
+@pytest.mark.parametrize("form", list(_FORMS), ids=list(_FORMS))
+@pytest.mark.parametrize("ext", [".ts", ".js"], ids=["ts", "js"])
+@pytest.mark.parametrize("case", list(_BLOCK_FUNCTIONS), ids=list(_BLOCK_FUNCTIONS))
+def test_block_function_does_not_hide_the_class_after_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock, case: str, ext: str, form: str
+) -> None:
+    box = _BOX_TS if ext == ".ts" else _BOX_JS
+    source = _BLOCK_FUNCTIONS[case].replace("{use}", _FORMS[form])
+    project = _index(
+        temp_repo / "block_fn", {f"m{ext}": box + _DECOY + source}, mock_ingestor
+    )
+    caller = "C.m" if case == "class-method" else "f"
+    callees = _callees(mock_ingestor, f"{project}.m.{caller}")
+    assert callees.get(f"{project}.m.Box.bump") == cs.EdgeResolution.EXACT, source
+
+
+@pytest.mark.parametrize("form", list(_FORMS), ids=list(_FORMS))
+def test_use_strict_script_scopes_a_block_function_to_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock, form: str
+) -> None:
+    project = _index(
+        temp_repo / "strict_script",
+        {
+            "m.js": "'use strict';\n"
+            "class Box { bump() { return 1; } }\n"
+            "class Decoy { bump() { return 3; } }\n"
+            "function f() { { function Box() {} } {use} }\n".replace(
+                "{use}", _FORMS[form]
+            )
+            + "module.exports = { f, Box, Decoy };\n",
+        },
+        mock_ingestor,
+    )
+    callees = _callees(mock_ingestor, f"{project}.m.f")
+    assert callees.get(f"{project}.m.Box.bump") == cs.EdgeResolution.EXACT
+
+
+_STILL_SHADOWED = {
+    "used-inside-its-block": ("export function f() { { function Box() {} {use} } }\n"),
+    "top-level-declared-after-use": (
+        "export function f() { {use} function Box() {} }\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("form", list(_FORMS), ids=list(_FORMS))
+@pytest.mark.parametrize("ext", [".ts", ".js"], ids=["ts", "js"])
+@pytest.mark.parametrize("case", list(_STILL_SHADOWED), ids=list(_STILL_SHADOWED))
+def test_function_declaration_still_shadows_where_it_is_in_scope(
+    temp_repo: Path, mock_ingestor: MagicMock, case: str, ext: str, form: str
+) -> None:
+    box = _BOX_TS if ext == ".ts" else _BOX_JS
+    source = _STILL_SHADOWED[case].replace("{use}", _FORMS[form])
+    project = _index(
+        temp_repo / "still_shadowed", {f"m{ext}": box + _DECOY + source}, mock_ingestor
+    )
+    assert f"{project}.m.Box.bump" not in _callees(mock_ingestor, f"{project}.m.f")
+
+
+@pytest.mark.parametrize("form", list(_FORMS), ids=list(_FORMS))
+def test_sloppy_script_block_function_still_shadows_after_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock, form: str
+) -> None:
+    # No module syntax and no "use strict": Annex B makes `Box` the block's
+    # function (or undefined) after the block, never the class.
+    project = _index(
+        temp_repo / "sloppy_script",
+        {
+            "m.js": "class Box { bump() { return 1; } }\n"
+            "class Decoy { bump() { return 3; } }\n"
+            "function f() { { function Box() {} } {use} }\n".replace(
+                "{use}", _FORMS[form]
+            )
+            + "module.exports = { f, Box, Decoy };\n",
+        },
+        mock_ingestor,
+    )
+    assert f"{project}.m.Box.bump" not in _callees(mock_ingestor, f"{project}.m.f")
+
+
+# ---------------------------------------------------------------------------
+# The binding scan is linear in the enclosing function, not per construction
+# ---------------------------------------------------------------------------
+
+
+def test_binding_scan_is_not_repeated_per_construction(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Each construction asked the whole enclosing function which names it
+    # binds, so a function with n constructions (and n declarators) did n
+    # full scans: O(n^2). The answer is indexed once per function.
+    n = 200
+    body = "".join(
+        f"  const b{i} = new Box(); b{i}.bump();\n  new Box().bump();\n"
+        for i in range(n)
+    )
+    original = JsTypeInferenceEngine._js_declarator_span
+    with patch.object(
+        JsTypeInferenceEngine,
+        "_js_declarator_span",
+        autospec=True,
+        side_effect=original,
+    ) as scanned:
+        project = _index(
+            temp_repo / "many",
+            {"m.ts": _BOX_TS + "export function f() {\n" + body + "}\n"},
+            mock_ingestor,
+        )
+    assert _callees(mock_ingestor, f"{project}.m.f") == {
+        f"{project}.m.Box.bump": cs.EdgeResolution.EXACT
+    }
+    assert scanned.call_count <= 10 * n, scanned.call_count

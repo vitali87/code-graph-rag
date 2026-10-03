@@ -4212,7 +4212,7 @@ class CallResolver:
             return None
         var_type = (
             self.type_inference.js_type_inference._infer_js_variable_type_from_value(
-                construction, module_qn
+                construction, module_qn, language
             )
         )
         if not var_type:
