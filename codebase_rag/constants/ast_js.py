@@ -280,6 +280,8 @@ TS_JS_TERNARY_EXPRESSION = "ternary_expression"
 # spelled `await` with X as its argument (the TS grammar does not); climbs
 # treat that call as the transparent await it denotes.
 JS_AWAIT_IDENTIFIER = "await"
+JS_ASYNC_KEYWORD = "async"
+JS_ARGUMENTS_OBJECT = "arguments"
 # tree-sitter-typescript binds `await` / a unary operator tighter than a call
 # with type arguments: `await f<T>(x)` is a call whose `function` is the
 # await_expression `await f` (issue #2930).
@@ -534,3 +536,12 @@ CAPTURE_MODULE_OBJ = "module_obj"
 CAPTURE_EXPORTS_PROP = "exports_prop"
 CAPTURE_EXPORT_NAME = "export_name"
 CAPTURE_EXPORT_FUNCTION = "export_function"
+
+# Inline-function evaluation checks (PR #2058).
+TS_JS_YIELD_EXPRESSION = "yield_expression"
+TS_JS_NUMBER = "number"
+TS_JS_NULL = "null"
+TS_JS_UNARY_EXPRESSION = "unary_expression"
+TS_JS_ARGUMENTS_NAME = "arguments"
+TS_ASYNC_KEYWORD = "async"
+TS_GENERATOR_STAR = "*"
