@@ -43,6 +43,15 @@ TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_PY_WITH_STATEMENT = "with_statement"
 TS_PY_AS_PATTERN = "as_pattern"
 TS_PY_AS_PATTERN_TARGET = "as_pattern_target"
+# The keyword child of an `async with` (and of `async for` / `async def`).
+TS_PY_ASYNC = "async"
+# What a with statement calls on its context manager, whose result its `as`
+# target is bound to: `with` calls `__enter__`, `async with` awaits `__aenter__`.
+PY_DUNDER_ENTER = "__enter__"
+PY_DUNDER_AENTER = "__aenter__"
+# The `if TYPE_CHECKING:` guard (bare or `typing.`-qualified): its body is
+# read by type checkers only and binds nothing at runtime.
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_EXPRESSION_STATEMENT = "expression_statement"
 TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
