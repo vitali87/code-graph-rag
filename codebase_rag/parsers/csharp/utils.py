@@ -197,11 +197,11 @@ def signature_type_name(text: str) -> str:
     canonical spacing so two spellings of a type name one overload, and a
     trailing nullable `?` is dropped as the type maps drop it.
     """
-    collapsed = " ".join(text.split())
+    collapsed = cs.CHAR_SPACE.join(text.split())
     out: list[str] = []
     depth = 0
     for index, char in enumerate(collapsed):
-        if char == " ":
+        if char == cs.CHAR_SPACE:
             following = collapsed[index + 1 : index + 2]
             if following == cs.CHAR_ANGLE_OPEN or (
                 depth
@@ -217,7 +217,7 @@ def signature_type_name(text: str) -> str:
             depth -= 1
         out.append(char)
         if char == cs.CHAR_COMMA and depth:
-            out.append(" ")
+            out.append(cs.CHAR_SPACE)
     return "".join(out).strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
