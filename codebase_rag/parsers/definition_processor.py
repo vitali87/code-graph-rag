@@ -33,6 +33,7 @@ from ..utils.path_utils import (
     has_implementation_sibling,
 )
 from .class_ingest import ClassIngestMixin
+from .constant_nodes import PendingConstantType, emit_declared_constants
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
@@ -355,6 +356,7 @@ class DefinitionProcessor(
         self.pending_type_facts: list[PendingTypeFact] = []
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
+        self.pending_constant_types: list[PendingConstantType] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -433,18 +435,22 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
+        from .constant_nodes import emit_constant_type_edges
         from .field_nodes import emit_field_type_edges
         from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        # Every queue, not just the first: a Parameter or Field fact with no
-        # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
-        # and OF_TYPE silently absent. A class whose only annotations are on
-        # fields is the case that reaches this (found by the Field regression).
+        # Every queue, not just the first: a Parameter, Field or Constant
+        # fact with no RETURNS/ACCEPTS fact beside it would otherwise be
+        # skipped outright, and OF_TYPE silently absent. A class whose only
+        # annotations are on fields is the case that reaches this (found by
+        # the Field regression); a module whose only annotation is on a
+        # constant is the Constant one.
         if not (
             self.pending_type_facts
             or self.pending_parameter_types
             or self.pending_field_types
+            or self.pending_constant_types
         ):
             return 0
         resolver = TypeReferenceResolver(
@@ -460,6 +466,9 @@ class DefinitionProcessor(
         )
         emitted += emit_field_type_edges(
             self.pending_field_types, resolver, self.ingestor
+        )
+        emitted += emit_constant_type_edges(
+            self.pending_constant_types, resolver, self.ingestor
         )
         return emitted
 
@@ -505,13 +514,25 @@ class DefinitionProcessor(
             ):
                 self.go_package_names[module_qn] = package_name
 
-            self._ingest_module_node(
+            module_props = self._ingest_module_node(
                 file_path,
                 relative_path,
                 module_qn,
                 language,
                 root_node,
                 structural_elements,
+            )
+
+            # Module-level constants (issue #1806). AFTER the Module node is
+            # queued: a batch flush writes nodes before relationships, so a
+            # DEFINES_CONSTANT emitted first could match nothing (#1891).
+            emit_declared_constants(
+                self.ingestor,
+                self.pending_constant_types,
+                module_qn,
+                root_node,
+                language,
+                module_props,
             )
 
             combined_captures = self._file_combined_captures(
@@ -616,7 +637,7 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
         root_node: ASTNode,
         structural_elements: dict[Path, str | None],
-    ) -> None:
+    ) -> PropertyDict:
         relative_path_str = relative_path.as_posix()
         module_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: module_qn,
@@ -661,6 +682,7 @@ class DefinitionProcessor(
             cs.RelationshipType.CONTAINS_MODULE,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
         )
+        return module_props
 
     def _file_combined_captures(
         self,
