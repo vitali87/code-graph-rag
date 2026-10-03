@@ -8,6 +8,8 @@ The knowledge graph uses a unified schema across all supported languages.
 
 ## Node Types
 
+A label marked opt-in belongs to a [capture group](#capture-groups) that a default index leaves out, so it appears only once that group is enabled.
+
 <!-- SECTION:node_schemas -->
 | Label | Properties |
 |-----|----------|
@@ -27,15 +29,15 @@ The knowledge graph uses a unified schema across all supported languages.
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
-| Resource | `{qualified_name: string, name: string, kind: string}` |
+| Resource (opt-in: [`io`](#capture-groups)) | `{qualified_name: string, name: string, kind: string}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
-| Pattern | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| CodeSmell | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| SecurityIssue | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| Gloss | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
-| Parameter | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
-| Field | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
-| EnumVariant | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
+| Pattern (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| CodeSmell (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| SecurityIssue (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| Gloss (opt-in: [`glosses`](#capture-groups)) | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
+| Parameter (opt-in: [`parameters`](#capture-groups)) | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
+| Field (opt-in: [`fields`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
+| EnumVariant (opt-in: [`enum_variants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
@@ -47,6 +49,8 @@ The knowledge graph uses a unified schema across all supported languages.
 `Pattern`, `CodeSmell`, and `SecurityIssue` are ast-grep finding nodes, captured only when the `findings` capture group is enabled.
 
 ## Relationships
+
+Every relationship type belongs to exactly one [capture group](#capture-groups). A relationship marked opt-in belongs to a group that a default index leaves out, so it appears only once that group is enabled.
 
 <!-- SECTION:relationship_schemas -->
 | Source | Relationship | Target |
@@ -73,20 +77,20 @@ The knowledge graph uses a unified schema across all supported languages.
 | Module, Function, Method | CALLS | Function, Method, Enum, Type |
 | Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
-| Module, Function, Method | READS_FROM | Resource |
-| Module, Function, Method | WRITES_TO | Resource |
-| Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
-| Function, Method, File | EXPOSES | Resource |
-| Resource | RESOLVES_TO | Resource |
-| Module | IMPLEMENTS_PATTERN | Pattern |
-| Module | HAS_SMELL | CodeSmell |
-| Module | HAS_VULNERABILITY | SecurityIssue |
-| Gloss | ANNOTATES | Module, Class, Function, Method, Interface, Enum, Type, Union |
-| Gloss | MENTIONS | Module, Class, Function, Method, Interface, Enum, Type, Union |
-| Function, Method | HAS_PARAMETER | Parameter |
-| Class, Interface, Enum, Type, Union | HAS_FIELD | Field |
-| Enum | HAS_VARIANT | EnumVariant |
-| Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
+| Module, Function, Method | READS_FROM (opt-in: [`io`](#capture-groups)) | Resource |
+| Module, Function, Method | WRITES_TO (opt-in: [`io`](#capture-groups)) | Resource |
+| Module, Function, Method, Resource | FLOWS_TO (opt-in: [`io`](#capture-groups)) | Module, Function, Method, Resource |
+| Function, Method, File | EXPOSES (opt-in: [`io`](#capture-groups)) | Resource |
+| Resource | RESOLVES_TO (opt-in: [`io`](#capture-groups)) | Resource |
+| Module | IMPLEMENTS_PATTERN (opt-in: [`findings`](#capture-groups)) | Pattern |
+| Module | HAS_SMELL (opt-in: [`findings`](#capture-groups)) | CodeSmell |
+| Module | HAS_VULNERABILITY (opt-in: [`findings`](#capture-groups)) | SecurityIssue |
+| Gloss | ANNOTATES (opt-in: [`glosses`](#capture-groups)) | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Gloss | MENTIONS (opt-in: [`glosses`](#capture-groups)) | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Function, Method | HAS_PARAMETER (opt-in: [`parameters`](#capture-groups)) | Parameter |
+| Class, Interface, Enum, Type, Union | HAS_FIELD (opt-in: [`fields`](#capture-groups)) | Field |
+| Enum | HAS_VARIANT (opt-in: [`enum_variants`](#capture-groups)) | EnumVariant |
+| Parameter, Field | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict, a Java method reference such as `Acc::add`). `INSTANTIATES` records a class being constructed; a Java constructor reference (`Acc::new`) instantiates its class and references each declared constructor. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
@@ -130,6 +134,53 @@ one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.
 
+## Capture Groups
+
+Which parts of the schema above an index writes is chosen per capture group. Every relationship type belongs to exactly one group; a node label a group owns is written only while at least one of that group's relationships is enabled, and a label no group owns is always written. A default index enables the groups marked ✓. The others are opt-in: until the repository is indexed with one of them, a query for its labels or relationships, such as `MATCH (f)-[:HAS_PARAMETER]->(p)`, returns nothing.
+
+<!-- SECTION:capture_groups -->
+| Group | Default | Node labels | Relationships | Description |
+|-----|-------|-----------|-------------|-----------|
+| `structure` | ✓ | - | CONTAINS_PACKAGE, CONTAINS_FOLDER, CONTAINS_FILE, CONTAINS_MODULE, CONTAINS_SECTION, DEFINES, DEFINES_METHOD | The containment tree from the project down to modules and document sections, and what each module, class or function defines. |
+| `calls` | ✓ | - | CALLS, REFERENCES, INSTANTIATES | Call sites, functions and classes used as values, and class instantiations. |
+| `types` | ✓ | - | IMPLEMENTS_MODULE, INHERITS, IMPLEMENTS, OVERRIDES, RETURNS, ACCEPTS | Inheritance, interface and module implementation, method overrides, and the project types a signature returns or accepts. |
+| `imports` | ✓ | - | IMPORTS, EXPORTS, EXPORTS_MODULE, DEPENDS_ON_EXTERNAL, LINKS_TO | Imports and exports between modules, the project's external package dependencies, and document links to files. |
+| `io` | - | Resource | READS_FROM, WRITES_TO, FLOWS_TO, EXPOSES, RESOLVES_TO | External resources code reads, writes or exposes (files, environment variables, network, databases, endpoints), value flow between them, and client calls resolved to the endpoints they reach. |
+| `findings` | - | Pattern, CodeSmell, SecurityIssue | IMPLEMENTS_PATTERN, HAS_SMELL, HAS_VULNERABILITY | ast-grep findings on each module: design patterns, code smells and security issues. |
+| `glosses` | - | Gloss | ANNOTATES, MENTIONS | Notes agents write about definitions with the annotate MCP tool, rather than anything parsed from source. |
+| `parameters` | - | Parameter | HAS_PARAMETER, OF_TYPE | One node per declared parameter of a function or method, and the OF_TYPE edge from a parameter or field to the project type its annotation names. |
+| `fields` | - | Field | HAS_FIELD | One node per field of a class, interface, enum, type or union. A field's OF_TYPE edge belongs to parameters, so field types need both. |
+| `enum_variants` | - | EnumVariant | HAS_VARIANT | One node per enum member, with its position and value. |
+<!-- /SECTION:capture_groups -->
+
+### Choosing Groups
+
+Every indexing run reads the selection from the `CGR_CAPTURE` environment variable, whose tokens are separated by commas, semicolons or spaces. `cgr start --update-graph` and `cgr index` also take `--capture`, repeatable and comma-separated (`--capture none,structure`), applied after `CGR_CAPTURE`. Tokens apply left to right, starting from the default groups:
+
+| Token | Effect |
+|-------|--------|
+| `GROUP`, `+GROUP` | Add the group. |
+| `-GROUP` | Drop the group. |
+| `TYPE`, `+TYPE` | Add one relationship type, such as `+HAS_PARAMETER`. |
+| `-TYPE` | Drop one relationship type, such as `-OVERRIDES`. |
+| `all` | Enable every group. |
+| `none` | Disable every group, so the tokens after it build the selection from nothing. |
+
+Names are case-insensitive. A name that is both a group and a relationship type is read as the group, so `-calls` and `-CALLS` both drop `CALLS`, `REFERENCES` and `INSTANTIATES`. Node labels are not tokens: `+Parameter` is not recognised, while the group `parameters` is. A bare group is added to what is already enabled, so naming a default group changes nothing and logs a warning saying so; put `none` first to capture only that group. A `--capture` token that names neither a group nor a relationship type is a usage error, and the command stops before indexing anything. In `CGR_CAPTURE`, which long-running servers also read, such a token is skipped with the warning `Ignoring unknown capture token`, and the rest of the selection still applies.
+
+```bash
+# The defaults plus Parameter and Field nodes
+cgr start --repo-path . --update-graph --capture parameters --capture fields
+# Every group
+cgr index --repo-path . -o ./index-out --capture all
+# Only the containment tree and definitions
+CGR_CAPTURE=none,structure cgr start --repo-path . --update-graph
+# The defaults without OVERRIDES edges
+cgr start --repo-path . --update-graph --capture -OVERRIDES
+```
+
+The selection is part of the parser fingerprint, so enabling a group on an indexed project needs no `--clean`: the next `--update-graph` re-parses the project once and writes the group's nodes and relationships (see [Document Support](language-support.md#document-support-document-tier)).
+
 ## Resource Kinds
 
 A `Resource` node stands for something outside the code that code reads,
@@ -159,7 +210,7 @@ its head key.
 
 ## I/O and Data-Flow Edges
 
-The `io` capture group (opt-in; excluded from the default capture set) adds three relationships that model how code touches external resources and how values move between them.
+The `io` capture group (opt-in; excluded from the default capture set) adds the relationships that model how code touches external resources and how values move between them: the three below, and `EXPOSES` and `RESOLVES_TO` from [Resource Kinds](#resource-kinds).
 
 `READS_FROM` and `WRITES_TO` connect a callable to a `Resource` it reads from or writes to (for example `os.getenv("K")` reads the `ENV` resource, `print(x)` writes the `STDOUT` resource).
 
