@@ -26,6 +26,7 @@ _OPT_TRACE = "--cgr-trace"
 _OPT_OUTPUT = "--cgr-trace-output"
 _OPT_REPO = "--cgr-trace-repo"
 _STASH_KEY: pytest.StashKey[CallGraphTracer] = pytest.StashKey()
+_SUMMARY_KEY: pytest.StashKey[str] = pytest.StashKey()
 
 _HELP_TRACE = "Record a cgr runtime call trace for this test session."
 _HELP_OUTPUT = "Where to write the trace file (default: %(default)s)."
@@ -98,11 +99,20 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     tracer.stop()
     output = _output_path(session.config)
     count = tracer.write(output)
-    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
-    if reporter is not None:
-        reporter.write_line(
-            f"{cs.TRACE_TOOL_NAME}: wrote {count} call records to {output}"
-        )
+    # Reported from the terminal summary, not here: pytest has not ended the
+    # progress line when this hook runs, so under `-q` the message was glued
+    # to `[100%]` (issue #2888).
+    session.config.stash[_SUMMARY_KEY] = (
+        f"{cs.TRACE_TOOL_NAME}: wrote {count} call records to {output}"
+    )
+
+
+def pytest_terminal_summary(
+    terminalreporter: pytest.TerminalReporter, config: pytest.Config
+) -> None:
+    summary = config.stash.get(_SUMMARY_KEY, None)
+    if summary is not None:
+        terminalreporter.write_line(summary)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
