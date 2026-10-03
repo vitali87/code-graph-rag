@@ -2054,6 +2054,9 @@ class GraphUpdater:
         # pass below: it re-resolves module-anchored trait guesses through
         # them.
         self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+        # Same for Scala: a package import resolves only once every module
+        # declaring a package is known, rehydrated ones included (#2450).
+        self.factory.import_processor.resolve_scala_project_imports(known_module_paths)
 
         # Same reasoning for every other language: parents resolve against
         # the full registry (including rehydrated definitions), and an

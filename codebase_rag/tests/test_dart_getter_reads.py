@@ -818,6 +818,8 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor._cpp_declaration_mappings = set()
     processor.csharp_static_imports = {}
     processor.csharp_global_static_imports = {}
+    processor._scala_imports = {}
+    processor._scala_block_imports = {}
 
     processor._clear_module_import_state("m")
 
