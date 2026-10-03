@@ -60,6 +60,7 @@ from .python_source_roots import discover_python_source_roots, resolve_via_sourc
 from .rs import utils as rs_utils
 from .scala import (
     resolve_scala_import,
+    scala_enclosing_packages_at,
     scala_package_index,
     scala_package_owner,
     scan_scala_packages,
@@ -863,6 +864,7 @@ class ImportProcessor:
         "_rust_mod_scope_shadows",
         "_scala_scans",
         "_scala_raw_imports",
+        "_scala_import_scopes",
         "_scala_import_targets",
         "_scala_import_members",
         "_scala_package_index",
@@ -950,6 +952,9 @@ class ImportProcessor:
         # from these once every file is parsed, so a provider edited in
         # watch mode re-points importers that were not re-parsed.
         self._scala_raw_imports: dict[str, dict[str, str]] = {}
+        # Importer -> bound name -> the packages its import sits in, innermost
+        # first: sibling `package p { ... }` blocks of one file differ.
+        self._scala_import_scopes: dict[str, dict[str, tuple[str, ...]]] = {}
         # Importer -> written import path -> the project modules its IMPORTS
         # edges land on. A path absent here was not resolved in the project.
         self._scala_import_targets: dict[str, dict[str, tuple[str, ...]]] = {}
@@ -1279,6 +1284,7 @@ class ImportProcessor:
         # Re-recorded once the Scala parse completes; a parse that fails
         # midway must not leave the previous imports to be restored.
         self._scala_raw_imports.pop(module_qn, None)
+        self._scala_import_scopes.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
@@ -2118,11 +2124,12 @@ class ImportProcessor:
 
     def _rewrite_scala_imports(self, importer: str, index: ScalaPackageIndex) -> None:
         scan = self._scala_scans.get(importer)
-        enclosing = scan.enclosing if scan is not None else ()
+        scopes = self._scala_import_scopes.get(importer, {})
         mapping: dict[str, str] = {}
         targets: dict[str, tuple[str, ...]] = {}
         members: dict[str, str] = {}
         for local_name, path in self._scala_raw_imports[importer].items():
+            enclosing = scopes.get(local_name, scan.enclosing if scan else ())
             target = resolve_scala_import(path, enclosing, index)
             if target is None:
                 mapping[local_name] = path
@@ -4836,10 +4843,25 @@ class ImportProcessor:
             import a.b.{C => Alias} -> Alias -> a.b.C   (C stays unbound)
             import a.b._            -> *a.b  -> a.b
         """
+        mapping = self.import_mapping[module_qn]
+        scopes: dict[str, tuple[str, ...]] = {}
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_SCALA_IMPORT_DECLARATION:
                 continue
-            self._parse_scala_import_declaration(import_node, module_qn)
+            # Bound into a map of its own first, so exactly the names THIS
+            # declaration binds are known: each resolves from the package the
+            # import sits in, once the project's packages are (issue #2450).
+            bound: dict[str, str] = {}
+            self.import_mapping[module_qn] = bound
+            try:
+                self._parse_scala_import_declaration(import_node, module_qn)
+            finally:
+                self.import_mapping[module_qn] = mapping
+            mapping.update(bound)
+            scopes.update(
+                dict.fromkeys(bound, scala_enclosing_packages_at(import_node))
+            )
+        self._scala_import_scopes[module_qn] = scopes
 
     def _parse_scala_import_declaration(
         self, import_node: Node, module_qn: str

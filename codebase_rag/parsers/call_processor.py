@@ -25,6 +25,7 @@ from ..types_defs import (
     LanguageQueries,
     NodeType,
     PropertyDict,
+    ScalaBinding,
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
@@ -142,7 +143,7 @@ class _CallScanContext:
     resolve_cpp_op: Callable[[str, str], tuple[str, str] | None] | None
     ensure_rel: Callable[..., None]
     arg_ref_rel: cs.RelationshipType
-    scala_bindings: dict[str, str | None] | None = None
+    scala_bindings: dict[str, list[ScalaBinding]] | None = None
     alias_map: dict[str, str] | None = None
     factory_aliases: dict[str, str] | None = None
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
@@ -4407,10 +4408,18 @@ class CallProcessor:
         if selection is None:
             return
         if ctx.scala_bindings is None:
-            ctx.scala_bindings = scala_utils.scala_binding_types(ctx.caller_node)
+            ctx.scala_bindings = scala_utils.scala_bindings(ctx.caller_node)
         receiver, member = selection
+        binding = scala_utils.scala_binding_at(
+            ctx.scala_bindings, receiver, node.start_byte
+        )
+        # A local's binding types it; an unbound name is an object named
+        # outright. A local of unknown type is neither, so it binds nothing.
+        receiver_type = binding.type_name if binding is not None else receiver
+        if receiver_type is None:
+            return
         callee_info = self._resolver.resolve_scala_selection(
-            receiver, member, ctx.module_qn, ctx.scala_bindings, ctx.class_context
+            receiver_type, member, ctx.module_qn, ctx.class_context
         )
         if callee_info is None:
             return

@@ -291,6 +291,33 @@ object Use { def a(): Cart = new Cart() }
     assert ("Method", f"{SRC}.shop.Cart.Cart.this") in calls, calls
 
 
+def test_new_without_a_declared_constructor_only_instantiates(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`new Cart()` with no `def this(...)` INSTANTIATES and CALLS nothing.
+
+    The primary constructor is the class body and has no node, so there is
+    nothing to call; Java's `new Foo()` on a class declaring no constructor
+    emits the same single INSTANTIATES.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA
+            + """object Use { def a(): Cart = new Cart() }
+""",
+        },
+    )
+
+    caller = f"{SRC}.shop.Cart.Use.a"
+
+    assert _targets_from(mock_ingestor, "INSTANTIATES", caller) == {
+        ("Class", f"{SRC}.shop.Cart.Cart")
+    }
+    assert _targets_from(mock_ingestor, "CALLS", caller) == set()
+
+
 def test_new_reaches_a_path_qualified_or_same_package_class(
     project: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -386,6 +413,41 @@ object Use { def a(): Cart = Registry.default }
     assert ("Method", f"{SRC}.shop.Cart.Registry.default") in use_calls, use_calls
 
 
+def test_an_inner_block_binding_hides_the_outer_one_only_inside_it(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """An inner `val c = new Crate()` does not untype the outer `c: Cart`.
+
+    Each selection reads the binding in effect where it sits: `c.size`
+    before the block is a Cart's, `c.weight` inside it a Crate's.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA
+            + """class Crate { def weight: Int = 1; def size: Int = 2 }
+object Use {
+  def run(): Int = {
+    val c = new Cart()
+    val n = c.size
+    { val c = new Crate(); c.weight }
+    n
+  }
+}
+""",
+        },
+    )
+
+    calls = _targets_from(mock_ingestor, "CALLS", f"{SRC}.shop.Cart.Use.run")
+
+    assert {
+        ("Method", f"{SRC}.shop.Cart.Cart.size"),
+        ("Method", f"{SRC}.shop.Cart.Crate.weight"),
+    } <= calls, calls
+    assert ("Method", f"{SRC}.shop.Cart.Crate.size") not in calls, calls
+
+
 # --- what must NOT change -----------------------------------------------------
 
 
@@ -444,6 +506,84 @@ object App { def run(): Int = 1 }
     imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.App")
 
     assert imports == {("ExternalModule", "shop")}, imports
+
+
+def test_a_lambda_or_case_binder_hides_the_outer_typed_name(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`items.map(c => c.size)` inside `def f(c: Cart)` is not Cart's size.
+
+    The lambda's own `c` is untyped and hides the parameter in the lambda;
+    a `case c: Crate` pattern types its `c` for its own clause only.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA
+            + """class Crate { def weight: Int = 1 }
+object Use {
+  def f(c: Cart, items: Seq[Item]): Seq[Int] = items.map(c => c.size)
+  def g(c: Cart, x: Any): Int = x match { case c: Crate => c.weight }
+}
+""",
+        },
+    )
+
+    f_calls = _targets_from(mock_ingestor, "CALLS", f"{SRC}.shop.Cart.Use.f")
+    g_calls = _targets_from(mock_ingestor, "CALLS", f"{SRC}.shop.Cart.Use.g")
+
+    assert ("Method", f"{SRC}.shop.Cart.Cart.size") not in f_calls, f_calls
+    assert ("Method", f"{SRC}.shop.Cart.Crate.weight") in g_calls, g_calls
+
+
+def test_a_same_scope_rebinding_to_another_type_stays_untyped(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """Two `c` bindings in ONE block with different types bind neither."""
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA
+            + """class Crate { def size: Int = 2 }
+object Use { def run(): Int = { val c = new Cart(); val c = new Crate(); c.size } }
+""",
+        },
+    )
+
+    calls = _targets_from(mock_ingestor, "CALLS", f"{SRC}.shop.Cart.Use.run")
+
+    assert not {qn for _, qn in calls if qn.endswith(".size")}, calls
+
+
+def test_a_selector_import_splitting_a_package_keeps_the_library_edge(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import shop.{Cart, Discount}`: Cart is the project's, Discount is not.
+
+    The project's name lands on its Module and the undeclared one keeps the
+    library's ExternalModule, as Java's `import shop.Cart; import
+    shop.Discount;` does for a split package.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA,
+            "src/main/scala/app/App.scala": """package app
+import shop.{Cart, Discount}
+object App { def run(): Cart = new Cart() }
+""",
+        },
+    )
+
+    imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.App")
+
+    assert imports == {
+        ("Module", f"{SRC}.shop.Cart"),
+        ("ExternalModule", "shop"),
+    }, imports
 
 
 def test_a_wildcard_import_of_the_files_own_package_is_no_self_import(
@@ -545,6 +685,118 @@ def test_a_call_with_parentheses_is_emitted_once(
     ]
 
     assert len(emitted) == 1, emitted
+
+
+def test_each_package_block_resolves_its_imports_from_its_own_package(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """Sibling `package left { ... }` and `package right { ... }` blocks each
+    resolve a relative import against their OWN package.
+
+    Under `package outer`, `import model.Item` in block `left` names
+    `outer.left.model.Item`. Read against the file's top-level package
+    alone it named the decoy `outer.model.Item` instead.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/left/model/Item.scala": """package outer.left.model
+class Item
+""",
+            "src/main/scala/right/model/Part.scala": """package outer.right.model
+class Part
+""",
+            "src/main/scala/model/Decoy.scala": """package outer.model
+class Item
+class Part
+""",
+            "src/main/scala/app/Multi.scala": """package outer
+package left {
+  import model.Item
+  object UseLeft { def make(): Item = new Item() }
+}
+package right {
+  import model.Part
+  object UseRight { def make(): Part = new Part() }
+}
+""",
+        },
+    )
+
+    imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.Multi")
+    left = _targets_from(mock_ingestor, "INSTANTIATES", f"{SRC}.app.Multi.UseLeft.make")
+    right = _targets_from(
+        mock_ingestor, "INSTANTIATES", f"{SRC}.app.Multi.UseRight.make"
+    )
+
+    assert imports == {
+        ("Module", f"{SRC}.left.model.Item"),
+        ("Module", f"{SRC}.right.model.Part"),
+    }, imports
+    assert left == {("Class", f"{SRC}.left.model.Item.Item")}, left
+    assert right == {("Class", f"{SRC}.right.model.Part.Part")}, right
+
+
+def test_an_import_inside_a_package_block_is_relative_to_that_package(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`package a { import b.C }` names `a.b.C`, as `package a; import b.C` does.
+
+    The block opens `a` for its body just as the bodiless clause opens it for
+    the rest of the file; only the bodiless form used to count.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/a/b/C.scala": """package a.b
+class C
+""",
+            "src/main/scala/app/Flat.scala": """package a
+import b.C
+object UseFlat { def make(): C = new C() }
+""",
+            "src/main/scala/app/Block.scala": """package a {
+  import b.C
+  object UseBlock { def make(): C = new C() }
+}
+""",
+        },
+    )
+
+    for importer in (f"{SRC}.app.Flat", f"{SRC}.app.Block"):
+        imports = _targets_from(mock_ingestor, "IMPORTS", importer)
+        assert imports == {("Module", f"{SRC}.a.b.C")}, (importer, imports)
+
+
+def test_a_root_anchored_import_skips_the_enclosing_packages(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`_root_.shop.Cart` names the root package `shop`, not `com.acme.shop`.
+
+    The chained clauses open `com.acme`, where a relative `shop.Cart` would
+    land; `_root_` exists to say the opposite.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA,
+            "src/main/scala/acme/Cart.scala": """package com.acme.shop
+class Cart
+""",
+            "src/main/scala/app/App.scala": """package com.acme
+package app
+import _root_.shop.Cart
+object App { def run(): Cart = new Cart() }
+""",
+        },
+    )
+
+    imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.App")
+
+    assert imports == {("Module", f"{SRC}.shop.Cart")}, imports
 
 
 # --- incremental runs -----------------------------------------------------------

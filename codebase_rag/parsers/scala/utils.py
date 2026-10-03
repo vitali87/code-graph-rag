@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Container
+from itertools import pairwise
 
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import ScalaImportTarget, ScalaPackageIndex, ScalaPackageScan
+from ...types_defs import (
+    ScalaBinding,
+    ScalaImportTarget,
+    ScalaPackageIndex,
+    ScalaPackageScan,
+)
 from ..utils import safe_decode_text
 
 # Subtrees whose identifiers name packages or import paths rather than use
@@ -92,6 +98,42 @@ def _enclosing_packages(root: Node) -> tuple[str, ...]:
     return tuple(reversed(opened))
 
 
+def scala_enclosing_packages_at(node: Node) -> tuple[str, ...]:
+    """The packages whose members an import at `node` names relatively,
+    innermost first.
+
+    A bodiless clause opens its package for the later siblings in its scope,
+    while `package p { ... }` opens `p` inside its own body only. So two
+    sibling blocks of one file each resolve against their own package, which
+    the file-level clauses alone cannot say.
+    """
+    path: list[Node] = []
+    current: Node | None = node
+    while current is not None:
+        path.append(current)
+        current = current.parent
+    path.reverse()
+    opened: list[str] = []
+    package = ""
+    for container, step in pairwise(path):
+        for sibling in container.named_children:
+            if sibling.id == step.id:
+                break
+            if (
+                sibling.type == cs.TS_SCALA_PACKAGE_CLAUSE
+                and sibling.child_by_field_name(cs.FIELD_BODY) is None
+                and (name := _dotted_name(sibling.child_by_field_name(cs.FIELD_NAME)))
+            ):
+                package = _joined(package, name)
+                opened.append(package)
+        if step.type == cs.TS_SCALA_PACKAGE_CLAUSE and (
+            name := _dotted_name(step.child_by_field_name(cs.FIELD_NAME))
+        ):
+            package = _joined(package, name)
+            opened.append(package)
+    return tuple(reversed(opened))
+
+
 def _mentions(root: Node) -> frozenset[str]:
     names: set[str] = set()
     stack = [root]
@@ -172,47 +214,111 @@ def _value_type_name(value: Node | None) -> str | None:
     return None
 
 
-def _binding(node: Node) -> tuple[str, str | None] | None:
-    if node.type == cs.TS_SCALA_PARAMETER:
-        name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
-        return (
-            (name, _type_name(node.child_by_field_name(cs.FIELD_TYPE)))
-            if name
-            else None
-        )
-    if node.type in cs.SCALA_BINDING_DEFINITIONS:
-        pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-        if pattern is None or pattern.type != cs.TS_SCALA_IDENTIFIER:
-            return None
-        name = safe_decode_text(pattern)
-        if not name:
-            return None
-        declared = _type_name(node.child_by_field_name(cs.FIELD_TYPE))
-        return name, declared or _value_type_name(
-            node.child_by_field_name(cs.FIELD_VALUE)
-        )
+def _scoped(
+    name: str | None, type_name: str | None, scope: Node | None
+) -> ScalaBinding | None:
+    if not name or scope is None:
+        return None
+    return ScalaBinding(name, type_name, scope.start_byte, scope.end_byte)
+
+
+def _ancestor(node: Node, node_type: str) -> Node | None:
+    current = node.parent
+    while current is not None and current.type != node_type:
+        current = current.parent
+    return current
+
+
+def _binding(node: Node) -> ScalaBinding | None:
+    match node.type:
+        case cs.TS_SCALA_PARAMETER | cs.TS_SCALA_BINDING:
+            # A def's parameters are visible in its whole definition, a
+            # lambda's typed ones in the lambda: the owner of the list.
+            owner = node.parent.parent if node.parent is not None else None
+            return _scoped(
+                safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
+                _type_name(node.child_by_field_name(cs.FIELD_TYPE)),
+                owner,
+            )
+        case cs.TS_SCALA_LAMBDA_EXPRESSION:
+            params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+            if params is not None and params.type == cs.TS_SCALA_IDENTIFIER:
+                return _scoped(safe_decode_text(params), None, node)
+        case cs.TS_SCALA_VAL_DEFINITION | cs.TS_SCALA_VAR_DEFINITION:
+            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+            if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
+                declared = _type_name(node.child_by_field_name(cs.FIELD_TYPE))
+                return _scoped(
+                    safe_decode_text(pattern),
+                    declared
+                    or _value_type_name(node.child_by_field_name(cs.FIELD_VALUE)),
+                    node.parent,
+                )
+        case cs.TS_SCALA_TYPED_PATTERN:
+            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+            if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
+                return _scoped(
+                    safe_decode_text(pattern),
+                    _type_name(node.child_by_field_name(cs.FIELD_TYPE)),
+                    _ancestor(node, cs.TS_SCALA_CASE_CLAUSE),
+                )
+        case cs.TS_SCALA_CASE_CLAUSE:
+            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+            if pattern is not None and pattern.type == cs.TS_SCALA_IDENTIFIER:
+                return _scoped(safe_decode_text(pattern), None, node)
+        case cs.TS_SCALA_ENUMERATOR:
+            first = node.named_children[0] if node.named_children else None
+            if first is not None and first.type == cs.TS_SCALA_IDENTIFIER:
+                return _scoped(
+                    safe_decode_text(first),
+                    None,
+                    _ancestor(node, cs.TS_SCALA_FOR_EXPRESSION),
+                )
     return None
 
 
-def scala_binding_types(caller_node: Node) -> dict[str, str | None]:
-    """Every name a caller binds, with the one type it is known to hold.
+def scala_bindings(caller_node: Node) -> dict[str, list[ScalaBinding]]:
+    """Every name a caller binds, by name, with its type and scope.
 
     Types come from parameters (`c: Cart`), annotated vals (`val c: Cart =
-    ...`) and constructions (`val c = new Cart()`, `val i = Item("x")`). A
-    name bound to an unknown type, or to two different ones, maps to None:
-    still a local, so never mistaken for an object of the same name, and
-    never typed by a guess that would let the wrong class's member answer.
+    ...`), constructions (`val c = new Cart()`, `val i = Item("x")`) and typed
+    patterns. Untyped binders (`c => ...`, `for (c <- xs)`) are kept too: they
+    still hide an outer `c`, and are never mistaken for an object of that name.
     """
-    types: dict[str, str | None] = {}
+    bindings: dict[str, list[ScalaBinding]] = {}
     stack = [caller_node]
     while stack:
         node = stack.pop()
         stack.extend(node.children)
-        if (binding := _binding(node)) is None:
-            continue
-        name, type_name = binding
-        types[name] = type_name if types.get(name, type_name) == type_name else None
-    return types
+        if (binding := _binding(node)) is not None:
+            bindings.setdefault(binding.name, []).append(binding)
+    return bindings
+
+
+def scala_binding_at(
+    bindings: dict[str, list[ScalaBinding]], name: str, position: int
+) -> ScalaBinding | None:
+    """The binding of `name` in effect at byte `position`, if any.
+
+    The innermost scope holding the position wins. Two bindings of the name
+    in that one scope with different types leave it untyped: a guess would
+    let the wrong class's member answer.
+    """
+    visible = [
+        binding
+        for binding in bindings.get(name, ())
+        if binding.scope_start <= position < binding.scope_end
+    ]
+    if not visible:
+        return None
+    width = min(binding.scope_end - binding.scope_start for binding in visible)
+    innermost = [
+        binding
+        for binding in visible
+        if binding.scope_end - binding.scope_start == width
+    ]
+    types = {binding.type_name for binding in innermost}
+    return innermost[0]._replace(type_name=types.pop() if len(types) == 1 else None)
 
 
 def scala_selection(node: Node) -> tuple[str, str] | None:

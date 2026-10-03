@@ -956,6 +956,21 @@ class ScalaPackageScan(NamedTuple):
     mentions: frozenset[str]
 
 
+class ScalaBinding(NamedTuple):
+    """A name a Scala caller binds: the type it holds, and where it holds it.
+
+    The scope is a byte span, so an inner block's `c` hides an outer `c`
+    only inside that block (issue #2450).
+    """
+
+    name: str
+    # None when the type is unknown without inference, or when one scope
+    # binds the name twice to different types.
+    type_name: str | None
+    scope_start: int
+    scope_end: int
+
+
 class ScalaImportTarget(NamedTuple):
     """A Scala import path resolved against the project's own packages."""
 

@@ -94,6 +94,14 @@ TS_SCALA_FIELD_BASE = "base"
 TS_SCALA_LAZY_PARAMETER_TYPE = "lazy_parameter_type"
 TS_SCALA_ASSIGNMENT_EXPRESSION = "assignment_expression"
 SCALA_THIS = "this"
+# Binders that hide an outer name for their own scope only: a lambda's
+# parameters (`c => ...`, `(c: Item) => ...`), a case pattern (`case c: Crate
+# => ...`) and a for-comprehension generator (`for (c <- items) ...`).
+TS_SCALA_BINDING = "binding"
+TS_SCALA_TYPED_PATTERN = "typed_pattern"
+TS_SCALA_CASE_CLAUSE = "case_clause"
+TS_SCALA_ENUMERATOR = "enumerator"
+TS_SCALA_FOR_EXPRESSION = "for_expression"
 # An auxiliary constructor is a `def this(...)`, registered as a method named
 # `this` on its class; `new C(...)` may run any of them.
 SCALA_AUXILIARY_CONSTRUCTOR = SCALA_THIS

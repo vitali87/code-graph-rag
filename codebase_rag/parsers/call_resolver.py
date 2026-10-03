@@ -3835,26 +3835,24 @@ class CallResolver:
 
     def resolve_scala_selection(
         self,
-        receiver: str,
+        receiver_type: str,
         member: str,
         module_qn: str,
-        bindings: dict[str, str | None],
         class_context: str | None,
     ) -> tuple[str, str] | None:
         """The method a parameterless Scala selection `receiver.member` runs.
 
         A `val` read and a parameterless call are spelled alike (`c.size`), so
         only a receiver whose class is KNOWN decides: `this`, a local typed by
-        its binding, or an object named outright. The member must be a method
-        of that class or an ancestor; no name-wide fallback answers for it.
+        its binding, or an object named outright. `receiver_type` is the type
+        name written for it, or `this`. The member must be a method of that
+        class or an ancestor; no name-wide fallback answers for it.
         """
-        if receiver == cs.SCALA_THIS:
-            class_qn = class_context
-        elif receiver in bindings:
-            written = bindings[receiver]
-            class_qn = self.scala_class_qn(written, module_qn) if written else None
-        else:
-            class_qn = self.scala_class_qn(receiver, module_qn)
+        class_qn = (
+            class_context
+            if receiver_type == cs.SCALA_THIS
+            else self.scala_class_qn(receiver_type, module_qn)
+        )
         if class_qn is None:
             return None
         result = self._try_resolve_method(class_qn, member)
