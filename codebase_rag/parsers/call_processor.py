@@ -4607,6 +4607,7 @@ class CallProcessor:
         callee_info = self._resolver.resolve_csharp_method_call(
             call_node, ctx.module_qn, call_var_types, ctx.caller_qn
         )
+        self._emit_csharp_overload_family(ctx, call_node)
         if (
             callee_info is not None
             and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET
@@ -4653,6 +4654,29 @@ class CallProcessor:
                 constructing=call_node.type in _OBJECT_CREATION_NODE_TYPES,
             )
         return callee_info
+
+    def _emit_csharp_overload_family(
+        self, ctx: _CallScanContext, call_node: Node
+    ) -> None:
+        # A member call whose arguments fit several same-arity overloads
+        # equally well takes an edge to each, and none of them is `exact`:
+        # the resolver's verdict carries the label onto the edge it returned
+        # too (issue #2619).
+        engine = self._resolver.type_inference.csharp_type_inference
+        family = engine.csharp_member_overload_family(
+            call_node, ctx.module_qn, ctx.caller_qn
+        )
+        if not family:
+            return
+        self._resolution = cs.EdgeResolution.OVERLOAD
+        self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
+        for sibling_qn in family:
+            for variant in self._resolver.function_registry.variants(sibling_qn):
+                ctx.ensure_rel(
+                    ctx.caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, variant),
+                )
 
     def _resolve_python_callee(
         self,

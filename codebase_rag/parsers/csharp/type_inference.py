@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import (
     CSharpCallShape,
+    CSharpGenericShape,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
@@ -23,11 +24,24 @@ from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
+from .overloads import (
+    ArgumentType,
+    Fit,
+    Relation,
+    best_candidates,
+    bindings_for_base,
+    fit,
+    plain_type_name,
+    substitute,
+    type_arguments,
+    unshadowed,
+)
 from .utils import (
     _normalize_type_name,
     annotate_type_ref,
     generic_arity_of_type_text,
     leaf_type_segment,
+    signature_type_name,
     split_type_ref,
     strip_generic_arguments,
     unique_carrier,
@@ -109,12 +123,6 @@ def _accepts_arg_count(
     return bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
 
 
-def _plain_type_name(type_name: str) -> str:
-    # `System.Int32?` -> `Int32`: the spelling the literal tables list.
-    name = type_name.strip().removesuffix(cs.CSHARP_NULLABLE_SUFFIX)
-    return name.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
-
-
 def _numeric_literal_type(node_type: str, text: str) -> str | None:
     """The C# type of a numeric literal, from its suffix and value, or None
     when it cannot be told (an unsuffixed integer too large for int)."""
@@ -148,7 +156,7 @@ def _literals_fit(leaf: str, literal_types: list[str | None]) -> bool:
     for param_type, literal in zip(_param_types(leaf), literal_types, strict=False):
         if literal is None:
             continue
-        param = _plain_type_name(param_type)
+        param = plain_type_name(param_type)
         if (
             param in cs.CSHARP_JUDGED_PARAM_TYPES
             and param not in cs.CSHARP_LITERAL_ACCEPTS[literal]
@@ -208,6 +216,18 @@ def _extension_receiver_matches(
     return not ambiguous_unqualified
 
 
+class _MemberCall(NamedTuple):
+    """A member call being bound, as overload ranking reads it."""
+
+    node: Node
+    receiver: Node
+    method_name: str
+    arg_count: int
+    local_var_types: dict[str, str]
+    module_qn: str
+    caller_qn: str | None
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -231,10 +251,12 @@ class CSharpTypeInferenceEngine:
         "csharp_class_namespaced",
         "csharp_namespaced_qns",
         "csharp_method_return_types",
+        "csharp_generic_shapes",
         "method_return_types",
         "function_locations",
         "_rel_to_module",
         "_call_memo",
+        "_overload_families",
     )
 
     def __init__(
@@ -263,6 +285,7 @@ class CSharpTypeInferenceEngine:
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
+        csharp_generic_shapes: dict[str, CSharpGenericShape] | None = None,
     ):
         # Memo for `resolve_csharp_method_call` (issue #1800). A chained
         # invocation types its receiver by resolving it, and THREE branches do
@@ -280,6 +303,12 @@ class CSharpTypeInferenceEngine:
         # to one; `caller_qn` is included because the same node resolves
         # differently per enclosing method (`this`, locals, imports).
         self._call_memo: dict[tuple[str, str | None, int, int], _MemoEntry] = {}
+        # The same-arity overloads a member call could not choose between
+        # beyond the one it returned, under the memo's key, so the call pass
+        # can fan the call out to them (issue #2619). Kept beside the memo
+        # rather than recomputed: the memo may answer the call node long
+        # after the ranking ran for it as a chained receiver.
+        self._overload_families: dict[tuple[str, str | None, int, int], list[str]] = {}
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.repo_path = repo_path
@@ -332,6 +361,11 @@ class CSharpTypeInferenceEngine:
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
+        )
+        # Shared reference (as above): {class qn: its type parameters and the
+        # arguments it passes its generic bases}, populated during ingestion.
+        self.csharp_generic_shapes = (
+            csharp_generic_shapes if csharp_generic_shapes is not None else {}
         )
         self._rel_to_module: dict[str, str] = {}
 
@@ -529,7 +563,7 @@ class CSharpTypeInferenceEngine:
         re-entered node degrades that site to an unresolved call, which is what
         the issue asks a pathological input to do instead of hanging.
         """
-        key = (module_qn, caller_qn, call_node.start_byte, call_node.end_byte)
+        key = self._call_key(call_node, module_qn, caller_qn)
         cached = self._call_memo.get(key, _MISSING)
         if cached is _IN_PROGRESS:
             return None
@@ -541,6 +575,27 @@ class CSharpTypeInferenceEngine:
         )
         self._call_memo[key] = result
         return result
+
+    @staticmethod
+    def _call_key(
+        call_node: Node, module_qn: str, caller_qn: str | None
+    ) -> tuple[str, str | None, int, int]:
+        return (module_qn, caller_qn, call_node.start_byte, call_node.end_byte)
+
+    def clear_call_memo(self) -> None:
+        # The ranked families answer the same keys as the memo, so they
+        # expire with it.
+        self._call_memo.clear()
+        self._overload_families.clear()
+
+    def csharp_member_overload_family(
+        self, call_node: Node, module_qn: str, caller_qn: str | None
+    ) -> list[str]:
+        """The other overloads a member call fits as well as the one it
+        resolved to, or [] when its arguments chose one (issue #2619)."""
+        return self._overload_families.get(
+            self._call_key(call_node, module_qn, caller_qn), []
+        )
 
     def _resolve_csharp_method_call(
         self,
@@ -581,20 +636,22 @@ class CSharpTypeInferenceEngine:
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
+        member_call = _MemberCall(
+            call_node,
+            receiver,
+            method_name,
+            arg_count,
+            local_var_types or {},
+            module_qn,
+            caller_qn,
+        )
         # Resolution order matters: an EXACT-ARITY instance method wins, then
         # an (always arity-exact) extension method, and only then the instance
         # name-only fallback. Trying the name-only fallback before extensions
         # would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
         # arity-correct `static Foo(this C, int)` extension.
-        if receiver_class_qn is not None and (
-            arity_hit := self._find_arity_across_parts(
-                receiver_class_qn, method_name, arg_count
-            )
-        ):
-            # A delegate-typed PROPERTY registers as a METHOD node with a bare
-            # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
-            # `entry.Callback()` is Delegate.Invoke, not a call to the property.
-            return self._method_or_property_target(arity_hit)
+        if arity_target := self._arity_member_target(member_call, receiver_class_qn):
+            return arity_target
         # An extension method (`static M(this T x, ...)` on an unrelated static
         # class) whose `this` receiver type matches the call's receiver; the
         # only path that binds `x.M()` to a method not in x's hierarchy.
@@ -607,14 +664,10 @@ class CSharpTypeInferenceEngine:
             arg_count,
         ):
             return cs.NodeLabel.METHOD.value, ext
-        if receiver_class_qn is not None and (
-            name_hit := self._find_name_across_parts(receiver_class_qn, method_name)
+        if fallback_target := self._fallback_member_target(
+            member_call, receiver_class_qn
         ):
-            # A delegate-typed PROPERTY invoked with call syntax
-            # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a method
-            # call; binding the property as a METHOD fabricates an edge. Its
-            # reachability comes from the read pass.
-            return self._method_or_property_target(name_hit)
+            return fallback_target
         return self._external_or_unresolved(
             receiver,
             method_name,
@@ -622,6 +675,54 @@ class CSharpTypeInferenceEngine:
             local_var_types or {},
             caller_qn,
         )
+
+    def _arity_member_target(
+        self, member_call: _MemberCall, receiver_class_qn: str | None
+    ) -> tuple[str, str] | None:
+        """An exact-arity instance method of the receiver's class, if any."""
+        if receiver_class_qn is None:
+            return None
+        arity_hit = self._find_arity_across_parts(
+            receiver_class_qn, member_call.method_name, member_call.arg_count
+        )
+        if not arity_hit:
+            return None
+        # Same-arity overloads are told apart by argument type; the first
+        # arity match stands when no argument can decide (issue #2619).
+        arity_hit = (
+            self._pick_member_overload(member_call, receiver_class_qn, compatible=False)
+            or arity_hit
+        )
+        # A delegate-typed PROPERTY registers as a METHOD node with a bare
+        # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
+        # `entry.Callback()` is Delegate.Invoke, not a call to the property.
+        return self._method_or_property_target(arity_hit)
+
+    def _fallback_member_target(
+        self, member_call: _MemberCall, receiver_class_qn: str | None
+    ) -> tuple[str, str] | None:
+        """The receiver's class member a call binds to once neither an
+        exact-arity method nor an extension method took it."""
+        if receiver_class_qn is None:
+            return None
+        # A call that leaves defaulted parameters out (`v.ValidateAsync(p)`
+        # for `ValidateAsync(T, CancellationToken = default)`) matches no
+        # arity exactly. Ranked by argument type among the overloads that
+        # accept it, it is not left to a name-only guess, which used to land
+        # on whatever shared the name, an explicit implementation included.
+        if defaulted_hit := self._pick_member_overload(
+            member_call, receiver_class_qn, compatible=True
+        ):
+            return self._method_or_property_target(defaulted_hit)
+        if name_hit := self._find_name_across_parts(
+            receiver_class_qn, member_call.method_name
+        ):
+            # A delegate-typed PROPERTY invoked with call syntax
+            # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a method
+            # call; binding the property as a METHOD fabricates an edge. Its
+            # reachability comes from the read pass.
+            return self._method_or_property_target(name_hit)
+        return None
 
     def _external_or_unresolved(
         self,
@@ -980,18 +1081,14 @@ class CSharpTypeInferenceEngine:
             if arg.type != cs.TS_CSHARP_ARGUMENT:
                 continue
             value = arg.named_children[-1] if arg.named_children else None
-            if value is None:
-                out.append(None)
-            elif value.type in (
-                cs.TS_CSHARP_INTEGER_LITERAL,
-                cs.TS_CSHARP_REAL_LITERAL,
-            ):
-                out.append(
-                    _numeric_literal_type(value.type, safe_decode_text(value) or "")
-                )
-            else:
-                out.append(cs.CSHARP_LITERAL_ARG_TYPES.get(value.type))
+            out.append(None if value is None else self._literal_type(value))
         return out
+
+    @staticmethod
+    def _literal_type(value: Node) -> str | None:
+        if value.type in (cs.TS_CSHARP_INTEGER_LITERAL, cs.TS_CSHARP_REAL_LITERAL):
+            return _numeric_literal_type(value.type, safe_decode_text(value) or "")
+        return cs.CSHARP_LITERAL_ARG_TYPES.get(value.type)
 
     def _static_import_scope(
         self, module_qn: str, caller_qn: str | None
@@ -1818,6 +1915,355 @@ class CSharpTypeInferenceEngine:
         if all(self.csharp_partial_groups.get(c) is group for c in candidates):
             return min(group)
         return None
+
+    # --- overloads by argument type (issue #2619) ------------------------
+
+    def _pick_member_overload(
+        self, call: _MemberCall, class_qn: str, compatible: bool
+    ) -> str | None:
+        """The overload a member call binds, or None when none applies.
+
+        Overloads its arguments fit equally well are kept for the call pass,
+        which fans the call out to all of them.
+        """
+        ranked = self._rank_member_overloads(call, class_qn, compatible)
+        if len(ranked) > 1:
+            self._overload_families[
+                self._call_key(call.node, call.module_qn, call.caller_qn)
+            ] = ranked[1:]
+        return ranked[0] if ranked else None
+
+    def _rank_member_overloads(
+        self, call: _MemberCall, class_qn: str, compatible: bool
+    ) -> list[str]:
+        """The overloads a member call fits best, best first.
+
+        Only exact-arity overloads compete unless `compatible`, which admits
+        those that take the argument count through defaults or a `params`
+        tail. Declaring types are visited from the receiver up, as the arity
+        walk visits them, and the first holding an overload the arguments can
+        bind decides: C# drops a base's methods once a derived one applies.
+        Each type is seen with the type arguments its subclasses pass it, so
+        `Validator<T>.Validate(T)` takes a Person on a `PersonValidator :
+        Inline<Person>`, and the receiver's own with the ones its written
+        type passes (`new Handler<Person>()`). Empty when no overload is
+        applicable.
+        """
+        arguments: list[ArgumentType | None] | None = None
+
+        def relation(
+            arg: str, arg_arity: int, param: str, param_arity: int
+        ) -> bool | None:
+            return self._converts_to(arg, arg_arity, param, param_arity, call.module_qn)
+
+        for declaring, bindings, open_names in self._typed_hierarchy(
+            class_qn, self._receiver_bindings(call.receiver, class_qn)
+        ):
+            qns = self._applicable_methods(
+                declaring, call.method_name, call.arg_count, compatible
+            )
+            if not qns:
+                continue
+            if arguments is None:
+                arguments = self._argument_types(
+                    call.node, call.local_var_types, call.module_qn, call.caller_qn
+                )
+            scored = [
+                (qn, self._overload_fits(qn, arguments, bindings, open_names, relation))
+                for qn in qns
+            ]
+            if best := best_candidates(scored):
+                return best
+        return []
+
+    def _overload_fits(
+        self,
+        method_qn: str,
+        arguments: list[ArgumentType | None],
+        bindings: Mapping[str, str],
+        open_names: frozenset[str],
+        relation: Relation,
+    ) -> list[Fit | None]:
+        # How each argument binds its parameter of `method_qn`. A type
+        # parameter the method declares itself shadows its class's of the
+        # same name (`Handler<T>.Handle<T>(T)`), so the binding the receiver
+        # gives the class's never reaches it; inference leaves it open.
+        own = self._method_type_parameters(method_qn)
+        visible = unshadowed(bindings, own)
+        return [
+            fit(substitute(parameter, visible), argument, open_names | own, relation)
+            for parameter, argument in zip(
+                self._call_parameters(method_qn, len(arguments)),
+                arguments,
+                strict=True,
+            )
+        ]
+
+    def _call_parameters(self, method_qn: str, arg_count: int) -> list[str]:
+        # The parameter each of `arg_count` arguments binds, one per argument,
+        # so every overload is scored on every argument. A call that expands
+        # a `params T[]` tail passes its trailing arguments as `T`; one that
+        # leaves defaulted parameters out binds the leading ones. A position
+        # no parameter takes (an overload that cannot apply) is unknown.
+        types = _param_types(method_qn)
+        shape = self.csharp_call_shapes.get(method_qn)
+        variadic = (
+            shape.variadic
+            if shape is not None
+            else bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
+        )
+        if variadic and arg_count != len(types):
+            element = types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)
+            types = types[:-1] + [element] * max(arg_count - len(types) + 1, 0)
+        return (types + [""] * arg_count)[:arg_count]
+
+    def _receiver_bindings(self, receiver: Node, class_qn: str) -> dict[str, str]:
+        # The type arguments the receiver's written type passes its class's
+        # parameters: `new Handler<Person>()`, or `Handler<Person> h`. Empty
+        # when the syntax spells none, or not one per parameter.
+        shape = self.csharp_generic_shapes.get(class_qn)
+        if shape is None or not shape.parameters:
+            return {}
+        written = self._written_receiver_type(receiver)
+        if not written:
+            return {}
+        arguments = type_arguments(signature_type_name(written))
+        if len(arguments) != len(shape.parameters):
+            return {}
+        return dict(zip(shape.parameters, arguments, strict=True))
+
+    def _written_receiver_type(self, receiver: Node) -> str | None:
+        # The type a receiver is written with: a construction's own type, or
+        # the declared type of the parameter or local it names (a `var`
+        # local's construction). Searched outward through the enclosing
+        # blocks and callables, stopping at the type body.
+        while (
+            receiver.type == cs.TS_PARENTHESIZED_EXPRESSION and receiver.named_children
+        ):
+            receiver = receiver.named_children[0]
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            return safe_decode_text(receiver.child_by_field_name(cs.FIELD_TYPE))
+        if receiver.type != cs.TS_CSHARP_IDENTIFIER:
+            return None
+        name = safe_decode_text(receiver)
+        current = receiver.parent
+        while name and current is not None:
+            if current.type == cs.TS_CSHARP_DECLARATION_LIST:
+                return None
+            if current.type == cs.TS_CSHARP_BLOCK and (
+                declared := self._block_local_type(current, name)
+            ):
+                return declared
+            if declared := self._parameter_type(current, name):
+                return declared
+            current = current.parent
+        return None
+
+    def _block_local_type(self, block: Node, name: str) -> str | None:
+        for statement in block.named_children:
+            for decl in statement.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                declarator = self._declarator_named(decl, name)
+                if declarator is not None:
+                    return self._declarator_written_type(decl, declarator)
+        return None
+
+    @staticmethod
+    def _declarator_named(decl: Node, name: str) -> Node | None:
+        for declarator in decl.named_children:
+            if (
+                declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+                and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+                == name
+            ):
+                return declarator
+        return None
+
+    def _declarator_written_type(self, decl: Node, declarator: Node) -> str | None:
+        # The declaration's own type, or, for a `var` local, the type its
+        # construction spells.
+        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+            return safe_decode_text(type_node)
+        created = self._descendants_of_type(
+            declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
+        )
+        return (
+            safe_decode_text(created[0].child_by_field_name(cs.FIELD_TYPE))
+            if created
+            else None
+        )
+
+    @staticmethod
+    def _parameter_type(scope: Node, name: str) -> str | None:
+        param_list = scope.child_by_field_name(cs.FIELD_PARAMETERS)
+        if param_list is None:
+            return None
+        for param in param_list.named_children:
+            if (
+                param.type == cs.TS_CSHARP_PARAMETER
+                and safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)) == name
+            ):
+                return safe_decode_text(param.child_by_field_name(cs.FIELD_TYPE))
+        return None
+
+    def _typed_hierarchy(
+        self, class_qn: str, receiver_bindings: dict[str, str]
+    ) -> Iterator[tuple[str, dict[str, str], frozenset[str]]]:
+        # (type, the type arguments bound to its parameters, its parameters
+        # left unbound) from the receiver's parts up through every base, in
+        # the depth-first order `_find_method_by_arity` walks.
+        seen: set[str] = set()
+        stack: list[tuple[str, dict[str, str]]] = [
+            (root, receiver_bindings)
+            for root in reversed(self._partial_roots(class_qn))
+        ]
+        while stack:
+            current, bindings = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            shape = self.csharp_generic_shapes.get(current)
+            parameters = shape.parameters if shape is not None else ()
+            yield (
+                current,
+                bindings,
+                frozenset(p for p in parameters if p not in bindings),
+            )
+            stack.extend(
+                (
+                    base,
+                    bindings_for_base(
+                        self.csharp_generic_shapes,
+                        self.csharp_class_generic_arity,
+                        current,
+                        bindings,
+                        base,
+                    ),
+                )
+                for base in reversed(self.class_inheritance.get(current, []))
+            )
+
+    def _applicable_methods(
+        self, class_qn: str, method_name: str, arg_count: int, compatible: bool
+    ) -> list[str]:
+        # A line-suffixed twin (`M(int)@12`, a `#if` branch) is the same
+        # overload; the call pass reaches it through the registry variants.
+        prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+        found = [
+            qn
+            for qn in self._direct_same_name_methods(class_qn, method_name)
+            if _arity(leaf := qn[len(prefix) :]) == arg_count
+            or (
+                compatible
+                and _accepts_arg_count(leaf, arg_count, self.csharp_call_shapes.get(qn))
+            )
+        ]
+        spelled = set(found)
+        return [
+            qn
+            for qn in found
+            if (natural := qn_markers.strip_dup_marker(qn)) == qn
+            or natural not in spelled
+        ]
+
+    def _method_type_parameters(self, method_qn: str) -> frozenset[str]:
+        # The type parameters a generic method declares (`M<U>(U item)`),
+        # as its declaration spells them.
+        shape = self.csharp_call_shapes.get(method_qn)
+        return frozenset(shape.type_parameters) if shape is not None else frozenset()
+
+    def _argument_types(
+        self,
+        call_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> list[ArgumentType | None]:
+        arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if arg_list is None:
+            return []
+        arguments = [c for c in arg_list.children if c.type == cs.TS_CSHARP_ARGUMENT]
+        # A named argument may stand at any position, so with one present no
+        # argument is matched to a parameter by where it is written.
+        if any(a.child_by_field_name(cs.FIELD_NAME) is not None for a in arguments):
+            return [None] * len(arguments)
+        return [
+            self._argument_type(a, local_var_types, module_qn, caller_qn)
+            for a in arguments
+        ]
+
+    def _argument_type(
+        self,
+        argument: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> ArgumentType | None:
+        value = argument.named_children[-1] if argument.named_children else None
+        if value is None:
+            return None
+        if (literal := self._literal_type(value)) is not None:
+            return ArgumentType(literal, None, 0, None)
+        if value.type in (
+            cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
+            cs.TS_CSHARP_CAST_EXPRESSION,
+        ):
+            # The written type keeps its arguments: `new Ctx<Person>()` is
+            # an identity for `Ctx<T>` with T := Person, not for `Ctx<Order>`.
+            raw = safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
+            if not raw:
+                return None
+            written = signature_type_name(raw)
+            return ArgumentType(
+                None,
+                strip_generic_arguments(written),
+                generic_arity_of_type_text(written),
+                type_arguments(written),
+            )
+        annotated = self._receiver_type_name(
+            value, local_var_types, module_qn, caller_qn
+        )
+        if not annotated:
+            return None
+        name, arity = split_type_ref(annotated)
+        return ArgumentType(None, name, arity, None)
+
+    def _converts_to(
+        self,
+        arg_name: str,
+        arg_arity: int,
+        param_name: str,
+        param_arity: int,
+        module_qn: str,
+    ) -> bool | None:
+        # Known only between first-party types whose conversion the class
+        # hierarchy settles: an argument class converts to a parameter
+        # class it derives from, and to no other class. An interface on
+        # either side is implemented outside `class_inheritance`, so it
+        # stays unknown, as does anything external.
+        param_qn = self._type_name_to_qn(param_name, module_qn, param_arity)
+        arg_qn = self._type_name_to_qn(arg_name, module_qn, arg_arity)
+        if param_qn is None or arg_qn is None:
+            return None
+        if self.function_registry.get(param_qn) != NodeType.CLASS or (
+            self.function_registry.get(arg_qn) not in (NodeType.CLASS, NodeType.ENUM)
+        ):
+            return None
+        return param_qn in self._class_ancestry(arg_qn)
+
+    def _class_ancestry(self, class_qn: str) -> set[str]:
+        seen: set[str] = set()
+        queue = deque(self._partial_roots(class_qn))
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            for base in self.class_inheritance.get(current, []):
+                queue.extend(self._partial_roots(base))
+        return seen
 
     # An exact-arity match ANYWHERE up the hierarchy (_find_arity_across_parts)
     # wins before any same-name fallback, so an inherited correct-arity overload

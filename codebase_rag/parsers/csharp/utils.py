@@ -3,6 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import CSharpGenericBase, CSharpGenericShape
 from ..utils import safe_decode_text
 
 
@@ -187,6 +188,44 @@ def normalize_csharp_type_name(type_node: Node) -> str | None:
     return _normalize_type_name(text) if text else None
 
 
+def signature_type_name(text: str) -> str:
+    """A type as a method signature spells it: `Ctx< T >?` -> `Ctx<T>`.
+
+    Generic arguments are kept, because `Validate(Ctx<T>)` and
+    `Validate(Ctx)` are two overloads and erasing them made the second a
+    line-suffixed duplicate of the first (issue #2619). They get one
+    canonical spacing so two spellings of a type name one overload, and a
+    trailing nullable `?` is dropped as the type maps drop it.
+    """
+    collapsed = cs.CHAR_SPACE.join(text.split())
+    out: list[str] = []
+    depth = 0
+    for index, char in enumerate(collapsed):
+        if char == cs.CHAR_SPACE:
+            if _drops_signature_space(out, collapsed[index + 1 : index + 2], depth):
+                continue
+        elif char == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and depth:
+            depth -= 1
+        out.append(char)
+        if char == cs.CHAR_COMMA and depth:
+            out.append(cs.CHAR_SPACE)
+    return "".join(out).strip().rstrip(cs.CHAR_QUESTION_MARK)
+
+
+def _drops_signature_space(out: list[str], following: str, depth: int) -> bool:
+    # Whether `signature_type_name` leaves out the space between what it has
+    # written so far and `following`, the character after that space.
+    if following == cs.CHAR_ANGLE_OPEN:
+        return True
+    if not depth:
+        return False
+    if out and out[-1] in cs.CSHARP_SIGNATURE_TIGHT_CHARS + cs.CHAR_SPACE:
+        return True
+    return following in cs.CSHARP_SIGNATURE_TIGHT_CHARS
+
+
 def extract_parameter_type_names(method_node: Node) -> list[str]:
     # The declared type of each parameter, in order, for the method-qn
     # signature that keeps C# overloads distinct. A `params object[]` tail is
@@ -204,8 +243,146 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
             type_node = child
         if type_node is not None and type_node.text:
             if name := safe_decode_text(type_node):
-                types.append(_normalize_type_name(name))
+                types.append(signature_type_name(name))
     return types
+
+
+def explicit_interface_name(member_node: Node) -> str | None:
+    """The interface an explicit implementation names, as written:
+    `int IValidator.Validate(Ctx c)` -> `IValidator`; None for any other
+    member."""
+    for child in member_node.children:
+        if child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER:
+            named = child.named_children
+            text = safe_decode_text(named[0]) if named else None
+            return signature_type_name(text) if text else None
+    return None
+
+
+def member_qn_leaf(member_node: Node) -> str | None:
+    """The leaf a C# member registers under when its bare name is not enough.
+
+    Parameters give `Validate(Ctx<T>)`, keeping overloads apart. An explicit
+    interface implementation is prefixed with its interface,
+    `IValidator#Validate(Ctx)`: C# reaches it only through that interface,
+    so it is not an overload of the class's own `Validate` and must not
+    share their name (issue #2619). None for a parameterless member that
+    implements nothing explicitly, whose bare name is its leaf.
+    """
+    name, params = extract_method_signature(member_node)
+    if not name:
+        return None
+    if interface := explicit_interface_name(member_node):
+        separator = cs.CSHARP_EXPLICIT_IMPL_SEPARATOR
+        name = f"{interface.replace(cs.SEPARATOR_DOT, separator)}{separator}{name}"
+    elif not params:
+        return None
+    signature = (
+        f"{cs.CHAR_PAREN_OPEN}{cs.SEPARATOR_COMMA_SPACE.join(params)}{cs.CHAR_PAREN_CLOSE}"
+        if params
+        else ""
+    )
+    return f"{name}{signature}"
+
+
+def _generic_base(node: Node) -> CSharpGenericBase | None:
+    # A base list entry that passes type arguments, else None: a plain base
+    # binds no parameter. A qualified base carries them on its last segment,
+    # a record's positional base on its type.
+    if node.type in (
+        cs.TS_CSHARP_QUALIFIED_NAME,
+        cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE,
+    ):
+        inner = (
+            node.child_by_field_name(cs.FIELD_NAME)
+            if node.type == cs.TS_CSHARP_QUALIFIED_NAME
+            else next(iter(node.named_children), None)
+        )
+        return _generic_base(inner) if inner is not None else None
+    if node.type != cs.TS_CSHARP_GENERIC_NAME:
+        return None
+    name_node = next(
+        (c for c in node.children if c.type == cs.TS_CSHARP_IDENTIFIER), None
+    )
+    arg_list = next(
+        (c for c in node.children if c.type == cs.TS_CSHARP_TYPE_ARGUMENT_LIST), None
+    )
+    name = safe_decode_text(name_node) if name_node is not None else None
+    if not name or arg_list is None:
+        return None
+    arguments = tuple(
+        signature_type_name(text)
+        for arg in arg_list.named_children
+        if (text := safe_decode_text(arg))
+    )
+    return CSharpGenericBase(name, arguments) if arguments else None
+
+
+def type_parameter_names(parameter_list: Node | None) -> tuple[str, ...]:
+    """The names a `type_parameter_list` declares: `<[A] T, out U>` ->
+    ("T", "U"); () for no list."""
+    if parameter_list is None:
+        return ()
+    return tuple(
+        name
+        for param in parameter_list.named_children
+        if (name := safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)))
+    )
+
+
+def generic_shape(type_node: Node) -> CSharpGenericShape | None:
+    """`class PersonValidator : Inline<Person>` -> no parameters and the
+    base `Inline<Person>`; `class Inline<T> : Validator<T>` -> `T` and
+    `Validator<T>`. None for a type that takes and passes no type argument,
+    which is most of them."""
+    parameters: list[str] = []
+    bases: list[CSharpGenericBase] = []
+    for child in type_node.children:
+        if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
+            parameters.extend(type_parameter_names(child))
+        elif child.type == cs.TS_CSHARP_BASE_LIST:
+            bases.extend(
+                base
+                for entry in child.named_children
+                if (base := _generic_base(entry)) is not None
+            )
+    if not (parameters or bases):
+        return None
+    return CSharpGenericShape(tuple(parameters), tuple(bases))
+
+
+def split_explicit_member(leaf: str) -> tuple[str, str] | None:
+    """(`IValidator`, `Validate(Ctx)`) for the leaf `IValidator#Validate(Ctx)`.
+
+    The interface comes back with its dots restored; None for a leaf that
+    is not an explicit interface implementation.
+    """
+    head, paren, params = leaf.partition(cs.CHAR_PAREN_OPEN)
+    interface, separator, name = head.rpartition(cs.CSHARP_EXPLICIT_IMPL_SEPARATOR)
+    if not (separator and interface and name):
+        return None
+    return (
+        interface.replace(separator, cs.SEPARATOR_DOT),
+        f"{name}{paren}{params}",
+    )
+
+
+def names_interface(written: str, interface_path: str, interface_arity: int) -> bool:
+    """Whether the interface an explicit implementation spells (`IRun`,
+    `B.IRun`, `IRun<T>`) can be the one whose namespace-qualified name is
+    `interface_path` (`B.IRun`).
+
+    Every segment the spelling writes must agree, so `A.IRun.Go` and
+    `B.IRun.Go` on one class stay with their own interfaces (issue #2619),
+    and so must the generic arity.
+    """
+    path = written.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    segments = strip_generic_arguments(path).split(cs.SEPARATOR_DOT)
+    target = strip_generic_arguments(interface_path).split(cs.SEPARATOR_DOT)
+    return (
+        target[-len(segments) :] == segments
+        and generic_arity_of_type_text(path) == interface_arity
+    )
 
 
 _CSHARP_TYPE_DECLARATIONS = frozenset(
