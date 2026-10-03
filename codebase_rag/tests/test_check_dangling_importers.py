@@ -471,6 +471,49 @@ def test_wildcard_skips_an_underscore_name_of_a_module_without_all(
     ]
 
 
+def test_wildcard_of_a_module_that_reassigns_all_without_the_name_is_a_finding(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A later `__all__ = [...]` replaces the list before it, so `import *`
+    # takes only `other` (Greptile, PR #2574).
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root,
+        store,
+        updater,
+        "app/util.py",
+        "def helper():\n    return 1\n\n\ndef other():\n    return 2\n\n\n"
+        '__all__ = ["helper"]\n__all__ = ["other"]\n',
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_walrus_in_a_lambda_default_binds_the_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A lambda's defaults run in the enclosing scope when it is created;
+    # only its body is a scope of its own (Greptile, PR #2574).
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\nfactory = lambda x=(helper := keep): x\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
 # --- what must not change -----------------------------------------------------
 
 
@@ -748,6 +791,67 @@ def test_wildcard_of_a_module_whose_all_lists_the_name_passes(
 
     assert _imports_cleanly(root)
     assert delta["dangling_importers"] == []
+
+
+def test_wildcard_of_a_module_that_extends_a_reassigned_all_with_the_name_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root,
+        store,
+        updater,
+        "app/util.py",
+        "def helper():\n    return 1\n\n\ndef other():\n    return 2\n\n\n"
+        '__all__ = ["unused"]\n__all__ = ["other"]\n__all__ += ["helper"]\n',
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_wildcard_of_a_module_that_reassigns_all_in_a_branch_is_taken_at_its_word(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A branch may not run, so the list before it may still be the one
+    # `import *` reads.
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root,
+        store,
+        updater,
+        "app/util.py",
+        "def helper():\n    return 1\n\n\nFLAG = False\n"
+        '__all__ = ["helper"]\nif FLAG:\n    __all__ = ["FLAG"]\n',
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_walrus_in_a_lambda_body_binds_no_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\nfactory = lambda x=keep: (helper := x)\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
 
 
 def test_wildcard_of_a_module_whose_all_is_computed_is_taken_at_its_word(

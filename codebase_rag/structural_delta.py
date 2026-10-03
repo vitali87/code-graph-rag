@@ -691,7 +691,8 @@ def _stored_names(node: ast.AST) -> Iterator[str]:
     A lambda's body and a comprehension's own variables are scopes of their
     own in Python 3, so `[helper for helper in items]` binds no module-level
     `helper` (Greptile, PR #2574); `:=` inside a comprehension still binds
-    in the enclosing scope (PEP 572), and so does a `case` capture.
+    in the enclosing scope (PEP 572), and so does a `case` capture or a
+    lambda's default values, which run where the lambda is made.
     """
     pending = [node]
     while pending:
@@ -700,8 +701,7 @@ def _stored_names(node: ast.AST) -> Iterator[str]:
             yield current.id
         elif captured := _pattern_capture(current):
             yield captured
-        if not isinstance(current, ast.Lambda):
-            pending.extend(_same_scope_children(current))
+        pending.extend(_same_scope_children(current))
 
 
 def _pattern_capture(node: ast.AST) -> str | None:
@@ -711,6 +711,12 @@ def _pattern_capture(node: ast.AST) -> str | None:
 
 
 def _same_scope_children(node: ast.AST) -> Iterator[ast.AST]:
+    if isinstance(node, ast.Lambda):
+        # `lambda x=(helper := keep): x` binds `helper` where it is made
+        # (Greptile, PR #2574); a missing keyword-only default is None.
+        defaults = (*node.args.defaults, *node.args.kw_defaults)
+        yield from (default for default in defaults if default is not None)
+        return
     for field, value in ast.iter_fields(node):
         if isinstance(node, ast.comprehension) and field == "target":
             continue
@@ -789,27 +795,67 @@ def _python_top_level_names(text: str) -> _SourceNames | None:
         return None
     own: set[str] = set()
     imported: set[str] = set()
-    # Every literal write is taken together, whatever its order: a name one
-    # of them lists may be in the final `__all__`, and only a name none of
-    # them lists is surely out.
-    star: set[str] | None = None
-    star_unknown = False
     pending: list[ast.AST] = list(tree.body)
     while pending:
         node = pending.pop()
-        writes_all, listed = _dunder_all_write(node)
-        if writes_all:
-            star = (star or set()) | (listed or set())
-            star_unknown |= listed is None
         if isinstance(node, ast.ImportFrom):
             imported.update(alias.asname or alias.name for alias in node.names)
         else:
             own.update(_names_bound_by(node, pending))
+    star, star_unknown = _star_names(tree.body)
     return _SourceNames(
         own=frozenset(own),
         imported=frozenset(imported),
-        star=None if star is None else frozenset(star),
+        star=star,
         star_unknown=star_unknown,
+    )
+
+
+def _in_source_order(
+    statements: Iterable[ast.AST], in_branch: bool = False
+) -> Iterator[tuple[ast.AST, bool]]:
+    """Each statement that runs at import time, in source order.
+
+    The flag says whether it sits in a statement list nested in another (an
+    `if` or loop body, a `try` handler), which may not run; a `def` or
+    `class` body is not import-time module code and is not entered.
+    """
+    for node in statements:
+        yield node, in_branch
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            continue
+        for field, value in ast.iter_fields(node):
+            if field in _PY_BLOCK_FIELDS:
+                yield from _in_source_order(value, True)
+
+
+def _star_names(
+    statements: list[ast.stmt],
+) -> tuple[frozenset[str] | None, bool]:
+    """The `star` and `star_unknown` of `_SourceNames`, from `__all__` writes.
+
+    Read in source order: an assignment at the top level replaces every
+    write before it (Greptile, PR #2574), while one in a branch may not run,
+    so the names it lists join the earlier ones -- a name any write that may
+    survive lists may be in the final `__all__`, and only the rest are out.
+    """
+    star: set[str] | None = None
+    unknown = False
+    for node, in_branch in _in_source_order(statements):
+        writes_all, listed = _dunder_all_write(node)
+        if not writes_all:
+            continue
+        if not in_branch and _replaces_dunder_all(node):
+            star, unknown = set(), False
+        star = (star or set()) | (listed or set())
+        unknown |= listed is None
+    return (None if star is None else frozenset(star)), unknown
+
+
+def _replaces_dunder_all(node: ast.AST) -> bool:
+    """Whether a statement that writes `__all__` rebinds it to a new value."""
+    return isinstance(node, ast.Assign) or (
+        isinstance(node, ast.AnnAssign) and node.value is not None
     )
 
 
