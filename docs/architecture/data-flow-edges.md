@@ -12,7 +12,7 @@ this page is the detailed reference.
 All three are **opt-in**. They belong to the `io` capture group, which is
 excluded from the default capture set, so a default build emits none of them and
 does no extra work. Enable them with the `io` capture group (see
-[Configuration](../getting-started/configuration.md)).
+[Capture Groups](graph-schema.md#capture-groups)).
 
 ## The mental model: taint
 
@@ -101,18 +101,20 @@ the three shapes. All three below come from one function body:
 
 ```python
 def build():
-    return os.getenv("K")      # build returns a value read from ENV::K
+    return os.getenv("K")  # build returns a value read from ENV::K
+
 
 def forward(v):
     print(v)
 
+
 def leak():
-    x = os.getenv("K")         # x now carries ENV::K
-    print(x)                   # shape 1
+    x = os.getenv("K")  # x now carries ENV::K
+    print(x)  # shape 1
     t = os.getenv("T")
-    forward(t)                 # shape 2
+    forward(t)  # shape 2
     r = build()
-    print(r)                   # shape 3
+    print(r)  # shape 3
 ```
 
 The three `FLOWS_TO` edges that body produces:
@@ -256,11 +258,33 @@ Within a function body, taint moves and disappears by these rules:
 - **Copy.** `b = a` copies `a`'s taint (and its origin resource) to `b`.
 - **Rebind to a new source.** `x = os.getenv("B")` after `x = os.getenv("A")`
   makes `x` carry `ENV::B`; the discarded `ENV::A` no longer flows from `x`.
+- **Transform.** A value built from a tainted one is still tainted, with the
+  union of its operands' origins. In Python this covers a builtin or library
+  call (`float(raw)`, `json.dumps(cfg)`), a method on the value
+  (`raw.strip().lower()`), string building (`f"token={t}"`, a dynamic
+  format spec such as `f"{'':{t}>8}"`, `"%s" % t`, `"{}".format(t)`,
+  `"k=" + t`, `s += t`, `", ".join(parts)`), arithmetic,
+  containers (`[t]`, `{"k": t}`), a slice or attribute of the value (`t[:4]`,
+  `resp.text`), `await`, and comprehensions (`"".join(c for c in t)`). This is
+  the usual taint-engine default for code the analysis cannot see into. A
+  **first-party** callee is not treated this way: it keeps its own return
+  summary, so `fresh(t)` with `def fresh(v): return "x"` is clean.
+- **Taint-clearing calls.** A short list of calls whose result reveals nothing
+  of their input stops taint: `len`, `bool`, `id`, `hash`, `type`,
+  `isinstance`, `issubclass`, `callable`, `hasattr`, `any`, `all`, the
+  `hashlib` / `hmac` digests and `compare_digest`, and the `str` predicate and
+  lookup methods (`startswith`, `endswith`, `is*`, `count`, `find`, `index`).
+  A comparison (`t == "x"`) or `not t` yields a bool and is clean too.
+  Escaping and quoting (`html.escape`, `shlex.quote`) deliberately stay
+  transforms: `FLOWS_TO` tracks where a value came from, and an escaped secret
+  written to stdout still leaks the secret. The list is
+  `PY_TAINT_CLEARING_CALLS` / `PY_TAINT_CLEARING_METHODS` in
+  `codebase_rag/constants/ast_python.py`.
 - **Kill.** Assigning a tainted variable to something clean removes its taint:
-  `x = "safe"` or `x = <untainted variable>` means `x` is no longer tracked, so
-  a later `print(x)` produces **no** resource flow. The `READS_FROM` /
-  `WRITES_TO` edges for the individual calls are still recorded; only the false
-  data-flow edge is suppressed.
+  `x = "safe"`, `x = <untainted variable>` or `x = len(x)` means `x` is no
+  longer tracked, so a later `print(x)` produces **no** resource flow. The
+  `READS_FROM` / `WRITES_TO` edges for the individual calls are still recorded;
+  only the false data-flow edge is suppressed.
 - **Co-occurrence is not flow.** An unrelated read sitting next to an untainted
   call produces no `FLOWS_TO` edge. Reading `ENV::K` in the same function that
   calls `helper(u)` with an untainted `u` does not connect the two.
@@ -357,6 +381,13 @@ module is re-exported under its own name. A project that does
   returning **different** sources on different branches carries every origin to its
   callers. It is not path-sensitive: a kill on one branch of an `if`/`else` drops
   taint conservatively.
+- The **Transform** rule above is Python's. The lean walks keep narrower
+  per-language tables: Go type conversions, Rust borrows and value-preserving
+  methods (`as_bytes`, `to_string`, `unwrap`), C# await helpers, Dart string
+  interpolation and Rust format macros carry taint, but a JavaScript template
+  literal, `+` concatenation or `.trim()` still ends the flow there. A Python
+  `for` statement does not bind its loop variable to the iterable's taint
+  (a comprehension does).
 - Return taint composes **transitively across functions and files**. Per-function
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
