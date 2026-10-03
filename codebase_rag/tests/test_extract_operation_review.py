@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing import ExtractRefused, extract
 from codebase_rag.tests.extract_inline_helpers import (
     PROJECT,
@@ -32,7 +33,7 @@ def _run_node(path: Path) -> str:
     if _NODE is None:
         pytest.skip("node is not installed")
     done = subprocess.run(
-        [_NODE, str(path)], capture_output=True, text=True, check=False
+        [_NODE, str(path)], capture_output=True, encoding=cs.ENCODING_UTF8, check=False
     )
     assert done.returncode == 0, done.stderr
     return done.stdout.strip()
