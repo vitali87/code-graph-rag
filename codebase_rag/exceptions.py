@@ -80,6 +80,9 @@ SETTING_NOT_JSON_LIST = '{value!r} is not a JSON list, such as ["ls", "cat"].'
 SETTING_JSON_LIST_TOO_DEEP = (
     '{value} is nested too deeply to read as a JSON list, such as ["ls", "cat"].'
 )
+# A `.env` value `os.environ` refused, such as one past the 32,767 characters
+# Windows holds in a variable. The error names the limit, not the value.
+SETTING_NOT_SETTABLE = "the operating system refused it ({error})."
 CONFIG = "{role} configuration error: {error}"
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "

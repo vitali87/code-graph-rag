@@ -10,11 +10,13 @@ an empty host) failed deep inside a command instead of naming the variable.
 import os
 import subprocess
 import sys
+from collections.abc import Iterator, MutableMapping
 from pathlib import Path
 from unittest.mock import patch
 
 import click
 import pytest
+from dotenv import load_dotenv
 from pydantic import ValidationError
 from pydantic_settings import EnvSettingsSource
 from typer.testing import CliRunner
@@ -47,12 +49,44 @@ _VARIABLES = (
 # without a database.
 _A_COMMAND = ("delete-project", "--name", "demo")
 _NOT_JSON = '\'ls,cat\' is not a JSON list, such as ["ls", "cat"].'
-# Far past any interpreter's recursion limit for `json.loads`, and shown
-# shortened in the refusal rather than echoed whole.
-_TOO_DEEP = "[" * 100_000
+# Windows holds at most this many characters in one variable, `NAME=value`
+# counted together, and `os.environ` raises ValueError past it.
+_WINDOWS_VARIABLE_LIMIT = 32_767
+_WINDOWS_REFUSAL = (
+    f"the environment variable is longer than {_WINDOWS_VARIABLE_LIMIT} characters"
+)
+# The value CI failed on: too long for Windows to hold in its environment.
+_TOO_LONG_FOR_WINDOWS = "[" * 100_000
+# Three times the limit `json.loads` has for nesting on CPython 3.12 and 3.13
+# (about 10,000 levels), and shown shortened in the refusal rather than echoed
+# whole. Short enough for Windows to hold in a variable, so the decoder, not
+# the environment, refuses it there too.
+_TOO_DEEP = "[" * 30_000
 _NESTED_TOO_DEEPLY = (
     "'[[[[[[[[[[[[...[[[[[[[[[[[[[' is nested too deeply to read as a JSON "
     'list, such as ["ls", "cat"].'
+)
+
+
+# `cgr` with `os.environ` refusing a variable as Windows does, so the value
+# that failed every command there is reproduced on every OS.
+_CLI_WITH_WINDOWS_LIMIT = f"""
+import os
+_store = os._Environ.__setitem__
+def _refuse_like_windows(environ, key, value):
+    if len(key) + 1 + len(value) > {_WINDOWS_VARIABLE_LIMIT}:
+        raise ValueError({_WINDOWS_REFUSAL!r})
+    _store(environ, key, value)
+os._Environ.__setitem__ = _refuse_like_windows
+{_CLI}
+"""
+# Variables only the `.env` loading tests set, besides python-dotenv's switch.
+_SCRATCH = (
+    "CGR_TEST_DOTENV_FIRST",
+    "CGR_TEST_DOTENV_REFUSED",
+    "CGR_TEST_DOTENV_LAST",
+    "CGR_TEST_DOTENV_BARE",
+    "PYTHON_DOTENV_DISABLED",
 )
 
 
@@ -61,13 +95,14 @@ def _cgr(
     *args: str,
     env: dict[str, str] | None = None,
     dotenv: str | None = None,
+    script: str = _CLI,
 ) -> subprocess.CompletedProcess[str]:
     if dotenv is not None:
         (cwd / ".env").write_text(f"{dotenv}\n", encoding="utf-8")
     child_env = {k: v for k, v in os.environ.items() if k.upper() not in _VARIABLES}
     child_env.update(env or {})
     return subprocess.run(
-        [sys.executable, "-c", _CLI, *args],
+        [sys.executable, "-c", script, *args],
         cwd=cwd,
         env=child_env,
         capture_output=True,
@@ -86,6 +121,36 @@ def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
     return tmp_path
+
+
+@pytest.fixture
+def scratch_environ(clean_env: Path) -> Iterator[Path]:
+    # Loading `.env` writes the real environment; it is restored whole.
+    with patch.dict(os.environ):
+        for name in _SCRATCH:
+            os.environ.pop(name, None)
+        yield clean_env
+
+
+@pytest.fixture
+def windows_sized_environ(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only writes are refused, and only past the limit, as on Windows.
+    store = type(os.environ).__setitem__
+
+    def refuse_like_windows(
+        environ: MutableMapping[str, str], key: str, value: str
+    ) -> None:
+        if len(key) + 1 + len(value) > _WINDOWS_VARIABLE_LIMIT:
+            raise ValueError(_WINDOWS_REFUSAL)
+        store(environ, key, value)
+
+    monkeypatch.setattr(type(os.environ), "__setitem__", refuse_like_windows)
+
+
+def _write_dotenv(directory: Path, *lines: str) -> Path:
+    path = directory / ".env"
+    path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+    return path
 
 
 class TestTheCliStartsWithAnInvalidSetting:
@@ -180,13 +245,16 @@ class TestTheCliStartsWithAnInvalidSetting:
         # `json.loads` raises RecursionError, not JSONDecodeError, on arrays
         # nested past the interpreter's limit, and it escaped the import of
         # the settings: `--version` and `--help` failed with a traceback
-        # (Greptile, PR #2556). Written to `.env`, as no OS takes a variable
-        # this long from the environment.
+        # (Greptile, PR #2556). Read where the environment holds no more than
+        # Windows does, so it is the decoder that refuses the value on every
+        # OS: one past that limit is refused by the environment on Windows
+        # first (CI on PR #2556).
         dotenv = f"SHELL_COMMAND_ALLOWLIST={_TOO_DEEP}"
+        windows = _CLI_WITH_WINDOWS_LIMIT
 
-        version = _cgr(tmp_path, "--version", dotenv=dotenv)
-        usage = _cgr(tmp_path, "--help", dotenv=dotenv)
-        command = _cgr(tmp_path, *_A_COMMAND, dotenv=dotenv)
+        version = _cgr(tmp_path, "--version", dotenv=dotenv, script=windows)
+        usage = _cgr(tmp_path, "--help", dotenv=dotenv, script=windows)
+        command = _cgr(tmp_path, *_A_COMMAND, dotenv=dotenv, script=windows)
 
         assert version.returncode == 0, version.stderr
         assert usage.returncode == 0, usage.stderr
@@ -197,6 +265,131 @@ class TestTheCliStartsWithAnInvalidSetting:
         )
         for result in (version, usage, command):
             assert "Traceback" not in result.stdout + result.stderr
+
+    def test_a_value_too_long_for_the_environment_is_reported_not_raised(
+        self, tmp_path: Path
+    ) -> None:
+        # Windows refuses a variable past 32,767 characters, and the ValueError
+        # escaped `load_dotenv` while the settings were imported, so every
+        # command failed there, `--version` too (CI on PR #2556). The value is
+        # also nested too deeply, yet is reported once, for the environment.
+        dotenv = f"SHELL_COMMAND_ALLOWLIST={_TOO_LONG_FOR_WINDOWS}\nMEMGRAPH_PORT=7688"
+        windows = _CLI_WITH_WINDOWS_LIMIT
+
+        version = _cgr(tmp_path, "--version", dotenv=dotenv, script=windows)
+        usage = _cgr(tmp_path, "--help", dotenv=dotenv, script=windows)
+        command = _cgr(tmp_path, *_A_COMMAND, dotenv=dotenv, script=windows)
+
+        assert version.returncode == 0, version.stderr
+        assert "code-graph-rag version" in version.stdout
+        assert usage.returncode == 0, usage.stderr
+        assert command.returncode == 2, command.stderr
+        assert command.stderr.strip() == (
+            "Error: Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: "
+            f"the operating system refused it ({_WINDOWS_REFUSAL})."
+        )
+        for result in (version, usage, command):
+            assert "Traceback" not in result.stdout + result.stderr
+
+
+class TestDotenvIntoTheEnvironment:
+    """`.env` is merged into the environment as `load_dotenv` merged it, but a
+    value the operating system will not hold is reported, not raised (#2474)."""
+
+    def test_every_variable_in_a_normal_file_is_set(
+        self, scratch_environ: Path
+    ) -> None:
+        dotenv = _write_dotenv(
+            scratch_environ, "CGR_TEST_DOTENV_FIRST=one", "CGR_TEST_DOTENV_LAST=two"
+        )
+
+        refused = config.merge_dotenv(dotenv)
+
+        assert refused == {}
+        assert os.environ["CGR_TEST_DOTENV_FIRST"] == "one"
+        assert os.environ["CGR_TEST_DOTENV_LAST"] == "two"
+
+    def test_a_variable_already_set_is_not_overridden(
+        self, scratch_environ: Path
+    ) -> None:
+        os.environ["CGR_TEST_DOTENV_FIRST"] = "exported"
+        dotenv = _write_dotenv(
+            scratch_environ,
+            "CGR_TEST_DOTENV_FIRST=from-file",
+            "CGR_TEST_DOTENV_LAST=${CGR_TEST_DOTENV_FIRST}",
+        )
+
+        config.merge_dotenv(dotenv)
+
+        assert os.environ["CGR_TEST_DOTENV_FIRST"] == "exported"
+        # A reference to it reads the exported value too.
+        assert os.environ["CGR_TEST_DOTENV_LAST"] == "exported"
+
+    @pytest.mark.parametrize("disabled", [None, "true"])
+    def test_the_environment_ends_as_load_dotenv_leaves_it(
+        self, scratch_environ: Path, disabled: str | None
+    ) -> None:
+        # Quoting, interpolation, a key with no value, UTF-8 and python-dotenv's
+        # own off switch all behave as they did before.
+        if disabled is not None:
+            os.environ["PYTHON_DOTENV_DISABLED"] = disabled
+        os.environ["CGR_TEST_DOTENV_FIRST"] = "exported"
+        dotenv = _write_dotenv(
+            scratch_environ,
+            "CGR_TEST_DOTENV_FIRST=from-file",
+            'CGR_TEST_DOTENV_LAST="quoted ${CGR_TEST_DOTENV_FIRST} caf\u00e9"',
+            "CGR_TEST_DOTENV_BARE",
+        )
+        with patch.dict(os.environ):
+            load_dotenv(dotenv)
+            expected = dict(os.environ)
+
+        config.merge_dotenv(dotenv)
+
+        assert dict(os.environ) == expected
+
+    def test_a_value_too_long_for_windows_leaves_the_rest_loaded(
+        self, scratch_environ: Path, windows_sized_environ: None
+    ) -> None:
+        dotenv = _write_dotenv(
+            scratch_environ,
+            "CGR_TEST_DOTENV_FIRST=one",
+            f"CGR_TEST_DOTENV_REFUSED={'x' * _WINDOWS_VARIABLE_LIMIT}",
+            "CGR_TEST_DOTENV_LAST=two",
+        )
+
+        refused = config.merge_dotenv(dotenv)
+
+        # Named with the reason, and the value is not echoed.
+        assert refused == {
+            "CGR_TEST_DOTENV_REFUSED": (
+                "Invalid value for CGR_TEST_DOTENV_REFUSED in ./.env: "
+                f"the operating system refused it ({_WINDOWS_REFUSAL})."
+            )
+        }
+        assert "CGR_TEST_DOTENV_REFUSED" not in os.environ
+        assert os.environ["CGR_TEST_DOTENV_FIRST"] == "one"
+        assert os.environ["CGR_TEST_DOTENV_LAST"] == "two"
+
+    def test_a_nul_byte_is_refused_by_every_os(self, scratch_environ: Path) -> None:
+        # No OS holds a NUL in a variable, so this one needs no stand-in.
+        dotenv = _write_dotenv(
+            scratch_environ,
+            "CGR_TEST_DOTENV_FIRST=one",
+            "CGR_TEST_DOTENV_REFUSED=a\x00b",
+            "CGR_TEST_DOTENV_LAST=two",
+        )
+
+        refused = config.merge_dotenv(dotenv)
+
+        assert list(refused) == ["CGR_TEST_DOTENV_REFUSED"]
+        assert refused["CGR_TEST_DOTENV_REFUSED"].startswith(
+            "Invalid value for CGR_TEST_DOTENV_REFUSED in ./.env: "
+            "the operating system refused it ("
+        )
+        assert "a\x00b" not in refused["CGR_TEST_DOTENV_REFUSED"]
+        assert "CGR_TEST_DOTENV_REFUSED" not in os.environ
+        assert os.environ["CGR_TEST_DOTENV_LAST"] == "two"
 
 
 class TestEmptyValues:
@@ -297,6 +490,61 @@ class TestLoadSettings:
         assert len(errors) == 1
         assert errors[0].startswith(f"Invalid value for {name} in the environment: ")
         assert problem in errors[0]
+
+
+class TestAVariableTheEnvironmentRefused:
+    """pydantic-settings reads `.env` itself, so it still sees a value the
+    environment refused; the setting must not keep it, nor report it twice."""
+
+    _MESSAGE = (
+        "Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: "
+        f"the operating system refused it ({_WINDOWS_REFUSAL})."
+    )
+
+    def test_it_is_reported_once_though_its_value_is_also_invalid(
+        self, clean_env: Path
+    ) -> None:
+        _write_dotenv(
+            clean_env,
+            f"SHELL_COMMAND_ALLOWLIST={_TOO_LONG_FOR_WINDOWS}",
+            "MEMGRAPH_HOST=db.internal",
+        )
+
+        loaded, errors = config.load_settings(
+            frozenset(os.environ), {"SHELL_COMMAND_ALLOWLIST": self._MESSAGE}
+        )
+
+        assert errors == (self._MESSAGE,)
+        assert loaded.MEMGRAPH_HOST == "db.internal"
+
+    def test_a_valid_value_falls_back_to_the_default(self, clean_env: Path) -> None:
+        _write_dotenv(clean_env, 'SHELL_COMMAND_ALLOWLIST=["ls"]')
+
+        loaded, errors = config.load_settings(
+            frozenset(os.environ), {"SHELL_COMMAND_ALLOWLIST": self._MESSAGE}
+        )
+
+        default = config.AppConfig.model_fields["SHELL_COMMAND_ALLOWLIST"]
+        assert errors == (self._MESSAGE,)
+        assert loaded.SHELL_COMMAND_ALLOWLIST == default.get_default(
+            call_default_factory=True
+        )
+
+    def test_it_is_reported_alongside_a_value_that_fails_validation(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_PORT", "abc")
+
+        loaded, errors = config.load_settings(
+            frozenset(os.environ), {"SHELL_COMMAND_ALLOWLIST": self._MESSAGE}
+        )
+
+        assert loaded.MEMGRAPH_PORT == 7687
+        assert errors == (
+            self._MESSAGE,
+            "Invalid value for MEMGRAPH_PORT in the environment: "
+            "'abc' is not a valid integer.",
+        )
 
 
 class TestAListSettingThatIsNotJson:

@@ -115,6 +115,10 @@ ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
 # Where a refused setting came from, as its error message names it.
 SETTING_ORIGIN_ENVIRONMENT = "the environment"
 SETTING_ORIGIN_DOTENV = "./.env"
+# python-dotenv's switch for not loading `.env`, and the values that turn it on,
+# honoured as `load_dotenv` honours them.
+ENV_PYTHON_DOTENV_DISABLED = "PYTHON_DOTENV_DISABLED"
+PYTHON_DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
 LOGURU_DEFAULT_HANDLER_ID = 0
 
 # Debounce settings for realtime watcher

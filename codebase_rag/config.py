@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import os
 import reprlib
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TypedDict, Unpack
+from typing import Any, TypedDict, Unpack
 
-from dotenv import load_dotenv
+from dotenv.main import DotEnv
 from loguru import logger
 from pydantic import Field, ValidationError, field_validator
 from pydantic.fields import FieldInfo
@@ -27,11 +27,44 @@ from .types_defs import CgrignorePatterns, ModelConfigKwargs
 # traced to the shell that exported it or to the file (#2474).
 _INHERITED_ENV = frozenset(os.environ)
 
+
+def merge_dotenv(path: Path) -> dict[str, str]:
+    """Merge `path` into `os.environ` as `load_dotenv(path)` does, without raising.
+
+    `os.environ` raises ValueError for a value the operating system will not
+    hold, such as one longer than the 32,767 characters Windows takes in a
+    variable or one with a NUL byte. `load_dotenv` let it escape the import of
+    this module, so every command failed, `--version` too (#2474). Such a
+    variable is left unset and the rest of the file is still loaded.
+
+    Returns the message for each variable left unset, keyed by its name. The
+    message names the variable and the reason, not the value.
+    """
+    switch = os.environ.get(cs.ENV_PYTHON_DOTENV_DISABLED, "").casefold()
+    if switch in cs.PYTHON_DOTENV_DISABLED_VALUES:
+        return {}
+    # `override=False`, as in `load_dotenv`: a variable already set keeps its
+    # value, and a reference to it in the file reads that value too.
+    values = DotEnv(path, encoding=cs.ENCODING_UTF8, override=False).dict()
+    refused: dict[str, str] = {}
+    for name, value in values.items():
+        if value is None or name in os.environ:
+            continue
+        try:
+            os.environ[name] = value
+        except ValueError as error:
+            problem = ex.SETTING_NOT_SETTABLE.format(error=error)
+            refused[name] = ex.SETTING_INVALID.format(
+                name=name, origin=cs.SETTING_ORIGIN_DOTENV, problem=problem
+            )
+    return refused
+
+
 # Load only the configuration file in the invocation directory.  The default
 # python-dotenv discovery walks parent directories, which can silently import
 # credentials from an unrelated workspace (and makes tests depend on the
 # caller's directory layout).
-load_dotenv(dotenv_path=Path.cwd() / ".env")
+_DOTENV_REFUSED = merge_dotenv(Path.cwd() / ".env")
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -631,7 +664,21 @@ def _describe_refusal(error: ErrorDetails, inherited_env: Collection[str]) -> st
     return ex.SETTING_INVALID.format(name=name, origin=origin, problem=problem)
 
 
-def load_settings(inherited_env: Collection[str]) -> tuple[AppConfig, tuple[str, ...]]:
+def _defaults_for(variables: Collection[str]) -> dict[str, Any]:
+    # Init values outrank every source, so a default passed for a variable
+    # replaces only its value. A variable is keyed by its alias where its field
+    # has one, and matched without case, as the sources match it.
+    wanted = {variable.upper() for variable in variables}
+    return {
+        variable: field.get_default(call_default_factory=True)
+        for name, field in AppConfig.model_fields.items()
+        if (variable := _variable_name(name, field)).upper() in wanted
+    }
+
+
+def load_settings(
+    inherited_env: Collection[str], unset: Mapping[str, str] | None = None
+) -> tuple[AppConfig, tuple[str, ...]]:
     """The settings, and one message per variable whose value was refused.
 
     Every `cgr` invocation imports this module before it parses its arguments,
@@ -642,25 +689,22 @@ def load_settings(inherited_env: Collection[str]) -> tuple[AppConfig, tuple[str,
 
     `inherited_env` names the variables the process was started with, which
     tells a value exported in the shell from one read out of `.env`.
+
+    `unset` holds the message for each `.env` variable the environment
+    refused, as `merge_dotenv` returns them. pydantic-settings reads `.env`
+    itself, so such a variable is refused here too, with that message alone.
     """
+    held_back = unset or {}
     try:
-        return AppConfig(), ()
+        return AppConfig(**_defaults_for(held_back)), tuple(held_back.values())
     except ValidationError as error:
         refusals = error.errors(include_url=False)
-    refused = {str(refusal["loc"][0]) for refusal in refusals}
-    # Init values outrank every source, so a default passed here replaces only
-    # the refused value. A refusal is keyed by the variable, which for an
-    # aliased field is its alias.
-    defaults = {
-        variable: field.get_default(call_default_factory=True)
-        for name, field in AppConfig.model_fields.items()
-        if (variable := _variable_name(name, field)) in refused
-    }
+    refused = {*held_back, *(str(refusal["loc"][0]) for refusal in refusals)}
     messages = tuple(_describe_refusal(r, inherited_env) for r in refusals)
-    return AppConfig(**defaults), messages
+    return AppConfig(**_defaults_for(refused)), (*held_back.values(), *messages)
 
 
-settings, settings_errors = load_settings(_INHERITED_ENV)
+settings, settings_errors = load_settings(_INHERITED_ENV, _DOTENV_REFUSED)
 
 CGRIGNORE_FILENAME = ".cgrignore"
 GITIGNORE_FILENAME = ".gitignore"
