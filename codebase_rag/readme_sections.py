@@ -13,12 +13,14 @@ from typing import NamedTuple
 
 from loguru import logger
 
+from . import capture as cp
 from . import cli_help as ch
 from .constants import (
     ENCODING_UTF8,
     IGNORE_PATTERNS,
     LANGUAGE_METADATA,
     TRACKED_SOURCE_DIR_NAMES,
+    CaptureGroup,
     LanguageStatus,
     SupportedLanguage,
 )
@@ -40,6 +42,10 @@ DEPENDENCY_LINE_PATTERN = re.compile(
 
 CHECK_MARK = "\u2713"
 DASH = "-"
+# Marks a schema-table row a default index leaves out and points it at its
+# group, under the `## Capture Groups` heading of graph-schema.md (#2584).
+# Only those rows change, so a concurrent edit to any other row still merges.
+CAPTURE_OPT_IN_NOTE = " (opt-in: [`{group}`](#capture-groups))"
 
 
 class MakeCommand(NamedTuple):
@@ -116,8 +122,20 @@ def format_full_languages_table() -> str:
     return format_markdown_table(headers, rows)
 
 
+def capture_opt_in_note(group: CaptureGroup | None) -> str:
+    if group is None or group in cp.default_groups():
+        return ""
+    return CAPTURE_OPT_IN_NOTE.format(group=group)
+
+
 def extract_node_schemas() -> list[tuple[str, str]]:
-    return [(schema.label.value, schema.properties) for schema in NODE_SCHEMAS]
+    return [
+        (
+            schema.label.value + capture_opt_in_note(cp.node_label_group(schema.label)),
+            schema.properties,
+        )
+        for schema in NODE_SCHEMAS
+    ]
 
 
 def format_node_schemas_table(schemas: list[tuple[str, str]]) -> str:
@@ -130,13 +148,33 @@ def extract_relationship_schemas() -> list[tuple[str, str, str]]:
     for schema in RELATIONSHIP_SCHEMAS:
         sources = ", ".join(s.value for s in schema.sources)
         targets = ", ".join(t.value for t in schema.targets)
-        result.append((sources, schema.rel_type.value, targets))
+        rel = schema.rel_type.value + capture_opt_in_note(
+            cp.relationship_group(schema.rel_type)
+        )
+        result.append((sources, rel, targets))
     return result
 
 
 def format_relationship_schemas_table(schemas: list[tuple[str, str, str]]) -> str:
     rows = [[source, rel, target] for source, rel, target in schemas]
     return format_markdown_table(["Source", "Relationship", "Target"], rows)
+
+
+def format_capture_groups_table() -> str:
+    defaults = cp.default_groups()
+    rows = [
+        [
+            f"`{group}`",
+            CHECK_MARK if group in defaults else DASH,
+            ", ".join(cp.group_node_labels(group)) or DASH,
+            ", ".join(cp.group_relationships(group)),
+            cp.group_summary(group),
+        ]
+        for group in CaptureGroup
+    ]
+    return format_markdown_table(
+        ["Group", "Default", "Node labels", "Relationships", "Description"], rows
+    )
 
 
 def format_cli_commands_table() -> str:
@@ -347,6 +385,7 @@ def generate_all_sections(project_root: Path) -> dict[str, str]:
         "language_mappings": format_language_mappings(),
         "node_schemas": format_node_schemas_table(node_schemas),
         "relationship_schemas": format_relationship_schemas_table(rel_schemas),
+        "capture_groups": format_capture_groups_table(),
         "cli_commands": format_cli_commands_table(),
         "mcp_tools": format_mcp_tools_table(),
         "agentic_tools": format_agentic_tools_table(),

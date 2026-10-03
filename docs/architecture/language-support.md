@@ -71,9 +71,18 @@ single YAML pattern file per language. Which node kinds a language yields
 depends on its config: the `-` entries below mark constructs the language
 does not have (Bash and Nix declare no class-like types).
 
-This is a **basic** tier: names are flat (no nested-namespace qualification)
-and there is **no call-graph (`CALLS`) resolution**, so call-graph analyses
-such as dead-code detection skip these files. It requires the `ast-grep`
+This is a **basic** tier: there is **no call-graph (`CALLS`) resolution**, so
+call-graph analyses such as dead-code detection skip these files.
+
+Kotlin, Swift and Solidity name their members the way the tree-sitter tier
+does: a function in a type is a `Method` `<module>.<Type>.<name>` defined by
+the type, a nested function is `<module>.<outer>.<name>`, and a second
+definition of one name (an overload) gets an `@<line>` suffix, so overloads
+and same-named methods of different types stay distinct nodes. A Swift
+`extension T` and a Kotlin extension function `fun T.f()` add their members to
+`T` rather than declaring a second `T`. The other languages here keep flat
+`<module>.<name>` names: an Elixir multi-clause `def` or a Haskell equation
+per pattern is one function, which a per-line suffix would split. It requires the `ast-grep`
 extra (`pip install 'code-graph-rag[ast-grep]'`).
 
 A module's qualified name carries its extension: `app.rb` becomes
@@ -96,8 +105,8 @@ re-index the others afterwards.
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
 | Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
-| Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members | classes, interfaces, data classes, objects, enums | import |
-| Swift | .swift | functions, initializers, protocol requirements | classes, structs, enums, extensions, protocols | import |
+| Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members, extension functions | classes, interfaces, data classes, objects, enums | import |
+| Swift | .swift | functions, initializers, protocol requirements, extension members | classes, structs, enums, protocols | import |
 | Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
 | Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
 | Solidity | .sol | functions, constructors, modifiers | contracts, interfaces, libraries | import |
