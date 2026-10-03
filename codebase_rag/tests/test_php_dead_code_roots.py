@@ -746,6 +746,110 @@ class ApiChecks extends IntegrationTestCase
     assert not members & dead, sorted(members & dead)
 
 
+# One file, two namespaces holding a class of the same name: only the one
+# in `Tests` extends PHPUnit.
+_MULTI_NAMESPACE_BASES = {
+    "bracketed": r"""<?php
+namespace Tests {
+    abstract class BaseTestCase extends \PHPUnit\Framework\TestCase {}
+}
+
+namespace Other {
+    class BaseTestCase {}
+}
+""",
+    "sequential": r"""<?php
+namespace Tests;
+
+abstract class BaseTestCase extends \PHPUnit\Framework\TestCase {}
+
+namespace Other;
+
+class BaseTestCase {}
+""",
+    # The second same-named class registers as `BaseTestCase@<line>`.
+    "sequential_test_base_second": r"""<?php
+namespace Other;
+
+class BaseTestCase {}
+
+namespace Tests;
+
+abstract class BaseTestCase extends \PHPUnit\Framework\TestCase {}
+""",
+}
+
+
+def _index_multi_namespace(tmp_path: Path, form: str) -> _CapturingIngestor:
+    checks = r"""<?php
+namespace App\Feature;
+
+use Tests\BaseTestCase;
+
+class FeatureChecks extends BaseTestCase
+{
+    private function leftoverFixture(): void {}
+}
+"""
+    prod = r"""<?php
+namespace App\Feature;
+
+use Other\BaseTestCase;
+
+class Prod extends BaseTestCase
+{
+    private function unusedLogic(): void {}
+}
+"""
+    return _index(
+        tmp_path,
+        {
+            "src/Support/Bases.php": _MULTI_NAMESPACE_BASES[form],
+            "src/Feature/FeatureChecks.php": checks,
+            "src/Feature/Prod.php": prod,
+        },
+    )
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+@pytest.mark.parametrize("form", sorted(_MULTI_NAMESPACE_BASES))
+def test_base_in_a_multi_namespace_file_is_linked_by_its_own_namespace(
+    tmp_path: Path, form: str, include_tests: bool
+) -> None:
+    # Each class takes the namespace that lexically encloses it, so a test
+    # base declared beside another namespace is still the class
+    # `use Tests\BaseTestCase` names, and its subclass is test code.
+    ingestor = _index_multi_namespace(tmp_path, form)
+    namespaces = sorted(
+        str(props.get(cs.KEY_NAMESPACE))
+        for (label, uid), props in ingestor.nodes.items()
+        if label == cs.NodeLabel.CLASS.value and ".src.Support.Bases." in str(uid)
+    )
+    assert namespaces == ["Other", "Tests"], namespaces
+    dead = _dead(ingestor, include_tests)
+
+    fixture = f"{_PROJECT}.src.Feature.FeatureChecks.FeatureChecks.leftoverFixture"
+    assert fixture not in dead, sorted(dead)
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+@pytest.mark.parametrize("form", sorted(_MULTI_NAMESPACE_BASES))
+def test_same_named_class_in_the_other_namespace_is_not_the_test_base(
+    tmp_path: Path, form: str, include_tests: bool
+) -> None:
+    ingestor = _index_multi_namespace(tmp_path, form)
+    dead = _dead(ingestor, include_tests)
+
+    assert f"{_PROJECT}.src.Feature.Prod.Prod.unusedLogic" in dead, sorted(dead)
+
+
+def test_class_outside_any_namespace_records_none(tmp_path: Path) -> None:
+    ingestor = _index(tmp_path, {"src/plain.php": "<?php\nclass Plain {}\n"})
+    plain = ingestor.nodes[(cs.NodeLabel.CLASS.value, f"{_PROJECT}.src.plain.Plain")]
+
+    assert cs.KEY_NAMESPACE not in plain
+
+
 @pytest.mark.parametrize("include_tests", [True, False])
 def test_test_case_rule_is_php_only(tmp_path: Path, include_tests: bool) -> None:
     # A Python unittest class outside any test path inherits a `TestCase`

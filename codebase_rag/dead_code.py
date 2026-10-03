@@ -961,7 +961,9 @@ def _is_php_test_path(path: str) -> bool:
 
 
 def _qn_leaf(qn: str) -> str:
-    return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    # Two same-named classes in one file's two namespaces register as `X` and
+    # `X@8`; the marker is not part of the name a `use` import spells.
+    return qn_markers.strip_dup_marker(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
 
 
 def _is_php_framework_test_base(qn: str) -> bool:

@@ -39,6 +39,7 @@ TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
 # The one visibility keyword that keeps a PHP member out of its type's API:
 # `public`, `protected` and no keyword at all expose it (issue #2472).
 PHP_VISIBILITY_PRIVATE = "private"
+PHP_NAMESPACE_SEPARATOR = "\\"
 TS_PHP_STATIC_MODIFIER = "static_modifier"
 TS_PHP_PROPERTY_DECLARATION = "property_declaration"
 TS_PHP_PROPERTY_ELEMENT = "property_element"
