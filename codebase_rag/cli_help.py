@@ -374,7 +374,10 @@ HELP_ASSUME_YES = (
     "Answer yes to destructive confirmations, such as the one --clean asks before "
     "deleting other projects from the shared graph."
 )
-HELP_OUTPUT_GRAPH = "Write the updated graph to PATH as JSON. Requires --update-graph."
+HELP_OUTPUT_GRAPH = (
+    "Write this repository's project graph to PATH as JSON. Requires "
+    "--update-graph. Use cgr export for the whole shared graph."
+)
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
 HELP_EXPORT_PROJECT_NAME = (
     "Export only this project: what it owns, the relationships that start "

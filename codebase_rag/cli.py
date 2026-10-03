@@ -738,16 +738,27 @@ def _run_graph_sync(
             interrupted = stop
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
+        # Taken before the export: counting it made a no-op sync of a small
+        # repo report the time to dump the whole shared graph (issue #2440).
+        elapsed = time.monotonic() - elapsed
 
         exported = True
         if output and interrupted is None:
-            _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
-            exported = export_graph_to_file(ingestor, output)
+            # The repo's own graph: `-o` wrote every project in the shared
+            # database (issue #2440), which `cgr export` without a scope still
+            # does. The updater's name is the one its Project node carries.
+            project = updater.project_name
+            _info(
+                style(
+                    cs.CLI_MSG_EXPORTING_TO.format(project=project, path=output),
+                    cs.Color.CYAN,
+                )
+            )
+            exported = export_graph_to_file(ingestor, output, [project])
     # Raised outside the `with`: the ingestor logs any exception leaving it as
     # a traceback, typer.Exit included, and the failure is already reported.
     if not exported:
         raise typer.Exit(1)
-    elapsed = time.monotonic() - elapsed
     if updater.skipped_because_in_sync:
         app_context.console.print(
             style(
