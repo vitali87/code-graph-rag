@@ -917,6 +917,16 @@ def _touch_empty_json(cache_path: Path) -> None:
         pass
 
 
+def _is_placeholder_hash_cache(cache_path: Path) -> bool:
+    # Read quietly rather than through `_load_hash_cache`, which logs every
+    # load: this only classifies the file. One that cannot be read or decoded
+    # is not the placeholder `_touch_empty_json` wrote.
+    try:
+        return loads_json(cache_path.read_text(encoding=cs.ENCODING_UTF8)) == {}
+    except (OSError, ValueError):
+        return False
+
+
 def _natural_qn(qualified_name: str) -> str:
     """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
 
@@ -1274,6 +1284,10 @@ class GraphUpdater:
         )
         self._embeddings_interrupted = False
         self.skipped_because_in_sync = False
+        # Whether the current run has saved its graph and sync state; see
+        # `run`. A caller interrupted mid-run reads it to tell a partial graph
+        # from a whole one (issue #2442).
+        self.committed = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
         # Module-qn claims `_forget_flux_stem_qns` dropped this run, by file
@@ -2082,7 +2096,15 @@ class GraphUpdater:
         and side-effect free for callers that never run. A single-file
         target deleted AFTER construction passes this check (its parent
         exists) and is a separate decision (#1737).
+
+        `committed` turns True once the run has nothing left that could leave
+        the graph partial: at the commit point, or on the in-sync fast path.
+        A Ctrl+C can land after that and before the return (#2442), so where
+        the interrupt surfaced does not say whether the graph is whole.
         """
+        # First, so an interrupt anywhere below reads this run's answer, not
+        # a reused updater's previous one.
+        self.committed = False
         if not self.repo_path.is_dir():
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
         self._clear_python_inference_caches()
@@ -2343,6 +2365,8 @@ class GraphUpdater:
         self.ingestor.flush_all()
         if self._single_file is None and not self._graph_state_unknown:
             self._stamp_exclusion_state(only_if_changed=True)
+        # Nothing to save on this path, and nothing left half-written.
+        self.committed = True
 
     def _commit_run_state(self) -> None:
         # The delombok state commits ONLY here, after every pass and the
@@ -2459,6 +2483,8 @@ class GraphUpdater:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
                 self._stamp_exclusion_state()
+        # Last, so an interrupt anywhere above still reads as a partial run.
+        self.committed = True
 
     def _stamp_exclusion_state(self, *, only_if_changed: bool = False) -> None:
         """Record this run's scope as the last run's and as this project's own.
@@ -5024,7 +5050,12 @@ class GraphUpdater:
             return
         if count:
             return
-        logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
+        if self._previous_build_unfinished():
+            # Nothing was wiped: that build stopped before any of its modules
+            # reached the graph.
+            logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
+        else:
+            logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
         # Discarding is best-effort by intent: `missing_ok=True` already says a
         # cache that is not there is fine, and a cache that cannot be REMOVED
         # is the same situation one step later. Every other filesystem writer
@@ -5050,6 +5081,23 @@ class GraphUpdater:
                 self._cache_discarded_in_memory = True
                 logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
+    def _previous_build_unfinished(self) -> bool:
+        """Whether the hash cache is the placeholder of a build that never committed.
+
+        A full build writes an empty cache before its first graph write
+        (`_hash_baseline`) and replaces it, stamping the parser fingerprint
+        beside it, only at its commit point. An empty cache with no stamp is
+        therefore a build that stopped short (Ctrl+C, a crash), and blaming a
+        parser change or a wiped database for the rebuild that follows sent
+        users looking for a cause that was not there (issue #2442). A graph
+        built before the stamp existed has a cache naming its files, and a
+        finished build that found no files stamps its parser all the same.
+        """
+        stamp = self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
+        return _load_parser_fingerprint(stamp) is None and _is_placeholder_hash_cache(
+            self.state_dir / cs.HASH_CACHE_FILENAME
+        )
+
     def _reparse_all_if_parser_changed(self) -> None:
         """Ignore the hash cache for this run when a parser input changed.
 
@@ -5064,6 +5112,11 @@ class GraphUpdater:
         """
         # No hash cache means a full build is coming: nothing to compare.
         if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
+            return
+        if self._previous_build_unfinished():
+            # The empty cache names no file to force, so this run is the full
+            # build it would be anyway; what changes is the reason given.
+            logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
             return
         stored = _load_parser_fingerprint(
             self.state_dir / cs.PARSER_FINGERPRINT_FILENAME

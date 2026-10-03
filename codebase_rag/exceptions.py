@@ -191,3 +191,16 @@ class EmbeddingsInterrupted(KeyboardInterrupt):  # NOSONAR
     where it would have; one that does can finish its own bookkeeping first,
     because the graph and the hash cache are already saved.
     """
+
+
+# A `KeyboardInterrupt` for the reason `EmbeddingsInterrupted` is one
+# (python:S5709 accepted), and so the pre-chat sync's worker, which swallows
+# only the interrupt it delivered, still recognises it.
+class SyncInterrupted(KeyboardInterrupt):  # NOSONAR
+    """Ctrl+C stopped a CLI sync part-way through its graph writes.
+
+    Its `:IncompleteRun` marker stays down and its hash cache unpublished, so
+    the graph is incomplete until a sync of the project finishes. Kept apart
+    from a plain interrupt so the command can say so: that would be false of
+    one that landed before the sync wrote anything.
+    """
