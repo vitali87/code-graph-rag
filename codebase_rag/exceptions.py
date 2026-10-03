@@ -61,6 +61,28 @@ MODEL_FORMAT_INVALID = (
     "Model must be specified as 'provider:model' (e.g., openai:gpt-4o)."
 )
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
+# A setting refused at start-up (#2474). Worded like click's own "Invalid value
+# for '--batch-size': 0 is not in the range x>=1." so a variable reads the same
+# as the flag it stands in for. Keyed by pydantic's error type; the fields are
+# the error's `input` and `msg` and the entries of its `ctx`.
+SETTING_INVALID = "Invalid value for {name} in {origin}: {problem}"
+SETTING_PROBLEMS = {
+    "int_parsing": "{input!r} is not a valid integer.",
+    "float_parsing": "{input!r} is not a valid float.",
+    "bool_parsing": "{input!r} is not a valid boolean.",
+    "enum": "{input!r} is not one of {expected}.",
+    "greater_than": "{input} is not in the range x>{gt}.",
+    "greater_than_equal": "{input} is not in the range x>={ge}.",
+    "value_error": "{error}",
+}
+SETTING_PROBLEM_OTHER = "{input!r}: {msg}"
+SETTING_NOT_JSON_LIST = '{value!r} is not a JSON list, such as ["ls", "cat"].'
+SETTING_JSON_LIST_TOO_DEEP = (
+    '{value} is nested too deeply to read as a JSON list, such as ["ls", "cat"].'
+)
+# A `.env` value `os.environ` refused, such as one past the 32,767 characters
+# Windows holds in a variable. The error names the limit, not the value.
+SETTING_NOT_SETTABLE = "the operating system refused it ({error})."
 CONFIG = "{role} configuration error: {error}"
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "
