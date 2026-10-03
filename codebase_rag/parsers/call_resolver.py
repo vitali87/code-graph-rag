@@ -4096,16 +4096,29 @@ class CallResolver:
         ]
         if not candidates:
             return None
-        # Visibility filters BEFORE specificity: an unimported extension `on
-        # Derived` must not beat an imported one `on Base` (Greptile, PR
-        # #2804). A `package:` import is kept verbatim and proves nothing, so
-        # when no candidate is provably visible they all stay in play rather
-        # than the call being dropped.
+        levels = self._class_and_ancestor_levels(class_qn)
+        receiver_types = set().union(*levels)
+        # Applicability, then visibility, then specificity. Only an extension
+        # `on` the receiver's class or an ancestor competes at all: filtering
+        # by visibility first let a visible extension on an UNRELATED type
+        # push out the applicable one (Greptile, PR #2804).
+        applicable = [
+            candidate for candidate in candidates if candidate[2] in receiver_types
+        ]
+        if not applicable:
+            return None
+        # Among those, an unimported one `on Derived` must not beat an
+        # imported one `on Base` (Greptile, PR #2804). A `package:` import is
+        # kept verbatim and proves nothing, so when no applicable candidate is
+        # provably visible they all stay in play rather than the call being
+        # dropped. A provable one also wins a same-level tie against an
+        # unprovable one: were both visible, Dart would reject the call as
+        # ambiguous, so in code that compiles the unprovable one is not.
         visible_libraries = self._dart_visible_libraries(module_qn)
         pool = [
-            candidate for candidate in candidates if candidate[3] in visible_libraries
-        ] or candidates
-        for level in self._class_and_ancestor_levels(class_qn):
+            candidate for candidate in applicable if candidate[3] in visible_libraries
+        ] or applicable
+        for level in levels:
             matches = [
                 member_qn for member_qn, _ext, on_qn, _module in pool if on_qn in level
             ]

@@ -600,6 +600,84 @@ class TestExtensionVisibilityAcrossLevels:
         }, sorted(_pairs(calls))
 
 
+PACKAGE_EXTENSION_FILES = {
+    "geo.dart": (
+        "class Point {\n  Point move() => Point();\n}\n\n"
+        "class Other {}\n\nclass Sub extends Point {}\n"
+    ),
+    "point_ops.dart": (
+        "import 'geo.dart';\n\nextension PointOps on Point {\n  int sum() => 1;\n}\n"
+    ),
+    "sub_ops.dart": (
+        "import 'geo.dart';\n\nextension SubOps on Sub {\n  int sum() => 3;\n}\n"
+    ),
+    "other_ops.dart": (
+        "import 'geo.dart';\n\nextension OtherOps on Other {\n  int sum() => 2;\n}\n"
+    ),
+    # Greptile's shape: the applicable extension arrives through a
+    # `package:` URI (kept verbatim, so never provably visible) while an
+    # UNRELATED local one with the same member name is provably visible.
+    "use_pkg.dart": (
+        "import 'geo.dart';\nimport 'other_ops.dart';\n"
+        "import 'package:dpkg/point_ops.dart';\n\n"
+        "int usePkg() {\n  Point p = Point();\n  return p.move().sum();\n}\n"
+    ),
+    # A provably visible applicable extension still beats an unprovable one
+    # on a more specific type; and an unrelated visible one changes nothing.
+    "use_mixed.dart": (
+        "import 'geo.dart';\nimport 'point_ops.dart';\nimport 'other_ops.dart';\n"
+        "import 'package:dpkg/sub_ops.dart';\n\n"
+        "int useMixed() {\n  Sub s = Sub();\n  return s.sum();\n}\n"
+    ),
+    # SubOps is applicable and more specific but never imported at all.
+    "use_local.dart": (
+        "import 'geo.dart';\nimport 'point_ops.dart';\nimport 'other_ops.dart';\n\n"
+        "int useLocal() {\n  Sub s = Sub();\n  return s.sum();\n}\n"
+    ),
+}
+
+
+class TestApplicabilityBeforeVisibility:
+    """Only an extension that APPLIES to the receiver competes on visibility:
+    a visible extension on an unrelated type must not push out an applicable
+    one the caller imports through an untraceable `package:` URI (Greptile,
+    PR #2804)."""
+
+    @pytest.fixture
+    def calls(self, temp_repo: Path, mock_ingestor: MagicMock) -> list[Edge]:
+        return _index(
+            _project(temp_repo, "dpkg", PACKAGE_EXTENSION_FILES), mock_ingestor
+        )
+
+    def test_package_imported_extension_survives_an_unrelated_visible_one(
+        self, calls: list[Edge]
+    ) -> None:
+        assert _targets(calls, ".use_pkg.usePkg") == {
+            "dpkg.lib.geo.Point.move",
+            "dpkg.lib.point_ops.PointOps.sum",
+        }, sorted(_pairs(calls))
+
+    def test_unrelated_visible_extension_never_binds(self, calls: list[Edge]) -> None:
+        assert not _has(calls, ".use_pkg.usePkg", ".OtherOps.sum"), sorted(
+            _pairs(calls)
+        )
+        assert not _has(calls, ".use_mixed.useMixed", ".OtherOps.sum"), sorted(
+            _pairs(calls)
+        )
+
+    def test_provably_visible_applicable_extension_still_wins(
+        self, calls: list[Edge]
+    ) -> None:
+        assert _targets(calls, ".use_mixed.useMixed") == {
+            "dpkg.lib.point_ops.PointOps.sum"
+        }, sorted(_pairs(calls))
+
+    def test_an_unimported_local_extension_still_loses(self, calls: list[Edge]) -> None:
+        assert _targets(calls, ".use_local.useLocal") == {
+            "dpkg.lib.point_ops.PointOps.sum"
+        }, sorted(_pairs(calls))
+
+
 PREFIXED_ON_FILES = {
     "geo.dart": "class Point {\n  Point move(int dx) => Point();\n}\n",
     "other_geo.dart": "class Point {\n  int z = 0;\n}\n",
