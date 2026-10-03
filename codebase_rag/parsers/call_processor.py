@@ -14,7 +14,11 @@ from tree_sitter import Node, Query, QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
-from ..language_spec import LanguageSpec, decode_node_text
+from ..language_spec import (
+    LanguageSpec,
+    decode_node_text,
+    sql_object_reference_name,
+)
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -1758,6 +1762,17 @@ class CallProcessor:
         nested_starts: set[int] = set()
         for func_node in func_nodes:
             body = func_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None and func_node.type == cs.TS_SQL_CREATE_FUNCTION:
+                # a SQL routine's body is an unnamed `function_body` child;
+                # missing it kept every body call module-attributed as well
+                body = next(
+                    (
+                        child
+                        for child in func_node.named_children
+                        if child.type == cs.TS_SQL_FUNCTION_BODY
+                    ),
+                    None,
+                )
             if body is None:
                 # a Dart body is a SIBLING of its signature, not a field
                 body = dart_utils.dart_body_node(func_node)
@@ -2658,6 +2673,11 @@ class CallProcessor:
         func_name = self._get_node_name(func_node)
         if not func_name and language in _JS_TS_LANGUAGES:
             func_name = self._js_ts_arrow_binding_name(func_node)
+        if not func_name and language == cs.SupportedLanguage.SQL:
+            # `create_function` has no `name` field either; without its name
+            # the routine got no caller pass and its body's calls went to the
+            # module (issue #2449).
+            func_name = sql_object_reference_name(func_node)
         if (
             not func_name
             and language == cs.SupportedLanguage.LUA
@@ -3325,6 +3345,12 @@ class CallProcessor:
             if rs_utils.in_attribute_arguments(call_node):
                 return None
             return self._macro_call_name(call_node)
+        # A SQL `invocation` names its routine through an unnamed
+        # `object_reference` child (no `function` or `name` field), so every
+        # SQL call site fell through nameless and was dropped (issue #2449).
+        # Normalized like the definition, so `TAX(x)` reaches `tax`.
+        if language == cs.SupportedLanguage.SQL:
+            return sql_object_reference_name(call_node)
         # A Dart call node is a selector/cascade_section holding the
         # argument_part; the target name lives in the PRECEDING sibling
         # chain, not inside the node.
@@ -4349,7 +4375,42 @@ class CallProcessor:
                     ctx.language,
                 )
             return
+        if ctx.language == cs.SupportedLanguage.SQL:
+            self._ingest_sql_routine_call(ctx, call_name)
+            return
         self._ingest_named_call(ctx, call_node, call_name)
+
+    def _ingest_sql_routine_call(self, ctx: _CallScanContext, call_name: str) -> None:
+        # A SQL routine call has no receiver, import or type to resolve
+        # through. The generic resolver reads `billing.fee` as a receiver and
+        # a method, drops the receiver and binds `fee` by bare name, so a
+        # schema-qualified call landed on whichever schema's `fee` came first.
+        #
+        # The name is recorded as a waiter even when it resolves: with no
+        # imports its target set stays open, and a routine of that name added
+        # in ANOTHER file (a second schema for `fee`, a second `billing.fee`
+        # overload) is one more target a clean index links. No edge leads from
+        # that file to this caller, so only the waiter list (issue #1568) can
+        # send it back for a re-parse. The whole normalized name is recorded:
+        # `billing.fee` waits on that routine only, never on `audit.fee`.
+        self._note_unresolved(ctx.module_qn, call_name)
+        targets = self._resolver.sql_routine_targets(call_name)
+        if not targets:
+            # A builtin (`count`, `now`) or a routine no indexed file defines.
+            return
+        if len({qn_markers.natural_qn(qn) for qn in targets}) > 1:
+            # Several routines answer to the name: other schemas for an
+            # unqualified one, other files defining a qualified one.
+            self._resolution = cs.EdgeResolution.HEURISTIC
+        elif len(targets) > 1:
+            # One routine with overloads the call site's types would choose.
+            self._resolution = cs.EdgeResolution.OVERLOAD
+        for target_qn in targets:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _scan_call_name(self, ctx: _CallScanContext, call_node: Node) -> str | None:
         node_id = id(call_node)
