@@ -108,6 +108,23 @@ TS_PROPERTY_IDENTIFIER = "property_identifier"
 # `enum_assignment` with `name` and `value` fields.
 TS_JS_ENUM_BODY = "enum_body"
 TS_JS_ENUM_ASSIGNMENT = "enum_assignment"
+# A quoted member's name is the string the runtime reads, so its escapes are
+# decoded: `\uXXXX`, `\u{X}` and `\xXX` name a code point, a backslash before
+# a line terminator continues the line, these letters stand for control
+# characters, and any other escaped character is itself.
+JS_HEX_ESCAPE_PREFIXES = frozenset({"u", "x"})
+JS_LINE_CONTINUATIONS = frozenset({"\n", "\r\n", "\r", "\u2028", "\u2029"})
+JS_CHAR_ESCAPES: dict[str, str] = {
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+    "0": "\0",
+}
+# Escapes name UTF-16 code units, so a surrogate pair joins into one character.
+JS_STRING_ENCODING = "utf-16"
 # `[expr]` as an object-literal / class-member key.
 TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
 # The `(a, b = 1, ...rest)` parameter list of a function.

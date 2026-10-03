@@ -123,6 +123,40 @@ SOURCES: dict[str, str] = {
         '    HI = "hi"\n'
     ),
     "plain.py": ("class Plain:\n    RED = 1\n    GREEN = 2\n"),
+    # Quoted member names spelled with escapes: the member is the string the
+    # runtime reads (`Esc["ab"]`), whether it has an initializer or not.
+    "escaped.ts": (
+        "export enum Esc {\n"
+        '  "a\\u0062" = 1,\n'
+        '  "c\\x64",\n'
+        '  "e\\u{66}" = 4,\n'
+        '  "line\\\ncont" = 5,\n'
+        '  "\\uD83D\\uDE00" = 7,\n'
+        '  "q\\"uote" = 8,\n'
+        "  'sq' = 9,\n"
+        "}\n"
+    ),
+    # Membership follows what a call refers to, not how it is spelled: an
+    # aliased descriptor is still a descriptor, and a first-party function
+    # that happens to be named `nonmember` is not `enum.nonmember`.
+    "descriptors.py": (
+        "import enum\n"
+        "import functools\n"
+        "from functools import cached_property as cp\n"
+        "\n"
+        "\n"
+        "def nonmember(value):\n"
+        "    return value\n"
+        "\n"
+        "\n"
+        "class Mode(enum.Enum):\n"
+        "    REAL = nonmember(1)\n"
+        "    ALSO = 2\n"
+        "    p = cp(lambda self: 3)\n"
+        "    q = functools.cached_property(lambda self: 4)\n"
+        "    r = enum.nonmember(5)\n"
+        "    s = enum.property(lambda self: 6)\n"
+    ),
     # A first-party class that merely shares the stdlib name, in a module
     # that never imports `enum`: its subclass is not an enum.
     "fake.py": ("class Enum:\n    pass\n\n\nclass Fake(Enum):\n    NOT_A_MEMBER = 1\n"),
@@ -359,6 +393,33 @@ def test_python_enum_non_members_are_not_variants(indexed: _StatefulIngestor) ->
     assert set(_variants(indexed, "proj.mood.Period")) == {"MONDAY"}
     # A nested class inside an enum is not an enum of its own.
     assert _variants(indexed, "proj.mood.Mood.Inner") == {}
+
+
+def test_a_ts_member_name_spelled_with_escapes_is_the_runtime_string(
+    indexed: _StatefulIngestor,
+) -> None:
+    variants = _variants(indexed, "proj.escaped.Esc")
+    assert list(variants) == [
+        "ab",
+        "cd",
+        "ef",
+        "linecont",
+        "\U0001f600",
+        'q"uote',
+        "sq",
+    ]
+    assert variants["ab"][cs.KEY_QUALIFIED_NAME] == "proj.escaped.Esc.ab"
+    assert variants["ab"][cs.KEY_VALUE] == "1"
+    # A bare quoted member has no initializer, so no value.
+    assert cs.KEY_VALUE not in variants["cd"]
+
+
+def test_python_enum_membership_follows_what_the_call_refers_to(
+    indexed: _StatefulIngestor,
+) -> None:
+    # REAL calls the module's own `nonmember`, so it is a member; `cp` is
+    # functools.cached_property, a descriptor, as are the qualified spellings.
+    assert list(_variants(indexed, "proj.descriptors.Mode")) == ["REAL", "ALSO"]
 
 
 def test_a_python_class_that_is_not_an_enum_gets_no_variants(

@@ -1335,6 +1335,7 @@ class ClassIngestMixin:
                 member_node,
                 language,
                 class_props,
+                self.import_processor.import_mapping.get(module_qn),
             )
         if language == cs.SupportedLanguage.DART and (
             type_args := pe.extract_dart_extends_type_args(

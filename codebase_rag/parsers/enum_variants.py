@@ -15,7 +15,7 @@ from the resolved bases (`is_python_enum`) and its variants hang off the
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -43,10 +43,13 @@ class DeclaredVariant(NamedTuple):
 
 
 def declared_variants(
-    enum_node: Node, language: cs.SupportedLanguage | None
+    enum_node: Node,
+    language: cs.SupportedLanguage | None,
+    import_map: Mapping[str, str] | None = None,
 ) -> list[DeclaredVariant]:
     """Per-language dispatch. No entry means "not covered", never "no
-    variants"."""
+    variants". `import_map` is the module's, which says what a Python enum
+    body's calls refer to."""
     if language == cs.SupportedLanguage.RUST:
         return _variants_of(
             enum_node, cs.TS_RS_ENUM_VARIANT_LIST, cs.TS_RS_ENUM_VARIANT
@@ -70,7 +73,7 @@ def declared_variants(
     if language == cs.SupportedLanguage.DART:
         return _variants_of(enum_node, cs.TS_DART_ENUM_BODY, cs.TS_DART_ENUM_CONSTANT)
     if language == cs.SupportedLanguage.PYTHON:
-        return _python_members(enum_node)
+        return _python_members(enum_node, import_map or {})
     return []
 
 
@@ -115,7 +118,7 @@ def _ts_variants(enum_node: Node) -> list[DeclaredVariant]:
         return []
     out: list[DeclaredVariant] = []
     for child in body.named_children:
-        if child.type == cs.TS_PROPERTY_IDENTIFIER:
+        if child.type in (cs.TS_PROPERTY_IDENTIFIER, cs.TS_STRING):
             name_node: Node | None = child
         elif child.type == cs.TS_JS_ENUM_ASSIGNMENT:
             name_node = child.child_by_field_name(cs.FIELD_NAME)
@@ -131,17 +134,40 @@ def _ts_variants(enum_node: Node) -> list[DeclaredVariant]:
 
 def _ts_member_name(name_node: Node) -> str | None:
     # `"Blue-ish" = 1` is read as `Color["Blue-ish"]`, so the name is the
-    # string's content, not the quoted literal.
+    # string's runtime value, not the quoted literal: `"a\u0062"` is `ab`.
     if name_node.type == cs.TS_STRING:
-        return "".join(
-            safe_decode_text(c) or ""
+        parts = [
+            _js_escape_value(text) if c.type == cs.TS_ESCAPE_SEQUENCE else text
             for c in name_node.named_children
-            if c.type == cs.TS_STRING_FRAGMENT
+            if c.type in (cs.TS_STRING_FRAGMENT, cs.TS_ESCAPE_SEQUENCE)
+            and (text := safe_decode_text(c))
+        ]
+        # A `\uD83D\uDE00` pair is one astral character; a lone surrogate
+        # cannot be stored and reads as U+FFFD.
+        return (
+            "".join(parts)
+            .encode(cs.JS_STRING_ENCODING, errors="surrogatepass")
+            .decode(cs.JS_STRING_ENCODING, errors="replace")
         )
     return safe_decode_text(name_node)
 
 
-def _python_members(class_node: Node) -> list[DeclaredVariant]:
+def _js_escape_value(escape: str) -> str:
+    """The text one JavaScript escape sequence stands for."""
+    body = escape[1:]
+    if body[:1] in cs.JS_HEX_ESCAPE_PREFIXES and len(body) > 1:
+        try:
+            return chr(int(body[1:].strip("{}"), 16))
+        except ValueError:
+            return escape
+    if body in cs.JS_LINE_CONTINUATIONS:
+        return ""
+    return cs.JS_CHAR_ESCAPES.get(body, body)
+
+
+def _python_members(
+    class_node: Node, import_map: Mapping[str, str]
+) -> list[DeclaredVariant]:
     """The names an `Enum` subclass body turns into members.
 
     The enum machinery's own rules, read statically: every class-level
@@ -169,7 +195,7 @@ def _python_members(class_node: Node) -> list[DeclaredVariant]:
                 or name in seen
                 or name in ignored
                 or not _py_is_member_name(name)
-                or _py_is_non_member_value(value_node)
+                or _py_is_non_member_value(value_node, import_map)
             ):
                 continue
             seen.add(name)
@@ -272,7 +298,7 @@ def _py_is_member_name(name: str) -> bool:
     )
 
 
-def _py_is_non_member_value(value: Node | None) -> bool:
+def _py_is_non_member_value(value: Node | None, import_map: Mapping[str, str]) -> bool:
     # A function object is a descriptor, so a lambda stays a plain
     # attribute; so does anything wrapped in property/staticmethod/
     # classmethod or the explicit `nonmember()`. Other calls are unknowable
@@ -287,7 +313,17 @@ def _py_is_non_member_value(value: Node | None) -> bool:
     text = safe_decode_text(callee) if callee is not None else None
     if not text:
         return False
-    return text.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.PY_ENUM_NON_MEMBER_CALLEES
+    return _py_callee_qn(text, import_map) in cs.PY_ENUM_NON_MEMBER_CALLEES
+
+
+def _py_callee_qn(text: str, import_map: Mapping[str, str]) -> str:
+    """What a callee spelling refers to: its first name through the
+    module's imports (`cp` -> functools.cached_property, `en.nonmember` ->
+    enum.nonmember), a bare name the module does not import as a builtin."""
+    head, dot, rest = text.partition(cs.SEPARATOR_DOT)
+    if (target := import_map.get(head)) is not None:
+        return f"{target}{dot}{rest}"
+    return f"{cs.PY_BUILTINS_MODULE}{cs.SEPARATOR_DOT}{text}" if not dot else text
 
 
 def _declared_variant(node: Node) -> DeclaredVariant | None:
@@ -331,13 +367,14 @@ def emit_declared_variants(
     enum_node: Node,
     language: cs.SupportedLanguage | None,
     owner_props: dict,
+    import_map: Mapping[str, str] | None = None,
 ) -> int:
     """EnumVariant nodes and HAS_VARIANT edges for one enum. Returns the
     count."""
     rel_gate = getattr(ingestor, "rel_enabled", None)
     if callable(rel_gate) and not rel_gate(cs.RelationshipType.HAS_VARIANT):
         return 0
-    declared = declared_variants(enum_node, language)
+    declared = declared_variants(enum_node, language, import_map)
     if not declared:
         return 0
     path = owner_props.get(cs.KEY_PATH)
