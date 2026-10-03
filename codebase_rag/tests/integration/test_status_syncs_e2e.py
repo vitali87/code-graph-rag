@@ -97,3 +97,54 @@ def test_status_lists_the_projects_this_memgraph_holds(
     listed = _cgr("status")
     assert "billing" not in listed, listed
     assert f"- ledger: last sync {stamps['ledger']}" in listed, listed
+
+
+def _mark(ingestor: MemgraphIngestor, project: str, run_id: str, writing: bool) -> None:
+    ingestor.execute_write(
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+        {
+            cs.KEY_PROJECT_NAME: project,
+            cs.KEY_RUN_ID: run_id,
+            cs.KEY_WRITING: writing,
+        },
+    )
+
+
+def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
+    memgraph_ingestor: MemgraphIngestor,
+    memgraph_container: dict[str, str | int],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review of PR #2532: the failed sync's marker is its own node, out of
+    # the delete's reach. The CLI's marker and an idle run's go with the
+    # project; a run that had begun writing keeps its own (#1709).
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", str(memgraph_container["host"]))
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", int(memgraph_container["port"]))
+    monkeypatch.setattr(settings, "CGR_HOME", tmp_path / "cgr-home")
+    monkeypatch.setattr(
+        app_context, "console", Console(width=200, force_terminal=False, no_color=True)
+    )
+    _sync(memgraph_ingestor, tmp_path, "billing")
+    _sync(memgraph_ingestor, tmp_path, "ledger")
+    _mark(memgraph_ingestor, "billing", cs.CLI_SYNC_RUN_ID, True)
+    _mark(memgraph_ingestor, "fresh", cs.CLI_SYNC_RUN_ID, True)
+    assert "- billing: last sync" in _cgr("status")
+
+    _cgr("delete-project", "-n", "billing")
+
+    listed = _cgr("status")
+    assert "billing" not in listed, listed
+    assert f"- fresh: ({cs.CLI_STATUS_SYNC_INCOMPLETE})" in listed, listed
+
+    _sync(memgraph_ingestor, tmp_path, "orders")
+    _mark(memgraph_ingestor, "orders", "mcp-idle", False)
+    _mark(memgraph_ingestor, "orders", "mcp-writing", True)
+
+    _cgr("delete-project", "-n", "orders")
+
+    runs = memgraph_ingestor.fetch_all(
+        "MATCH (m:IncompleteRun {project: $project_name}) RETURN m.run_id AS run_id",
+        {cs.KEY_PROJECT_NAME: "orders"},
+    )
+    assert [row["run_id"] for row in runs] == ["mcp-writing"]

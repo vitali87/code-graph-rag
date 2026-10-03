@@ -979,6 +979,11 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
 )
+CLI_DELETE_MARKER_NOT_CLEARED = (
+    "Project {project} was deleted, but its incomplete-run marker could not be "
+    "cleared: {error}. cgr status may list it as interrupted until it is synced "
+    "again."
+)
 CLI_SYNC_STATE_UNREADABLE = (
     "Could not read the graph's projects and sync markers for cgr status: {error}"
 )

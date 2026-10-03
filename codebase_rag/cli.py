@@ -640,6 +640,32 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _clear_deleted_project_markers(
+    ingestor: MemgraphIngestor, project_name: str
+) -> None:
+    """Take off the markers a deleted project no longer needs (#2444 review).
+
+    A marker sits on its own node, out of the delete's reach, so without this
+    a sync that failed before the delete keeps the project in `cgr status`
+    as interrupted. The CLI sync's own marker goes, and so does any run's
+    that never wrote the graph. A run that had begun writing owns its marker
+    (#1709): it may still be writing, and its marker is what guards that.
+    Best effort, like `_clear_sync_incomplete`: the project is deleted.
+    """
+    try:
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, _sync_marker_params(project_name)
+        )
+        ingestor.execute_write(
+            cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+        )
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -2697,6 +2723,7 @@ def delete_project(
             )
             _cleanup_project_embeddings(ingestor, project_name)
             ingestor.delete_project(project_name)
+            _clear_deleted_project_markers(ingestor, project_name)
     except typer.Exit:
         raise
     except Exception as e:

@@ -59,6 +59,8 @@ class _Memgraph(_StatefulIngestor):
     def __init__(self) -> None:
         super().__init__()
         self.markers: set[tuple[str, str]] = set()
+        # Each marker's phase: whether its run had begun writing the graph.
+        self.writing: dict[tuple[str, str], bool] = {}
         # What the stack's port probe sees, and whether a connection is then
         # refused anyway (a login rejected, a server still starting).
         self.reachable = True
@@ -122,8 +124,22 @@ class _Memgraph(_StatefulIngestor):
             run = (str(params[cs.KEY_PROJECT_NAME]), str(params[cs.KEY_RUN_ID]))
             if query == cq.CYPHER_MARK_PROJECT_INCOMPLETE:
                 self.markers.add(run)
+                self.writing[run] = self.writing.get(run, False) or bool(
+                    params.get(cs.KEY_WRITING)
+                )
             else:
                 self.markers.discard(run)
+                self.writing.pop(run, None)
+            return
+        if params and query == cq.CYPHER_RECOVER_PROJECT_INCOMPLETE:
+            project = str(params[cs.KEY_PROJECT_NAME])
+            for run in [
+                run
+                for run in self.markers
+                if run[0] == project and not self.writing.get(run, True)
+            ]:
+                self.markers.discard(run)
+                self.writing.pop(run, None)
             return
         super().execute_write(query, params)
 
@@ -277,6 +293,104 @@ def _stamp(graph: _Memgraph, name: str) -> str:
     stamp = project.get(cs.KEY_LAST_SYNCED_AT)
     assert isinstance(stamp, str), project
     return stamp
+
+
+def _fail_sync(tmp_path: Path, name: str) -> None:
+    with patch(
+        "codebase_rag.graph_updater.GraphUpdater.run",
+        side_effect=RuntimeError("killed mid-sync"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "start",
+                "--repo-path",
+                str(tmp_path / name),
+                "--update-graph",
+                "--no-start-stack",
+                "--no-embeddings",
+                "--project-name",
+                name,
+            ],
+        )
+    assert result.exit_code != 0, result.output
+
+
+class TestDeletingAProjectAfterAFailedSync:
+    # Review of PR #2532: the failed sync's marker sits on its own node, out
+    # of the delete's reach, so the deleted project stayed listed as
+    # interrupted.
+    def test_the_deleted_project_is_no_longer_listed(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        _sync(tmp_path, "billing")
+        _sync(tmp_path, "ledger")
+        ledger = _stamp(graphs[THIS_GRAPH], "ledger")
+        _fail_sync(tmp_path, "billing")
+        assert "billing" in _listed(_cgr("status"))
+
+        _cgr("delete-project", "-n", "billing")
+
+        assert graphs[THIS_GRAPH].project("billing") is None
+        assert _listed(_cgr("status")) == {"ledger": f"last sync {ledger}"}
+
+    def test_an_interrupted_first_sync_of_another_project_still_shows(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        _sync(tmp_path, "billing")
+        _repo(tmp_path, "fresh")
+        _fail_sync(tmp_path, "fresh")
+
+        _cgr("delete-project", "-n", "billing")
+
+        marker = f"({cs.CLI_STATUS_SYNC_INCOMPLETE})"
+        assert _listed(_cgr("status")) == {"fresh": marker}
+
+    def test_a_run_that_had_begun_writing_keeps_its_own_marker(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        # Another process's run (an MCP index, say) that has started writing
+        # owns its marker (#1709): clearing it here would leave whatever that
+        # run writes next unguarded. One that never wrote is stale, and goes.
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        for run_id, writing in (("mcp-writing", True), ("mcp-idle", False)):
+            graph.execute_write(
+                cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+                {
+                    cs.KEY_PROJECT_NAME: "billing",
+                    cs.KEY_RUN_ID: run_id,
+                    cs.KEY_WRITING: writing,
+                },
+            )
+
+        _cgr("delete-project", "-n", "billing")
+
+        assert graph.markers == {("billing", "mcp-writing")}
+
+    def test_a_marker_that_cannot_be_cleared_does_not_fail_the_delete(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        _sync(tmp_path, "billing")
+        _fail_sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        real_write = graph.execute_write
+
+        def write(query: str, params: PropertyDict | None = None) -> None:
+            if query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
+                raise ConnectionError("store went away")
+            real_write(query, params)
+
+        warnings: list[str] = []
+        sink = logger.add(warnings.append, level="WARNING", format="{message}")
+        try:
+            with patch.object(graph, "execute_write", side_effect=write):
+                _cgr("delete-project", "-n", "billing")
+        finally:
+            logger.remove(sink)
+
+        assert graph.project("billing") is None
+        assert any("marker could not be cleared" in w for w in warnings), warnings
 
 
 class TestWhatStillShows:
