@@ -437,15 +437,27 @@ def python_stub_has_implementation(
     `__init__.py` beside it. As with `has_implementation_sibling`, this asks
     the disk and the walk's own skip predicate, not the parse registry, so the
     answer does not depend on which file was walked first.
+
+    And the walk's symlink rule (#2451): a candidate that is a link, or a
+    package behind a linked `x/`, is never walked, so it is never indexed.
+    Yielding to one left nothing defining the module, neither the stub nor
+    the implementation it deferred to.
     """
     if path.suffix != cs.EXT_PYI:
         return False
     if path.name == cs.INIT_PYI:
-        candidates = (path.with_name(cs.INIT_PY),)
+        candidates = [path.with_name(cs.INIT_PY)]
     else:
-        candidates = (path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY)
+        candidates = [path.with_suffix(cs.EXT_PY)]
+        package_dir = path.with_suffix("")
+        # The walk does not enter a linked directory (#2451).
+        if not is_symlink_entry(package_dir):
+            candidates.append(package_dir / cs.INIT_PY)
     return any(
         candidate.is_file()
+        # A linked implementation is no implementation: the walk leaves links
+        # out (#2451).
+        and not is_symlink_entry(candidate)
         and not should_skip_path(
             candidate,
             repo_path,

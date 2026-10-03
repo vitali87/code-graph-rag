@@ -6723,7 +6723,9 @@ class GraphUpdater:
         if not parent.is_dir():
             return
         for candidate in sorted(parent.iterdir()):
-            if not candidate.is_file():
+            # A link is no survivor: the walk leaves links out (#2451), and
+            # `is_file` follows one.
+            if not candidate.is_file() or path_utils.is_symlink_entry(candidate):
                 continue
             key = cached_relative_path(candidate, self.repo_path).as_posix()
             if _stem_key(key) != stem or key in present or key in gone:
@@ -6799,8 +6801,10 @@ class GraphUpdater:
                 continue
             for candidate in sorted(directory.iterdir()):
                 key = cached_relative_path(candidate, self.repo_path).as_posix()
+                # A link is not walked (#2451), so it is not re-parsed here.
                 if (
                     not candidate.is_file()
+                    or path_utils.is_symlink_entry(candidate)
                     or key in present
                     or key in gone
                     or self._reingest_ignored(candidate)

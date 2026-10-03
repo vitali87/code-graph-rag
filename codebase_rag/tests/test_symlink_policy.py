@@ -17,7 +17,7 @@ is logged at DEBUG and the run logs one INFO count.
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
@@ -36,11 +36,13 @@ from codebase_rag.tests.conftest import (
     create_and_run_updater,
     force_mtime_after_cache,
     get_node_names,
+    get_nodes,
 )
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.utils import path_utils
 from codebase_rag.utils.path_utils import (
     has_implementation_sibling,
+    python_stub_has_implementation,
     walk_eligible_files,
 )
 from evals.cgr_graph import _StatefulIngestor
@@ -709,3 +711,252 @@ class TestPackagePruneScope:
         packages = _packages(store)
         assert "shared.vendored" not in packages
         assert "shared.pkg" in packages
+
+
+_STUB = "def f() -> int: ...\n"
+_IMPL = "def f():\n    return 1\n"
+
+
+def _implementation(root: Path, rel: str, *, inside: bool) -> str:
+    """Write the real implementation; return its path relative to `proj/`.
+
+    Inside the repository it is walked under its own path, and only the
+    symlink rule tells the stub not to yield to the link. Outside it,
+    `should_skip_path`'s containment check already refused the link.
+    """
+    if inside:
+        _write(root / "proj" / "lib" / rel, _IMPL)
+        return f"lib/{rel}"
+    _write(root / "vendor" / rel, _IMPL)
+    return f"../vendor/{rel}"
+
+
+def _linked_file(root: Path, *, inside: bool) -> Path:
+    target = _implementation(root, "x.py", inside=inside)
+    stub = _write(root / "proj" / "x.pyi", _STUB)
+    _link(root / "proj" / "x.py", target)
+    return stub
+
+
+def _linked_package_dir(root: Path, *, inside: bool) -> Path:
+    target = _implementation(root, "x/__init__.py", inside=inside)
+    stub = _write(root / "proj" / "x.pyi", _STUB)
+    _link(root / "proj" / "x", Path(target).parent.as_posix(), directory=True)
+    return stub
+
+
+def _linked_package_init(root: Path, *, inside: bool) -> Path:
+    # A real `x/` the walk enters, whose `__init__.py` is the link.
+    target = _implementation(root, "x.py", inside=inside)
+    stub = _write(root / "proj" / "x.pyi", _STUB)
+    (root / "proj" / "x").mkdir()
+    _link(root / "proj" / "x" / "__init__.py", f"../{target}")
+    return stub
+
+
+def _linked_init_beside_init_stub(root: Path, *, inside: bool) -> Path:
+    target = _implementation(root, "x.py", inside=inside)
+    stub = _write(root / "proj" / "pkg" / "__init__.pyi", _STUB)
+    _link(root / "proj" / "pkg" / "__init__.py", f"../{target}")
+    return stub
+
+
+# (layout builder, the module qn the stub must define)
+_LINKED_IMPLEMENTATIONS = [
+    pytest.param(_linked_file, "proj.x", id="x.py-is-a-link"),
+    pytest.param(_linked_package_dir, "proj.x", id="x-dir-is-a-link"),
+    pytest.param(_linked_package_init, "proj.x", id="x/__init__.py-is-a-link"),
+    pytest.param(_linked_init_beside_init_stub, "proj.pkg", id="__init__.py-link"),
+]
+_TARGET_INSIDE = pytest.mark.parametrize(
+    "inside", [True, False], ids=["target-inside", "target-outside"]
+)
+
+
+def _module_paths(ingestor: MagicMock) -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for node_call in get_nodes(ingestor, cs.NodeLabel.MODULE.value):
+        props = node_call[0][1]
+        path = props.get(cs.KEY_PATH)
+        entry = found.setdefault(props[cs.KEY_QUALIFIED_NAME], set())
+        if isinstance(path, str):
+            entry.add(path)
+    return found
+
+
+class TestStubBesideALinkedImplementation:
+    # A `.pyi` stub yields its module to the `.py` (or package) beside it
+    # (issue #2445) only when the walk will index that implementation. A
+    # link, or a package behind a linked directory, is never walked, so a
+    # stub yielding to one left NOTHING defining the module.
+
+    @_TARGET_INSIDE
+    @pytest.mark.parametrize(("build", "module"), _LINKED_IMPLEMENTATIONS)
+    def test_the_stub_defines_the_module(
+        self,
+        tmp_path: Path,
+        mock_ingestor: MagicMock,
+        build: Callable[..., Path],
+        module: str,
+        inside: bool,
+    ) -> None:
+        stub = build(tmp_path, inside=inside)
+        repo = tmp_path / "proj"
+        create_and_run_updater(repo, mock_ingestor)
+        assert _module_paths(mock_ingestor).get(module) == {
+            stub.relative_to(repo).as_posix()
+        }
+        assert f"{module}.f" in get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
+
+    @_TARGET_INSIDE
+    @pytest.mark.parametrize(("build", "module"), _LINKED_IMPLEMENTATIONS)
+    def test_a_linked_implementation_does_not_count(
+        self, tmp_path: Path, build: Callable[..., Path], module: str, inside: bool
+    ) -> None:
+        stub = build(tmp_path, inside=inside)
+        assert not python_stub_has_implementation(stub, tmp_path / "proj")
+
+    def test_a_real_implementation_still_counts(self, tmp_path: Path) -> None:
+        # Negative: the #2445 yield is unchanged for a file that is walked.
+        stub = _write(tmp_path / "x.pyi", _STUB)
+        _write(tmp_path / "x.py", _IMPL)
+        assert python_stub_has_implementation(stub, tmp_path)
+
+    def test_a_real_package_still_counts(self, tmp_path: Path) -> None:
+        # Negative: a package directory that is not a link still wins.
+        stub = _write(tmp_path / "x.pyi", _STUB)
+        _write(tmp_path / "x" / "__init__.py", _IMPL)
+        assert python_stub_has_implementation(stub, tmp_path)
+
+    def test_a_real_init_still_counts(self, tmp_path: Path) -> None:
+        # Negative.
+        stub = _write(tmp_path / "pkg" / "__init__.pyi", _STUB)
+        _write(tmp_path / "pkg" / "__init__.py", _IMPL)
+        assert python_stub_has_implementation(stub, tmp_path)
+
+    def test_a_stub_with_no_implementation_does_not_yield(self, tmp_path: Path) -> None:
+        # Negative.
+        stub = _write(tmp_path / "x.pyi", _STUB)
+        assert not python_stub_has_implementation(stub, tmp_path)
+
+    def test_a_repository_reached_through_a_link_keeps_its_implementation(
+        self, tmp_path: Path
+    ) -> None:
+        # Negative: only entries inside the repository are judged, so a
+        # `--repo-path` that is itself a link still has a walked `x.py`.
+        _write(tmp_path / "repo" / "x.py", _IMPL)
+        _write(tmp_path / "repo" / "x.pyi", _STUB)
+        entry = tmp_path / "repo-link"
+        _link(entry, "repo", directory=True)
+        assert python_stub_has_implementation(entry / "x.pyi", entry)
+
+    def test_a_real_implementation_keeps_the_module_in_the_graph(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative, end to end: the `.py` owns the module, the stub adds none.
+        repo = tmp_path / "proj"
+        _write(repo / "x.py", _IMPL)
+        _write(repo / "x.pyi", _STUB + "def only_in_stub() -> None: ...\n")
+        create_and_run_updater(repo, mock_ingestor)
+        assert _module_paths(mock_ingestor).get("proj.x") == {"x.py"}
+        functions = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
+        assert "proj.x.f" in functions
+        assert "proj.x.only_in_stub" not in functions
+
+
+def _stub_whose_implementation_becomes_a_link(
+    tmp_path: Path,
+) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+    """Index a real `x.py` beside `x.pyi`, then replace it with a link."""
+    repo = tmp_path / "proj"
+    _write(repo / "lib" / "x.py", _IMPL)
+    _write(repo / "x.py", "def g():\n    return 2\n")
+    _write(repo / "x.pyi", _STUB)
+    store = _StatefulIngestor()
+    updater = _stateful_updater(repo, store)
+    updater.run(force=True)
+    assert _stored_module_path(store, "proj.x") == "x.py"
+    (repo / "x.py").unlink()
+    _link(repo / "x.py", "lib/x.py")
+    return repo, store, updater
+
+
+def _stored_module_path(store: _StatefulIngestor, qn: str) -> object:
+    return store.nodes.get((cs.NodeLabel.MODULE.value, qn), {}).get(cs.KEY_PATH)
+
+
+class TestImplementationBecomesALink:
+    # The stub's answer flips when its `x.py` turns into a link, and the
+    # update must hand `proj.x` to the stub rather than leave it unowned.
+
+    def test_the_next_sync_hands_the_module_to_the_stub(self, tmp_path: Path) -> None:
+        repo, store, _updater = _stub_whose_implementation_becomes_a_link(tmp_path)
+        _stateful_updater(repo, store).run()
+        assert _stored_module_path(store, "proj.x") == "x.pyi"
+        assert _function_qns(store) == {"proj.x.f", "proj.lib.x.f"}
+
+    def test_a_reingest_hands_the_module_to_the_stub(self, tmp_path: Path) -> None:
+        repo, store, updater = _stub_whose_implementation_becomes_a_link(tmp_path)
+        updater.reingest((), deleted=(repo / "x.py",))
+        assert _stored_module_path(store, "proj.x") == "x.pyi"
+        assert _function_qns(store) == {"proj.x.f", "proj.lib.x.f"}
+
+
+class TestReingestSkipsLinks:
+    # A scoped re-ingest re-parses files the call did not name: same-stem
+    # survivors (issue #1569) and the files under a directory whose
+    # package-ness flipped (issue #1798). Both listed the directory and kept
+    # whatever `is_file()` accepted, which follows a link, so a re-ingest
+    # indexed links the walk leaves out.
+
+    def test_a_package_flip_reparses_no_link(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _write(repo / "pkg" / "core.py", "def helper():\n    return 1\n")
+        _link(repo / "pkg" / "alias.py", "core.py")
+        store = _StatefulIngestor()
+        updater = _stateful_updater(repo, store)
+        updater.run(force=True)
+        assert _function_qns(store) == {"repo.pkg.core.helper"}
+
+        updater.reingest((_write(repo / "pkg" / "__init__.py", ""),))
+
+        assert _function_qns(store) == {"repo.pkg.core.helper"}
+        assert "pkg/alias.py" not in _file_paths(store)
+        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        assert "pkg/alias.py" not in cache
+
+    def test_a_same_stem_survivor_is_no_link(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _write(repo / "web" / "m.js", "export function shown() {\n  return 1;\n}\n")
+        (repo / "pkg").mkdir()
+        _link(repo / "pkg" / "m.js", "../web/m.js")
+        store = _StatefulIngestor()
+        updater = _stateful_updater(repo, store)
+        updater.run(force=True)
+        before = _function_qns(store)
+        assert not any(qn.startswith("repo.pkg.") for qn in before)
+
+        updater.reingest((_write(repo / "pkg" / "m.py", "def own():\n    return 1\n"),))
+
+        assert _function_qns(store) == before | {"repo.pkg.m.own"}
+        assert "pkg/m.js" not in _file_paths(store)
+
+    def test_a_package_flip_still_reparses_a_real_sibling(self, tmp_path: Path) -> None:
+        # Negative: the real files under a flipped directory are re-parsed
+        # onto the new Package, as before.
+        repo = tmp_path / "repo"
+        _write(repo / "pkg" / "core.py", "def helper():\n    return 1\n")
+        store = _StatefulIngestor()
+        updater = _stateful_updater(repo, store)
+        updater.run(force=True)
+
+        updater.reingest((_write(repo / "pkg" / "__init__.py", ""),))
+
+        assert "repo.pkg" in _packages(store)
+        assert _function_qns(store) == {"repo.pkg.core.helper"}
+        contains = {
+            (edge[1], edge[4])
+            for edge in store.keyed_edges
+            if edge[2] == cs.RelationshipType.CONTAINS_MODULE.value
+        }
+        assert ("repo.pkg", "repo.pkg.core") in contains
