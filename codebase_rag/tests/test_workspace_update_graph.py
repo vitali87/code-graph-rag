@@ -297,20 +297,31 @@ def empty(tmp_path: Path) -> Path:
     return elsewhere
 
 
+_EMPTY_WORKSPACE = "'empty' has no repositories"
+
+
 @pytest.mark.parametrize(
-    "extra",
+    ("extra", "refusal"),
     [
-        ["--update-graph"],
-        ["--update-graph", "-a", "where is main?"],
-        ["--update-graph", "--projects", "alpha"],
-        [],
-        ["--no-sync"],
-        ["-a", "where is main?"],
+        (["--update-graph"], _EMPTY_WORKSPACE),
+        # #2478 refuses `-a` and `--projects` with any `--update-graph`, before
+        # the workspace is loaded; either way nothing opens or syncs.
+        (
+            ["--update-graph", "-a", "where is main?"],
+            "--ask-agent cannot be combined with --update-graph",
+        ),
+        (
+            ["--update-graph", "--projects", "alpha"],
+            "--projects cannot be combined with --update-graph",
+        ),
+        ([], _EMPTY_WORKSPACE),
+        (["--no-sync"], _EMPTY_WORKSPACE),
+        (["-a", "where is main?"], _EMPTY_WORKSPACE),
     ],
     ids=["update", "update-ask", "update-projects", "chat", "no-sync", "ask"],
 )
 def test_an_empty_workspace_opens_no_assistant(
-    sync: MagicMock, session: MagicMock, empty: Path, extra: list[str]
+    sync: MagicMock, session: MagicMock, empty: Path, extra: list[str], refusal: str
 ) -> None:
     # Greptile review of PR 2507: a workspace with no repositories left the
     # project scope empty, and an empty scope is what "no scope" looks like
@@ -320,7 +331,7 @@ def test_an_empty_workspace_opens_no_assistant(
 
     out = " ".join(click.unstyle(result.output).split())
     assert result.exit_code == 1, out
-    assert "'empty' has no repositories" in out
+    assert refusal in out
     assert "Graph update completed" not in out
     session.assert_not_called()
     sync.assert_not_called()
