@@ -563,13 +563,15 @@ def _scan_invoked_parameters(
     invoked: set[str],
     config: _CallableScanConfig,
     bound_names: Callable[[Node], set[str]],
+    sites: dict[str, list[Node]] | None = None,
 ) -> None:
     # Mark a candidate parameter invoked when it is called by bare name in this
     # lexical scope. Descend into nested closures that CAPTURE a candidate (do not
     # rebind it) so `outer(cb) { inner() { cb() } }` still attributes cb to outer,
     # the closure form decorator/formatter factories use. A nested scope's own
     # bound names are removed first so a shadowing local cannot masquerade as the
-    # captured outer parameter. Class-like scopes are skipped entirely.
+    # captured outer parameter. Class-like scopes are skipped entirely. `sites`,
+    # when given, also collects every invoking call node per parameter.
     if not candidates:
         return
     stack: list[Node] = [scope_node]
@@ -579,9 +581,13 @@ def _scan_invoked_parameters(
             name = _bare_call_name(child, config)
             if name is not None and name in candidates:
                 invoked.add(name)
+                if sites is not None:
+                    sites.setdefault(name, []).append(child)
             if child.type in config.closure_types:
                 inner = candidates - bound_names(child)
-                _scan_invoked_parameters(child, inner, invoked, config, bound_names)
+                _scan_invoked_parameters(
+                    child, inner, invoked, config, bound_names, sites
+                )
                 continue
             if child.type in config.opaque_types:
                 continue
@@ -801,12 +807,19 @@ def python_positional_parameter_names(func_node: Node) -> list[str]:
     return names
 
 
-def callable_parameter_indices(
+class _CallableScanInputs(NamedTuple):
+    names: list[str]
+    body: Node
+    scan: _CallableScanConfig
+    scope_bound: Callable[[Node], set[str]]
+
+
+def _callable_scan_inputs(
     func_node: Node, language: cs.SupportedLanguage | None
-) -> dict[str, int]:
-    # Maps each parameter invoked as a call inside the function body to its
-    # positional index in the call-site argument list (self/cls dropped so the
-    # index lines up with how bound methods are invoked).
+) -> _CallableScanInputs | None:
+    # The ordered parameters, the body and the language's scan rules; None
+    # for a language without callable-parameter flow or a function with no
+    # body or no parameters.
     if language == cs.SupportedLanguage.PYTHON:
         names = python_parameter_names(func_node)
         scan, scope_bound = _PY_SCAN, _python_scope_bound_names
@@ -820,14 +833,51 @@ def callable_parameter_indices(
         names = cpp_parameter_names(func_node)
         scan, scope_bound = _CPP_SCAN, _cpp_scope_bound_names
     else:
-        return {}
+        return None
     body_node = func_node.child_by_field_name(cs.FIELD_BODY)
     if body_node is None or not names:
+        return None
+    return _CallableScanInputs(names, body_node, scan, scope_bound)
+
+
+def callable_parameter_indices(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, int]:
+    # Maps each parameter invoked as a call inside the function body to its
+    # positional index in the call-site argument list (self/cls dropped so the
+    # index lines up with how bound methods are invoked).
+    if (inputs := _callable_scan_inputs(func_node, language)) is None:
         return {}
-    invoked = _invoked_parameter_names(body_node, set(names), scan, scope_bound)
+    names = inputs.names
+    invoked = _invoked_parameter_names(
+        inputs.body, set(names), inputs.scan, inputs.scope_bound
+    )
     if not invoked:
         return {}
     return {name: index for index, name in enumerate(names) if name in invoked}
+
+
+def callable_parameter_invocations(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, list[Node]]:
+    # The call nodes behind callable_parameter_indices, in source order: where
+    # the function itself invokes each parameter. A callback it receives runs
+    # there, in this function's file, which is where the CALLS edge to that
+    # callback is located (issue #2459).
+    if (inputs := _callable_scan_inputs(func_node, language)) is None:
+        return {}
+    sites: dict[str, list[Node]] = {}
+    _scan_invoked_parameters(
+        inputs.body,
+        set(inputs.names),
+        set(),
+        inputs.scan,
+        inputs.scope_bound,
+        sites,
+    )
+    for nodes in sites.values():
+        nodes.sort(key=lambda node: node.start_byte)
+    return sites
 
 
 def go_parameter_names(func_node: Node) -> list[str]:

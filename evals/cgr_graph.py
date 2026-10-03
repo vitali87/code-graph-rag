@@ -622,6 +622,9 @@ class _StatefulIngestor:
         cs.KEY_KWARG_NAMES,
         cs.KEY_RESOLUTION,
     )
+    # A reference read also names the parameter a callback is invoked
+    # through (issue #2459).
+    _GRAPH_REFERENCE_KEYS = (*_GRAPH_SITE_KEYS, cs.KEY_VIA_PARAM)
     _GRAPH_IMPORT_KEYS = (
         cs.KEY_LINE,
         cs.KEY_COL,
@@ -698,6 +701,29 @@ class _StatefulIngestor:
             cs.NodeLabel.MODULE.value,
         }
     )
+
+    def _graph_callback_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """The CALLS into `$qn` that run it through a parameter (#2459)."""
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        rows: list[ResultRow] = []
+        for target in self._graph_node_ids(_str(params.get(cs.KEY_QN))):
+            for edge in self._in.get(target, ()):
+                props = self.edge_props.get(edge, {})
+                if (
+                    edge[2] != cs.RelationshipType.CALLS.value
+                    or props.get(cs.KEY_VIA_PARAM) is None
+                    or not self._in_project((edge[0], edge[1]), prefix)
+                ):
+                    continue
+                rows.append(
+                    {
+                        cs.KEY_QUALIFIED_NAME: _result(edge[1]),
+                        cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
+                        cs.KEY_COL: _result(props.get(cs.KEY_COL)),
+                        cs.KEY_VIA_PARAM: _result(props.get(cs.KEY_VIA_PARAM)),
+                    }
+                )
+        return rows
 
     def _graph_resolve_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
@@ -794,6 +820,12 @@ class _StatefulIngestor:
                         continue
                     if query == cq.CYPHER_GRAPH_CALLERS:
                         rows.append(self._graph_call_row(edge, source))
+                    elif query == cq.CYPHER_GRAPH_REFERENCES:
+                        rows.append(
+                            self._graph_edge_row(
+                                edge, self._GRAPH_REFERENCE_KEYS, source
+                            )
+                        )
                     else:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
@@ -1039,6 +1071,8 @@ class _StatefulIngestor:
                 return self._context_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
+            case cq.CYPHER_GRAPH_CALLBACK_SITES:
+                return self._graph_callback_rows(params or {})
             case cs.CYPHER_ALL_PACKAGE_PATHS:
                 return self._path_rows(_PACKAGE_LABEL)
             case cs.CYPHER_REPO_FILE_PATHS:
