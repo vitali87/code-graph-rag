@@ -128,9 +128,17 @@ NATIVE_STDERR_FD = 2
 # pymgclient's Windows wheels are MinGW builds, linked against this C runtime
 # rather than the UCRT that CPython and its os module use.
 MGCLIENT_WINDOWS_C_RUNTIME = "msvcrt"
-ERR_C_RUNTIME_CALL_FAILED = (
-    "The C runtime mgclient prints through could not move its stderr."
+# Generous for a handshake and `RETURN 1` on this machine; a Memgraph that has
+# not answered by then is reported as not answering, as a refusal is.
+MGCLIENT_PROBE_TIMEOUT_S = 30.0
+MSG_MEMGRAPH_PROBE_TIMED_OUT = "Memgraph gave the probe no answer within {timeout}s"
+ERR_MGCLIENT_PROBE_CHILD_FAILED = (
+    "The process probing Memgraph failed with exit code {code}: {output}"
 )
+# PyInstaller sets this attribute on sys in a frozen build.
+FROZEN_APP_ATTR = "frozen"
+PYTHON_SAFE_PATH_FLAG = "-P"
+PYTHON_RUN_MODULE_FLAG = "-m"
 
 PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 

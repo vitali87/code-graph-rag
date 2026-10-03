@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import ctypes.util
 import errno
 import itertools
 import os
-import re
 import socket
 import subprocess
 import sys
@@ -12,7 +12,6 @@ import time
 from collections.abc import Callable, Iterator
 from functools import partial
 from pathlib import Path
-from typing import IO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -170,7 +169,7 @@ def test_every_memgraph_probe_is_silent_while_memgraph_starts(
     assert capfd.readouterr().err == ""
 
 
-@pytest.mark.usefixtures("quick_memgraph_waits")
+@pytest.mark.usefixtures("quick_memgraph_waits", "mgclient_in_this_process")
 def test_daemon_up_waits_for_a_starting_memgraph_without_noise(
     starting_memgraph: int, stack_home: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
@@ -253,26 +252,13 @@ def test_waiting_for_a_memgraph_that_never_starts_still_raises(
         mgr.wait_healthy(timeout=NEVER_READY_TIMEOUT_S)
 
 
-@pytest.mark.parametrize(
-    "starting_memgraph",
-    [
-        pytest.param(
-            "reset",
-            marks=pytest.mark.skipif(
-                sys.platform == "win32",
-                reason="mgclient does not always emit stderr for a reset on Windows",
-            ),
-        ),
-        "close",
-    ],
-    indirect=True,
-)
 def test_the_c_library_message_is_kept_at_debug_level(
     starting_memgraph: int, debug_records: list[tuple[str, str]]
 ) -> None:
     # On Windows mgclient prints through a C runtime of its own, whose fd 2
     # capfd does not watch, so there this is the test that sees where the
-    # real message goes.
+    # real message goes. It prints on a reset as on a close: perror() for the
+    # failed recv, fprintf(stderr) for the stream that ended.
     health.memgraph_anonymous_access(cs.LOOPBACK_HOST, starting_memgraph)
 
     assert [level for level, text in debug_records if MGCLIENT_NOISE in text] == [
@@ -290,6 +276,7 @@ def test_stderr_outside_a_probe_still_reaches_the_terminal(
     assert capfd.readouterr().err == "before\nafter\n"
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_an_unexpected_probe_error_propagates_and_restores_stderr(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -305,6 +292,7 @@ def test_an_unexpected_probe_error_propagates_and_restores_stderr(
     assert capfd.readouterr().err == "after\n"
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_concurrent_probes_leave_stderr_pointing_at_the_terminal(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -331,6 +319,7 @@ def test_concurrent_probes_leave_stderr_pointing_at_the_terminal(
     assert capfd.readouterr().err == "after\n"
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_a_process_without_stderr_still_probes() -> None:
     # A service started with fd 2 closed has nothing to redirect.
     with (
@@ -340,6 +329,7 @@ def test_a_process_without_stderr_still_probes() -> None:
         assert health._bolt_reachable(cs.LOOPBACK_HOST, 7687)
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 @pytest.mark.parametrize(
     ("error", "access", "rejected"),
     [
@@ -370,6 +360,7 @@ def test_a_refused_login_is_still_told_apart_from_no_answer(
     assert capfd.readouterr().err == ""
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_a_ready_memgraph_is_still_reachable(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -380,132 +371,66 @@ def test_a_ready_memgraph_is_still_reachable(
     assert capfd.readouterr().err == ""
 
 
-# --- Windows: mgclient prints through a C runtime of its own ---
-
-
-class _SeparateCRuntime:
-    """A C runtime with descriptors of its own, as msvcrt.dll has on Windows.
-
-    pymgclient's Windows wheels print through msvcrt.dll, while Python's os
-    module works on the UCRT's descriptors, so os.dup2 onto fd 2 leaves the
-    fd 2 that mgclient writes to where it was. Each descriptor here is backed
-    by a real one but numbered apart from them.
-    """
-
-    def __init__(self, stderr: int | None) -> None:
-        self.fds: dict[int, int] = {}
-        if stderr is not None:
-            self.fds[STDERR_FD] = os.dup(stderr)
-        self._numbers = itertools.count(STDERR_FD + 1)
-
-    def _add(self, real_fd: int) -> int:
-        fd = next(self._numbers)
-        self.fds[fd] = real_fd
-        return fd
-
-    def dup(self, fd: int) -> int:
-        if fd not in self.fds:
-            raise OSError(errno.EBADF, os.strerror(errno.EBADF))
-        return self._add(os.dup(self.fds[fd]))
-
-    def dup2(self, fd: int, fd2: int) -> None:
-        real_fd = os.dup(self.fds[fd])
-        if fd2 in self.fds:
-            os.close(self.fds[fd2])
-        self.fds[fd2] = real_fd
-
-    def close(self, fd: int) -> None:
-        os.close(self.fds.pop(fd))
-
-    def open_file(self, file: IO[bytes]) -> int:
-        return self._add(os.dup(file.fileno()))
-
-    def perror(self, text: str) -> None:
-        os.write(self.fds[STDERR_FD], f"{text}\n".encode())
+# --- Windows: each probe runs mgclient in a child process of its own ---
 
 
 @pytest.fixture
-def mgclient_c_runtime(tmp_path: Path) -> Iterator[tuple[_SeparateCRuntime, Path]]:
-    # As on Windows: the fd 2 mgclient prints to is a terminal of its own.
-    terminal = tmp_path / "terminal"
-    with terminal.open("wb") as file:
-        runtime = _SeparateCRuntime(file.fileno())
-    try:
-        with patch.object(health, "_mgclient_own_c_runtime", return_value=runtime):
-            yield runtime, terminal
-    finally:
-        for real_fd in runtime.fds.values():
-            os.close(real_fd)
+def probes_in_a_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The path Windows takes, here with this platform's C library standing in
+    # for msvcrt.dll: the child flushes it as it would msvcrt.dll.
+    runtime = health._mgclient_own_c_runtime() or health._CRuntimeLibrary(
+        str(ctypes.util.find_library("c"))
+    )
+    monkeypatch.setattr(health, "_mgclient_own_c_runtime", lambda: runtime)
 
 
-def test_mgclient_printing_through_its_own_c_runtime_stays_off_the_terminal(
-    mgclient_c_runtime: tuple[_SeparateCRuntime, Path],
+@pytest.mark.usefixtures("probes_in_a_child")
+def test_a_probe_child_keeps_the_c_library_message_at_debug_level(
+    starting_memgraph: int,
     debug_records: list[tuple[str, str]],
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    runtime, terminal = mgclient_c_runtime
+    # The real mgclient in a real child: what it prints comes back over the
+    # child's stderr, and nothing reaches this process's own.
+    assert (
+        health.memgraph_anonymous_access(cs.LOOPBACK_HOST, starting_memgraph)
+        is cs.AnonymousAccess.NO_ANSWER
+    )
 
-    def connect(**_: object) -> MagicMock:
-        runtime.perror(f"{MGCLIENT_NOISE}_recv: connection closed by server")
-        raise health.mgclient.OperationalError("failed to receive handshake")
-
-    with patch.object(health.mgclient, "connect", side_effect=connect):
-        assert (
-            health.memgraph_anonymous_access(cs.LOOPBACK_HOST, 7687)
-            is cs.AnonymousAccess.NO_ANSWER
-        )
-    runtime.perror("after")
-
-    assert terminal.read_text() == "after\n"
     assert [level for level, text in debug_records if MGCLIENT_NOISE in text] == [
         "DEBUG"
     ]
-    assert set(runtime.fds) == {STDERR_FD}
     assert capfd.readouterr().err == ""
 
 
-def test_an_unexpected_probe_error_restores_both_c_runtimes_stderr(
-    mgclient_c_runtime: tuple[_SeparateCRuntime, Path],
+@pytest.mark.usefixtures("probes_in_a_child")
+@pytest.mark.parametrize(
+    ("probe", "expected"),
+    [
+        pytest.param(
+            lambda port: health._bolt_reachable(
+                cs.LOOPBACK_HOST, port, ("cgr", "s3cret")
+            ),
+            False,
+            id="login-probe",
+        ),
+        pytest.param(
+            lambda port: health.memgraph_rejects_credentials(
+                cs.LOOPBACK_HOST, port, ("cgr", "s3cret")
+            ),
+            False,
+            id="rejects-credentials",
+        ),
+    ],
+)
+def test_every_probe_child_is_silent_while_memgraph_starts(
+    probe: Callable[[int], object],
+    expected: object,
+    starting_memgraph: int,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    runtime, terminal = mgclient_c_runtime
+    assert probe(starting_memgraph) == expected
 
-    def connect(**_: object) -> MagicMock:
-        runtime.perror(MGCLIENT_NOISE)
-        os.write(STDERR_FD, f"{MGCLIENT_NOISE}\n".encode())
-        raise RuntimeError("bug")
-
-    with (
-        patch.object(health.mgclient, "connect", side_effect=connect),
-        pytest.raises(RuntimeError, match="bug"),
-    ):
-        health._bolt_reachable(cs.LOOPBACK_HOST, 7687)
-    runtime.perror("after")
-    os.write(STDERR_FD, b"after\n")
-
-    assert terminal.read_text() == "after\n"
-    assert set(runtime.fds) == {STDERR_FD}
-    assert capfd.readouterr().err == "after\n"
-
-
-def test_a_c_runtime_without_stderr_still_probes(
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    # A service started with no stderr: msvcrt.dll has no fd 2 to move, and
-    # Python's fd 2 is still kept clean.
-    runtime = _SeparateCRuntime(stderr=None)
-    failure = health.mgclient.OperationalError("failed to receive handshake")
-
-    with (
-        patch.object(health, "_mgclient_own_c_runtime", return_value=runtime),
-        patch.object(health.mgclient, "connect", side_effect=_noisy_connect(failure)),
-    ):
-        assert (
-            health.memgraph_anonymous_access(cs.LOOPBACK_HOST, 7687)
-            is cs.AnonymousAccess.NO_ANSWER
-        )
-
-    assert runtime.fds == {}
     assert capfd.readouterr().err == ""
 
 
@@ -516,12 +441,8 @@ def test_mgclient_has_a_c_runtime_of_its_own_only_on_windows() -> None:
     assert (own_runtime is not None) == (sys.platform == "win32")
 
 
-def test_a_failed_c_runtime_call_raises_instead_of_returning_minus_one() -> None:
-    # The C runtime signals failure with -1 rather than raising, so a swap on
-    # a descriptor it refused must stop before stderr is pointed anywhere.
-    with pytest.raises(OSError, match=re.escape(cs.ERR_C_RUNTIME_CALL_FAILED)):
-        health._c_runtime_result(-1)
+def test_on_windows_mgclient_prints_through_msvcrt() -> None:
+    with patch.object(sys, "platform", "win32"):
+        own_runtime = health._mgclient_own_c_runtime()
 
-
-def test_a_successful_c_runtime_call_returns_its_descriptor() -> None:
-    assert health._c_runtime_result(7) == 7
+    assert own_runtime == health._CRuntimeLibrary(cs.MGCLIENT_WINDOWS_C_RUNTIME)
