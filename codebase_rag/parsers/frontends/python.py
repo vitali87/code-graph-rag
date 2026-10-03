@@ -26,7 +26,14 @@ class PythonJediFrontend:
         # anyway, so existence is the only meaningful precondition.
         return repo_path.exists()
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        rescued_files: frozenset[str] = frozenset(),
+    ) -> SemanticFacts:
+        # Handed the files the walk parsed, rescued ones included.
+        del rescued_files
         return run_python_frontend(repo_path, list(files))
 
 

@@ -45,7 +45,78 @@ to establish it and logs why.
 
 ## Default Exclusions
 
-Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.
+Code-Graph-RAG automatically excludes common non-source directories. A name
+matches a directory at any depth. Cargo's `src/bin/` is always indexed.
+
+Some of these names hold first-party, committed source as often as build
+output: Dart's `bin/main.dart` entry point, npm and gem executables, a Go
+package called `out`, a JavaScript `env` module. The files git tracks under a
+directory with one of those names are indexed, and the run log names each
+directory they are in. Everything else under the same name is still skipped:
+an untracked `bin/generated.js` beside a tracked `bin/main.dart`, a
+`.gitignore`d build folder, an untracked `tools/bin/`, and a tracked file that
+also sits under another excluded directory (`vendor/bin/lib.js` is still
+vendored code). A tracked path whose name holds pattern characters (`*`, `?`,
+`[`, `]`, `!`, `\`) is not rescued either. An explicit exclude (`.cgrignore`
+or `--exclude`) still wins.
+
+The compiler frontends (go/types, javac, Roslyn) see the rescued files too, so
+their calls keep the compiler's binding. javac is handed the rescued files
+themselves, so an untracked source under another directory of the same name
+never enters its compilation. The real-time watcher re-reads these rules when
+`.cgrignore`, `.gitignore` or the git index changes, so a `git mv`, `git add`
+or `git rm` under one of these names, or an edited ignore file, applies without
+a restart.
+
+<!-- SECTION:default_exclusions -->
+| Directory name | Excluded |
+|---|---|
+| `.cache` | always |
+| `.claude` | always |
+| `.cxx` | always |
+| `.dart_tool` | always |
+| `.eclipse` | always |
+| `.eggs` | always |
+| `.env` | always |
+| `.git` | always |
+| `.gradle` | always |
+| `.hg` | always |
+| `.idea` | always |
+| `.maven` | always |
+| `.mypy_cache` | always |
+| `.nox` | always |
+| `.npm` | always |
+| `.nyc_output` | always |
+| `.pnpm-store` | always |
+| `.pytest_cache` | always |
+| `.qdrant_code_embeddings` | always |
+| `.ruff_cache` | always |
+| `.svn` | always |
+| `.tmp` | always |
+| `.tox` | always |
+| `.venv` | always |
+| `.vs` | always |
+| `.vscode` | always |
+| `.yarn` | always |
+| `__pycache__` | always |
+| `bin` | except the files git tracks in it |
+| `bower_components` | always |
+| `build` | always |
+| `coverage` | except the files git tracks in it |
+| `dist` | always |
+| `env` | except the files git tracks in it |
+| `htmlcov` | always |
+| `node_modules` | always |
+| `obj` | except the files git tracks in it |
+| `out` | except the files git tracks in it |
+| `Pods` | always |
+| `site-packages` | always |
+| `target` | except the files git tracks in it |
+| `temp` | except the files git tracks in it |
+| `tmp` | except the files git tracks in it |
+| `vendor` | always |
+| `venv` | always |
+<!-- /SECTION:default_exclusions -->
 
 Individual files are also skipped by how their **name ends**, covering build
 output and editor leftovers (`.pyc`, `.pyo`, `.o`, `.a`, `.so`, `.dll`,

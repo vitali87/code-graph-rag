@@ -41,6 +41,7 @@ EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
     "docs/guide/interactive-querying.md": frozenset({"agentic_tools"}),
     "docs/guide/cli-reference.md": frozenset({"cli_commands", "makefile_commands"}),
     "docs/getting-started/installation.md": frozenset({"dependencies"}),
+    "docs/advanced/ignore-patterns.md": frozenset({"default_exclusions"}),
 }
 
 

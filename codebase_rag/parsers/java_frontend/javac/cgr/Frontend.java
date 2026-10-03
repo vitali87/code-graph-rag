@@ -78,7 +78,8 @@ public final class Frontend {
         }
         Path root = Paths.get(args[0]).toRealPath();
         Set<String> ignored = ignoredDirs();
-        List<Path> sources = javaSources(root, ignored);
+        Set<Path> sources = new LinkedHashSet<>(javaSources(root, ignored));
+        sources.addAll(extraSources(root));
         if (sources.isEmpty()) {
             return EMPTY_PAYLOAD;
         }
@@ -110,6 +111,28 @@ public final class Frontend {
             return new HashSet<>();
         }
         return new HashSet<>(Arrays.asList(raw.split(",")));
+    }
+
+    // The files cgr indexes under a default-excluded name (a git-tracked
+    // `out/Main.java`), listed one repo-relative path a line in the file
+    // CGR_EXTRA_SOURCES names. Taken file by file rather than by releasing the
+    // name, so an untracked source under another `out/` never compiles.
+    private static List<Path> extraSources(Path root) throws IOException {
+        String listing = System.getenv("CGR_EXTRA_SOURCES");
+        if (listing == null || listing.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Path> extra = new ArrayList<>();
+        for (String line : Files.readAllLines(Paths.get(listing), StandardCharsets.UTF_8)) {
+            if (line.isEmpty()) {
+                continue;
+            }
+            Path source = root.resolve(line).normalize();
+            if (source.startsWith(root) && Files.isRegularFile(source)) {
+                extra.add(source);
+            }
+        }
+        return extra;
     }
 
     private static List<Path> javaSources(Path root, Set<String> ignored) throws IOException {
