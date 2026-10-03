@@ -4827,10 +4827,18 @@ class CallProcessor:
         # `Checker`s stay apart (issue #2555). A position name that binds to
         # nothing names a type with no node, and must not reach the
         # name-based lookups.
+        # A name declared with a qualified type (`::B g`, `ns::B n`) keeps
+        # the class its qualifier names (#2631 re-review).
         anchors = self._cpp_local_anchors(caller_node, module_qn)
+        qualified: frozenset[str] | None = None
         for name, type_name in list(var_types.items()):
             if local_qn := self._cpp_local_type_under(anchors, type_name):
-                var_types[name] = local_qn
+                if qualified is None:
+                    qualified = CppTypeInferenceEngine().qualified_type_names(
+                        caller_node
+                    )
+                if name not in qualified:
+                    var_types[name] = local_qn
             elif cpp_local_types.is_positional_name(type_name):
                 del var_types[name]
 
@@ -4895,8 +4903,10 @@ class CallProcessor:
             type_name := cpp_local_types.named_type(type_node)
         ):
             return None
-        if local_qn := self._cpp_local_type_under(
-            self._cpp_local_anchors(node, module_qn), type_name
+        if not cpp_local_types.is_qualified_type(type_node) and (
+            local_qn := self._cpp_local_type_under(
+                self._cpp_local_anchors(node, module_qn), type_name
+            )
         ):
             return local_qn
         class_qn = self._resolver._resolve_class_name(type_name, module_qn)

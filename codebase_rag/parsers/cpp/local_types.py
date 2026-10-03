@@ -14,6 +14,7 @@ The definition pass and the call pass both name these types through
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Iterator, Mapping
 
@@ -149,18 +150,72 @@ def callable_anchor_qn(
     included (`over@29`), so each overload's local types stay its own.
     """
     if cpp_utils.is_out_of_class_method_definition(callable_node):
-        class_name = cpp_utils.extract_class_name_from_out_of_class_method(
-            callable_node
-        )
-        method_name = cpp_utils.extract_function_name(callable_node)
-        if not class_name or not method_name:
+        if (written := _out_of_class_written_name(callable_node)) is None:
             return None
-        written = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         return cpp_utils.build_qualified_name(
-            callable_node, module_qn, f"{written}{cs.SEPARATOR_DOT}{method_name}"
+            callable_node, module_qn, written + _overload_marker(callable_node)
         )
     recorded = function_locations.get(function_span_key(module_qn, callable_node))
     return recorded.qualified_name if recorded is not None else None
+
+
+def _out_of_class_written_name(callable_node: Node) -> str | None:
+    # `Widget.run` for `int ui::Widget::run(...) {...}`, as written.
+    method_name = cpp_utils.extract_function_name(callable_node)
+    if not method_name:
+        return None
+    class_name = cpp_utils.extract_class_name_from_out_of_class_method(callable_node)
+    if not class_name:
+        return None
+    written = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+    return f"{written}{cs.SEPARATOR_DOT}{method_name}"
+
+
+def _overload_marker(callable_node: Node) -> str:
+    # Out-of-class overloads (`Widget::run(int)`, `Widget::run(double)`)
+    # share the written name, so each later one carries the registry's
+    # duplicate marker for its own position, `@<line>`, as a function
+    # overload's qn does (`over@4`). Its local types then stay its own in
+    # both the definition and the call pass (#2631 re-review). Read from the
+    # file alone, so a header parsed later cannot move it between runs.
+    parent = callable_node.parent
+    if parent is None:
+        return ""
+    return _overload_markers(parent).get(callable_node.start_byte, "")
+
+
+@functools.lru_cache(maxsize=16)
+def _overload_markers(container: Node) -> dict[int, str]:
+    # One pass over a namespace or file body: start byte -> marker for each
+    # out-of-class definition after the first of its written name. Cached
+    # per body, as every callable in it asks.
+    claimed: dict[str, list[int]] = {}
+    markers: dict[int, str] = {}
+    for child in container.named_children:
+        if child.type != cs.CppNodeType.FUNCTION_DEFINITION or not (
+            cpp_utils.is_out_of_class_method_definition(child)
+        ):
+            continue
+        if (written := _out_of_class_written_name(child)) is None:
+            continue
+        line, col = child.start_point
+        earlier = claimed.setdefault(written, [])
+        if earlier:
+            marker = f"{cs.DUP_QN_MARKER}{line + 1}"
+            if line in earlier:
+                marker = f"{marker}{cs.DUP_QN_COLUMN_MARKER}{col}"
+            markers[child.start_byte] = marker
+        earlier.append(line)
+    return markers
+
+
+def is_qualified_type(node: Node) -> bool:
+    """True for a type spelled with a scope qualifier (`::B`, `ns::B`,
+    `ns::B<int>`), which names that class and never a local one."""
+    if node.type == cs.CppNodeType.TEMPLATE_TYPE:
+        inner = node.child_by_field_name(cs.FIELD_NAME)
+        return inner is not None and is_qualified_type(inner)
+    return node.type == cs.CppNodeType.QUALIFIED_IDENTIFIER
 
 
 def named_type(node: Node) -> str | None:

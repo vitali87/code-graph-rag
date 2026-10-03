@@ -6,6 +6,16 @@ from ... import constants as cs
 from ..utils import safe_decode_text
 from . import local_types
 
+# Declarations whose `type` field names the type of the names they declare.
+_QUALIFIABLE_DECLARATION_TYPES = frozenset(
+    {
+        cs.CppNodeType.PARAMETER_DECLARATION,
+        cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        cs.CppNodeType.DECLARATION,
+        cs.CppNodeType.FIELD_DECLARATION,
+    }
+)
+
 
 class CppTypeInferenceEngine:
     # Maps local variable / parameter names to their bare C++ type name in a
@@ -287,6 +297,38 @@ class CppTypeInferenceEngine:
             # variable declared only in an inner block still resolves; conflicting
             # redecls across scopes are reconciled by the caller (drop-on-conflict).
             self._collect_body_declarations(child, decls)
+
+    def qualified_type_names(self, caller_node: Node) -> frozenset[str]:
+        """The parameters, locals and (for a member function written in its
+        class) fields whose declared type is spelled qualified (`::B`,
+        `ns::B`). The type map keeps only the bare `B`, but such a name means
+        the class the qualifier names, never a local type the bare name would
+        find (#2631 re-review)."""
+        declarations: list[Node] = []
+        if (declarator := self._function_declarator(caller_node)) is not None and (
+            params := declarator.child_by_field_name(cs.KEY_PARAMETERS)
+        ) is not None:
+            declarations.extend(params.children)
+        scopes = [caller_node.child_by_field_name(cs.FIELD_BODY), caller_node.parent]
+        if scopes[1] is None or scopes[1].type != cs.TS_CPP_FIELD_DECLARATION_LIST:
+            scopes.pop()
+        while scopes:
+            if (scope := scopes.pop()) is None:
+                continue
+            for child in scope.children:
+                if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+                    declarations.append(child)
+                    scopes.append(child)
+        return frozenset(
+            name
+            for declaration in declarations
+            if declaration.type in _QUALIFIABLE_DECLARATION_TYPES
+            and (type_node := declaration.child_by_field_name(cs.FIELD_TYPE))
+            is not None
+            and local_types.is_qualified_type(type_node)
+            for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR)
+            if (name := self._declarator_name(declarator)) is not None
+        )
 
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)

@@ -637,3 +637,114 @@ def test_invoked_functor_still_calls_its_operator(
     assert (f"{module}.invoke", operator_call) in calls
     references = _edges(mock_ingestor, RelationshipType.REFERENCES)
     assert (f"{module}.invoke", operator_call) not in references
+
+
+# Two out-of-class overloads each write a local `L` (#2631 re-review): each
+# overload's calls bind its own `L`, never the first overload's.
+_OUT_OF_CLASS_OVERLOADS = """\
+int g1(int x) { return x; }
+int g2(int x) { return x; }
+
+namespace ui {
+class Widget {
+public:
+  int run(int n);
+  int run(double d);
+};
+
+int Widget::run(int n) {
+  struct L { int a(int v) { return g1(v); } } l;
+  return l.a(n);
+}
+
+int Widget::run(double d) {
+  struct L { int a(int v) { return g2(v); } } l;
+  return l.a(1);
+}
+}
+"""
+
+
+def test_out_of_class_overloads_keep_their_own_local_structs(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Out-of-class overloads share one `Widget.run` Method node; the second
+    # one's local `L` sits under `run@16`, the line it starts on, and its
+    # `l.a(1)` binds that `L`, not the first overload's.
+    _index(temp_repo, mock_ingestor, ooc=_OUT_OF_CLASS_OVERLOADS)
+
+    run = f"{_PROJECT}.ooc.ui.Widget.run"
+    first_l, second_l = f"{run}.L", f"{run}@16.L"
+    assert {first_l, second_l} <= get_node_names(mock_ingestor, NodeLabel.CLASS)
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{first_l}.a", f"{_PROJECT}.ooc.g1") in calls
+    assert (f"{second_l}.a", f"{_PROJECT}.ooc.g2") in calls
+    assert (run, f"{first_l}.a") in calls
+    assert (run, f"{second_l}.a") in calls
+
+
+def test_out_of_class_overload_local_struct_is_defined_by_its_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: both local `L`s still hang off the one `Widget.run` node, and
+    # a single out-of-class definition keeps its unmarked name (asserted by
+    # test_local_struct_in_out_of_class_method_is_scoped_under_the_method).
+    _index(temp_repo, mock_ingestor, ooc=_OUT_OF_CLASS_OVERLOADS)
+
+    run = f"{_PROJECT}.ooc.ui.Widget.run"
+    defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
+    assert (NodeLabel.METHOD, run, NodeLabel.CLASS, f"{run}.L") in defines
+    assert (NodeLabel.METHOD, run, NodeLabel.CLASS, f"{run}@16.L") in defines
+
+
+# A receiver whose type is spelled qualified names that type, not the local
+# one the bare name would find (#2631 re-review).
+_QUALIFIED_RECEIVERS = """\
+struct B { int ping() { return 1; } };
+namespace ns { struct C { int ping() { return 3; } }; }
+
+int f() {
+  struct A {
+    struct B { int ping() { return 2; } };
+    struct C { int ping() { return 4; } };
+    ::B field;
+    int global_b() { ::B g; return g.ping(); }
+    int ns_c(ns::C n) { return n.ping(); }
+    int member() { return field.ping(); }
+    int local_b() { B l; return l.ping(); }
+  } a;
+  return a.global_b() + a.ns_c(ns::C{}) + a.member() + a.local_b();
+}
+"""
+
+
+def test_qualified_receiver_types_bind_the_named_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A local, a parameter and a field each spelled `::B` / `ns::C` name
+    # the class the qualifier names, not `A`'s nested one.
+    _index(temp_repo, mock_ingestor, qual=_QUALIFIED_RECEIVERS)
+
+    module = f"{_PROJECT}.qual"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    for caller, wrong in (
+        ("global_b", "B"),
+        ("ns_c", "C"),
+        ("member", "B"),
+    ):
+        assert (f"{module}.f.A.{caller}", f"{module}.f.A.{wrong}.ping") not in calls
+    assert (f"{module}.f.A.global_b", f"{module}.B.ping") in calls
+    assert (f"{module}.f.A.ns_c", f"{module}.ns.C.ping") in calls
+    assert (f"{module}.f.A.member", f"{module}.B.ping") in calls
+
+
+def test_unqualified_receiver_type_still_binds_the_local_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: the bare `B` inside `A` is the nested local one.
+    _index(temp_repo, mock_ingestor, qual=_QUALIFIED_RECEIVERS)
+
+    module = f"{_PROJECT}.qual"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.local_b", f"{module}.f.A.B.ping") in calls
+    assert (f"{module}.f.A.local_b", f"{module}.B.ping") not in calls
