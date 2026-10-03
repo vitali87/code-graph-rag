@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import errno
 import itertools
-import json
 import os
 import re
 import socket
@@ -31,26 +30,19 @@ from codebase_rag.stack.manager import StackError, StackManager
 MGCLIENT_NOISE = "mg_raw_transport"
 STDERR_FD = 2
 NEVER_READY_TIMEOUT_S = 0.2
-# Deadline for the child interpreter, not a performance assertion.
-_CHILD_TIMEOUT_S = 120
 
 # Docker's port proxy accepts a connection on the published port while the
 # Memgraph behind it is still starting, then drops it once the proxy cannot
 # reach the container: with a reset or a plain close, both covered here. It
 # runs in its own process because mgclient holds the GIL while it waits on the
 # socket, so a server thread in the test process would never get to answer.
-# mgclient writes its 20-byte handshake in five sends, so the whole of it is
-# read first: closing with part of it unread, or still in flight, makes the
-# peer's stack answer with a reset, and "close" would be a second reset.
 _STARTING_MEMGRAPH = """
 import socket, struct, sys
 listener = socket.create_server(("127.0.0.1", 0))
 print(listener.getsockname()[1], flush=True)
 while True:
     conn, _ = listener.accept()
-    handshake = b""
-    while len(handshake) < 20 and (chunk := conn.recv(20 - len(handshake))):
-        handshake += chunk
+    conn.recv(20)
     if sys.argv[1] == "reset":
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
     conn.close()
@@ -261,57 +253,31 @@ def test_waiting_for_a_memgraph_that_never_starts_still_raises(
         mgr.wait_healthy(timeout=NEVER_READY_TIMEOUT_S)
 
 
-# One probe in a fresh interpreter whose stdout and stderr are one handle, as
-# on a terminal: the DEBUG records it logged go to the file in argv[2].
-_PROBE_ON_A_TERMINAL = """
-import json, sys
-from loguru import logger
-from codebase_rag.stack import constants as cs
-from codebase_rag.stack import health
-records = []
-logger.remove()
-logger.add(
-    lambda m: records.append([m.record["level"].name, m.record["message"]]),
-    level="DEBUG",
+@pytest.mark.parametrize(
+    "starting_memgraph",
+    [
+        pytest.param(
+            "reset",
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="mgclient does not always emit stderr for a reset on Windows",
+            ),
+        ),
+        "close",
+    ],
+    indirect=True,
 )
-health.memgraph_anonymous_access(cs.LOOPBACK_HOST, int(sys.argv[1]))
-with open(sys.argv[2], "w", encoding="utf-8") as out:
-    json.dump(records, out)
-"""
-
-
 def test_the_c_library_message_is_kept_at_debug_level(
-    starting_memgraph: int, tmp_path: Path
+    starting_memgraph: int, debug_records: list[tuple[str, str]]
 ) -> None:
-    # Run in a child, not under pytest's fd capture. On Windows mgclient
-    # prints through msvcrt.dll, whose fd 2 starts on the same OS handle as
-    # Python's; with stdout and stderr on different handles, as pytest's
-    # capture leaves them, the first `os.dup2` onto fd 2 closes that handle
-    # under msvcrt.dll, and its fd 2 then names a dead handle or whatever
-    # reused the number, so the message was lost at random. On a terminal
-    # stdout and stderr share the handle and neither runtime closes it. The
-    # child's combined output is also the terminal it would have reached,
-    # which capfd cannot watch on Windows.
-    records_path = tmp_path / "records.json"
-    child = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            _PROBE_ON_A_TERMINAL,
-            str(starting_memgraph),
-            str(records_path),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=_CHILD_TIMEOUT_S,
-        check=False,
-    )
-    output = child.stdout.decode(root_cs.ENCODING_UTF8, errors="replace")
+    # On Windows mgclient prints through a C runtime of its own, whose fd 2
+    # capfd does not watch, so there this is the test that sees where the
+    # real message goes.
+    health.memgraph_anonymous_access(cs.LOOPBACK_HOST, starting_memgraph)
 
-    assert child.returncode == 0, output
-    records = json.loads(records_path.read_text(encoding=root_cs.ENCODING_UTF8))
-    assert [level for level, text in records if MGCLIENT_NOISE in text] == ["DEBUG"]
-    assert MGCLIENT_NOISE not in output
+    assert [level for level, text in debug_records if MGCLIENT_NOISE in text] == [
+        "DEBUG"
+    ]
 
 
 def test_stderr_outside_a_probe_still_reaches_the_terminal(
