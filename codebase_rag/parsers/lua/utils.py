@@ -403,15 +403,29 @@ def rebinds_locally(node: Node, name: str) -> bool:
     """
     child, parent = node, node.parent
     while parent is not None and parent.type != cs.TS_LUA_CHUNK:
-        if parent.type == cs.TS_LUA_BLOCK:
-            for statement in parent.children:
-                if statement == child:
-                    break
-                if name in _local_names(statement):
-                    return True
-        elif child.type == cs.TS_LUA_BLOCK and name in _scope_names(parent):
+        if _binds_locally_at(parent, child, name):
             return True
         child, parent = parent, parent.parent
+    return False
+
+
+def _binds_locally_at(scope: Node, child: Node, name: str) -> bool:
+    """True when `scope`, the parent of `child`, makes `name` a local there:
+    a block declaring it before `child`, or a function or `for` loop whose
+    body `child` is and which binds it as a parameter or loop variable."""
+    if scope.type == cs.TS_LUA_BLOCK:
+        return _declared_before(scope, child, name)
+    return child.type == cs.TS_LUA_BLOCK and name in _scope_names(scope)
+
+
+def _declared_before(block: Node, child: Node, name: str) -> bool:
+    """True when a `local` statement of `block` ahead of `child` declares
+    `name`; a declaration after `child` is not yet in scope there."""
+    for statement in block.children:
+        if statement == child:
+            return False
+        if name in _local_names(statement):
+            return True
     return False
 
 
