@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing import MoveRefused, move
 from codebase_rag.editing.contract import Verdict
+from codebase_rag.editing.move import MoveRefused, move
 from codebase_rag.editing.transaction import EditTransaction, load_history
 from codebase_rag.tests.test_move_op import (
     FIXTURE,
@@ -26,8 +26,7 @@ from codebase_rag.tests.test_move_op import (
     _write,
 )
 
-# `codebase_rag.editing.move` the attribute is the op function; the module
-# is what the monkeypatches below reach into.
+# The module, which the monkeypatches below reach into.
 move_mod = importlib.import_module("codebase_rag.editing.move")
 # `pkg/b.py` imports `other` too, so every util variant keeps it defined.
 OTHER = "\n\ndef other():\n    return 'o'\n"
@@ -232,6 +231,46 @@ def test_a_module_constant_the_definition_reads_is_imported(
     probe = _python(root, "from pkg.core import helper; print(helper(['a', 'b']))")
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.strip() == "a-b"
+
+
+def test_moving_the_last_function_beside_a_module_constant_passes_its_contract(
+    temp_repo: Path,
+) -> None:
+    """The graph has no node for `SEP`, so the old module read as vacated and
+    the moved helper's own `from pkg.util import SEP` was reported as a stale
+    importer: the contract rolled back a move that runs."""
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": "SEP = '-'\n\n\ndef helper(a):\n    return SEP.join(a)\n",
+        "pkg/a.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(['x'])\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    assert report.verdict is not None and report.verdict.ok
+    assert "from pkg.util import SEP" in (root / "pkg/core.py").read_text()
+    assert "from pkg.core import helper" in (root / "pkg/a.py").read_text()
+
+
+def test_an_importer_left_on_the_vacated_module_still_fails_the_contract(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The constant exemption is by imported name: an importer still naming
+    the moved helper on its old module is stale, and the move rolls back."""
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": "SEP = '-'\n\n\ndef helper(a):\n    return SEP.join(a)\n",
+        "pkg/a.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(['x'])\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    # The importer rewrite is skipped, so a.py keeps naming the old module.
+    monkeypatch.setattr(move_mod.Mover, "_retarget_importers", lambda *a, **k: ([], []))
+    report = _move(root, store, updater)
+    assert not report.applied
+    assert "importers still target the old module" in report.message
+    assert (root / "pkg/a.py").read_text() == fixture["pkg/a.py"]
 
 
 def test_future_directives_travel_with_the_definition(temp_repo: Path) -> None:
