@@ -312,6 +312,30 @@ def test_another_checkout_is_not_blocked(
     mock_ingestor.ensure_node_batch.assert_called()
 
 
+def test_a_single_file_run_takes_its_projects_lock(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The lock sits at the project root the constructor derives for the
+    # file, where a whole-project sync of it locks: not `<file>/`, which
+    # cannot be opened, nor the file's own directory, which would let the
+    # two runs overlap.
+    package = repo / "pkg"
+    package.mkdir()
+    target = package / "mod.py"
+    target.write_text("def f():\n    return 1\n")
+    _updater(repo, mock_ingestor).run()
+    single = _updater(target, mock_ingestor)
+    assert single._single_file is not None, "fixture guard: not a single-file run"
+    mock_ingestor.reset_mock()
+
+    with _held_elsewhere(repo, "click"):
+        with pytest.raises(SyncInProgressError):
+            single.run()
+
+    mock_ingestor.ensure_node_batch.assert_not_called()
+    assert not (package / cs.SYNC_LOCK_FILENAME).exists()
+
+
 def test_the_holder_reenters_its_own_lock(repo: Path, mock_ingestor: MagicMock) -> None:
     # Negative: the CLI and the MCP tools take the lock before their marker
     # and then call `run()`, which takes it again on the same thread.

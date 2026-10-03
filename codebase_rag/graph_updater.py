@@ -2089,20 +2089,32 @@ class GraphUpdater:
     def state_dir(self) -> Path:
         return self._state_dir if self._state_dir is not None else self.repo_path
 
-    @holds_sync_lock()
+    def _require_repo_dir(self) -> None:
+        """Raise `FileNotFoundError` unless `self.repo_path` is a directory.
+
+        `run` checks this before `holds_sync_lock` opens the lock file in
+        that directory, so a missing root is reported as missing rather
+        than as a lock that cannot be opened (issues #1651, #2441).
+        """
+        if not self.repo_path.is_dir():
+            raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
+
+    @holds_sync_lock(require=_require_repo_dir)
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
 
         Raises `FileNotFoundError` when `self.repo_path` -- the target
-        directory, or the parent of a single-file target -- is not a
+        directory, or the project root of a single-file target -- is not a
         directory. The constructor recognises a single-file target only
         while the file exists, so a deleted or mistyped path fell through as
         a directory run rooted at a non-directory: the walk yielded nothing
         and the run reported success having indexed nothing (issue #1651).
         Raising here rather than in the constructor keeps construction cheap
         and side-effect free for callers that never run. A single-file
-        target deleted AFTER construction passes this check (its parent
-        exists) and is a separate decision (#1737).
+        target deleted AFTER construction passes this check (its root
+        exists) and is a separate decision (#1737). `holds_sync_lock` runs
+        the check (`_require_repo_dir`) before it opens the lock, so the
+        missing path is what the caller is told about.
 
         Raises `SyncInProgressError`, before anything is written, while
         another writer holds the checkout's sync lock, which
@@ -2110,8 +2122,6 @@ class GraphUpdater:
         `UnsafeSyncLockError` when that lock file is a symbolic link, and
         `SyncLockUnavailableError` when it cannot be opened.
         """
-        if not self.repo_path.is_dir():
-            raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
         self._clear_python_inference_caches()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.

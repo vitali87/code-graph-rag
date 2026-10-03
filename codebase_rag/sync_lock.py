@@ -237,7 +237,7 @@ def repo_sync_lock(
 
 
 def holds_sync_lock[S: _Syncs, **P, R](
-    *, wait: bool = False
+    *, wait: bool = False, require: Callable[[S], None] | None = None
 ) -> Callable[[Callable[Concatenate[S, P], R]], Callable[Concatenate[S, P], R]]:
     """Run the decorated method under its instance's checkout sync lock.
 
@@ -245,6 +245,11 @@ def holds_sync_lock[S: _Syncs, **P, R](
     and every phase call in it stay in the method itself: the phase order of
     `GraphUpdater.run` is pinned over the AST of `run`
     (`test_graph_updater_phase_order.py`).
+
+    `require`, when given, runs before the lock is opened and raises when
+    there is no checkout to sync: `GraphUpdater.run`'s missing-root check
+    (issue #1651) must name the missing path, not the lock's failure to
+    create its file inside it.
     """
 
     def decorate(
@@ -252,6 +257,8 @@ def holds_sync_lock[S: _Syncs, **P, R](
     ) -> Callable[Concatenate[S, P], R]:
         @functools.wraps(method)
         def locked(self: S, /, *args: P.args, **kwargs: P.kwargs) -> R:
+            if require is not None:
+                require(self)
             with repo_sync_lock(self.repo_path, self.project_name, wait=wait):
                 return method(self, *args, **kwargs)
 
