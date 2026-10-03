@@ -1213,7 +1213,7 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
-CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[:IMPORTS]->(t:Module)
+CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1223,7 +1223,7 @@ WHERE m.qualified_name STARTS WITH $project_prefix
           WHERE t.qualified_name <> longer_project
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn"""
+       t.qualified_name AS to_qn, r.imported_name AS imported_name"""
 # Context slice reads (issue #1536): trace hotness of the callers of one
 # symbol, the types it returns and accepts, and the sections of the
 # documents whose links point at its file.

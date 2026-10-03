@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing import MoveRefused, move
+from codebase_rag.editing.move import MoveRefused, move
 from codebase_rag.editing.transaction import load_history
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
