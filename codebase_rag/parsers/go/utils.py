@@ -209,3 +209,84 @@ def _receiver_type_arguments(param: Node) -> set[str]:
         for ident in elem.named_children
         if ident.type == cs.TS_TYPE_IDENTIFIER and (text := safe_decode_text(ident))
     }
+
+
+def binds_locally(node: Node, name: str) -> bool:
+    # Whether `name`, used at `node`, is bound inside its function rather than
+    # at package level: a parameter, receiver or named result of an enclosing
+    # function or closure, or a declaration earlier in an enclosing block.
+    # Go scopes a local from the end of its declaration to the end of its
+    # block, so a declaration counts only when it precedes the use in a block
+    # that encloses it (`NewBox := NewBox()` still calls the package's).
+    child = node
+    parent = node.parent
+    while parent is not None and parent.type != cs.TS_GO_SOURCE_FILE:
+        if parent.type in cs.TS_GO_FUNCTION_SCOPES:
+            if name in _signature_names(parent):
+                return True
+            if parent.type != cs.TS_GO_FUNC_LITERAL:
+                return False
+        elif any(
+            name in _declared_names(parent, sibling)
+            for sibling in parent.children
+            if sibling.end_byte <= child.start_byte
+        ):
+            return True
+        child, parent = parent, parent.parent
+    return False
+
+
+def _signature_names(function: Node) -> set[str]:
+    names: set[str] = set()
+    for field in (cs.FIELD_RECEIVER, cs.FIELD_PARAMETERS, cs.FIELD_RESULT):
+        params = function.child_by_field_name(field)
+        if params is None or params.type != cs.TS_GO_PARAMETER_LIST:
+            continue
+        for param in params.named_children:
+            if param.type in (
+                cs.TS_GO_PARAMETER_DECLARATION,
+                cs.TS_GO_VARIADIC_PARAMETER_DECLARATION,
+            ):
+                names.update(
+                    _identifier_texts(param.children_by_field_name(cs.FIELD_NAME))
+                )
+    return names
+
+
+def _declared_names(parent: Node, statement: Node) -> set[str]:
+    if statement.type in cs.TS_GO_LEFT_BINDING_STATEMENTS:
+        left = statement.child_by_field_name(cs.FIELD_LEFT)
+        return _identifier_texts(left.named_children) if left is not None else set()
+    if statement.type in cs.TS_GO_SPEC_DECLARATIONS:
+        specs = [
+            spec
+            for child in statement.named_children
+            for spec in (
+                child.named_children
+                if child.type == cs.TS_GO_VAR_SPEC_LIST
+                else [child]
+            )
+            if spec.type in cs.TS_GO_BINDING_SPECS
+        ]
+        return {
+            text
+            for spec in specs
+            for text in _identifier_texts(spec.children_by_field_name(cs.FIELD_NAME))
+        }
+    if statement.type == cs.TS_GO_FOR_CLAUSE:
+        initializer = statement.child_by_field_name(cs.FIELD_GO_INITIALIZER)
+        return _declared_names(statement, initializer) if initializer else set()
+    # `switch t := x.(type)` binds `t` in its alias list, before every case.
+    if parent.type == cs.TS_GO_TYPE_SWITCH_STATEMENT and statement == (
+        parent.child_by_field_name(cs.FIELD_ALIAS)
+    ):
+        return _identifier_texts(statement.named_children)
+    return set()
+
+
+def _identifier_texts(nodes: list[Node]) -> set[str]:
+    return {
+        text
+        for node in nodes
+        if node.type == cs.TS_GO_IDENTIFIER and (text := safe_decode_text(node))
+    }

@@ -4756,9 +4756,7 @@ class CallProcessor:
         if root.type == cs.TS_GO_COMPOSITE_LITERAL:
             class_qn, owned = self._go_literal_receiver_class(root, ctx.module_qn)
         else:
-            owned, class_qn = self._go_package_function_root(
-                root, ctx.module_qn, call_var_types
-            )
+            owned, class_qn = self._go_package_function_root(root, ctx.module_qn)
             if not owned:
                 called = self._go_resolved_root_class(ctx, root, call_var_types)
                 if called is None:
@@ -4806,10 +4804,7 @@ class CallProcessor:
         return owned, self._go_result_class(root_callee)
 
     def _go_package_function_root(
-        self,
-        root: Node,
-        module_qn: str,
-        call_var_types: dict[str, str] | None,
+        self, root: Node, module_qn: str
     ) -> tuple[bool, str | None]:
         """(calls a package's function, the struct it returns) for a root.
 
@@ -4819,6 +4814,11 @@ class CallProcessor:
         answered `bytes.NewBuffer` with the caller's own `NewBuffer` when the
         standard library's was not indexed, and that guess typed every hop
         after it. Any other root (a method on a variable) is not one.
+
+        A bare name the function binds itself (`NewBox := func() *Other
+        {...}`, a parameter) is that local, never the package's function, so
+        it types nothing; a local named like an import (`box`) makes
+        `box.New()` a method call on it, left to the resolver.
         """
         function = root.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if function is None:
@@ -4826,8 +4826,10 @@ class CallProcessor:
         import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
         if function.type == cs.TS_GO_IDENTIFIER:
             name = safe_decode_text(function)
-            if not name or (call_var_types and name in call_var_types):
+            if not name:
                 return False, None
+            if go_utils.binds_locally(root, name):
+                return True, None
             # (package, is the caller's own): a dot-import of the caller's own
             # directory (`package m_test` importing `m`) is still an import.
             packages = [(module_qn.rpartition(cs.SEPARATOR_DOT)[0], True)] + [
@@ -4842,8 +4844,10 @@ class CallProcessor:
                 return False, None
             alias = safe_decode_text(operand)
             name = safe_decode_text(field)
-            target = import_map.get(alias) if alias else None
-            if not target or not name or (call_var_types and alias in call_var_types):
+            if not alias or not name or go_utils.binds_locally(root, alias):
+                return False, None
+            target = import_map.get(alias)
+            if not target:
                 return False, None
             if self._go_import_is_external(target):
                 return True, None

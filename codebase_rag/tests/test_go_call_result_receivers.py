@@ -676,3 +676,64 @@ def test_an_external_test_package_sees_the_package_it_imports(
     dotted = _calls(store, "proj.m.dot_test.TestDot")
     assert dotted.get("proj.m.box.Box.With") == EXACT, dotted
     assert dotted.get("proj.m.box.Box.Bump") == EXACT, dotted
+
+
+def test_a_locally_bound_root_types_nothing_from_the_package_function(
+    tmp_path: Path,
+) -> None:
+    # A local closure or a parameter named NewBox shadows the package's
+    # NewBox, so `NewBox()` is not the package function and its `*Box` result
+    # types nothing. A binding in a block that does not enclose the call
+    # shadows nothing.
+    store = _project(
+        tmp_path,
+        {
+            "m/box.go": BOX_GO,
+            "m/use.go": (
+                "package m\n\n"
+                "func viaClosure() int {\n"
+                "\tNewBox := func() *Other { return &Other{} }\n"
+                "\treturn NewBox().Bump()\n"
+                "}\n\n"
+                "func viaParam(NewBox func() *Other) int { return NewBox().Bump() }\n\n"
+                "func outOfScope(ok bool) int {\n"
+                "\tif ok {\n"
+                "\t\tNewBox := func() *Other { return &Other{} }\n"
+                "\t\t_ = NewBox\n"
+                "\t}\n"
+                "\treturn NewBox().Bump()\n"
+                "}\n"
+            ),
+        },
+    )
+    for caller in ("proj.m.use.viaClosure", "proj.m.use.viaParam"):
+        calls = _calls(store, caller)
+        assert "proj.m.box.Box.Bump" not in calls, (caller, calls)
+    scoped = _calls(store, "proj.m.use.outOfScope")
+    assert scoped.get("proj.m.box.Box.Bump") == EXACT, scoped
+
+
+def test_a_local_named_like_an_import_is_the_local(tmp_path: Path) -> None:
+    # The parameter `box` shadows the import `box`: `box.New()` is Maker's
+    # New, whose `*Other` result is what Bump is called on.
+    store = _project(
+        tmp_path,
+        {
+            "box/box.go": (
+                "package box\n\ntype Box struct{}\n\n"
+                "func (b *Box) Bump() int { return 1 }\n\n"
+                "func New() *Box { return &Box{} }\n"
+            ),
+            "m/box.go": BOX_GO,
+            "m/use.go": (
+                'package m\n\nimport "proj/box"\n\n'
+                "type Maker struct{}\n\n"
+                "func (k *Maker) New() *Other { return &Other{} }\n\n"
+                "var _ = box.New\n\n"
+                "func viaLocal(box *Maker) int { return box.New().Bump() }\n"
+            ),
+        },
+    )
+    calls = _calls(store, "proj.m.use.viaLocal")
+    assert "proj.box.box.Box.Bump" not in calls, calls
+    assert calls.get("proj.m.box.Other.Bump") == EXACT, calls

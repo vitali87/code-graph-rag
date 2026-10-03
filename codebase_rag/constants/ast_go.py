@@ -100,3 +100,19 @@ FIELD_GO_TYPE_PARAMETERS = "type_parameters"
 TS_GO_TYPE_PARAMETER_DECLARATION = "type_parameter_declaration"
 FIELD_GO_TYPE_ARGUMENTS = "type_arguments"
 TS_GO_TYPE_ELEM = "type_elem"
+# Statements that bind the identifiers in their `left` list (`a, b := ...`,
+# `for k, v := range m`, a select arm's `case v := <-ch`), the declarations
+# whose specs bind names, and a `for` clause's `initializer` (`for i := ...`):
+# what makes a bare name inside a function a local rather than the package's.
+TS_GO_LEFT_BINDING_STATEMENTS: frozenset[str] = frozenset(
+    {"short_var_declaration", "range_clause", "receive_statement"}
+)
+TS_GO_SPEC_DECLARATIONS: frozenset[str] = frozenset(
+    {"var_declaration", "const_declaration"}
+)
+TS_GO_BINDING_SPECS: frozenset[str] = frozenset({"var_spec", "const_spec"})
+TS_GO_VAR_SPEC_LIST = "var_spec_list"
+FIELD_GO_INITIALIZER = "initializer"
+TS_GO_FUNCTION_SCOPES: frozenset[str] = frozenset(
+    {"function_declaration", "method_declaration", "func_literal"}
+)
