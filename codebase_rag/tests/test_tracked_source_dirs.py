@@ -242,6 +242,24 @@ def test_a_tracked_name_with_glob_characters_rescues_nothing_else(
     assert "bin/main.dart" in indexed
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows file names cannot end in whitespace"
+)
+@pytest.mark.parametrize("suffix", [" ", "\t"])
+def test_a_tracked_name_with_trailing_whitespace_rescues_nothing_else(
+    defex: Path, suffix: str
+) -> None:
+    # gitwildmatch drops trailing whitespace, so a tracked `bin/q.js ` written
+    # as a pattern would let the untracked `bin/q.js` beside it in.
+    _commit(defex, {f"bin/q.js{suffix}": "export const x = 1;\n"})
+    (defex / "bin" / "q.js").write_text("export const leaked = 1;\n")
+
+    indexed = _indexed_paths(defex)
+
+    assert "bin/q.js" not in indexed
+    assert "bin/main.dart" in indexed
+
+
 GO_MOD = "module example.com/defex\n\ngo 1.22\n"
 # `o.Hello()` reaches `Base.Hello` only through embedded-struct promotion: the
 # go/types tool binds it exactly, the name trie by a heuristic guess.

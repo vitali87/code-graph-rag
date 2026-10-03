@@ -423,9 +423,10 @@ DIR_SRC = "src"
 TRACKED_SOURCE_DIR_NAMES = frozenset(
     {"bin", "coverage", "env", "obj", "out", "target", "temp", "tmp"}
 )
-# gitwildmatch reads these as pattern syntax (and drops trailing whitespace),
-# so a tracked path holding them cannot be rescued by its literal path.
-TRACKED_PATH_PATTERN_CHARS = re.compile(r"(?:[*?\[\]\\!]|\s$)")
+# gitwildmatch reads these as pattern syntax, so a tracked path holding them
+# cannot be rescued by its literal path. It also drops trailing whitespace,
+# which `_tracked_source_dirs` checks separately.
+TRACKED_PATH_PATTERN_CHARS = re.compile(r"[*?\[\]\\!]")
 GIT_LS_FILES_TIMEOUT_S = 30
 GIT_INDEX_FILENAME = "index"
 
