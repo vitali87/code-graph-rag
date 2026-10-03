@@ -22,6 +22,9 @@ TS_SCALA_NAMESPACE_WILDCARD = "namespace_wildcard"
 # Scala 3 spells a rename `as`; Scala 2 spells it `=>`. Different node types.
 TS_SCALA_AS_RENAMED_IDENTIFIER = "as_renamed_identifier"
 TS_SCALA_IMPORT_KEYWORD = "import"
+# Import-map key prefix of a wildcard (`import a.b._` -> `*a.b`): it binds no
+# name, so no identifier can collide with it.
+SCALA_WILDCARD_PREFIX = "*"
 
 # Wrappers the grammar puts between an `extends` clause and the
 # `type_identifier` naming the base. `type_arguments` is deliberately ABSENT:
@@ -54,3 +57,43 @@ SCALA_UNIT_TYPES = frozenset({"Unit", "scala.Unit", "_root_.scala.Unit"})
 # A curried `def f(a: Int)(b: Int)` has one `parameters` child per list.
 TS_SCALA_PARAMETERS = "parameters"
 TS_SCALA_FIELD_DEFAULT_VALUE = "default_value"
+
+# Package clauses (issue #2450). `package a.b` heads a file and chained
+# clauses nest (`package a` then `package b` is `a.b`); a clause with a
+# body, `package a { ... }`, scopes only that body. `package object p`
+# declares members of package `p` itself.
+TS_SCALA_PACKAGE_CLAUSE = "package_clause"
+TS_SCALA_PACKAGE_IDENTIFIER = "package_identifier"
+TS_SCALA_PACKAGE_OBJECT = "package_object"
+# `_root_.a.b` anchors an import at the root, past every enclosing package.
+SCALA_ROOT_PACKAGE = "_root_"
+TS_SCALA_ENUM_DEFINITION = "enum_definition"
+TS_SCALA_TYPE_DEFINITION = "type_definition"
+TS_SCALA_GIVEN_DEFINITION = "given_definition"
+# Definitions that put a NAME into the package they sit in. A val/var names
+# its binding through `pattern` instead, so it is listed apart.
+SCALA_NAMED_PACKAGE_MEMBERS = frozenset(
+    {
+        TS_SCALA_CLASS_DEFINITION,
+        TS_SCALA_OBJECT_DEFINITION,
+        TS_SCALA_TRAIT_DEFINITION,
+        TS_SCALA_FUNCTION_DEFINITION,
+        TS_SCALA_FUNCTION_DECLARATION,
+        TS_SCALA_ENUM_DEFINITION,
+        TS_SCALA_TYPE_DEFINITION,
+        TS_SCALA_GIVEN_DEFINITION,
+    }
+)
+SCALA_BINDING_DEFINITIONS = frozenset(
+    {TS_SCALA_VAL_DEFINITION, TS_SCALA_VAR_DEFINITION}
+)
+
+# `new C(...)` and the receiver shapes a parameterless selection is typed by.
+TS_SCALA_COMPOUND_TYPE = "compound_type"
+TS_SCALA_FIELD_BASE = "base"
+TS_SCALA_LAZY_PARAMETER_TYPE = "lazy_parameter_type"
+TS_SCALA_ASSIGNMENT_EXPRESSION = "assignment_expression"
+SCALA_THIS = "this"
+# An auxiliary constructor is a `def this(...)`, registered as a method named
+# `this` on its class; `new C(...)` may run any of them.
+SCALA_AUXILIARY_CONSTRUCTOR = SCALA_THIS

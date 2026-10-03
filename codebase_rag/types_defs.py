@@ -939,6 +939,42 @@ class DeferredImportEdge(NamedTuple):
     site: PropertyDict | None = None
 
 
+class ScalaPackageScan(NamedTuple):
+    """What one Scala file declares and mentions (issue #2450).
+
+    Scala packages need not mirror directories, so the package clauses are
+    the only answer to "does this repo define the package an import names".
+    """
+
+    # Each package the file opens -> the names it declares directly in it.
+    packages: dict[str, frozenset[str]]
+    # Packages whose members the file's imports may name relatively,
+    # innermost first: `package a` then `package b` opens `a.b` and `a`.
+    enclosing: tuple[str, ...]
+    # Every name the file writes outside its import and package clauses: the
+    # evidence that pins a wildcard import to the modules actually used.
+    mentions: frozenset[str]
+
+
+class ScalaImportTarget(NamedTuple):
+    """A Scala import path resolved against the project's own packages."""
+
+    # The project qn of the imported member, or None when the path names a
+    # package, whose members are spread over the declaring modules.
+    member_qn: str | None
+    # Declaring module qn -> the names it declares under the resolved package.
+    declaring: dict[str, frozenset[str]]
+
+
+class ScalaPackageIndex(NamedTuple):
+    """Every Scala package the project declares, from both directions."""
+
+    # package -> {declaring module qn -> the names it declares there}
+    modules: dict[str, dict[str, frozenset[str]]]
+    # package -> {declared name -> the module qns declaring it}
+    owners: dict[str, dict[str, tuple[str, ...]]]
+
+
 LanguageFamily = frozenset[SupportedLanguage]
 # {bare module qn: {language family: its file's module qn}} for a stem whose
 # files carry their extension, the name each family's importers land on.

@@ -28,6 +28,9 @@ from ..types_defs import (
     LanguageFamily,
     LanguageQueries,
     PropertyDict,
+    ScalaImportTarget,
+    ScalaPackageIndex,
+    ScalaPackageScan,
     StemSiblingModules,
 )
 from ..utils.json_io import loads_json
@@ -37,6 +40,7 @@ from ..utils.path_utils import (
     module_extension,
     should_keep_dir,
     should_skip_rel_file,
+    walk_eligible_files,
 )
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
@@ -54,6 +58,12 @@ from .js_ts.module_paths import (
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
+from .scala import (
+    resolve_scala_import,
+    scala_package_index,
+    scala_package_owner,
+    scan_scala_packages,
+)
 from .stdlib_extractor import (
     StdlibCacheStats,
     StdlibExtractor,
@@ -72,6 +82,8 @@ from .utils import (
 )
 
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
+# A module known to declare no Scala package: not a Scala file, or unreadable.
+_EMPTY_SCALA_SCAN = ScalaPackageScan(packages={}, enclosing=(), mentions=frozenset())
 # Bodyless `mod NAME;` declarations in a Rust crate entry file: the mod graph
 # is what assigns a file to the lib or the bin crate (issue #1007). Attribute
 # prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; the
@@ -849,6 +861,11 @@ class ImportProcessor:
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
         "_rust_mod_scope_shadows",
+        "_scala_scans",
+        "_scala_raw_imports",
+        "_scala_import_targets",
+        "_scala_import_members",
+        "_scala_package_index",
     )
 
     def __init__(
@@ -925,6 +942,23 @@ class ImportProcessor:
         self._inferred_module_imports: dict[str, set[str]] = {}
         self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
+        # Scala packages need not mirror directories (issue #2450): each
+        # file's package clauses, scanned when it is parsed, say which
+        # modules declare a package an import names.
+        self._scala_scans: dict[str, ScalaPackageScan] = {}
+        # Each Scala file's imports as written. The import map is rebuilt
+        # from these once every file is parsed, so a provider edited in
+        # watch mode re-points importers that were not re-parsed.
+        self._scala_raw_imports: dict[str, dict[str, str]] = {}
+        # Importer -> written import path -> the project modules its IMPORTS
+        # edges land on. A path absent here was not resolved in the project.
+        self._scala_import_targets: dict[str, dict[str, tuple[str, ...]]] = {}
+        # Importer -> written import path -> the project member it names, for
+        # consumers that captured the written path before it was resolved.
+        self._scala_import_members: dict[str, dict[str, str]] = {}
+        # The packages every known Scala module declares, for name lookups
+        # that follow the same visibility rules as the imports.
+        self._scala_package_index = ScalaPackageIndex(modules={}, owners={})
         # Exact-case directory listings and entry-file `mod` declarations for
         # Rust path rewriting (issue #1007); cleared per run by
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
@@ -1242,6 +1276,9 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        # Re-recorded once the Scala parse completes; a parse that fails
+        # midway must not leave the previous imports to be restored.
+        self._scala_raw_imports.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
@@ -1354,6 +1391,8 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(root_node)
             )
+        elif language == cs.SupportedLanguage.SCALA:
+            self._scala_scans[module_qn] = scan_scala_packages(root_node)
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
@@ -1409,6 +1448,9 @@ class ImportProcessor:
                     self._parse_dart_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.SCALA:
                     self._parse_scala_imports(captures, module_qn)
+                    self._scala_raw_imports[module_qn] = dict(
+                        self.import_mapping[module_qn]
+                    )
                 case _:
                     self._parse_generic_imports(captures, lang_config)
 
@@ -1833,6 +1875,21 @@ class ImportProcessor:
                     entry, declaring, known_module_qns
                 )
                 continue
+            if entry.language == cs.SupportedLanguage.SCALA and (
+                (
+                    scala_targets := self._scala_import_targets.get(
+                        entry.module_qn, {}
+                    ).get(entry.full_name)
+                )
+                is not None
+            ):
+                # A path into the project's own packages: its modules, or no
+                # edge at all when none is used; never an ExternalModule.
+                for target_qn in scala_targets:
+                    if target_qn in known_module_qns:
+                        self._emit_import_edge(entry, cs.NodeLabel.MODULE, target_qn)
+                        emitted += 1
+                continue
             emitted += self._flush_resolved_import(
                 entry, known_module_paths, module_aliases, siblings
             )
@@ -2037,6 +2094,184 @@ class ImportProcessor:
                 )
                 if target != full_name:
                     mapping[local_name] = target
+
+    def resolve_scala_project_imports(self, known_module_paths: dict[str, str]) -> None:
+        """Point Scala imports of the project's own packages at its modules.
+
+        A Scala import names a package path (`shop.Cart`), and the package
+        lives wherever a `package shop` clause says, not in a directory: read
+        raw, every first-party import became an ExternalModule and the names
+        it bound resolved nowhere (issue #2450). Rebuilt from the written
+        imports on every run, after every module is known and before the
+        inheritance pass reads bases through the map.
+        """
+        importers = [qn for qn in self._scala_raw_imports if qn in known_module_paths]
+        self._scala_import_targets = {}
+        self._scala_import_members = {}
+        if not importers:
+            return
+        self._recover_unscanned_scala_modules(known_module_paths)
+        index = scala_package_index(self._scala_scans, known_module_paths)
+        self._scala_package_index = index
+        for importer in importers:
+            self._rewrite_scala_imports(importer, index)
+
+    def _rewrite_scala_imports(self, importer: str, index: ScalaPackageIndex) -> None:
+        scan = self._scala_scans.get(importer)
+        enclosing = scan.enclosing if scan is not None else ()
+        mapping: dict[str, str] = {}
+        targets: dict[str, tuple[str, ...]] = {}
+        members: dict[str, str] = {}
+        for local_name, path in self._scala_raw_imports[importer].items():
+            target = resolve_scala_import(path, enclosing, index)
+            if target is None:
+                mapping[local_name] = path
+                continue
+            targets[path] = self._scala_edge_modules(importer, target, scan)
+            if target.member_qn is not None:
+                members[path] = target.member_qn
+            is_wildcard = local_name.startswith(cs.SCALA_WILDCARD_PREFIX)
+            if target.member_qn is None and is_wildcard:
+                # A package's members are spread over the files declaring it;
+                # each one's own wildcard lets the resolver find them.
+                for module_qn in sorted(target.declaring):
+                    mapping[f"{cs.SCALA_WILDCARD_PREFIX}{module_qn}"] = module_qn
+            elif target.member_qn is None:
+                # `import a.b` binds the package itself: no single qn to name.
+                mapping[local_name] = path
+            elif is_wildcard:
+                mapping[f"{cs.SCALA_WILDCARD_PREFIX}{target.member_qn}"] = (
+                    target.member_qn
+                )
+            else:
+                mapping[local_name] = target.member_qn
+        current = self.import_mapping.setdefault(importer, {})
+        current.clear()
+        current.update(mapping)
+        if targets:
+            self._scala_import_targets[importer] = targets
+        if members:
+            self._scala_import_members[importer] = members
+
+    def scala_type_qn(self, module_qn: str, written: str) -> str | None:
+        """The project qn a type name written in a Scala file names, if any.
+
+        Looked up the way the compiler would, and no further: an import, the
+        file's own definitions, its packages' other files, then wildcard
+        imports. A name none of them reaches is not the project's, however
+        many classes elsewhere share it.
+        """
+        scan = self._scala_scans.get(module_qn)
+        enclosing = scan.enclosing if scan is not None else ()
+        if cs.SEPARATOR_DOT in written:
+            target = resolve_scala_import(written, enclosing, self._scala_package_index)
+            return target.member_qn if target is not None else None
+        mapping = self.import_mapping.get(module_qn, {})
+        if written in mapping:
+            return mapping[written]
+        registry = self.function_registry
+        own = f"{module_qn}{cs.SEPARATOR_DOT}{written}"
+        if registry is not None and own in registry:
+            return own
+        for package in enclosing:
+            if owner := scala_package_owner(
+                package, written, self._scala_package_index
+            ):
+                return f"{owner}{cs.SEPARATOR_DOT}{written}"
+        for key, imported in mapping.items():
+            candidate = f"{imported}{cs.SEPARATOR_DOT}{written}"
+            if (
+                key.startswith(cs.SCALA_WILDCARD_PREFIX)
+                and registry is not None
+                and candidate in registry
+            ):
+                return candidate
+        return None
+
+    def scala_import_member(self, module_qn: str, path: str) -> str | None:
+        """The project qn a Scala file's written import path names, if any.
+
+        A base class is bound to its import's written path while the file is
+        parsed, before any package is known to be the project's own.
+        """
+        return self._scala_import_members.get(module_qn, {}).get(path)
+
+    def _scala_edge_modules(
+        self,
+        importer: str,
+        target: ScalaImportTarget,
+        scan: ScalaPackageScan | None,
+    ) -> tuple[str, ...]:
+        if target.member_qn is not None:
+            return tuple(qn for qn in target.declaring if qn != importer)
+        # A package import pins only the modules whose names the file uses,
+        # as a C# namespace `using` does (issue #1347); a name the file
+        # declares itself binds to its own definition, so it is no evidence.
+        used: frozenset[str] = frozenset()
+        if scan is not None:
+            own = {name for names in scan.packages.values() for name in names}
+            used = scan.mentions - own
+        return tuple(
+            sorted(
+                qn
+                for qn, names in target.declaring.items()
+                if qn != importer and not used.isdisjoint(names)
+            )
+        )
+
+    def _recover_unscanned_scala_modules(
+        self, known_module_paths: dict[str, str]
+    ) -> None:
+        # An incremental run parses only CHANGED files, and a module it did
+        # not parse is known by qn alone: without its package clauses an
+        # unchanged provider would turn its importers back into external
+        # imports. Its file is found by the walk the indexer itself takes.
+        pending = {
+            qn: Path(path)
+            for qn, path in known_module_paths.items()
+            if qn not in self._scala_scans and path.endswith(cs.SCALA_EXTENSIONS)
+        }
+        pathless = {
+            qn
+            for qn, path in known_module_paths.items()
+            if not path and qn not in self._scala_scans
+        }
+        if pathless:
+            pending.update(self._scala_files_for(pathless))
+            for qn in pathless - pending.keys():
+                # Not a Scala file: remembered so later runs skip the walk.
+                self._scala_scans[qn] = _EMPTY_SCALA_SCAN
+        if not pending:
+            return
+        from ..parser_loader import load_parsers
+
+        parsers, _queries = load_parsers()
+        parser = parsers.get(cs.SupportedLanguage.SCALA)
+        for qn, path in pending.items():
+            try:
+                source = path.read_bytes()
+            except OSError:
+                self._scala_scans[qn] = _EMPTY_SCALA_SCAN
+                continue
+            self._scala_scans[qn] = (
+                scan_scala_packages(parser.parse(source).root_node)
+                if parser is not None
+                else _EMPTY_SCALA_SCAN
+            )
+
+    def _scala_files_for(self, module_qns: set[str]) -> dict[str, Path]:
+        found: dict[str, Path] = {}
+        for _dirpath, fname, rel in walk_eligible_files(
+            self.repo_path, self.exclude_paths, self.unignore_paths
+        ):
+            if not fname.endswith(cs.SCALA_EXTENSIONS):
+                continue
+            base = base_module_qn(Path(rel), self.project_name)
+            # A stem shared with another file carries its extension.
+            for qn in (base, own_extension_module_qn(base, fname)):
+                if qn in module_qns:
+                    found[qn] = self.repo_path / rel
+        return found
 
     def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
         # A module reached through its container's name: pkg/__init__.py,
@@ -4661,8 +4896,9 @@ class ImportProcessor:
             # `import a.b._` (Scala 2) and `_root_.a.b.*` (Scala 3) both reach
             # here; the package itself is what comes into scope.
             package = cs.SEPARATOR_DOT.join(prefix_parts)
-            self.import_mapping[module_qn][f"*{package}"] = package
-            self._record_import_site(module_qn, f"*{package}", import_node)
+            key = f"{cs.SCALA_WILDCARD_PREFIX}{package}"
+            self.import_mapping[module_qn][key] = package
+            self._record_import_site(module_qn, key, import_node)
             return
 
         if selectors is not None:
@@ -4717,8 +4953,9 @@ class ImportProcessor:
                 self._bind_scala_rename(child, package, module_qn, import_node)
             elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
                 # `import a.{b, _}` -- a wildcard alongside explicit names.
-                self.import_mapping[module_qn][f"*{package}"] = package
-                self._record_import_site(module_qn, f"*{package}", import_node)
+                key = f"{cs.SCALA_WILDCARD_PREFIX}{package}"
+                self.import_mapping[module_qn][key] = package
+                self._record_import_site(module_qn, key, import_node)
             elif child.type == cs.TS_IDENTIFIER:
                 if name := safe_decode_with_fallback(child):
                     self.import_mapping[module_qn][name] = (

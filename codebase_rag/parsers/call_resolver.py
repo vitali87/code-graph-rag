@@ -3833,6 +3833,42 @@ class CallResolver:
                 result.add(candidate)
         return result
 
+    def resolve_scala_selection(
+        self,
+        receiver: str,
+        member: str,
+        module_qn: str,
+        bindings: dict[str, str | None],
+        class_context: str | None,
+    ) -> tuple[str, str] | None:
+        """The method a parameterless Scala selection `receiver.member` runs.
+
+        A `val` read and a parameterless call are spelled alike (`c.size`), so
+        only a receiver whose class is KNOWN decides: `this`, a local typed by
+        its binding, or an object named outright. The member must be a method
+        of that class or an ancestor; no name-wide fallback answers for it.
+        """
+        if receiver == cs.SCALA_THIS:
+            class_qn = class_context
+        elif receiver in bindings:
+            written = bindings[receiver]
+            class_qn = self.scala_class_qn(written, module_qn) if written else None
+        else:
+            class_qn = self.scala_class_qn(receiver, module_qn)
+        if class_qn is None:
+            return None
+        result = self._try_resolve_method(class_qn, member)
+        if result is None or result[0] != NodeType.METHOD:
+            return None
+        return result
+
+    def scala_class_qn(self, written: str, module_qn: str) -> str | None:
+        """The registered class a type name written in a Scala file names."""
+        class_qn = self.import_processor.scala_type_qn(module_qn, written)
+        if class_qn is None or self.function_registry.get(class_qn) != NodeType.CLASS:
+            return None
+        return class_qn
+
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         if call_name in cs.JS_BUILTIN_PATTERNS:
             return (cs.NodeLabel.FUNCTION, f"{cs.BUILTIN_PREFIX}.{call_name}")

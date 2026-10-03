@@ -942,6 +942,18 @@ class ClassIngestMixin:
             return self._resolve_deferred_parent_qn(
                 entry._replace(parent_qn=entry.alt_parent_qn, alt_parent_qn=None)
             )
+        if entry.language == cs.SupportedLanguage.SCALA and (
+            (
+                imported := self.import_processor.scala_import_member(
+                    entry.module_qn, entry.parent_qn
+                )
+            )
+            is not None
+            and self.function_registry.get(imported) in target_kinds
+        ):
+            # The base was bound to its import's written path; the path turned
+            # out to name a project package once every file was parsed.
+            return imported, False
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(project_prefix):
             external = entry.parent_qn.replace(
