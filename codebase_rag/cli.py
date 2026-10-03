@@ -321,28 +321,23 @@ def _refuse_options_update_graph_drops(
     # reads these, so they were accepted and dropped with exit 0 (#2478).
     # With `--workspace` it syncs the workspace's repositories and then opens
     # the assistant, which reads `-a`, `--output-format` and `--projects`, so
-    # those are not refused there (#2418). `--no-sync` is refused in both
-    # modes: a sync asked for with `--no-sync` contradicts itself.
+    # only `--no-sync` is refused there, by its own message: a sync asked for
+    # with `--no-sync` contradicts itself (#2418).
     if not update_graph:
         return
-    dropped = not workspace_given
+    if workspace_given:
+        if no_sync:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_NO_SYNC)
+        return
     for option, given, remedy in (
-        (
-            cs.CLI_OPT_ASK_AGENT,
-            dropped and ask_agent is not None,
-            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
-        ),
+        (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
         (
             cs.CLI_OPT_OUTPUT_FORMAT_JSON,
-            dropped and output_format == cs.QueryFormat.JSON,
+            output_format == cs.QueryFormat.JSON,
             cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
         ),
         (cs.CLI_OPT_NO_SYNC, no_sync, cs.CLI_REMEDY_SYNC_OR_NO_SYNC),
-        (
-            cs.CLI_OPT_PROJECTS,
-            dropped and projects is not None,
-            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
-        ),
+        (cs.CLI_OPT_PROJECTS, projects is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
     ):
         if given:
             _exit_with_error(

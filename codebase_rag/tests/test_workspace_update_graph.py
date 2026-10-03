@@ -308,7 +308,9 @@ def test_a_workspace_update_graph_still_refuses_no_sync(
 
     out = " ".join(click.unstyle(result.output).split())
     assert result.exit_code == 1, out
-    assert "--no-sync cannot be combined with --update-graph" in out
+    assert "--no-sync cannot be combined with --workspace --update-graph" in out
+    # #2478's wording is for a repository's sync; this one opens the assistant.
+    assert "exits without starting the assistant" not in out
     sync.assert_not_called()
     session.assert_not_called()
 

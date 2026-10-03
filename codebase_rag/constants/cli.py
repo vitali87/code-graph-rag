@@ -50,6 +50,12 @@ CLI_ERR_WORKSPACE_UPDATE_OPTION = (
     "Error: {option} applies to one repository and cannot be combined with "
     "--workspace --update-graph. Run it with --repo-path <repository> instead."
 )
+CLI_ERR_WORKSPACE_UPDATE_NO_SYNC = (
+    "Error: --no-sync cannot be combined with --workspace --update-graph, "
+    "which syncs every repository in the workspace and then opens the "
+    "assistant. Drop --no-sync to sync first, or --update-graph to open the "
+    "assistant on the graph as it is."
+)
 CLI_ERR_START_EMPTY_WORKSPACE = (
     "Error: workspace '{name}' has no repositories, so there is nothing to sync "
     "or to scope the assistant to. Add one with `cgr workspace add-repo {name} "
