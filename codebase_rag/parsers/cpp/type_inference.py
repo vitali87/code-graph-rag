@@ -19,16 +19,20 @@ _QUALIFIABLE_DECLARATION_TYPES = frozenset(
 )
 
 
-def _scope_declarations(scope: Node | None) -> list[Node]:
+def _scope_declarations(scope: Node | None) -> list[tuple[Node, int]]:
     # Every node under `scope` outside the nested scopes (lambdas, local
-    # classes, nested functions) it holds.
-    found: list[Node] = []
-    pending = [scope] if scope is not None else []
+    # classes, nested functions) it holds, with the end byte of the innermost
+    # block it sits in: a local is visible from its declaration to there.
+    found: list[tuple[Node, int]] = []
+    pending = [(scope, scope.end_byte)] if scope is not None else []
     while pending:
-        for child in pending.pop().children:
+        node, block_end = pending.pop()
+        if node.type == cs.CppNodeType.COMPOUND_STATEMENT:
+            block_end = node.end_byte
+        for child in node.children:
             if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
-                found.append(child)
-                pending.append(child)
+                found.append((child, block_end))
+                pending.append((child, block_end))
     return found
 
 
@@ -313,43 +317,49 @@ class CppTypeInferenceEngine:
             # redecls across scopes are reconciled by the caller (drop-on-conflict).
             self._collect_body_declarations(child, decls)
 
-    def qualified_type_names(self, caller_node: Node) -> frozenset[str]:
-        """The parameters, locals and (for a member function written in its
-        class) fields whose declared type is spelled qualified (`::B`,
-        `ns::B`). The type map keeps only the bare `B`, but such a name means
-        the class the qualifier names, never a local type the bare name would
-        find (#2631 re-review). A parameter or local hides a field of its
-        name, as it does in the type map."""
-        own: list[Node] = []
+    def declaration_scopes(self, caller_node: Node) -> list[tuple[int, int, str, bool]]:
+        """Each parameter, local and (for a member function written in its
+        class) field the caller can see, as (start, end, name, qualified):
+        the byte window in which a use of `name` finds that declaration, and
+        whether its declared type is spelled qualified (`::B`, `ns::B`). The
+        type map keeps only the bare `B`, but such a name means the class the
+        qualifier names, never a local type the bare name would find (#2631
+        re-review). A parameter or field spans the whole caller, and a
+        parameter hides a field of its name; a local runs from the end of its
+        declaration to the end of its block, so it hides a field only there,
+        as C++ name lookup does."""
+        whole = (caller_node.start_byte, caller_node.end_byte)
+        params: list[tuple[Node, int]] = []
         if (declarator := self._function_declarator(caller_node)) is not None and (
-            params := declarator.child_by_field_name(cs.KEY_PARAMETERS)
+            param_list := declarator.child_by_field_name(cs.KEY_PARAMETERS)
         ) is not None:
-            own.extend(params.children)
-        own.extend(_scope_declarations(caller_node.child_by_field_name(cs.FIELD_BODY)))
+            params = [(param, whole[1]) for param in param_list.children]
         members = caller_node.parent
         fields = (
             _scope_declarations(members)
             if members is not None and members.type == cs.TS_CPP_FIELD_DECLARATION_LIST
             else []
         )
-        hidden = {name for name, _ in self._declared_names(own)}
-        return frozenset(
-            name
-            for name, qualified in (
-                *self._declared_names(own),
-                *(
-                    entry
-                    for entry in self._declared_names(fields)
-                    if entry[0] not in hidden
-                ),
-            )
-            if qualified
+        scopes = [(*whole, name, q) for _, _, name, q in self._declared_names(params)]
+        hidden = {scope[2] for scope in scopes}
+        scopes.extend(
+            (*whole, name, q)
+            for _, _, name, q in self._declared_names(fields)
+            if name not in hidden
         )
+        scopes.extend(
+            self._declared_names(
+                _scope_declarations(caller_node.child_by_field_name(cs.FIELD_BODY))
+            )
+        )
+        return scopes
 
-    def _declared_names(self, declarations: list[Node]) -> Iterator[tuple[str, bool]]:
-        # (name, whether its declared type is spelled qualified) for each
-        # name the declarations introduce.
-        for declaration in declarations:
+    def _declared_names(
+        self, declarations: list[tuple[Node, int]]
+    ) -> Iterator[tuple[int, int, str, bool]]:
+        # (declaration end, block end, name, whether its declared type is
+        # spelled qualified) for each name the declarations introduce.
+        for declaration, block_end in declarations:
             if declaration.type not in _QUALIFIABLE_DECLARATION_TYPES:
                 continue
             type_node = declaration.child_by_field_name(cs.FIELD_TYPE)
@@ -358,7 +368,7 @@ class CppTypeInferenceEngine:
             )
             for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR):
                 if (name := self._declarator_name(declarator)) is not None:
-                    yield name, qualified
+                    yield declaration.end_byte, block_end, name, qualified
 
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)

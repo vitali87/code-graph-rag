@@ -845,3 +845,57 @@ def test_unshadowed_qualified_field_still_binds_the_named_class(
     calls = _edges(mock_ingestor, RelationshipType.CALLS)
     assert (f"{module}.f.A.field", f"{module}.B.ping") in calls
     assert (f"{module}.f.A.field", f"{module}.f.A.B.ping") not in calls
+
+
+# A local declared in a block hides a field of its name only inside that
+# block, and only after its declaration (#2631 re-review): before it and once
+# the block closes, the name is the field again.
+_BLOCK_SHADOWED_FIELD = """\
+struct B { int ping() { return 1; } };
+
+int f() {
+  struct A {
+    struct B { int ping() { return 2; } };
+    ::B b;
+    int in_block() { { B b; return b.ping(); } }
+    int after_block() { { B b; (void)b; } return b.ping(); }
+    int before_decl() { int r = b.ping(); B b; (void)b; return r; }
+  } a;
+  struct C {
+    struct B { int ping() { return 3; } };
+    B b;
+    int after_block() { { ::B b; (void)b; } return b.ping(); }
+    int in_block() { { ::B b; return b.ping(); } }
+  } c;
+  return a.in_block() + a.after_block() + a.before_decl() + c.after_block()
+      + c.in_block();
+}
+"""
+
+
+def test_block_local_hides_a_field_only_inside_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(temp_repo, mock_ingestor, block=_BLOCK_SHADOWED_FIELD)
+
+    module = f"{_PROJECT}.block"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    for caller in ("after_block", "before_decl"):
+        assert (f"{module}.f.A.{caller}", f"{module}.B.ping") in calls
+        assert (f"{module}.f.A.{caller}", f"{module}.f.A.B.ping") not in calls
+    assert (f"{module}.f.C.after_block", f"{module}.f.C.B.ping") in calls
+    assert (f"{module}.f.C.after_block", f"{module}.B.ping") not in calls
+
+
+def test_block_local_still_hides_a_field_inside_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: inside the block the local's own type is what binds.
+    _index(temp_repo, mock_ingestor, block=_BLOCK_SHADOWED_FIELD)
+
+    module = f"{_PROJECT}.block"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.in_block", f"{module}.f.A.B.ping") in calls
+    assert (f"{module}.f.A.in_block", f"{module}.B.ping") not in calls
+    assert (f"{module}.f.C.in_block", f"{module}.B.ping") in calls
+    assert (f"{module}.f.C.in_block", f"{module}.f.C.B.ping") not in calls

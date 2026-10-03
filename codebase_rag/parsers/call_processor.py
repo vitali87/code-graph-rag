@@ -303,6 +303,25 @@ def _class_qn_for_calls(
     )
 
 
+def _cpp_scoped_bindings(
+    scopes: list[tuple[int, int, str, bool]],
+    name: str,
+    type_name: str,
+    local_qn: str,
+) -> list[tuple[int, int, str, str]]:
+    # Each C++ declaration of `name` as a span binding, widest first: a
+    # qualified one keeps the bare type name, which the module-wide lookup
+    # resolves to the class the qualifier names; an unqualified one binds
+    # the local type.
+    bindings = [
+        (start, end, name, type_name if qualified else local_qn)
+        for start, end, scope_name, qualified in scopes
+        if scope_name == name
+    ]
+    bindings.sort(key=lambda binding: binding[0] - binding[1])
+    return bindings
+
+
 def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
     # The byte span a declaration shadows: its nearest enclosing scope, with
     # statement scopes (for/try) starting at the declaration END because the
@@ -3862,16 +3881,19 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        # Rust match arms and iterator-adaptor closures both reuse one binding
+        # name for different types at different byte ranges (`cmd` per arm;
+        # `|x|` per collection), as does a C++ block local hiding a field;
+        # the flat map keeps only one. These span-scoped bindings let each
+        # call resolve against the binding containing it.
+        span_bindings: list[tuple[int, int, str, str]] = []
         if language == cs.SupportedLanguage.CPP and local_var_types:
-            self._bind_cpp_local_types(caller_node, module_qn, local_var_types)
+            span_bindings = self._bind_cpp_local_types(
+                caller_node, module_qn, local_var_types
+            )
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
 
-        # Rust match arms and iterator-adaptor closures both reuse one binding
-        # name for different types at different byte ranges (`cmd` per arm;
-        # `|x|` per collection); the flat map keeps only one. These span-scoped
-        # bindings let each call resolve against the binding containing it.
-        span_bindings: list[tuple[int, int, str, str]] = []
         if language == cs.SupportedLanguage.RUST and local_var_types is not None:
             span_bindings = self._resolver.type_inference.collect_rust_span_bindings(
                 caller_node, module_qn, class_context
@@ -4820,7 +4842,7 @@ class CallProcessor:
 
     def _bind_cpp_local_types(
         self, caller_node: Node, module_qn: str, var_types: dict[str, str]
-    ) -> None:
+    ) -> list[tuple[int, int, str, str]]:
         # A variable of a type written in an enclosing function body binds
         # to that type's node, not whichever same-named class the
         # module-wide lookup meets first, so two functions' local
@@ -4828,19 +4850,25 @@ class CallProcessor:
         # nothing names a type with no node, and must not reach the
         # name-based lookups.
         # A name declared with a qualified type (`::B g`, `ns::B n`) keeps
-        # the class its qualifier names (#2631 re-review).
+        # the class its qualifier names (#2631 re-review). Where a name's
+        # declarations disagree (a block local `B b` hiding a `::B b`
+        # field), the widest one is the flat binding and each is returned
+        # as a span binding over its window, so a call binds to the
+        # declaration in force where it sits.
         anchors = self._cpp_local_anchors(caller_node, module_qn)
-        qualified: frozenset[str] | None = None
+        scopes: list[tuple[int, int, str, bool]] | None = None
+        spans: list[tuple[int, int, str, str]] = []
         for name, type_name in list(var_types.items()):
             if local_qn := self._cpp_local_type_under(anchors, type_name):
-                if qualified is None:
-                    qualified = CppTypeInferenceEngine().qualified_type_names(
-                        caller_node
-                    )
-                if name not in qualified:
-                    var_types[name] = local_qn
+                if scopes is None:
+                    scopes = CppTypeInferenceEngine().declaration_scopes(caller_node)
+                bindings = _cpp_scoped_bindings(scopes, name, type_name, local_qn)
+                var_types[name] = bindings[0][3] if bindings else local_qn
+                if any(binding[3] != var_types[name] for binding in bindings):
+                    spans.extend(bindings)
             elif cpp_local_types.is_positional_name(type_name):
                 del var_types[name]
+        return spans
 
     def _emit_cpp_functor_callback(
         self,
