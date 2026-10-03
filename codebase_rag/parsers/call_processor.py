@@ -4363,24 +4363,31 @@ class CallProcessor:
                 )
             return
         if ctx.language == cs.SupportedLanguage.SQL:
-            self._ingest_sql_routine_call(ctx, call_node, call_name)
+            self._ingest_sql_routine_call(ctx, call_name)
             return
         self._ingest_named_call(ctx, call_node, call_name)
 
-    def _ingest_sql_routine_call(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
-    ) -> None:
+    def _ingest_sql_routine_call(self, ctx: _CallScanContext, call_name: str) -> None:
         # A SQL routine call has no receiver, import or type to resolve
         # through. The generic resolver reads `billing.fee` as a receiver and
         # a method, drops the receiver and binds `fee` by bare name, so a
         # schema-qualified call landed on whichever schema's `fee` came first.
+        #
+        # The name is recorded as a waiter even when it resolves: with no
+        # imports its target set stays open, and a routine of that name added
+        # in ANOTHER file (a second schema for `fee`, a second `billing.fee`
+        # overload) is one more target a clean index links. No edge leads from
+        # that file to this caller, so only the waiter list (issue #1568) can
+        # send it back for a re-parse. The whole normalized name is recorded:
+        # `billing.fee` waits on that routine only, never on `audit.fee`.
+        self._note_unresolved(ctx.module_qn, call_name)
         targets = self._resolver.sql_routine_targets(call_name)
         if not targets:
             # A builtin (`count`, `now`) or a routine no indexed file defines.
-            self._ingest_unresolved_call(ctx, call_node, call_name)
             return
         if len({qn_markers.natural_qn(qn) for qn in targets}) > 1:
-            # Unqualified, and more than one schema defines the name.
+            # Several routines answer to the name: other schemas for an
+            # unqualified one, other files defining a qualified one.
             self._resolution = cs.EdgeResolution.HEURISTIC
         elif len(targets) > 1:
             # One routine with overloads the call site's types would choose.

@@ -17,7 +17,14 @@ import pytest
 from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
+from codebase_rag.tests.test_incremental_deleted_dependents import (
+    _index as _index_into,
+)
+from codebase_rag.tests.test_incremental_deleted_dependents import _materialise
+from evals.cgr_graph import _StatefulIngestor
 
 tree_sitter_sql = pytest.importorskip("tree_sitter_sql")
 
@@ -400,3 +407,212 @@ class TestNoFalseEdges:
             },
         )
         assert _calls(mock_ingestor) == {(_qn("db.fns"), _qn("db.fns.tax"))}
+
+
+_CALLER_QN = "proj.db.caller.caller"
+
+
+def _routine(name: str) -> str:
+    return (
+        f"CREATE FUNCTION {name}(x INT) RETURNS INT AS $$ SELECT x; $$ LANGUAGE sql;\n"
+    )
+
+
+def _caller(call: str) -> str:
+    return (
+        f"CREATE FUNCTION caller() RETURNS INT AS $$ SELECT {call}(1); "
+        "$$ LANGUAGE sql;\n"
+    )
+
+
+def _caller_edges(store: _StatefulIngestor) -> dict[str, str]:
+    # callee qn -> resolution label of the caller's CALLS edges
+    return {
+        str(edge[4]): str(store.props_for(edge).get(cs.KEY_RESOLUTION))
+        for edge in store.edges
+        if edge[1] == _CALLER_QN and edge[2] == cs.RelationshipType.CALLS
+    }
+
+
+def _clean_edges(tmp_path: Path, files: dict[str, str]) -> dict[str, str]:
+    root = tmp_path / "clean" / "proj"
+    root.parent.mkdir()
+    _materialise(root, files)
+    store = _StatefulIngestor()
+    _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
+    return _caller_edges(store)
+
+
+class _WaiterSpy:
+    """The files the added-definition lookup sends back for a re-parse."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.returned: list[str] = []
+        original = GraphUpdater._unresolved_reference_waiters
+
+        def spy(
+            updater: GraphUpdater,
+            added: list[tuple[str, bytes]],
+            modified: list[tuple[str, bytes]] | None = None,
+        ) -> list[str]:
+            keys = original(updater, added, modified)
+            self.returned.extend(keys)
+            return keys
+
+        monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy)
+
+
+class TestIncrementalMatchesCleanIndex:
+    """An unchanged caller has no edge into a file that ADDS a routine it can
+    reach, so only the waiter list (issue #1568) can send it back for a
+    re-parse; the incremental graph must equal a clean index of the tree."""
+
+    def _sync(
+        self,
+        tmp_path: Path,
+        before: dict[str, str],
+        changes: dict[str, str | None],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        root = tmp_path / "proj"
+        _materialise(root, before)
+        store = _StatefulIngestor()
+        _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
+        for rel, text in changes.items():
+            if text is None:
+                (root / rel).unlink()
+            else:
+                _add_after_cache(root, rel, text)
+        _index_into(store, root, cs.SupportedLanguage.SQL, force=False)
+        after = {
+            rel: text for rel, text in {**before, **changes}.items() if text is not None
+        }
+        return _caller_edges(store), _clean_edges(tmp_path, after)
+
+    def test_added_schema_routine_fans_out_an_unqualified_call(
+        self, tmp_path: Path
+    ) -> None:
+        incremental, clean = self._sync(
+            tmp_path,
+            {"db/b.sql": _routine("billing.fee"), "db/caller.sql": _caller("fee")},
+            {"db/a.sql": _routine("audit.fee")},
+        )
+        assert clean == {
+            "proj.db.b.billing.fee": cs.EdgeResolution.HEURISTIC,
+            "proj.db.a.audit.fee": cs.EdgeResolution.HEURISTIC,
+        }
+        assert incremental == clean
+
+    def test_modified_file_gaining_a_schema_routine_fans_out(
+        self, tmp_path: Path
+    ) -> None:
+        # The edited file held nothing the caller reached, so no edge leads
+        # the incremental pass from it to the caller.
+        incremental, clean = self._sync(
+            tmp_path,
+            {
+                "db/b.sql": _routine("billing.fee"),
+                "db/other.sql": _routine("levy"),
+                "db/caller.sql": _caller("fee"),
+            },
+            {"db/other.sql": _routine("levy") + _routine("audit.fee")},
+        )
+        assert set(clean) == {"proj.db.b.billing.fee", "proj.db.other.audit.fee"}
+        assert incremental == clean
+
+    def test_added_uppercase_routine_reaches_a_lowercase_caller(
+        self, tmp_path: Path
+    ) -> None:
+        # The added file spells AUDIT.FEE; PostgreSQL folds it to the
+        # audit.fee the caller's `fee` can reach, and the waiter key must fold
+        # the same way or the caller is never revisited.
+        incremental, clean = self._sync(
+            tmp_path,
+            {"db/b.sql": _routine("billing.fee"), "db/caller.sql": _caller("fee")},
+            {"db/a.sql": _routine("AUDIT.FEE")},
+        )
+        assert set(clean) == {"proj.db.b.billing.fee", "proj.db.a.audit.fee"}
+        assert incremental == clean
+
+    def test_added_same_schema_routine_reaches_a_qualified_call(
+        self, tmp_path: Path
+    ) -> None:
+        # A second file defining billing.fee (an overload) is one more
+        # routine a qualified billing.fee(...) can run.
+        incremental, clean = self._sync(
+            tmp_path,
+            {
+                "db/b.sql": _routine("billing.fee"),
+                "db/caller.sql": _caller("billing.fee"),
+            },
+            {
+                "db/b2.sql": "CREATE FUNCTION billing.fee(x NUMERIC) RETURNS NUMERIC "
+                "AS $$ SELECT x; $$ LANGUAGE sql;\n"
+            },
+        )
+        assert set(clean) == {"proj.db.b.billing.fee", "proj.db.b2.billing.fee"}
+        assert incremental == clean
+
+    def test_removed_schema_routine_returns_to_one_exact_edge(
+        self, tmp_path: Path
+    ) -> None:
+        # The caller HAS an edge into the deleted file, so the inbound-edge
+        # dependents re-parse it.
+        incremental, clean = self._sync(
+            tmp_path,
+            {
+                "db/a.sql": _routine("audit.fee"),
+                "db/b.sql": _routine("billing.fee"),
+                "db/caller.sql": _caller("fee"),
+            },
+            {"db/a.sql": None},
+        )
+        assert clean == {"proj.db.b.billing.fee": cs.EdgeResolution.EXACT}
+        assert incremental == clean
+
+    def test_qualified_call_is_not_revisited_for_another_schema(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # billing.fee(...) can never reach audit.fee, so adding it must
+        # neither re-parse the caller nor change its edge.
+        spy = _WaiterSpy(monkeypatch)
+        incremental, clean = self._sync(
+            tmp_path,
+            {
+                "db/b.sql": _routine("billing.fee"),
+                "db/caller.sql": _caller("billing.fee"),
+            },
+            {"db/a.sql": _routine("audit.fee")},
+        )
+        assert "db/caller.sql" not in spy.returned
+        assert clean == {"proj.db.b.billing.fee": cs.EdgeResolution.EXACT}
+        assert incremental == clean
+
+    def test_unrelated_routine_does_not_revisit_callers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = _WaiterSpy(monkeypatch)
+        incremental, clean = self._sync(
+            tmp_path,
+            {"db/b.sql": _routine("billing.fee"), "db/caller.sql": _caller("fee")},
+            {"db/a.sql": _routine("audit.levy")},
+        )
+        assert "db/caller.sql" not in spy.returned
+        assert clean == {"proj.db.b.billing.fee": cs.EdgeResolution.EXACT}
+        assert incremental == clean
+
+    def test_caller_records_each_routine_name_it_wrote(self, tmp_path: Path) -> None:
+        # Resolved or not, the normalized name stays on the waiter list: a
+        # later routine of that name changes what a clean index links.
+        root = tmp_path / "proj"
+        _materialise(
+            root,
+            {
+                "db/b.sql": _routine("billing.fee"),
+                "db/caller.sql": "CREATE FUNCTION caller() RETURNS INT AS $$ "
+                "SELECT FEE(1) + Billing.Fee(2) + count(*) FROM t; $$ LANGUAGE sql;\n",
+            },
+        )
+        store = _StatefulIngestor()
+        _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
+        module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.db.caller")]
+        assert module[cs.KEY_UNRESOLVED_REFERENCES] == ["billing.fee", "count", "fee"]

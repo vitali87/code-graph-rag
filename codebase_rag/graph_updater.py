@@ -36,6 +36,7 @@ from .language_spec import (
     csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
+    sql_object_reference_name,
 )
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
@@ -3961,6 +3962,17 @@ class GraphUpdater:
         names: set[str] = set()
         for capture in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
             for node in captures.get(capture, ()):
+                if language == cs.SupportedLanguage.SQL:
+                    # A SQL caller waits on the normalized name it wrote:
+                    # `fee` (any schema) or `billing.fee` (that schema only).
+                    # The raw identifier (`FEE`, `"Fee"`) would match neither.
+                    # The graph keeps only the last segment, so an edited file
+                    # re-offers its qualified names: a caller waiting on one
+                    # is either linked into the file (re-parsed anyway) or
+                    # really gains the routine.
+                    if routine := sql_object_reference_name(node):
+                        names.update({routine, routine.rsplit(cs.SEPARATOR_DOT, 1)[-1]})
+                    continue
                 names.update(_definition_names(node))
         return names
 
