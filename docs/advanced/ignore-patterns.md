@@ -65,10 +65,18 @@ directory to keep the state elsewhere, for example on a CI cache volume.
 Versions before this change wrote these files, all named `.cgr-*`, into the
 repository root. The next sync moves any that are still there into the state
 directory, keeping the hash cache and its timestamp, so it stays incremental
-and reports "already in sync" when nothing changed. If they were committed,
-`git status` then shows them as deleted; commit the deletion, and remove any
-`.cgr-*` lines added to `.gitignore` for them if you like. `cgr check` never
-counts these files as edits.
+and reports "already in sync" when nothing changed. A file the state
+directory already holds is never replaced by the older copy in the tree. If
+they were committed, `git status` then shows them as deleted; commit the
+deletion, and remove any `.cgr-*` lines added to `.gitignore` for them if you
+like. `cgr check` never counts these files as edits; a source file that only
+starts with `.cgr-` is checked like any other.
+
+The one exception is the edit lock, `.cgr-edit-lock`: an older cgr still
+running (an MCP server started before the upgrade, say) keeps taking it at
+the repository root, so it is left there, and edits take it as well as their
+own lock for as long as it exists. Delete it once no older cgr runs against
+the checkout.
 
 ## Default Exclusions
 

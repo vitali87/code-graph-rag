@@ -963,9 +963,19 @@ def _project_root_for_single_file(target: Path) -> Path:
     level down, and overwriting `Project.root_path` with the nested directory.
     Measured on a nested worktree-style marker during review of this change.
 
-    So: the nearest CACHED ancestor wins outright; only if there is none does
-    the nearest `.git` apply. Two nested caches still resolve to the nearer,
+    So: the nearest CACHED ancestor wins; only if there is none does the
+    nearest `.git` apply. Two nested caches still resolve to the nearer,
     which is the project that genuinely indexed the target.
+
+    A cache outranks a nearer `.git` only when it lists a file inside that
+    nested checkout, which is what makes it evidence about the target. The
+    cache lives under CGR_HOME, keyed by the checkout's path, so it outlives
+    the tree it describes: a removed checkout's path reused for a different
+    tree still holds the old cache, and that tree's nested checkout was never
+    indexed from there (Greptile, PR #2557). With no nested `.git` between
+    them the cached ancestor still wins whatever it lists. A nested checkout
+    added since the enclosing root's last directory run is listed by neither
+    and roots at its `.git`, as on a fresh clone, until that run.
 
     The final fallback is the old behaviour: a target under neither marker is
     not identifiably part of a project here, so there is no root to agree with
@@ -975,15 +985,43 @@ def _project_root_for_single_file(target: Path) -> Path:
     """
     git_root: Path | None = None
     for ancestor in target.parents:
-        # `state_dir`, not `prepare_state_dir`: a lookup must not create a
-        # state directory for every ancestor it asks about (issue #2427).
-        if (state_dir(ancestor) / cs.HASH_CACHE_FILENAME).is_file() or (
-            ancestor / cs.HASH_CACHE_FILENAME
-        ).is_file():
+        cache = _hash_cache_marking(ancestor)
+        if cache is not None and (
+            git_root is None or _cache_lists_under(cache, ancestor, git_root)
+        ):
             return ancestor
         if git_root is None and (ancestor / cs.GIT_DIR_NAME).exists():
             git_root = ancestor
     return git_root if git_root is not None else target.parent
+
+
+def _hash_cache_marking(ancestor: Path) -> Path | None:
+    """The hash cache a directory run at `ancestor` wrote, if there is one.
+
+    In its state directory, or in the tree itself where an older cgr wrote
+    it. `state_dir`, not `prepare_state_dir`: a lookup must not create a
+    state directory for every ancestor it asks about (issue #2427).
+    """
+    for cache in (
+        state_dir(ancestor) / cs.HASH_CACHE_FILENAME,
+        ancestor / cs.HASH_CACHE_FILENAME,
+    ):
+        if cache.is_file():
+            return cache
+    return None
+
+
+def _cache_lists_under(cache: Path, root: Path, checkout: Path) -> bool:
+    """Whether the run at `root` that wrote `cache` indexed a file in
+    `checkout`. Keys are POSIX paths relative to `root`; one that cannot be
+    read lists nothing."""
+    prefix = f"{checkout.relative_to(root).as_posix()}{cs.SEPARATOR_SLASH}"
+    try:
+        with cache.open(encoding=cs.ENCODING_UTF8) as f:
+            entries = load_json(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(entries, dict) and any(key.startswith(prefix) for key in entries)
 
 
 def _definition_names(node: Node) -> set[str]:

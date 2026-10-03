@@ -51,9 +51,12 @@ outcome.files  # repo-relative paths, sorted
   temp sibling and `os.replace` and records the history entry, holding the
   originals so a failure anywhere after the first write (a later file, the
   history record) restores what already landed. Commits to one repo
-  serialise on an OS-level lock (`.cgr-edit-lock`), so a `cgr edits undo`
-  in another process queues behind an agent's commit. On a rejected
-  verification the working tree is byte-identical to before.
+  serialise on an OS-level lock (`.cgr-edit-lock` in the checkout's state
+  directory), so a `cgr edits undo` in another process queues behind an
+  agent's commit. While a `.cgr-edit-lock` an older cgr left in the
+  checkout root is there, it is taken as well, so an older cgr still
+  running against the tree is excluded too. On a rejected verification the
+  working tree is byte-identical to before.
 - **Rollback** discards the overlay. `with transaction(root) as tx:` rolls
   back on an exception.
 

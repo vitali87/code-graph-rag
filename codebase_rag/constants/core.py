@@ -227,7 +227,7 @@ EDIT_TEMP_FILE_MODE = 0o600
 # directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working
 # tree, and a copy an older cgr left in the tree is moved there, so a name
 # added here is kept out of the tree and migrated with no code of its own
-# (issue #2427).
+# (issue #2427); a lock is registered in CGR_STATE_LOCK_FILENAMES as well.
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
@@ -241,6 +241,12 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         EDIT_LOCK_FILENAME,
     }
 )
+# The state files that are locks. One an older cgr left in the tree is never
+# moved, copied or removed: another process may hold it, or be about to open
+# it by that path, so replacing it would let two holders run at once.
+# Instead it stays, and is taken along with the lock under CGR_HOME for as
+# long as it is there (issue #2427).
+CGR_STATE_LOCK_FILENAMES: frozenset[str] = frozenset({EDIT_LOCK_FILENAME})
 CGR_STATE_DIRNAME = "state"
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50

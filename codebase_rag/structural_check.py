@@ -34,9 +34,6 @@ from .utils.path_utils import derive_project_name
 _GIT_DELETED = "D"
 
 
-_CGR_STATE_PREFIX = ".cgr-"
-
-
 class CheckError(ValueError):
     """The working tree cannot be compared against the requested base."""
 
@@ -114,9 +111,19 @@ def _is_cgr_state(path: str) -> bool:
     """cgr's own state files (hash cache, directory mtimes, ...) are not
     source: never re-ingested or reported as reparsed. That holds for a copy
     a user committed with `git add -A` before cgr kept them out of the tree,
-    which every later sync rewrote, or the next one moves out (issue #2427).
+    which every later sync rewrote, or the next one moves out (issue #2427),
+    and for the temp sibling an older cgr wrote one through.
+
+    By exact name, as the indexing walk skips them: a source file merely
+    named `.cgr-...` (a tracked `.cgr-custom.py`) is indexed, so its edits
+    and deletions are structural changes the check must report.
     """
-    return Path(path).name.startswith(_CGR_STATE_PREFIX)
+    name = Path(path).name
+    if name in cs.CGR_STATE_FILENAMES:
+        return True
+    if not name.endswith(cs.TMP_EXTENSION):
+        return False
+    return any(name.startswith(f"{state}.") for state in cs.CGR_STATE_FILENAMES)
 
 
 def _stamp_is_named(stored: dict[str, list[str] | str]) -> bool:
