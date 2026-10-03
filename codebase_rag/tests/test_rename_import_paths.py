@@ -234,6 +234,29 @@ def test_without_a_package_a_python_module_may_be_spelled_alone(
 
 
 @pytest.mark.parametrize(
+    ("statement", "named"),
+    [("from pkg.cache import x", True), ("from cache import x", False)],
+)
+def test_a_stub_only_package_is_spelled_from_the_package_down(
+    tmp_path: Path, statement: str, named: bool
+) -> None:
+    # `pkg/__init__.pyi` makes `pkg` a package as `pkg/__init__.py` does
+    # (#2445), so `cache` alone names another module.
+    _write(tmp_path, "pkg/__init__.pyi")
+
+    assert (
+        _named(
+            tmp_path,
+            "app/use.py",
+            cs.SupportedLanguage.PYTHON,
+            statement,
+            "pkg/cache.pyi",
+        )
+        is named
+    )
+
+
+@pytest.mark.parametrize(
     ("language", "importer", "statement", "name", "above"),
     [
         (

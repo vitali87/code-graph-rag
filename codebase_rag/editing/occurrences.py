@@ -33,7 +33,7 @@ import re
 from collections.abc import Callable, Iterator
 from enum import Enum, auto
 from functools import cached_property, partial
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -42,7 +42,11 @@ from .. import constants as cs
 from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension, language_family
 from ..parser_loader import load_parsers
-from ..utils.path_utils import module_stem, walk_eligible_files
+from ..utils.path_utils import (
+    module_stem,
+    python_stub_implementations,
+    walk_eligible_files,
+)
 from .import_paths import (
     ImportRead,
     ImportReader,
@@ -53,12 +57,13 @@ from .import_paths import (
     spelled_length,
     unique_match,
 )
-from .patcher import _identifier_at
+from .patcher import PatcherError, _identifier_at, line_col_to_byte
 
 _WORD = rb"(?<![\w])%s(?![\w])"
 _CALL_OPEN = re.compile(rb"\s*" + re.escape(cs.CHAR_PAREN_OPEN.encode()))
 _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
+_ARROW = cs.RENAME_ARROW_ACCESS.encode()
 _TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
 # A name as written, qualified or not: `Cache`, `other.Cache`, `a::Parse`.
 # The names a Node.js module uses (`require`, `module.exports`, `exports`):
@@ -135,6 +140,9 @@ class Target(NamedTuple):
     # (name, file) of each other project symbol named like one of the
     # classes: what a bare or qualified class name may mean instead.
     rivals: frozenset[tuple[str, str]] = frozenset()
+    # (file, line, byte column) of each definition's name. A `.pyi` stub of
+    # the file declares the same symbol under the same names around it.
+    definitions: frozenset[tuple[str, int, int]] = frozenset()
 
 
 class Occurrence(NamedTuple):
@@ -178,6 +186,11 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
       is spelled by its name, bare or qualified, only where that spelling
       reaches the class's module: `other.Cache()` is another Cache;
     - a type: every occurrence.
+
+    A `.pyi` stub of a defining file is read as that file: the indexer
+    skips it (#2445), so the graph has no site there, and its module-level
+    `class Widget:` is the symbol's own declaration, not another class
+    hiding it. That declaration counts too.
     """
     family = language_family(target.language)
     modules = _modules(repo_root, target)
@@ -230,6 +243,9 @@ class _Modules(NamedTuple):
     # Whether the function is a top-level one of a classic JS/TS script,
     # which any script reaches by its bare name with no import.
     script_global: bool = False
+    # Each definition's file with the names that lead to it there:
+    # `("pkg/widget.py", ("Widget", "spin"))`.
+    declared: frozenset[tuple[str, tuple[str, ...]]] = frozenset()
 
 
 def _modules(repo_root: Path, target: Target) -> _Modules:
@@ -245,7 +261,37 @@ def _modules(repo_root: Path, target: Target) -> _Modules:
         module_key(path): spelled_length(repo_root, path)
         for _name, path in target.rivals
     }
-    return _Modules(home, packages, rivals, _script_global(repo_root, target))
+    return _Modules(
+        home,
+        packages,
+        rivals,
+        _script_global(repo_root, target),
+        _declared(repo_root, target),
+    )
+
+
+def _declared(
+    repo_root: Path, target: Target
+) -> frozenset[tuple[str, tuple[str, ...]]]:
+    """Where each definition sits in its file, by the names around it:
+    what a `.pyi` stub of the file declares it as (`class Widget:` with
+    `def spin` in it). Only Python has such stubs."""
+    parsers, _queries = load_parsers()
+    parser = parsers.get(target.language)
+    if target.language is not cs.SupportedLanguage.PYTHON or parser is None:
+        return frozenset()
+    width = len(target.name.encode(cs.ENCODING_UTF8))
+    found: set[tuple[str, tuple[str, ...]]] = set()
+    for path, line, col in target.definitions:
+        try:
+            source = (repo_root / path).read_bytes()
+            start = line_col_to_byte(source, line, col)
+        except (OSError, PatcherError):
+            continue
+        token = _identifier_at(parser.parse(source).root_node, start, start + width)
+        if token is not None and (names := _nesting(token)) is not None:
+            found.add((path, names))
+    return frozenset(found)
 
 
 def _script_global(repo_root: Path, target: Target) -> bool:
@@ -399,11 +445,31 @@ class _File:
         self.modules = modules
         self.tokens = tokens
         self.imports = ImportReader(repo_root, path, language)
+        # The target's files this one is a `.pyi` stub of: it declares their
+        # module's interface, so it names their symbols as they do (#2445).
+        self.stub_of = frozenset(
+            implementation.as_posix()
+            for implementation in python_stub_implementations(PurePosixPath(path))
+        ) & (target.owner_paths or frozenset({target.path}))
+        # Whether the file is the target's own module: its definition's file
+        # or a stub of it, where a module-level binding is the symbol itself.
+        self.own_module = path == target.path or target.path in self.stub_of
         self._typed: dict[tuple[int, int, bytes], bool | None] = {}
         self._reads: dict[tuple[int, int], ImportRead] = {}
         self._bound: dict[
             str, list[tuple[int, int, tuple[ModulePath, ...] | None]]
         ] = {}
+
+    def declares(self, token: Node) -> bool:
+        """Whether the token is a stub's declaration of the target: a
+        definition's name with the same names around it as the target has in
+        the file the stub declares (`def spin` in `class Widget:`)."""
+        if not self.stub_of:
+            return False
+        names = _nesting(token)
+        return names is not None and any(
+            (path, names) in self.modules.declared for path in self.stub_of
+        )
 
     def _names(self, names: frozenset[str]) -> Iterator[Node]:
         """The identifier tokens in code spelling one of `names`."""
@@ -562,9 +628,10 @@ class _File:
         if len(segments) > 1:
             return self._is_home(name, self._spelled(segments, at))
         bound = self._bound_at(name, at)
-        if self.path in self.target.owner_paths:
-            # The class's own definition binds the name at module level;
-            # only a local in a function (a parameter) hides it.
+        if self.path in self.target.owner_paths or self.stub_of:
+            # The class's own definition, or its stub's declaration, binds
+            # the name at module level; only a local in a function (a
+            # parameter) hides it.
             return bound is not None or self._local_at(name, at) is None
         if bound is None:
             return False
@@ -584,10 +651,7 @@ class _File:
         builtin. A star import may bring it in, so one from elsewhere keeps
         the use as refusal-only evidence (False), and so does a classic
         script's global function, which any script calls with no import."""
-        if (
-            self.path == self.target.path
-            or self.language not in cs.RENAME_IMPORT_REQUIRED_LANGUAGES
-        ):
+        if self.own_module or self.language not in cs.RENAME_IMPORT_REQUIRED_LANGUAGES:
             return True
         name = self.target.name
         statement = _import_statement(token)
@@ -629,7 +693,7 @@ class _File:
         """Whether an import names the method through its class
         (`import static a.Greeter.greet;`), so a bare call reaches it."""
         return any(
-            _access(self.source, token.start_byte) is not _Access.BARE
+            _access(self.source, token.start_byte, self.language) is not _Access.BARE
             and (receiver := _receiver_node(token)) is not None
             and self.is_owner(_text(receiver), receiver.start_byte)
             and _within(token, cs.RENAME_IMPORT_MARKER)
@@ -699,39 +763,52 @@ class _File:
 
 
 def _file_occurrences(file: _File) -> Iterator[Occurrence]:
-    source, target = file.source, file.target
     bindings = [token for token in file.tokens if _binds(token)]
     bound = {(token.start_byte, token.end_byte) for token in bindings}
     shadows = [
         span
         for binding in bindings
-        if (span := _shadow(binding, file.path, target, len(source))) is not None
+        if (span := _shadow(binding, file.own_module, len(file.source))) is not None
     ]
     for token in file.tokens:
-        if (token.start_byte, token.end_byte) in bound or _labels(token):
-            continue
-        access = _access(source, token.start_byte)
-        if access is _Access.BARE and any(
-            start <= token.start_byte < end for start, end in shadows
-        ):
-            continue
-        called = _CALL_OPEN.match(source, token.end_byte) is not None
-        match target.kind:
-            case cs.RenameTargetKind.TYPE:
-                certain: bool | None = True
-            case cs.RenameTargetKind.FUNCTION:
-                certain = _function_use(file, token, access)
-            case _:
-                certain = _method_use(file, token, access, called)
-        if certain is not None:
-            yield Occurrence(
-                file.path,
-                token.start_point[0] + 1,
-                token.start_point[1],
-                called,
-                access is _Access.BARE,
-                certain,
-            )
+        if file.declares(token):
+            # `class Widget:` in `widget.pyi`: the stub states the module's
+            # interface, and keeping the old name there breaks every checker
+            # reading it.
+            yield _occurrence(file.path, token, called=False, bare=True)
+        elif (token.start_byte, token.end_byte) not in bound and not _labels(token):
+            found = _use(file, token, shadows)
+            if found is not None:
+                yield found
+
+
+def _use(file: _File, token: Node, shadows: list[tuple[int, int]]) -> Occurrence | None:
+    """The occurrence a token that binds nothing makes, if it may name the
+    target."""
+    access = _access(file.source, token.start_byte, file.language)
+    if access is _Access.BARE and any(
+        start <= token.start_byte < end for start, end in shadows
+    ):
+        return None
+    called = _CALL_OPEN.match(file.source, token.end_byte) is not None
+    match file.target.kind:
+        case cs.RenameTargetKind.TYPE:
+            certain: bool | None = True
+        case cs.RenameTargetKind.FUNCTION:
+            certain = _function_use(file, token, access)
+        case _:
+            certain = _method_use(file, token, access, called)
+    if certain is None:
+        return None
+    return _occurrence(file.path, token, called, access is _Access.BARE, certain)
+
+
+def _occurrence(
+    path: str, token: Node, called: bool, bare: bool, certain: bool = True
+) -> Occurrence:
+    return Occurrence(
+        path, token.start_point[0] + 1, token.start_point[1], called, bare, certain
+    )
 
 
 def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
@@ -876,6 +953,30 @@ def _scope_around(binding: Node) -> Node | None:
     return scope
 
 
+def _nesting(token: Node) -> tuple[str, ...] | None:
+    """The names of the definition a token names and of the definitions
+    around it, outermost first: `("Widget", "spin")` for `def spin` in
+    `class Widget:`. None where the token names no definition, or one in a
+    scope with no name (a lambda)."""
+    definition = token.parent
+    if (
+        definition is None
+        or not _is_scope(definition)
+        or _field(definition, token) != cs.FIELD_NAME
+    ):
+        return None
+    names = [_text(token)]
+    scope = definition.parent
+    while scope is not None:
+        if _is_scope(scope):
+            name = scope.child_by_field_name(cs.FIELD_NAME)
+            if name is None:
+                return None
+            names.append(_text(name))
+        scope = scope.parent
+    return tuple(reversed(names))
+
+
 def _binding_span(binding: Node, size: int) -> tuple[int, int] | None:
     """The byte span in which a binding (a local, or an import statement)
     gives a bare use its name: the function around it, or the whole file at
@@ -890,18 +991,17 @@ def _binding_span(binding: Node, size: int) -> tuple[int, int] | None:
     return scope.start_byte, scope.end_byte
 
 
-def _shadow(
-    binding: Node, rel_path: str, target: Target, size: int
-) -> tuple[int, int] | None:
+def _shadow(binding: Node, own_module: bool, size: int) -> tuple[int, int] | None:
     """The byte span in which a binding hides the target's bare name. At
-    module level in the defining file it is the symbol itself, or a
-    rebinding of it; anywhere else it is another symbol for the file."""
-    if rel_path == target.path and _scope_around(binding) is None:
+    module level in the defining file, or in a `.pyi` stub of it, it is the
+    symbol itself, or a rebinding of it; anywhere else it is another symbol
+    for the file."""
+    if own_module and _scope_around(binding) is None:
         return None
     return _binding_span(binding, size)
 
 
-def _access(source: bytes, start: int) -> _Access:
+def _access(source: bytes, start: int, language: cs.SupportedLanguage) -> _Access:
     # Walked back by hand: slicing the whole prefix per token would make a
     # file that names the symbol often quadratic.
     end = start
@@ -910,6 +1010,8 @@ def _access(source: bytes, start: int) -> _Access:
     before = source[max(0, end - len(_SCOPE)) : end]
     if before == _SCOPE:
         return _Access.SCOPED
+    if before.endswith(_ARROW) and language not in cs.RENAME_ARROW_MEMBER_LANGUAGES:
+        return _Access.BARE
     return _Access.MEMBER if before.endswith(_MEMBER) else _Access.BARE
 
 

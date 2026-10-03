@@ -22,7 +22,12 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
-from codebase_rag.editing.occurrences import Target, find_occurrences
+from codebase_rag.editing.occurrences import (
+    Target,
+    _Access,
+    _access,
+    find_occurrences,
+)
 from codebase_rag.editing.rename import QueryFn, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -2325,3 +2330,221 @@ def test_a_require_shadowed_around_the_call_leaves_the_script_classic(
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
     ] == [("call", "web/page.js", 2, 9, "receiver_unknown")]
+
+
+# --- review of PR #2797, ninth round ----------------------------------------
+
+# A `.pyi` stub declares its module's interface (#2445). The indexer skips a
+# stub whose `.py` it parses, so the graph has no site in it.
+STUBBED = {
+    "pkg/__init__.py": "",
+    "pkg/widget.py": (
+        "class Widget:\n"
+        "    def spin(self):\n"
+        "        return 1\n"
+        "\n"
+        "\n"
+        "def make():\n"
+        "    return Widget()\n"
+    ),
+    "pkg/widget.pyi": (
+        '__all__ = ["Widget", "make"]\n'
+        "\n"
+        "class Widget:\n"
+        "    def spin(self) -> int: ...\n"
+        "\n"
+        "peer: Widget\n"
+        "\n"
+        "def make() -> Widget: ...\n"
+    ),
+}
+# Each target, its new name and where the stub spells it: the declaration,
+# then the uses.
+STUB_TARGETS = {
+    "class": (f"{PROJECT}.pkg.widget.Widget", "Gadget", [(3, 6), (6, 6), (8, 14)]),
+    "function": (f"{PROJECT}.pkg.widget.make", "build", [(8, 4)]),
+    "method": (f"{PROJECT}.pkg.widget.Widget.spin", "turn", [(4, 8)]),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(STUB_TARGETS))
+def test_a_companion_stub_refuses_the_rename_by_default(
+    tmp_path: Path, kind: str
+) -> None:
+    # Review of PR #2797 (Greptile): renaming `Widget` rewrote `widget.py`
+    # and reported success while `widget.pyi` still declared `class Widget`
+    # and annotated `peer: Widget`, so the module and its interface
+    # disagreed. The stub's own `class Widget` hid every use in it, as
+    # another module's same-named class would.
+    qn, new_name, positions = STUB_TARGETS[kind]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, STUBBED)
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(root, _query(store), PROJECT, qn, new_name)
+
+    assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
+        ("pkg/widget.pyi", line, col, "unplanned") for line, col in positions
+    ]
+    assert _tree(root) == before
+
+
+@pytest.mark.parametrize("kind", sorted(STUB_TARGETS))
+def test_allow_heuristic_renames_the_companion_stub_with_its_module(
+    tmp_path: Path, kind: str
+) -> None:
+    qn, new_name, positions = STUB_TARGETS[kind]
+    old_name = qn.rsplit(".", 1)[-1]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, STUBBED)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        qn,
+        new_name,
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col) for s in report.unplanned] == [
+        ("pkg/widget.pyi", line, col) for line, col in positions
+    ]
+    # The stub's `__all__` follows the module's own.
+    for path in ("pkg/widget.py", "pkg/widget.pyi"):
+        assert (root / path).read_text() == STUBBED[path].replace(old_name, new_name)
+
+
+# Where a stub sits beside the module it declares, as the indexer pairs
+# them: `x.pyi` for `x.py`, `__init__.pyi` for the `__init__.py` beside it,
+# and `x.pyi` for the package `x/`.
+STUB_COMPANIONS = {
+    "module": ("pkg/util.py", "pkg/util.pyi", HELPER),
+    "package-init": ("pkg/__init__.py", "pkg/__init__.pyi", f"{PROJECT}.pkg.helper"),
+    "package-beside": ("pkg/__init__.py", "pkg.pyi", f"{PROJECT}.pkg.helper"),
+}
+
+
+@pytest.mark.parametrize("where", sorted(STUB_COMPANIONS))
+def test_a_stub_is_held_to_the_module_it_declares(tmp_path: Path, where: str) -> None:
+    implementation, stub, qn = STUB_COMPANIONS[where]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        "pkg/__init__.py": "",
+        implementation: "def helper(a, b):\n    return a + b\n",
+        stub: "def helper(a: int, b: int) -> int: ...\n",
+    }
+    store, _updater = _indexed(root, files)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(root, _query(store), PROJECT, qn, "assist", dry_run=True)
+
+    assert [(s.path, s.line, s.col) for s in refused.value.unplanned] == [(stub, 1, 4)]
+
+
+UNRELATED_STUB = "class Widget: ...\n\npeer: Widget\n\ndef make() -> Widget: ...\n"
+# Another module's stub with a `Widget` of its own: beside its `.py`, or as
+# the module itself.
+UNRELATED_STUBS = {
+    "stubbed-module": {
+        "other/__init__.py": "",
+        "other/widget.py": "class Widget:\n    pass\n",
+        "other/widget.pyi": UNRELATED_STUB,
+    },
+    "stub-only-module": {
+        "other/__init__.py": "",
+        "other/widget.pyi": UNRELATED_STUB,
+    },
+}
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+@pytest.mark.parametrize("case", sorted(UNRELATED_STUBS))
+def test_another_modules_stub_is_neither_refused_nor_rewritten(
+    tmp_path: Path, case: str, allow_heuristic: bool
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    own = {path: STUBBED[path] for path in ("pkg/__init__.py", "pkg/widget.py")}
+    store, updater = _indexed(root, {**own, **UNRELATED_STUBS[case]})
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.pkg.widget.Widget",
+        "Gadget",
+        allow_heuristic=allow_heuristic,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "other/widget.pyi").read_text() == UNRELATED_STUB
+
+
+@pytest.mark.parametrize("kind", sorted(STUB_TARGETS))
+def test_a_module_with_no_stub_renames_as_before(tmp_path: Path, kind: str) -> None:
+    qn, new_name, _positions = STUB_TARGETS[kind]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    own = {path: STUBBED[path] for path in ("pkg/__init__.py", "pkg/widget.py")}
+    store, updater = _indexed(root, own)
+
+    report = rename(
+        root, _query(store), PROJECT, qn, new_name, reingest=updater.reingest
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+
+
+def test_a_stub_only_module_is_its_own_definition(tmp_path: Path) -> None:
+    # With no `.py` beside it the stub is the module: the graph has its
+    # definition and sites, and the cross-check reads it as any module.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {
+        "pkg/__init__.py": "",
+        "pkg/widget.pyi": "def make() -> int: ...\n",
+        "pkg/app.py": "from pkg.widget import make\n\n\ndef run():\n    return make()\n",
+    }
+    store, updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.pkg.widget.make",
+        "build",
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    for path in ("pkg/widget.pyi", "pkg/app.py"):
+        assert (root / path).read_text() == files[path].replace("make", "build")
+
+
+@pytest.mark.parametrize(
+    ("language", "source", "access"),
+    [
+        (cs.SupportedLanguage.PYTHON, b"def make() -> Widget: ...", _Access.BARE),
+        (cs.SupportedLanguage.RUST, b"fn new() -> Widget {", _Access.BARE),
+        (cs.SupportedLanguage.PHP, b"$this->Widget", _Access.MEMBER),
+        (cs.SupportedLanguage.CPP, b"self->Widget", _Access.MEMBER),
+        (cs.SupportedLanguage.PYTHON, b"pkg.Widget", _Access.MEMBER),
+    ],
+)
+def test_an_arrow_reaches_a_member_only_where_the_language_says_so(
+    language: cs.SupportedLanguage, source: bytes, access: _Access
+) -> None:
+    # A return annotation is not a member access: `def make() -> Widget`
+    # in another module's stub is that module's `Widget`, hidden by its own.
+    assert _access(source, source.index(b"Widget"), language) is access

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 from loguru import logger
@@ -43,7 +43,7 @@ from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyParams, ResultRow
-from ..utils.path_utils import base_module_qn
+from ..utils.path_utils import base_module_qn, python_stub_implementations
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .occurrences import Occurrence, Target, binding_scope, find_occurrences
@@ -814,14 +814,14 @@ class Renamer:
         (issue #2564). An occurrence the graph gives to ANOTHER symbol of the
         same name is not one: that symbol keeps its name.
         """
-        definitions = [s.path for s in sites if s.kind == "definition"]
-        definition = definitions[0]
+        definitions = [s for s in sites if s.kind == "definition"]
+        definition = definitions[0].path
         language = get_language_for_extension(Path(definition).suffix)
         if language is None:
             return []
         kind = _target_kind(label)
         owners = _owners(hierarchy)
-        owner_paths = frozenset(definitions)
+        owner_paths = frozenset(s.path for s in definitions)
         target = Target(
             old_name,
             language,
@@ -832,6 +832,7 @@ class Renamer:
             self._rivals(hierarchy, owner_paths)
             if kind is cs.RenameTargetKind.METHOD
             else frozenset(),
+            frozenset((s.path, s.line, s.col) for s in definitions),
         )
         planned = {(s.path, s.line, s.col) for s in sites}
         statements = [_statement(site) for site in imports]
@@ -940,7 +941,8 @@ class Renamer:
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
-        module of each module-level member, plus the modules importing it."""
+        module of each module-level member and its `.pyi` stubs, plus the
+        modules importing it."""
         paths: set[str] = set()
         for member in hierarchy:
             module_qn, module_path = self._module_of(member)
@@ -948,6 +950,7 @@ class Renamer:
                 continue
             if module_path:
                 paths.add(module_path)
+                paths.update(_stubs_of(self.repo_root, module_path))
             paths.update(site.path for site, _m in self._import_sites(member, old_name))
         return {
             path
@@ -1455,6 +1458,21 @@ class _Namesakes(NamedTuple):
     statements: list[_Span]
     # Where an import binds the bare name to the other symbol.
     bound: list[_Span]
+
+
+def _stubs_of(repo_root: Path, path: str) -> set[str]:
+    """The `.pyi` stubs on disk that declare the module `path` implements:
+    `x.pyi` for `x.py`, and `x/__init__.pyi` or `x.pyi` for `x/__init__.py`."""
+    implementation = PurePosixPath(path)
+    candidates = [implementation.with_suffix(cs.EXT_PYI)]
+    if implementation.parent.name:
+        candidates.append(implementation.parent.with_suffix(cs.EXT_PYI))
+    return {
+        stub.as_posix()
+        for stub in candidates
+        if implementation in python_stub_implementations(stub)
+        and (repo_root / stub).is_file()
+    }
 
 
 def _target_kind(label: str | None) -> cs.RenameTargetKind:

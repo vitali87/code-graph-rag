@@ -103,7 +103,8 @@ family are read (the indexer's own walk, under `.cgrignore` and
   A relative import (`from .cache import x`, `'./cache.js'`) and a Rust path
   from `crate`, `self` or `super` are resolved from the importing file; a
   Python import from a source root spells the module from its top-level
-  package down (`pkg.cache` once `pkg/__init__.py` exists). Where two
+  package down (`pkg.cache` once `pkg/__init__.py` or `pkg/__init__.pyi`
+  exists). Where two
   source roots hold the spelled module (`pkg/cache.py` and
   `src/pkg/cache.py`), Python's import path decides which one loads, and
   the source does not say: a call through it is uncertain, held to the plan
@@ -125,6 +126,18 @@ family are read (the indexer's own walk, under `.cgrignore` and
   TypeScript, where a method is an attribute; in Rust, Java or C++
   `self.name` is the field of the name;
 - for anything else (a class, an interface, a type), every occurrence.
+
+A Python `.pyi` stub of a defining file (`widget.pyi` beside `widget.py`,
+`__init__.pyi` beside `__init__.py`, `pkg.pyi` beside the package `pkg/`)
+states that module's interface. The indexer skips such a stub (#2445), so
+the graph has no site in it, and it is read as the defining file itself: its
+declaration of the symbol (`class Widget:`, `def spin` inside it) counts,
+and its own module-level `class Widget` does not hide its uses
+(`peer: Widget`, `-> Widget`) the way another module's would. The rename
+refuses over them, and `--allow-heuristic` rewrites them with the stub's
+`__all__`. A `->` reaches a member only in C, C++, PHP and C#; elsewhere it
+is a return type or a lambda's arrow, so `-> Widget` in another module's
+stub is that module's own `Widget`.
 
 Comments and strings are prose and never count, and neither does a token
 that binds the name instead of using it (a parameter, an assignment or loop

@@ -95,14 +95,18 @@ def module_key(path: str) -> tuple[str, ...]:
 def spelled_length(repo_root: Path, path: str) -> int:
     """How many trailing segments of a module's path an import from a source
     root must spell: a Python module from its top-level package down
-    (`pkg.cache` once `pkg/__init__.py` exists), anywhere else its own name."""
+    (`pkg.cache` once `pkg/__init__.py` or `pkg/__init__.pyi` exists),
+    anywhere else its own name."""
     file = PurePosixPath(path)
     key = module_key(path)
     if get_language_for_extension(file.suffix) is not cs.SupportedLanguage.PYTHON:
         return 1
     packages = 0
     directory = file.parent
-    while directory.parts and (repo_root / directory / cs.INIT_PY).is_file():
+    # A stub-only package's `__init__.pyi` makes it a package too (#2445).
+    while directory.parts and any(
+        (repo_root / directory / init).is_file() for init in cs.PY_PACKAGE_INIT_FILES
+    ):
         packages += 1
         directory = directory.parent
     own = 0 if len(key) == len(file.parent.parts) else 1

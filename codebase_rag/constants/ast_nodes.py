@@ -203,6 +203,17 @@ RENAME_SCOPE_MARKERS = (
 RENAME_CLASS_MARKER = "class"
 RENAME_NOT_SCOPE_MARKERS = ("call", "invocation", "type", "signature")
 RENAME_MEMBER_ACCESS = (".", "->")
+# `->` reaches a member only in these languages; elsewhere it marks a return
+# type (`def make() -> Widget`, `fn new() -> Parse`) or a lambda's body.
+RENAME_ARROW_ACCESS = "->"
+RENAME_ARROW_MEMBER_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.C,
+        SupportedLanguage.CPP,
+        SupportedLanguage.PHP,
+        SupportedLanguage.CSHARP,
+    }
+)
 # A node whose body holds methods, so `self`, `this` and a bare call inside
 # it reach the methods of the class its header names (it carries `body`).
 RENAME_TYPE_SCOPE_MARKERS = (
