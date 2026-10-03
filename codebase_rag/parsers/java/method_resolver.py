@@ -16,6 +16,7 @@ from .utils import (
     extract_method_call_info,
     extract_method_info,
     get_class_context_from_qn,
+    method_reference_receiver_text,
 )
 
 if TYPE_CHECKING:
@@ -576,6 +577,13 @@ class JavaMethodResolverMixin:
         arg_count: int | None = None,
         arg_types: tuple[str | None, ...] = (),
     ) -> tuple[str, str] | None:
+        return _pick_overload(
+            self._methods_named(class_qn, method_name), arg_count, arg_types
+        )
+
+    def _methods_named(self, class_qn: str, method_name: str) -> list[tuple[str, str]]:
+        # Every overload of `method_name` declared directly on `class_qn`; a
+        # nested class's member carries an extra segment and never matches.
         matches: list[tuple[str, str]] = []
         for qn, method_type in self._find_registry_entries_under(class_qn):
             if qn == class_qn:
@@ -586,7 +594,63 @@ class JavaMethodResolverMixin:
             member = suffix[1:]
             if self._is_matching_method(member, method_name):
                 matches.append((method_type, qn))
-        return _pick_overload(matches, arg_count, arg_types)
+        return matches
+
+    def java_method_reference_targets(
+        self,
+        receiver: ASTNode,
+        method_name: str,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> list[tuple[str, str]]:
+        # The receiver is typed exactly as a call's `object` is, so one the call
+        # path cannot type (a lambda parameter, the JDK's `System.out`) binds
+        # nothing instead of a same-named first-party method found by name.
+        if receiver.type in (cs.TS_METHOD_INVOCATION, cs.TS_OBJECT_CREATION_EXPRESSION):
+            receiver_type = self._infer_java_type_from_expression(
+                receiver, module_qn, local_var_types
+            )
+        elif receiver_text := method_reference_receiver_text(receiver):
+            receiver_type = self._resolve_java_object_type(
+                receiver_text, local_var_types or {}, module_qn, receiver
+            )
+        else:
+            receiver_type = None
+        if not receiver_type or not (
+            first := self._resolve_instance_method(
+                receiver_type, method_name, module_qn
+            )
+        ):
+            return []
+        # Which overload a reference denotes is decided by the functional
+        # interface it is assigned to, a type the parser never sees (the C#
+        # method-group shape), so the whole family visible on the receiver is
+        # referenced rather than whichever overload the lookup met first.
+        declaring_qn = (
+            first[1].split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
+        )
+        return self._overload_family(declaring_qn, method_name) or [first]
+
+    def _overload_family(
+        self, class_qn: str, method_name: str
+    ) -> list[tuple[str, str]]:
+        # The overloads of `method_name` a reference through `class_qn` can
+        # denote: those it declares plus those it inherits up the superclass
+        # chain. A parent overload with the signature of one already met is
+        # overridden by it, so it is not a separate target.
+        family: list[tuple[str, str]] = []
+        signatures: set[tuple[str, ...]] = set()
+        seen: set[str] = set()
+        current: str | None = class_qn
+        while current and current not in seen:
+            seen.add(current)
+            for entry in self._methods_named(current, method_name):
+                signature = tuple(_java_param_type_names(entry[1]))
+                if signature not in signatures:
+                    signatures.add(signature)
+                    family.append(entry)
+            current = self._find_parent_class(current)
+        return family
 
     def _search_method_in_alternate_modules(
         self,
