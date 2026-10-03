@@ -1,6 +1,6 @@
-FROM ghcr.io/astral-sh/uv:0.12@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+FROM ghcr.io/astral-sh/uv:0.12@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
 
-FROM python:3.14-slim@sha256:fb83750094b46fd6b8adaa80f66e2302ecbe45d513f6cece637a841e1025b4ca AS builder
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
 
 COPY --from=uv /uv /uvx /bin/
 
@@ -32,7 +32,7 @@ RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-
 COPY . .
 RUN uv sync --frozen --no-dev --extra treesitter-full --no-binary-package pymgclient
 
-FROM python:3.14-slim@sha256:fb83750094b46fd6b8adaa80f66e2302ecbe45d513f6cece637a841e1025b4ca
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ripgrep libssl3 zlib1g libzstd1 && \
