@@ -50,6 +50,8 @@ EXT_LUA = ".lua"
 EXT_CS = ".cs"
 EXT_DART = ".dart"
 EXT_SQL = ".sql"
+# Data file extensions
+EXT_JSON = ".json"
 
 # File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
@@ -196,8 +198,8 @@ TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
 # Contract files that declare service operations (issue #912): OpenAPI specs
 # in JSON or YAML, and protobuf service definitions. The markers gate parsing
 # so the JSON and YAML a repo is otherwise full of is never read as a spec.
-CONTRACT_JSON_EXTENSION = ".json"
-CONTRACT_SPEC_EXTENSIONS: frozenset[str] = frozenset({".json", ".yaml", ".yml"})
+CONTRACT_JSON_EXTENSION = EXT_JSON
+CONTRACT_SPEC_EXTENSIONS: frozenset[str] = frozenset({EXT_JSON, ".yaml", ".yml"})
 CONTRACT_PROTO_EXTENSION = ".proto"
 CONTRACT_SPEC_VERSION_KEYS: tuple[str, ...] = ("openapi", "swagger")
 CONTRACT_SPEC_MARKERS: tuple[str, ...] = ("openapi", "swagger")
@@ -245,6 +247,8 @@ JS_SOURCE_DIR = "src"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
+TS_EXTENDS_KEY = "extends"
+TSCONFIG_EXTENSION = EXT_JSON
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"
