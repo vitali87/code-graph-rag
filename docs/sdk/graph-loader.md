@@ -14,10 +14,10 @@ First, export the knowledge graph to JSON:
 cgr export -o my_graph.json
 ```
 
-Or export during graph update:
+Or export one repository's graph while syncing it:
 
 ```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
 
 ## Load and Query
