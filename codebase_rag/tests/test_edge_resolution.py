@@ -109,11 +109,18 @@ def test_python_property_reads_require_the_receiver_class_and_skip_writes(
 
 
 @pytest.mark.parametrize(
-    "assignment",
-    ["self.name = value", "self.name += value", "self.name, value = value, value"],
+    ("assignment", "expect_getter"),
+    [
+        ("self.name = value", False),
+        ("self.name += value", True),
+        ("self.name, value = value, value", False),
+    ],
 )
 def test_python_property_write_does_not_call_getter(
-    temp_repo: Path, mock_ingestor: MagicMock, assignment: str
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    assignment: str,
+    expect_getter: bool,
 ) -> None:
     (temp_repo / "models.py").write_text(
         "class Local:\n"
@@ -125,7 +132,31 @@ def test_python_property_write_does_not_call_getter(
     )
     create_and_run_updater(temp_repo, mock_ingestor)
 
-    assert not _resolutions(mock_ingestor, ".models.Local.update")
+    resolutions = _resolutions(mock_ingestor, ".models.Local.update")
+    if expect_getter:
+        assert resolutions["name"] == {cs.EdgeResolution.EXACT}
+    else:
+        assert not resolutions
+
+
+@pytest.mark.parametrize(
+    "assignment", ["self.prop.field = value", "self.prop[0] = value"]
+)
+def test_python_property_receiver_is_read_for_nested_assignment_targets(
+    temp_repo: Path, mock_ingestor: MagicMock, assignment: str
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def prop(self):\n"
+        '        return "local"\n\n'
+        "    def update(self, value):\n"
+        f"        {assignment}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    resolutions = _resolutions(mock_ingestor, ".models.Local.update")
+    assert resolutions["prop"] == {cs.EdgeResolution.EXACT}
 
 
 def test_inherited_python_property_read_is_exact(

@@ -2167,6 +2167,10 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+            has_python_property_reads = (
+                language == cs.SupportedLanguage.PYTHON
+                and bool(self._resolver.function_registry.property_names())
+            )
             if (
                 not all_call_nodes
                 and language
@@ -2176,6 +2180,7 @@ class CallProcessor:
                     cs.SupportedLanguage.DART,
                 )
                 and language not in _JS_TS_LANGUAGES
+                and not has_python_property_reads
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
@@ -8166,16 +8171,25 @@ class CallProcessor:
     def _python_attribute_is_write_target(node: Node) -> bool:
         current = node.parent
         while current is not None:
-            if current.type in (
-                cs.TS_PY_ASSIGNMENT,
-                cs.TS_PY_AUGMENTED_ASSIGNMENT,
-            ):
+            if current.type == cs.TS_PY_ASSIGNMENT:
                 left = current.child_by_field_name(cs.TS_FIELD_LEFT)
-                return (
-                    left is not None
-                    and left.start_byte <= node.start_byte
+                if left is None or not (
+                    left.start_byte <= node.start_byte
                     and node.end_byte <= left.end_byte
-                )
+                ):
+                    return False
+                return True
+            if current.type in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
+                receiver = current.child_by_field_name(
+                    cs.TS_FIELD_OBJECT
+                ) or current.child_by_field_name(cs.FIELD_VALUE)
+                if receiver is not None and (
+                    receiver.start_byte <= node.start_byte
+                    and node.end_byte <= receiver.end_byte
+                ):
+                    # A property used as the receiver of another assignment
+                    # target is read to obtain the object being mutated.
+                    return False
             if current.type in _PY_SCOPE_BOUNDARY_TYPES:
                 return False
             current = current.parent
