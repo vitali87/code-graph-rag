@@ -54,6 +54,7 @@ _CONSTRUCTIBLE_NODE_TYPES = frozenset(
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
+_PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
 
 class _CallSite(NamedTuple):
@@ -67,6 +68,15 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+
+
+def _trie_search_name(call_name: str) -> str:
+    # The last name segment, the only part the simple-name fallback matches on.
+    search_name = _SEARCH_NAME_CACHE.get(call_name)
+    if search_name is None:
+        search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
+        _SEARCH_NAME_CACHE[call_name] = search_name
+    return search_name
 
 
 def _split_receiver_chain(expr: str) -> list[str] | None:
@@ -1366,6 +1376,11 @@ class CallResolver:
         handled, result = self._resolve_typed_receiver_or_csharp(call)
         if handled:
             return result
+        # Ahead of the import probe: for a receiver it cannot place, that probe
+        # binds `subprocess.run` to a same-module function named `run`.
+        if self._receiver_is_external_python_module(call):
+            self._remember_cacheable(cache_key, None)
+            return None
         handled, result = self._resolve_imported_or_module_member(call, cache_key)
         if handled:
             return result
@@ -1375,6 +1390,10 @@ class CallResolver:
         handled, result = self._resolve_untyped_member_or_unresolvable(call, cache_key)
         if handled:
             return result
+        if self._untyped_receiver_guess_is_ambiguous(call):
+            logger.debug(ls.CALL_AMBIGUOUS_UNTYPED_RECEIVER, call_name=call_name)
+            self._remember_cacheable(cache_key, None)
+            return None
 
         result = self._try_resolve_via_trie(
             call_name, module_qn, language, call_point, constructing
@@ -2133,6 +2152,119 @@ class CallResolver:
         if class_qn.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
         return self._registered_class_qn(class_qn, module_qn) is None
+
+    def _is_python_call(self, call: _CallSite) -> bool:
+        # The pre-passes (constructor fields, decorators, property reads) omit
+        # the language, and their answers share the module-keyed cache with
+        # the call scan's, so a gate on `call.language` alone would let a
+        # pre-pass cache the very guess the scan is meant to refuse.
+        language = call.language or self._module_language(call.module_qn)
+        return language == cs.SupportedLanguage.PYTHON
+
+    def _receiver_is_external_python_module(self, call: _CallSite) -> bool:
+        # True for a Python `mod.attr(...)` whose `mod` is bound by an import
+        # of a module outside the project (`import subprocess`, `from
+        # concurrent import futures`). The attribute lives in that module, so
+        # the call has no first-party target, yet the name-only probes bound
+        # `subprocess.run` to whichever first-party `run` sat closest:
+        # `GraphUpdater.run` on this repository (issue #2360).
+        call_name, module_qn = call.call_name, call.module_qn
+        head, sep, _ = call_name.partition(cs.SEPARATOR_DOT)
+        if not sep or not self._is_python_call(call):
+            return False
+        # A local of that name shadows the module; the typed paths own it.
+        if call.local_var_types and head in call.local_var_types:
+            return False
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        target = import_map.get(head) if import_map else None
+        if not target:
+            return False
+        # Every binding must be external: `try: import tomllib` / `except
+        # ImportError: import tomli as tomllib` is, while a branch that binds
+        # the name to first-party code leaves the fallbacks to find it.
+        rebinds = self.import_processor.python_import_rebinds.get(module_qn, {})
+        if not all(
+            self._import_target_is_external(bound, call_name, module_qn)
+            for bound in {target, *rebinds.get(head, ())}
+        ):
+            return False
+        logger.debug(
+            ls.CALL_EXTERNAL_MODULE_RECEIVER, call_name=call_name, target=target
+        )
+        return True
+
+    def _import_target_is_external(
+        self, target: str, call_name: str, module_qn: str
+    ) -> bool:
+        # The import processor writes a first-party target project-prefixed,
+        # but records bare the modules it cannot place: a script's `import
+        # helper` of the sibling `helper.py`, or `import helpers` in a
+        # repository whose root is a package. Such a target is first-party
+        # when the registry holds it under the project, or when a
+        # first-party definition spells out the called member in full.
+        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
+        if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
+            return False
+        if self._registered_class_qn(target, module_qn) is not None:
+            return False
+        if self._import_target_is_a_namespace(
+            f"{project_root}{cs.SEPARATOR_DOT}{target}"
+        ):
+            return False
+        member = call_name.partition(cs.SEPARATOR_DOT)[2]
+        module_name = target.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        spelled = f"{cs.SEPARATOR_DOT}{module_name}{cs.SEPARATOR_DOT}{member}"
+        return not any(
+            qn.endswith(spelled)
+            for qn in self.function_registry.find_ending_with(
+                _trie_search_name(call_name)
+            )
+        )
+
+    def _untyped_receiver_guess_is_ambiguous(self, call: _CallSite) -> bool:
+        # True for a Python member call on a receiver holding a value nothing
+        # typed (a parameter, a dict lookup's result, an unannotated field)
+        # when several first-party definitions share the member's name. The
+        # simple-name fallback picks among them by import distance alone,
+        # which is how `frontend.run()` and `agent.run()` bound
+        # `GraphUpdater.run` (issue #2360). A unique name still binds as a
+        # heuristic edge, the rule callable fields of unknown receiver type
+        # follow. A namespace receiver (an import, a class, a module-level
+        # alias) is not a value, and a typed receiver (a bare `self.m()`, an
+        # annotated field) is the typed paths' to answer or refuse, so all of
+        # them keep the fallback exactly as before.
+        call_name = call.call_name
+        if call.constructing or cs.SEPARATOR_DOT not in call_name:
+            return False
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        head = parts[0]
+        if not head.isidentifier() or not self._is_python_call(call):
+            return False
+        on_self = head in _PY_SELF_RECEIVERS
+        if on_self and len(parts) == 2:
+            return False
+        if self._receiver_is_bound(call, parts, on_self):
+            return False
+        if len(self._trie_candidates(call_name, call.module_qn, call.call_point)) < 2:
+            return False
+        # Last, being the one probe that reads the module's AST.
+        return on_self or self._receiver_base_qn(head, call.module_qn) is None
+
+    def _receiver_is_bound(
+        self, call: _CallSite, parts: list[str], on_self: bool
+    ) -> bool:
+        # A typed local or an import names the receiver, so the typed and
+        # import paths answer the call and the fallback guard stays out.
+        local_types = call.local_var_types or {}
+        if cs.SEPARATOR_DOT.join(parts[:-1]) in local_types:
+            return True
+        if on_self:
+            return False
+        head = parts[0]
+        if head in local_types:
+            return True
+        import_map = self.import_processor.import_mapping.get(call.module_qn)
+        return bool(import_map) and head in import_map
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
@@ -3107,6 +3239,15 @@ class CallResolver:
         self._module_language_cache[qualified_name] = language
         return language
 
+    def _trie_candidates(
+        self, call_name: str, module_qn: str, call_point: int | None = None
+    ) -> list[str]:
+        return self._nameable_candidates(
+            self.function_registry.find_ending_with(_trie_search_name(call_name)),
+            module_qn,
+            call_point,
+        )
+
     def _try_resolve_via_trie(
         self,
         call_name: str,
@@ -3115,13 +3256,8 @@ class CallResolver:
         call_point: int | None = None,
         constructing: bool = False,
     ) -> tuple[str, str] | None:
-        search_name = _SEARCH_NAME_CACHE.get(call_name)
-        if search_name is None:
-            search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
-            _SEARCH_NAME_CACHE[call_name] = search_name
-        possible_matches = self._nameable_candidates(
-            self.function_registry.find_ending_with(search_name), module_qn, call_point
-        )
+        search_name = _trie_search_name(call_name)
+        possible_matches = self._trie_candidates(call_name, module_qn, call_point)
         if search_name == call_name:
             # A bare name never reaches an object literal's function value;
             # a member call (`opts.retry.delay()`) still does (issue #2435).
@@ -3148,6 +3284,23 @@ class CallResolver:
                 qn
                 for qn in possible_matches
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
+            ]
+        elif (
+            search_name == call_name
+            and (language or self._module_language(module_qn))
+            == cs.SupportedLanguage.PYTHON
+        ):
+            # A bare Python name is looked up in local, enclosing, global and
+            # builtin scope; a method answers to its bare name only inside
+            # its own class body, which lives in the caller's module. So a
+            # local `run` handed on as a callback, or a variable named like
+            # some property, never names another module's method (#2360).
+            own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] != cs.NodeLabel.METHOD.value
+                or qn.startswith(own_module)
             ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
