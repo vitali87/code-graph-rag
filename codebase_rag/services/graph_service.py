@@ -93,6 +93,20 @@ from .resource_cleanup import prune_unanchored_resources
 if TYPE_CHECKING:
     from .neo4j_driver import Neo4jDriver
 
+# Raised on purpose to end a command with its own exit code once it has told
+# the user why; logging them as a failed write buried that message under a
+# traceback (#2414). typer's are listed beside click's because a typer that
+# vendors click raises its own copies (#1409). Ctrl+C is not here: it stops
+# work that did not choose to stop.
+_DELIBERATE_EXITS: tuple[type[BaseException], ...] = (
+    SystemExit,
+    click.exceptions.Exit,
+    click.exceptions.Abort,
+    click.ClickException,
+    typer.Exit,
+    typer.Abort,
+)
+
 
 def _apply_memory_limit(
     query: str, mb: int, dialect: GraphDialect | None = None
@@ -165,9 +179,6 @@ def _missing_endpoints(row: ResultRow) -> str:
         )
         if row.get(key) is True
     )
-
-
-_COMMAND_EXITS = (typer.Exit, click.exceptions.Exit, SystemExit)
 
 
 def _log_failed_relationships(
@@ -291,18 +302,19 @@ class MemgraphIngestor:
 
     def __exit__(
         self,
-        exc_type: type | None,
+        exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         try:
             if exc_type:
-                if issubclass(exc_type, _COMMAND_EXITS):
-                    # A command that chose its exit code (a refused rename, an
-                    # unindexed project) has said why already. `typer.Exit` is
-                    # a RuntimeError with no message, so logging it as an
-                    # error printed "An exception occurred: ." and a traceback.
-                    logger.debug(ls.MG_COMMAND_EXIT)
+                if issubclass(exc_type, _DELIBERATE_EXITS):
+                    # Kept at DEBUG with its traceback: a command may turn a
+                    # real failure into its own message and an exit, and the
+                    # cause should stay one LOGURU_LEVEL away.
+                    logger.opt(exception=exc_val).debug(
+                        ls.MG_DELIBERATE_EXIT.format(kind=exc_type.__name__)
+                    )
                 elif issubclass(exc_type, Exception):
                     logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
                 else:
@@ -336,8 +348,8 @@ class MemgraphIngestor:
 
     async def __aexit__(
         self,
-        exc_type: type | None,
-        exc_val: Exception | None,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         self.__exit__(exc_type, exc_val, exc_tb)
