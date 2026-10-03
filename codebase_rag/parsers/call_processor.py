@@ -4624,7 +4624,42 @@ class CallProcessor:
             callee_info = self._resolver.resolve_java_method_call(
                 call_node, ctx.module_qn, ctx.local_var_types, ctx.caller_qn
             )
+            if callee_info is not None:
+                self._link_java_overload_ties(ctx, call_node, callee_info[1])
         return callee_info
+
+    def _link_java_overload_ties(
+        self, ctx: _CallScanContext, call_node: Node, callee_qn: str
+    ) -> None:
+        # Same-arity overloads the argument types cannot tell apart were
+        # bound by declaration order, which is no evidence for any one of
+        # them: link each, labelled `overload`, as a constructor family is
+        # (issue #2548). The resolver's verdict carries the label onto the
+        # primary edge, which the caller emits after the argument passes;
+        # the edge label proper is scoped to the siblings, so the argument
+        # references emitted in between keep their own.
+        engine = self._resolver.type_inference.java_type_inference
+        ties = engine.java_overload_ties(
+            call_node, callee_qn, ctx.local_var_types, ctx.module_qn
+        )
+        if not ties:
+            return
+        self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
+        prev_resolution = self._resolution
+        self._resolution = cs.EdgeResolution.OVERLOAD
+        registry = self._resolver.function_registry
+        try:
+            for target_type, target_qn in ties:
+                if target_qn == callee_qn:
+                    continue
+                for variant in registry.variants(target_qn):
+                    ctx.ensure_rel(
+                        ctx.caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                    )
+        finally:
+            self._resolution = prev_resolution
 
     def _resolve_csharp_callee(
         self,

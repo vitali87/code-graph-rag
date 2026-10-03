@@ -13,6 +13,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     NamedTuple,
@@ -338,6 +339,50 @@ class JavaClassInfo(TypedDict):
     interfaces: list[str]
     modifiers: list[str]
     type_parameters: list[str]
+
+
+class JavaOverloadRank(NamedTuple):
+    """How well one Java overload fits a call's argument types; smaller is
+    better. `unproven` counts the arguments whose conversion could be neither
+    proven nor ruled out, so it decides first; then the summed conversion
+    ranks (JLS 5.3); then the summed distances up the argument types'
+    hierarchies, which make the nearest supertype the most specific."""
+
+    unproven: int
+    conversions: int
+    distance: int
+
+
+class JavaSupertypes(NamedTuple):
+    """What one Java argument type widens to. `depths` maps each supertype
+    found, by simple name, to its distance up the hierarchy; `unreachable`
+    holds the candidates' parameter types it provably cannot reach, because
+    the whole hierarchy is visible or a JDK type cannot extend a project one.
+    Any other parameter type stays possible. `refs` keeps each supertype as
+    the walk resolved it, at its distance, `project` the ones that are
+    project types, and `complete` whether the walk saw every supertype: a
+    parameter sharing a simple name with one counts it only when it names
+    that very type."""
+
+    depths: Mapping[str, int]
+    unreachable: frozenset[str]
+    # The argument's type as the caller's file resolves it, and as written,
+    # when a candidate parameter shares its simple name and that name may
+    # denote another type.
+    qualified: str | None = None
+    written: str | None = None
+    refs: Mapping[str, int] = MappingProxyType({})
+    project: frozenset[str] = frozenset()
+    complete: bool = False
+
+
+class JavaCandidateLookups(NamedTuple):
+    """What ranking reads from a Java overload's declaration, only when a
+    parameter calls for it: the type variables it may name, and the types its
+    parameters name as its own file resolves them (None where unsure)."""
+
+    type_variables: Callable[[str], frozenset[str]]
+    parameter_types: Callable[[str], tuple[str | None, ...]]
 
 
 class JavaMethodInfo(TypedDict):
