@@ -689,6 +689,12 @@ def _is_home_or_root(repo: Path) -> bool:
     return resolved == Path.home().resolve() or resolved == resolved.parent
 
 
+def _exit_if_syncing_home_or_root(repo: Path, assume_yes: bool) -> None:
+    # A home directory or disk root is synced only when `--yes` says so.
+    if not assume_yes and _is_home_or_root(repo):
+        _exit_with_error(cs.CLI_ERR_SYNC_HOME_OR_ROOT.format(path=repo.resolve()))
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -705,8 +711,7 @@ def _run_graph_sync(
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
 
-    if not assume_yes and _is_home_or_root(repo):
-        _exit_with_error(cs.CLI_ERR_SYNC_HOME_OR_ROOT.format(path=repo.resolve()))
+    _exit_if_syncing_home_or_root(repo, assume_yes)
 
     if clean:
         _import_vector_store()
