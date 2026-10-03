@@ -821,6 +821,7 @@ class ImportProcessor:
         "csharp_global_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
+        "python_import_rebinds",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
@@ -918,6 +919,14 @@ class ImportProcessor:
         # treats a same-named local def as the mutually-exclusive fallback
         # variant ONLY for these; an unconditional import is plain shadowing.
         self.conditional_imports: dict[str, set[str]] = {}
+        # Every target a Python name was bound to, for names its module's
+        # imports bind more than once (`try: import tomllib` / `except
+        # ImportError: import tomli as tomllib`). `import_mapping` keeps one
+        # binding, and plain imports are handled before from-imports whatever
+        # their source order, so the resolver needs all of them to tell a
+        # module that is external on every path from one a branch binds to
+        # first-party code (issue #2360).
+        self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -1216,10 +1225,11 @@ class ImportProcessor:
             # top-level names, so a bare top-level import resolves externally.
             if repo_is_package:
                 return module_name == project_name
-            return (
-                (repo_path / module_name).is_dir()
-                or (repo_path / f"{module_name}{cs.EXT_PY}").is_file()
-                or (repo_path / module_name / cs.INIT_PY).is_file()
+            # A top-level stub with no `.py` is a local module too: it is what
+            # a compiled extension's definitions are indexed from (#2445).
+            return (repo_path / module_name).is_dir() or any(
+                (repo_path / f"{module_name}{ext}").is_file()
+                for ext in cs.PY_EXTENSIONS
             )
 
         # Discovered annotation-processor roots (issue #1140): mutated via
@@ -1422,6 +1432,9 @@ class ImportProcessor:
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
+        # A re-parse that drops a fallback import must not leave the binding
+        # it removed standing beside the one that remains.
+        self.python_import_rebinds.pop(module_qn, None)
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
@@ -2458,17 +2471,27 @@ class ImportProcessor:
             cs.CAPTURE_IMPORT_FROM, []
         )
         for import_node in all_imports:
-            before = set(self.import_mapping[module_qn])
+            before = dict(self.import_mapping[module_qn])
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
                 self._handle_python_import_from_statement(import_node, module_qn)
             if _is_conditional_import_node(import_node):
-                new_names = set(self.import_mapping[module_qn]) - before
+                new_names = self.import_mapping[module_qn].keys() - before.keys()
                 if new_names:
                     self.conditional_imports.setdefault(module_qn, set()).update(
                         new_names
                     )
+            self._record_python_rebinds(module_qn, before)
+
+    def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
+        mapping = self.import_mapping[module_qn]
+        for name, previous in before.items():
+            current = mapping.get(name)
+            if current is not None and current != previous:
+                self.python_import_rebinds.setdefault(module_qn, {}).setdefault(
+                    name, {previous}
+                ).add(current)
 
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str
@@ -3944,7 +3967,10 @@ class ImportProcessor:
         if not module_qn.startswith(prefix):
             return False
         rel = module_qn[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
-        return (self.repo_path / rel / cs.INIT_PY).is_file()
+        # A stub-only package's `__init__.pyi` names the package too (#2445).
+        return any(
+            (self.repo_path / rel / init).is_file() for init in cs.PY_PACKAGE_INIT_FILES
+        )
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         # Relative imports are always internal; resolve to the full project-prefixed

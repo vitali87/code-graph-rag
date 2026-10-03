@@ -20,13 +20,47 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 | JavaScript | Fully Supported | .js, .jsx, .mjs, .cjs | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
 | PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
-| Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
+| Python | Fully Supported | .py, .pyi | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions, macro_rules! macros |
 | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
 | TypeScript | Fully Supported | .ts, .mts, .cts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 | SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
 <!-- /SECTION:supported_languages -->
+
+## Python Stubs and Source Encodings
+
+**Type stubs (`.pyi`).** A stub is parsed as Python and indexed under the
+module name its `.py` would have: `fastmath/_core.pyi` defines the module
+`fastmath._core`, and `pkg/__init__.pyi` defines the package module `pkg`.
+This makes a compiled extension (C, Cython or Rust/PyO3 built into a `.so` or
+`.pyd`) visible in the graph. Its stub is the only source of its functions and
+classes, so `from ._core import add` resolves to `fastmath._core.add`, and so do
+calls made through the re-export.
+
+A stub **beside its implementation is skipped**. When `x.py` is indexed, or the
+package `x/__init__.py` (or, for `__init__.pyi`, the `__init__.py` next to
+it), that file owns the module, and `x.pyi` is recorded only as a `File`, so
+the module is never duplicated. The stub's signatures are not merged into the
+implementation's `Function` nodes: an unannotated implementation gets no
+`return_type` or `param_types` from its stub. An implementation that is
+excluded from indexing (`--exclude`, `.cgrignore`) does not count, and the
+stub then defines the module. Package detection still keys on `__init__.py`,
+so a directory holding only `__init__.pyi` stays a `Folder`.
+
+**Source encodings.** A Python source is decoded the way CPython decodes it.
+A [PEP 263](https://peps.python.org/pep-0263/) declaration names the file's
+encoding (`# -*- coding: latin-1 -*-`, `# vim: set fileencoding=cp1252 :`).
+It must be on line 1, or on line 2 below a comment or blank line 1. The file
+is re-encoded to UTF-8 before parsing, so `def café():` in a Latin-1 file is
+indexed as `café`. A UTF-8 byte-order mark means UTF-8 and overrides a
+conflicting declaration. Recorded line numbers are those of the file on disk,
+and code snippets are read back in the same encoding. A declaration anywhere
+else is an ordinary comment. If a declaration cannot be honoured (an unknown
+codec, one that is not an ASCII-compatible text encoding such as `utf-16`, or
+bytes that do not decode), a warning names the file and the codec, and the
+file is read as UTF-8, as before. Files in other languages are always read as
+UTF-8.
 
 ## Structural Support (ast-grep tier)
 
