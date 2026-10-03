@@ -427,11 +427,28 @@ SKIP_REASON_STDERR_CHARS = 400
 # absl lines such as `I1003 10:37:31.866642   75998 ev_poll_posix.cc:587] FD
 # from fork parent still in poll list` to the child's stderr before it execs.
 # That is the PARENT's noise, and a few lines of it fill the budget above
-# before the child's own error. The whole prefix is matched (severity, MMDD,
-# time to the microsecond, thread id, `file:line] `) so a node stack frame or
-# a message that merely starts with I/W/E/F is never dropped.
+# before the child's own error.
+# A line is inherited only when its source is one of gRPC's fork-time files,
+# not merely when it has the absl format: the child may log in that format
+# too, and those lines are its own. The sources, from grpc v1.84.0:
+# - ev_poll_posix.cc: PollPoller::Work, "FD from fork parent still in poll
+#   list" (line 587, as in the #2550 macOS CI log);
+# - fork_posix.cc: grpc_prefork, "Other threads are currently calling into
+#   gRPC, skipping fork() handlers" (line 71, also in that log);
+# - ev_epoll1_linux.cc: Epoll1Poller::HandleForkInChild, "Post-fork grpc epoll
+#   fd" (the Linux poller's counterpart, logged under GRPC_TRACE).
+# util/fork.cc is left out: it logs nothing, and its name is not among the
+# source files compiled into grpcio's cygrpc module.
+GRPC_FORK_LOG_SOURCES: tuple[str, ...] = (
+    "ev_poll_posix.cc",
+    "fork_posix.cc",
+    "ev_epoll1_linux.cc",
+)
+# The whole absl prefix (severity, MMDD, time to the microsecond, thread id,
+# `file:line] `) so a node stack frame never matches.
 INHERITED_LOG_LINE_PATTERN = re.compile(
-    r"[IWEF][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} +[0-9]+ [^\s:\]]+:[0-9]+\] "
+    r"[IWEF][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} +[0-9]+ "
+    rf"(?:{'|'.join(map(re.escape, GRPC_FORK_LOG_SOURCES))}):[0-9]+\] "
 )
 # The oracle's own `require("pkg")` calls: the authoritative statement of what
 # it loads, and literally the call that fails on an incompatible Node. Builtins
