@@ -126,11 +126,12 @@ Note: Updated /path/to/code-graph-rag/codebase_rag/language_spec.py
 
 ```bash
 cgr language list-languages
+cgr language list-languages --verbose
 
 uv run cgr language remove-language <language-name>
 ```
 
-`list-languages` only reads the configuration and works from any install. `remove-language` edits the source checkout, like `add-grammar`, and exits non-zero when the language was not removed.
+`list-languages` only reads, so it works from any install. It shows every language by tier and whether its grammar is installed; `--verbose` adds the node types each tree-sitter language maps, so you can check what `add-grammar` detected. `remove-language` edits the source checkout, like `add-grammar`, and exits non-zero when the language was not removed.
 
 ## Language Configuration
 

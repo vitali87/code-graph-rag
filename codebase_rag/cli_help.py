@@ -55,7 +55,7 @@ CMD_HELP = "Show help for a command"
 
 CMD_LANGUAGE_GROUP = CMD_LANGUAGE
 CMD_LANGUAGE_ADD = "Add a Tree-sitter grammar to a code-graph-rag source checkout"
-CMD_LANGUAGE_LIST = "List configured languages and their node mappings"
+CMD_LANGUAGE_LIST = "List supported languages by tier, and the optional frontends"
 CMD_LANGUAGE_REMOVE = "Remove a language from a code-graph-rag source checkout"
 CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under the checkout's .git"
 # add-grammar, remove-language and cleanup-orphaned-modules edit the checkout
@@ -416,6 +416,10 @@ HELP_GRAMMAR_URL = (
 )
 HELP_KEEP_SUBMODULE = (
     "Keep the grammar git submodule when removing the language. By default, remove it."
+)
+HELP_LANGUAGE_LIST_VERBOSE = (
+    "Also list the tree-sitter node types each language maps to functions, "
+    "classes, modules and calls."
 )
 
 HELP_PROJECT_NAME = (
