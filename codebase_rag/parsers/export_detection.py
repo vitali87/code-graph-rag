@@ -51,6 +51,9 @@ _JS_TS_FUNCTION_SCOPE_TYPES = frozenset(
         cs.TS_METHOD_DEFINITION,
     }
 )
+# Wrappers that pass their operand's value through unchanged: parentheses and
+# TypeScript's assertions (`x as T`, `x satisfies T`, `x!`).
+_JS_TS_VALUE_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
 _JAVA_PUBLIC_MODIFIERS = frozenset(
     {cs.JAVA_MODIFIER_PUBLIC, cs.JAVA_MODIFIER_PROTECTED}
 )
@@ -151,6 +154,8 @@ def _js_ts_exported(node: Node, name: str) -> bool:
     # matching the Java rule and staying conservative against false dead-flags.
     if _js_ts_private_member(node):
         return False
+    if _in_commonjs_exported_class(node):
+        return True
     # Two export forms: the declaration wrapped by `export` (caught by the
     # ancestor walk), and a separate `export { name }` / `export { x as y }` /
     # `export default x` / CommonJS `module.exports = x` elsewhere in the
@@ -208,14 +213,23 @@ def _is_script_global(node: Node) -> bool:
     # reachable from HTML/templates the graph cannot see (django's
     # OLMapWidget classes, core.js helpers). Function-local declarations
     # are still reached only through their enclosing scope.
+    root = _module_root(node)
+    return root is not None and not _has_module_construct(root)
+
+
+def _module_root(node: Node) -> Node | None:
+    # The tree root when `node` sits at module level, None when a function
+    # encloses it. A top-level block (`if (...) {...}`, django's bare `{...}`
+    # in core.js) is still module level: it runs at load, while a function
+    # body runs only when the function is called.
     root = node
     current = node.parent
     while current is not None:
         if current.type in _JS_TS_FUNCTION_SCOPE_TYPES:
-            return False
+            return None
         root = current
         current = current.parent
-    return not _has_module_construct(root)
+    return root
 
 
 # 1-slot memo of the last root's module-construct scan: files are ingested
@@ -240,10 +254,134 @@ def _is_module_construct(statement: Node) -> bool:
     if statement.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT):
         return True
     text = statement.text or b""
-    return (
+    if (
         _JS_REQUIRE_CALL in text
         or _JS_MODULE_EXPORTS in text
         or text.startswith(_JS_EXPORTS_MEMBER)
+    ):
+        return True
+    return _JS_EXPORTS_KEYWORD_BYTES in text and _has_commonjs_export(statement)
+
+
+def _has_commonjs_export(statement: Node) -> bool:
+    # An export the textual markers miss (`exports["X"] = ...`,
+    # `const X = exports.X = ...`, one in a module-level `if`) makes the file
+    # a module too, by the same rule that publishes a class through it.
+    # Function bodies are pruned: an export there runs only when called, so
+    # that rule rejects it anyway.
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        if node.type in _JS_TS_FUNCTION_SCOPE_TYPES:
+            continue
+        if (
+            node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION
+            and _is_top_level_commonjs_export(node)
+        ):
+            return True
+        pending.extend(node.named_children)
+    return False
+
+
+_JS_MODULE_EXPORTS_MEMBER = _JS_MODULE_EXPORTS + cs.SEPARATOR_DOT.encode()
+
+
+def _in_commonjs_exported_class(node: Node) -> bool:
+    # A class expression inside the value of a top-level CommonJS export
+    # (`module.exports = class {...}`, `module.exports = [class {...}]`,
+    # `exports.Rule = class {...}`) is published by it the way
+    # `export default class {...}` publishes its class, and its members follow
+    # it (issue #2567). It has no name an export list could match. Only a class
+    # counts: the methods of an exported object literal keep today's decision,
+    # and a class built inside a function is that function's local.
+    in_class = node.type == cs.TS_CLASS_EXPRESSION
+    child = node
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            return (
+                in_class
+                and current.child_by_field_name(cs.FIELD_RIGHT) == child
+                and _is_top_level_commonjs_export(current)
+            )
+        if (
+            current.type in _JS_TS_FUNCTION_SCOPE_TYPES
+            or current.type in _JS_TS_EXPORT_STOP_TYPES
+        ):
+            return False
+        if current.type == cs.TS_CLASS_EXPRESSION:
+            in_class = True
+        child = current
+        current = current.parent
+    return False
+
+
+def _is_top_level_commonjs_export(assignment: Node) -> bool:
+    # `module.exports = exports.Rule = value` chains assignments, each the
+    # value of the next, also through parentheses
+    # (`module.exports = (exports.Rule = value)`); any CommonJS target on the
+    # chain publishes the value. The outermost assignment must run at load:
+    # as a statement or a declarator's value (`const R = module.exports = v`),
+    # at module level, a top-level `if` block included. The same assignment
+    # inside a function exports nothing until that function is called.
+    exported = False
+    current = assignment
+    while True:
+        exported = exported or _is_commonjs_export_target(
+            current.child_by_field_name(cs.FIELD_LEFT)
+        )
+        value, holder = _outermost_value(current)
+        if (
+            holder is None
+            or holder.type != cs.TS_JS_ASSIGNMENT_EXPRESSION
+            or holder.child_by_field_name(cs.FIELD_RIGHT) != value
+        ):
+            break
+        current = holder
+    return exported and _runs_at_module_load(value, holder)
+
+
+def _outermost_value(node: Node) -> tuple[Node, Node | None]:
+    # `node` with the value wrappers around it, and the node holding that.
+    parent = node.parent
+    while parent is not None and parent.type in _JS_TS_VALUE_WRAPPER_TYPES:
+        node = parent
+        parent = node.parent
+    return node, parent
+
+
+def _runs_at_module_load(value: Node, holder: Node | None) -> bool:
+    if holder is None:
+        return False
+    if holder.type == cs.TS_VARIABLE_DECLARATOR:
+        is_own_statement = holder.child_by_field_name(cs.FIELD_VALUE) == value
+    else:
+        is_own_statement = holder.type == cs.TS_EXPRESSION_STATEMENT
+    return is_own_statement and _module_root(holder) is not None
+
+
+def _is_commonjs_export_target(target: Node | None) -> bool:
+    # `module.exports`, `module.exports.X`, `exports.X`, and the same with a
+    # string key (`exports["X"]`), which names the export as `.X` does. A
+    # computed key (`exports[pick()]`) names no export a caller could find.
+    if target is None:
+        return False
+    if target.type == cs.TS_MEMBER_EXPRESSION:
+        text = target.text or b""
+        return (
+            text == _JS_MODULE_EXPORTS
+            or text.startswith(_JS_MODULE_EXPORTS_MEMBER)
+            or text.startswith(_JS_EXPORTS_MEMBER)
+        )
+    if target.type != cs.TS_SUBSCRIPT_EXPRESSION:
+        return False
+    obj = target.child_by_field_name(cs.FIELD_OBJECT)
+    key = target.child_by_field_name(cs.TS_FIELD_INDEX)
+    return (
+        obj is not None
+        and obj.text in (_JS_MODULE_EXPORTS, _JS_EXPORTS_KEYWORD_BYTES)
+        and key is not None
+        and key.type == cs.TS_STRING
     )
 
 
