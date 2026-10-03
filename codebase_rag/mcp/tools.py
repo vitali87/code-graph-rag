@@ -18,6 +18,7 @@ from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
+from codebase_rag.editing.extract_types import ExtractReport, InlineReport
 from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
@@ -130,6 +131,11 @@ _NOT_GRAPH_READERS = frozenset(
         # the postcondition contract, so refusing up front on a partial graph
         # would block the operation that repairs it (issue #1534).
         cs.MCPToolName.MOVE,
+        # EXTRACT and INLINE are graph-driven edits of the same shape as MOVE:
+        # each runs its own re-ingest behind the incomplete-run marker and is
+        # held to the postcondition contract (Copilot, PR #2061).
+        cs.MCPToolName.EXTRACT,
+        cs.MCPToolName.INLINE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -537,6 +543,8 @@ class MCPToolsRegistry:
             cs.MCPToolName.RENAME: self._rename_tool(),
             cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
             cs.MCPToolName.MOVE: self._move_tool(),
+            cs.MCPToolName.EXTRACT: self._extract_tool(),
+            cs.MCPToolName.INLINE: self._inline_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -3070,6 +3078,188 @@ class MCPToolsRegistry:
         payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
         if payload_marker_error is not None:
             payload[cs.DICT_KEY_ERROR] = payload_marker_error
+        return payload
+
+    def _extract_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.EXTRACT,
+            description=td.MCP_TOOLS[cs.MCPToolName.EXTRACT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.START_LINE: prop(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_START_LINE
+                    ),
+                    cs.MCPParamName.END_LINE: prop(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_END_LINE
+                    ),
+                    cs.MCPParamName.NEW_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.START_LINE,
+                    cs.MCPParamName.END_LINE,
+                    cs.MCPParamName.NEW_NAME,
+                ],
+            ),
+            handler=self.extract,
+            returns_json=True,
+        )
+
+    def _inline_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.INLINE,
+            description=td.MCP_TOOLS[cs.MCPToolName.INLINE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[cs.MCPParamName.QUALIFIED_NAME],
+            ),
+            handler=self.inline,
+            returns_json=True,
+        )
+
+    async def extract(
+        self,
+        qualified_name: str,
+        start_line: int,
+        end_line: int,
+        new_name: str,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.EXTRACT,
+            project,
+            lambda name: self._run_extract(
+                name, qualified_name, start_line, end_line, new_name, dry_run
+            ),
+        )
+
+    def _run_extract(
+        self,
+        project_name: str,
+        qualified_name: str,
+        start_line: int,
+        end_line: int,
+        new_name: str,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.extract import ExtractRefused, extract
+
+        # Paths are meaningful only under the root the project was indexed
+        # from (issue #1542), exactly as for `rename`.
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
+        try:
+            report = extract(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                (start_line, end_line),
+                new_name,
+                dry_run=dry_run,
+                reingest=reingest,
+            )
+        except ExtractRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused)}
+        finally:
+            if release is not None:
+                release()
+        return self._edit_payload(project_name, report)
+
+    async def inline(
+        self, qualified_name: str, dry_run: bool = False, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.INLINE,
+            project,
+            lambda name: self._run_inline(name, qualified_name, dry_run),
+        )
+
+    def _run_inline(
+        self, project_name: str, qualified_name: str, dry_run: bool
+    ) -> object:
+        from codebase_rag.editing.extract import InlineRefused, inline
+
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
+        try:
+            report = inline(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                dry_run=dry_run,
+                reingest=reingest,
+            )
+        except InlineRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused), cs.KEY_SITES: list(refused.sites)}
+        finally:
+            if release is not None:
+                release()
+        return self._edit_payload(project_name, report)
+
+    def _edit_payload(
+        self, project_name: str, report: ExtractReport | InlineReport
+    ) -> object:
+        """An extract or inline report as JSON, recording a partial graph.
+
+        A failed re-ingest gets the same invalidation, in memory and durably,
+        that `_run_rename` applies.
+        """
+        payload = dict(report._asdict())
+        payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+        if report.graph_incomplete:
+            self._live_updater = None
+            self._invalidate_graph_for(project_name)
+            marker_error = self._require_marker(project_name, writing=True)
+            if marker_error is not None:
+                payload[cs.DICT_KEY_ERROR] = marker_error
         return payload
 
     async def rename(

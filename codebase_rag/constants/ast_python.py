@@ -54,6 +54,10 @@ TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
+# Early exits an extracted span may not contain (issue #1535).
+TS_PY_BREAK_STATEMENT = "break_statement"
+TS_PY_CONTINUE_STATEMENT = "continue_statement"
+TS_PY_YIELD = "yield"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
 # A definition's parameter list node, and the splats an argument list can
@@ -306,3 +310,8 @@ GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
 # letting a RecursionError discard the whole method's variable types.
 GUARD_JAVA_INFERENCE_DEPTH = "_java_inference_depth_guard"
 JAVA_MAX_INFERENCE_DEPTH = 64
+
+# Inline-function evaluation checks (PR #2058).
+TS_PY_INTEGER = "integer"
+TS_PY_FLOAT = "float"
+TS_PY_NONE = "none"

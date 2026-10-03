@@ -48,6 +48,8 @@ Every top-level command, from the CLI's own help registry:
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites. |
 | `cgr change-signature` | Change a Python definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched. |
 | `cgr move` | Move a module-level definition to another module: importers rewritten, needed imports carried, refused when it would create an import cycle. |
+| `cgr extract` | Extract whole statements of a function (a line span) into a new function placed after it; inputs become parameters, outputs are returned. |
+| `cgr inline` | Inline a single-return function at every call site the graph knows and delete the definition once no caller remains. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
 | `cgr status` | Show stack state and the last sync time for each project |
