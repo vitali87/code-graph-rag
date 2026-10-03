@@ -28,6 +28,7 @@ class MCPToolName(StrEnum):
     # Graph-driven edit operations (issues #1532, #1533).
     RENAME = "rename"
     CHANGE_SIGNATURE = "change_signature"
+    MOVE = "move"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -124,6 +125,8 @@ class MCPParamName(StrEnum):
     ALLOW_HEURISTIC = "allow_heuristic"
     NEW_PARAMS = "new_params"
     MAPPING = "mapping"
+    TARGET_MODULE = "target_module"
+    KEEP_ALIAS = "keep_alias"
 
 
 # MCP server constants

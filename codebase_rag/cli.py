@@ -1679,6 +1679,75 @@ def rename_command(
 
 
 @app.command(
+    name=ch.CLICommandName.MOVE,
+    help=ch.CMD_MOVE,
+    short_help=ch.CMD_MOVE,
+    epilog=ch.EXAMPLES_MOVE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def move_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_MOVE_QN),
+    target_module: str = typer.Argument(..., help=ch.HELP_MOVE_TARGET),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    keep_alias: bool = typer.Option(
+        False, "--keep-alias", help=ch.HELP_MOVE_KEEP_ALIAS
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_MOVE_DRY_RUN),
+) -> None:
+    from .editing.move import MoveRefused, move
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this one.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.MOVE_CLI_WRONG_ROOT.format(project=name, root=repo_path.resolve()),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = move(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                target_module,
+                keep_alias=keep_alias,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except MoveRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    payload = dict(report._asdict())
+    if report.verdict is not None:
+        payload[cs.KEY_VERDICT] = report.verdict._asdict()
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.CHANGE_SIGNATURE,
     help=ch.CMD_CHANGE_SIGNATURE,
     short_help=ch.CMD_CHANGE_SIGNATURE,

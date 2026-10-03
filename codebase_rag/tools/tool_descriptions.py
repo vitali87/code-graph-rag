@@ -346,6 +346,27 @@ MCP_CHANGE_SIGNATURE = (
     "diff without touching the tree. Applied edits are recorded for `cgr edits "
     "undo`."
 )
+MCP_MOVE = (
+    "Move a module-level function or class to another module. The definition "
+    "(decorators, docstring, adjacent comments) is cut and pasted into "
+    "`target_module` (a dotted module name or a repo-relative path; created "
+    "when missing) with the imports it needs, every importer is rewritten, "
+    "uses through a module import (`pkg.util.helper`) follow, and the old "
+    "module keeps an import of the name when it still uses it. `keep_alias` "
+    "leaves a re-export at the old location so the old import path keeps "
+    "working. Refused before any file is touched when the move would create "
+    "an import cycle, naming the cycle. One transaction, held to the "
+    "postcondition contract; set `dry_run` to see the plan."
+)
+MCP_PARAM_TARGET_MODULE = (
+    "Destination module: a dotted module name (`pkg.core`) or a repo-relative path."
+)
+MCP_PARAM_MOVE_DRY_RUN = (
+    "Plan only: report the files, importers and copied imports, write nothing."
+)
+MCP_PARAM_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
+)
 MCP_PARAM_NEW_PARAMS = (
     "The new parameter list in order, one entry per parameter (`name`, "
     "`name: type`, `name = default`, `name: type = default`)."
@@ -560,6 +581,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
+    MCPToolName.MOVE: MCP_MOVE,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,
