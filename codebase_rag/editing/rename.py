@@ -562,26 +562,34 @@ class Renamer:
         while pending:
             source, barrel = pending.pop()
             for row in graph_query.importers(self.fetch_all, self.project, source):
-                path = row["path"]
-                if not path:
+                following = self._js_star_following(row, name, barrel, bound)
+                if following is None:
                     continue
-                # `export * from` records `*` and binds no alias.
-                if (
-                    row["imported_name"] == cs.IMPORTED_NAME_WILDCARD
-                    and row["alias"] is None
-                ):
-                    following = barrel or path
-                elif row["alias"] == name and row["imported_name"] == name:
-                    # A consumer, or a barrel passing the name on by name.
-                    following = barrel
-                    if barrel:
-                        bound.setdefault(path, barrel)
-                else:
-                    continue
-                if (row["module"], bool(following)) not in seen:
-                    seen.add((row["module"], bool(following)))
+                step = (row["module"], bool(following))
+                if step not in seen:
+                    seen.add(step)
                     pending.append((row["module"], following))
         return bound
+
+    @staticmethod
+    def _js_star_following(
+        row: graph_query.ImporterRow, name: str, barrel: str, bound: dict[str, str]
+    ) -> str | None:
+        """The first `export *` barrel on the chain once it passes `row`, empty
+        while there is none, or None when `row` does not pass `name` on. A
+        file binding `name` past such a barrel is recorded in `bound`."""
+        path = row["path"]
+        if not path:
+            return None
+        # `export * from` records `*` and binds no alias.
+        if row["imported_name"] == cs.IMPORTED_NAME_WILDCARD and row["alias"] is None:
+            return barrel or path
+        if row["alias"] != name or row["imported_name"] != name:
+            return None
+        # A consumer, or a barrel passing the name on by name.
+        if barrel:
+            bound.setdefault(path, barrel)
+        return barrel
 
     def _definition_site(
         self,

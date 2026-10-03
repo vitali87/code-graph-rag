@@ -19,7 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag import graph_query
+from codebase_rag.editing.rename import Renamer, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
@@ -312,6 +313,33 @@ def test_the_barrel_maps_record_what_each_export_names(tmp_path: Path) -> None:
         "leftPad": ("maps.src.text.index.pad", True),
         "strip": ("maps.src.text.index.strip", True),
         "shout": ("maps.src.text.index.upper", True),
+    }
+
+
+# Export statements that publish no name a binding could follow: an anonymous
+# default, a default expression, and a re-export whose source names no
+# module. A comment inside a clause is no specifier either.
+UNNAMED_EXPORT_FILES = {
+    "src/anon.ts": "export default function () {\n  return 1;\n}\n",
+    "src/expr.ts": "const base = 40;\n\nexport default base + 2;\n",
+    "src/blank.ts": 'export { gone } from "";\n',
+    "src/listed.ts": (
+        "function first(): number {\n  return 1;\n}\n\n"
+        "function last(): number {\n  return 2;\n}\n\n"
+        "export { first, /* middle was removed */ last as final };\n"
+    ),
+}
+
+
+def test_an_export_naming_no_binding_records_nothing(tmp_path: Path) -> None:
+    updater, _store = _run(tmp_path / "unnamed", UNNAMED_EXPORT_FILES)
+    exports = updater.factory.import_processor.js_export_bindings
+    assert "unnamed.src.anon" not in exports, exports
+    assert "unnamed.src.expr" not in exports, exports
+    assert "unnamed.src.blank" not in exports, exports
+    assert exports["unnamed.src.listed"] == {
+        "first": ("unnamed.src.listed.first", True),
+        "final": ("unnamed.src.listed.last", True),
     }
 
 
@@ -680,3 +708,83 @@ def test_a_chain_of_named_reexports_renames_without_leave(
     app = _read(temp_repo, "src/app.ts")
     assert app.startswith('import { bar } from "./c";\n')
     assert "return bar();" in app
+
+
+# --- the star walk behind the refusal --------------------------------------------
+
+
+def _importer(
+    module: str, path: str | None, alias: str | None, imported_name: str | None
+) -> graph_query.ImporterRow:
+    return graph_query.ImporterRow(
+        module=module,
+        path=path,
+        line=1,
+        col=0,
+        end_line=1,
+        end_col=1,
+        alias=alias,
+        imported_name=imported_name,
+    )
+
+
+STAR = cs.IMPORTED_NAME_WILDCARD
+
+# Who imports each module, and how. `p.a` defines `foo`; `b` and `c` star it
+# and `d` stars both, so the walk reaches `d` twice past a star. `direct`
+# imports `foo` by name before `e` stars it. A row with no path, and one
+# naming another export, lead nowhere even past a star.
+STAR_WALK_IMPORTERS = {
+    "p.a": [
+        _importer("p.b", "src/b.ts", None, STAR),
+        _importer("p.c", "src/c.ts", None, STAR),
+        _importer("p.direct", "src/direct.ts", "foo", "foo"),
+    ],
+    "p.b": [
+        _importer("p.d", "src/d.ts", None, STAR),
+        _importer("p.wrong", "src/wrong.ts", "bar", "bar"),
+    ],
+    "p.c": [
+        _importer("p.d", "src/d.ts", None, STAR),
+        _importer("p.ghost", None, "foo", "foo"),
+        _importer("p.near", "src/near.ts", "foo", "foo"),
+    ],
+    "p.d": [_importer("p.app", "src/app.ts", "foo", "foo")],
+    "p.direct": [_importer("p.e", "src/e.ts", None, STAR)],
+    "p.e": [_importer("p.late", "src/late.ts", "foo", "foo")],
+    "p.ghost": [_importer("p.haunted", "src/haunted.ts", "foo", "foo")],
+    "p.wrong": [_importer("p.astray", "src/astray.ts", "foo", "foo")],
+}
+
+
+def test_the_star_walk_binds_each_consumer_to_its_first_star_barrel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    def importers(
+        _fetch_all: object, _project: str, source: str
+    ) -> list[graph_query.ImporterRow]:
+        asked.append(source)
+        return STAR_WALK_IMPORTERS.get(source, [])
+
+    monkeypatch.setattr(graph_query, "importers", importers)
+    bound = Renamer(tmp_path, MagicMock(), "p")._js_star_bound("p.a", "foo")
+    assert bound == {
+        "src/near.ts": "src/c.ts",
+        "src/app.ts": "src/c.ts",
+        "src/late.ts": "src/e.ts",
+    }
+    # Each module is walked once past a star; the pathless and the unrelated
+    # rows are not followed at all.
+    assert sorted(asked) == [
+        "p.a",
+        "p.app",
+        "p.b",
+        "p.c",
+        "p.d",
+        "p.direct",
+        "p.e",
+        "p.late",
+        "p.near",
+    ]

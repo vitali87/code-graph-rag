@@ -408,6 +408,21 @@ def _js_default_export_local(statement: Node) -> str | None:
     return None
 
 
+def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
+    # The (local, exported) names of each `export { local as exported }`
+    # specifier; a comment inside the braces is no specifier.
+    for clause in statement.named_children:
+        if clause.type != cs.TS_EXPORT_CLAUSE:
+            continue
+        for specifier in clause.named_children:
+            local = safe_decode_text(specifier.child_by_field_name(cs.FIELD_NAME))
+            name = (
+                safe_decode_text(specifier.child_by_field_name(cs.FIELD_ALIAS)) or local
+            )
+            if local and name:
+                yield local, name
+
+
 def _is_js_star_reexport(site: PropertyDict | None) -> bool:
     # `export * from` records `*` as its imported name and binds no alias,
     # where `import * as ns` binds one.
@@ -4124,23 +4139,13 @@ class ImportProcessor:
                 )
         # `_parse_js_reexport` has just mapped this statement's re-exports.
         mapped = self.import_mapping.get(module_qn, {})
-        for clause in statement.named_children:
-            if clause.type != cs.TS_EXPORT_CLAUSE:
-                continue
-            for specifier in clause.named_children:
-                local = safe_decode_text(specifier.child_by_field_name(cs.FIELD_NAME))
-                name = (
-                    safe_decode_text(specifier.child_by_field_name(cs.FIELD_ALIAS))
-                    or local
+        for local, name in _js_export_specifiers(statement):
+            if not reexport:
+                exported[name] = JsExport(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{local}", local=True
                 )
-                if not local or not name:
-                    continue
-                if not reexport:
-                    exported[name] = JsExport(
-                        f"{module_qn}{cs.SEPARATOR_DOT}{local}", local=True
-                    )
-                elif (target := mapped.get(name)) is not None:
-                    exported[name] = JsExport(target, local=False)
+            elif (target := mapped.get(name)) is not None:
+                exported[name] = JsExport(target, local=False)
         if exported:
             self.js_export_bindings.setdefault(module_qn, {}).update(exported)
 
