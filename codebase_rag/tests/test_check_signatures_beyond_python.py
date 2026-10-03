@@ -599,6 +599,14 @@ def test_a_csharp_value_receiver_is_never_counted_as_an_argument(
             cs.DELTA_ARITY_TOO_FEW,
             id="branch-local",
         ),
+        # A case guard's pattern variable binds into its own section only.
+        pytest.param(
+            "s",
+            "switch (s.Length) { case 0 when s is string Util: break; "
+            "default: return Util.Ext(s, 1); } return s;",
+            cs.DELTA_ARITY_TOO_FEW,
+            id="case-guard-in-another-section",
+        ),
         # The parameter's scope encloses the nested block: an instance call.
         pytest.param(
             "Util",
@@ -1263,6 +1271,72 @@ def _call_tree(language: cs.SupportedLanguage, source: str) -> Node:
             "Util",
             id="cs-top-level-sibling-block-local",
         ),
+        # Greptile's case on #2832. An iteration statement is a declaration
+        # space of its own (ECMA-334 §7.3), so its condition's pattern
+        # variable is out of scope after the loop.
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { while (!(o is string Util)) "
+            '{ o = "x"; } Util.Ext(1, 2); } }',
+            "Util",
+            id="cs-negated-while-pattern-after-the-loop",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { for (; o is string Util; ) {} Util.Ext(1); } }",
+            "Util",
+            id="cs-for-condition-pattern-after-the-loop",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { using (var Util = x) {} Util.Ext(1); } }",
+            "Util",
+            id="cs-using-after-the-statement",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { try {} catch (E e) when (e.D is string Util) {} "
+            "Util.Ext(1); } }",
+            "Util",
+            id="cs-catch-filter-after-the-clause",
+        ),
+        # A case label's pattern and `when` guard bind into their section
+        # alone; an embedded statement is its own declaration space.
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { switch (o) { case string Util: break; "
+            'default: Util.Ext("x"); break; } } }',
+            "Util",
+            id="cs-case-pattern-in-another-section",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { switch (o) { case string s when s is "
+            'var Util: break; default: Util.Ext("x"); break; } } }',
+            "Util",
+            id="cs-when-guard-in-another-section",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { if (c) b = o is string Util; "
+            'Util.Ext("x"); } }',
+            "Util",
+            id="cs-if-embedded-statement-pattern",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { if (c) {} else b = o is string Util; "
+            'Util.Ext("x"); } }',
+            "Util",
+            id="cs-else-embedded-statement-pattern",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { lock (o) b = o is string Util; "
+            'Util.Ext("x"); } }',
+            "Util",
+            id="cs-lock-body-pattern",
+        ),
         # A binder whose scope holds the call is still a value.
         pytest.param(
             cs.SupportedLanguage.CSHARP,
@@ -1301,6 +1375,49 @@ def _call_tree(language: cs.SupportedLanguage, source: str) -> Node:
             'var Util = "x";\n{ Util.Ext(1); }\n',
             "",
             id="cs-top-level-local",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { for (; o is string Util; ) { Util.Ext(1); } } }",
+            "",
+            id="cs-for-condition-pattern",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { try {} catch (E e) when (e.D is string Util) "
+            "{ Util.Ext(1); } } }",
+            "",
+            id="cs-catch-filter",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { switch (o) { case string Util: "
+            "Util.Ext(1); break; } } }",
+            "",
+            id="cs-case-pattern-in-its-section",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { switch (o) { case string s when s is "
+            "var Util: Util.Ext(1); break; } } }",
+            "",
+            id="cs-when-guard-in-its-section",
+        ),
+        # A `lock` expression's pattern variable, like an `if` condition's,
+        # binds into the enclosing block.
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { lock (o is string Util ? o : o) {} "
+            "Util.Ext(1); } }",
+            "",
+            id="cs-lock-expression-pattern-in-the-enclosing-block",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { if (c) {} else if (o is string Util) "
+            "Util.Ext(1); } }",
+            "",
+            id="cs-else-if-pattern",
         ),
         pytest.param(
             cs.SupportedLanguage.CPP, "int r() { return s.f(1); }", None, id="cpp"

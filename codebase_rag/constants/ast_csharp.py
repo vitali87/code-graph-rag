@@ -369,6 +369,15 @@ TS_CSHARP_FIXED_STATEMENT = "fixed_statement"
 TS_CSHARP_SWITCH_BODY = "switch_body"
 TS_CSHARP_SWITCH_EXPRESSION_ARM = "switch_expression_arm"
 TS_CSHARP_QUERY_EXPRESSION = "query_expression"
+# Statements whose embedded statement is a scope of its own, a switch
+# section and its case guard, and the node-type suffixes of a statement
+# and of a pattern.
+TS_CSHARP_IF_STATEMENT = "if_statement"
+TS_CSHARP_LOCK_STATEMENT = "lock_statement"
+TS_CSHARP_SWITCH_SECTION = "switch_section"
+TS_CSHARP_WHEN_CLAUSE = "when_clause"
+CSHARP_STATEMENT_SUFFIX = "_statement"
+CSHARP_PATTERN_SUFFIX = "_pattern"
 # An enum body and its members (issue #1807).
 TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
 TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"

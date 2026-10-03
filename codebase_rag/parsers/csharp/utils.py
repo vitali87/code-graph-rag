@@ -524,10 +524,13 @@ _TYPE_DECLARATIONS = frozenset(
 _FIELD_DECLARATIONS = frozenset(
     {cs.TS_CSHARP_FIELD_DECLARATION, cs.TS_CSHARP_EVENT_FIELD_DECLARATION}
 )
-# Nodes that bound the scope of the names bound inside them; a binder under
-# none is in scope across its member. An `if` is not one: `if (o is not
-# string s) return;` keeps `s` in scope in the enclosing block. Switch
-# sections share their switch body's scope.
+# Nodes that bound the scope of the names bound inside them, after the local
+# variable declaration spaces of ECMA-334 §7.3: a block, switch block,
+# catch clause, iteration statement and `using` statement each make one. A
+# binder under none is in scope across its member. An `if` or a `lock` is
+# not one: `if (o is not string s) return;` keeps `s` in scope in the
+# enclosing block. A switch section's statements share its switch body's
+# scope.
 _VALUE_SCOPES = frozenset(
     {
         cs.TS_CSHARP_BLOCK,
@@ -543,6 +546,11 @@ _VALUE_SCOPES = frozenset(
         cs.TS_CSHARP_QUERY_EXPRESSION,
         *cs.TS_CSHARP_NESTED_SCOPE_TYPES,
     }
+)
+# Statements whose embedded statement, not being part of a statement list,
+# is a scope of its own (§7.3): `if (c) M(o is string s);` binds `s` there.
+_EMBEDDING_STATEMENTS = frozenset(
+    {cs.TS_CSHARP_IF_STATEMENT, cs.TS_CSHARP_LOCK_STATEMENT}
 )
 # The scans hold a few trees' nodes at most: one file is parsed at a time.
 _SCOPE_CACHE_SIZE = 64
@@ -588,11 +596,31 @@ def _member_values(member: Node) -> Mapping[str, tuple[Node, ...]]:
             scopes.setdefault(name, []).append(scope)
         inner = node if node.type in _VALUE_SCOPES else scope
         stack.extend(
-            (child, inner)
+            (child, _child_scope(node, child, inner))
             for child in node.named_children
             if child.type not in _TYPE_DECLARATIONS
         )
     return MappingProxyType({name: tuple(nodes) for name, nodes in scopes.items()})
+
+
+def _child_scope(node: Node, child: Node, inner: Node) -> Node:
+    """The scope `child` binds into, `inner` being the one inside `node`.
+
+    An embedded statement of an `if` or a `lock` is its own. A case label's
+    pattern and `when` guard bind into their switch section alone, while
+    the section's statements bind into the switch body (§7.3).
+    """
+    if node.type in _EMBEDDING_STATEMENTS and (
+        child.type == cs.TS_CSHARP_BLOCK
+        or child.type.endswith(cs.CSHARP_STATEMENT_SUFFIX)
+    ):
+        return child
+    if node.type == cs.TS_CSHARP_SWITCH_SECTION and (
+        child.type == cs.TS_CSHARP_WHEN_CLAUSE
+        or child.type.endswith(cs.CSHARP_PATTERN_SUFFIX)
+    ):
+        return node
+    return inner
 
 
 def _member_binds(member: Node, name: str, site: Node) -> bool:
