@@ -367,6 +367,14 @@ WATCHER_EXPANSION_FAILED = (
     "Could not list the files a directory event covers: {error}. Re-indexing "
     "the whole repository instead."
 )
+WATCHER_IGNORE_RULES_CHANGED = (
+    "Ignore rules changed (.cgrignore, .gitignore or the files git tracks); "
+    "re-syncing the graph under the new rules."
+)
+WATCHER_IGNORE_RULES_SYNC_FAILED = (
+    "Re-sync under the new ignore rules FAILED: {error}. The next change "
+    "triggers a full re-index first."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"

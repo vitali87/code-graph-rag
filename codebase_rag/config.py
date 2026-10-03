@@ -696,6 +696,34 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     return frozenset(rescued)
 
 
+def git_index_path(repo_path: Path) -> Path | None:
+    """The git index `load_ignore_patterns` reads the tracked files from.
+
+    A watcher re-reads its rules when this file changes: `git mv`, `git add`
+    and `git rm` move the tracked-file rescues without touching any ignore
+    file. It lies outside the checkout for a linked worktree. None outside a
+    git checkout, or when git cannot answer.
+    """
+    try:
+        answer = subprocess.run(
+            [cs.SHELL_CMD_GIT, "rev-parse", "--git-path", cs.GIT_INDEX_FILENAME],
+            cwd=repo_path,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LS_FILES_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if answer.returncode != 0 or not (relative := answer.stdout.strip()):
+        return None
+    # Relative to the checkout for a plain repository, absolute for a linked
+    # worktree. Normalised but not resolved, to compare equal to the paths a
+    # watch on the checkout as given reports.
+    return Path(os.path.normpath(repo_path / relative))
+
+
 CGR_INSTRUCTIONS_FILENAME = ".cgr.md"
 GLOBAL_CGR_INSTRUCTIONS_PATH = Path.home() / CGR_INSTRUCTIONS_FILENAME
 

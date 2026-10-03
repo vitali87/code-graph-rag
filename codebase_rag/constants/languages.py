@@ -423,6 +423,7 @@ TRACKED_SOURCE_DIR_NAMES = frozenset(
 # so a tracked path holding them cannot be rescued by its literal path.
 TRACKED_PATH_PATTERN_CHARS = re.compile(r"[*?\[\]\\!]|(?:\s$)")
 GIT_LS_FILES_TIMEOUT_S = 30
+GIT_INDEX_FILENAME = "index"
 
 # Patterns detected at repo root and offered as exclude candidates (user picks which)
 IGNORE_PATTERNS = frozenset(

@@ -492,31 +492,42 @@ def walk_eligible_files(
                 yield dirpath, fname, rel_path_str
 
 
-def frontend_ignored_dirs(
+def rescued_files(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
 ) -> frozenset[str]:
-    """The default-excluded directory names a compiler frontend may skip whole.
+    """The files the walk indexes although a default-excluded name is on their path.
 
-    gotypes, javac and Roslyn take the exclusions as bare names and drop every
-    file under one, so a file the walk keeps there (a git-tracked
-    `pkg/out/out.go`, a `!` line) reached the graph without its compiler facts
-    (review of PR 2490). A name the walk yields any file under is left out.
-    The tool then also reports on files under that name the walk skipped,
-    which is harmless: every fact joins to a definition by the position the
-    parse registered, and a file the walk skipped registers none.
+    The compiler frontends skip those names on their own, so they must be told
+    which files under them the graph holds: a git-tracked `pkg/out/out.go` or
+    a file a `!` line rescues otherwise reaches the graph without its compiler
+    facts (review of PR 2490).
     """
-    kept: set[str] = set()
-    for _dirpath, _fname, rel_path_str in walk_eligible_files(
-        repo_path, exclude_paths, unignore_paths
-    ):
-        kept.update(
-            part
-            for part in rel_path_str.split(cs.SEPARATOR_SLASH)[:-1]
-            if part in cs.IGNORE_PATTERNS
+    return frozenset(
+        rel_path_str
+        for _dirpath, _fname, rel_path_str in walk_eligible_files(
+            repo_path, exclude_paths, unignore_paths
         )
-    return cs.IGNORE_PATTERNS - kept
+        if any(
+            part in cs.IGNORE_PATTERNS
+            for part in rel_path_str.split(cs.SEPARATOR_SLASH)[:-1]
+        )
+    )
+
+
+def frontend_ignored_dirs(rescued: frozenset[str]) -> frozenset[str]:
+    """The default-excluded names a frontend that filters by name may skip whole.
+
+    For gotypes and Roslyn, which can only drop a directory name everywhere:
+    every name a rescued file sits under stays visible. They then also report
+    on untracked files under that name, which is harmless, because every fact
+    joins to a definition by the position the parse registered and a file the
+    walk skipped registers none.
+    """
+    return cs.IGNORE_PATTERNS - {
+        part for rel in rescued for part in rel.split(cs.SEPARATOR_SLASH)[:-1]
+    }
 
 
 def is_walked_dir(

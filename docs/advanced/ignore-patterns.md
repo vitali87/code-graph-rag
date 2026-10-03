@@ -60,6 +60,14 @@ vendored code). A tracked path whose name holds pattern characters (`*`, `?`,
 `[`, `]`, `!`, `\`) is not rescued either. An explicit exclude (`.cgrignore`
 or `--exclude`) still wins.
 
+The compiler frontends (go/types, javac, Roslyn) see the rescued files too, so
+their calls keep the compiler's binding. javac is handed the rescued files
+themselves, so an untracked source under another directory of the same name
+never enters its compilation. The real-time watcher re-reads these rules when
+`.cgrignore`, `.gitignore` or the git index changes, so a `git mv`, `git add`
+or `git rm` under one of these names, or an edited ignore file, applies without
+a restart.
+
 <!-- SECTION:default_exclusions -->
 | Directory name | Excluded |
 |---|---|

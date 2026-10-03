@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from ...constants.languages import IGNORE_PATTERNS, SupportedLanguage
+from ...constants.languages import SupportedLanguage
 from ..py_frontend import python_frontend_available, run_python_frontend
 from .protocol import SemanticFacts
 from .registry import register_frontend
@@ -30,10 +30,10 @@ class PythonJediFrontend:
         self,
         repo_path: Path,
         files: Sequence[Path],
-        ignored_dirs: frozenset[str] = IGNORE_PATTERNS,
+        rescued_files: frozenset[str] = frozenset(),
     ) -> SemanticFacts:
-        # Handed the files the walk parsed, so it has no directories to skip.
-        del ignored_dirs
+        # Handed the files the walk parsed, rescued ones included.
+        del rescued_files
         return run_python_frontend(repo_path, list(files))
 
 

@@ -1033,7 +1033,7 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
     root = temp_repo / "proj"
     holder: dict[str, object] = {"target_file": "B.java"}
 
-    def facts(repo_path: Path, ignored_dirs: frozenset[str]) -> JavaSemanticFacts:
+    def facts(repo_path: Path, rescued_files: frozenset[str]) -> JavaSemanticFacts:
         updater = holder["updater"]
         assert isinstance(updater, GraphUpdater)
         target_file = str(holder["target_file"])

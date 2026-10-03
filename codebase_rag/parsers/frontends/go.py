@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from ...constants.languages import IGNORE_PATTERNS, SupportedLanguage
+from ...constants.languages import SupportedLanguage
+from ...utils.path_utils import frontend_ignored_dirs
 from ..go_frontend import (
     GoSemanticFacts,
     find_go_module,
@@ -60,10 +61,12 @@ class GoFrontend:
         self,
         repo_path: Path,
         files: Sequence[Path],
-        ignored_dirs: frozenset[str] = IGNORE_PATTERNS,
+        rescued_files: frozenset[str] = frozenset(),
     ) -> SemanticFacts:
         return _adapt_go_semantic_facts(
-            run_go_frontend(repo_path, ignored_dirs=ignored_dirs)
+            run_go_frontend(
+                repo_path, ignored_dirs=frontend_ignored_dirs(rescued_files)
+            )
         )
 
 

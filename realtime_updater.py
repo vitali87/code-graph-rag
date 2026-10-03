@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Protocol
 
@@ -20,7 +21,13 @@ from watchdog.observers import Observer
 from codebase_rag import cli_help as ch
 from codebase_rag import logs
 from codebase_rag import tool_errors as te
-from codebase_rag.config import load_ignore_patterns, settings
+from codebase_rag.config import (
+    CGRIGNORE_FILENAME,
+    GITIGNORE_FILENAME,
+    git_index_path,
+    load_ignore_patterns,
+    settings,
+)
 from codebase_rag.constants import (
     CONTENT_EVENT_TYPES,
     DEFAULT_DEBOUNCE_SECONDS,
@@ -33,6 +40,7 @@ from codebase_rag.constants import (
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.types_defs import CgrignorePatterns
 from codebase_rag.utils.path_utils import (
     derive_project_name,
     is_eligible_rel_file,
@@ -59,6 +67,46 @@ class PendingTimer(Protocol):
 # callback for another thread (or for a later explicit fire) rather than
 # invoking it during `start()` — doing so deadlocks the handler.
 TimerFactory = Callable[..., PendingTimer]
+UpdaterFactory = Callable[[CgrignorePatterns], GraphUpdater]
+
+
+class IgnoreRules:
+    """The ignore rules the watcher applies, and the files they derive from.
+
+    `load_ignore_patterns` reads the root `.cgrignore` and `.gitignore` and
+    asks git which files it tracks. Read once at start-up, a tracked file
+    renamed within `out/` was refused as untracked and an edited ignore file
+    left later events filtered by the old rules (review of PR 2490), so the
+    handler re-reads them whenever one of these inputs changes. The git index
+    stands for "what git tracks": `git mv`, `git add` and `git rm` rewrite it.
+    """
+
+    def __init__(self, repo_path: Path, updater_factory: UpdaterFactory) -> None:
+        self.repo_path = repo_path
+        self._updater_factory = updater_factory
+        self.patterns = load_ignore_patterns(repo_path)
+        inputs = {repo_path / CGRIGNORE_FILENAME, repo_path / GITIGNORE_FILENAME}
+        if (index := git_index_path(repo_path)) is not None:
+            inputs.add(index)
+        self.inputs = frozenset(inputs)
+
+    def outside_dirs(self) -> frozenset[Path]:
+        """Directories of inputs the repository watch misses (a worktree's index)."""
+        return frozenset(
+            path.parent
+            for path in self.inputs
+            if not path.is_relative_to(self.repo_path)
+        )
+
+    def build_updater(self) -> GraphUpdater:
+        return self._updater_factory(self.patterns)
+
+    def reload(self) -> bool:
+        """Re-read the rules; True when they changed."""
+        patterns = load_ignore_patterns(self.repo_path)
+        changed = patterns != self.patterns
+        self.patterns = patterns
+        return changed
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
@@ -80,8 +128,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
         max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
         timer_factory: TimerFactory = threading.Timer,
+        ignore_rules: IgnoreRules | None = None,
     ):
         self.updater = updater
+        # Where the updater's ignore rules come from, so a change to them
+        # re-syncs the graph under the new rules. None keeps the updater's
+        # rules as given.
+        self._ignore_rules = ignore_rules
         # Injectable so a test can drive the debounce deterministically rather
         # than racing a wall clock, which is what made these tests flaky on
         # loaded runners (issue #1005). Production always uses threading.Timer.
@@ -190,6 +243,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # │ Step 4: Log what was re-parsed, what depended on it, what was      │
         # │         removed, and how long it took                              │
         # └─────────────────────────────────────────────────────────────────────┘
+        if self._ignore_rules is not None and not self._follow_ignore_rules(
+            event, self._ignore_rules
+        ):
+            return
         try:
             file_events = self._file_events(event)
         except (OSError, ValueError) as exc:
@@ -204,6 +261,42 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return
         for file_event in file_events:
             self._dispatch_file(file_event)
+
+    def _follow_ignore_rules(self, event: FileSystemEvent, rules: IgnoreRules) -> bool:
+        """Re-read the rules when the event touches an input; False to drop it.
+
+        Only the repository's own files go further: the extra watch on a
+        linked worktree's git directory exists for its index alone.
+        """
+        paths = [Path(_event_path(event.src_path))]
+        if event.event_type == EventType.MOVED:
+            paths.append(Path(_event_path(event.dest_path)))
+        if any(path in rules.inputs for path in paths):
+            self._apply_ignore_rules(rules)
+        return any(path.is_relative_to(rules.repo_path) for path in paths)
+
+    def _apply_ignore_rules(self, rules: IgnoreRules) -> None:
+        """Re-sync the graph under changed rules with an updater built for them.
+
+        A fresh updater rather than new sets on the old one: the processors
+        hold their own copies of the exclude set. Its incremental run sees the
+        changed exclusion stamp and reconciles the graph, indexing what the new
+        rules admit (the renamed `out/` file) and deleting what they drop. A
+        `git status` that rewrites the index without moving a rule costs one
+        `git ls-files` and nothing more.
+        """
+        with self._update_lock:
+            if not rules.reload():
+                return
+            logger.info(logs.WATCHER_IGNORE_RULES_CHANGED)
+            self.updater = rules.build_updater()
+            try:
+                self.updater.run()
+            except Exception as exc:  # noqa: BLE001
+                # Must not escape the watchdog callback; the next change
+                # re-indexes everything first, as after a failed re-ingest.
+                logger.error(logs.WATCHER_IGNORE_RULES_SYNC_FAILED.format(error=exc))
+                self._needs_full_rebuild = True
 
     def _file_events(self, event: FileSystemEvent) -> list[FileSystemEvent]:
         """Restate an event as the per-file deletions and creations it implies.
@@ -486,26 +579,13 @@ def _run_watcher_loop(
     max_wait_seconds: float,
     project_name: str | None = None,
 ):
-    # The name `cgr start --repo-path` gives this checkout, not GraphUpdater's
-    # bare-directory fallback: live updates must land in the project every
-    # other command reads, and the two writers share one hash cache and
-    # exclusion stamp (issue #2432).
-    #
-    # The same ignore sets `cgr index` loads, or the initial scan skips what
-    # `.cgrignore`, `.gitignore` and the git-tracked rescue decide and the
-    # event filter, which reads them from the updater, drops their edits
-    # (review of PR 2490).
-    patterns = load_ignore_patterns(repo_path_obj)
-    updater = GraphUpdater(
-        ingestor,
+    ignore_rules = IgnoreRules(
         repo_path_obj,
-        parsers,
-        queries,
-        unignore_paths=patterns.unignore or None,
-        exclude_paths=patterns.exclude or None,
-        project_name=project_name or derive_project_name(repo_path_obj),
-        project_named=project_name is not None,
+        partial(
+            _watcher_updater, ingestor, repo_path_obj, parsers, queries, project_name
+        ),
     )
+    updater = ignore_rules.build_updater()
 
     # Initial full scan builds the context for real-time updates
     logger.info(logs.INITIAL_SCAN)
@@ -516,9 +596,12 @@ def _run_watcher_loop(
         updater,
         debounce_seconds=debounce_seconds,
         max_wait_seconds=max_wait_seconds,
+        ignore_rules=ignore_rules,
     )
     observer = Observer()
     observer.schedule(event_handler, str(repo_path_obj), recursive=True)
+    for directory in ignore_rules.outside_dirs():
+        observer.schedule(event_handler, str(directory), recursive=False)
     observer.start()
     logger.info(logs.WATCHING.format(path=repo_path_obj))
 
@@ -528,6 +611,35 @@ def _run_watcher_loop(
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
+
+
+def _watcher_updater(
+    ingestor,
+    repo_path_obj: Path,
+    parsers,
+    queries,
+    project_name: str | None,
+    patterns: CgrignorePatterns,
+) -> GraphUpdater:
+    # The name `cgr start --repo-path` gives this checkout, not GraphUpdater's
+    # bare-directory fallback: live updates must land in the project every
+    # other command reads, and the two writers share one hash cache and
+    # exclusion stamp (issue #2432).
+    #
+    # The same ignore sets `cgr index` loads, or the initial scan skips what
+    # `.cgrignore`, `.gitignore` and the git-tracked rescue decide and the
+    # event filter, which reads them from the updater, drops their edits
+    # (review of PR 2490).
+    return GraphUpdater(
+        ingestor,
+        repo_path_obj,
+        parsers,
+        queries,
+        unignore_paths=patterns.unignore or None,
+        exclude_paths=patterns.exclude or None,
+        project_name=project_name or derive_project_name(repo_path_obj),
+        project_named=project_name is not None,
+    )
 
 
 def _validate_positive_int(value: int | None) -> int | None:

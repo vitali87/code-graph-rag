@@ -20,18 +20,35 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from loguru import logger
-from watchdog.events import FileModifiedEvent, FileSystemEventHandler
+from watchdog.events import (
+    FileCreatedEvent,
+    FileModifiedEvent,
+    FileMovedEvent,
+    FileSystemEventHandler,
+)
 
 import realtime_updater
 from codebase_rag import constants as cs
-from codebase_rag.config import CGRIGNORE_FILENAME, load_ignore_patterns, settings
+from codebase_rag.config import (
+    CGRIGNORE_FILENAME,
+    git_index_path,
+    load_ignore_patterns,
+    settings,
+)
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.csharp_frontend import frontend as csharp_frontend
+from codebase_rag.parsers.frontends.csharp import CSharpFrontend
+from codebase_rag.parsers.frontends.go import GoFrontend
+from codebase_rag.parsers.frontends.java import JavaJavacFrontend
 from codebase_rag.parsers.go_frontend import frontend as go_frontend
 from codebase_rag.parsers.java_frontend import frontend as java_frontend
 from codebase_rag.tests.conftest import git_env
-from codebase_rag.utils.path_utils import frontend_ignored_dirs, is_eligible_rel_file
+from codebase_rag.utils.path_utils import (
+    frontend_ignored_dirs,
+    is_eligible_rel_file,
+    rescued_files,
+)
 from evals.cgr_graph import _StatefulIngestor
 
 TRACKED = {
@@ -273,42 +290,56 @@ def test_go_calls_in_tracked_source_keep_the_compiler_answer(defex: Path) -> Non
     assert calls[("defex.pkg.out.out.Caller", "defex.pkg.out.out.Base.Hello")] == exact
 
 
-def test_javac_facts_cover_tracked_source(
+JAVA_BASE = (
+    "package demo;\n\npublic class Base {\n"
+    '  public String hello() { return "hi"; }\n}\n'
+)
+JAVA_CALLER = (
+    "package demo;\n\npublic class Caller {\n"
+    "  public String run() {\n    return new Base().hello();\n  }\n}\n"
+)
+
+
+def test_javac_compiles_tracked_source_and_nothing_else_under_its_name(
     defex: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # javac compiled only the sources outside the default-excluded names, so a
-    # tracked `out/demo/Caller.java` was indexed with no compiler facts.
+    # tracked `out/demo/Caller.java` was indexed with no compiler facts. It is
+    # now handed the tracked files themselves, not the name: an untracked
+    # copy of `demo.Base` under another `out/` would otherwise compile too and
+    # could take the binding from the class the graph holds (review of PR 2490).
     if not java_frontend.java_frontend_available():
         pytest.skip("JDK not available")
     monkeypatch.setattr(settings, "JAVA_FRONTEND", cs.JavaFrontend.JAVAC)
     _commit(
-        defex,
-        {
-            "out/demo/Base.java": (
-                "package demo;\n\npublic class Base {\n"
-                '  public String hello() { return "hi"; }\n}\n'
-            ),
-            "out/demo/Caller.java": (
-                "package demo;\n\npublic class Caller {\n"
-                "  public String run() {\n    return new Base().hello();\n  }\n}\n"
-            ),
-        },
+        defex, {"out/demo/Base.java": JAVA_BASE, "out/demo/Caller.java": JAVA_CALLER}
     )
+    untracked = {
+        "tools/out/demo/Base.java": JAVA_BASE.replace("hi", "copy"),
+        "tools/out/demo/Copy.java": JAVA_CALLER.replace("Caller", "Copy"),
+    }
+    for rel, text in untracked.items():
+        (defex / rel).parent.mkdir(parents=True, exist_ok=True)
+        (defex / rel).write_text(text)
 
     _store, updater = _index(defex)
 
     sites = updater.factory.definition_processor.java_call_sites
     assert {key[0] for key in sites} == {"out/demo/Caller.java"}
+    assert {site.target_file for site in sites.values()} == {"out/demo/Base.java"}
 
 
-def test_the_native_frontends_drop_only_what_the_walk_drops(defex: Path) -> None:
+def test_the_rescued_files_are_what_the_walk_keeps_under_a_default_name(
+    defex: Path,
+) -> None:
+    (defex / "out" / "gen.js").parent.mkdir()
+    (defex / "out" / "gen.js").write_text("export const X = 1;\n")
     patterns = load_ignore_patterns(defex)
 
-    ignored = frontend_ignored_dirs(
-        defex, patterns.exclude or None, patterns.unignore or None
-    )
+    rescued = rescued_files(defex, patterns.exclude or None, patterns.unignore or None)
 
-    assert ignored == cs.IGNORE_PATTERNS - {"bin", "env", "out"}
+    assert rescued == {"bin/main.dart", "src/env/index.js", "pkg/out/out.go"}
+    assert frontend_ignored_dirs(rescued) == cs.IGNORE_PATTERNS - {"bin", "env", "out"}
 
 
 def test_without_a_rescue_the_native_frontends_drop_every_default(
@@ -320,74 +351,93 @@ def test_without_a_rescue_the_native_frontends_drop_every_default(
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text)
 
-    assert frontend_ignored_dirs(repo) == cs.IGNORE_PATTERNS
+    assert rescued_files(repo) == frozenset()
+    assert frontend_ignored_dirs(frozenset()) == cs.IGNORE_PATTERNS
 
 
-def _tool_env_recorder(
-    stdout: str, envs: list[dict[str, str]]
-) -> Callable[..., subprocess.CompletedProcess[str]]:
-    def fake_run(
-        command: list[str], **kwargs: dict[str, str]
+class _ToolRuns:
+    """Records what each compiler-tool launch was handed."""
+
+    def __init__(self) -> None:
+        self.envs: list[dict[str, str]] = []
+        self.listings: list[str | None] = []
+
+    def __call__(
+        self, command: list[str], **kwargs: dict[str, str]
     ) -> subprocess.CompletedProcess[str]:
-        envs.append(kwargs["env"])
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        env = kwargs["env"]
+        self.envs.append(env)
+        listing = env.get(java_frontend.EXTRA_SOURCES_ENV)
+        self.listings.append(Path(listing).read_text() if listing else None)
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
 
-    return fake_run
+
+RESCUED = frozenset({"out/Tracked.java", "out/tracked.go", "out/Tracked.cs"})
 
 
-def _run_go(
-    repo: Path, ignored: frozenset[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _run_go(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (repo / "go.mod").write_text(GO_MOD)
     monkeypatch.setattr(go_frontend.shutil, "which", lambda _name: "/usr/bin/go")
     monkeypatch.setattr(go_frontend, "_build_tool", lambda _go: Path("/fake/gotypes"))
-    go_frontend.run_go_frontend(repo, ignored_dirs=ignored)
+    GoFrontend().run(repo, (), rescued_files=RESCUED)
 
 
-def _run_java(
-    repo: Path, ignored: frozenset[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _run_java(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(java_frontend.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(java_frontend, "_build_tool", lambda _javac: Path("/fake"))
-    java_frontend.run_java_frontend(repo, ignored_dirs=ignored)
+    JavaJavacFrontend().run(repo, (), rescued_files=RESCUED)
 
 
-def _run_csharp(
-    repo: Path, ignored: frozenset[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _run_csharp(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (repo / "App.csproj").write_text("<Project />\n")
     monkeypatch.setattr(
         csharp_frontend.shutil, "which", lambda _name: "/usr/bin/dotnet"
     )
     monkeypatch.setattr(csharp_frontend, "_build_tool", lambda _dotnet: Path("/f.dll"))
     monkeypatch.setattr(csharp_frontend, "_restore", lambda _dotnet, _project: None)
-    csharp_frontend.run_csharp_frontend(repo, ignored_dirs=ignored)
+    CSharpFrontend().run(repo, (), rescued_files=RESCUED)
 
 
 @pytest.mark.parametrize(
-    ("runner", "module"),
+    ("runner", "module", "ignored", "listing"),
     [
-        (_run_go, go_frontend),
-        (_run_java, java_frontend),
-        (_run_csharp, csharp_frontend),
+        (_run_go, go_frontend, cs.IGNORE_PATTERNS - {"out"}, None),
+        (_run_csharp, csharp_frontend, cs.IGNORE_PATTERNS - {"out"}, None),
+        # javac takes the files themselves, so the name stays excluded and an
+        # untracked source under another `out/` never compiles.
+        (_run_java, java_frontend, cs.IGNORE_PATTERNS, "out/Tracked.java"),
     ],
-    ids=["gotypes", "javac", "roslyn"],
+    ids=["gotypes", "roslyn", "javac"],
 )
-def test_each_native_frontend_is_handed_the_walks_set(
+def test_each_native_frontend_is_handed_the_rescued_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    runner: Callable[[Path, frozenset[str], pytest.MonkeyPatch], None],
+    runner: Callable[[Path, pytest.MonkeyPatch], None],
     module: ModuleType,
+    ignored: frozenset[str],
+    listing: str | None,
 ) -> None:
-    envs: list[dict[str, str]] = []
-    monkeypatch.setattr(
-        module.subprocess, "run", _tool_env_recorder('{"calls": []}', envs)
-    )
-    ignored = cs.IGNORE_PATTERNS - {"out"}
+    runs = _ToolRuns()
+    monkeypatch.setattr(module.subprocess, "run", runs)
 
-    runner(tmp_path, ignored, monkeypatch)
+    runner(tmp_path, monkeypatch)
 
-    assert [env["CGR_IGNORE_DIRS"] for env in envs] == [",".join(sorted(ignored))]
+    assert [env["CGR_IGNORE_DIRS"] for env in runs.envs] == [",".join(sorted(ignored))]
+    assert runs.listings == [listing]
+
+
+def test_javac_without_a_rescue_gets_no_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: nothing rescued, nothing extra handed over.
+    runs = _ToolRuns()
+    monkeypatch.setattr(java_frontend.subprocess, "run", runs)
+    monkeypatch.setattr(java_frontend.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(java_frontend, "_build_tool", lambda _javac: Path("/fake"))
+
+    JavaJavacFrontend().run(tmp_path, ())
+
+    assert runs.listings == [None]
 
 
 class _Observer:
@@ -415,13 +465,10 @@ def _interrupt(_seconds: float) -> None:
     raise KeyboardInterrupt
 
 
-def test_the_standalone_watcher_indexes_and_follows_tracked_source(
-    defex: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The watcher built its updater without the ignore patterns, so its
-    # initial scan skipped the tracked files under `bin/`, `env/` and `out/`
-    # and their later edits were never applied (review of PR 2490).
-    (defex / "pkg" / "out" / "gen.go").write_text("package out\nfunc Gen() {}\n")
+def _start_watcher(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[_StatefulIngestor, FileSystemEventHandler]:
+    """Run the real watcher start-up, then hand back its graph and handler."""
     observer = _Observer()
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
@@ -430,9 +477,23 @@ def test_the_standalone_watcher_indexes_and_follows_tracked_source(
         patched.setattr(
             realtime_updater, "time", SimpleNamespace(sleep=_interrupt, time=time.time)
         )
-        realtime_updater._run_watcher_loop(
-            store, defex, parsers, queries, 0, 0, "defex"
-        )
+        realtime_updater._run_watcher_loop(store, repo, parsers, queries, 0, 0, "defex")
+    (handler,) = set(observer.handlers)
+    return store, handler
+
+
+def _functions(store: _StatefulIngestor) -> set[str]:
+    return {str(uid) for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION}
+
+
+def test_the_standalone_watcher_indexes_and_follows_tracked_source(
+    defex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The watcher built its updater without the ignore patterns, so its
+    # initial scan skipped the tracked files under `bin/`, `env/` and `out/`
+    # and their later edits were never applied (review of PR 2490).
+    (defex / "pkg" / "out" / "gen.go").write_text("package out\nfunc Gen() {}\n")
+    store, handler = _start_watcher(defex, monkeypatch)
 
     scanned = _file_paths(store)
     assert {"bin/main.dart", "src/env/index.js", "pkg/out/out.go"} <= scanned
@@ -440,12 +501,97 @@ def test_the_standalone_watcher_indexes_and_follows_tracked_source(
 
     out_go = defex / "pkg" / "out" / "out.go"
     out_go.write_text(out_go.read_text() + 'func Edited() string { return "e" }\n')
-    (handler,) = observer.handlers
     handler.dispatch(FileModifiedEvent(str(out_go)))
     handler.dispatch(FileModifiedEvent(str(defex / "pkg" / "out" / "gen.go")))
 
-    functions = {
-        str(uid) for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION
-    }
-    assert "defex.pkg.out.out.Edited" in functions
-    assert "defex.pkg.out.gen.Gen" not in functions
+    assert "defex.pkg.out.out.Edited" in _functions(store)
+    assert "defex.pkg.out.gen.Gen" not in _functions(store)
+
+
+def test_the_watcher_follows_a_tracked_file_renamed_under_out(
+    defex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The rescues were read once at start-up, so the renamed file's creation
+    # was refused as untracked and it stayed out of the graph (review of
+    # PR 2490). `git mv` rewrites the index, and the watcher re-reads its
+    # rules when the index changes, even after the move event that preceded it.
+    store, handler = _start_watcher(defex, monkeypatch)
+    old, new = defex / "pkg" / "out" / "out.go", defex / "pkg" / "out" / "moved.go"
+    _git(defex, "mv", "pkg/out/out.go", "pkg/out/moved.go")
+
+    handler.dispatch(FileMovedEvent(str(old), str(new)))
+    handler.dispatch(FileModifiedEvent(str(defex / ".git" / "index")))
+
+    assert "defex.pkg.out.moved.Print" in _functions(store)
+    assert "defex.pkg.out.out.Print" not in _functions(store)
+    assert "pkg/out/moved.go" in _file_paths(store)
+
+
+def test_the_watcher_indexes_a_file_once_git_tracks_it(
+    defex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, handler = _start_watcher(defex, monkeypatch)
+    gen = defex / "pkg" / "out" / "gen.go"
+    gen.write_text("package out\nfunc Gen() {}\n")
+    handler.dispatch(FileCreatedEvent(str(gen)))
+    # Negative: untracked output under `out/` stays out.
+    assert "defex.pkg.out.gen.Gen" not in _functions(store)
+
+    _git(defex, "add", "pkg/out/gen.go")
+    handler.dispatch(FileModifiedEvent(str(defex / ".git" / "index")))
+
+    assert "defex.pkg.out.gen.Gen" in _functions(store)
+
+
+def test_the_watcher_applies_an_edited_ignore_file(
+    defex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An edit to `.cgrignore` left later events filtered by the old rules, so
+    # a newly excluded file kept being re-ingested (review of PR 2490).
+    store, handler = _start_watcher(defex, monkeypatch)
+    cgrignore = defex / CGRIGNORE_FILENAME
+    cgrignore.write_text("src/\n")
+    handler.dispatch(FileCreatedEvent(str(cgrignore)))
+
+    app = defex / "src" / "app.js"
+    app.write_text(app.read_text() + "export function added() { return 2; }\n")
+    handler.dispatch(FileModifiedEvent(str(app)))
+
+    assert "src/app.js" not in _file_paths(store)
+    assert not any(qn.endswith(".added") for qn in _functions(store))
+    assert "bin/main.dart" in _file_paths(store)
+
+
+def test_an_index_write_that_moves_no_rule_keeps_the_updater(
+    defex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: `git status` and friends rewrite the index without changing
+    # what is tracked; that must not cost a re-sync.
+    _store, handler = _start_watcher(defex, monkeypatch)
+    before = handler.updater
+
+    handler.dispatch(FileModifiedEvent(str(defex / ".git" / "index")))
+
+    assert handler.updater is before
+
+
+def test_a_linked_worktree_watches_its_index_outside_the_checkout(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    # A linked worktree keeps its index under the main repository's git
+    # directory, which the recursive watch on the checkout never sees.
+    _git(git_repo, "commit", "-q", "--allow-empty", "-m", "init")
+    linked = tmp_path / "linked"
+    _git(git_repo, "worktree", "add", "-q", str(linked))
+
+    rules = realtime_updater.IgnoreRules(linked, _never_built)
+
+    index = git_index_path(linked)
+    assert index is not None
+    assert not index.is_relative_to(linked)
+    assert rules.outside_dirs() == {index.parent}
+    assert index in rules.inputs
+
+
+def _never_built(_patterns: object) -> GraphUpdater:
+    raise AssertionError("no updater is built while only reading the rules")

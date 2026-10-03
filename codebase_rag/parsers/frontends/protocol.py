@@ -9,7 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ...constants.languages import IGNORE_PATTERNS, SupportedLanguage
+from ...constants.languages import SupportedLanguage
 from ...services import IngestorProtocol
 from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 
@@ -135,14 +135,15 @@ class LanguageFrontend(Protocol):
 
     def applies(self, repo_path: Path) -> bool: ...
 
-    # `ignored_dirs` is the set of directory names a whole-repo tool may skip
-    # outright: the defaults less those the indexing walk still keeps a file
-    # under, so a rescued file gets its facts too (review of PR 2490).
+    # `rescued_files` are the repo-relative files the indexing walk keeps
+    # although a default-excluded directory name is on their path; a
+    # whole-repo tool that skips those names must still cover them, or they
+    # reach the graph without compiler facts (review of PR 2490).
     def run(
         self,
         repo_path: Path,
         files: Sequence[Path],
-        ignored_dirs: frozenset[str] = IGNORE_PATTERNS,
+        rescued_files: frozenset[str] = frozenset(),
     ) -> SemanticFacts: ...
 
 
