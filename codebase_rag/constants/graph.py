@@ -671,6 +671,14 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# A C++ member's overload identity, `(int,double) const` (issue #2455): what
+# tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
+# re-parsed out-of-class definition lands on the overload it defines.
+KEY_SIGNATURE = "signature"
+# True on a C++ member whose declaration was read from its class body. An
+# incremental run restores only these as declarations: a member known only
+# from its definition is re-read with that definition, not paired with it.
+KEY_DECLARED_IN_CLASS = "declared_in_class"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -941,7 +949,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.signature AS signature, n.declared_in_class AS declared_in_class"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
