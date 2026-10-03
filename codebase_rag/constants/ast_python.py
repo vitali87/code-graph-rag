@@ -156,11 +156,11 @@ PY_TAINT_CLEARING_CALLS = frozenset(
         "secrets.compare_digest",
     }
 )
-# str predicates and position/count lookups return a bool or an int. They
-# clear the receiver's taint by name alone, since the walk rarely knows a
-# receiver's type. Their arguments' taint clears only on a receiver known to
-# be a string: on any other object (`client.find(secret)`) the method is that
-# object's own, and its result may carry the argument.
+# str predicates and position/count lookups return a bool or an int, so on a
+# receiver known to be a string they clear both the receiver's and the
+# arguments' taint. On any other object (`client.find(secret)`) the method is
+# that object's own, and its result may carry the object's data or the
+# argument, so nothing clears.
 PY_TAINT_CLEARING_METHODS = frozenset(
     {
         "startswith",
@@ -184,8 +184,37 @@ PY_TAINT_CLEARING_METHODS = frozenset(
         "rindex",
     }
 )
-# The local type-map name of a value known to be a string.
+# The annotation that makes a parameter or local a string.
 PY_TYPE_STR = "str"
+# Builtins whose result is always a string, so a name bound to one is a
+# string receiver for the lookups above.
+PY_STR_RESULT_CALLS = frozenset({"str", "repr", "input"})
+# str (and bytes) methods that return a str or bytes when their receiver is
+# one: `t.strip().lower()` on a string is still a string.
+PY_STR_RESULT_METHODS = frozenset(
+    {
+        "strip",
+        "lstrip",
+        "rstrip",
+        "lower",
+        "upper",
+        "casefold",
+        "title",
+        "capitalize",
+        "swapcase",
+        "replace",
+        "removeprefix",
+        "removesuffix",
+        "format",
+        "join",
+        "zfill",
+        "center",
+        "ljust",
+        "rjust",
+        "encode",
+        "decode",
+    }
+)
 
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.

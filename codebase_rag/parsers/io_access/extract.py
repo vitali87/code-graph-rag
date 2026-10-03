@@ -20,6 +20,12 @@ _PY_DEFINITION_TYPES = (
 )
 
 
+# Statements that hand a name to another scope's bindings.
+_PY_SCOPE_DECLARATIONS = frozenset(
+    {cs.TS_PY_GLOBAL_STATEMENT, cs.TS_PY_NONLOCAL_STATEMENT}
+)
+
+
 def _definition_body(node: Node) -> Node | None:
     if node.type == cs.TS_PY_DECORATED_DEFINITION:
         inner = node.child_by_field_name(cs.FIELD_DEFINITION)
@@ -60,19 +66,21 @@ def _python_parameter_names(scope_node: Node) -> set[str]:
     # entire body like any assignment (CodeRabbit review on PR #1325). A typed /
     # default parameter binds only its `name` field -- its annotation / default
     # expressions are loads in the ENCLOSING scope, never bindings here.
+    names: set[str] = set()
+    for param in _python_parameter_nodes(scope_node):
+        names |= _python_parameter_bindings(param)
+    return names
+
+
+def _python_parameter_nodes(scope_node: Node) -> list[Node]:
     if scope_node.type == cs.TS_PY_DECORATED_DEFINITION:
         inner = scope_node.child_by_field_name(cs.FIELD_DEFINITION)
         if inner is not None:
             scope_node = inner
     if scope_node.type != cs.TS_PY_FUNCTION_DEFINITION:
-        return set()
+        return []
     params = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
-    if params is None:
-        return set()
-    names: set[str] = set()
-    for param in params.named_children:
-        names |= _python_parameter_bindings(param)
-    return names
+    return list(params.named_children) if params is not None else []
 
 
 def _python_parameter_bindings(param: Node) -> set[str]:
@@ -227,6 +235,41 @@ def python_locally_assigned_names(scope_node: Node) -> set[str]:
     if scope_node.type != cs.TS_PY_MODULE:
         names -= _global_declared_names(scope_node)
     return names
+
+
+def _declares_name(node: Node, name: str) -> bool:
+    return any(
+        child.type == cs.TS_PY_IDENTIFIER
+        and child.text is not None
+        and child.text.decode(cs.ENCODING_UTF8) == name
+        for child in node.children
+    )
+
+
+def python_name_binding_sites(scope_node: Node, name: str) -> list[Node] | None:
+    # Every node that binds `name` in this scope: the parameter declaring it,
+    # then each assignment / augmented assignment / walrus / with-as / for
+    # target in the scope's OWN body (nested defs/classes pruned), the same
+    # binding forms `python_locally_assigned_names` counts. None when a
+    # `global` or `nonlocal` statement hands the name to another scope, whose
+    # bindings this scan cannot see.
+    sites = [
+        param
+        for param in _python_parameter_nodes(scope_node)
+        if name in _python_parameter_bindings(param)
+    ]
+    stack = list(scope_seed_nodes(scope_node))
+    while stack:
+        node = stack.pop()
+        if node.type in PY_SCOPE_BOUNDARIES:
+            continue
+        if node.type in _PY_SCOPE_DECLARATIONS and _declares_name(node, name):
+            return None
+        target = _binding_target(node)
+        if target is not None and name in _binding_identifiers(target):
+            sites.append(node)
+        stack.extend(node.children)
+    return sites
 
 
 def definition_header_nodes(node: Node) -> list[Node]:

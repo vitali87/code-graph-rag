@@ -404,9 +404,10 @@ def test_sanitizer_clears_the_taint(tmp_path: Path, body: str) -> None:
     assert not _env_to_stdout(edges)
 
 
-# A str lookup name (`find`, `index`, `count`, ...) clears its argument only
-# on a receiver known to be a string. On any other object it is that object's
-# own method, and its result may carry the argument it was given.
+# A str lookup name (`find`, `index`, `count`, ...) clears its receiver and
+# its arguments only on a receiver known to be a string. On any other object
+# it is that object's own method, and its result may carry the object's data
+# or the argument it was given.
 _LOOKUPS_WITH_AN_ARGUMENT = (
     "find",
     "rfind",
@@ -437,6 +438,96 @@ def test_lookup_on_an_object_keeps_its_argument_taint(
 ) -> None:
     edges = _run_flow(tmp_path, _client_handler(f"client.{method}(secret)"))
     assert _env_to_stdout(edges)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [f"client.{m}()" for m in sorted(cs.PY_TAINT_CLEARING_METHODS)]
+    + ["client.startswith('x')", "client.count('-')"],
+)
+def test_lookup_on_a_secret_bearing_object_keeps_the_receiver_taint(
+    tmp_path: Path, call: str
+) -> None:
+    files = {
+        "app.py": (
+            "import os\n"
+            "import external_client\n\n"
+            "def handler():\n"
+            "    secret = os.getenv('API_TOKEN')\n"
+            "    client = external_client.connect(secret)\n"
+            f"    print({call})\n"
+        )
+    }
+    assert _env_to_stdout(_run_flow(tmp_path, files))
+
+
+@pytest.mark.parametrize(
+    "rebind",
+    [
+        pytest.param("    label = external_client.Client()\n", id="assignment"),
+        pytest.param(
+            "    for label in external_client.clients():\n        pass\n",
+            id="for-target",
+        ),
+        pytest.param(
+            "    if label := external_client.Client():\n        pass\n", id="walrus"
+        ),
+    ],
+)
+def test_lookup_on_a_rebound_str_parameter_keeps_its_argument_taint(
+    tmp_path: Path, rebind: str
+) -> None:
+    files = {
+        "app.py": (
+            "import os\n"
+            "import external_client\n\n"
+            "def handler(label: str):\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            f"{rebind}"
+            "    print(label.find(t))\n"
+        )
+    }
+    assert _env_to_stdout(_run_flow(tmp_path, files))
+
+
+def test_lookup_on_a_comprehension_variable_keeps_its_argument_taint(
+    tmp_path: Path,
+) -> None:
+    # The comprehension's own `s` shadows the string bound outside it.
+    files = {
+        "app.py": (
+            "import os\n"
+            "import external_client\n\n"
+            "def handler():\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            "    s = 'sk-live-abc'\n"
+            "    print([s.find(t) for s in external_client.clients()])\n"
+        )
+    }
+    assert _env_to_stdout(_run_flow(tmp_path, files))
+
+
+@pytest.mark.parametrize("declaration", ["global", "nonlocal"])
+def test_lookup_on_a_name_bound_in_another_scope_keeps_its_argument_taint(
+    tmp_path: Path, declaration: str
+) -> None:
+    # Another scope can rebind the name to any object, so the local string
+    # assignment does not make it a string receiver.
+    files = {
+        "app.py": (
+            "import os\n\n"
+            "label = None\n\n"
+            "def outer():\n"
+            "    label = None\n"
+            "    def handler():\n"
+            f"        {declaration} label\n"
+            "        t = os.getenv('API_TOKEN')\n"
+            "        label = 'sk-live-abc'\n"
+            "        print(label.find(t))\n"
+            "    return handler\n"
+        )
+    }
+    assert _env_to_stdout(_run_flow(tmp_path, files))
 
 
 def test_lookup_on_an_untyped_parameter_reaches_the_callee(tmp_path: Path) -> None:
@@ -488,6 +579,36 @@ def test_lookup_on_a_parameter_annotated_str_clears_its_argument(
         )
     }
     assert not _env_to_stdout(_run_flow(tmp_path, files))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "    s = os.environ['API_TOKEN']\n    emit(s.startswith('sk-'))\n",
+            id="environ-subscript",
+        ),
+        pytest.param(
+            "    s = os.environ.get('API_TOKEN')\n    emit(s.count('-'))\n",
+            id="environ-get",
+        ),
+        pytest.param(
+            "    t = t.strip().lower()\n    emit(t.startswith('sk-'))\n",
+            id="str-method-rebind",
+        ),
+        pytest.param(
+            "    s = 'sk-live-abc'\n    emit(s.find(t))\n", id="literal-local"
+        ),
+        pytest.param("    s = str(42)\n    emit(s.find(t))\n", id="str-builtin"),
+        pytest.param("    s = input()\n    emit(s.find(t))\n", id="input-builtin"),
+    ],
+)
+def test_lookup_on_a_name_bound_to_a_string_clears_the_taint(
+    tmp_path: Path, body: str
+) -> None:
+    edges = _run_flow(tmp_path, _handler(body))
+    assert not _arg_edge(edges, "app.handler", "app.emit")
+    assert not _env_to_stdout(edges)
 
 
 def test_sanitizer_result_is_not_resurrected_by_a_later_transform(
