@@ -317,19 +317,32 @@ def _start_update_graph(
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
-    _run_graph_sync(
-        repo=repo,
-        project_name=project_name,
-        project_named=project_named,
-        batch_size=batch_size,
-        exclude=exclude,
-        interactive_setup=interactive_setup,
-        clean=clean,
-        output=output,
-        capture=capture,
-        skip_embeddings=skip_embeddings,
-        assume_yes=assume_yes,
-    )
+    try:
+        _run_graph_sync(
+            repo=repo,
+            project_name=project_name,
+            project_named=project_named,
+            batch_size=batch_size,
+            exclude=exclude,
+            interactive_setup=interactive_setup,
+            clean=clean,
+            output=output,
+            capture=capture,
+            skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
+        )
+    except KeyboardInterrupt as stop:
+        # Ctrl+C is a request, not a crash (#2442): one line when it left the
+        # graph partial, and the shell's interrupt status, set here so it
+        # does not hinge on how typer happens to handle a KeyboardInterrupt.
+        if isinstance(stop, ex.SyncInterrupted):
+            app_context.console.print(
+                style(
+                    cs.CLI_MSG_SYNC_INTERRUPTED.format(project=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+        raise typer.Exit(cs.CLI_EXIT_INTERRUPTED) from stop
     _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
 
 
@@ -709,6 +722,10 @@ def _run_graph_sync(
             # the command outside the connection, which would otherwise log
             # it as a failed write.
             interrupted = stop
+        except KeyboardInterrupt as stop:
+            # Anywhere else the run stopped short of its commit: the marker
+            # stays down, and only the caller knows whether to say so.
+            raise ex.SyncInterrupted from stop
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
 

@@ -917,6 +917,16 @@ def _touch_empty_json(cache_path: Path) -> None:
         pass
 
 
+def _is_placeholder_hash_cache(cache_path: Path) -> bool:
+    # Read quietly rather than through `_load_hash_cache`, which logs every
+    # load: this only classifies the file. One that cannot be read or decoded
+    # is not the placeholder `_touch_empty_json` wrote.
+    try:
+        return loads_json(cache_path.read_text(encoding=cs.ENCODING_UTF8)) == {}
+    except (OSError, ValueError):
+        return False
+
+
 def _natural_qn(qualified_name: str) -> str:
     """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
 
@@ -5010,7 +5020,12 @@ class GraphUpdater:
             return
         if count:
             return
-        logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
+        if self._previous_build_unfinished():
+            # Nothing was wiped: that build stopped before any of its modules
+            # reached the graph.
+            logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
+        else:
+            logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
         # Discarding is best-effort by intent: `missing_ok=True` already says a
         # cache that is not there is fine, and a cache that cannot be REMOVED
         # is the same situation one step later. Every other filesystem writer
@@ -5036,6 +5051,23 @@ class GraphUpdater:
                 self._cache_discarded_in_memory = True
                 logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
+    def _previous_build_unfinished(self) -> bool:
+        """Whether the hash cache is the placeholder of a build that never committed.
+
+        A full build writes an empty cache before its first graph write
+        (`_hash_baseline`) and replaces it, stamping the parser fingerprint
+        beside it, only at its commit point. An empty cache with no stamp is
+        therefore a build that stopped short (Ctrl+C, a crash), and blaming a
+        parser change or a wiped database for the rebuild that follows sent
+        users looking for a cause that was not there (issue #2442). A graph
+        built before the stamp existed has a cache naming its files, and a
+        finished build that found no files stamps its parser all the same.
+        """
+        stamp = self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
+        return _load_parser_fingerprint(stamp) is None and _is_placeholder_hash_cache(
+            self.state_dir / cs.HASH_CACHE_FILENAME
+        )
+
     def _reparse_all_if_parser_changed(self) -> None:
         """Ignore the hash cache for this run when a parser input changed.
 
@@ -5050,6 +5082,11 @@ class GraphUpdater:
         """
         # No hash cache means a full build is coming: nothing to compare.
         if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
+            return
+        if self._previous_build_unfinished():
+            # The empty cache names no file to force, so this run is the full
+            # build it would be anyway; what changes is the reason given.
+            logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
             return
         stored = _load_parser_fingerprint(
             self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
