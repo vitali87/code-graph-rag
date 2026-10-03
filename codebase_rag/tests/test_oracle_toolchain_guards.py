@@ -497,6 +497,9 @@ _GRPC_FORK_NOISE = "\n".join(
         ),
     ]
 )
+# The child's OWN line in the same absl format, from a source that is not one
+# of gRPC's fork-time files: format alone cannot tell it from the noise above.
+_CHILD_LOG_LINE = "E1003 10:37:32.000001   4242 addon.cc:12] prism binding failed"
 
 
 class TestInheritedLogNoise:
@@ -506,8 +509,9 @@ class TestInheritedLogNoise:
     PR #2550 with a reason made only of `ev_poll_posix.cc:587] FD from fork
     parent still in poll list` lines: they filled the stderr budget before
     node's `ERR_REQUIRE_ESM` was reached. The same happens to anyone running
-    the evals in a process that has initialised gRPC, so the guard filters
-    them, not the test.
+    the evals in a process that has initialised gRPC, so the guard handles
+    them, not the test: it moves them behind the child's own output and drops
+    nothing.
     """
 
     @staticmethod
@@ -549,11 +553,74 @@ class TestInheritedLogNoise:
             monkeypatch,
             f"{_GRPC_FORK_NOISE}\nError [ERR_REQUIRE_ESM]: nope",
         )
-        assert "ERR_REQUIRE_ESM" in reason
-        assert "ev_poll_posix" not in reason
-        assert "fork_posix" not in reason
+        assert reason.startswith(
+            ec.NODE_SKIP_CANNOT_REQUIRE.format(
+                package="@ruby/prism", stderr="Error [ERR_REQUIRE_ESM]: nope"
+            )
+        ), reason
 
-    def test_a_failed_npm_install_reason_drops_them_too(
+    def test_a_child_log_line_after_the_inherited_block_comes_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A child may log in the absl format too; its lines are not gRPC's.
+
+        Classified by SOURCE, not by format: `addon.cc` is no gRPC fork-time
+        file, so the line is the child's own and leads the reason.
+        """
+        reason = self._node_reason(
+            tmp_path,
+            monkeypatch,
+            f"{_GRPC_FORK_NOISE}\n{_CHILD_LOG_LINE}\nError [ERR_REQUIRE_ESM]: nope",
+        )
+        assert reason.startswith(
+            ec.NODE_SKIP_CANNOT_REQUIRE.format(
+                package="@ruby/prism",
+                stderr=f"{_CHILD_LOG_LINE}\nError [ERR_REQUIRE_ESM]: nope",
+            )
+        ), reason
+
+    def test_a_child_that_only_logs_in_the_absl_format_keeps_its_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every line is in the absl format, yet only the leading block is gRPC's.
+
+        A format-only filter cannot tell them apart here, falls back to the
+        original order and cuts the child's line off behind the noise.
+        """
+        reason = self._node_reason(
+            tmp_path, monkeypatch, f"{_GRPC_FORK_NOISE}\n{_CHILD_LOG_LINE}"
+        )
+        assert _CHILD_LOG_LINE in reason
+
+    def test_the_inherited_lines_follow_when_the_budget_allows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reordered, not dropped: nothing is lost when it all fits."""
+        inherited = _GRPC_FORK_NOISE.splitlines()[1]
+        reason = self._node_reason(
+            tmp_path, monkeypatch, f"{inherited}\nError [ERR_REQUIRE_ESM]: nope"
+        )
+        assert reason == ec.NODE_SKIP_CANNOT_REQUIRE.format(
+            package="@ruby/prism",
+            stderr=f"Error [ERR_REQUIRE_ESM]: nope\n{inherited}",
+        )
+
+    def test_only_the_leading_block_moves(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A fork-source line AFTER the child's output is left where it is.
+
+        gRPC's fork handlers run before exec, so only a leading block can be
+        theirs; past the child's first line, the order is the child's own.
+        """
+        inherited = _GRPC_FORK_NOISE.splitlines()[1]
+        stderr = f"Error [ERR_REQUIRE_ESM]: nope\n{inherited}\nNode.js v18.19.1"
+        reason = self._node_reason(tmp_path, monkeypatch, stderr)
+        assert reason == ec.NODE_SKIP_CANNOT_REQUIRE.format(
+            package="@ruby/prism", stderr=stderr
+        )
+
+    def test_a_failed_npm_install_reason_puts_npm_first_too(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """`ensure_node_deps` cuts npm's stderr to the same budget."""
@@ -570,10 +637,11 @@ class TestInheritedLogNoise:
         oracle.mkdir()
         with pytest.raises(NodeOracleUnavailable) as raised:
             _common.ensure_node_deps(oracle)
-        assert "npm ERR! code E404" in str(raised.value)
-        assert "ev_poll_posix" not in str(raised.value)
+        assert str(raised.value).startswith(
+            ec.NODE_SKIP_INSTALL_FAILED.format(stderr="npm ERR! code E404")
+        ), raised.value
 
-    def test_a_failed_dotnet_build_reason_drops_them_too(
+    def test_a_failed_dotnet_build_reason_puts_the_build_error_first_too(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The C# guard cuts the build's stderr to the same budget.
@@ -595,16 +663,19 @@ class TestInheritedLogNoise:
         monkeypatch.setattr(csharp_oracle, "_ensure_built", _failed_build)
         reason = csharp_oracle_skip_reason()
         assert reason is not None
-        assert "NETSDK1045" in reason
-        assert "ev_poll_posix" not in reason
+        assert reason.startswith(
+            ec.DOTNET_SKIP_BUILD_FAILED.format(stderr="error NETSDK1045: too old")
+        ), reason
 
-    def test_a_stderr_of_only_log_lines_is_kept_rather_than_emptied(
+    def test_a_stderr_of_only_inherited_lines_is_kept_as_it_is(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Noise is still better than a reason that ends in a bare colon."""
         reason = self._node_reason(tmp_path, monkeypatch, _GRPC_FORK_NOISE)
-        assert "fork_posix.cc:71]" in reason
-        assert not reason.rstrip().endswith(":")
+        assert reason == ec.NODE_SKIP_CANNOT_REQUIRE.format(
+            package="@ruby/prism",
+            stderr=_GRPC_FORK_NOISE[: ec.SKIP_REASON_STDERR_CHARS],
+        )
 
     @pytest.mark.parametrize(
         "line",
@@ -616,16 +687,24 @@ class TestInheritedLogNoise:
             "Error: Cannot find module '@ruby/prism'",
             # The format minus the thread id is not the format.
             "W1003 10:37:31.866642 ev_poll_posix.cc:587] no thread id",
+            # A gRPC fork file's name inside a longer one is another file.
+            "I1003 10:37:31.866642   75998 my_ev_poll_posix.cc:587] the child's",
         ],
     )
-    def test_lines_that_merely_resemble_a_log_line_are_kept(
+    def test_lines_that_merely_resemble_an_inherited_line_stay_first(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str
     ) -> None:
+        # Leading, so a classifier that took them for gRPC's would move them
+        # behind the error and this would catch it.
         reason = self._node_reason(
-            tmp_path, monkeypatch, f"Error [ERR_REQUIRE_ESM]: nope\n{line}"
+            tmp_path, monkeypatch, f"{line}\nError [ERR_REQUIRE_ESM]: nope"
         )
-        assert "ERR_REQUIRE_ESM" in reason
-        assert line in reason
+        assert reason.startswith(
+            ec.NODE_SKIP_CANNOT_REQUIRE.format(
+                package="@ruby/prism",
+                stderr=f"{line.strip()}\nError [ERR_REQUIRE_ESM]: nope",
+            )
+        ), reason
 
 
 class TestPostInstallRecheck:

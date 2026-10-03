@@ -79,18 +79,28 @@ def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
 def reason_stderr(stderr: str) -> str:
     """The part of a child's stderr a skip reason quotes.
 
-    Inherited gRPC fork-handler log lines go BEFORE the cut, not after: they
-    precede the child's own output, so cutting first can leave nothing but
-    them (both macOS jobs of PR #2550 did exactly that to ERR_REQUIRE_ESM).
-    When they are all there is, they stay, because a reason ending in a bare
-    colon tells the reader even less.
+    gRPC's fork handlers run in the child between fork and exec, so what they
+    log is always a LEADING block, ahead of anything the exec'd program
+    writes. Cut as-is, that block can fill the whole budget (both macOS jobs
+    of PR #2550 lost ERR_REQUIRE_ESM this way). So the block moves behind the
+    child's output instead of being dropped: the child's lines come first and
+    in their own order, and nothing is lost when the budget allows. Past the
+    child's first line nothing moves, even a fork-source line, because by
+    then the order is the child's.
     """
-    kept = "\n".join(
-        line
-        for line in stderr.splitlines()
-        if not ec.INHERITED_LOG_LINE_PATTERN.match(line)
-    ).strip()
-    return (kept or stderr.strip())[: ec.SKIP_REASON_STDERR_CHARS]
+    lines = stderr.splitlines()
+    first_own = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if not ec.INHERITED_LOG_LINE_PATTERN.match(line)
+        ),
+        len(lines),
+    )
+    # Rotating by len(lines) is the identity, so a stderr made only of
+    # inherited lines keeps its order: noise still beats a bare colon.
+    reordered = lines[first_own:] + lines[:first_own]
+    return "\n".join(reordered).strip()[: ec.SKIP_REASON_STDERR_CHARS]
 
 
 def node_oracle_available(oracle_dir: Path | None = None) -> bool:
