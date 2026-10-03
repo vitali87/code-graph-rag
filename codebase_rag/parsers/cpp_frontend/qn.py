@@ -17,6 +17,9 @@ from . import constants as fc
 if TYPE_CHECKING:
     from clang.cindex import Cursor
 
+# Every member function a class body can declare, member templates included.
+_MEMBER_KIND_NAMES = fc.METHOD_KIND_NAMES | fc.FUNCTION_KIND_NAMES
+
 
 def _eligible_rel_files(
     repo_path: Path,
@@ -101,8 +104,10 @@ class CppQnResolver:
         self._module_qn = build_module_qn_map(
             self.repo_path, project_name, exclude_paths, unignore_paths
         )
-        # {plain method qn: {canonical declaration's (file, line, column): qn}}
-        self._overloads: dict[str, dict[tuple[str, int, int], str]] = {}
+        # {plain method qn: {its declaration's (line, column): qn}}. The file
+        # is left out: a class body lies in one file, and a path spelled
+        # differently in another translation unit must not miss the entry.
+        self._overloads: dict[str, dict[tuple[int, int], str]] = {}
 
     def rel_path(self, absolute_file: str) -> str | None:
         try:
@@ -201,30 +206,71 @@ class CppQnResolver:
             return None
         return cs.SEPARATOR_DOT.join([class_qn, self.member_name(cursor)])
 
-    def overload_qn(self, cursor: Cursor, method_qn: str, mint: bool) -> str:
+    def overload_qn(self, cursor: Cursor, method_qn: str) -> str:
         """The qn of the overload `cursor` is, in the tree-sitter path's scheme.
 
         Every overload of a member shares `method_qn`, so one node stood for
         all of them (issue #2455). The tree-sitter path keeps the plain name
         for the first overload its class body declares and gives each other
-        one `@<line>` of that declaration; libclang knows the declaration of
-        any declaration or call target as its canonical cursor, so keying on
-        where that sits reproduces both rules. Only a member the walk visits
-        (`mint`) takes a new name: a call to one it never visits (an implicit
-        constructor, a member of an instantiated template) keeps the plain
-        name it always had rather than target a node nobody emits.
+        one `@<line>` of that declaration. The name is worked out from where
+        the declaration sits among its class's members, never from what the
+        walk has reached: an inline body can call an overload declared below
+        it, and libclang resolves that call before the walk gets there.
+        Only a member the class declares is named, so a call to an implicit
+        one (a defaulted constructor) keeps the plain name it always had.
         """
+        if method_qn not in self._overloads and self._name_overloads(
+            cursor.semantic_parent
+        ):
+            # Its class declares no such member (an implicit one): plain, and
+            # remembered, so the next call to it does not scan the class again.
+            self._overloads.setdefault(method_qn, {})
         start = cursor.canonical.extent.start
-        key = (start.file.name if start.file else "", start.line, start.column)
-        overloads = self._overloads.setdefault(method_qn, {})
-        if (known := overloads.get(key)) is not None or not mint:
-            return known or method_qn
+        names = self._overloads.get(method_qn, {})
+        return names.get((start.line, start.column), method_qn)
+
+    def _name_overloads(self, owner: Cursor | None) -> bool:
+        """Name every member `owner` declares; False when it declares none.
+
+        A member of an instantiated template has an owner with no children
+        (`Box<int>`); its template's own members are named when the walk
+        reaches the template, which a use of it always follows, so nothing
+        is recorded for it here.
+        """
+        if owner is None:
+            return False
+        positions: dict[str, set[tuple[int, int]]] = {}
+        for member in owner.get_children():
+            if member.kind.name not in _MEMBER_KIND_NAMES:
+                continue
+            if (member_qn := self.method_qn(member)) is None:
+                continue
+            start = member.canonical.extent.start
+            positions.setdefault(member_qn, set()).add((start.line, start.column))
+        for member_qn, declared in positions.items():
+            self._overloads.setdefault(
+                member_qn, _overload_names(member_qn, sorted(declared))
+            )
+        return bool(positions)
+
+
+def _overload_names(
+    method_qn: str, declared: list[tuple[int, int]]
+) -> dict[tuple[int, int], str]:
+    """Names for one member's overloads, in declaration order.
+
+    The tree-sitter registry's rule: the first keeps the plain name, the
+    rest take `@<line>`, and `_<column>` (0-based, as tree-sitter counts)
+    when an earlier overload already holds that line.
+    """
+    names: dict[tuple[int, int], str] = {}
+    for index, (line, column) in enumerate(declared):
         qualified_name = method_qn
-        if overloads:
-            qualified_name = f"{method_qn}{cs.DUP_QN_MARKER}{start.line}"
-            if qualified_name in overloads.values():
+        if index:
+            qualified_name = f"{method_qn}{cs.DUP_QN_MARKER}{line}"
+            if qualified_name in names.values():
                 qualified_name = (
-                    f"{qualified_name}{cs.DUP_QN_COLUMN_MARKER}{start.column - 1}"
+                    f"{qualified_name}{cs.DUP_QN_COLUMN_MARKER}{column - 1}"
                 )
-        overloads[key] = qualified_name
-        return qualified_name
+        names[(line, column)] = qualified_name
+    return names

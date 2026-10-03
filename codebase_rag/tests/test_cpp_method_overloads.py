@@ -973,6 +973,24 @@ int use_box(Box<int>& b) { b.put(1); b.put(1, 2); return 0; }
 """
 
 
+# Calls that libclang resolves before the walk reaches the overload they
+# name: `a()`'s inline body comes before both `later` declarations, and
+# `Fwd::b` is defined before either `later` definition.
+PURE_FWD_H = """class Fwd {
+public:
+  void a() { later(1.0); }
+  void later(int x);
+  void later(double x);
+  void b();
+};
+"""
+PURE_FWD_CPP = """#include "fwd.h"
+void Fwd::b() { later(2.0); }
+void Fwd::later(int x) {}
+void Fwd::later(double x) {}
+"""
+
+
 def _pure_libclang_project(root: Path) -> Path:
     _write(
         root,
@@ -981,9 +999,11 @@ def _pure_libclang_project(root: Path) -> Path:
             "sep.h": PURE_SEP_H,
             "sep.cpp": PURE_SEP_CPP,
             "box.cpp": PURE_BOX_CPP,
+            "fwd.h": PURE_FWD_H,
+            "fwd.cpp": PURE_FWD_CPP,
         },
     )
-    _write_compdb(root, ("inl.cpp", "sep.cpp", "box.cpp"))
+    _write_compdb(root, ("inl.cpp", "sep.cpp", "box.cpp", "fwd.cpp"))
     return root
 
 
@@ -1008,6 +1028,8 @@ def test_pure_libclang_frontend_names_overloads_as_tree_sitter_does(
         f"{PROJECT}.sep.h.Sep.k@8",
         f"{PROJECT}.box.Box.put",
         f"{PROJECT}.box.Box.put@4",
+        f"{PROJECT}.fwd.h.Fwd.later",
+        f"{PROJECT}.fwd.h.Fwd.later@5",
     }
     frontend_methods = get_qualified_names(get_nodes(frontend, label))
     assert frontend_methods >= expected
@@ -1037,3 +1059,20 @@ def test_pure_libclang_frontend_binds_each_call_to_its_overload(
     box_targets = {dst for src, dst in calls if src == f"{PROJECT}.box.use_box"}
     assert box_targets == {f"{PROJECT}.box.Box.put", f"{PROJECT}.box.Box.put@4"}
     assert box_targets <= nodes
+
+
+@libclang
+def test_pure_libclang_call_to_an_overload_declared_later_binds_to_it(
+    temp_repo: Path,
+) -> None:
+    # The name of the overload a call targets depends on where that overload
+    # is declared, not on whether the walk has reached it yet: both calls
+    # pass a double, so both bind to `later(double)`, which is `later@5`.
+    root = _pure_libclang_project(temp_repo / PROJECT)
+    frontend = _MockIngestor()
+    run_cpp_frontend(frontend, root, root.name, root)
+
+    fwd = f"{PROJECT}.fwd.h.Fwd"
+    calls = {(src, dst) for src, dst, _ in _calls(frontend)}
+    assert {dst for src, dst in calls if src == f"{fwd}.a"} == {f"{fwd}.later@5"}
+    assert {dst for src, dst in calls if src == f"{fwd}.b"} == {f"{fwd}.later@5"}
