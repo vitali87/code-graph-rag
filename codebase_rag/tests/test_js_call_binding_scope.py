@@ -435,6 +435,76 @@ def test_recursive_named_function_expression_still_calls_itself(
     assert edges[(inner, inner)] == cs.EdgeResolution.EXACT
 
 
+@pytest.mark.parametrize(
+    ("source", "callback", "declaration", "outside_caller"),
+    [
+        (
+            "function f () {}\n"
+            "app.use(function f () { return f() })\n"
+            "function caller () { return f() }\n",
+            "f@2",
+            "f",
+            "caller",
+        ),
+        (
+            "app.use(function f () { return f() })\n"
+            "function f () {}\n"
+            "function caller () { return f() }\n",
+            "f",
+            "f@2",
+            "caller",
+        ),
+        (
+            "function outer () {\n"
+            "  function f () {}\n"
+            "  app.use(function f () { return f() })\n"
+            "  return f()\n"
+            "}\n",
+            "outer.f@3",
+            "outer.f",
+            "outer",
+        ),
+    ],
+    ids=["declaration-first", "callback-first", "nested"],
+)
+def test_recursive_callback_shadows_same_named_declaration(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    source: str,
+    callback: str,
+    declaration: str,
+    outside_caller: str,
+) -> None:
+    # Inside `function f`'s own body, `f` is that expression: it shadows the
+    # enclosing scope's `function f`, so the recursion must not reach the
+    # declaration through their shared `@line` group. Outside the body the
+    # declaration still answers the name.
+    root = temp_repo / "shadowdecl"
+    project = _index(root, {"lib/a.js": source}, mock_ingestor)
+    edges = _calls(mock_ingestor)
+    callback_qn = f"{project}.lib.a.{callback}"
+    declaration_qn = f"{project}.lib.a.{declaration}"
+    assert _targets_of(edges, callback_qn) == {callback_qn}
+    assert edges[(callback_qn, callback_qn)] == cs.EdgeResolution.EXACT
+    assert declaration_qn in _targets_of(edges, f"{project}.lib.a.{outside_caller}")
+
+
+def test_recursive_callback_without_outer_name_still_calls_only_itself(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # No other `f` in the module: the recursion keeps its single exact edge.
+    root = temp_repo / "loneself"
+    project = _index(
+        root,
+        {"lib/a.js": "app.use(function f () { return f() })\n"},
+        mock_ingestor,
+    )
+    callback_qn = f"{project}.lib.a.f"
+    edges = _calls(mock_ingestor)
+    assert _targets_of(edges, callback_qn) == {callback_qn}
+    assert edges[(callback_qn, callback_qn)] == cs.EdgeResolution.EXACT
+
+
 def test_recursion_in_same_named_function_expressions_matches_main(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

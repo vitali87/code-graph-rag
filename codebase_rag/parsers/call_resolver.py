@@ -1019,7 +1019,11 @@ class CallResolver:
         )
 
     def lexical_call_targets(
-        self, call_name: str, module_qn: str, targets: list[str]
+        self,
+        call_name: str,
+        module_qn: str,
+        targets: list[str],
+        caller_qn: str | None = None,
     ) -> list[str]:
         """The members of a bare call's `@line` group its name can reach.
 
@@ -1027,14 +1031,32 @@ class CallResolver:
         the bare name means the declaration, not the object's value (issue
         #2435). A name the module imports is left whole: the import may bind
         a module's exported object member, which it does reach by name.
+        Inside a JS/TS named function expression's own body, its name is that
+        expression and shadows every same-named declaration (issue #2402).
         """
         if len(targets) < 2 or cs.SEPARATOR_DOT in call_name:
             return targets
+        registry = self.function_registry
+        if self._calls_own_body_name(call_name, caller_qn, targets):
+            # Same-named function expressions keep their spread (#2403).
+            return [qn for qn in targets if registry.is_body_scoped_name(qn)]
         if call_name in self.import_processor.import_mapping.get(module_qn, {}):
             return targets
-        registry = self.function_registry
         bound = [qn for qn in targets if not registry.is_object_member(qn)]
         return bound or targets
+
+    def _calls_own_body_name(
+        self, call_name: str, caller_qn: str | None, targets: list[str]
+    ) -> bool:
+        # The caller is a body-scoped function expression in the call's
+        # `@line` group, calling the group's name: its own name, which inside
+        # its body binds to it alone, whatever else shares the group.
+        if caller_qn is None or caller_qn not in targets:
+            return False
+        if not self.function_registry.is_body_scoped_name(caller_qn):
+            return False
+        natural = qn_markers.natural_qn(caller_qn)
+        return natural.rsplit(cs.SEPARATOR_DOT, 1)[-1] == call_name
 
     def _protocol_impl_map(self) -> dict[str, str]:
         # A Protocol stub never runs; the concrete implementer does. Map each
