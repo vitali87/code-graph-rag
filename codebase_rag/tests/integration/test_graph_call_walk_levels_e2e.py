@@ -103,21 +103,25 @@ def test_callees_depth_two_walks_from_a_method(indexed: MemgraphIngestor) -> Non
 
 
 @pytest.mark.parametrize(
-    "query",
-    [cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLEES],
-    ids=["callers", "callees"],
+    "name",
+    [
+        "CYPHER_GRAPH_CALLERS",
+        "CYPHER_GRAPH_CALLEES",
+        "CYPHER_GRAPH_CALLERS_OF",
+        "CYPHER_GRAPH_CALLEES_OF",
+    ],
 )
-def test_the_walk_starts_from_the_label_indexes(
-    indexed: MemgraphIngestor, query: str
+def test_every_call_read_starts_from_the_label_indexes(
+    indexed: MemgraphIngestor, name: str
 ) -> None:
     plan = [
         str(next(iter(row.values()), ""))
         for row in indexed.fetch_all(
-            cs.CYPHER_EXPLAIN_PREFIX + query,
+            cs.CYPHER_EXPLAIN_PREFIX + getattr(cq, name),
             {
                 cs.KEY_PROJECT_PREFIX: f"{PROJECT}.",
-                cs.KEY_QNS: [INDEX, URLS],
                 cs.KEY_QN: INDEX,
+                cs.KEY_QNS: [INDEX, URLS],
             },
         )
     ]

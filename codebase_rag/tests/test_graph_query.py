@@ -188,11 +188,16 @@ def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[Resul
                 out.append(n)
     elif query == cq.CYPHER_GRAPH_DEFINITION:
         out = [n for n in NODES if n[cs.KEY_QUALIFIED_NAME] == qn][:1]
-    elif query in (cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLEES):
-        callers = query == cq.CYPHER_GRAPH_CALLERS
-        # One read per level of the walk, for the whole frontier, each row
+    elif query in (
+        cq.CYPHER_GRAPH_CALLERS,
+        cq.CYPHER_GRAPH_CALLEES,
+        cq.CYPHER_GRAPH_CALLERS_OF,
+        cq.CYPHER_GRAPH_CALLEES_OF,
+    ):
+        callers = query in (cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLERS_OF)
+        # A walk's later levels read their whole frontier at once, each row
         # naming the frontier node it hangs off (issue #2597).
-        frontier = p[cs.KEY_QNS]
+        frontier = p.get(cs.KEY_QNS, [qn])
         assert isinstance(frontier, list)
         for src, dst, line, col, el, ec, argc, kws in CALLS:
             this = dst if callers else src

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -395,31 +395,55 @@ def _site_sort_key(row: CallSiteRow) -> tuple[int, str, str, int, int]:
     )
 
 
+class _CallReads(NamedTuple):
+    # The start's own read (`$qn`), the read of a whole later level (`$qns`),
+    # and that read's column naming the frontier node a row hangs off.
+    start: str
+    level: str
+    through: str
+
+
+_CALLERS_READS = _CallReads(
+    cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLERS_OF, cs.KEY_TO_QN
+)
+_CALLEES_READS = _CallReads(
+    cq.CYPHER_GRAPH_CALLEES, cq.CYPHER_GRAPH_CALLEES_OF, cs.KEY_FROM_QN
+)
+
+
 def _walk_sites(
-    fetch_all: QueryFn,
-    project_name: str,
-    query: str,
-    through_key: str,
-    start: str,
-    depth: int,
+    fetch_all: QueryFn, project_name: str, reads: _CallReads, start: str, depth: int
 ) -> list[CallSiteRow]:
-    # Breadth-first over endpoints, one query per LEVEL for the whole
-    # frontier: one per node was 886 round trips for a depth-2 walk on django
-    # (issue #2597). `through_key` is the column naming the frontier node a
-    # row hangs off. A node's sites appear at the depth it was first reached
-    # and never again, so a cycle terminates and the output stays a finite,
-    # ordered list.
+    # Breadth-first over endpoints, one query per LEVEL: one per frontier
+    # node was 886 round trips for a depth-2 walk on django (issue #2597).
+    # The start is read on its own, so depth 1, the default, is still the one
+    # single-node read. A node's sites appear at the depth it was first
+    # reached and never again, so a cycle terminates and the output stays a
+    # finite, ordered list.
     prefix = _prefix(project_name)
     owns = _owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
     for level in range(1, max(1, depth) + 1):
-        rows = fetch_all(
-            query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: sorted(frontier)}
-        )
+        if level == 1:
+            rows = fetch_all(
+                reads.start, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: start}
+            )
+            hops = [(start, row) for row in rows]
+        else:
+            rows = fetch_all(
+                reads.level,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: sorted(frontier)},
+            )
+            hops = [(str(row.get(reads.through, "")), row) for row in rows]
         next_frontier: list[str] = []
-        for site in _owned_sites(rows, owns, level, through_key):
+        for through, row in hops:
+            # A foreign row is neither reported nor a hop the walk continues
+            # through (issue #1982).
+            if not owns(_text_qn(row)):
+                continue
+            site = _site_row(row, level, through)
             out.append(site)
             other = site["qualified_name"]
             if other not in seen:
@@ -431,18 +455,6 @@ def _walk_sites(
     return sorted(out, key=_site_sort_key)
 
 
-def _owned_sites(
-    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through_key: str
-) -> list[CallSiteRow]:
-    """The sites among `rows` whose other endpoint this project owns: a
-    foreign row is neither reported nor a hop the walk continues through."""
-    return [
-        _site_row(row, level, str(row.get(through_key, "")))
-        for row in rows
-        if owns(_text_qn(row))
-    ]
-
-
 def callers(
     fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
 ) -> list[CallSiteRow]:
@@ -451,14 +463,7 @@ def callers(
     `depth` > 1 follows the callers' callers; `through` names the callee
     each row's site invokes, so a transitive row is still one exact site.
     """
-    return _walk_sites(
-        fetch_all,
-        project_name,
-        cq.CYPHER_GRAPH_CALLERS,
-        cs.KEY_TO_QN,
-        qualified_name,
-        depth,
-    )
+    return _walk_sites(fetch_all, project_name, _CALLERS_READS, qualified_name, depth)
 
 
 def callees(
@@ -469,14 +474,7 @@ def callees(
     `path` is `through`'s file, where the site is, not the callee's: that
     one is `callee_path`, so a hop past depth 1 still reads as `path:line`.
     """
-    return _walk_sites(
-        fetch_all,
-        project_name,
-        cq.CYPHER_GRAPH_CALLEES,
-        cs.KEY_FROM_QN,
-        qualified_name,
-        depth,
-    )
+    return _walk_sites(fetch_all, project_name, _CALLEES_READS, qualified_name, depth)
 
 
 # --- implementors / overrides / importers ---------------------------------------

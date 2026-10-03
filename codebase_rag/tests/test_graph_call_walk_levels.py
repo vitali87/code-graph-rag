@@ -78,53 +78,59 @@ def _path(qn: str) -> str:
 
 
 def _fetch_for(
+    callers: bool,
     calls: list[tuple[str, str, int]] = CALLS,
     log: list[tuple[str, PropertyDict]] | None = None,
     reverse_rows: bool = True,
 ) -> Callable[[str, PropertyDict | None], list[ResultRow]]:
-    """The graph answering the call reads with the project-prefix filter
-    their Cypher applies. A read naming the whole frontier (`qns`) is
-    answered for every frontier node at once, each row carrying the frontier
-    node it hangs off; a read naming one node (`qn`) is answered for it."""
+    """The graph answering the walk's reads in one direction, with the
+    project-prefix filter their Cypher applies. A read naming one node
+    (`qn`) is answered for it; a read naming a whole frontier (`qns`) for
+    every node in it, each row carrying the frontier node it hangs off."""
     prefix = f"{P}."
+    through_key = cs.KEY_TO_QN if callers else cs.KEY_FROM_QN
 
     def fetch(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
         if query == cq.CYPHER_LIST_PROJECTS:
             return [{cs.KEY_NAME: name} for name in (P, EXTRA)]
         p = params or {}
         assert p.get(cs.KEY_PROJECT_PREFIX) == prefix, "every read is scoped"
-        assert query in (cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLEES), query
         if log is not None:
             log.append((query, p))
-        qns = p[cs.KEY_QNS] if cs.KEY_QNS in p else [p[cs.KEY_QN]]
-        assert isinstance(qns, list)
-        frontier = {str(qn) for qn in qns}
-        is_callers = query == cq.CYPHER_GRAPH_CALLERS
+        batched = cs.KEY_QNS in p
+        frontier = {str(qn) for qn in _asked(p)}
         out: list[ResultRow] = []
         for caller, callee, line in calls:
-            this, other = (callee, caller) if is_callers else (caller, callee)
+            this, other = (callee, caller) if callers else (caller, callee)
             if this not in frontier or not other.startswith(prefix):
                 continue
-            out.append(
-                {
-                    cs.KEY_TO_QN if is_callers else cs.KEY_FROM_QN: this,
-                    cs.KEY_LABEL: LABELS[other],
-                    cs.KEY_QUALIFIED_NAME: other,
-                    cs.KEY_PATH: _path(caller),
-                    cs.KEY_CALLEE_PATH: _path(callee),
-                    cs.KEY_LINE: line,
-                    cs.KEY_COL: 4,
-                    cs.KEY_END_LINE: line,
-                    cs.KEY_END_COL: 20,
-                    cs.KEY_ARG_COUNT: 1,
-                    cs.KEY_KWARG_NAMES: [],
-                    cs.KEY_RESOLUTION: None,
-                }
-            )
+            row: ResultRow = {
+                cs.KEY_LABEL: LABELS[other],
+                cs.KEY_QUALIFIED_NAME: other,
+                cs.KEY_PATH: _path(caller),
+                cs.KEY_CALLEE_PATH: _path(callee),
+                cs.KEY_LINE: line,
+                cs.KEY_COL: 4,
+                cs.KEY_END_LINE: line,
+                cs.KEY_END_COL: 20,
+                cs.KEY_ARG_COUNT: 1,
+                cs.KEY_KWARG_NAMES: [],
+                cs.KEY_RESOLUTION: None,
+            }
+            if batched:
+                row[through_key] = this
+            out.append(row)
         # Deliberately unsorted: the walk must order its own output.
         return list(reversed(out)) if reverse_rows else out
 
     return fetch
+
+
+def _asked(params: PropertyDict) -> list[str]:
+    """The names one read looks up: its whole frontier, or its one node."""
+    qns = params[cs.KEY_QNS] if cs.KEY_QNS in params else [params[cs.KEY_QN]]
+    assert isinstance(qns, list)
+    return [str(qn) for qn in qns]
 
 
 def _hops(rows: list[graph_query.CallSiteRow]) -> list[tuple[int, str, str, int]]:
@@ -138,33 +144,40 @@ def _hops(rows: list[graph_query.CallSiteRow]) -> list[tuple[int, str, str, int]
 
 def test_callers_ask_once_per_level_for_the_whole_frontier() -> None:
     log: list[tuple[str, PropertyDict]] = []
-    graph_query.callers(_fetch_for(log=log), P, TARGET, depth=5)
-    assert [(q, p.get(cs.KEY_QNS)) for q, p in log] == [
-        (cq.CYPHER_GRAPH_CALLERS, [TARGET]),
-        (cq.CYPHER_GRAPH_CALLERS, [URLS, DETAIL, INDEX]),
-        (cq.CYPHER_GRAPH_CALLERS, [TEST_URLS, TEST_INDEX]),
-        (cq.CYPHER_GRAPH_CALLERS, [RUNNER]),
+    graph_query.callers(_fetch_for(callers=True, log=log), P, TARGET, depth=5)
+    assert [_asked(p) for _q, p in log] == [
+        [TARGET],
+        [URLS, DETAIL, INDEX],
+        [TEST_URLS, TEST_INDEX],
+        [RUNNER],
+    ]
+    # The start's own read, then one batched read per later level.
+    assert [q for q, _p in log] == [
+        cq.CYPHER_GRAPH_CALLERS,
+        cq.CYPHER_GRAPH_CALLERS_OF,
+        cq.CYPHER_GRAPH_CALLERS_OF,
+        cq.CYPHER_GRAPH_CALLERS_OF,
     ]
 
 
 def test_callees_ask_once_per_level_for_the_whole_frontier() -> None:
     log: list[tuple[str, PropertyDict]] = []
-    graph_query.callees(_fetch_for(log=log), P, RUNNER, depth=5)
-    assert [(q, p.get(cs.KEY_QNS)) for q, p in log] == [
-        (cq.CYPHER_GRAPH_CALLEES, [RUNNER]),
-        (cq.CYPHER_GRAPH_CALLEES, [TEST_URLS, TEST_INDEX]),
-        (cq.CYPHER_GRAPH_CALLEES, [URLS, DETAIL, INDEX]),
-        (cq.CYPHER_GRAPH_CALLEES, [TARGET]),
+    graph_query.callees(_fetch_for(callers=False, log=log), P, RUNNER, depth=5)
+    assert [_asked(p) for _q, p in log] == [
+        [RUNNER],
+        [TEST_URLS, TEST_INDEX],
+        [URLS, DETAIL, INDEX],
+        [TARGET],
+    ]
+    assert [q for q, _p in log] == [
+        cq.CYPHER_GRAPH_CALLEES,
+        cq.CYPHER_GRAPH_CALLEES_OF,
+        cq.CYPHER_GRAPH_CALLEES_OF,
+        cq.CYPHER_GRAPH_CALLEES_OF,
     ]
 
 
-def test_depth_one_is_a_single_query_for_the_start() -> None:
-    log: list[tuple[str, PropertyDict]] = []
-    graph_query.callers(_fetch_for(log=log), P, TARGET)
-    assert [p.get(cs.KEY_QNS) for _q, p in log] == [[TARGET]]
-
-
-# --- the frontier is found through the label + qualified_name indexes ------------
+# --- the looked-up node is found through the label + qualified_name indexes -------
 
 
 def _calls_endpoint_labels() -> set[str]:
@@ -179,25 +192,28 @@ def _calls_endpoint_labels() -> set[str]:
 
 
 @pytest.mark.parametrize(
-    ("query", "looked_up", "other"),
+    ("name", "looked_up", "other", "key"),
     [
-        (cq.CYPHER_GRAPH_CALLERS, "callee", "caller"),
-        (cq.CYPHER_GRAPH_CALLEES, "caller", "callee"),
+        ("CYPHER_GRAPH_CALLERS", "callee", "caller", f"${cs.KEY_QN}"),
+        ("CYPHER_GRAPH_CALLEES", "caller", "callee", f"${cs.KEY_QN}"),
+        ("CYPHER_GRAPH_CALLERS_OF", "callee", "caller", cs.KEY_QN),
+        ("CYPHER_GRAPH_CALLEES_OF", "caller", "callee", cs.KEY_QN),
     ],
-    ids=["callers", "callees"],
 )
-def test_the_frontier_is_matched_by_label_and_qualified_name(
-    query: str, looked_up: str, other: str
+def test_the_looked_up_node_is_matched_by_label_and_qualified_name(
+    name: str, looked_up: str, other: str, key: str
 ) -> None:
+    query = getattr(cq, name)
     # Its own MATCH, so the planner starts there from the label indexes
     # rather than scanning every node for the unlabelled far end.
     lookup = re.search(
-        rf"MATCH \({looked_up}:([A-Za-z|]+) \{{qualified_name: (\w+)\}}\)", query
+        rf"MATCH \({looked_up}:([A-Za-z|]+) \{{qualified_name: (\$?\w+)\}}\)", query
     )
     assert lookup is not None, query
-    labels = set(lookup.group(1).split("|"))
-    assert _calls_endpoint_labels() <= labels
-    assert f"UNWIND ${cs.KEY_QNS} AS {lookup.group(2)}" in query
+    assert _calls_endpoint_labels() <= set(lookup.group(1).split("|"))
+    assert lookup.group(2) == key
+    if not key.startswith("$"):
+        assert f"UNWIND ${cs.KEY_QNS} AS {key}" in query
     # The far end keeps its project filter, and nothing compares the
     # looked-up node's qualified_name outside the indexed lookup.
     assert f"{other}.qualified_name STARTS WITH ${cs.KEY_PROJECT_PREFIX}" in query
@@ -208,7 +224,7 @@ def test_the_frontier_is_matched_by_label_and_qualified_name(
 
 
 def test_callers_rows_are_the_sites_of_each_hop() -> None:
-    rows = graph_query.callers(_fetch_for(), P, TARGET, depth=5)
+    rows = graph_query.callers(_fetch_for(callers=True), P, TARGET, depth=5)
     assert _hops(rows) == [
         (1, TARGET, URLS, 12),
         (1, TARGET, DETAIL, 11),
@@ -242,7 +258,7 @@ def test_callers_rows_are_the_sites_of_each_hop() -> None:
 
 
 def test_callees_rows_are_the_sites_of_each_hop() -> None:
-    rows = graph_query.callees(_fetch_for(), P, RUNNER, depth=5)
+    rows = graph_query.callees(_fetch_for(callers=False), P, RUNNER, depth=5)
     assert _hops(rows) == [
         (1, RUNNER, TEST_URLS, 4),
         (1, RUNNER, TEST_INDEX, 3),
@@ -262,31 +278,47 @@ def test_callees_rows_are_the_sites_of_each_hop() -> None:
 
 
 def test_another_projects_node_is_neither_listed_nor_a_hop() -> None:
-    rows = graph_query.callers(_fetch_for(), P, TARGET, depth=5)
+    rows = graph_query.callers(_fetch_for(callers=True), P, TARGET, depth=5)
     names = {r["qualified_name"] for r in rows} | {r["through"] for r in rows}
     assert HOOK not in names
     # Calls the target only through the foreign hook.
     assert VIA_HOOK not in names
     # The other way round: the hook is all `via_hook` calls, so nothing.
-    assert graph_query.callees(_fetch_for(), P, VIA_HOOK, depth=5) == []
+    assert graph_query.callees(_fetch_for(callers=False), P, VIA_HOOK, depth=5) == []
+
+
+def test_depth_one_is_the_single_node_read_of_the_start() -> None:
+    # The default depth, and what rename collects its sites with.
+    for walk, callers, read in (
+        (graph_query.callers, True, cq.CYPHER_GRAPH_CALLERS),
+        (graph_query.callees, False, cq.CYPHER_GRAPH_CALLEES),
+    ):
+        log: list[tuple[str, PropertyDict]] = []
+        walk(_fetch_for(callers=callers, log=log), P, TARGET)
+        assert log == [(read, {cs.KEY_PROJECT_PREFIX: f"{P}.", cs.KEY_QN: TARGET})]
 
 
 def test_depth_stops_at_the_requested_hop() -> None:
     log: list[tuple[str, PropertyDict]] = []
-    rows = graph_query.callers(_fetch_for(log=log), P, TARGET, depth=2)
+    rows = graph_query.callers(_fetch_for(callers=True, log=log), P, TARGET, depth=2)
     assert max(r["depth"] for r in rows) == 2
     assert len(log) == 2
 
 
 def test_an_unknown_name_answers_empty_after_one_query() -> None:
     log: list[tuple[str, PropertyDict]] = []
-    assert graph_query.callers(_fetch_for(log=log), P, f"{P}.nope", depth=5) == []
-    assert graph_query.callees(_fetch_for(log=log), P, f"{P}.nope", depth=5) == []
+    fetch = _fetch_for(callers=True, log=log)
+    assert graph_query.callers(fetch, P, f"{P}.nope", depth=5) == []
+    fetch = _fetch_for(callers=False, log=log)
+    assert graph_query.callees(fetch, P, f"{P}.nope", depth=5) == []
     assert len(log) == 2
 
 
 def test_the_output_does_not_depend_on_the_row_order() -> None:
-    for walk, start in ((graph_query.callers, TARGET), (graph_query.callees, RUNNER)):
-        forward = walk(_fetch_for(reverse_rows=False), P, start, 5)
-        backward = walk(_fetch_for(calls=list(reversed(CALLS))), P, start, 5)
+    for walk, start, callers in (
+        (graph_query.callers, TARGET, True),
+        (graph_query.callees, RUNNER, False),
+    ):
+        forward = walk(_fetch_for(callers, reverse_rows=False), P, start, 5)
+        backward = walk(_fetch_for(callers, list(reversed(CALLS))), P, start, 5)
         assert json.dumps(forward) == json.dumps(backward)
