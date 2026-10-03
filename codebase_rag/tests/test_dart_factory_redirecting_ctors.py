@@ -498,3 +498,271 @@ class TestExtensionNegatives:
         calls = _edges(graph, cs.RelationshipType.CALLS.value)
         targets = _targets(calls, ".use_both.useBothAreas")
         assert not any(t.endswith(".area") for t in targets), sorted(targets)
+
+
+# Review follow-ups (Greptile, PR #2804): each gets its own small project so
+# the fixtures above keep their line numbers and their negatives.
+
+
+def _project(temp_repo: Path, name: str, files: dict[str, str]) -> Path:
+    root = temp_repo / name
+    lib = root / "lib"
+    lib.mkdir(parents=True)
+    for rel, text in files.items():
+        (lib / rel).write_text(text, encoding="utf-8")
+    return root
+
+
+def _index(root: Path, mock_ingestor: MagicMock) -> list[Edge]:
+    run_updater(root, mock_ingestor, skip_if_missing=SKIP)
+    return _edges(mock_ingestor, cs.RelationshipType.CALLS.value)
+
+
+VISIBILITY_FILES = {
+    "kinds.dart": "class Base {}\nclass Derived extends Base {}\n",
+    "base_ops.dart": (
+        "import 'kinds.dart';\n\nextension BaseOps on Base {\n  int ping() => 1;\n}\n"
+    ),
+    "derived_ops.dart": (
+        "import 'kinds.dart';\n\n"
+        "extension DerivedOps on Derived {\n  int ping() => 2;\n}\n"
+    ),
+    "barrel.dart": "export 'derived_ops.dart';\n",
+    "uses_only.dart": "import 'derived_ops.dart';\n",
+    "use_base.dart": (
+        "import 'kinds.dart';\nimport 'base_ops.dart';\n\n"
+        "int useBase() {\n  Derived d = Derived();\n  return d.ping();\n}\n"
+    ),
+    "use_both.dart": (
+        "import 'kinds.dart';\nimport 'base_ops.dart';\nimport 'derived_ops.dart';\n\n"
+        "int useBoth() {\n  Derived d = Derived();\n  return d.ping();\n}\n"
+    ),
+    "use_barrel.dart": (
+        "import 'kinds.dart';\nimport 'base_ops.dart';\nimport 'barrel.dart';\n\n"
+        "int useBarrel() {\n  Derived d = Derived();\n  return d.ping();\n}\n"
+    ),
+    "use_transitive.dart": (
+        "import 'kinds.dart';\nimport 'base_ops.dart';\nimport 'uses_only.dart';\n\n"
+        "int useTransitive() {\n  Derived d = Derived();\n  return d.ping();\n}\n"
+    ),
+    "use_package.dart": (
+        "import 'kinds.dart';\nimport 'package:dvis/derived_ops.dart';\n\n"
+        "int usePackage() {\n  Derived d = Derived();\n  return d.ping();\n}\n"
+    ),
+}
+
+
+class TestExtensionVisibilityAcrossLevels:
+    """An extension the caller's library cannot see never applies, at any
+    inheritance level: an unimported one `on Derived` must not beat an
+    imported one `on Base` (Greptile, PR #2804)."""
+
+    @pytest.fixture
+    def calls(self, temp_repo: Path, mock_ingestor: MagicMock) -> list[Edge]:
+        return _index(_project(temp_repo, "dvis", VISIBILITY_FILES), mock_ingestor)
+
+    def test_imported_base_extension_beats_an_unimported_derived_one(
+        self, calls: list[Edge]
+    ) -> None:
+        assert _targets(calls, ".use_base.useBase") == {
+            "dvis.lib.base_ops.BaseOps.ping"
+        }, sorted(_pairs(calls))
+
+    def test_most_specific_visible_extension_still_wins(
+        self, calls: list[Edge]
+    ) -> None:
+        assert _targets(calls, ".use_both.useBoth") == {
+            "dvis.lib.derived_ops.DerivedOps.ping"
+        }, sorted(_pairs(calls))
+
+    def test_an_exported_extension_is_visible_through_the_barrel(
+        self, calls: list[Edge]
+    ) -> None:
+        assert _targets(calls, ".use_barrel.useBarrel") == {
+            "dvis.lib.derived_ops.DerivedOps.ping"
+        }, sorted(_pairs(calls))
+
+    def test_a_plain_import_of_the_extension_does_not_reexport_it(
+        self, calls: list[Edge]
+    ) -> None:
+        # uses_only.dart IMPORTS derived_ops.dart; an import is not an export.
+        assert _targets(calls, ".use_transitive.useTransitive") == {
+            "dvis.lib.base_ops.BaseOps.ping"
+        }, sorted(_pairs(calls))
+
+    def test_untraceable_imports_keep_the_most_specific_extension(
+        self, calls: list[Edge]
+    ) -> None:
+        # A `package:` import is kept verbatim, so no candidate is provably
+        # visible; the lookup must not then drop the call altogether.
+        assert _targets(calls, ".use_package.usePackage") == {
+            "dvis.lib.derived_ops.DerivedOps.ping"
+        }, sorted(_pairs(calls))
+
+
+PREFIXED_ON_FILES = {
+    "geo.dart": "class Point {\n  Point move(int dx) => Point();\n}\n",
+    "other_geo.dart": "class Point {\n  int z = 0;\n}\n",
+    "ops.dart": (
+        "import 'geo.dart' as p;\n\nextension Ops on p.Point {\n  int sum() => 1;\n}\n"
+    ),
+    "other_ops.dart": (
+        "import 'other_geo.dart' as p;\n\n"
+        "extension OtherOps on p.Point {\n  int total() => 1;\n}\n"
+    ),
+    "use.dart": (
+        "import 'geo.dart';\nimport 'ops.dart';\nimport 'other_ops.dart';\n\n"
+        "int usePrefixed() {\n  Point q = Point();\n"
+        "  return q.move(1).sum() + q.sum();\n}\n\n"
+        "int useOtherPoint() {\n  Point q = Point();\n"
+        "  return q.move(1).total() + q.total();\n}\n"
+    ),
+}
+
+
+class TestPrefixedExtensionOnType:
+    """`extension Ops on p.Point` names Point through the extension's own
+    import prefix (Greptile, PR #2804)."""
+
+    @pytest.fixture
+    def calls(self, temp_repo: Path, mock_ingestor: MagicMock) -> list[Edge]:
+        return _index(_project(temp_repo, "dpre", PREFIXED_ON_FILES), mock_ingestor)
+
+    def test_prefixed_on_type_serves_chained_and_direct_calls(
+        self, calls: list[Edge]
+    ) -> None:
+        cols = {
+            col
+            for src, dst, _line, col in calls
+            if src.endswith(".use.usePrefixed") and dst == "dpre.lib.ops.Ops.sum"
+        }
+        assert len(cols) == 2, sorted(calls)
+
+    def test_prefix_resolves_against_the_extensions_own_import(
+        self, calls: list[Edge]
+    ) -> None:
+        # other_ops.dart's `p` is other_geo.dart: its `p.Point` is a
+        # DIFFERENT class, so the chained hop on a geo.Point (column 24)
+        # never reaches OtherOps.total. Only the direct `q.total()` at column
+        # 36 may, through the pre-existing name-only fallback this lookup
+        # does not own.
+        sites = {
+            (line, col)
+            for src, dst, line, col in calls
+            if src.endswith(".use.useOtherPoint") and dst.endswith(".OtherOps.total")
+        }
+        assert sites <= {(12, 36)}, sorted(calls)
+        # The sibling chain in usePrefixed DOES reach its extension (col 22).
+        assert (7, 22) in {
+            (line, col)
+            for src, dst, line, col in calls
+            if src.endswith(".use.usePrefixed") and dst.endswith(".Ops.sum")
+        }, sorted(calls)
+
+
+RETURN_SCOPE_FILES = {
+    "model.dart": (
+        "class Result {\n  int value() => 1;\n}\n\n"
+        "class Shape {\n  Result make() => Result();\n}\n\n"
+        "class Box extends Shape {}\n\n"
+        "extension BoxOps on Box {\n  Result build() => Result();\n}\n"
+    ),
+    "caller.dart": (
+        "import 'model.dart';\n\n"
+        "class Result {\n  int value() => 2;\n}\n\n"
+        "int useInherited() {\n  Box b = Box();\n  return b.make().value();\n}\n\n"
+        "int useExtension() {\n  Box b = Box();\n  return b.build().value();\n}\n\n"
+        "int useDirect() {\n  Shape s = Shape();\n  return s.make().value();\n}\n"
+    ),
+    "plain.dart": (
+        "import 'model.dart';\n\n"
+        "int usePlain() {\n  Box b = Box();\n"
+        "  return b.make().value() + b.build().value();\n}\n"
+    ),
+    # The declaring library only IMPORTS the returned type; `a_caller.dart`
+    # sorts first, so a project-wide first match would pick its Outcome.
+    "outcome.dart": "class Outcome {\n  int score() => 1;\n}\n",
+    "maker.dart": (
+        "import 'outcome.dart';\n\nclass Maker {\n  Outcome run() => Outcome();\n}\n"
+    ),
+    "a_caller.dart": (
+        "import 'maker.dart';\n\n"
+        "class Outcome {\n  int score() => 2;\n}\n\n"
+        "int useImportedReturn() {\n  Maker m = Maker();\n"
+        "  return m.run().score();\n}\n"
+    ),
+}
+
+
+class TestChainReturnTypeScope:
+    """A hop's return type is written in the DECLARING library, so it must
+    resolve there, not in the caller's (Greptile, PR #2804)."""
+
+    @pytest.fixture
+    def calls(self, temp_repo: Path, mock_ingestor: MagicMock) -> list[Edge]:
+        return _index(_project(temp_repo, "dret", RETURN_SCOPE_FILES), mock_ingestor)
+
+    @pytest.mark.parametrize("caller", ["useInherited", "useExtension", "useDirect"])
+    def test_hop_reaches_the_declaring_librarys_class(
+        self, calls: list[Edge], caller: str
+    ) -> None:
+        targets = _targets(calls, f".caller.{caller}")
+        assert "dret.lib.model.Result.value" in targets, sorted(targets)
+        assert "dret.lib.caller.Result.value" not in targets, sorted(targets)
+
+    def test_no_collision_still_resolves(self, calls: list[Edge]) -> None:
+        targets = _targets(calls, ".plain.usePlain")
+        assert "dret.lib.model.Result.value" in targets, sorted(targets)
+        assert "dret.lib.caller.Result.value" not in targets, sorted(targets)
+
+    def test_a_type_the_declaring_library_imports_resolves_there(
+        self, calls: list[Edge]
+    ) -> None:
+        targets = _targets(calls, ".a_caller.useImportedReturn")
+        assert "dret.lib.outcome.Outcome.score" in targets, sorted(targets)
+        assert "dret.lib.a_caller.Outcome.score" not in targets, sorted(targets)
+
+
+SUPER_TARGET_FILES = {
+    "local.dart": "class Local {\n  Local.named();\n  void other() {}\n}\n",
+    "mix.dart": (
+        "import 'package:ext/ext.dart';\nimport 'local.dart';\n"
+        "import 'local.dart' as lp;\n\n"
+        "mixin M {\n  void named() {}\n}\n\n"
+        "class Iface {\n  Iface.named();\n}\n\n"
+        "class ViaMixin extends External with M {\n  ViaMixin() : super.named();\n}\n\n"
+        "class ViaIface extends External implements Iface {\n"
+        "  ViaIface() : super.named();\n}\n\n"
+        "class OnlyMixin with M {\n  OnlyMixin() : super.named();\n}\n\n"
+        "class LocalBase extends Local with M {\n  LocalBase() : super.named();\n}\n\n"
+        "class PrefixedBase extends lp.Local {\n  PrefixedBase() : super.named();\n}\n"
+    ),
+}
+
+
+class TestSuperDelegationTarget:
+    """`: super.named()` runs a constructor of the `extends` class only: never
+    a mixin's method, an interface's constructor, or anything when there is
+    no `extends` (Greptile, PR #2804)."""
+
+    @pytest.fixture
+    def calls(self, temp_repo: Path, mock_ingestor: MagicMock) -> list[Edge]:
+        return _index(_project(temp_repo, "dmix", SUPER_TARGET_FILES), mock_ingestor)
+
+    @pytest.mark.parametrize("ctor", ["ViaMixin", "ViaIface", "OnlyMixin"])
+    def test_super_never_reaches_a_mixin_or_interface(
+        self, calls: list[Edge], ctor: str
+    ) -> None:
+        assert not _targets(calls, f".mix.{ctor}.{ctor}"), sorted(_pairs(calls))
+
+    def test_super_reaches_the_extends_base_past_a_mixin(
+        self, calls: list[Edge]
+    ) -> None:
+        assert _targets(calls, ".mix.LocalBase.LocalBase") == {
+            "dmix.lib.local.Local.named"
+        }, sorted(_pairs(calls))
+
+    def test_super_reaches_an_import_prefixed_base(self, calls: list[Edge]) -> None:
+        assert _targets(calls, ".mix.PrefixedBase.PrefixedBase") == {
+            "dmix.lib.local.Local.named"
+        }, sorted(_pairs(calls))

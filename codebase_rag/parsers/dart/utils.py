@@ -148,25 +148,66 @@ def dart_constructor_delegations(node: Node) -> list[DartConstructorDelegation]:
     return delegations
 
 
-def dart_extension_on_type(node: Node) -> str | None:
-    """The type an `extension ... on T` declaration extends, as written.
+def _written_type_after(node: Node, keyword: str) -> str | None:
+    """The type named right after the `keyword` token among `node`'s children.
 
-    An import prefix stays (`on p.Point` -> `p.Point`) for the resolver to
-    fold against the import map; type arguments (`on List<T>`) are dropped.
+    An import prefix is a flat sibling run (`p` `.` `Point`), so the run is
+    glued back to `p.Point` for the resolver to fold against the declaring
+    library's own `as` imports; type arguments (`List<T>`) end the run.
     """
-    if node.type != cs.TS_DART_EXTENSION_DECLARATION:
-        return None
     names: list[str] = []
-    after_on = False
+    after_keyword = False
     for child in node.children:
-        if not after_on:
-            after_on = child.type == cs.DART_EXTENSION_ON_KEYWORD
+        if not after_keyword:
+            after_keyword = child.type == keyword
             continue
         if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
             names.append(decode_node_text(child.text))
         elif child.type != cs.SEPARATOR_DOT:
             break
     return cs.SEPARATOR_DOT.join(names) or None
+
+
+def dart_extension_on_type(node: Node) -> str | None:
+    """The type an `extension ... on T` declaration extends, as written
+    (`on p.Point` -> `p.Point`, `on List<T>` -> `List`)."""
+    if node.type != cs.TS_DART_EXTENSION_DECLARATION:
+        return None
+    return _written_type_after(node, cs.DART_EXTENSION_ON_KEYWORD)
+
+
+def dart_superclass_type(node: Node) -> str | None:
+    """The `extends` type, as written, of the class enclosing `node`.
+
+    Only that class declares the constructors a `: super(...)` initializer
+    can run: a `with` mixin declares none, an `implements` interface's are
+    never inherited, and a class with no `extends` delegates to Object.
+    """
+    current = node.parent
+    while current is not None and current.type != cs.TS_DART_CLASS_DEFINITION:
+        current = current.parent
+    if current is None:
+        return None
+    superclass = next(
+        (c for c in current.named_children if c.type == cs.TS_DART_SUPERCLASS),
+        None,
+    )
+    if superclass is None:
+        return None
+    return _written_type_after(superclass, cs.DART_EXTENDS_KEYWORD)
+
+
+def dart_exposes_library(directive: Node) -> bool:
+    """Does this directive hand its target's names to the library's importers?
+
+    `export 'x.dart';` re-exports x, and `part 'x.dart';` makes x part of the
+    library itself; a plain `import` only brings x into this file's scope.
+    """
+    if directive.type == cs.TS_DART_PART_DIRECTIVE:
+        return True
+    return any(
+        child.type == cs.TS_DART_LIBRARY_EXPORT for child in directive.named_children
+    )
 
 
 def _selector_member_name(selector: Node) -> str | None:

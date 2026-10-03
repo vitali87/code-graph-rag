@@ -4218,7 +4218,7 @@ class CallProcessor:
             self._ingest_cpp_declaration_ctor_calls(caller_node, caller_spec, module_qn)
         if language == cs.SupportedLanguage.DART and class_context:
             self._ingest_dart_constructor_delegations(
-                caller_node, caller_spec, class_context
+                caller_node, caller_spec, class_context, module_qn
             )
 
     @_site_scoped
@@ -4227,38 +4227,44 @@ class CallProcessor:
         caller_node: Node,
         caller_spec: tuple[str, str, str],
         class_qn: str,
+        module_qn: str,
     ) -> None:
         # `: this(...)` and `: super(...)` run another constructor without
         # any call node, so a constructor reached only through a redirect or
         # a subclass's super initializer reported dead (issue #2482). An
         # unnamed constructor is registered under its class's simple name.
-        # Only the `extends` base declares constructors among the recorded
-        # parents (a mixin cannot), so the first registered hit is the one.
-        registry = self._resolver.function_registry
+        resolver = self._resolver
+        registry = resolver.function_registry
+        constructors = resolver.type_inference.dart_constructor_qns
         for delegation in dart_utils.dart_constructor_delegations(caller_node):
-            owners = (
-                [
-                    self._resolver._follow_reexports(parent)
-                    for parent in self._resolver.class_inheritance.get(class_qn, [])
-                ]
-                if delegation.to_super
-                else [class_qn]
-            )
-            for owner_qn in owners:
-                simple = qn_markers.strip_dup_marker(
-                    owner_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                )
-                target_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{delegation.name or simple}"
-                if registry.get(target_qn) != NodeType.METHOD:
+            owner_qn = class_qn
+            if delegation.to_super:
+                # `super` is the `extends` class ONLY, as written in this
+                # file: a `with` mixin's same-named METHOD, an `implements`
+                # interface's constructor, or anything at all for a class
+                # with no `extends` is never what runs (Greptile, PR #2804).
+                written = dart_utils.dart_superclass_type(caller_node)
+                if written is None:
                     continue
-                self._site_node = delegation.site
-                self._resolution = cs.EdgeResolution.EXACT
-                self._emit_rel(
-                    caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                owner_qn = resolver._follow_reexports(
+                    resolver.resolve_dart_written_type(written, module_qn)
                 )
-                break
+            simple = qn_markers.strip_dup_marker(
+                owner_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
+            target_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{delegation.name or simple}"
+            if (
+                registry.get(target_qn) != NodeType.METHOD
+                or target_qn not in constructors
+            ):
+                continue
+            self._site_node = delegation.site
+            self._resolution = cs.EdgeResolution.EXACT
+            self._emit_rel(
+                caller_spec,
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _call_scan_context(
         self,

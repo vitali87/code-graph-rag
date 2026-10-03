@@ -3987,28 +3987,84 @@ class CallResolver:
             if not current_type or cs.CHAR_PAREN_OPEN not in part:
                 return None
             method = part.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            if language == cs.SupportedLanguage.DART:
+                current_type = self._dart_member_return_type(
+                    self.resolve_dart_written_type(current_type, module_qn),
+                    method,
+                    module_qn,
+                )
+                continue
             class_qn = self._chain_class_qn(current_type, module_qn)
             current_type = self.type_inference.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
-            if current_type is None and language == cs.SupportedLanguage.DART:
-                current_type = self._dart_member_return_type(
-                    class_qn, method, module_qn
-                )
         return current_type
 
     def _dart_member_return_type(
         self, class_qn: str, member: str, module_qn: str
     ) -> str | None:
-        # An inherited or extension member records its return type under the
-        # DECLARING qn, not the receiver's, so a hop through one ended the
-        # chain (`o.move(1).sum()` on a subclass of Point, issue #2482).
-        found = self._resolve_inherited_method(
+        """The class a Dart hop `.member()` on a `class_qn` receiver returns.
+
+        The member is the class's own, else an inherited one, else an
+        extension's (Dart's lookup order). Its return type is recorded under
+        the DECLARING qn, so a hop through an inherited or extension member
+        ended the chain (`o.move(1).sum()` on a subclass of Point, issue
+        #2482). It is also written in the DECLARING library, so it resolves
+        there: read in the caller's file instead, a bare `Result` bound to
+        whichever `Result` the CALLER sees (Greptile, PR #2804).
+        """
+        return_types = self.type_inference.method_return_types
+        own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member}"
+        if own_qn in return_types or own_qn in self.function_registry:
+            # An own member shadows every inherited and extension one, even
+            # when it records no return type.
+            member_qn = own_qn
+        elif found := self._resolve_inherited_method(
             class_qn, member
-        ) or self._dart_extension_member(class_qn, member, module_qn)
-        if found is None:
+        ) or self._dart_extension_member(class_qn, member, module_qn):
+            member_qn = found[1]
+        else:
             return None
-        return self.type_inference.method_return_types.get(found[1])
+        returned = return_types.get(member_qn)
+        if not returned:
+            return None
+        # Dart has no nested types: a member sits in a top-level class, mixin,
+        # enum or extension, so its library is two segments up.
+        declaring_module = member_qn.rsplit(cs.SEPARATOR_DOT, 2)[0]
+        return self.resolve_dart_written_type(returned, declaring_module)
+
+    def resolve_dart_written_type(self, written: str, module_qn: str) -> str:
+        """A Dart type as written in `module_qn` -> its qn, else as written.
+
+        Dart scopes a type name to the library it is written in (Greptile,
+        PR #2804): `p.Point` names Point through `module_qn`'s OWN `import
+        ... as p` (read as a qualified name it matched nothing), and a bare
+        `Result` is the library's own declaration, else the ONE its imports
+        expose, before any project-wide guess. A name that is already a
+        registered qn (an earlier hop's result) is kept.
+        """
+        if written in self.function_registry:
+            return written
+        prefix, dot, name = written.partition(cs.SEPARATOR_DOT)
+        if dot:
+            hit = self._unique_prefixed_definition(
+                self._dart_prefix_targets(prefix, module_qn), name
+            )
+            if hit is not None:
+                return hit[1]
+        else:
+            own = f"{module_qn}{cs.SEPARATOR_DOT}{written}"
+            if own in self.function_registry:
+                return own
+            imported = [
+                qn
+                for library in self._dart_visible_libraries(module_qn) - {module_qn}
+                if (qn := f"{library}{cs.SEPARATOR_DOT}{written}")
+                in self.function_registry
+            ]
+            if len(imported) == 1:
+                return imported[0]
+        return self._chain_class_qn(written, module_qn)
 
     def _dart_extension_member(
         self, class_qn: str, member: str, module_qn: str
@@ -4016,44 +4072,45 @@ class CallResolver:
         """The extension member a Dart receiver of `class_qn` reaches, if any.
 
         Dart consults extensions only after the receiver's own and inherited
-        members miss, and the extension on the most specific type wins: one
-        `on` the receiver's class beats one `on` an ancestor. Two at the same
-        level are told apart by which the caller's library can see; any tie
-        left is ambiguous (a compile error in Dart) and binds nothing.
+        members miss, applies only those the caller's library can see, and
+        among them the one on the most specific type wins: one `on` the
+        receiver's class beats one `on` an ancestor. Two at the same level are
+        ambiguous (a compile error in Dart) and bind nothing.
         """
         on_types = self.type_inference.dart_extension_on_types
         if not on_types:
             return None
         # The `on` type is resolved from the extension's own library, where it
-        # was written; an extension is always a top-level declaration.
+        # was written (`on p.Point` through ITS `as p` import); an extension
+        # is always a top-level declaration.
         candidates = [
             (
                 member_qn,
                 ext_qn,
-                self._chain_class_qn(
-                    on_types[ext_qn], ext_qn.rpartition(cs.SEPARATOR_DOT)[0]
-                ),
+                self.resolve_dart_written_type(on_types[ext_qn], ext_module),
+                ext_module,
             )
             for member_qn in self.function_registry.find_ending_with(member)
             if (ext_qn := member_qn.rpartition(cs.SEPARATOR_DOT)[0]) in on_types
+            and (ext_module := ext_qn.rpartition(cs.SEPARATOR_DOT)[0])
         ]
         if not candidates:
             return None
+        # Visibility filters BEFORE specificity: an unimported extension `on
+        # Derived` must not beat an imported one `on Base` (Greptile, PR
+        # #2804). A `package:` import is kept verbatim and proves nothing, so
+        # when no candidate is provably visible they all stay in play rather
+        # than the call being dropped.
+        visible_libraries = self._dart_visible_libraries(module_qn)
+        pool = [
+            candidate for candidate in candidates if candidate[3] in visible_libraries
+        ] or candidates
         for level in self._class_and_ancestor_levels(class_qn):
             matches = [
-                (member_qn, ext_qn)
-                for member_qn, ext_qn, on_qn in candidates
-                if on_qn in level
+                member_qn for member_qn, _ext, on_qn, _module in pool if on_qn in level
             ]
-            if len(matches) > 1:
-                matches = [
-                    match
-                    for match in matches
-                    if self._dart_library_visible(match[1], module_qn)
-                ]
             if len(matches) == 1:
-                member_qn = matches[0][0]
-                return self.function_registry[member_qn], member_qn
+                return self.function_registry[matches[0]], matches[0]
             if matches:
                 return None
         return None
@@ -4076,18 +4133,23 @@ class CallResolver:
             frontier = list(parents)
         return levels
 
-    def _dart_library_visible(self, ext_qn: str, module_qn: str) -> bool:
-        # A Dart extension applies only where its library is imported.
-        ext_module = ext_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        if ext_module == module_qn:
-            return True
-        if (
-            ext_module
-            in self.import_processor.import_mapping.get(module_qn, {}).values()
-        ):
-            return True
-        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
-        return any(ext_module in libraries for libraries in aliases.values())
+    def _dart_visible_libraries(self, module_qn: str) -> set[str]:
+        """The libraries whose top-level names `module_qn` can see: itself,
+        every library it imports (prefixed or not), and whatever those hand
+        on through `export` / `part`, transitively. A library a dependency
+        merely IMPORTS stays hidden (issue #2482)."""
+        processor = self.import_processor
+        imported = set(processor.import_mapping.get(module_qn, {}).values())
+        for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
+            imported.update(libraries)
+        visible = {module_qn, *imported}
+        frontier = list(imported)
+        while frontier:
+            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
+                if exposed not in visible:
+                    visible.add(exposed)
+                    frontier.append(exposed)
+        return visible
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but

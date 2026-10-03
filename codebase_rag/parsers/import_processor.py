@@ -41,6 +41,7 @@ from ..utils.path_utils import (
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
+    dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
     dart_local_name,
@@ -843,6 +844,7 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -1010,6 +1012,12 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {library module qn: [module qns it hands to ITS importers]}: the
+        # targets of its `export` and `part` directives. import_mapping holds
+        # those beside plain imports, which expose nothing, so an extension
+        # reached through a barrel file could not be told from one the barrel
+        # merely uses (issue #2482).
+        self.dart_exposed_libraries: dict[str, list[str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -1270,6 +1278,7 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def _defer_module_import_edges(
@@ -5125,6 +5134,10 @@ class ImportProcessor:
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                if dart_exposes_library(import_node):
+                    self.dart_exposed_libraries.setdefault(module_qn, []).append(
+                        full_name
+                    )
                 # `import 'lib.dart' as p;` binds the library's names under
                 # `p`, and the file-derived key never appears in the source,
                 # so a prefixed reference (`p.Box`) resolves only once the
