@@ -335,3 +335,67 @@ class TestNeighbours:
         assert len(errors) == 1, records
         assert errors[0].startswith("Error parsing pyproject.toml ")
         assert "parser bug" in errors[0]
+
+
+class TestPartialManifest:
+    """A manifest that fails part-way keeps what it declared before the
+    failure, as every parser did before the shared reader (Greptile, PR
+    #2613)."""
+
+    def test_valid_cargo_dependency_survives_a_wrong_type_dev_dependency(
+        self, tmp_path: Path, records: list[tuple[str, str]]
+    ) -> None:
+        manifest = _write(
+            tmp_path / "Cargo.toml",
+            '[dependencies]\nserde = "1.0"\n\n[dev-dependencies]\nbroken = 1\n',
+        )
+
+        assert parse_dependencies(manifest) == [Dependency("serde", "1.0")]
+        # A wrong-typed entry is a fault the parser cannot read past, and it
+        # is still reported as one.
+        errors = [msg for lvl, msg in records if lvl == "ERROR"]
+        assert len(errors) == 1, records
+        assert errors[0].startswith("Error parsing Cargo.toml ")
+
+    def test_lines_before_bytes_that_are_not_utf8_are_kept(
+        self, tmp_path: Path, records: list[tuple[str, str]]
+    ) -> None:
+        manifest = _write(
+            tmp_path / "requirements.txt",
+            b"requests==2.31.0\n" + b"x" * 70000 + b"\n\xff\xfe\n",
+        )
+
+        parsed = dependency_parser.read_manifest(manifest)
+
+        assert parsed.dependencies[:1] == [Dependency("requests", "==2.31.0")]
+        # Still named as unparsable: the rest of the file was not read.
+        assert parsed.unparsable is not None
+        assert _at_least_warning(records) == []
+
+    def test_a_valid_cargo_manifest_yields_every_entry_and_no_error(
+        self, tmp_path: Path, records: list[tuple[str, str]]
+    ) -> None:
+        manifest = _write(
+            tmp_path / "Cargo.toml",
+            '[dependencies]\nserde = "1.0"\n\n'
+            '[dev-dependencies]\ntokio = { version = "1.38" }\n',
+        )
+
+        parsed = dependency_parser.read_manifest(manifest)
+
+        assert parsed.dependencies == [
+            Dependency("serde", "1.0"),
+            Dependency("tokio", "1.38"),
+        ]
+        assert parsed.unparsable is None
+        assert records == []
+
+    def test_a_manifest_that_fails_to_load_still_yields_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        manifest = _write(tmp_path / "Cargo.toml", b"[dependencies\nserde = 1")
+
+        parsed = dependency_parser.read_manifest(manifest)
+
+        assert parsed.dependencies == []
+        assert parsed.unparsable is not None

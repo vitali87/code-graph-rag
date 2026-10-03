@@ -74,19 +74,23 @@ class DependencyParser:
         # made every index of such a repository read as a failed run. Bad
         # content is recoverable and per file: DEBUG here, and the updater
         # names the unparsable ones in one WARNING (issue #2568).
+        # `_collect` appends to a list this method owns, so the entries read
+        # before a failure part-way through the file are kept, as each
+        # parser kept them before the shared reader (Greptile, PR #2613).
+        dependencies: list[Dependency] = []
         try:
-            return ManifestParse(self._collect(file_path))
+            self._collect(file_path, dependencies)
         except _CONTENT_ERRORS as e:
             if _is_blank(file_path):
                 logger.debug(ls.DEP_MANIFEST_EMPTY.format(path=file_path))
-                return ManifestParse([])
+                return ManifestParse(dependencies)
             logger.debug(ls.DEP_MANIFEST_UNPARSABLE.format(path=file_path, error=e))
-            return ManifestParse([], str(e))
+            return ManifestParse(dependencies, str(e))
         except Exception as e:
             logger.error(self.failure_message.format(path=file_path, error=e))
-            return ManifestParse([])
+        return ManifestParse(dependencies)
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         raise NotImplementedError
 
 
@@ -94,8 +98,7 @@ class PyProjectTomlParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_PYPROJECT
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         data = _load_toml(file_path)
 
         if poetry_deps := (
@@ -126,15 +129,13 @@ class PyProjectTomlParser(DependencyParser):
                     dependencies.append(
                         Dependency(dep_name, dep_line, {cs.DEP_KEY_GROUP: group_name})
                     )
-        return dependencies
 
 
 class RequirementsTxtParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_REQUIREMENTS
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             for line in f:
                 line = line.strip()
@@ -144,18 +145,17 @@ class RequirementsTxtParser(DependencyParser):
                 dep_name, version_spec = _extract_pep508_package_name(line)
                 if dep_name:
                     dependencies.append(Dependency(dep_name, version_spec))
-        return dependencies
 
 
 class PackageJsonParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_PACKAGE_JSON
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             data = json.load(f)
 
-        return [
+        dependencies.extend(
             Dependency(dep_name, dep_spec)
             for key in (
                 cs.DEP_KEY_DEPENDENCIES,
@@ -163,15 +163,14 @@ class PackageJsonParser(DependencyParser):
                 cs.DEP_KEY_PEER_DEPS,
             )
             for dep_name, dep_spec in data.get(key, {}).items()
-        ]
+        )
 
 
 class CargoTomlParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_CARGO
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         data = _load_toml(file_path)
 
         deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
@@ -191,15 +190,13 @@ class CargoTomlParser(DependencyParser):
                 else dep_spec.get(cs.DEP_KEY_VERSION, "")
             )
             dependencies.append(Dependency(dep_name, version))
-        return dependencies
 
 
 class GoModParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_GOMOD
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             in_require_block = False
             for line in f:
@@ -218,7 +215,6 @@ class GoModParser(DependencyParser):
                 )
                 if dep is not None:
                     dependencies.append(dep)
-        return dependencies
 
 
 def _gomod_require_line(line: str) -> Dependency | None:
@@ -244,8 +240,7 @@ class GemfileParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_GEMFILE
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             for line in f:
                 line = line.strip()
@@ -257,15 +252,13 @@ class GemfileParser(DependencyParser):
                         dep_name = gem_match[1]
                         version = gem_match[2] or ""
                         dependencies.append(Dependency(dep_name, version))
-        return dependencies
 
 
 class ComposerJsonParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_COMPOSER
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             data = json.load(f)
 
@@ -279,15 +272,13 @@ class ComposerJsonParser(DependencyParser):
         dependencies.extend(
             Dependency(dep_name, dep_spec) for dep_name, dep_spec in dev_deps.items()
         )
-        return dependencies
 
 
 class CsprojParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_CSPROJ
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
-        dependencies: list[Dependency] = []
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         tree = ET.parse(file_path)
         root = tree.getroot()
 
@@ -297,14 +288,13 @@ class CsprojParser(DependencyParser):
 
             if include:
                 dependencies.append(Dependency(include, version or ""))
-        return dependencies
 
 
 class PubspecYamlParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_PUBSPEC
 
-    def _collect(self, file_path: Path) -> list[Dependency]:
+    def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         # pubspec.yaml is flat enough that a line scanner beats adding a YAML
         # dependency: track the current top-level key by zero indentation and
         # collect the `name: spec` lines under dependencies blocks. The block's
@@ -313,13 +303,11 @@ class PubspecYamlParser(DependencyParser):
         # `git:`, `path:`) and are skipped. A nested block's parent key
         # (`flutter:`) has no inline scalar, so it is recorded name-only
         # (spec = "").
-        dependencies: list[Dependency] = []
         scanner = _PubspecScanner()
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             for raw in f:
                 if (dependency := scanner.feed(raw.rstrip())) is not None:
                     dependencies.append(dependency)
-        return dependencies
 
 
 class _PubspecScanner:
