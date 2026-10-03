@@ -453,6 +453,7 @@ class DefinitionProcessor(
             self.import_processor.import_mapping,
             self.project_name,
         )
+        resolver.join_partial_groups(self.csharp_partial_groups)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.

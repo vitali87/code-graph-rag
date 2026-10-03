@@ -2077,6 +2077,7 @@ class GraphUpdater:
         linked = self.factory.definition_processor.resolve_deferred_parent_links()
         if linked:
             logger.info("Resolved {} deferred containment parents", linked)
+        self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
         typed = self.factory.definition_processor.emit_type_edges()
@@ -3634,6 +3635,42 @@ class GraphUpdater:
                 restored += 1
         if restored:
             logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
+
+    def _ungroup_rehydrated_non_partials(self) -> None:
+        # The registry rehydration joins every unchanged C# type to the partial
+        # group of its directory and declared name, as its rows do not say
+        # whether the type was declared `partial`; parsing groups only the
+        # types that are. `class Box` and `class Box<T>` side by side are two
+        # types, and grouped they read as one candidate for a type reference:
+        # an edge an incremental sync drew and a clean index does not (#2469).
+        # Only rehydrated types are judged by the graph's rows: a re-parsed
+        # one's row may still describe the source before the edit.
+        dp = self.factory.definition_processor
+        rehydrated = dp.rehydrated_definition_paths
+        if not isinstance(self.ingestor, QueryProtocol) or not any(
+            len(group) > 1 and qn in rehydrated
+            for qn, group in dp.csharp_partial_groups.items()
+        ):
+            return
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            modifiers = row.get(cs.KEY_MODIFIERS)
+            if (
+                isinstance(qn, str)
+                and qn in rehydrated
+                and isinstance(modifiers, list)
+                and cs.TS_CSHARP_MODIFIER_PARTIAL not in modifiers
+                and (group := dp.csharp_partial_groups.pop(qn, None)) is not None
+            ):
+                # In place: the list is the one `_csharp_partial_index` holds.
+                group[:] = [part for part in group if part != qn]
 
     def _rehydrate_go_type_locations(self) -> None:
         # Incremental runs fill go_type_locations only from re-parsed files,

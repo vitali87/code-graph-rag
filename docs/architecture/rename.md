@@ -23,7 +23,7 @@ Sites come from the graph, never from text search:
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
-| `definition` | The `name` field of the definition node, and of every override in both directions (`OVERRIDES` edges), so a method rename keeps the hierarchy consistent. |
+| `definition` | The `name` field of the definition node, and of every override in both directions (`OVERRIDES` edges), so a method rename keeps the hierarchy consistent. A C# `partial` type split across files is one node per part, and every part is renamed together: the parts declared `partial` with the same kind and name, in the same directory under the same namespace. Renaming any part renames the type: the sites of every part are rewritten, and an edge to any part without a site refuses the rename (see [Refusal](#refusal)). |
 | `call`       | `CALLS` edges into the definition, using the per-site `line`/`col` recorded at ingest (see [graph schema](graph-schema.md#edge-site-properties)). |
 | `reference`  | `REFERENCES` and `INSTANTIATES` edges, the same way.            |
 | `import`     | `IMPORTS` edges whose `imported_name` is the symbol; the statement is retargeted by the [import rewriter](patchers.md#import-rewriting-for-rename-and-move), and an alias (`import helper as h`) is kept, so aliased call sites need no edit. |
