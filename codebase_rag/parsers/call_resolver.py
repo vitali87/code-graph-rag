@@ -1966,9 +1966,7 @@ class CallResolver:
                 call.call_point,
             )
             if self.function_registry[qn] == cs.NodeLabel.METHOD.value
-            and self._rust_method_owner_matches(
-                qn.rpartition(cs.SEPARATOR_DOT)[0], owners, names
-            )
+            and self._rust_method_owner_matches(qn, owners, names)
         ]
         if not candidates:
             logger.debug(ls.CALL_RUST_OWNER_UNRESOLVED, call_name=call.call_name)
@@ -1982,9 +1980,10 @@ class CallResolver:
         return self.function_registry[best], best
 
     def _rust_method_owner_matches(
-        self, owner: str, owners: frozenset[str], names: frozenset[str]
+        self, method_qn: str, owners: frozenset[str], names: frozenset[str]
     ) -> bool:
-        if self._rust_owner_is(owner, owners, names):
+        owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if self._rust_owner_is(owner, owners, names, method_qn):
             return True
         return self.function_registry.get(owner) == NodeType.INTERFACE and any(
             self._rust_owner_is(implementer, owners, names)
@@ -1992,7 +1991,11 @@ class CallResolver:
         )
 
     def _rust_owner_is(
-        self, owner: str, owners: frozenset[str], names: frozenset[str]
+        self,
+        owner: str,
+        owners: frozenset[str],
+        names: frozenset[str],
+        method_qn: str | None = None,
     ) -> bool:
         return owner in owners or (
             owner not in self.function_registry
@@ -2000,10 +2003,12 @@ class CallResolver:
             # With no first-party owner the names are external or primitive
             # types, and the impl block must be on that type, not on the
             # crate's own type of the same name.
-            and (bool(owners) or self._rust_impl_on_external_type(owner))
+            and (bool(owners) or self._rust_impl_on_external_type(owner, method_qn))
         )
 
-    def _rust_impl_on_external_type(self, owner: str) -> bool:
+    def _rust_impl_on_external_type(
+        self, owner: str, method_qn: str | None = None
+    ) -> bool:
         """Whether an impl block registered under `owner` is on a type the
         crate does not define.
 
@@ -2019,7 +2024,10 @@ class CallResolver:
         nothing.
         """
         impl_module = owner.rpartition(cs.SEPARATOR_DOT)[0]
-        written = self.import_processor.rust_impl_self_paths.get(owner)
+        paths = self.import_processor.rust_impl_self_paths
+        # The method's own block when known: two blocks of one module share
+        # `owner` while naming different types.
+        written = (paths.get(method_qn) if method_qn else None) or paths.get(owner)
         if not written:
             # Not parsed this run (an unchanged file on an incremental run):
             # no path to read, so a crate type of the name is taken to mean

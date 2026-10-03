@@ -601,3 +601,47 @@ def test_trait_impl_on_a_std_path_reaches_it_beside_the_crates_own_type(
     callees = _callees(edges, "rs_std_path_impl.src.app.build")
     assert "rs_std_path_impl.src.describe.String.describe" in callees, edges
     assert "rs_std_path_impl.src.bare.String.label" in callees, edges
+
+
+_MIXED_IMPLS = {
+    "src/lib.rs": "pub mod shadow;\npub mod mixed;\npub mod app;\n",
+    "src/shadow.rs": "pub struct String { n: usize }\n",
+    "src/mixed.rs": (
+        "use crate::shadow::String;\n\n"
+        "pub trait Describe {\n"
+        "    fn describe() -> usize;\n"
+        "}\n\n"
+        "impl String {\n"
+        "    pub fn new() -> String { String { n: 1 } }\n"
+        "}\n\n"
+        "impl Describe for std::string::String {\n"
+        "    fn describe() -> usize { 6 }\n"
+        "}\n"
+    ),
+    "src/app.rs": (
+        "use crate::mixed::Describe;\n\n"
+        "pub fn build() -> usize {\n"
+        "    std::string::String::new().len() + std::string::String::describe()\n"
+        "}\n"
+    ),
+}
+
+
+def test_std_path_call_skips_the_crates_impl_in_a_module_with_both(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # #2595 re-review: mixed.rs holds an impl of the crate's `String` and a
+    # trait impl for `std::string::String`; both register under
+    # `mixed.String`, but only the trait impl's methods are std's.
+    edges = _index(temp_repo, mock_ingestor, "rs_mixed_impls", _MIXED_IMPLS)
+    callees = _callees(edges, "rs_mixed_impls.src.app.build")
+    assert "rs_mixed_impls.src.mixed.String.new" not in callees, edges
+
+
+def test_std_path_call_still_reaches_the_std_impl_in_a_module_with_both(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: the trait impl on `std::string::String` beside it still binds.
+    edges = _index(temp_repo, mock_ingestor, "rs_mixed_impls", _MIXED_IMPLS)
+    callees = _callees(edges, "rs_mixed_impls.src.app.build")
+    assert "rs_mixed_impls.src.mixed.String.describe" in callees, edges
