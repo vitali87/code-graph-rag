@@ -1879,7 +1879,7 @@ class CallProcessor:
         if registered := self._path_to_module_qn.get(file_path):
             return registered
         file_name = file_path.name
-        if file_name in (cs.INIT_PY, cs.MOD_RS):
+        if file_name in (*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.parent.parts)
             )
@@ -2655,19 +2655,8 @@ class CallProcessor:
         # The caller name a function node's body calls are attributed under;
         # None means the node gets no caller pass and is skipped.
         if language in _C_FAMILY_LANGUAGES:
-            # A macro-invocation artifact the ingest pass declined to
-            # register (no class bears its name) must not become a call
-            # target either; mirror ingest's decision via the recorded
-            # locations so the two passes never diverge.
-            if (
-                language == cs.SupportedLanguage.CPP
-                and cpp_utils.is_macro_invocation_artifact(func_node)
-                and self._recorded_caller(func_node, module_qn) is None
-            ):
-                return None
-            func_name = cpp_utils.extract_function_name(func_node)
-        else:
-            func_name = self._get_node_name(func_node)
+            return self._c_family_caller_func_name(func_node, language, module_qn)
+        func_name = self._get_node_name(func_node)
         if not func_name and language in _JS_TS_LANGUAGES:
             func_name = self._js_ts_arrow_binding_name(func_node)
         if (
@@ -2701,6 +2690,27 @@ class CallProcessor:
                 return None
             func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return func_name
+
+    def _c_family_caller_func_name(
+        self, func_node: Node, language: cs.SupportedLanguage, module_qn: str
+    ) -> str | None:
+        # A macro-invocation artifact the ingest pass declined to register
+        # (no class bears its name) must not become a call target either;
+        # mirror ingest's decision via the recorded locations so the two
+        # passes never diverge.
+        if (
+            language == cs.SupportedLanguage.CPP
+            and cpp_utils.is_macro_invocation_artifact(func_node)
+            and self._recorded_caller(func_node, module_qn) is None
+        ):
+            return None
+        func_name = cpp_utils.extract_function_name(func_node)
+        # The definition pass names a macro-split C definition from its
+        # `type` field (issue #2528); without the same name here its body is
+        # skipped and every call in it is lost.
+        if not func_name and language == cs.SupportedLanguage.C:
+            func_name = cpp_utils.c_macro_split_function_name(func_node)
+        return func_name or None
 
     @staticmethod
     def _lua_caller_func_name(func_node: Node) -> str | None:
@@ -4304,6 +4314,9 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
+            self._ingest_java_method_reference(ctx, call_node)
+            return
         call_name = self._scan_call_name(ctx, call_node)
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
@@ -5184,7 +5197,10 @@ class CallProcessor:
                     )
 
     def _redirect_construction(
-        self, ctx: _CallScanContext, callee_qn: str
+        self,
+        ctx: _CallScanContext,
+        callee_qn: str,
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> tuple[str, str] | None:
         class_variants = self._resolver.function_registry.variants(callee_qn)
         self._resolution = (
@@ -5215,7 +5231,8 @@ class CallProcessor:
             # A Java/C#/C++/Dart constructor is a method named like its
             # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
             # runs one, so redirect a CALLS edge to every declared
-            # constructor (overload selection unneeded for reachability).
+            # constructor (overload selection unneeded for reachability);
+            # a Java `Foo::new` runs none yet and passes REFERENCES.
             # C#, C++, and Dart default constructors use the same
             # class-simple-name convention, so java_constructor_targets
             # selects them too (a Dart NAMED constructor is invoked by its
@@ -5223,7 +5240,7 @@ class CallProcessor:
             # redirects to the destructor: the object's `~X` runs at end of
             # lifetime with no call node of its own. sorted(): the target
             # label is a hash-randomized StrEnum, so sort for determinism.
-            self._emit_declared_ctor_calls(ctx, callee_qn, class_variants)
+            self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
@@ -5239,7 +5256,11 @@ class CallProcessor:
         return (cs.NodeLabel.METHOD, init_qn)
 
     def _emit_declared_ctor_calls(
-        self, ctx: _CallScanContext, callee_qn: str, class_variants: list[str]
+        self,
+        ctx: _CallScanContext,
+        callee_qn: str,
+        class_variants: list[str],
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
         if ctx.language == cs.SupportedLanguage.CPP:
             self._emit_cpp_ctor_calls(ctx.caller_spec, callee_qn)
@@ -5270,8 +5291,79 @@ class CallProcessor:
         for ctor_type, variant in ctor_edges:
             ctx.ensure_rel(
                 ctx.caller_spec,
-                cs.RelationshipType.CALLS,
+                ctor_rel,
                 (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+            )
+
+    def _ingest_java_method_reference(
+        self, ctx: _CallScanContext, ref_node: Node
+    ) -> None:
+        # `Type::m`, `expr::m`, `this::m`, `super::m` hand a method over as a
+        # value and nothing runs at this site, so the edge is REFERENCES: what
+        # a C# method group and a callback argument get in every other
+        # language, which keeps the method reachable without asserting a
+        # call the graph cannot see (issue #2546).
+        if (parts := java_utils.method_reference_parts(ref_node)) is None:
+            return
+        if parts.method_name is None:
+            self._ingest_java_constructor_reference(ctx, ref_node, parts.receiver)
+            return
+        engine = self._resolver.type_inference.java_type_inference
+        targets = engine.java_method_reference_targets(
+            parts.receiver, parts.method_name, ctx.local_var_types, ctx.module_qn
+        )
+        registry = self._resolver.function_registry
+        edges = [
+            (label, variant)
+            for target_type, target_qn in targets
+            for variant in registry.variants(target_qn)
+            if (label := registry.get(variant) or target_type)
+            in (NodeType.FUNCTION, NodeType.METHOD)
+        ]
+        if not edges:
+            # Java sees same-package definitions without an import, so the
+            # name is the only link to a file that may define it later.
+            self._note_unresolved(ctx.module_qn, parts.method_name)
+            return
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for label, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    def _ingest_java_constructor_reference(
+        self, ctx: _CallScanContext, ref_node: Node, receiver: Node
+    ) -> None:
+        # `Type::new` is a factory for Type: the type is resolved and
+        # INSTANTIATES'd exactly as `new Type(...)` is, and its constructors are
+        # referenced rather than called, since none runs here. The functional
+        # interface that would pick one is not visible to the parser, so each
+        # declared constructor is referenced, labelled `overload` when there
+        # are several. An array type (`int[]::new`) constructs no class.
+        if not (type_name := java_utils.method_reference_receiver_text(receiver)):
+            return
+        callee = ctx.resolve_func(
+            type_name,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            call_point=ref_node.start_byte,
+            constructing=True,
+        )
+        if callee is None:
+            self._note_unresolved(ctx.module_qn, written_simple_name(type_name))
+            return
+        if self._resolver.function_registry.get(callee[1]) == NodeType.CLASS:
+            self._redirect_construction(
+                ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
             )
 
     def _emit_resolved_callee_targets(

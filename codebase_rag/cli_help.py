@@ -208,7 +208,8 @@ EPILOG_TRACE = "Run 'cgr help trace COMMAND' for command-specific help."
 
 HELP_TRACE_REPO_PATH = (
     "Repository the trace was recorded against. Used to derive the project "
-    "name and re-anchor traced file paths."
+    "name and re-anchor traced file paths, including paths recorded under the "
+    "checkout root the trace header names (a CI runner's or container's)."
 )
 HELP_TRACE_PROJECT_NAME = (
     "Project name to ingest into. Defaults to the name derived from --repo-path."
@@ -374,7 +375,10 @@ HELP_ASSUME_YES = (
     "Answer yes to destructive confirmations, such as the one --clean asks before "
     "deleting other projects from the shared graph."
 )
-HELP_OUTPUT_GRAPH = "Write the updated graph to PATH as JSON. Requires --update-graph."
+HELP_OUTPUT_GRAPH = (
+    "Write this repository's project graph to PATH as JSON. Requires "
+    "--update-graph. Use cgr export for the whole shared graph."
+)
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
 HELP_EXPORT_PROJECT_NAME = (
     "Export only this project: what it owns, the relationships that start "

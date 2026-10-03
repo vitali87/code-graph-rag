@@ -29,6 +29,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, PendingTypeFact
+from .cpp import utils as cpp_utils
 from .csharp import arity as csharp_arity
 from .csharp import utils as csharp_utils
 from .utils import safe_decode_with_fallback
@@ -204,6 +205,13 @@ def _extract_c_cpp_type_facts(node: Node) -> TypeFacts:
     return TypeFacts(_field_type(node) or None, None)
 
 
+def _extract_c_type_facts(node: Node) -> TypeFacts:
+    # A macro-split definition's `type` field holds its NAME; the return type
+    # stayed on the declaration recovery closed before it (issue #2528).
+    split = cpp_utils.c_macro_split_declaration(node)
+    return _extract_c_cpp_type_facts(node if split is None else split)
+
+
 _EXTRACTORS = {
     cs.SupportedLanguage.PYTHON: _extract_python_type_facts,
     cs.SupportedLanguage.JS: _extract_js_ts_type_facts,
@@ -213,7 +221,7 @@ _EXTRACTORS = {
     cs.SupportedLanguage.JAVA: _extract_java_type_facts,
     cs.SupportedLanguage.RUST: _extract_rust_type_facts,
     cs.SupportedLanguage.CSHARP: _extract_csharp_type_facts,
-    cs.SupportedLanguage.C: _extract_c_cpp_type_facts,
+    cs.SupportedLanguage.C: _extract_c_type_facts,
     cs.SupportedLanguage.CPP: _extract_c_cpp_type_facts,
 }
 

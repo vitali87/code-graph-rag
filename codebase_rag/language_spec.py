@@ -184,6 +184,13 @@ def _c_get_name(node: Node) -> str | None:
             name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
             if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
                 return decode_node_text(name_node.text)
+        # `int CJSON_CDECL main(void)`: recovery moved the name into `type`
+        # (issue #2528). The call pass names the caller through the same
+        # helper, so both passes agree on the node.
+        from .parsers.cpp import utils as cpp_utils
+
+        if split_name := cpp_utils.c_macro_split_function_name(node):
+            return split_name
     return _generic_get_name(node)
 
 
@@ -677,11 +684,15 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (record_declaration
             name: (identifier) @name) @class
         """,
+        # A method reference is no call, but it is captured with the calls so
+        # it is owned by the same caller (method, anonymous-class method, or
+        # the module for a field initializer) and turned into REFERENCES.
         call_query="""
         (method_invocation
             name: (identifier) @name) @call
         (object_creation_expression
             type: (_) @name) @call
+        (method_reference) @call
         """,
     ),
     cs.SupportedLanguage.C: LanguageSpec(

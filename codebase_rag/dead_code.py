@@ -631,6 +631,11 @@ def _is_root(
         # never by a first-party call, so it is a root.
         lambda: props.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
         lambda: qn in protocol_stubs,
+        # A `.pyi` definition declares an API whose body lives elsewhere,
+        # usually in a compiled extension that is not source; no first-party
+        # call is needed for it to be used, and deleting it from the stub
+        # would not delete the code (issue #2445).
+        lambda: path.endswith(cs.EXT_PYI),
         lambda: is_method and _is_dunder(leaf) and path.endswith(cs.EXT_PY),
         # Python Enum protocol hooks (_generate_next_value_, _missing_) are
         # invoked by the enum machinery by NAME, like dunders: roots, not
