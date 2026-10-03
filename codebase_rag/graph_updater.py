@@ -91,6 +91,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
@@ -6336,6 +6337,8 @@ class GraphUpdater:
                 self._parsed_files.append((filepath, language))
         elif self._is_dependency_file(filepath.name, filepath):
             self.factory.definition_processor.process_dependencies(filepath)
+        elif is_notebook_path(filepath):
+            self._process_notebook(filepath, file_bytes)
         else:
             self.process_with_secondary_tier(filepath)
 
@@ -6385,6 +6388,39 @@ class GraphUpdater:
             return True
         return False
 
+    def _process_notebook(self, filepath: Path, file_bytes: bytes | None) -> None:
+        """Parse a Python notebook's code cells as the module they make.
+
+        Registered with the call pass like any parsed file, so its imports and
+        calls become edges; a notebook in another language, or one that does
+        not read as nbformat 4, keeps only its `File` node (issue #2480).
+        """
+        if cs.SupportedLanguage.PYTHON not in self.parsers:
+            return
+        notebook = read_notebook(
+            _read_bytes(filepath) if file_bytes is None else file_bytes
+        )
+        rel = cached_relative_path(filepath, self.repo_path).as_posix()
+        if isinstance(notebook, NotebookSkipped):
+            if notebook.reason == cs.NotebookSkip.NOT_PYTHON:
+                logger.debug(
+                    ls.NOTEBOOK_NOT_PYTHON, path=rel, language=notebook.language
+                )
+            else:
+                logger.warning(ls.NOTEBOOK_UNREADABLE, path=rel, reason=notebook.reason)
+            return
+        result = self.factory.definition_processor.process_file(
+            filepath,
+            cs.SupportedLanguage.PYTHON,
+            self.queries,
+            self.factory.structure_processor.structural_elements,
+            source_bytes=notebook.source,
+        )
+        if result:
+            self.ast_cache[filepath] = result
+            self._parsed_files.append((filepath, cs.SupportedLanguage.PYTHON))
+            logger.debug(ls.NOTEBOOK_INDEXED, path=rel, cells=len(notebook.cells))
+
     def _ast_for(self, file_path: Path) -> Node | None:
         """The cached AST root for a file, or None when it is not cached."""
         entry = self.ast_cache.load(file_path)
@@ -6398,6 +6434,8 @@ class GraphUpdater:
         Evicted files carry stale captures (nodes from the discarded tree),
         so those are dropped: downstream recomputes them from the fresh tree.
         """
+        if is_notebook_path(file_path):
+            return self._load_notebook_ast(file_path)
         language = get_language_for_extension(file_path.suffix)
         if language is None or language not in self.parsers:
             return None
@@ -6418,6 +6456,27 @@ class GraphUpdater:
         ).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
+
+    def _load_notebook_ast(
+        self, file_path: Path
+    ) -> tuple[Node, cs.SupportedLanguage] | None:
+        """Re-parse an evicted notebook from the Python source it was parsed as."""
+        language_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        parser = language_queries.get(cs.KEY_PARSER) if language_queries else None
+        if parser is None:
+            return None
+        try:
+            notebook = read_notebook(file_path.read_bytes())
+        except OSError as e:
+            logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
+            return None
+        if isinstance(notebook, NotebookSkipped):
+            return None
+        root_node = parse_with_preproc_recovery(
+            parser, notebook.source, cs.SupportedLanguage.PYTHON
+        ).root_node
+        self.factory._func_class_captures_cache.pop(file_path, None)
+        return (root_node, cs.SupportedLanguage.PYTHON)
 
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
         # `only` scopes the pass to a re-ingested subset (issue #1524); every
