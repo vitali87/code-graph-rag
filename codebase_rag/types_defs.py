@@ -368,6 +368,12 @@ class JavaMethodCallInfo(TypedDict):
     arguments: int
 
 
+class JavaMethodReferenceParts(NamedTuple):
+    # `method_name` is None for a constructor reference (`Type::new`).
+    receiver: ASTNode
+    method_name: str | None
+
+
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
