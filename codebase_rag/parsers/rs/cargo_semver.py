@@ -48,7 +48,7 @@ class _Comparator(NamedTuple):
 
 def satisfies(version: str, requirement: str) -> bool:
     """Whether `version` meets the Cargo `requirement`; False when unsure."""
-    key = _version_key(version.strip())
+    key = version_key(version)
     comparators = _parse_requirement(requirement)
     if key is None or comparators is None:
         return False
@@ -60,8 +60,9 @@ def satisfies(version: str, requirement: str) -> bool:
     return all(_matches(c, key) for c in comparators)
 
 
-def _version_key(text: str) -> _Key | None:
-    match = _VERSION_RE.match(text)
+def version_key(version: str) -> _Key | None:
+    """A sort key ordering versions as Cargo does; None when unreadable."""
+    match = _VERSION_RE.match(version.strip())
     if match is None:
         return None
     major, minor, patch, pre = match.groups()

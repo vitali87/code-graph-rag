@@ -2853,45 +2853,57 @@ class ImportProcessor:
         if source is None:
             return None
         package = _rust_dep_package(key, value)
-        if (patch := self._rust_patch_entry(source, package)) is not None:
-            return self._rust_patch_target(*patch, _rust_dep_requirement(value))
+        if patches := self._rust_patch_entries(source, package):
+            return self._rust_patch_target(patches, _rust_dep_requirement(value))
         if source != cs.RS_DEFAULT_REGISTRY:
             return None
         return self._rust_member_package_dirs().get(package)
 
-    def _rust_patch_entry(
+    def _rust_patch_entries(
         self, source: str, package: str
-    ) -> tuple[str, dict[str, object]] | None:
-        # The root manifest's `[patch.<source>]` entry for `package`, keyed
-        # by a git URL as written or a registry name.
+    ) -> list[tuple[str, dict[str, object]]]:
+        # Every entry of the root manifest's `[patch.<source>]` table (a git
+        # URL as written, or a registry name) that patches `package`: one
+        # table may list it at several versions, under its own name and
+        # under other keys that name it through `package =`.
         patch = self._rust_read_manifest(self.repo_path).get(cs.RS_MANIFEST_PATCH_KEY)
         entries = patch.get(source) if isinstance(patch, dict) else None
         if not isinstance(entries, dict):
-            return None
-        for key, value in entries.items():
-            if isinstance(value, dict) and _rust_dep_package(key, value) == package:
-                return key, value
-        return None
+            return []
+        return [
+            (key, value)
+            for key, value in entries.items()
+            if isinstance(value, dict) and _rust_dep_package(key, value) == package
+        ]
 
     def _rust_patch_target(
-        self, key: str, value: dict[str, object], requirement: str | None
+        self, patches: list[tuple[str, dict[str, object]]], requirement: str | None
     ) -> tuple[str, ...] | None:
-        """The repo dir a patch puts in place of the dependency, if Cargo uses it.
+        """The repo dir a patch puts in place of the dependency, if Cargo uses one.
 
-        Only a path patch lands in the repo, and Cargo applies it only when
+        Only a path patch lands in the repo, and Cargo applies one only when
         the patched package's version meets the dependency's requirement;
         otherwise it warns "patch was not used" and builds against the
-        source's own copy, which no local call reaches (PR #2791 review). A
-        dependency stating no requirement takes the patch. A version that
-        cannot be read or checked keeps the dependency external.
+        source's own copy, which no local call reaches (PR #2791 review).
+        Among several patched versions it takes the highest that qualifies,
+        wherever the table lists it. A dependency stating no requirement
+        takes any of them; a version that cannot be read or checked never
+        meets a requirement, so the dependency stays external.
         """
-        target = self._rust_dep_target_dir((), key, value)
-        if target is None or requirement is None:
-            return target
-        version = self._rust_package_version(target)
-        if version is None or not cargo_semver.satisfies(version, requirement):
+        candidates = []
+        for key, value in patches:
+            target = self._rust_dep_target_dir((), key, value)
+            if target is None:
+                continue
+            version = self._rust_package_version(target)
+            if requirement is None or (
+                version is not None and cargo_semver.satisfies(version, requirement)
+            ):
+                rank = cargo_semver.version_key(version) if version else None
+                candidates.append(((rank is not None, rank or ()), target))
+        if not candidates:
             return None
-        return target
+        return max(candidates, key=lambda candidate: candidate[0])[1]
 
     def _rust_package_version(self, pkg: tuple[str, ...]) -> str | None:
         # A package's `[package] version`, or the root `[workspace.package]`

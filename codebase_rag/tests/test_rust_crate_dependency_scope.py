@@ -582,3 +582,72 @@ def test_root_patch_stands_in_only_for_a_version_it_satisfies(
     assert (f"{top}.level", f"{meter}.new") in edges, edges
     assert (f"{top}.level", f"{meter}.gauge") in edges, edges
     assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges
+
+
+# One patch table may list the package at several versions under different
+# keys (`package =` naming it), and Cargo uses the highest one that meets
+# the requirement, wherever it is listed. Patch dirs and their versions:
+_PATCH_VERSIONS = {"base0": "0.1.0", "base": "1.2.0", "base15": "1.5.0"}
+_PATCH_KEYS = {"base0": "my-base", "base": "my-base-12", "base15": "my-base-15"}
+
+
+@pytest.mark.parametrize(
+    ("case", "listed", "requirement", "chosen"),
+    [
+        ("incompatible_first", ("base0", "base"), "1", "base"),
+        ("compatible_first", ("base", "base0"), "1", "base"),
+        ("highest_compatible", ("base0", "base", "base15"), "1", "base15"),
+        ("bounded", ("base15", "base0", "base"), "~1.2", "base"),
+        ("none_compatible", ("base0", "base"), "2", None),
+    ],
+)
+def test_patch_listing_several_versions_uses_the_highest_compatible(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    case: str,
+    listed: tuple[str, ...],
+    requirement: str,
+    chosen: str | None,
+) -> None:
+    # The lookup stopped at the first entry naming the package, so an
+    # incompatible one listed first hid a compatible one after it and the
+    # result hung on entry order (PR #2791 review).
+    project = f"rs_dep_patches_{case}"
+    patch = "".join(
+        f'{_PATCH_KEYS[d]} = {{ path = "crates/{d}", package = "my-base" }}\n'
+        for d in listed
+    )
+    files = {
+        "Cargo.toml": (
+            '[workspace]\nmembers = ["crates/base", "crates/top"]\n'
+            'exclude = ["crates/base0", "crates/base15"]\n'
+            f'\n[patch."{_GIT_URL}"]\n{patch}'
+        ),
+        "crates/top/Cargo.toml": _manifest(
+            "top",
+            f'my-base = {{ git = "{_GIT_URL}", version = "{requirement}" }}\n',
+        ),
+        "crates/top/src/lib.rs": _ALIAS_TOP_RS.replace("base_alias", "my_base"),
+    }
+    for d, version in _PATCH_VERSIONS.items():
+        files[f"crates/{d}/Cargo.toml"] = (
+            f'[package]\nname = "my-base"\nversion = "{version}"\n'
+        )
+        files[f"crates/{d}/src/lib.rs"] = _METER_RS
+    edges = _index(temp_repo, mock_ingestor, project, files)
+    top = f"{project}.crates.top.src.lib"
+    reached = {
+        callee.split(".")[2]
+        for src, callee in edges
+        if src.startswith(f"{top}.") and ".Meter." in callee
+    }
+    assert reached == ({chosen} if chosen else set()), edges
+    if chosen is None:
+        return
+    meter = f"{project}.crates.{chosen}.src.lib.Meter"
+    assert (f"{top}.level", f"{meter}.gauge") in edges, edges
+    assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges
+    if chosen == "base":
+        # `my_base::Meter::new` resolves through the crate root `my_base`
+        # names, the workspace member, so only the member's is asserted.
+        assert (f"{top}.level", f"{meter}.new") in edges, edges
