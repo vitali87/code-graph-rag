@@ -52,8 +52,10 @@ imports cleanly.
 **Grammar not found**: Use a custom URL:
 
 ```bash
-cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+uv run cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
+
+**"modifies a code-graph-rag source checkout"**: `add-grammar` and `remove-language` edit a clone of this repository, not your project. Run them with `uv run cgr` inside a clone, or [request the language](https://github.com/vitali87/code-graph-rag/issues).
 
 **Version incompatibility**: Update tree-sitter:
 
