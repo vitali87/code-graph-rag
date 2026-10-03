@@ -30,6 +30,7 @@ class FunctionRegistryTrie:
         "_member_aliases",
         "_aliases_by_target",
         "_non_method_members",
+        "_non_method_holders",
         "_object_members",
         "_abstracts",
         "_callable_params",
@@ -57,6 +58,9 @@ class FunctionRegistryTrie:
         # method (`run = None`); attribute lookup stops there instead of
         # reaching a base's `run`.
         self._non_method_members: dict[QualifiedName, frozenset[str]] = {}
+        # Member name -> the classes binding it that way, so a lookup only
+        # pays for an exact MRO walk when some class hides the name.
+        self._non_method_holders: dict[str, set[QualifiedName]] = {}
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
@@ -185,7 +189,7 @@ class FunctionRegistryTrie:
 
         self._invalidate_ending_with_cache(simple_name)
         self._drop_member_alias_target(qualified_name)
-        self._non_method_members.pop(qualified_name, None)
+        self.set_non_method_members(qualified_name, ())
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -328,13 +332,22 @@ class FunctionRegistryTrie:
     def set_non_method_members(
         self, class_qn: QualifiedName, names: Iterable[str]
     ) -> None:
+        for name in self._non_method_members.pop(class_qn, ()):
+            holders = self._non_method_holders.get(name)
+            if holders is not None:
+                holders.discard(class_qn)
+                if not holders:
+                    del self._non_method_holders[name]
         if members := frozenset(names):
             self._non_method_members[class_qn] = members
-        else:
-            self._non_method_members.pop(class_qn, None)
+            for name in members:
+                self._non_method_holders.setdefault(name, set()).add(class_qn)
 
     def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool:
         return member in self._non_method_members.get(class_qn, ())
+
+    def non_method_holders(self, member: str) -> frozenset[QualifiedName]:
+        return frozenset(self._non_method_holders.get(member, ()))
 
     def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
         # A re-parsed file registers its aliases again with its methods, so a

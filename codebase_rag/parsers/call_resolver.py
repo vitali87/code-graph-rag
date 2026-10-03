@@ -4531,9 +4531,11 @@ class CallResolver:
             or (local_var_types and receiver in local_var_types)
         ):
             return False, None
+        order = self._value_aware_mro(class_context, member) or [
+            self._follow_reexports(class_qn) for class_qn in self._mro(class_context)
+        ]
         hidden = False
-        for class_qn in self._mro(class_context):
-            owner = self._follow_reexports(class_qn)
+        for owner in order:
             if alias := self._member_alias(owner, member):
                 return True, None if hidden else alias
             if f"{owner}{cs.SEPARATOR_DOT}{member}" in self.function_registry:
@@ -4634,6 +4636,59 @@ class CallResolver:
             stack.extend(subclass_map.get(current, ()))
         return found
 
+    def _value_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
+        """class_qn's C3 MRO when a class in it binds `member` to a value.
+
+        Only Python class bodies record such values, so every other lookup
+        keeps the breadth-first walk it always had (None).
+        """
+        if not (holders := self.function_registry.non_method_holders(member)):
+            return None
+        order = self._c3_mro(class_qn)
+        return None if holders.isdisjoint(order) else order
+
+    def _c3_mro(self, class_qn: str) -> list[str]:
+        # Python's linearisation (C3). A hierarchy it rejects (a cycle, or
+        # bases in an order no class could have) cannot have been defined,
+        # so the breadth-first order stands in for it.
+        memo: dict[str, list[str] | None] = {}
+
+        def linearise(cls: str, active: frozenset[str]) -> list[str] | None:
+            if cls in memo:
+                return memo[cls]
+            if cls in active:
+                return None
+            bases = [
+                self._follow_reexports(base)
+                for base in self.class_inheritance.get(cls, [])
+            ]
+            sequences: list[list[str]] = []
+            for base in bases:
+                if (base_order := linearise(base, active | {cls})) is None:
+                    return None
+                sequences.append(list(base_order))
+            sequences.append(bases)
+            order = [cls]
+            while sequences := [seq for seq in sequences if seq]:
+                head = next(
+                    (
+                        seq[0]
+                        for seq in sequences
+                        if not any(seq[0] in other[1:] for other in sequences)
+                    ),
+                    None,
+                )
+                if head is None:
+                    return None
+                order.append(head)
+                sequences = [seq[1:] if seq[0] == head else seq for seq in sequences]
+            memo[cls] = order
+            return order
+
+        return linearise(class_qn, frozenset()) or [
+            self._follow_reexports(qn) for qn in self._mro(class_qn)
+        ]
+
     def _resolve_inherited_method(
         self, class_qn: str, method_name: str, own_members: bool = True
     ) -> tuple[str, str] | None:
@@ -4649,6 +4704,20 @@ class CallResolver:
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
         if class_qn not in self.class_inheritance:
+            return None
+        # Which class binds the name first decides whether a value hides
+        # it, and that order is the C3 MRO, not this walk's breadth-first
+        # order: `class C(A, B)` reaches a `run` that A inherits before B's
+        # `run = None`.
+        if (order := self._value_aware_mro(class_qn, method_name)) is not None:
+            for owner in order[1:]:
+                if alias := self._member_alias(owner, method_name):
+                    return alias
+                owner_method_qn = f"{owner}{cs.SEPARATOR_DOT}{method_name}"
+                if owner_method_qn in self.function_registry:
+                    return self.function_registry[owner_method_qn], owner_method_qn
+                if self.function_registry.binds_non_method(owner, method_name):
+                    return None
             return None
 
         bfs_queue = deque(self.class_inheritance.get(class_qn, []))
@@ -4669,8 +4738,6 @@ class CallResolver:
                     self.function_registry[parent_method_qn],
                     parent_method_qn,
                 )
-            if self.function_registry.binds_non_method(parent_class_qn, method_name):
-                return None
 
             if parent_class_qn in self.class_inheritance:
                 for grandparent_qn in self.class_inheritance[parent_class_qn]:

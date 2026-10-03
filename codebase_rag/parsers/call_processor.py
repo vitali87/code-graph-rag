@@ -46,6 +46,7 @@ from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .php import utils as php_utils
 from .py.class_aliases import scan_class_body_aliases
+from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
@@ -4506,6 +4507,19 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
+        if (
+            call_var_types
+            and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
+            and not rebinding.sometimes
+        ):
+            # No `self = Other()` can run before this call, so the method-wide
+            # type of `self` does not apply to it (issue #2620).
+            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
+            call_var_types = {
+                name: var_type
+                for name, var_type in call_var_types.items()
+                if name != receiver
+            }
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
@@ -5092,11 +5106,11 @@ class CallProcessor:
                 call_name.startswith(cs.PY_SELF_PREFIX)
                 or call_name.startswith(cs.PY_CLS_PREFIX)
             )
-            # A method that rebinds its receiver (`self = Other()`) calls
+            # A call that runs after `self = Other()` on every path calls
             # through that value's type, which the resolved edge follows.
             and not (
-                ctx.local_var_types
-                and call_name.partition(cs.SEPARATOR_DOT)[0] in ctx.local_var_types
+                (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
+                and rebinding.always
             )
         ):
             # self.M()/cls.M() statically targets the enclosing class's own or
@@ -5167,6 +5181,23 @@ class CallProcessor:
                     cs.RelationshipType.CALLS,
                     (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
+
+    @staticmethod
+    def _receiver_rebinding_at(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> ReceiverRebinding | None:
+        # Only a `self.M()` / `cls.M()` in a method whose type map holds the
+        # receiver can have been rebound; every other call skips the scan.
+        receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            not ctx.is_python
+            or not member
+            or receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+            or not ctx.local_var_types
+            or receiver not in ctx.local_var_types
+        ):
+            return None
+        return receiver_rebinding(call_node, receiver)
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str

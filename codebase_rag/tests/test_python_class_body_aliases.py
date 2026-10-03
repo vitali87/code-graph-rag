@@ -19,10 +19,11 @@
 # same-named members, `super()` and the call-argument form the indexer
 # already handled.
 #
-# Lookup stops at the first class whose body binds the name: a subclass's
-# `run = None` hides the base's `run` (alias or def), a conditional `def run`
-# beside `run = _impl` leaves both as candidates, and a method that rebinds
-# `self` calls through the type it assigned, not its class's alias.
+# Lookup stops at the first class in the C3 MRO whose body binds the name: a
+# subclass's `run = None` hides the base's `run` (alias or def), a conditional
+# `def run` beside `run = _impl` leaves both as candidates, and a call that
+# runs after `self = Other()` on every path calls through the type it assigned,
+# not its class's alias.
 from __future__ import annotations
 
 from pathlib import Path
@@ -1093,3 +1094,189 @@ class TestTypedReceiverBeforeEnclosingAlias:
 
         assert f"{OTHER}.run" in calls, calls
         assert f"{HOST}._own" not in calls, calls
+
+
+# ---------------------------------------------------------------------------
+# Which class binds the name first follows Python's MRO (C3)
+# ---------------------------------------------------------------------------
+
+# `class C(A, B)` linearises to C, A, Grandparent, B: A's whole chain comes
+# before B, so a `run` that A inherits wins over B's `run = None`.
+_MRO_CLASSES = (
+    "class Grandparent:\n"
+    "    def run(self):\n"
+    "        return 1\n"
+    "\n"
+    "class A(Grandparent):\n"
+    "    pass\n"
+    "\n"
+    "class B:\n"
+    "    run = None\n"
+    "\n"
+)
+GRANDPARENT_RUN = f"{MODULE}.Grandparent.run"
+
+
+class TestValueLookupFollowsTheMro:
+    def test_inherited_def_before_a_later_base_value(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _MRO_CLASSES + "class C(A, B):\n"
+            "    def go(self):\n"
+            "        return self.run()\n"
+            "\n"
+            "def via_c():\n"
+            "    return C().run()\n",
+        )
+
+        calls = _edges(mock_ingestor, _CALLS)
+
+        assert GRANDPARENT_RUN in _targets(calls, f"{MODULE}.via_c"), calls
+        assert GRANDPARENT_RUN in _targets(calls, f"{MODULE}.C.go"), calls
+
+    def test_value_deep_in_the_first_base_hides_a_later_base_def(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # C, A, V, B: V's `run = None` comes before B's `def run`.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            "class V:\n"
+            "    run = None\n"
+            "\n"
+            "class A(V):\n"
+            "    pass\n"
+            "\n"
+            "class B:\n"
+            "    def run(self):\n"
+            "        return 2\n"
+            "\n"
+            "class C(A, B):\n"
+            "    pass\n"
+            "\n"
+            "def via_c():\n"
+            "    return C().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.via_c")
+
+        assert f"{MODULE}.B.run" not in calls, calls
+
+    def test_value_in_the_first_base_still_hides(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # D, B, A, Grandparent: B's value comes first.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _MRO_CLASSES + "class D(B, A):\n"
+            "    pass\n"
+            "\n"
+            "def via_d():\n"
+            "    return D().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.via_d")
+
+        assert GRANDPARENT_RUN not in calls, calls
+
+
+# ---------------------------------------------------------------------------
+# Only a rebinding of `self` that runs before the call retypes it
+# ---------------------------------------------------------------------------
+
+_SUBHOST = "\nclass SubHost(Host):\n    def run(self):\n        return 5\n"
+SUBHOST_RUN = f"{MODULE}.SubHost.run"
+
+
+class TestReceiverRebindingIsPositional:
+    def test_call_before_the_rebinding_keeps_the_class_targets(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _HOST + "    def go(self):\n"
+            "        result = self.run()\n"
+            "        self = Other()\n"
+            "        return result\n" + _SUBHOST,
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert calls.get(f"{HOST}._own") == cs.EdgeResolution.EXACT, calls
+        assert SUBHOST_RUN in calls, calls
+        assert f"{OTHER}.run" not in calls, calls
+
+    def test_call_before_the_rebinding_reaches_the_class_def(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            "class Other:\n"
+            "    def run(self):\n"
+            "        return 3\n"
+            "\n"
+            "class Host:\n"
+            "    def run(self):\n"
+            "        return 4\n"
+            "    def go(self):\n"
+            "        result = self.run()\n"
+            "        self = Other()\n"
+            "        return result\n" + _SUBHOST,
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert f"{HOST}.run" in calls, calls
+        assert SUBHOST_RUN in calls, calls
+
+    @pytest.mark.parametrize(
+        "method",
+        [
+            "    def go(self, items):\n"
+            "        for _ in items:\n"
+            "            self.run()\n"
+            "            self = Other()\n",
+            "    def go(self, flag):\n"
+            "        if flag:\n"
+            "            self = Other()\n"
+            "        return self.run()\n",
+        ],
+        ids=["later-in-a-loop", "conditional-before"],
+    )
+    def test_rebinding_on_some_paths_keeps_both(
+        self, temp_repo: Path, mock_ingestor: MagicMock, method: str
+    ) -> None:
+        _index(temp_repo, mock_ingestor, _HOST + method)
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert f"{HOST}._own" in calls, calls
+        assert f"{OTHER}.run" in calls, calls
+
+    # Negative: a rebinding that runs first on every path, even one in an
+    # enclosing block of a nested call, retypes the receiver alone.
+
+    def test_rebinding_in_an_enclosing_block_retypes_a_nested_call(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _HOST + "    def go(self, items):\n"
+            "        self = Other()\n"
+            "        for _ in items:\n"
+            "            if items:\n"
+            "                self.run()\n" + _SUBHOST,
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert f"{OTHER}.run" in calls, calls
+        assert f"{HOST}._own" not in calls, calls
+        assert SUBHOST_RUN not in calls, calls
