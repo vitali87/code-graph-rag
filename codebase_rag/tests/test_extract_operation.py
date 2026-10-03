@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing import ExtractRefused, extract
 from codebase_rag.editing.extract_types import ExtractReport
 from codebase_rag.graph_updater import GraphUpdater
@@ -124,7 +125,7 @@ def test_extracted_typescript_still_runs(temp_repo: Path) -> None:
     done = subprocess.run(
         ["node", "--experimental-strip-types", "--no-warnings", str(runner)],
         capture_output=True,
-        text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     assert done.returncode == 0, done.stderr
