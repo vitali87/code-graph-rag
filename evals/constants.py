@@ -422,6 +422,17 @@ NODE_SKIP_NO_BINARY = "{binary} is not on PATH"
 NODE_SKIP_INSTALL_FAILED = "npm install failed for this oracle: {stderr}"
 NODE_SKIP_CANNOT_REQUIRE = "this node cannot require({package}): {stderr}"
 SKIP_REASON_STDERR_CHARS = 400
+# A child forked from a process that holds a live gRPC client (the Milvus Lite
+# vector store opens one) inherits gRPC's fork handlers, which on macOS log
+# absl lines such as `I1003 10:37:31.866642   75998 ev_poll_posix.cc:587] FD
+# from fork parent still in poll list` to the child's stderr before it execs.
+# That is the PARENT's noise, and a few lines of it fill the budget above
+# before the child's own error. The whole prefix is matched (severity, MMDD,
+# time to the microsecond, thread id, `file:line] `) so a node stack frame or
+# a message that merely starts with I/W/E/F is never dropped.
+INHERITED_LOG_LINE_PATTERN = re.compile(
+    r"[IWEF][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} +[0-9]+ [^\s:\]]+:[0-9]+\] "
+)
 # The oracle's own `require("pkg")` calls: the authoritative statement of what
 # it loads, and literally the call that fails on an incompatible Node. Builtins
 # are excluded because they load everywhere and would make the probe vacuous.

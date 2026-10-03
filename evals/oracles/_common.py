@@ -72,8 +72,25 @@ def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
     if stderr is None:
         return None
     return ec.NODE_SKIP_CANNOT_REQUIRE.format(
-        package=package, stderr=stderr.strip()[: ec.SKIP_REASON_STDERR_CHARS]
+        package=package, stderr=reason_stderr(stderr)
     )
+
+
+def reason_stderr(stderr: str) -> str:
+    """The part of a child's stderr a skip reason quotes.
+
+    Inherited gRPC fork-handler log lines go BEFORE the cut, not after: they
+    precede the child's own output, so cutting first can leave nothing but
+    them (both macOS jobs of PR #2550 did exactly that to ERR_REQUIRE_ESM).
+    When they are all there is, they stay, because a reason ending in a bare
+    colon tells the reader even less.
+    """
+    kept = "\n".join(
+        line
+        for line in stderr.splitlines()
+        if not ec.INHERITED_LOG_LINE_PATTERN.match(line)
+    ).strip()
+    return (kept or stderr.strip())[: ec.SKIP_REASON_STDERR_CHARS]
 
 
 def node_oracle_available(oracle_dir: Path | None = None) -> bool:
@@ -222,9 +239,7 @@ def ensure_node_deps(oracle_dir: Path) -> None:
         # its stderr is the most useful thing a developer can be shown here.
         raise NodeOracleUnavailable(
             ec.NODE_SKIP_INSTALL_FAILED.format(
-                stderr=((e.stderr or e.stdout or "").strip())[
-                    : ec.SKIP_REASON_STDERR_CHARS
-                ]
+                stderr=reason_stderr(e.stderr or e.stdout or "")
             )
         ) from e
     finally:
