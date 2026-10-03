@@ -514,6 +514,58 @@ def test_walrus_in_a_lambda_default_binds_the_module_name(
     assert delta["dangling_importers"] == []
 
 
+def test_walrus_in_a_def_default_binds_the_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A `def`'s defaults and decorators run where it is defined, as a
+    # lambda's defaults do; only its body is a scope of its own.
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\ndef factory(x=(helper := keep)):\n    return x\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_walrus_in_a_decorator_binds_the_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER
+        + "\n\n@(helper := (lambda fn: fn))\ndef wrapped():\n    return 1\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_walrus_in_a_class_keyword_binds_the_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A class's decorators, bases and keywords run where it is defined too.
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\nclass Box(metaclass=(helper := type)):\n    pass\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
 # --- what must not change -----------------------------------------------------
 
 
@@ -843,6 +895,45 @@ def test_walrus_in_a_lambda_body_binds_no_module_name(
         root,
         "app/core.py",
         CORE_WITHOUT_HELPER + "\n\nfactory = lambda x=keep: (helper := x)\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_walrus_in_a_def_body_binds_no_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER
+        + "\n\n@(lambda fn: fn)\ndef factory(x=keep):\n    return (helper := x)\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_def_parameter_named_like_the_removed_symbol_binds_no_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\ndef factory(helper=keep):\n    return helper\n",
     )
 
     delta = _observe(root, store, updater, ["app/core.py"])

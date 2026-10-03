@@ -772,7 +772,7 @@ def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
     queued on `pending`: they run at import time too.
     """
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-        yield node.name
+        yield from _definition_bindings(node)
         return
     if isinstance(node, ast.Import):
         for alias in node.names:
@@ -785,6 +785,29 @@ def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
         for part in value if isinstance(value, list) else [value]:
             if isinstance(part, ast.AST):
                 yield from _stored_names(part)
+
+
+def _definition_bindings(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> Iterator[str]:
+    """The names a `def` or `class` statement binds where it runs.
+
+    Its own name, and any `:=` in what it evaluates there: its decorators,
+    and a function's default values or a class's bases and keywords, so
+    `def f(x=(helper := keep))` binds `helper` in the module, as a lambda's
+    defaults do. The body and the parameters are scopes of their own.
+    Annotations are left out: under `from __future__ import annotations`,
+    and from Python 3.14 on, they are not evaluated there.
+    """
+    yield node.name
+    if isinstance(node, ast.ClassDef):
+        keywords = [keyword.value for keyword in node.keywords]
+        evaluated = [*node.decorator_list, *node.bases, *keywords]
+    else:
+        kw_defaults = [d for d in node.args.kw_defaults if d is not None]
+        evaluated = [*node.decorator_list, *node.args.defaults, *kw_defaults]
+    for part in evaluated:
+        yield from _stored_names(part)
 
 
 def _python_top_level_names(text: str) -> _SourceNames | None:
