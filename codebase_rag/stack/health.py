@@ -167,14 +167,19 @@ def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
         saved = None
     redirected = False
     try:
-        target = runtime.open_file(capture)
-        # With fd 2 free, the capture's descriptor is given that very number.
-        if target != cs.NATIVE_STDERR_FD:
-            try:
-                runtime.dup2(target, cs.NATIVE_STDERR_FD)
-            finally:
-                runtime.close(target)
-        redirected = True
+        try:
+            target = runtime.open_file(capture)
+            # With fd 2 free, the capture's descriptor is given that number.
+            if target != cs.NATIVE_STDERR_FD:
+                try:
+                    runtime.dup2(target, cs.NATIVE_STDERR_FD)
+                finally:
+                    runtime.close(target)
+            redirected = True
+        except OSError:
+            # Keeping the terminal clean is best-effort: the probe still runs
+            # and reports its result, its message going where fd 2 points.
+            pass
         yield
     finally:
         if saved is not None:
