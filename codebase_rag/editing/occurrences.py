@@ -75,7 +75,7 @@ _COMMONJS_NAMES = re.compile(
     )
 )
 # Where a statement may import every name of a module: `import *`, `::*`.
-_WILDCARD_IMPORT = re.compile(rb"\bimport\s*\(?\s*\*|::\s*\*")
+_WILDCARD_IMPORT = re.compile(rb"\bimport\s*(?:\(\s*)?\*|::\s*\*")
 _SPELLING = re.compile(rb"\w+(?:\s*(?:::|\.|\\)\s*\w+)*")
 _SEPARATORS = re.compile(
     "|".join(re.escape(separator) for separator in cs.RENAME_TYPE_SEPARATORS)

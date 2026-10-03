@@ -7,19 +7,27 @@ repo-relative path, from the importing file where the language says how.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.editing.import_paths import (
+    _RUST_GROUP,
     ImportReader,
+    _expand_group,
+    _go_specs,
+    _python_from_parts,
     module_key,
     resolves_above,
     resolves_to,
     spelled_length,
     unique_match,
 )
+from codebase_rag.editing.occurrences import _WILDCARD_IMPORT
 
 
 def _write(root: Path, *paths: str) -> None:
@@ -310,3 +318,112 @@ def test_an_import_is_the_target_only_when_it_names_no_other_module(
     paths = reader.read(statement).bindings["Cache"]
 
     assert unique_match(paths, modules) is verdict
+
+
+@pytest.mark.parametrize(
+    ("statement", "parts"),
+    [
+        ("from pkg.cache import x", ("", "pkg.cache", "x")),
+        ("  from\tpkg  import  x, y", ("", "pkg", "x, y")),
+        ("from .cache import Cache as C", (".", "cache", "Cache as C")),
+        ("from . import x", (".", "", "x")),
+        ("from .. import (a,\n    b)", ("..", "", "(a,\n    b)")),
+        ("from . import import x", (".", "import", "x")),
+        ("import pkg.cache", None),
+        ("from pkg import", None),
+        ("from pkg importx", None),
+        ("frompkg import x", None),
+        ("from .import x", None),
+    ],
+)
+def test_a_python_from_import_is_read_into_its_dots_module_and_names(
+    statement: str, parts: tuple[str, str, str] | None
+) -> None:
+    assert _python_from_parts(statement) == parts
+
+
+@pytest.mark.parametrize(
+    ("statement", "specs"),
+    [
+        ('"a/b"', [("", "a/b")]),
+        ('f "a/b"', [("f", "a/b")]),
+        ('. "a/b"', [(".", "a/b")]),
+        (
+            'import (\n\t_ "a"\n\tx "b/c"\n\t"d"\n)',
+            [("_", "a"), ("x", "b/c"), ("", "d")],
+        ),
+        ('f""', []),
+        ('f"a"', [("", "a")]),
+        ("fmt", []),
+    ],
+)
+def test_a_go_import_spec_is_read_into_its_alias_and_path(
+    statement: str, specs: list[tuple[str, str]]
+) -> None:
+    assert list(_go_specs(statement)) == specs
+
+
+@pytest.mark.parametrize(
+    ("statement", "expanded"),
+    [
+        (
+            "use crate::{Parse, frame::Frame as F};",
+            "use crate::Parse crate::frame::Frame as F;",
+        ),
+        ("use a :: b :: {c};", "use a :: b :: c;"),
+        ("use a::b;", "use a::b;"),
+        ("use a{b};", "use a{b};"),
+    ],
+)
+def test_a_rust_use_group_is_expanded_into_its_paths(
+    statement: str, expanded: str
+) -> None:
+    assert _RUST_GROUP.sub(_expand_group, statement) == expanded
+
+
+def test_a_path_is_read_by_its_words_whatever_the_spacing(tmp_path: Path) -> None:
+    reader = ImportReader(tmp_path, "src/use.rs", cs.SupportedLanguage.RUST)
+
+    read = reader.read("use a :: b . c;")
+
+    assert [path.segments for path in read.paths] == [("a", "b", "c")]
+
+
+@pytest.mark.parametrize(
+    ("source", "spans"),
+    [
+        (b"from pkg import *", [(9, 17)]),
+        (b"from pkg import ( *", [(9, 19)]),
+        (b"use crate::util::*;", [(15, 18)]),
+        (b"use crate :: *;", [(10, 14)]),
+        (b"from pkg import x", []),
+        (b"reimport *", []),
+        (b"important *", []),
+    ],
+)
+def test_a_wildcard_import_is_found_where_it_is_written(
+    source: bytes, spans: list[tuple[int, int]]
+) -> None:
+    assert [found.span() for found in _WILDCARD_IMPORT.finditer(source)] == spans
+
+
+_LONG = 50_000
+
+
+@pytest.mark.parametrize(
+    ("read", "text", "expected"),
+    [
+        # Each of these took the old patterns time that grew with the square
+        # (or the cube) of the input; now they return at once.
+        (_python_from_parts, "from" + " " * _LONG + "!", None),
+        (_python_from_parts, "from " + "." * _LONG + "!", None),
+        (lambda text: list(_go_specs(text)), "a" * _LONG, []),
+        (partial(_RUST_GROUP.sub, _expand_group), "a" * _LONG, "a" * _LONG),
+        (partial(_RUST_GROUP.sub, _expand_group), "a::" * _LONG, "a::" * _LONG),
+        (_WILDCARD_IMPORT.findall, b"import" + b" " * _LONG, []),
+    ],
+)
+def test_a_long_statement_is_read_without_backtracking(
+    read: Callable[[Any], object], text: str | bytes, expected: object
+) -> None:
+    assert read(text) == expected

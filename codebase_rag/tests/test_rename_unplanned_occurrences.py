@@ -144,10 +144,11 @@ def test_a_call_site_the_graph_missed_refuses_the_rename(
     root, store, _updater = py_repo
     before = _tree(root)
 
+    graph = _missing(store, "pkg/late.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/late.py"),
+            graph,
             PROJECT,
             HELPER,
             "assist",
@@ -199,10 +200,11 @@ def test_a_missed_rust_method_call_refuses_and_the_comment_is_not_listed(
     root.mkdir()
     store, _updater = _indexed(root, RUST, project="mr")
 
+    graph = _missing(store, "src/cmd/get.rs")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/cmd/get.rs"),
+            graph,
             "mr",
             NEXT_STRING,
             "next_str",
@@ -259,10 +261,11 @@ def test_a_missed_java_method_reference_and_static_import_call_refuse(
     root.mkdir()
     store, _updater = _indexed(root, JAVA)
 
+    graph = _missing(store, "src/main/java/a/Use.java", "src/main/java/b/Stat.java")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/main/java/a/Use.java", "src/main/java/b/Stat.java"),
+            graph,
             PROJECT,
             f"{PROJECT}.src.main.java.a.Greeter.Greeter.greet(String)",
             "welcome",
@@ -300,10 +303,11 @@ def test_a_type_is_held_to_every_occurrence_not_only_calls(tmp_path: Path) -> No
     root.mkdir()
     store, _updater = _indexed(root, ERRORS)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             f"{PROJECT}.pkg.errors.MyError",
             "Oops",
@@ -334,10 +338,11 @@ def test_a_function_named_without_a_call_is_held_to_the_plan(
     text = f"from pkg.util import helper\n\n\ndef use(xs):\n{body}"
     store, _updater = _indexed(root, {**PY, "pkg/refs.py": text})
 
+    graph = _missing(store, "pkg/refs.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/refs.py"),
+            graph,
             PROJECT,
             HELPER,
             "assist",
@@ -359,10 +364,11 @@ def test_a_call_on_an_import_line_is_not_covered_by_the_import(
         root, {**PY, "pkg/one.py": "from pkg.util import helper; helper(1, 2)\n"}
     )
 
+    graph = _missing(store, "pkg/one.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/one.py"),
+            graph,
             PROJECT,
             HELPER,
             "assist",
@@ -398,10 +404,11 @@ def test_a_method_read_through_self_is_held_to_the_plan(tmp_path: Path) -> None:
     root.mkdir()
     store, _updater = _indexed(root, WORKER)
 
+    graph = _missing(store, "pkg/worker.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/worker.py"),
+            graph,
             PROJECT,
             f"{PROJECT}.pkg.worker.Worker.helper",
             "assist",
@@ -439,10 +446,11 @@ def test_a_call_through_an_unknown_object_refuses_even_with_allow_heuristic(
     store, updater = _indexed(root, CACHE)
     before = _tree(root)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             CACHE_GET,
             "fetch",
@@ -467,10 +475,11 @@ def test_without_allow_heuristic_the_refusal_says_which_calls_it_cannot_take(
     root.mkdir()
     store, _updater = _indexed(root, CACHE)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             CACHE_GET,
             "fetch",
@@ -536,10 +545,11 @@ def test_a_class_used_as_a_python_dict_key_is_held_to_the_plan(
     }
     store, _updater = _indexed(root, files)
 
+    graph = _missing(store, "pkg/handlers.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/handlers.py"),
+            graph,
             PROJECT,
             f"{PROJECT}.pkg.errors.MyError",
             "Oops",
@@ -559,10 +569,11 @@ def test_the_refusal_names_ten_locations_and_counts_the_rest(tmp_path: Path) -> 
         root,
         {**PY, "pkg/many.py": f"from pkg.util import helper\n\n\ndef many():\n{calls}"},
     )
+    graph = _missing(store, "pkg/many.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/many.py"),
+            graph,
             PROJECT,
             HELPER,
             "assist",
@@ -954,10 +965,11 @@ def test_a_function_reached_through_a_module_alias_is_held_to_the_plan(
     aliased = "import pkg.util as u\n\n\ndef go():\n    return u.helper(1, 2)\n"
     store, _updater = _indexed(root, {**PY, "pkg/aliased.py": aliased})
 
+    graph = _missing(store, "pkg/aliased.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/aliased.py"),
+            graph,
             PROJECT,
             HELPER,
             "assist",
@@ -1022,10 +1034,11 @@ def test_a_js_key_is_a_label_and_shorthand_is_a_use(tmp_path: Path) -> None:
     root.mkdir()
     store, _updater = _indexed(root, JS)
 
+    graph = _missing(store, "src/app.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/app.js"),
+            graph,
             PROJECT,
             f"{PROJECT}.src.util.helper",
             "assist",
@@ -1086,10 +1099,11 @@ def test_a_call_on_an_object_from_the_classs_module_is_held_to_the_plan(
     store, updater = _indexed(root, {**FACTORY, "pkg/use.py": FACTORY_USERS[user]})
     before = _tree(root)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             CACHE_GET,
             "fetch",
@@ -1165,10 +1179,11 @@ def test_a_function_scoped_import_of_a_namesake_binds_only_that_function(
     store, _updater = _indexed(root, files)
     before = _tree(root)
 
+    graph = _missing(store, "pkg/mixed.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/mixed.py"),
+            graph,
             PROJECT,
             HELPER,
             "assist",
@@ -1279,10 +1294,11 @@ def test_another_modules_same_named_class_is_not_the_target(
     store, updater = _indexed(root, {**RIVAL, "pkg/use.py": text})
     before = _tree(root)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             CACHE_GET,
             "fetch",
@@ -1372,10 +1388,11 @@ def test_a_module_spelled_in_a_string_is_still_the_classs_module(
     root.mkdir()
     store, _updater = _indexed(root, JS_FACTORY)
 
+    graph = _missing(store, "src/use.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/use.js"),
+            graph,
             PROJECT,
             f"{PROJECT}.src.cache.Cache.get",
             "fetch",
@@ -1521,10 +1538,11 @@ def test_an_import_of_the_classs_own_module_still_holds_the_file(
     files = {**FACTORY, **VENDOR, "pkg/use.py": OWN_MODULE_USERS[user]}
     store, _updater = _indexed(root, files)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             CACHE_GET,
             "fetch",
@@ -1571,10 +1589,11 @@ def test_a_same_named_class_in_a_same_named_module_is_not_the_target(
     store, _updater = _indexed(root, {**TWIN, "app/use.py": TWIN_USERS[user]})
     before = _tree(root)
 
+    graph = _missing(store, "app/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "app/use.py"),
+            graph,
             PROJECT,
             TWIN_GET,
             "fetch",
@@ -1666,10 +1685,11 @@ def test_a_parameter_named_like_the_class_shadows_it_in_its_own_function(
     store, _updater = _indexed(root, {**CACHE, "pkg/use.py": shadowed})
     before = _tree(root)
 
+    graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "pkg/use.py"),
+            graph,
             PROJECT,
             CACHE_GET,
             "fetch",
@@ -1771,10 +1791,9 @@ def test_a_bare_call_reached_through_an_import_still_counts(
         root, {**files, "pkg/other.py": f"{head}    return sorted(xs)\n"}
     )
 
+    graph = _missing(store, "pkg/other.py")
     with pytest.raises(RenameRefused) as refused:
-        rename(
-            root, _missing(store, "pkg/other.py"), PROJECT, qn, new_name, dry_run=True
-        )
+        rename(root, graph, PROJECT, qn, new_name, dry_run=True)
 
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
@@ -1788,10 +1807,9 @@ def test_a_bare_call_in_the_functions_own_file_still_counts(tmp_path: Path) -> N
     root.mkdir()
     store, _updater = _indexed(root, {**files, "pkg/util.py": own})
 
+    graph = _missing(store, "pkg/util.py")
     with pytest.raises(RenameRefused) as refused:
-        rename(
-            root, _missing(store, "pkg/util.py"), PROJECT, qn, new_name, dry_run=True
-        )
+        rename(root, graph, PROJECT, qn, new_name, dry_run=True)
 
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
@@ -1981,10 +1999,11 @@ def test_a_classic_scripts_global_function_is_held_in_every_script(
     store, _updater = _indexed(root, CLASSIC)
     before = _tree(root)
 
+    graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "web/page.js"),
+            graph,
             PROJECT,
             f"{PROJECT}.web.lib.helper",
             "assist",
@@ -2019,10 +2038,11 @@ def test_a_module_marker_in_prose_leaves_the_script_classic(
     store, _updater = _indexed(root, files)
     before = _tree(root)
 
+    graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "web/page.js"),
+            graph,
             PROJECT,
             f"{PROJECT}.web.lib.helper",
             "assist",
@@ -2126,10 +2146,9 @@ def test_an_import_the_graph_did_not_record_is_held_to_the_plan(
     root.mkdir()
     store, _updater = _indexed(root, files, project=project)
 
+    graph = _without_imports(store, importer)
     with pytest.raises(RenameRefused) as refused:
-        rename(
-            root, _without_imports(store, importer), project, qn, "assist", dry_run=True
-        )
+        rename(root, graph, project, qn, "assist", dry_run=True)
 
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
@@ -2184,10 +2203,11 @@ def test_a_local_named_like_commonjs_leaves_the_script_classic(
     store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
     before = _tree(root)
 
+    graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "web/page.js"),
+            graph,
             PROJECT,
             f"{PROJECT}.web.lib.helper",
             "assist",
@@ -2291,10 +2311,11 @@ def test_a_require_shadowed_around_the_call_leaves_the_script_classic(
     lib = CLASSIC["web/lib.js"] + "\n" + SHADOWED_REQUIRES[code]
     store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
 
+    graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "web/page.js"),
+            graph,
             PROJECT,
             f"{PROJECT}.web.lib.helper",
             "assist",

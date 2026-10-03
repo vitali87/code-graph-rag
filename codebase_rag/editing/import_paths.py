@@ -20,6 +20,7 @@ How sure a spelled path is depends on where it starts:
 
 import posixpath
 import re
+from collections.abc import Iterator
 from enum import Enum, auto
 from itertools import product
 from pathlib import Path, PurePosixPath
@@ -30,13 +31,28 @@ from ..language_spec import get_language_for_extension
 from ..utils.path_utils import module_stem
 
 _QUOTED = re.compile(r"""(['"`])([^'"`\n]+)\1""")
-_PY_FROM = re.compile(r"^\s*from\s+(\.*)\s*([\w.]*)\s+import\s+(.+)$", re.DOTALL)
+# `from ..pkg import a, b` is read in anchored steps, each unambiguous where
+# it starts, so the read stays linear where one pattern for the statement
+# backtracks super-linearly (S8786): `from` and the dots, the module, then
+# `import` and the names, which run to the end of the statement.
+_PY_FROM_LEAD = re.compile(r"\s*from(\s+)(\.*)")
+_PY_FROM_MODULE = re.compile(r"(\s*)([\w.]*)")
+_PY_FROM_IMPORT = re.compile(r"\s+import")
+# The names after the whitespace, or its last character when nothing follows.
+_PY_FROM_NAMES = re.compile(r"\s+(\S.*|\s)", re.DOTALL)
 _PATH = re.compile(r"\*|\w+(?:\s*(?:::|\.|\\)\s*\w+)*")
 _ALIAS = re.compile(r"\s+as\s+(\w+)")
 _ITEM = re.compile(r"(\*|[\w.]+)(?:\s+as\s+(\w+))?")
-_GO_SPEC = re.compile(r"""(?:(\w+|\.)\s+)?"([^"]+)\"""")
-_RUST_GROUP = re.compile(r"((?:\w+\s*::\s*)+)\{([^{}]*)\}")
-_SEPARATOR = re.compile(r"\s*(?:::|\.|\\)\s*")
+# `alias "path"`, or a bare `"path"`. A word with no spec after it matches
+# alone, so a scan steps over it whole instead of retrying from each of its
+# characters.
+_GO_SPEC = re.compile(r"""(\w+|\.)(?:\s+"([^"]+)")?|"([^"]+)\"""")
+# `crate::frame::{Parse, Frame}`: a path, the `::` after it and the group.
+# A path with no group after it matches too (and is kept as written), for
+# the same reason.
+_RUST_GROUP = re.compile(r"(\w+(?:\s*::\s*\w+)*)(?:(\s*::\s*)\{([^{}]*)\})?")
+# The words of a path `_PATH` matched: `crate :: cache` is `crate`, `cache`.
+_SEGMENT = re.compile(r"\w+")
 _JS_FROM = re.compile(r"\bfrom\b")
 _WILDCARD = re.compile(r"\s*(?:::|\.|\\)\s*\*")
 
@@ -162,8 +178,6 @@ def resolves_above(path: ModulePath, key: tuple[str, ...], length: int) -> bool:
                     segments
                 ):
                     return True
-            case _:
-                pass
     return False
 
 
@@ -204,8 +218,8 @@ class ImportReader:
         return ModulePath((*self.own, name), PathKind.EXACT)
 
     def _python(self, text: str) -> ImportRead:
-        if (found := _PY_FROM.match(text)) is not None:
-            return self._python_from(*found.groups())
+        if (found := _python_from_parts(text)) is not None:
+            return self._python_from(*found)
         paths: list[ModulePath] = []
         bindings: dict[str, tuple[ModulePath, ...]] = {}
         words = text.split(None, 1)
@@ -265,7 +279,7 @@ class ImportReader:
     def _go(self, text: str) -> ImportRead:
         paths: list[ModulePath] = []
         bindings: dict[str, tuple[ModulePath, ...]] = {}
-        for alias, spec in _GO_SPEC.findall(text):
+        for alias, spec in _go_specs(text):
             segments = tuple(part for part in spec.split("/") if part)
             if not segments:
                 continue
@@ -347,11 +361,46 @@ class ImportReader:
         return None
 
 
+def _python_from_parts(text: str) -> tuple[str, str, str] | None:
+    """The dots, the module and the names of `from ..pkg import a, b`."""
+    lead = _PY_FROM_LEAD.match(text)
+    if lead is None:
+        return None
+    spaces, dots = lead.groups()
+    module = _PY_FROM_MODULE.match(text, lead.end())
+    if module is None:
+        return None
+    gap, dotted = module.groups()
+    keyword = _PY_FROM_IMPORT.match(text, module.end())
+    if keyword is not None and (names := _PY_FROM_NAMES.fullmatch(text, keyword.end())):
+        return dots, dotted, names.group(1)
+    # `from . import x`: the dots alone, with whitespace on either side of
+    # them (two characters of it when there are none), and `import` is the
+    # keyword rather than the module.
+    if dotted != cs.RENAME_IMPORT_MARKER or not (gap if dots else spaces[1:]):
+        return None
+    names = _PY_FROM_NAMES.fullmatch(text, module.end())
+    return None if names is None else (dots, "", names.group(1))
+
+
+def _go_specs(text: str) -> Iterator[tuple[str, str]]:
+    """The alias (empty when there is none) and the path of each spec."""
+    for found in _GO_SPEC.finditer(text):
+        alias, aliased, bare = found.groups()
+        if aliased is not None:
+            yield alias, aliased
+        elif bare is not None:
+            yield "", bare
+
+
 def _expand_group(found: re.Match[str]) -> str:
     # `use crate::{Parse, frame::Frame as F}` is two paths.
-    prefix = found.group(1)
+    path, separator, items = found.groups()
+    if items is None:
+        return found.group(0)
+    prefix = path + separator
     return " ".join(
-        f"{prefix}{item.strip()}" for item in found.group(2).split(",") if item.strip()
+        f"{prefix}{item.strip()}" for item in items.split(",") if item.strip()
     )
 
 
@@ -361,7 +410,7 @@ def _import_path(code: str, found: re.Match[str]) -> tuple[str, ...]:
     raw = found.group(0)
     if raw in cs.RENAME_IMPORT_KEYWORDS or _is_alias(code, found.start()):
         return ()
-    segments = tuple(part for part in _SEPARATOR.split(raw) if part)
+    segments = tuple(_SEGMENT.findall(raw))
     if len(segments) > 1 and segments[-1] == cs.RENAME_RUST_SELF:
         return segments[:-1]
     return segments
