@@ -161,11 +161,14 @@ def _mgclient_session_in_child(
             timeout=cs.MGCLIENT_PROBE_TIMEOUT_S,
             check=False,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
+        # run() has killed and reaped the child before raising. What it means
+        # depends on the probe, so each caller decides.
+        _log_mgclient_output(_printed_before_the_timeout(e))
         logger.debug(
             cs.MSG_MEMGRAPH_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S)
         )
-        return MgclientProbeReport(succeeded=False, connect_error=None)
+        raise
     if child.returncode != 0:
         # Not reported as no answer: the anonymous-access probe guards the
         # stack's authentication, and a probe that could not run must not
@@ -177,6 +180,15 @@ def _mgclient_session_in_child(
         )
     _log_mgclient_output(child.stderr)
     return json.loads(child.stdout)
+
+
+def _printed_before_the_timeout(error: subprocess.TimeoutExpired) -> str:
+    # Text on Windows, where run() reads the pipes to their end after the
+    # kill; elsewhere the bytes read before the timeout, if any.
+    printed = error.stderr
+    if isinstance(printed, bytes):
+        return printed.decode(root_cs.ENCODING_UTF8, errors="replace")
+    return printed or ""
 
 
 def _login_refused(report: MgclientProbeReport) -> bool:
@@ -226,12 +238,16 @@ def _mgclient_stderr_to_debug_log() -> Iterator[None]:
 def _bolt_reachable(
     host: str, port: int, credentials: tuple[str, str] | None = None
 ) -> bool:
-    if (runtime := _mgclient_own_c_runtime()) is not None:
+    if (runtime := _mgclient_own_c_runtime()) is None:
+        return _bolt_reachable_in_process(host, port, credentials)
+    try:
         report = _mgclient_session_in_child(
             runtime, host, port, credentials, cs.BOLT_PROBE_QUERY
         )
-        return report["succeeded"]
-    return _bolt_reachable_in_process(host, port, credentials)
+    except subprocess.TimeoutExpired:
+        # Not reachable yet, like a refused connection: the wait asks again.
+        return False
+    return report["succeeded"]
 
 
 @_mgclient_stderr_to_debug_log()
@@ -289,7 +305,17 @@ def memgraph_accepts_anonymous(host: str, port: int) -> bool:
 def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
     if (runtime := _mgclient_own_c_runtime()) is None:
         return _anonymous_access_in_process(host, port)
-    report = _mgclient_session_in_child(runtime, host, port, None, cs.BOLT_PROBE_QUERY)
+    try:
+        report = _mgclient_session_in_child(
+            runtime, host, port, None, cs.BOLT_PROBE_QUERY
+        )
+    except subprocess.TimeoutExpired as e:
+        # A Memgraph that took the connection and never answered may still
+        # accept anonymous logins. Like a child that failed, this has no
+        # answer to give the check that the stack enforces its credentials.
+        raise ChildProcessError(
+            cs.ERR_MGCLIENT_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S)
+        ) from e
     if report["succeeded"]:
         return cs.AnonymousAccess.ALLOWED
     if _login_refused(report):
@@ -325,9 +351,12 @@ def memgraph_rejects_credentials(
 ) -> bool:
     if (runtime := _mgclient_own_c_runtime()) is None:
         return _rejects_credentials_in_process(host, port, credentials)
-    return _login_refused(
-        _mgclient_session_in_child(runtime, host, port, credentials, None)
-    )
+    try:
+        report = _mgclient_session_in_child(runtime, host, port, credentials, None)
+    except subprocess.TimeoutExpired:
+        # No answer is no refusal, and this probe only reports a refusal.
+        return False
+    return _login_refused(report)
 
 
 @_mgclient_stderr_to_debug_log()

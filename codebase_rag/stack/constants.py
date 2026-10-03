@@ -135,6 +135,13 @@ MSG_MEMGRAPH_PROBE_TIMED_OUT = "Memgraph gave the probe no answer within {timeou
 ERR_MGCLIENT_PROBE_CHILD_FAILED = (
     "The process probing Memgraph failed with exit code {code}: {output}"
 )
+ERR_MGCLIENT_PROBE_TIMED_OUT = (
+    "The process probing Memgraph gave no answer within {timeout}s"
+)
+WARN_MEMGRAPH_ACCESS_UNCHECKED = (
+    "Could not check whether Memgraph refuses connections without credentials, "
+    "so it is treated as accepting them: {detail}"
+)
 # PyInstaller sets this attribute on sys in a frozen build.
 FROZEN_APP_ATTR = "frozen"
 PYTHON_SAFE_PATH_FLAG = "-P"

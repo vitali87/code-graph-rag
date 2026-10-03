@@ -21,6 +21,7 @@ does neither.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes.util
 import io
 import itertools
@@ -33,7 +34,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, NoReturn
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 from loguru import logger
@@ -42,6 +43,8 @@ from codebase_rag import constants as root_cs
 from codebase_rag import mgclient_probe
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
+from codebase_rag.stack import manager as manager_module
+from codebase_rag.stack.manager import StackError, StackManager
 from codebase_rag.types_defs import MgclientProbeReport, MgclientProbeRequest
 
 STDOUT_FD = 1
@@ -801,15 +804,12 @@ def test_a_child_that_fails_raises_rather_than_passing_for_no_answer() -> None:
 
 
 @pytest.mark.usefixtures("probes_on_windows")
-def test_a_child_that_never_answers_is_no_answer(
+def test_a_child_that_never_answers_is_not_reachable_and_says_so_at_debug(
     debug_records: list[tuple[str, str]],
 ) -> None:
     hung = subprocess.TimeoutExpired([], cs.MGCLIENT_PROBE_TIMEOUT_S)
     with patch.object(subprocess, "run", _RecordedRun(hung)) as run:
-        assert (
-            health.memgraph_anonymous_access(LOOPBACK, 7687)
-            is cs.AnonymousAccess.NO_ANSWER
-        )
+        assert not health._bolt_reachable(LOOPBACK, 7687, LOGIN)
 
     [(_, kwargs)] = run.calls
     assert kwargs["timeout"] == cs.MGCLIENT_PROBE_TIMEOUT_S
@@ -883,7 +883,7 @@ def test_the_frozen_entry_point_answers_the_probe_argument_with_a_report() -> No
 # A Bolt server that refuses every login, as Memgraph does without the right
 # credentials. In its own process: mgclient holds the GIL while it waits.
 _REFUSING_MEMGRAPH = r"""
-import socket, struct
+import socket, struct, sys, time
 
 def text(value):
     data = value.encode()
@@ -910,6 +910,7 @@ while True:
         conn.sendall(bytes([0, 0, 1, 4]))
         while size := struct.unpack(">H", read(conn, 2))[0]:
             read(conn, size)
+        time.sleep(float(sys.argv[1]))
         conn.sendall(struct.pack(">H", len(FAILURE)) + FAILURE + b"\x00\x00")
         conn.recv(1024)
     except (EOFError, OSError):
@@ -918,10 +919,10 @@ while True:
 """
 
 
-@pytest.fixture
-def refusing_memgraph() -> Iterator[int]:
+@contextlib.contextmanager
+def _refusing_memgraph(answer_after_s: float) -> Iterator[int]:
     proc = subprocess.Popen(
-        [sys.executable, "-c", _REFUSING_MEMGRAPH],
+        [sys.executable, "-c", _REFUSING_MEMGRAPH, str(answer_after_s)],
         stdout=subprocess.PIPE,
         text=True,
         encoding=root_cs.ENCODING_UTF8,
@@ -932,6 +933,12 @@ def refusing_memgraph() -> Iterator[int]:
     finally:
         proc.kill()
         proc.wait()
+
+
+@pytest.fixture
+def refusing_memgraph() -> Iterator[int]:
+    with _refusing_memgraph(answer_after_s=0) as port:
+        yield port
 
 
 @pytest.mark.parametrize("where", ["this-process", "child"])
@@ -949,3 +956,259 @@ def test_a_refused_login_is_told_apart_from_no_answer_wherever_the_probe_runs(
     )
     assert health.memgraph_rejects_credentials(LOOPBACK, refusing_memgraph, LOGIN)
     assert not health._bolt_reachable(LOOPBACK, refusing_memgraph, LOGIN)
+
+
+# --- A child that gives no answer in time (Greptile, PR #2856) ---
+#
+# Whether anonymous logins are refused guards the stack's authentication, so a
+# probe that timed out has no verdict to give there: like a child that failed,
+# it must not pass for a Memgraph that gave no answer. A reachability wait, by
+# contrast, just asks again.
+
+
+@dataclass
+class _HungChild:
+    """subprocess.run for a probe child still running at the timeout.
+
+    run() kills and reaps such a child, then raises with what it had printed:
+    bytes on POSIX, text on Windows, where it reads the pipes to their end.
+    """
+
+    printed: str | bytes | None = None
+    commands: list[list[str]] = field(default_factory=list)
+
+    def __call__(
+        self, args: list[str], **kwargs: float | str | bool
+    ) -> subprocess.CompletedProcess[str]:
+        # Only probe children come through here, never a Docker command.
+        assert args == health._mgclient_probe_command()
+        self.commands.append(args)
+        raise subprocess.TimeoutExpired(
+            args, float(kwargs["timeout"]), stderr=self.printed
+        )
+
+
+@pytest.fixture
+def hung_child(probes_on_windows: None) -> Iterator[_HungChild]:
+    hung = _HungChild()
+    with patch.object(subprocess, "run", hung):
+        yield hung
+
+
+@pytest.fixture(params=["timed-out", "failed"])
+def unanswered_child(
+    request: pytest.FixtureRequest, probes_on_windows: None
+) -> Iterator[None]:
+    """A probe child that gave no verdict: hung past the timeout, or crashed."""
+    run = (
+        _HungChild()
+        if request.param == "timed-out"
+        else _RecordedRun(subprocess.CompletedProcess([], 1, "", "ImportError\n"))
+    )
+    with patch.object(subprocess, "run", run):
+        yield
+
+
+@pytest.fixture
+def guarded_stack(tmp_path: Path) -> Iterator[StackManager]:
+    """A stack whose Memgraph has credentials and whose Qdrant has no key."""
+    mgr = StackManager(
+        home=tmp_path / "cgr-home",
+        package_compose=Path(os.devnull),
+        memgraph_host=LOOPBACK,
+        memgraph_port=7687,
+    )
+    mgr.memgraph_credentials = LOGIN
+    with patch.object(
+        StackManager, "qdrant_api_key", new_callable=PropertyMock, return_value=None
+    ):
+        yield mgr
+
+
+@pytest.mark.usefixtures("hung_child")
+def test_a_timed_out_anonymous_probe_raises_as_a_failed_child_does() -> None:
+    with pytest.raises(ChildProcessError, match="no answer within"):
+        health.memgraph_anonymous_access(LOOPBACK, 7687)
+    with pytest.raises(ChildProcessError, match="no answer within"):
+        health.memgraph_accepts_anonymous(LOOPBACK, 7687)
+
+
+@pytest.mark.usefixtures("unanswered_child")
+def test_a_running_stack_whose_memgraph_cannot_be_checked_is_refused(
+    guarded_stack: StackManager,
+) -> None:
+    refused, warnings = _failure_of(guarded_stack.raise_if_auth_not_enforced)
+
+    assert "still accept" in str(refused)
+    assert cs.SERVICE_MEMGRAPH in str(refused)
+    assert any("Could not check whether Memgraph" in w for w in warnings)
+
+
+def _failure_of(action: Callable[[], None]) -> tuple[StackError, list[str]]:
+    warnings: list[str] = []
+    sink_id = logger.add(warnings.append, level="WARNING")
+    try:
+        action()
+    except StackError as error:
+        return error, warnings
+    finally:
+        logger.remove(sink_id)
+    raise AssertionError("no StackError")
+
+
+@pytest.mark.usefixtures("unanswered_child")
+def test_a_start_whose_memgraph_cannot_be_checked_stops_it_and_is_refused(
+    guarded_stack: StackManager,
+) -> None:
+    with (
+        patch.object(manager_module, "wait_for_memgraph", return_value=True),
+        patch.object(manager_module, "wait_for_qdrant", return_value=True),
+        patch.object(guarded_stack, "stop") as stop,
+        pytest.raises(StackError, match="still accept"),
+    ):
+        guarded_stack.wait_healthy(0)
+
+    stop.assert_called_once_with(cs.SERVICE_MEMGRAPH)
+
+
+@pytest.mark.usefixtures("unanswered_child")
+def test_a_failed_start_stops_a_memgraph_it_cannot_check(
+    guarded_stack: StackManager,
+) -> None:
+    # The start fails for its own reason, which stays the error reported.
+    with (
+        patch.object(manager_module, "wait_for_memgraph", return_value=True),
+        patch.object(manager_module, "wait_for_qdrant", return_value=False),
+        patch.object(guarded_stack, "stop") as stop,
+        pytest.raises(StackError, match="did not become healthy"),
+    ):
+        guarded_stack.wait_healthy(0)
+
+    stop.assert_called_once_with(cs.SERVICE_MEMGRAPH)
+
+
+@pytest.mark.usefixtures("probes_on_windows")
+def test_a_start_whose_probe_child_fails_while_waiting_stops_what_it_started(
+    guarded_stack: StackManager,
+) -> None:
+    crashed = subprocess.CompletedProcess([], 1, "", "ImportError\n")
+    with (
+        patch.object(subprocess, "run", _RecordedRun(crashed)),
+        patch.object(guarded_stack, "stop") as stop,
+        pytest.raises(ChildProcessError, match="ImportError"),
+    ):
+        guarded_stack.wait_healthy(0.1)
+
+    stop.assert_called_once_with(cs.SERVICE_MEMGRAPH)
+
+
+@pytest.mark.parametrize(
+    "printed",
+    [b"mg_raw_transport_recv: partial\n", "mg_raw_transport_recv: partial\n"],
+    ids=["posix-bytes", "windows-text"],
+)
+def test_what_a_timed_out_child_printed_reaches_the_debug_log(
+    printed: str | bytes,
+    hung_child: _HungChild,
+    debug_records: list[tuple[str, str]],
+) -> None:
+    hung_child.printed = printed
+
+    assert not health._bolt_reachable(LOOPBACK, 7687, LOGIN)
+
+    assert _noise(debug_records) == ["DEBUG"]
+
+
+def test_a_child_still_running_at_the_timeout_is_killed_and_reaped(
+    probes_on_windows: None,
+    debug_records: list[tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A real process that prints and then hangs, as mgclient would on a
+    # Memgraph that accepts the connection and never answers.
+    hangs = "import sys, time\nsys.stderr.write('mg_raw_transport_recv: partial\\n')\nsys.stderr.flush()\ntime.sleep(60)"
+    monkeypatch.setattr(
+        health, "_mgclient_probe_command", lambda: [sys.executable, "-c", hangs]
+    )
+    monkeypatch.setattr(cs, "MGCLIENT_PROBE_TIMEOUT_S", 2.0)
+    started: list[subprocess.Popen[str]] = []
+    real_popen = subprocess.Popen
+
+    def popen(*args: list[str], **kwargs: object) -> subprocess.Popen[str]:
+        process = real_popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    assert not health._bolt_reachable(LOOPBACK, 7687, LOGIN)
+
+    [child] = started
+    assert child.returncode is not None
+    assert child.returncode != 0
+    assert _noise(debug_records) == ["DEBUG"]
+
+
+# What must not change: a reachability wait asks again, a login check that got
+# no answer has seen no refusal, and an answer, however slow, is still read.
+
+
+def test_a_reachability_wait_asks_again_after_a_timed_out_probe(
+    probes_on_windows: None,
+) -> None:
+    answers: list[subprocess.CompletedProcess[str] | subprocess.TimeoutExpired] = [
+        subprocess.TimeoutExpired([], cs.MGCLIENT_PROBE_TIMEOUT_S),
+        _child_reporting(MgclientProbeReport(succeeded=True, connect_error=None)),
+    ]
+
+    def run(args: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        answer = answers.pop(0)
+        if isinstance(answer, subprocess.TimeoutExpired):
+            raise answer
+        return answer
+
+    with patch.object(subprocess, "run", run):
+        assert health.wait_for_memgraph(LOOPBACK, 7687, timeout=30, interval=0)
+
+    assert answers == []
+
+
+@pytest.mark.usefixtures("hung_child")
+def test_a_timed_out_login_check_is_not_a_rejection() -> None:
+    assert not health.memgraph_rejects_credentials(LOOPBACK, 7687, LOGIN)
+
+
+@pytest.fixture
+def probes_in_a_real_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = health._CRuntimeLibrary(_host_c_runtime())
+    monkeypatch.setattr(health, "_mgclient_own_c_runtime", lambda: runtime)
+
+
+@pytest.mark.usefixtures("probes_in_a_real_child")
+def test_a_memgraph_that_refuses_the_login_slowly_is_still_refused(
+    guarded_stack: StackManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cs, "MGCLIENT_PROBE_TIMEOUT_S", 20.0)
+    with _refusing_memgraph(answer_after_s=1.0) as port:
+        assert (
+            health.memgraph_anonymous_access(LOOPBACK, port)
+            is cs.AnonymousAccess.REFUSED
+        )
+        guarded_stack.memgraph_port = port
+        with patch.object(guarded_stack, "stop") as stop:
+            guarded_stack.raise_if_auth_not_enforced()
+
+    stop.assert_not_called()
+
+
+@pytest.mark.usefixtures("probes_in_a_real_child")
+def test_a_memgraph_that_refuses_the_connection_is_still_no_answer(
+    guarded_stack: StackManager,
+) -> None:
+    guarded_stack.memgraph_port = _closed_port()
+
+    assert (
+        health.memgraph_anonymous_access(LOOPBACK, guarded_stack.memgraph_port)
+        is cs.AnonymousAccess.NO_ANSWER
+    )
+    guarded_stack.raise_if_auth_not_enforced()

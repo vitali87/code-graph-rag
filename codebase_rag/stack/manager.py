@@ -620,15 +620,31 @@ class StackManager:
     def _services_accepting_anonymous(self) -> list[str]:
         """The services that accept connections without their configured credentials."""
         open_services: list[str] = []
-        if self.memgraph_credentials and memgraph_accepts_anonymous(
-            self.memgraph_host, self.memgraph_port
-        ):
+        if self.memgraph_credentials and self._memgraph_accepts_anonymous():
             open_services.append(cs.SERVICE_MEMGRAPH)
         if self.qdrant_api_key and qdrant_accepts_anonymous(
             self.qdrant_port, host=self.qdrant_host
         ):
             open_services.append(cs.SERVICE_QDRANT)
         return open_services
+
+    # On Windows a Memgraph probe runs mgclient in a child process, and a child
+    # that failed or never answered leaves unknown whether anonymous logins are
+    # refused. Unknown counts as open: such a stack is refused, and a start
+    # stops it as it stops an open one.
+    def _memgraph_accepts_anonymous(self) -> bool:
+        try:
+            return memgraph_accepts_anonymous(self.memgraph_host, self.memgraph_port)
+        except ChildProcessError as e:
+            logger.warning(cs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
+            return True
+
+    def _memgraph_anonymous_access(self) -> cs.AnonymousAccess:
+        try:
+            return memgraph_anonymous_access(self.memgraph_host, self.memgraph_port)
+        except ChildProcessError as e:
+            logger.warning(cs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
+            return cs.AnonymousAccess.ALLOWED
 
     def _compose_env(self) -> dict[str, str]:
         """The environment `docker compose up` runs in.
@@ -807,10 +823,11 @@ class StackManager:
         # Every caller has just started the stack, after `up` refused one that
         # was already open. A start whose wait fails or is interrupted never
         # reaches the credential check below, so an open service it started
-        # is found and stopped here instead.
+        # is found and stopped here instead. That includes a wait cut short
+        # by a Memgraph probe child that failed (Windows only).
         try:
             self._wait_for_services(timeout)
-        except (StackError, KeyboardInterrupt):
+        except (StackError, ChildProcessError, KeyboardInterrupt):
             self._stop_if_left_open()
             raise
         # Ready is not the same as protected: prove the started containers
@@ -902,7 +919,7 @@ class StackManager:
 
     def _anonymous_access(self, service: str) -> cs.AnonymousAccess:
         if service == cs.SERVICE_MEMGRAPH:
-            return memgraph_anonymous_access(self.memgraph_host, self.memgraph_port)
+            return self._memgraph_anonymous_access()
         return qdrant_anonymous_access(self.qdrant_port, host=self.qdrant_host)
 
     def _stop_open_services(self, open_services: list[str]) -> None:
