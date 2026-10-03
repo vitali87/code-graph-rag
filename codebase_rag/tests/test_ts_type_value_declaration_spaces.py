@@ -14,12 +14,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.types_defs import NodeType
+from codec import schema_pb2 as pb
 from evals.cgr_graph import _StatefulIngestor
 
 TYPE_AND_FUNCTION_TS = """export type input<T> = { value: T };
@@ -133,6 +135,42 @@ USE_OTHER_INPUT_TS = """import { input } from "./other";
 
 export function run() {
   return input(1);
+}
+"""
+
+
+# One import binds both twins: the call names the function, the return
+# annotation the type.
+USE_INPUT_AND_ITS_TYPE_TS = """import { input } from "./shape";
+
+export function run(): input<number> {
+  return input(1);
+}
+"""
+
+USE_OPTS_AND_IMPLEMENT_IT_TS = """import { Opts } from "./shape";
+
+export class Impl implements Opts {
+  a = 1;
+}
+
+export function run() {
+  return Opts(1);
+}
+"""
+
+BASE_AND_BOX_TWINS_TS = """export class Base {
+  base(): number {
+    return 0;
+  }
+}
+
+export interface Box extends Base { extra: number }
+
+export class Box extends Base {
+  get(): number {
+    return 1;
+  }
 }
 """
 
@@ -373,6 +411,101 @@ def test_renaming_the_function_leaves_its_type_twin(temp_repo: Path) -> None:
     assert "+export function makeInput<T>(value: T): input<T> {" in report.diff
     assert "-export type" not in report.diff
     assert '+import { makeInput } from "./shape";' in report.diff
+
+
+def test_renaming_a_function_whose_import_also_binds_its_type_twin_refuses(
+    temp_repo: Path,
+) -> None:
+    # `import { input }` binds the function AND the type. Rewriting it to
+    # `import { makeInput }` leaves the `input<number>` annotation unbound
+    # (TS2304), so the rename must not go ahead.
+    _write(
+        temp_repo,
+        {"shape.ts": TYPE_AND_FUNCTION_TS, "use.ts": USE_INPUT_AND_ITS_TYPE_TS},
+    )
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
+    )
+    updater.run()
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            temp_repo,
+            store.fetch_all,
+            updater.project_name,
+            f"{updater.project_name}.src.shape.input",
+            "makeInput",
+            dry_run=True,
+        )
+    assert "src/use.ts" in str(refused.value)
+    assert [site.path for site in refused.value.ambiguous] == ["src/use.ts"]
+
+
+def test_renaming_a_function_whose_import_is_also_implemented_refuses(
+    temp_repo: Path,
+) -> None:
+    # `implements Opts` names the interface the same import binds.
+    _write(
+        temp_repo,
+        {"shape.ts": INTERFACE_AND_FUNCTION_TS, "use.ts": USE_OPTS_AND_IMPLEMENT_IT_TS},
+    )
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
+    )
+    updater.run()
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            temp_repo,
+            store.fetch_all,
+            updater.project_name,
+            f"{updater.project_name}.src.shape.Opts",
+            "makeOpts",
+            dry_run=True,
+        )
+    assert [site.path for site in refused.value.ambiguous] == ["src/use.ts"]
+
+
+def test_protobuf_export_keeps_both_twins_inheritance_edges(temp_repo: Path) -> None:
+    # `interface Box extends Base` and `class Box extends Base` are two
+    # INHERITS edges between the same two qualified names, told apart only by
+    # the source's label; the export must not merge them into one.
+    _write(temp_repo, {"shape.ts": BASE_AND_BOX_TWINS_TS})
+    out = temp_repo.parent / f"{temp_repo.name}-pb"
+    out.mkdir()
+    exporter = ProtobufFileIngestor(str(out), repo_path=str(temp_repo))
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=exporter, repo_path=temp_repo, parsers=parsers, queries=queries
+    ).run()
+    exporter.flush_all()
+
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / "index.bin").read_bytes())
+    shape = f"{temp_repo.name}.src.shape"
+    inherits = sorted(
+        (rel.source_label, rel.source_id, rel.target_label, rel.target_id)
+        for rel in index.relationships
+        if rel.type == pb.Relationship.INHERITS
+    )
+    assert inherits == [
+        (
+            cs.NodeLabel.CLASS.value,
+            f"{shape}.Box",
+            cs.NodeLabel.CLASS.value,
+            f"{shape}.Base",
+        ),
+        (
+            cs.NodeLabel.INTERFACE.value,
+            f"{shape}.Box",
+            cs.NodeLabel.CLASS.value,
+            f"{shape}.Base",
+        ),
+    ]
 
 
 def test_an_incremental_run_reads_both_twins_back(temp_repo: Path) -> None:

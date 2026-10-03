@@ -26,8 +26,10 @@ def _edge(
 
 
 def _names(store: _StatefulIngestor, query: str, qn: str) -> set[str]:
-    rows = store.fetch_all(query, {cs.KEY_QN: qn, cs.KEY_PROJECT_PREFIX: "proj."})
-    return {str(row[_QN]) for row in rows}
+    # `label` for the reads scoped to the node they start from, a Function
+    # here: a TS type and a value share one qualified name (issue #2520).
+    params = {cs.KEY_QN: qn, cs.KEY_LABEL: _FN, cs.KEY_PROJECT_PREFIX: "proj."}
+    return {str(row[_QN]) for row in store.fetch_all(query, params)}
 
 
 @pytest.mark.parametrize(
