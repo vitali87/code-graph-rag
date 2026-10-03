@@ -19,6 +19,7 @@ from .csharp_frontend import CallSiteKey
 from .dart.type_inference import DartTypeInferenceEngine
 from .frontends.protocol import ResolvedCallSite
 from .go import GoTypeInferenceEngine
+from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
 from .js_ts import JsTypeInferenceEngine
@@ -589,6 +590,10 @@ class TypeInferenceEngine:
             return None
         base_type = var_types.get(segments[0])
         if not base_type:
+            if len(segments) == 2:
+                return self._go_package_call_return_type(
+                    segments[0], segments[1], module_qn
+                )
             return None
         class_qn = self._resolve_class_name(base_type, module_qn) or base_type
         for field in segments[1:-1]:
@@ -694,6 +699,10 @@ class TypeInferenceEngine:
             return hit
         if cs.SEPARATOR_DOT not in module_qn:
             return None
+        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return self._go_package_fn_return_type(package_prefix, name)
+
+    def _go_package_fn_return_type(self, package_qn: str, name: str) -> str | None:
         if len(self.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
             for qn, return_type in self.go_function_return_types.items():
@@ -702,8 +711,38 @@ class TypeInferenceEngine:
                 if package:
                     self._go_free_fn_index.setdefault((package, fn_name), return_type)
             self._go_free_fn_index_size = len(self.go_function_return_types)
-        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        return self._go_free_fn_index.get((package_prefix, name))
+        return self._go_free_fn_index.get((package_qn, name))
+
+    def _go_package_call_return_type(
+        self, qualifier: str, name: str, module_qn: str
+    ) -> str | None:
+        # `r := gotest.NewRouter()`: the callee's bare `*Mux` names a type of
+        # the package the import binds `gotest` to, not of the caller's, so it
+        # is qualified here to that package's one type of that name. Left
+        # bare, it resolved against the caller's package (an external
+        # `_test` package has no Mux) and `r.Get` fell to the name trie
+        # (#2571). A return type naming yet another package stays untyped.
+        package_qn = (self.import_processor.import_mapping.get(module_qn) or {}).get(
+            qualifier
+        )
+        if not package_qn:
+            return None
+        return_type = self._go_package_fn_return_type(package_qn, name)
+        if not return_type or cs.SEPARATOR_DOT in return_type:
+            return None
+        # The import map knows the package by its qn, not its directory, so
+        # its files are the modules one segment below that qn, the shape
+        # `_go_package_fn_return_type` keys its functions by.
+        declared = go_utils.package_level_definitions(
+            self.function_registry,
+            return_type,
+            go_utils.TYPE_DECLARATION_TYPES,
+            lambda qn: (
+                qn.rpartition(cs.SEPARATOR_DOT)[0].rpartition(cs.SEPARATOR_DOT)[0]
+                == package_qn
+            ),
+        )
+        return declared[0] if len(declared) == 1 else None
 
     def _enrich_rust_call_locals(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]

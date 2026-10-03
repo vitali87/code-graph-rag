@@ -1617,6 +1617,7 @@ class CallProcessor:
             rehydrated_definition_paths=rehydrated_definition_paths,
             rust_function_modules=rust_function_modules,
             declared_module_qns=declared_module_qns,
+            go_package_names=self._go_package_names,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -3880,6 +3881,8 @@ class CallProcessor:
             local_var_types = None
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
+        elif language == cs.SupportedLanguage.GO:
+            self._record_go_local_names(caller_node, caller_qn, caller_type)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
@@ -3993,6 +3996,23 @@ class CallProcessor:
             self._resolver.python_local_names[caller_qn] = local
         else:
             self._resolver.python_local_names.pop(caller_qn, None)
+
+    def _record_go_local_names(
+        self, caller_node: Node, caller_qn: str, caller_type: str
+    ) -> None:
+        # A file's package-level names cannot collide with its functions'
+        # (the compiler rejects it), so only a function or method binds
+        # names a bare call might mean instead of the package's (#2571),
+        # and only where each is in scope (#2616 review).
+        scopes = (
+            {}
+            if caller_type == cs.NodeLabel.MODULE
+            else go_utils.local_binding_scopes(caller_node)
+        )
+        if scopes:
+            self._resolver.go_local_scopes[caller_qn] = scopes
+        else:
+            self._resolver.go_local_scopes.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -6644,9 +6664,7 @@ class CallProcessor:
             for qn in registry.find_with_prefix_and_suffix(package_qn, name)
             if registry.get(qn) == NodeType.CLASS
             and qn.count(cs.SEPARATOR_DOT) == depth
-            and self._go_declaration_is_visible(
-                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn, module_qn
-            )
+            and self._resolver.go_declaration_is_visible(qn, module_qn)
         ]
         if len(candidates) > 1:
             own = [
@@ -6656,42 +6674,6 @@ class CallProcessor:
             ]
             candidates = own if own else candidates
         return candidates[0] if len(candidates) == 1 else None
-
-    def _go_declaration_is_visible(
-        self, declaring_qn: str, package_qn: str, module_qn: str
-    ) -> bool:
-        """Whether a type declared in `declaring_qn` is in scope for `module_qn`.
-
-        A directory is not a package: `package m_test` files sit beside
-        `package m` files and are a DIFFERENT package, and any `_test.go` is
-        compiled only under `go test`. Without this filter a production
-        `Error{}` in a third file of the package saw both `types.Error` and a
-        same-named `Error` from `m_test.go`, and the ambiguity rule emitted
-        nothing (CodeRabbit, #1747). Same rules as `_go_package_receiver_qn`:
-        a test file is visible only to a test requester of the same package,
-        and within the requester's own directory the `package` clauses must
-        agree. A lookup through an import is into ANOTHER package, whose
-        clause the requester does not share, so only the test rule applies.
-        """
-        declaring_path = self.module_qn_to_file_path.get(declaring_qn)
-        if declaring_path is None:
-            return True
-        requester = self.module_qn_to_file_path.get(module_qn)
-        requester_is_test = requester is not None and requester.stem.endswith(
-            cs.GO_TEST_FILE_SUFFIX
-        )
-        own_package = package_qn == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
-            requester_is_test and own_package
-        ):
-            return False
-        if not own_package:
-            return True
-        requester_package = self._go_package_names.get(module_qn)
-        return (
-            requester_package is None
-            or self._go_package_names.get(declaring_qn) == requester_package
-        )
 
     def _go_visible_class_variants(
         self, class_qn: str, module_qn: str, literal: Node

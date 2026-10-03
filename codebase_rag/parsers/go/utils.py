@@ -1,9 +1,145 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Collection
+
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import safe_decode_text
+
+# What a Go type name can declare: a struct (Class), a named or alias type,
+# or an interface. Receiver and constructor-return types name one of them.
+TYPE_DECLARATION_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFACE})
+
+
+def package_level_definitions(
+    registry: FunctionRegistryTrieProtocol,
+    name: str,
+    labels: Collection[str],
+    in_package: Callable[[str], bool],
+) -> list[str]:
+    # A Go package spans its directory's files, and cgr files each package-level
+    # declaration under its FILE module (`pkg.file.Name`), a segment the source
+    # never writes. That segment is the file's stem, which can hold dots
+    # (`helper.gen.go` files under `pkg.helper.gen`), so a qn's depth cannot
+    # tell a file of `pkg` from one of the sub-package `pkg/helper` (whose
+    # `gen.go` spells the same qn). `in_package` decides by the declaring
+    # file, from its recorded path where the caller knows it (#2616 review).
+    return [
+        qn
+        for qn in registry.find_ending_with(name)
+        if registry.get(qn) in labels and in_package(qn)
+    ]
+
+
+# Statements whose `left` (or a type switch's `alias`) list declares names:
+# `a, b := ...`, `for k, v := range m`, `case v := <-ch`, `switch t := x.(type)`.
+_GO_BINDING_LIST_FIELDS = {
+    cs.TS_GO_SHORT_VAR_DECLARATION: cs.FIELD_LEFT,
+    cs.TS_GO_RANGE_CLAUSE: cs.FIELD_LEFT,
+    cs.TS_GO_RECEIVE_STATEMENT: cs.FIELD_LEFT,
+    cs.TS_GO_TYPE_SWITCH_STATEMENT: cs.FIELD_GO_ALIAS,
+}
+# Declarations whose `name` identifiers are the names they bind.
+_GO_NAMED_BINDING_TYPES = frozenset(
+    {
+        cs.TS_GO_VAR_SPEC,
+        cs.TS_GO_CONST_SPEC,
+        cs.TS_GO_PARAMETER_DECLARATION,
+        cs.TS_GO_VARIADIC_PARAMETER_DECLARATION,
+    }
+)
+_GO_PARAMETER_TYPES = frozenset(
+    {cs.TS_GO_PARAMETER_DECLARATION, cs.TS_GO_VARIADIC_PARAMETER_DECLARATION}
+)
+_GO_FUNCTION_TYPES = frozenset(
+    {
+        cs.TS_GO_FUNCTION_DECLARATION,
+        cs.TS_GO_METHOD_DECLARATION,
+        cs.TS_GO_FUNC_LITERAL,
+    }
+)
+# The blocks, explicit and implicit, a local declaration is scoped to: the
+# innermost one around it is where its name stops being in scope.
+_GO_SCOPE_TYPES = _GO_FUNCTION_TYPES | frozenset(
+    {
+        cs.TS_GO_BLOCK,
+        cs.TS_GO_IF_STATEMENT,
+        cs.TS_GO_FOR_STATEMENT,
+        cs.TS_GO_EXPRESSION_SWITCH_STATEMENT,
+        cs.TS_GO_TYPE_SWITCH_STATEMENT,
+        cs.TS_GO_SELECT_STATEMENT,
+        cs.TS_GO_EXPRESSION_CASE,
+        cs.TS_GO_TYPE_CASE,
+        cs.TS_GO_COMMUNICATION_CASE,
+        cs.TS_GO_DEFAULT_CASE,
+    }
+)
+
+# A name a function binds for itself -> the byte spans it is in scope over.
+GoLocalScopes = dict[str, tuple[tuple[int, int], ...]]
+
+
+def local_binding_scopes(func_node: Node) -> GoLocalScopes:
+    """Every name a function or method binds for itself (receiver,
+    parameters, locals, and those of the closures inside it), with the byte
+    spans where it is in scope. A bare call to one of them inside a span calls
+    that value, whatever package-level function shares its name; outside
+    every span the name is the package's again.
+
+    The spans follow Go's scoping: a parameter covers its function's body; a
+    local starts at the end of its declaration (`helper := helper()` reads
+    the outer `helper`) and ends with the innermost block around it, an
+    `if`/`for`/`switch` header's own implicit block included."""
+    scopes: dict[str, list[tuple[int, int]]] = {}
+    stack = [func_node]
+    while stack:
+        node = stack.pop()
+        names = _bound_names(node)
+        if names and (span := _binding_span(node)) is not None:
+            for name in names:
+                scopes.setdefault(name, []).append(span)
+        stack.extend(node.named_children)
+    return {name: tuple(spans) for name, spans in scopes.items()}
+
+
+def _bound_names(node: Node) -> list[str]:
+    if (field := _GO_BINDING_LIST_FIELDS.get(node.type)) is not None:
+        bound = node.child_by_field_name(field)
+        children = bound.named_children if bound is not None else []
+    elif node.type in _GO_NAMED_BINDING_TYPES:
+        children = node.children_by_field_name(cs.FIELD_NAME)
+    else:
+        return []
+    return [
+        name
+        for child in children
+        if child.type == cs.TS_GO_IDENTIFIER and (name := safe_decode_text(child))
+    ]
+
+
+def _binding_span(node: Node) -> tuple[int, int] | None:
+    if node.type in _GO_PARAMETER_TYPES:
+        # parameter_declaration -> parameter_list -> the function; a
+        # parameter of a bare function TYPE binds nothing anywhere.
+        owner = node.parent.parent if node.parent is not None else None
+        if owner is None or owner.type not in _GO_FUNCTION_TYPES:
+            return None
+        body = owner.child_by_field_name(cs.FIELD_BODY)
+        return (body.start_byte, body.end_byte) if body is not None else None
+    if node.type == cs.TS_GO_TYPE_SWITCH_STATEMENT:
+        # `switch t := x.(type) {...}`: `t` is declared in each clause, after
+        # the guard is evaluated.
+        guard = node.child_by_field_name(cs.FIELD_VALUE) or node.child_by_field_name(
+            cs.FIELD_GO_ALIAS
+        )
+        start = guard.end_byte if guard is not None else node.start_byte
+        return (start, node.end_byte)
+    scope = node.parent
+    while scope is not None and scope.type not in _GO_SCOPE_TYPES:
+        scope = scope.parent
+    return (node.end_byte, scope.end_byte) if scope is not None else None
 
 
 def extract_package_name(root: Node) -> str | None:
