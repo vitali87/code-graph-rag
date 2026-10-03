@@ -524,6 +524,15 @@ class DefinitionProcessor(
             # first-claim guard would block the live registration, filing body
             # `use` imports under the dead qn (issue #1019).
             self.function_locations.drop_module(module_qn)
+            # Before the function pass below, which would otherwise take a
+            # class's plain name first (issue #2621).
+            if language == cs.SupportedLanguage.PYTHON:
+                self._reserve_python_class_qns(
+                    combined_captures,
+                    module_qn,
+                    queries[language][cs.QUERY_CONFIG],
+                    file_path,
+                )
 
             self.import_processor.parse_imports(
                 root_node,
