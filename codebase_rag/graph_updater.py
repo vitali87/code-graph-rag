@@ -7844,20 +7844,18 @@ class GraphUpdater:
         one node between the two, so that checkout's stays even when this
         repository's link points at it (#2451 review).
         """
-        if not self._outside_repo_row(abs_path, repo_abs):
+        if not isinstance(abs_path, str) or not self._outside_repo_row(
+            abs_path, repo_abs
+        ):
             return False
         if not path_utils.is_symlink_entry(self.repo_path / path):
             return True
-        return isinstance(abs_path, str) and abs_path.endswith(
-            f"{cs.SEPARATOR_SLASH}{path}"
-        )
+        return abs_path.endswith(f"{cs.SEPARATOR_SLASH}{path}")
 
     @staticmethod
-    def _outside_repo_row(abs_path: ResultValue | None, repo_abs: str) -> bool:
+    def _outside_repo_row(abs_path: str, repo_abs: str) -> bool:
         """Whether a row's absolute path lies outside this repository."""
-        return isinstance(abs_path, str) and not (
-            abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
-        )
+        return not (abs_path == repo_abs or abs_path.startswith(repo_abs + "/"))
 
     @staticmethod
     def _repo_scope_params(repo_abs: str) -> PropertyParams:
