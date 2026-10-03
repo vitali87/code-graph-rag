@@ -467,6 +467,24 @@ def _py_is_taint_clearing_method(func: Node) -> bool:
     )
 
 
+_PY_STRING_LITERALS = frozenset({cs.TS_PY_STRING, cs.TS_PY_CONCATENATED_STRING})
+
+
+def _py_is_known_str(node: Node | None, local_var_types: dict[str, str] | None) -> bool:
+    # A string literal (an f-string included), or a name the caller's local
+    # type map binds to `str` (an annotated local or parameter).
+    if node is None:
+        return False
+    if node.type in _PY_STRING_LITERALS:
+        return True
+    return (
+        node.type == cs.TS_PY_IDENTIFIER
+        and node.text is not None
+        and local_var_types is not None
+        and local_var_types.get(node.text.decode(cs.ENCODING_UTF8)) == cs.PY_TYPE_STR
+    )
+
+
 class _FlowCtx(NamedTuple):
     # Per-caller constants threaded through the source-ordered walk.
     caller_spec: tuple[str, str, str]
@@ -3950,9 +3968,14 @@ class FlowProcessor:
         operands: list[Node] = []
         func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is not None and func.type == cs.TS_PY_ATTRIBUTE:
+            receiver = func.child_by_field_name(cs.FIELD_OBJECT)
             if _py_is_taint_clearing_method(func):
-                return []
-            if (receiver := func.child_by_field_name(cs.FIELD_OBJECT)) is not None:
+                # A str lookup never returns its receiver's content, but only
+                # a receiver known to be a string makes `find(secret)` the str
+                # method: any other object's `find` may return its argument.
+                if _py_is_known_str(receiver, ctx.local_var_types):
+                    return []
+            elif receiver is not None:
                 operands.append(receiver)
         operands.extend(_py_argument_values(node))
         return operands

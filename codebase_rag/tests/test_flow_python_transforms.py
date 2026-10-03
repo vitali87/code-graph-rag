@@ -404,6 +404,92 @@ def test_sanitizer_clears_the_taint(tmp_path: Path, body: str) -> None:
     assert not _env_to_stdout(edges)
 
 
+# A str lookup name (`find`, `index`, `count`, ...) clears its argument only
+# on a receiver known to be a string. On any other object it is that object's
+# own method, and its result may carry the argument it was given.
+_LOOKUPS_WITH_AN_ARGUMENT = (
+    "find",
+    "rfind",
+    "index",
+    "rindex",
+    "count",
+    "startswith",
+    "endswith",
+)
+
+
+def _client_handler(call: str) -> dict[str, str]:
+    return {
+        "app.py": (
+            "import os\n"
+            "import external_client\n\n"
+            "def handler():\n"
+            "    secret = os.getenv('API_TOKEN')\n"
+            "    client = external_client.Client()\n"
+            f"    print({call})\n"
+        )
+    }
+
+
+@pytest.mark.parametrize("method", _LOOKUPS_WITH_AN_ARGUMENT)
+def test_lookup_on_an_object_keeps_its_argument_taint(
+    tmp_path: Path, method: str
+) -> None:
+    edges = _run_flow(tmp_path, _client_handler(f"client.{method}(secret)"))
+    assert _env_to_stdout(edges)
+
+
+def test_lookup_on_an_untyped_parameter_reaches_the_callee(tmp_path: Path) -> None:
+    files = {
+        "app.py": (
+            "import os\n\n"
+            "def emit(v):\n"
+            "    print(v)\n\n"
+            "def handler(store):\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            "    emit(store.find(t))\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _arg_edge(edges, "app.handler", "app.emit")
+    assert _env_to_stdout(edges)
+
+
+@pytest.mark.parametrize("method", _LOOKUPS_WITH_AN_ARGUMENT)
+@pytest.mark.parametrize(
+    "receiver",
+    [
+        pytest.param("'sk-live-abc'", id="str-literal"),
+        pytest.param("f'sk-{1}'", id="fstring"),
+        pytest.param("label", id="annotated-str-local"),
+    ],
+)
+def test_lookup_on_a_known_string_clears_its_argument(
+    tmp_path: Path, receiver: str, method: str
+) -> None:
+    files = _handler(
+        f"    label: str = external_client.name()\n    emit({receiver}.{method}(t))\n"
+    )
+    files["app.py"] = "import external_client\n" + files["app.py"]
+    edges = _run_flow(tmp_path, files)
+    assert not _arg_edge(edges, "app.handler", "app.emit")
+    assert not _env_to_stdout(edges)
+
+
+def test_lookup_on_a_parameter_annotated_str_clears_its_argument(
+    tmp_path: Path,
+) -> None:
+    files = {
+        "app.py": (
+            "import os\n\n"
+            "def handler(label: str):\n"
+            "    t = os.getenv('API_TOKEN')\n"
+            "    print(label.find(t))\n"
+        )
+    }
+    assert not _env_to_stdout(_run_flow(tmp_path, files))
+
+
 def test_sanitizer_result_is_not_resurrected_by_a_later_transform(
     tmp_path: Path,
 ) -> None:

@@ -274,6 +274,9 @@ Within a function body, taint moves and disappears by these rules:
   `isinstance`, `issubclass`, `callable`, `hasattr`, `any`, `all`, the
   `hashlib` / `hmac` digests and `compare_digest`, and the `str` predicate and
   lookup methods (`startswith`, `endswith`, `is*`, `count`, `find`, `index`).
+  Those methods clear their receiver by name, but clear their arguments only
+  on a receiver known to be a string (a literal, or a name annotated `str`):
+  `client.find(secret)` on any other object keeps the secret's taint.
   A comparison (`t == "x"`) or `not t` yields a bool and is clean too.
   Escaping and quoting (`html.escape`, `shlex.quote`) deliberately stay
   transforms: `FLOWS_TO` tracks where a value came from, and an escaped secret

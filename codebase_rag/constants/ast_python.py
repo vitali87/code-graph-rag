@@ -156,8 +156,11 @@ PY_TAINT_CLEARING_CALLS = frozenset(
         "secrets.compare_digest",
     }
 )
-# Methods matched by name on any receiver, since the walk has no receiver
-# type: str predicates and position/count lookups return a bool or an int.
+# str predicates and position/count lookups return a bool or an int. They
+# clear the receiver's taint by name alone, since the walk rarely knows a
+# receiver's type. Their arguments' taint clears only on a receiver known to
+# be a string: on any other object (`client.find(secret)`) the method is that
+# object's own, and its result may carry the argument.
 PY_TAINT_CLEARING_METHODS = frozenset(
     {
         "startswith",
@@ -181,6 +184,8 @@ PY_TAINT_CLEARING_METHODS = frozenset(
         "rindex",
     }
 )
+# The local type-map name of a value known to be a string.
+PY_TYPE_STR = "str"
 
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
