@@ -26,8 +26,10 @@ typing's too. A class body runs where it is defined, but a def's body runs
 only when the def is called, by which time any binding its enclosing scopes
 make anywhere (after the def too) may be in force: it starts from all of them
 merged by that same rule, and its own bindings shadow them as it runs. A name
-a `global` or `nonlocal` declares can be rebound by any call, so it never
-spells a stub. A stub whose decorator is not surely typing's is never folded.
+a function (or class body) declares `global` or `nonlocal` AND rebinds to
+anything but typing's in its own scope may change whenever that runs, so it
+never spells a stub; a declaration alone, read-only, changes nothing. A stub
+whose decorator is not surely typing's is never folded.
 Where nothing binds the name before the stub, the module's imports as a
 whole decide.
 
@@ -84,6 +86,8 @@ _SAME_SCOPE_COMPOUNDS = cs.PY_STATEMENT_CONTAINERS - _OWN_SCOPES - {cs.TS_PY_BLO
 _SHARED_DECLARATIONS = frozenset(
     {cs.TS_PY_GLOBAL_STATEMENT, cs.TS_PY_NONLOCAL_STATEMENT}
 )
+# The bodies a `global` / `nonlocal` declaration can stand in.
+_DECLARING_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION})
 
 # Root-name bindings, as (name, spelling), that the enclosing scopes make
 # anywhere: what a def's body may see when it is finally called.
@@ -149,7 +153,7 @@ def _overload_stubs(root: Node) -> frozenset[int]:
         return frozenset()
     roots = {spelling.partition(cs.SEPARATOR_DOT)[0] for spelling in spellings}
     hits = _root_words(root, roots)
-    shared = _declared_shared(root, roots, hits)
+    shared = _rebound_through_declarations(root, roots, hits)
     spellings = frozenset(
         spelling
         for spelling in spellings
@@ -225,17 +229,40 @@ def _scope_late(block: Node, roots: set[str], hits: list[int]) -> _Late:
     )
 
 
-def _declared_shared(root: Node, roots: set[str], hits: list[int]) -> set[str]:
-    # Root names a `global` or `nonlocal` declares anywhere: the function
-    # declaring one can rebind it whenever it is called.
-    return {
-        name
-        for block in _blocks(root)
-        for statement in block.named_children
-        if statement.type in _SHARED_DECLARATIONS and _spans_word(statement, hits)
-        for name in map(safe_decode_text, statement.named_children)
-        if name in roots
-    }
+def _rebound_through_declarations(
+    root: Node, roots: set[str], hits: list[int]
+) -> set[str]:
+    # Root names some function or class body both declares `global` /
+    # `nonlocal` and binds, by any binding form, to something other than
+    # typing's in its own scope: each run of that body may rebind the shared
+    # name, wherever it is read. A declaration that is only read rebinds
+    # nothing.
+    rebound: set[str | None] = set()
+    for block in _blocks(root):
+        parent = block.parent if _spans_word(block, hits) else None
+        if parent is None or parent.type not in _DECLARING_SCOPES:
+            continue
+        statements = [
+            inner
+            for statement in block.named_children
+            if _spans_word(statement, hits)
+            for inner in _scope_statements(statement, hits)
+        ]
+        declared = {
+            safe_decode_text(name)
+            for statement in statements
+            if statement.type in _SHARED_DECLARATIONS
+            for name in statement.named_children
+        }
+        if not declared:
+            continue
+        rebound |= declared & {
+            name
+            for statement in statements
+            for name, spelling in _bindings(statement, hits)
+            if not spelling
+        }
+    return {name for name in roots if name in rebound}
 
 
 def _rebind(
@@ -274,12 +301,20 @@ def _scope_bindings(
     # Every binding `statement` makes in its scope: its own syntax's, and that
     # of every statement in its clauses' blocks, at any depth, except inside
     # a def's or class's body (another scope; its name and header still
-    # count). A statement with no root-named word in it binds no root name;
-    # an import is read anyway, since `from typing import *` names none.
+    # count).
+    for node in _scope_statements(statement, hits):
+        yield from _bindings(node, hits)
+
+
+def _scope_statements(statement: Node, hits: list[int]) -> Iterator[Node]:
+    # `statement` and every statement in its clauses' blocks at any depth,
+    # all running in its scope. A statement with no root-named word in it
+    # can neither bind nor declare a root name and is skipped; an import is
+    # kept anyway, since `from typing import *` names none.
     stack = [statement]
     while stack:
         node = stack.pop()
-        yield from _bindings(node, hits)
+        yield node
         if node.type in _SAME_SCOPE_COMPOUNDS:
             stack.extend(
                 inner

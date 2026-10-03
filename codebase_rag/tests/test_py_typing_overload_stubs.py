@@ -312,6 +312,10 @@ def run():
             id="rebound-then-reimported-from-typing",
         ),
         pytest.param(RENAME_UTIL + "\n\nt = None\n", id="rebound-after-the-stubs"),
+        pytest.param(
+            RENAME_UTIL + "\n\ndef _peek():\n    global t\n    return t\n",
+            id="read-only-global-in-a-helper",
+        ),
     ],
 )
 def test_rename_rewrites_every_stub_with_the_implementation(
@@ -599,7 +603,53 @@ TARGET_REBINDINGS = [
     ),
 ]
 
-EVERY_REBINDING = [*REBOUND_OVERLOAD, *COMPOUND_BODY_REBINDINGS, *TARGET_REBINDINGS]
+# Rebound through a `global` declaration: the declaring function (or class
+# body) binds the module's name, by any binding form, whenever it runs.
+DECLARED_REBINDINGS = [
+    pytest.param(
+        "from typing import overload\n\n\n"
+        "def reset():\n    global overload\n    overload = identity\n",
+        "@overload",
+        id="global-then-assigned",
+    ),
+    pytest.param(
+        "from typing import overload\n\n\ndef reset():\n    global overload\n"
+        "    if ready:\n        overload, other = identity, 1\n",
+        "@overload",
+        id="global-then-unpacked-in-an-if",
+    ),
+    pytest.param(
+        "from typing import overload\n\n\ndef reset():\n    if ready:\n"
+        "        global overload\n\n    def overload(fn):\n        return fn\n",
+        "@overload",
+        id="global-in-an-if-then-def",
+    ),
+    pytest.param(
+        "from typing import overload\n\n\n"
+        "def reset():\n    global overload\n    import mylib as overload\n",
+        "@overload",
+        id="global-then-imported",
+    ),
+    pytest.param(
+        "from typing import overload\n\n\ndef reset():\n    global overload\n"
+        "    for overload in hooks:\n        pass\n",
+        "@overload",
+        id="global-then-loop-target",
+    ),
+    pytest.param(
+        "from typing import overload\n\n\n"
+        "class Holder:\n    global overload\n    overload = identity\n",
+        "@overload",
+        id="global-in-a-class-body",
+    ),
+]
+
+EVERY_REBINDING = [
+    *REBOUND_OVERLOAD,
+    *COMPOUND_BODY_REBINDINGS,
+    *TARGET_REBINDINGS,
+    *DECLARED_REBINDINGS,
+]
 
 
 @pytest.mark.parametrize(("imports", "deco"), [*NOT_TYPING_OVERLOAD, *EVERY_REBINDING])
@@ -771,6 +821,38 @@ LIVE_AT_THE_STUBS = [
             deco="@overload",
         ),
         id="reimported-after-a-compound-rebinding",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\n"
+                "def helper():\n    global overload\n    return overload"
+            ),
+            deco="@overload",
+        ),
+        id="read-only-global-in-a-helper",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\ndef helper():\n"
+                "    global overload, counter\n    counter = 1\n    return overload"
+            ),
+            deco="@overload",
+        ),
+        id="global-helper-rebinding-another-name",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\ndef outer():\n"
+                "    overload = identity\n\n    def inner():\n"
+                "        nonlocal overload\n        return overload\n\n"
+                "    return inner"
+            ),
+            deco="@overload",
+        ),
+        id="read-only-nonlocal-in-a-closure",
     ),
 ]
 
@@ -999,6 +1081,32 @@ NESTED_STUBS = [
         3,
         3,
         id="rebound-through-global",
+    ),
+    pytest.param(
+        "",
+        "\n\ndef helper():\n    global overload\n    return overload\n",
+        1,
+        1,
+        id="read-only-global",
+    ),
+    # `rebind` rebinds `outer`'s own `overload` through `nonlocal`; such a
+    # rebinding is honoured module-wide, which errs toward keeping `Box`'s
+    # definitions apart too.
+    pytest.param(
+        "    from typing import overload\n\n    def rebind():\n"
+        "        nonlocal overload\n        overload = identity\n\n    rebind()\n",
+        "",
+        3,
+        3,
+        id="rebound-through-nonlocal",
+    ),
+    pytest.param(
+        "    from typing import overload\n\n    def peek():\n"
+        "        nonlocal overload\n        return overload\n",
+        "",
+        1,
+        1,
+        id="read-only-nonlocal",
     ),
     pytest.param(
         "    from typing import overload\n",
@@ -1296,6 +1404,10 @@ def test_a_pyi_stub_beside_the_module_changes_nothing(
                 "import typing as t", "import typing as t\n\nt, _other = None, 1"
             ),
             id="alias-rebound-by-unpacking",
+        ),
+        pytest.param(
+            RENAME_UTIL + "\n\ndef _reset():\n    global t\n    t = None\n",
+            id="alias-rebound-through-global",
         ),
     ],
 )
