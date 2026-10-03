@@ -272,3 +272,73 @@ def test_name_rebound_to_a_package_stays_external(tmp_path: Path) -> None:
     }
     refs = _refs_from(tmp_path, "proj", files, "javascript", "proj.src.View.View")
     assert refs == [], refs
+
+
+# A `baseUrl` applies only to the files its tsconfig governs: those under the
+# config's directory, the nearest enclosing config winning, with a `baseUrl`
+# it inherits through `extends` counting as its own.
+
+BASE_URL_DOT = '{"compilerOptions":{"baseUrl":"."}}'
+
+
+def test_sibling_app_base_url_keeps_the_package_external(tmp_path: Path) -> None:
+    # App B's `baseUrl` and its `react.tsx` say nothing about app A's imports:
+    # in A, `react` is still the npm package.
+    files = {
+        "apps/a/src/View.tsx": _view(
+            'import * as React from "react";', "React.Fragment"
+        ),
+        "apps/a/src/frag.tsx": LOCAL_FRAGMENT,
+        "apps/b/tsconfig.json": BASE_URL_DOT,
+        "apps/b/react.tsx": LOCAL_FRAGMENT,
+    }
+    refs = _refs_from(tmp_path, "proj", files, "tsx", "proj.apps.a.src.View.View")
+    assert refs == [], refs
+
+
+@pytest.mark.parametrize(
+    ("files", "source", "expected"),
+    [
+        (
+            {
+                "apps/b/tsconfig.json": BASE_URL_DOT,
+                "apps/b/widgets.tsx": "export function Card() {\n  return <b />;\n}\n",
+                "apps/b/src/View.tsx": _view(
+                    'import * as Widgets from "widgets";', "Widgets.Card"
+                ),
+            },
+            "proj.apps.b.src.View.View",
+            ["proj.apps.b.widgets.Card"],
+        ),
+        (
+            {
+                "tsconfig.json": BASE_URL_DOT,
+                "react.tsx": LOCAL_FRAGMENT,
+                "apps/b/tsconfig.json": '{"compilerOptions":{"baseUrl":"src"}}',
+                "apps/b/src/View.tsx": _view(
+                    'import * as React from "react";', "React.Fragment"
+                ),
+            },
+            "proj.apps.b.src.View.View",
+            [],
+        ),
+        (
+            {
+                "tsconfig.base.json": BASE_URL_DOT,
+                "widgets.tsx": "export function Card() {\n  return <b />;\n}\n",
+                "apps/b/tsconfig.json": '{"extends":"../../tsconfig.base.json"}',
+                "apps/b/src/View.tsx": _view(
+                    'import * as Widgets from "widgets";', "Widgets.Card"
+                ),
+            },
+            "proj.apps.b.src.View.View",
+            ["proj.widgets.Card"],
+        ),
+    ],
+    ids=["file-under-the-config", "nearest-config-wins", "inherited-through-extends"],
+)
+def test_base_url_applies_to_the_files_its_config_governs(
+    tmp_path: Path, files: dict[str, str], source: str, expected: list[str]
+) -> None:
+    refs = _refs_from(tmp_path, "proj", files, "tsx", source)
+    assert [e.target for e in refs] == expected, refs

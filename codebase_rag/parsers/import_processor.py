@@ -498,19 +498,59 @@ def _tsconfig_dir_prefix(cfg: Path, repo_path: Path) -> str:
     return parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
 
 
-def _load_ts_base_urls(repo_path: Path) -> tuple[str, ...]:
-    # Every tsconfig `baseUrl`, repo-root-relative (`frontend/src/`). With one
-    # set, TypeScript resolves a bare specifier against it before node_modules,
-    # so `widgets` names `<baseUrl>/widgets.tsx` with no `paths` entry at all.
-    prefixes: list[str] = []
+def _tsconfig_extends(data: dict, cfg: Path, repo_path: Path) -> list[Path]:
+    # The in-repo configs `cfg` extends, last (most overriding) first. A
+    # package-shipped base (`@tsconfig/node20`) lives in node_modules, which
+    # is never indexed, so only relative entries are followed.
+    raw = data.get(cs.TS_EXTENDS_KEY)
+    entries = raw if isinstance(raw, list) else [raw]
+    found: list[Path] = []
+    for entry in reversed(entries):
+        if not isinstance(entry, str) or not entry.startswith(cs.PATH_CURRENT_DIR):
+            continue
+        target = Path(os.path.normpath(cfg.parent / entry))
+        if not target.is_file():
+            target = target.with_name(f"{target.name}{cs.TSCONFIG_EXTENSION}")
+        if target.is_file() and target.is_relative_to(repo_path):
+            found.append(target)
+    return found
+
+
+def _tsconfig_base_url(
+    cfg: Path, repo_path: Path, seen: frozenset[Path] = frozenset()
+) -> str | None:
+    # The repo-relative prefix `cfg`'s effective `baseUrl` names: its own, or
+    # one inherited through `extends`, which TypeScript resolves against the
+    # config that declares it (an app extending the root `tsconfig.base.json`).
+    data = _load_jsonc(cfg) if cfg not in seen else None
+    if not data:
+        return None
+    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+    if isinstance(options, dict) and options.get(cs.TS_BASE_URL_KEY):
+        return _tsconfig_dir_prefix(cfg, repo_path) + _tsconfig_base_prefix(options)
+    for parent in _tsconfig_extends(data, cfg, repo_path):
+        if (base := _tsconfig_base_url(parent, repo_path, seen | {cfg})) is not None:
+            return base
+    return None
+
+
+def _load_ts_base_urls(repo_path: Path) -> tuple[tuple[str, str | None], ...]:
+    # (config directory as a dotted module prefix, its effective `baseUrl` as a
+    # repo-relative path prefix or None), deepest directory first. With a
+    # `baseUrl`, TypeScript resolves a bare specifier against it before
+    # node_modules, so `widgets` names `<baseUrl>/widgets.tsx` with no `paths`
+    # entry at all; but only for files that config governs: those under its
+    # directory, the nearest config winning, so a sibling app's `baseUrl`
+    # never reaches this app's imports. The first config file found in a
+    # directory governs it (tsconfig.json before jsconfig.json).
+    governing: dict[str, str | None] = {}
     for cfg in _find_tsconfig_files(repo_path):
-        data = _load_jsonc(cfg)
-        options = data.get(cs.TS_COMPILER_OPTIONS_KEY) if data else None
-        if isinstance(options, dict) and options.get(cs.TS_BASE_URL_KEY):
-            prefixes.append(
-                _tsconfig_dir_prefix(cfg, repo_path) + _tsconfig_base_prefix(options)
-            )
-    return tuple(prefixes)
+        dotted = _tsconfig_dir_prefix(cfg, repo_path).replace(
+            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+        )
+        if dotted not in governing:
+            governing[dotted] = _tsconfig_base_url(cfg, repo_path)
+    return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
 
 
 def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
@@ -1140,7 +1180,9 @@ class ImportProcessor:
         self.js_path_aliases: list[tuple[str, str, bool]] = _load_ts_path_aliases(
             repo_path
         )
-        self.js_base_urls: tuple[str, ...] = _load_ts_base_urls(repo_path)
+        self.js_base_urls: tuple[tuple[str, str | None], ...] = _load_ts_base_urls(
+            repo_path
+        )
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
@@ -3742,14 +3784,30 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
-    def _js_base_url_names_file(self, import_path: str) -> bool:
-        # A bare specifier a tsconfig `baseUrl` resolves to a project file is
-        # first-party even though no `paths` alias maps it. Its qn stays the
-        # bare path it always had; only the package flag needs the disk's
-        # answer, so resolution beyond this flag is unchanged.
-        return any(
-            self._js_module_rel_on_disk(f"{base}{import_path}") is not None
-            for base in self.js_base_urls
+    def _js_base_url_names_file(self, import_path: str, current_module: str) -> bool:
+        # A bare specifier the importing file's own `baseUrl` resolves to a
+        # project file is first-party even though no `paths` alias maps it.
+        # Its qn stays the bare path it always had; only the package flag
+        # needs the disk's answer, so resolution beyond this flag is unchanged.
+        base = self._js_governing_base_url(current_module)
+        return (
+            base is not None
+            and self._js_module_rel_on_disk(f"{base}{import_path}") is not None
+        )
+
+    def _js_governing_base_url(self, current_module: str) -> str | None:
+        # The `baseUrl` of the nearest tsconfig whose directory holds the
+        # module; module qns spell directories as dotted segments, as the
+        # relative-specifier resolver below reads them.
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        relative = current_module.removeprefix(project_prefix)
+        return next(
+            (
+                base
+                for directory, base in self.js_base_urls
+                if relative.startswith(directory)
+            ),
+            None,
         )
 
     def _js_module_rel_on_disk(self, normalized: str) -> str | None:
@@ -3826,7 +3884,7 @@ class ImportProcessor:
             return JsImportTarget(
                 import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
                 not _has_aliased_scheme(import_path)
-                and not self._js_base_url_names_file(import_path),
+                and not self._js_base_url_names_file(import_path, current_module),
             )
         import_path = self._strip_js_extension(import_path)
 
