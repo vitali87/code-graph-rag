@@ -410,3 +410,41 @@ def test_variants_in_a_reparsed_file_are_unchanged(
 
     assert _calls(store) == clean_calls
     assert _snapshot(store) == clean
+
+
+def test_a_forced_build_on_a_reused_updater_drops_variants_it_read_back(
+    temp_repo: Path,
+) -> None:
+    # The sync before the forced build reads the `@line` variants back from
+    # the graph. The forced build skips that read-back, so a variant whose
+    # body the edit removed must leave with the re-parsed file's state, or a
+    # call into the name still fans out to it.
+    root = temp_repo / PROJECT
+    store, _clean_calls, _clean, updater = _clean_then_incremental(
+        root, JAVA_ENUM, "src/demo/Caller.java", "//"
+    )
+    assert len(updater.function_registry.variants(JAVA_TARGET_QN)) == 3
+    policy = root / "src/demo/Policy.java"
+    policy.write_text(
+        JAVA_POLICY.replace(
+            "  UPPER {\n"
+            "    @Override\n"
+            "    public String translate(String name) {\n"
+            "      return name.toUpperCase();\n"
+            "    }\n"
+            "  };\n",
+            "  UPPER;\n",
+        ),
+        encoding="utf-8",
+    )
+    updater.run(force=True)
+
+    fresh = _StatefulIngestor()
+    fresh_updater = _index(fresh, root, force=True)
+    assert len(fresh_updater.function_registry.variants(JAVA_TARGET_QN)) == 2
+
+    assert _calls(store) == _calls(fresh)
+    assert _snapshot(store) == _snapshot(fresh)
+    assert updater.function_registry.variants(
+        JAVA_TARGET_QN
+    ) == fresh_updater.function_registry.variants(JAVA_TARGET_QN)

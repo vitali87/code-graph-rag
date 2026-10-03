@@ -21,6 +21,8 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_incremental_duplicate_variants import (
     CallEdge,
     Snapshot,
@@ -445,3 +447,56 @@ def test_edges_the_sync_already_matched_are_unchanged(
 
     assert _calls(store) == clean_calls
     assert _snapshot(store) == clean
+
+
+def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+
+
+@pytest.mark.parametrize(
+    "full_build_on_the_same_updater",
+    [False, True],
+    ids=["read-back-pairs", "read-back-and-parsed-pairs"],
+)
+def test_a_forced_build_on_a_reused_updater_matches_a_fresh_one(
+    temp_repo: Path, full_build_on_the_same_updater: bool
+) -> None:
+    # An incremental run reads the implementer pairs back from the graph, and
+    # a forced run skips that read-back. A reused updater that kept the pairs
+    # of an earlier run still counted a deleted implementer, so the forced
+    # build missed the sole-implementer edge a fresh one emits. With the full
+    # build on the same updater its parsed pairs hold the deleted one too.
+    root = temp_repo / PROJECT
+    lower = root / "src/demo/Lower.java"
+    _write(root, JAVA)
+    _write(root, {"src/demo/Lower.java": "package demo;\n\npublic " + JAVA_LOWER_CLASS})
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    if full_build_on_the_same_updater:
+        updater.run(force=True)
+    else:
+        _index(store, root, force=True)
+    _touch_after_cache(root / "src/demo/Caller.java", root, "//")
+    updater.run(force=False)
+    lower.unlink()
+    updater.run(force=True)
+
+    fresh = _StatefulIngestor()
+    _index(fresh, root, force=True)
+    fresh_calls = _calls(fresh)
+    assert JAVA_UPPER_QN in {
+        edge[1] for edge in _calls_from(fresh_calls, JAVA_CALLER_QN)
+    }, "fixture must reach the remaining implementer's method"
+
+    assert _calls_from(_calls(store), JAVA_CALLER_QN) == _calls_from(
+        fresh_calls, JAVA_CALLER_QN
+    )
+    assert _calls(store) == fresh_calls
+    assert _snapshot(store) == _snapshot(fresh)

@@ -5389,6 +5389,9 @@ class GraphUpdater:
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
+        # Before the parse, which re-records every pair a full build holds.
+        if is_full_build:
+            self.factory.definition_processor.reset_interface_implementers()
 
         eligible_files = self._collect_eligible_files()
 
