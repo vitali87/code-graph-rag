@@ -8,7 +8,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine
+import uuid
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
@@ -78,6 +80,7 @@ from .utils.path_utils import (
     resolve_repo_path,
     unwritable_output_reason,
 )
+from .utils.process_owner import pid_may_be_running, process_host
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
@@ -602,18 +605,44 @@ def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
     return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
 
 
-def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
+# The CLI syncs THIS process is running, by the owner token on their marker.
+# A delete in the same process sees its own pid alive whether or not the sync
+# that wrote a marker has returned, so the pid cannot answer for these.
+_RUNNING_SYNC_TOKENS: set[str] = set()
+
+
+@contextmanager
+def _sync_owner() -> Iterator[dict[str, PropertyValue]]:
+    """Who this sync is, for its marker; registered as running while held."""
+    token = uuid.uuid4().hex
+    _RUNNING_SYNC_TOKENS.add(token)
+    try:
+        yield {
+            cs.KEY_OWNER_HOST: process_host(),
+            cs.KEY_OWNER_PID: os.getpid(),
+            cs.KEY_OWNER_TOKEN: token,
+        }
+    finally:
+        _RUNNING_SYNC_TOKENS.discard(token)
+
+
+def _mark_sync_incomplete(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    owner: dict[str, PropertyValue],
+) -> None:
     """Put the `:IncompleteRun` marker down before the sync writes (#2219).
 
     The same marker the MCP mutating paths write (#1679), so a later MCP
     process refuses to hydrate from a graph an interrupted CLI sync left
     partial. Failing to write it aborts the sync: nothing has changed yet,
     and proceeding would make exactly that partial graph look complete.
+    It names its `owner`, so a delete can tell whether this sync still runs.
     """
-    params = _sync_marker_params(project_name)
+    params = _sync_marker_params(project_name) | owner
     params[cs.KEY_WRITING] = True
     try:
-        ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+        ingestor.execute_write(cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE, params)
     except Exception as exc:
         app_context.console.print(
             style(
@@ -640,6 +669,44 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _stopped_sync_token(owner: ResultRow) -> str | None:
+    """The marker's owner token if the CLI sync that wrote it provably stopped.
+
+    Only a sync in this process table can be checked: one whose process is
+    gone, or one of this process's own that has returned. A marker from
+    another host, from a live process, or from before markers named their
+    owner is kept, since it may guard a graph that sync is still writing.
+    """
+    pid = owner.get(cs.KEY_OWNER_PID)
+    token = owner.get(cs.KEY_OWNER_TOKEN)
+    if (
+        owner.get(cs.KEY_OWNER_HOST) != process_host()
+        or not isinstance(pid, int)
+        or not isinstance(token, str)
+    ):
+        return None
+    if pid == os.getpid():
+        stopped = token not in _RUNNING_SYNC_TOKENS
+    else:
+        stopped = not pid_may_be_running(pid)
+    return token if stopped else None
+
+
+def _clear_stopped_sync_marker(ingestor: MemgraphIngestor, project_name: str) -> bool:
+    """Clear the CLI sync's marker if its sync stopped; True if one is kept."""
+    params = _sync_marker_params(project_name)
+    kept = False
+    for owner in ingestor.fetch_all(cq.CYPHER_CLI_SYNC_MARKER_OWNER, params):
+        if (token := _stopped_sync_token(owner)) is None:
+            kept = True
+            continue
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER,
+            params | {cs.KEY_OWNER_TOKEN: token},
+        )
+    return kept
+
+
 def _clear_deleted_project_markers(
     ingestor: MemgraphIngestor, project_name: str
 ) -> None:
@@ -647,15 +714,15 @@ def _clear_deleted_project_markers(
 
     A marker sits on its own node, out of the delete's reach, so without this
     a sync that failed before the delete keeps the project in `cgr status`
-    as interrupted. The CLI sync's own marker goes, and so does any run's
-    that never wrote the graph. A run that had begun writing owns its marker
-    (#1709): it may still be writing, and its marker is what guards that.
-    Best effort, like `_clear_sync_incomplete`: the project is deleted.
+    as interrupted. A marker goes only when its run cannot still be writing:
+    the CLI sync's once that sync provably stopped (PR #2532 review: a sync
+    still running would otherwise write on unguarded), and any run's that
+    never wrote the graph. A run that had begun writing owns its marker
+    (#1709). Best effort, like `_clear_sync_incomplete`: the project is
+    deleted.
     """
     try:
-        ingestor.execute_write(
-            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, _sync_marker_params(project_name)
-        )
+        kept = _clear_stopped_sync_marker(ingestor, project_name)
         ingestor.execute_write(
             cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
             {cs.KEY_PROJECT_NAME: project_name},
@@ -664,6 +731,9 @@ def _clear_deleted_project_markers(
         logger.warning(
             ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
         )
+        return
+    if kept:
+        logger.warning(ls.CLI_DELETE_SYNC_MARKER_KEPT.format(project=project_name))
 
 
 def _run_graph_sync(
@@ -695,7 +765,7 @@ def _run_graph_sync(
         unignore_paths = cgrignore.unignore or None
 
     elapsed = time.monotonic()
-    with connect_memgraph(batch_size) as ingestor:
+    with connect_memgraph(batch_size) as ingestor, _sync_owner() as owner:
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
@@ -707,7 +777,7 @@ def _run_graph_sync(
 
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
-        _mark_sync_incomplete(ingestor, project_name)
+        _mark_sync_incomplete(ingestor, project_name, owner)
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()

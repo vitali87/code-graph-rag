@@ -984,6 +984,11 @@ CLI_DELETE_MARKER_NOT_CLEARED = (
     "cleared: {error}. cgr status may list it as interrupted until it is synced "
     "again."
 )
+CLI_DELETE_SYNC_MARKER_KEPT = (
+    "Project {project} was deleted, but a cgr sync of it may still be running, "
+    "so its incomplete-run marker was kept: cgr status lists it as interrupted "
+    "until a sync of it completes."
+)
 CLI_SYNC_STATE_UNREADABLE = (
     "Could not read the graph's projects and sync markers for cgr status: {error}"
 )

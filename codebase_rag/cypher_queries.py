@@ -131,6 +131,28 @@ CYPHER_MARK_PROJECT_INCOMPLETE = (
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) DELETE m"
 )
+# The CLI sync's mark also records WHO holds it (PR #2532 review): every CLI
+# sync of a project shares one run id, so the run id cannot say whether the
+# sync that left the marker still runs. `delete-project` reads the owner and
+# clears the marker only once that sync provably stopped. Set in the same
+# statement as the mark, so a marker never carries a stopped sync's owner
+# after a running sync has re-marked it.
+CYPHER_MARK_CLI_SYNC_INCOMPLETE = (
+    CYPHER_MARK_PROJECT_INCOMPLETE + ", "
+    "m.owner_host = $owner_host, m.owner_pid = $owner_pid, "
+    "m.owner_token = $owner_token"
+)
+CYPHER_CLI_SYNC_MARKER_OWNER = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "RETURN m.owner_host AS owner_host, m.owner_pid AS owner_pid, "
+    "m.owner_token AS owner_token"
+)
+# Compare-and-delete on the owner token read above: a sync that started
+# after that read re-marked the node under its own token and keeps it.
+CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "WHERE m.owner_token = $owner_token DELETE m"
+)
 # RECOVERY: clears every outstanding marker for the project, whichever run
 # wrote it. Deliberately not run-scoped -- its whole purpose is to clear a
 # marker some OTHER run stranded (a run that stopped before its first graph

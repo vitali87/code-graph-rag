@@ -7,6 +7,7 @@ ahead of `last_sync`, and a later MCP process hydrated from it as if whole.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Generator
 from pathlib import Path
@@ -22,6 +23,7 @@ from codebase_rag.cli import _project_syncs, _run_graph_sync, app
 from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
 from codebase_rag.types_defs import ProjectSync
+from codebase_rag.utils.process_owner import process_host
 
 runner = CliRunner()
 
@@ -45,7 +47,7 @@ def ingestor(events: list[str]) -> MagicMock:
     store = MagicMock()
 
     def write(query: str, params: dict | None = None) -> None:
-        if query == cq.CYPHER_MARK_PROJECT_INCOMPLETE:
+        if query == cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE:
             events.append("mark")
         elif query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
             events.append("clear")
@@ -108,11 +110,17 @@ def test_a_sync_marks_before_writing_and_clears_after_running(
     _sync(tmp_path)
 
     assert events == ["mark", "constraints", "run", "clear"], events
-    (mark,) = _marker_writes(ingestor, cq.CYPHER_MARK_PROJECT_INCOMPLETE)
+    (mark,) = _marker_writes(ingestor, cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE)
+    token = mark.pop(cs.KEY_OWNER_TOKEN)
+    assert isinstance(token, str)
+    assert token
+    # The owner, so a delete can tell whether this sync still runs (#2532).
     assert mark == {
         cs.KEY_PROJECT_NAME: "proj",
         cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID,
         cs.KEY_WRITING: True,
+        cs.KEY_OWNER_HOST: process_host(),
+        cs.KEY_OWNER_PID: os.getpid(),
     }
     (clear,) = _marker_writes(ingestor, cq.CYPHER_CLEAR_PROJECT_INCOMPLETE)
     assert clear == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}

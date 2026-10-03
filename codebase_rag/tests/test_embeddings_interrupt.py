@@ -257,7 +257,7 @@ def test_the_cli_sync_records_an_interrupted_run_before_stopping(
     # The graph is whole, so it loses its incomplete marker like any
     # finished sync (#2219); only then does the interrupt end it.
     assert cli_sync.events == [
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+        cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
     ]
     # Raised after the connection closed cleanly, not through it, where it

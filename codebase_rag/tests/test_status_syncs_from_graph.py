@@ -10,7 +10,10 @@ into another Memgraph all stayed listed with a sync time, next to the
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
+import os
+import subprocess
+import sys
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -33,12 +36,15 @@ from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.process_owner import process_host
 from evals.cgr_graph import _StatefulIngestor
 
 runner = CliRunner()
 
 THIS_GRAPH = 17644
 OTHER_GRAPH = 17645
+
+_OWNER_KEYS = (cs.KEY_OWNER_HOST, cs.KEY_OWNER_PID, cs.KEY_OWNER_TOKEN)
 
 # What `CYPHER_DELETE_PROJECT` walks from the Project before deleting.
 _PROJECT_TREE = frozenset(
@@ -61,6 +67,8 @@ class _Memgraph(_StatefulIngestor):
         self.markers: set[tuple[str, str]] = set()
         # Each marker's phase: whether its run had begun writing the graph.
         self.writing: dict[tuple[str, str], bool] = {}
+        # Who wrote each CLI sync marker: host, pid and token.
+        self.owners: dict[tuple[str, str], PropertyDict] = {}
         # What the stack's port probe sees, and whether a connection is then
         # refused anyway (a login rejected, a server still starting).
         self.reachable = True
@@ -114,22 +122,47 @@ class _Memgraph(_StatefulIngestor):
             return [{"project": project} for project, _ in sorted(self.markers)]
         if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
             return []
+        if params and query == cq.CYPHER_CLI_SYNC_MARKER_OWNER:
+            run = self._run(params)
+            if run not in self.markers:
+                return []
+            owner = self.owners.get(run, {})
+            return [{key: owner.get(key) for key in _OWNER_KEYS}]
         return super().fetch_all(query, params)
+
+    @staticmethod
+    def _run(params: PropertyDict) -> tuple[str, str]:
+        return (str(params[cs.KEY_PROJECT_NAME]), str(params[cs.KEY_RUN_ID]))
+
+    def _mark(self, params: PropertyDict) -> None:
+        run = self._run(params)
+        self.markers.add(run)
+        self.writing[run] = self.writing.get(run, False) or bool(
+            params.get(cs.KEY_WRITING)
+        )
+        if cs.KEY_OWNER_TOKEN in params:
+            self.owners[run] = {key: params[key] for key in _OWNER_KEYS}
+
+    def _clear(self, run: tuple[str, str]) -> None:
+        self.markers.discard(run)
+        self.writing.pop(run, None)
+        self.owners.pop(run, None)
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         if params and query in (
             cq.CYPHER_MARK_PROJECT_INCOMPLETE,
-            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
+            cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
         ):
-            run = (str(params[cs.KEY_PROJECT_NAME]), str(params[cs.KEY_RUN_ID]))
-            if query == cq.CYPHER_MARK_PROJECT_INCOMPLETE:
-                self.markers.add(run)
-                self.writing[run] = self.writing.get(run, False) or bool(
-                    params.get(cs.KEY_WRITING)
-                )
-            else:
-                self.markers.discard(run)
-                self.writing.pop(run, None)
+            self._mark(params)
+            return
+        if params and query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
+            self._clear(self._run(params))
+            return
+        if params and query == cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER:
+            run = self._run(params)
+            token = self.owners.get(run, {}).get(cs.KEY_OWNER_TOKEN)
+            if token == params[cs.KEY_OWNER_TOKEN]:
+                self._clear(run)
             return
         if params and query == cq.CYPHER_RECOVER_PROJECT_INCOMPLETE:
             project = str(params[cs.KEY_PROJECT_NAME])
@@ -138,8 +171,7 @@ class _Memgraph(_StatefulIngestor):
                 for run in self.markers
                 if run[0] == project and not self.writing.get(run, True)
             ]:
-                self.markers.discard(run)
-                self.writing.pop(run, None)
+                self._clear(run)
             return
         super().execute_write(query, params)
 
@@ -238,6 +270,7 @@ class TestTheListFollowsTheGraph:
         _cgr("delete-project", "-n", "billing")
 
         assert graphs[THIS_GRAPH].project("billing") is None
+        assert graphs[THIS_GRAPH].markers == set()
         listed = _listed(_cgr("status"))
         assert "billing" not in listed, listed
         assert "ledger" in listed, listed
@@ -295,11 +328,17 @@ def _stamp(graph: _Memgraph, name: str) -> str:
     return stamp
 
 
-def _fail_sync(tmp_path: Path, name: str) -> None:
-    with patch(
-        "codebase_rag.graph_updater.GraphUpdater.run",
-        side_effect=RuntimeError("killed mid-sync"),
-    ):
+def _fail_sync(
+    tmp_path: Path, name: str, mid_sync: Callable[[], object] | None = None
+) -> None:
+    """A sync that stops short, after doing `mid_sync` while it still runs."""
+
+    def run(_updater: GraphUpdater) -> None:
+        if mid_sync is not None:
+            mid_sync()
+        raise RuntimeError("killed mid-sync")
+
+    with patch.object(GraphUpdater, "run", run):
         result = runner.invoke(
             app,
             [
@@ -314,6 +353,27 @@ def _fail_sync(tmp_path: Path, name: str) -> None:
             ],
         )
     assert result.exit_code != 0, result.output
+
+
+def _cli_marker(graph: _Memgraph, project: str, owner: PropertyDict) -> None:
+    """The marker a CLI sync in another process put down, naming `owner`."""
+    graph.execute_write(
+        cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
+        {
+            cs.KEY_PROJECT_NAME: project,
+            cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID,
+            cs.KEY_WRITING: True,
+            cs.KEY_OWNER_TOKEN: "another-sync",
+        }
+        | owner,
+    )
+
+
+def _gone_pid() -> int:
+    """The pid of a process that has exited and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait()
+    return child.pid
 
 
 class TestDeletingAProjectAfterAFailedSync:
@@ -368,6 +428,105 @@ class TestDeletingAProjectAfterAFailedSync:
 
         assert graph.markers == {("billing", "mcp-writing")}
 
+    def test_a_sync_still_running_keeps_its_marker(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        # Review of PR #2532: a delete that landed while a CLI sync of the
+        # project was still writing took that sync's marker off, and the sync,
+        # stopping short afterwards, left a partial graph nothing flagged.
+        _sync(tmp_path, "billing")
+
+        _fail_sync(
+            tmp_path,
+            "billing",
+            mid_sync=lambda: _cgr("delete-project", "-n", "billing"),
+        )
+
+        assert graphs[THIS_GRAPH].markers == {("billing", cs.CLI_SYNC_RUN_ID)}
+        marker = f"({cs.CLI_STATUS_SYNC_INCOMPLETE})"
+        assert _listed(_cgr("status")) == {"billing": marker}
+
+    @pytest.mark.skipif(
+        os.name != "posix",
+        reason="pid liveness is probed on POSIX only; elsewhere a marker from "
+        "another process is kept, as the next test's live owner is",
+    )
+    def test_a_sync_whose_process_is_gone_loses_its_marker(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        # The usual end of a failed `cgr start`: its process exited.
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        owner = {cs.KEY_OWNER_HOST: process_host(), cs.KEY_OWNER_PID: _gone_pid()}
+        _cli_marker(graph, "billing", owner)
+
+        _cgr("delete-project", "-n", "billing")
+
+        assert graph.markers == set()
+        assert "billing" not in _listed(_cgr("status"))
+
+    @pytest.mark.parametrize(
+        "owner",
+        [
+            pytest.param(
+                lambda: {
+                    cs.KEY_OWNER_HOST: process_host(),
+                    cs.KEY_OWNER_PID: os.getppid(),
+                },
+                id="live-process-on-this-host",
+            ),
+            pytest.param(
+                lambda: {
+                    cs.KEY_OWNER_HOST: "another-host",
+                    cs.KEY_OWNER_PID: _gone_pid(),
+                },
+                id="another-host",
+            ),
+            pytest.param(
+                lambda: {cs.KEY_OWNER_HOST: None, cs.KEY_OWNER_PID: None},
+                id="written-before-markers-named-an-owner",
+            ),
+        ],
+    )
+    def test_a_sync_that_may_still_run_keeps_its_marker(
+        self,
+        graphs: dict[int, _Memgraph],
+        tmp_path: Path,
+        owner: Callable[[], PropertyDict],
+    ) -> None:
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        _cli_marker(graph, "billing", owner())
+
+        _cgr("delete-project", "-n", "billing")
+
+        assert graph.markers == {("billing", cs.CLI_SYNC_RUN_ID)}
+
+    def test_a_sync_that_re_marked_after_the_read_keeps_its_marker(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        # The stopped sync's owner is read, then a new sync re-marks the same
+        # node before the clear lands: the clear must miss the new owner.
+        _sync(tmp_path, "billing")
+        _fail_sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        real_fetch = graph.fetch_all
+
+        def fetch(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+            rows = real_fetch(query, params)
+            if query == cq.CYPHER_CLI_SYNC_MARKER_OWNER:
+                live = {
+                    cs.KEY_OWNER_HOST: process_host(),
+                    cs.KEY_OWNER_PID: os.getppid(),
+                }
+                _cli_marker(graph, "billing", live)
+            return rows
+
+        with patch.object(graph, "fetch_all", side_effect=fetch):
+            _cgr("delete-project", "-n", "billing")
+
+        assert graph.markers == {("billing", cs.CLI_SYNC_RUN_ID)}
+
     def test_a_marker_that_cannot_be_cleared_does_not_fail_the_delete(
         self, graphs: dict[int, _Memgraph], tmp_path: Path
     ) -> None:
@@ -377,7 +536,7 @@ class TestDeletingAProjectAfterAFailedSync:
         real_write = graph.execute_write
 
         def write(query: str, params: PropertyDict | None = None) -> None:
-            if query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
+            if query == cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER:
                 raise ConnectionError("store went away")
             real_write(query, params)
 

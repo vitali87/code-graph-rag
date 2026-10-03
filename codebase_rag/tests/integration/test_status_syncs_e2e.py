@@ -3,6 +3,9 @@
 # project deleted from it leaves the list with its node.
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +24,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
+from codebase_rag.utils.process_owner import process_host
 
 if TYPE_CHECKING:
     from codebase_rag.services.graph_service import MemgraphIngestor
@@ -110,6 +114,27 @@ def _mark(ingestor: MemgraphIngestor, project: str, run_id: str, writing: bool) 
     )
 
 
+def _mark_cli_sync(ingestor: MemgraphIngestor, project: str, pid: int) -> None:
+    """A CLI sync's marker, as the sync in process `pid` on this host left it."""
+    ingestor.execute_write(
+        cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
+        {
+            cs.KEY_PROJECT_NAME: project,
+            cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID,
+            cs.KEY_WRITING: True,
+            cs.KEY_OWNER_HOST: process_host(),
+            cs.KEY_OWNER_PID: pid,
+            cs.KEY_OWNER_TOKEN: f"sync-{pid}",
+        },
+    )
+
+
+def _gone_pid() -> int:
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait()
+    return child.pid
+
+
 def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
     memgraph_ingestor: MemgraphIngestor,
     memgraph_container: dict[str, str | int],
@@ -117,8 +142,9 @@ def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Review of PR #2532: the failed sync's marker is its own node, out of
-    # the delete's reach. The CLI's marker and an idle run's go with the
-    # project; a run that had begun writing keeps its own (#1709).
+    # the delete's reach. A stopped CLI sync's marker and an idle run's go
+    # with the project; a CLI sync whose process still runs, and a run that
+    # had begun writing (#1709), keep theirs.
     monkeypatch.setattr(settings, "MEMGRAPH_HOST", str(memgraph_container["host"]))
     monkeypatch.setattr(settings, "MEMGRAPH_PORT", int(memgraph_container["port"]))
     monkeypatch.setattr(settings, "CGR_HOME", tmp_path / "cgr-home")
@@ -127,8 +153,8 @@ def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
     )
     _sync(memgraph_ingestor, tmp_path, "billing")
     _sync(memgraph_ingestor, tmp_path, "ledger")
-    _mark(memgraph_ingestor, "billing", cs.CLI_SYNC_RUN_ID, True)
-    _mark(memgraph_ingestor, "fresh", cs.CLI_SYNC_RUN_ID, True)
+    _mark_cli_sync(memgraph_ingestor, "billing", _gone_pid())
+    _mark_cli_sync(memgraph_ingestor, "fresh", _gone_pid())
     assert "- billing: last sync" in _cgr("status")
 
     _cgr("delete-project", "-n", "billing")
@@ -140,6 +166,7 @@ def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
     _sync(memgraph_ingestor, tmp_path, "orders")
     _mark(memgraph_ingestor, "orders", "mcp-idle", False)
     _mark(memgraph_ingestor, "orders", "mcp-writing", True)
+    _mark_cli_sync(memgraph_ingestor, "orders", os.getppid())
 
     _cgr("delete-project", "-n", "orders")
 
@@ -147,4 +174,7 @@ def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
         "MATCH (m:IncompleteRun {project: $project_name}) RETURN m.run_id AS run_id",
         {cs.KEY_PROJECT_NAME: "orders"},
     )
-    assert [row["run_id"] for row in runs] == ["mcp-writing"]
+    assert sorted(str(row["run_id"]) for row in runs) == [
+        cs.CLI_SYNC_RUN_ID,
+        "mcp-writing",
+    ]

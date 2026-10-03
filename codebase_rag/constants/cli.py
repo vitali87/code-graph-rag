@@ -113,6 +113,13 @@ CLI_MSG_CLEANING_DB = "Cleaning database..."
 # again. Sharing the id lets that run's run-scoped clear remove the marker the
 # interrupted one stranded, while MCP runs keep their own ids untouched.
 CLI_SYNC_RUN_ID = "cli-sync"
+# What tells two process tables apart beyond the hostname, which containers
+# with host networking share while each has its own pid namespace: the
+# kernel's boot id (per machine and boot) and this process's pid namespace.
+# Linux only; elsewhere the hostname stands alone.
+PROCESS_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+PROCESS_PID_NAMESPACE_PATH = "/proc/self/ns/pid"
+PROCESS_HOST_SEPARATOR = "|"
 CLI_ERR_SYNC_MARKER_FAILED = (
     "Refusing to sync '{project}': the incomplete-run marker could not be "
     "written, so an interrupted sync would leave a partial graph that looks "
