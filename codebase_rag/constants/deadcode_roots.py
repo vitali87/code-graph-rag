@@ -209,14 +209,18 @@ CSHARP_DISPOSE_METHOD_NAMES: frozenset[str] = frozenset({"Dispose", "DisposeAsyn
 # string array. Types are compared as _csharp_type_name spells them: without
 # whitespace and with every namespace or `global::` qualifier dropped.
 CSHARP_ENTRY_METHOD_NAME = "Main"
-CSHARP_ENTRY_RETURN_TYPES: frozenset[str] = frozenset(
-    {"void", "int", "Int32", "Task", "Task<int>", "Task<Int32>"}
+CSHARP_ENTRY_TASK_RETURN_TYPES: frozenset[str] = frozenset(
+    {"Task", "Task<int>", "Task<Int32>"}
+)
+CSHARP_ENTRY_RETURN_TYPES: frozenset[str] = (
+    frozenset({"void", "int", "Int32"}) | CSHARP_ENTRY_TASK_RETURN_TYPES
 )
 CSHARP_ENTRY_ARGS_TYPES: frozenset[str] = frozenset({"string[]", "String[]"})
 CSHARP_TYPE_QUALIFIER_PATTERN = r"(?:\w+(?:\.|::))+"
-# A nullable-reference annotation (`string[]?`, `string?[]`) leaves the CLR
-# type unchanged, so it is ignored on the args parameter. It is kept on the
-# return type, where `int?` is Nullable<int> and not an entry point.
+# A nullable-reference annotation (`string[]?`, `string?[]`, `Task?`) leaves
+# the CLR type unchanged, so it is ignored on the args parameter and on a
+# Task return. On a value type it is not an annotation: `int?` is
+# Nullable<int>, which is not an entry-point return.
 CSHARP_NULLABLE_MARKER = "?"
 
 # Base classes that mark a class as a structural interface: its method stubs
