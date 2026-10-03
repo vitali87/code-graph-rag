@@ -93,6 +93,24 @@ CYPHER_CLAIM_PROJECT_ROOT = (
     "ON CREATE SET p.root_path = $root_path "
     "RETURN p.root_path AS root_path, holders = 0 AS created"
 )
+# The marker write of a sync that holds a claim (review of PR 2499). Another
+# sync of this repository may have created the claim, failed and released it
+# since this sync's check, and a different repository claimed the name. So
+# the marker goes down only while the Project's root is still one the check
+# accepted, read in this same statement; a Project released meanwhile is
+# claimed again here. Setting the name to itself writes the Project, so a
+# release at the same moment conflicts with this write instead of deleting
+# the node out from under the marker.
+CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE = (
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "WITH p WHERE p.root_path IN $root_paths "
+    "SET p.name = p.name "
+    "MERGE (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "SET m.run_incomplete = true, "
+    "m.writing = coalesce(m.writing, false) OR $writing "
+    "RETURN p.root_path AS root_path"
+)
 # Gives back a claim whose first sync failed before writing anything (review
 # of PR 2499): a bare Project would refuse every other repository the name.
 # Kept once the sync has put down its incomplete-run marker or any node hangs

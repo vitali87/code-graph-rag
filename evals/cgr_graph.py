@@ -700,6 +700,16 @@ class _StatefulIngestor:
             {**row, cs.KEY_CREATED: created} for row in self._project_root_rows(params)
         ]
 
+    def _mark_claimed_project(self, params: PropertyDict) -> list[ResultRow]:
+        # Its marker is not kept (see CYPHER_PROJECT_IS_INCOMPLETE below):
+        # only whether the claim still holds, and the root it holds.
+        rows = self._claim_project_root(params)
+        roots = params.get(cs.KEY_ROOT_PATHS)
+        held = [row.get(cs.KEY_ROOT_PATH) for row in rows]
+        if not isinstance(roots, list) or not set(held) & set(roots):
+            return []
+        return [{cs.KEY_ROOT_PATH: root} for root in held]
+
     def _release_project_claim(self, params: PropertyDict) -> None:
         # Never holds an incomplete-run marker (see CYPHER_PROJECT_IS_INCOMPLETE
         # below), so only the root and the Project's edges decide.
@@ -1046,6 +1056,8 @@ class _StatefulIngestor:
                 return self._project_root_rows(params or {})
             case cq.CYPHER_CLAIM_PROJECT_ROOT:
                 return self._claim_project_root(params or {})
+            case cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
+                return self._mark_claimed_project(params or {})
             case (
                 cq.CYPHER_GRAPH_DEFINITION
                 | cq.CYPHER_GRAPH_CALLERS

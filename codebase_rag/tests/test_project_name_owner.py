@@ -10,8 +10,8 @@ graph kept claiming `root_path: orgA/api` while holding orgB's code.
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from contextlib import nullcontext
+from collections.abc import Callable, Generator, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +20,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import (
@@ -219,15 +220,19 @@ def _owned_by(ingestor: MagicMock, root: Path | None) -> None:
     # Matches on the exact name, as the Cypher lookup does. The claim answers
     # a name nobody holds with the claimant's own root, as its MERGE does.
     def fetch_all(
-        query: str, params: dict[str, str] | None = None
-    ) -> list[dict[str, str]]:
+        query: str, params: dict[str, object] | None = None
+    ) -> list[dict[str, object]]:
         params = params or {}
         owned = root is not None and params.get(cs.KEY_PROJECT_NAME) == "api2"
         if query == cq.CYPHER_PROJECT_ROOT_PATH and owned:
             return [{cs.KEY_ROOT_PATH: str(root)}]
+        claimed = str(root) if owned else params.get(cs.KEY_ROOT_PATH)
         if query == cq.CYPHER_CLAIM_PROJECT_ROOT:
-            claimed = str(root) if owned else params[cs.KEY_ROOT_PATH]
             return [{cs.KEY_ROOT_PATH: claimed}]
+        if query == cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
+            roots = params.get(cs.KEY_ROOT_PATHS)
+            held = isinstance(roots, list) and claimed in roots
+            return [{cs.KEY_ROOT_PATH: claimed}] if held else []
         return []
 
     ingestor.fetch_all.side_effect = fetch_all
@@ -415,7 +420,10 @@ def _write_phase(repo: Path, store: _SyncedGraph) -> None:
     # The rest of a sync whose ownership check has already run.
     with (
         patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)),
-        patch("codebase_rag.cli._exit_if_project_owned_elsewhere", return_value=False),
+        patch(
+            "codebase_rag.cli._exit_if_project_owned_elsewhere",
+            return_value=cli._OwnerCheck(None),
+        ),
     ):
         _run_graph_sync(
             repo=repo,
@@ -518,6 +526,78 @@ def test_a_failed_resync_keeps_the_project(tmp_path: Path) -> None:
     _full_sync(org_a, store)
 
     _fails_before_writing(org_a, store)
+
+    assert _root(store) == str(org_a.resolve())
+    assert _functions(store) == {"api2.billing.charge_card"}
+    assert not _owner_check(org_b, store)
+
+
+def _claim_held_by(repo: Path, store: _SyncedGraph) -> AbstractContextManager[object]:
+    # A sync that has passed its ownership check and not yet written.
+    claim = cli._project_claim(10, "api2", repo, clean=False, assume_yes=False)
+    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+        claim.__enter__()
+    return claim
+
+
+def _fail(claim: AbstractContextManager[object], store: _SyncedGraph) -> None:
+    # That sync stopping before its marker, as a failed marker write does.
+    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+        claim.__exit__(typer.Exit, typer.Exit(1), None)
+
+
+@contextmanager
+def _paused_before_marking(during: Callable[[], None]) -> Iterator[None]:
+    # The next sync stops between its ownership check and its marker while
+    # `during` runs; syncs started by `during` pass straight through.
+    real_mark = cli._mark_sync_incomplete
+    paused = False
+
+    def mark(*args: object, **kwargs: object) -> None:
+        nonlocal paused
+        if not paused:
+            paused = True
+            during()
+        real_mark(*args, **kwargs)
+
+    with patch("codebase_rag.cli._mark_sync_incomplete", side_effect=mark):
+        yield
+
+
+def test_a_sync_whose_claim_was_released_under_it_is_refused(
+    tmp_path: Path,
+) -> None:
+    # Greptile review of PR 2499: two syncs of orgA passed the check. The one
+    # that created the claim failed before its marker and released it, orgB
+    # then claimed and indexed the name, and the other orgA sync went on
+    # without checking again and replaced orgB's graph without --yes.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+    first = _claim_held_by(org_a, store)
+
+    def first_fails_then_org_b_syncs() -> None:
+        _fail(first, store)
+        _full_sync(org_b, store)
+
+    with (
+        _paused_before_marking(first_fails_then_org_b_syncs),
+        pytest.raises(typer.Exit),
+    ):
+        _full_sync(org_a, store)
+
+    assert _root(store) == str(org_b.resolve())
+    assert _functions(store) == {"api2.users.list_users"}
+
+
+def test_a_sync_whose_claim_was_released_claims_it_again(tmp_path: Path) -> None:
+    # Negative: with nobody else claiming the name meanwhile, the second orgA
+    # sync takes it back and finishes.
+    org_a, org_b = _repos(tmp_path)
+    store = _SyncedGraph()
+    first = _claim_held_by(org_a, store)
+
+    with _paused_before_marking(lambda: _fail(first, store)):
+        _full_sync(org_a, store)
 
     assert _root(store) == str(org_a.resolve())
     assert _functions(store) == {"api2.billing.charge_card"}

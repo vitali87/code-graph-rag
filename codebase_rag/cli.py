@@ -14,7 +14,7 @@ from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NamedTuple, NoReturn
 
 import click
 import typer
@@ -606,11 +606,20 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
+class _OwnerCheck(NamedTuple):
+    refusal: str | None
+    created: bool = False
+    # The roots the sync's marker write must still find on the Project, this
+    # repository's first; None when there is nothing to hold it to (no
+    # recorded root, or --yes taking the project over).
+    owned_roots: list[str] | None = None
+
+
 def _project_owner_refusal(
     ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
-) -> tuple[str | None, bool]:
+) -> _OwnerCheck:
     """Why a sync must not replace what another repository indexed (#2411),
-    and whether its claim created the project.
+    and what its claim holds.
 
     A derived name carries a hash of its path, so only a chosen one can
     collide; the sync would delete the other repository's modules as stale
@@ -623,57 +632,56 @@ def _project_owner_refusal(
     the first one's graph (review of PR 2499).
     """
     if not repo.is_dir():
-        return None, False
+        return _OwnerCheck(None)
+    root = str(repo.resolve())
     try:
         rows = ingestor.fetch_all(
             cq.CYPHER_CLAIM_PROJECT_ROOT,
-            {
-                cs.KEY_PROJECT_NAME: project_name,
-                cs.KEY_ROOT_PATH: str(repo.resolve()),
-            },
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_ROOT_PATH: root},
         )
     except Exception as exc:
         logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
         if assume_yes:
-            return None, False
-        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
-            project_name=project_name, error=exc
-        ), False
+            return _OwnerCheck(None)
+        return _OwnerCheck(
+            cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+                project_name=project_name, error=exc
+            )
+        )
     owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
     if not isinstance(owner, str) or not owner:
-        return None, False
+        return _OwnerCheck(None)
     if Path(owner).resolve() == repo.resolve():
-        return None, rows[0].get(cs.KEY_CREATED) is True
+        # --yes would replace whoever holds it by then, so nothing to hold.
+        held = None if assume_yes else list(dict.fromkeys((root, owner)))
+        return _OwnerCheck(None, rows[0].get(cs.KEY_CREATED) is True, held)
     if assume_yes:
         logger.warning(
             ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
         )
-        return None, False
-    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
-        project_name=project_name, root=owner
-    ), False
+        return _OwnerCheck(None)
+    return _OwnerCheck(
+        cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(project_name=project_name, root=owner)
+    )
 
 
 def _exit_if_project_owned_elsewhere(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
-) -> bool:
+) -> _OwnerCheck:
     """Stop before the sync when `_project_owner_refusal` refuses it (#2411).
 
-    True when this check's claim created the project. A `--clean` rebuild is
-    not checked: it wipes every project in the graph, and
-    `_confirm_destructive_clean` already asks before it does.
+    A `--clean` rebuild is not checked: it wipes every project in the graph,
+    and `_confirm_destructive_clean` already asks before it does.
     """
     if clean:
-        return False
+        return _OwnerCheck(None)
     # On its own connection: exiting inside the sync's would report the
     # refusal as a failed session.
     with connect_memgraph(batch_size) as ingestor:
-        refusal, created = _project_owner_refusal(
-            ingestor, project_name, repo, assume_yes
-        )
-    if refusal is not None:
-        _exit_with_error(refusal)
-    return created
+        check = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
+    if check.refusal is not None:
+        _exit_with_error(check.refusal)
+    return check
 
 
 def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> None:
@@ -694,20 +702,21 @@ def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> No
 @contextmanager
 def _project_claim(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
-) -> Iterator[None]:
+) -> Iterator[list[str] | None]:
     """Hold this sync's claim on its project name while the sync runs (#2411).
 
+    Yields the roots `_mark_sync_incomplete` must still find on the Project.
     A claim the sync created is given back when the sync fails before its
     incomplete-run marker or any code is written; the release query checks
     that, so a failure further in keeps it (review of PR 2499).
     """
-    created = _exit_if_project_owned_elsewhere(
+    check = _exit_if_project_owned_elsewhere(
         batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
     )
     try:
-        yield
+        yield check.owned_roots
     except BaseException:
-        if created:
+        if check.created:
             _release_project_claim(batch_size, project_name, repo)
         raise
 
@@ -716,18 +725,31 @@ def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
     return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
 
 
-def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
+def _mark_sync_incomplete(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    owned_roots: list[str] | None = None,
+) -> None:
     """Put the `:IncompleteRun` marker down before the sync writes (#2219).
 
     The same marker the MCP mutating paths write (#1679), so a later MCP
     process refuses to hydrate from a graph an interrupted CLI sync left
     partial. Failing to write it aborts the sync: nothing has changed yet,
     and proceeding would make exactly that partial graph look complete.
+
+    With `owned_roots`, the marker goes down only while the Project still
+    has one of them, checked in the same statement: the claim the ownership
+    check saw may have been released and taken since (review of PR 2499).
     """
     params = _sync_marker_params(project_name)
     params[cs.KEY_WRITING] = True
     try:
-        ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+        if owned_roots is None:
+            ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+            return
+        params[cs.KEY_ROOT_PATH] = owned_roots[0]
+        params[cs.KEY_ROOT_PATHS] = owned_roots
+        marked = ingestor.fetch_all(cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE, params)
     except Exception as exc:
         app_context.console.print(
             style(
@@ -736,6 +758,23 @@ def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None
             )
         )
         raise typer.Exit(1) from exc
+    if not marked:
+        _exit_with_error(_claim_lost_refusal(ingestor, project_name))
+
+
+def _claim_lost_refusal(ingestor: MemgraphIngestor, project_name: str) -> str:
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
+        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+            project_name=project_name, error=exc
+        )
+    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
+        project_name=project_name, root=owner
+    )
 
 
 def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
@@ -789,7 +828,7 @@ def _run_graph_sync(
     with (
         _project_claim(
             batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
-        ),
+        ) as owned_roots,
         connect_memgraph(batch_size) as ingestor,
     ):
         if clean:
@@ -803,7 +842,7 @@ def _run_graph_sync(
 
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
-        _mark_sync_incomplete(ingestor, project_name)
+        _mark_sync_incomplete(ingestor, project_name, owned_roots)
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()

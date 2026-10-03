@@ -3,7 +3,9 @@
 # while the graph holds the other repository's code under its root.
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import patch
@@ -11,6 +13,7 @@ from unittest.mock import patch
 import pytest
 import typer
 
+from codebase_rag import cli
 from codebase_rag.cli import (
     _exit_if_project_owned_elsewhere,
     _project_owner_refusal,
@@ -124,8 +127,8 @@ def test_simultaneous_claims_let_exactly_one_sync_through(
         def claim(repo: Path, name: str = name, start: Barrier = start) -> bool:
             with MemgraphIngestor(host=host, port=port) as ingestor:
                 start.wait()
-                refusal, _ = _project_owner_refusal(ingestor, name, repo, False)
-                return refusal is None
+                check = _project_owner_refusal(ingestor, name, repo, False)
+                return check.refusal is None
 
         with ThreadPoolExecutor(max_workers=len(repos)) as pool:
             allowed = list(pool.map(claim, repos))
@@ -215,6 +218,81 @@ def test_a_failed_resync_keeps_the_project(
     _cli_sync(org_a)
 
     _fails_before_writing(org_a)
+
+    [row] = memgraph_ingestor.fetch_all(_FUNCTIONS)
+    assert row["root"] == str(org_a.resolve())
+    assert row["functions"] == ["api2.billing.charge_card"]
+    assert _refused(org_b)
+
+
+def _claim_held_by(repo: Path) -> AbstractContextManager[object]:
+    # A sync that has passed its ownership check and not yet written.
+    claim = cli._project_claim(100, "api2", repo, clean=False, assume_yes=False)
+    claim.__enter__()
+    return claim
+
+
+def _fail(claim: AbstractContextManager[object]) -> None:
+    # That sync stopping before its marker, as a failed marker write does.
+    claim.__exit__(typer.Exit, typer.Exit(1), None)
+
+
+@contextmanager
+def _paused_before_marking(during: Callable[[], None]) -> Iterator[None]:
+    # The next sync stops between its ownership check and its marker while
+    # `during` runs; syncs started by `during` pass straight through.
+    real_mark = cli._mark_sync_incomplete
+    paused = False
+
+    def mark(*args: object, **kwargs: object) -> None:
+        nonlocal paused
+        if not paused:
+            paused = True
+            during()
+        real_mark(*args, **kwargs)
+
+    with patch("codebase_rag.cli._mark_sync_incomplete", side_effect=mark):
+        yield
+
+
+def test_a_sync_whose_claim_was_released_under_it_is_refused(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # Review of PR 2499: the orgA sync that created the claim failed and
+    # released it while another orgA sync sat between its check and its
+    # marker; orgB then claimed and indexed the name.
+    org_a, org_b = _repos(tmp_path)
+    first = _claim_held_by(org_a)
+
+    def first_fails_then_org_b_syncs() -> None:
+        _fail(first)
+        _cli_sync(org_b)
+
+    with (
+        _paused_before_marking(first_fails_then_org_b_syncs),
+        pytest.raises(typer.Exit),
+    ):
+        _cli_sync(org_a)
+
+    [row] = memgraph_ingestor.fetch_all(_FUNCTIONS)
+    assert row["root"] == str(org_b.resolve())
+    assert row["functions"] == ["api2.users.list_users"]
+
+
+def test_a_sync_whose_claim_was_released_claims_it_again(
+    memgraph_ingestor: MemgraphIngestor,
+    cli_graph: dict[str, str | int],
+    tmp_path: Path,
+) -> None:
+    # Negative: with nobody else claiming the name meanwhile, the second
+    # orgA sync takes it back and finishes.
+    org_a, org_b = _repos(tmp_path)
+    first = _claim_held_by(org_a)
+
+    with _paused_before_marking(lambda: _fail(first)):
+        _cli_sync(org_a)
 
     [row] = memgraph_ingestor.fetch_all(_FUNCTIONS)
     assert row["root"] == str(org_a.resolve())
