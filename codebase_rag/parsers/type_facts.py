@@ -290,12 +290,23 @@ class TypeReferenceResolver:
         project_name: str,
     ) -> None:
         self._registry = function_registry
+        self._partial_groups: Mapping[str, list[str]] = {}
         self._imports = import_mapping
         self._prefix = f"{project_name}{cs.SEPARATOR_DOT}"
 
     def _is_type(self, qn: str) -> bool:
         node_type = self._registry.get(qn)
         return node_type is not None and str(node_type) in TYPE_NODE_TYPES
+
+    def join_partial_groups(self, partial_groups: Mapping[str, list[str]]) -> None:
+        """Count the parts of each C# partial type as one candidate.
+
+        Every file declaring a `partial` type registers its own node, so a
+        name matching the parts read as two equally near candidates and the
+        reference got no edge at all (issue #2469). `partial_groups` maps
+        each part to its group, as parsing builds them.
+        """
+        self._partial_groups = partial_groups
 
     def _scoped_candidates(self, name: str, module_qn: str) -> list[str]:
         head, _sep, rest = name.partition(cs.SEPARATOR_DOT)
@@ -316,9 +327,10 @@ class TypeReferenceResolver:
     def _nearest_unique(self, matches: list[str], module_qn: str) -> str | None:
         # 3. A unique project type with that name, preferring the nearest
         #    package; two equally near candidates stay unresolved rather
-        #    than guessed.
-        if len(matches) == 1:
-            return matches[0]
+        #    than guessed. The parts of a C# partial type are one candidate,
+        #    as near as its nearest part and named by its lowest qn, the
+        #    part a base list binds (`csharp_utils.unique_carrier`), so every
+        #    reference to the type lands on one node.
         module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
         def shared(qn: str) -> int:
@@ -329,8 +341,15 @@ class TypeReferenceResolver:
                 n += 1
             return n
 
-        ranked = sorted(matches, key=lambda qn: (-shared(qn), len(qn), qn))
-        if shared(ranked[0]) > shared(ranked[1]):
+        types: dict[str, list[str]] = {}
+        for qn in matches:
+            group = self._partial_groups.get(qn)
+            types.setdefault(min(group) if group else qn, []).append(qn)
+        nearness = {min(parts): max(map(shared, parts)) for parts in types.values()}
+        if len(nearness) == 1:
+            return next(iter(nearness))
+        ranked = sorted(nearness, key=lambda qn: (-nearness[qn], len(qn), qn))
+        if nearness[ranked[0]] > nearness[ranked[1]]:
             return ranked[0]
         return None
 

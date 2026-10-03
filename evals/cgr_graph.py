@@ -735,6 +735,21 @@ class _StatefulIngestor:
                 )
         return rows
 
+    def _same_named_csharp_type_rows(self, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        return [
+            {
+                cs.KEY_LABEL: label,
+                cs.KEY_QUALIFIED_NAME: _result(uid),
+                cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                cs.KEY_MODIFIERS: _result(props.get(cs.KEY_MODIFIERS)),
+            }
+            for (label, uid), props in self.nodes.items()
+            if label in cs.CSHARP_PARTIAL_TYPE_LABELS
+            and _str(uid).startswith(prefix)
+            and props.get(cs.KEY_NAME) == params.get(cs.KEY_NAME)
+        ]
+
     def _project_rows(self) -> list[ResultRow]:
         return [
             {
@@ -1031,6 +1046,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_CALLEES
             ):
                 return self._graph_rows(query, params or {})
+            case cs.CYPHER_SAME_NAMED_CSHARP_TYPES:
+                return self._same_named_csharp_type_rows(params or {})
             case (
                 cq.CYPHER_CONTEXT_HOTNESS
                 | cq.CYPHER_CONTEXT_TYPES
