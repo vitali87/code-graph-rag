@@ -50,6 +50,7 @@ def _index(temp_repo: Path, mock_ingestor: MagicMock, files: dict[str, str]) -> 
     project = temp_repo / PROJECT
     project.mkdir()
     for rel, source in files.items():
+        (project / rel).parent.mkdir(parents=True, exist_ok=True)
         (project / rel).write_text(source, encoding="utf-8")
     run_updater(project, mock_ingestor, skip_if_missing="c")
 
@@ -624,6 +625,39 @@ class TestHeaderInlineNeedsInclude:
         refs = _edges(mock_ingestor, REFERENCES)
         assert _into(refs, _qn("real", "helper")) == {f"{PROJECT}.store"}, refs
         assert _into(refs, _qn("unrelated", "helper")) == set(), refs
+
+    @pytest.mark.parametrize(
+        "includes",
+        [
+            '#include "a/util.h"\n#include "b/util.h"\n',
+            '#include "b/util.h"\n#include "a/util.h"\n',
+        ],
+        ids=["displaced-first", "displacing-last"],
+    )
+    def test_static_inline_in_a_header_a_same_named_include_displaced(
+        self, temp_repo: Path, mock_ingestor: MagicMock, includes: str
+    ) -> None:
+        # `a/util.h` and `b/util.h` bind the same local name `util`, so the
+        # later include takes over the binding; the earlier header is still
+        # compiled into the file, and so is its `static inline` (Greptile, PR
+        # #2593). `c/util.h`, also `util`, is not included at all.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "a/util.h": "static inline int twice(int x) { return 2 * x; }\n",
+                "b/util.h": "static inline int thrice(int x) { return 3 * x; }\n",
+                "c/util.h": "static inline int twice(int x) { return -x; }\n",
+                "main.c": (
+                    includes + "typedef struct { int (*fn)(int); } slot_t;\n"
+                    "static slot_t slots[] = { { twice }, { thrice } };\n"
+                ),
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("a.util", "twice")) == {f"{PROJECT}.main"}, refs
+        assert _into(refs, _qn("b.util", "thrice")) == {f"{PROJECT}.main"}, refs
+        assert _into(refs, _qn("c.util", "twice")) == set(), refs
 
     def test_static_inline_in_an_included_header_is_referenced(
         self, temp_repo: Path, mock_ingestor: MagicMock

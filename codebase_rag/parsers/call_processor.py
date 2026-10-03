@@ -6225,12 +6225,19 @@ class CallProcessor:
     def _c_include_closure(self, module_qn: str) -> frozenset[str]:
         if (cached := self._c_include_closures.get(module_qn)) is not None:
             return cached
-        import_mapping = self._resolver.import_processor.import_mapping
+        imports = self._resolver.import_processor
+        import_mapping = imports.import_mapping
+        # A header a later include displaced from its local name is still
+        # included, so its `static inline`s compile into this file too.
+        displaced = imports.displaced_include_targets()
         reached: set[str] = set()
         pending = [module_qn]
         while pending:
             current = pending.pop()
-            for target in (import_mapping.get(current) or {}).values():
+            for target in (
+                *(import_mapping.get(current) or {}).values(),
+                *displaced.get(current, ()),
+            ):
                 if target not in reached and target in self.module_qn_to_file_path:
                     reached.add(target)
                     pending.append(target)
