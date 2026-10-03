@@ -21,7 +21,7 @@ import typer
 from typer.testing import CliRunner
 
 from codebase_rag.cli import _launch_session, _run_graph_sync, app
-from codebase_rag.workspaces import add_repo, create_workspace
+from codebase_rag.workspaces import add_repo, create_workspace, load_workspace
 
 runner = CliRunner()
 
@@ -286,3 +286,120 @@ def test_yes_reaches_the_sync_before_the_chat(
         with pytest.raises(typer.Exit):
             sync_task()
         graph.assert_not_called()
+
+
+@pytest.fixture
+def empty(tmp_path: Path) -> Path:
+    # A workspace with no repositories, and a directory to start from.
+    create_workspace("empty")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    return elsewhere
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--update-graph"],
+        ["--update-graph", "-a", "where is main?"],
+        ["--update-graph", "--projects", "alpha"],
+        [],
+        ["--no-sync"],
+        ["-a", "where is main?"],
+    ],
+    ids=["update", "update-ask", "update-projects", "chat", "no-sync", "ask"],
+)
+def test_an_empty_workspace_opens_no_assistant(
+    sync: MagicMock, session: MagicMock, empty: Path, extra: list[str]
+) -> None:
+    # Greptile review of PR 2507: a workspace with no repositories left the
+    # project scope empty, and an empty scope is what "no scope" looks like
+    # to the assistant, so it opened on every project in the shared graph.
+    # Its `--update-graph` synced nothing and reported a completed update.
+    result = runner.invoke(app, _start(empty, "--workspace", "empty", *extra))
+
+    out = " ".join(click.unstyle(result.output).split())
+    assert result.exit_code == 1, out
+    assert "'empty' has no repositories" in out
+    assert "Graph update completed" not in out
+    session.assert_not_called()
+    sync.assert_not_called()
+
+
+def test_an_empty_workspace_with_projects_still_opens_a_chat_on_them(
+    sync: MagicMock, session: MagicMock, empty: Path
+) -> None:
+    # Negative: `--projects` names the scope of a chat that syncs nothing,
+    # as it did before (fe30ec957).
+    result = runner.invoke(
+        app, _start(empty, "--workspace", "empty", "--projects", "alpha,beta")
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _launched_with(session)["active_projects"] == ["alpha", "beta"]
+
+
+def test_a_workspace_without_update_graph_syncs_it_before_the_chat(
+    sync: MagicMock, session: MagicMock, shop: tuple[Path, Path, Path]
+) -> None:
+    # Negative: without `--update-graph` nothing is synced up front; the chat
+    # opens on the workspace's projects and syncs its repositories first.
+    backend, frontend, elsewhere = shop
+
+    result = runner.invoke(app, _start(elsewhere, "--workspace", "shop"))
+
+    assert result.exit_code == 0, result.output
+    sync.assert_not_called()
+    launched = _launched_with(session)
+    assert launched["active_projects"] == load_workspace("shop").project_names()
+    sync_task = launched["sync_task"]
+    assert callable(sync_task)
+    sync_task()
+    synced = [call.kwargs["repo"] for call in sync.call_args_list]
+    assert synced == [backend.resolve(), frontend.resolve()]
+
+
+def test_start_without_a_workspace_opens_the_chat_on_the_repository(
+    sync: MagicMock, session: MagicMock, tmp_path: Path
+) -> None:
+    # Negative: the non-workspace chat is scoped to `--repo-path`'s project.
+    result = runner.invoke(app, _start(tmp_path, "--project-name", "solo"))
+
+    assert result.exit_code == 0, result.output
+    sync.assert_not_called()
+    launched = _launched_with(session)
+    assert launched["active_projects"] == ["solo"]
+    sync_task = launched["sync_task"]
+    assert callable(sync_task)
+    sync_task()
+    assert sync.call_args.kwargs["repo"] == tmp_path.resolve()
+
+
+def _assistant_scope_check(active_projects: list[str] | None) -> None:
+    # Stop `_initialize_services_and_agent` at its first step after the scope
+    # check, so no model or tool is built.
+    from codebase_rag import main as main_mod
+
+    with patch.object(
+        main_mod, "_validate_provider_config", side_effect=RuntimeError("past")
+    ):
+        main_mod._initialize_services_and_agent(
+            "/repo", MagicMock(), active_projects=active_projects
+        )
+
+
+def test_the_assistant_refuses_an_empty_project_scope() -> None:
+    # Fail closed: an empty scope must never be read as every project.
+    with pytest.raises(ValueError, match="no project"):
+        _assistant_scope_check([])
+
+
+@pytest.mark.parametrize(
+    "active_projects", [None, ["alpha"], ["alpha", "beta"]], ids=str
+)
+def test_the_assistant_accepts_a_named_or_absent_scope(
+    active_projects: list[str] | None,
+) -> None:
+    # Negative: a named scope, or none at all (`cgr optimize`), gets past it.
+    with pytest.raises(RuntimeError, match="past"):
+        _assistant_scope_check(active_projects)

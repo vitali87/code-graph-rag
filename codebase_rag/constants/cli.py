@@ -50,6 +50,11 @@ CLI_ERR_WORKSPACE_UPDATE_OPTION = (
     "Error: {option} applies to one repository and cannot be combined with "
     "--workspace --update-graph. Run it with --repo-path <repository> instead."
 )
+CLI_ERR_START_EMPTY_WORKSPACE = (
+    "Error: workspace '{name}' has no repositories, so there is nothing to sync "
+    "or to scope the assistant to. Add one with `cgr workspace add-repo {name} "
+    "PATH`, or leave out --workspace."
+)
 CLI_ERR_SYNC_HOME_OR_ROOT = (
     "Error: refusing to index {path}: it is your home directory or the "
     "filesystem root, so every file under it would enter the graph and sync "

@@ -476,6 +476,23 @@ def _refuse_unsupported_workspace_update(
             _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_OPTION.format(option=option))
 
 
+def _refuse_empty_workspace(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    active_projects: list[str],
+) -> None:
+    # A workspace with no repositories gives `--update-graph` nothing to sync,
+    # and leaves the assistant's scope empty unless `--projects` names one: an
+    # empty scope reads as every project in the shared graph (Greptile review
+    # of PR 2507). Refused before the stack starts or anything is synced.
+    if workspace_config is None or workspace_config.repos:
+        return
+    if update_graph or not active_projects:
+        _exit_with_error(
+            cs.CLI_ERR_START_EMPTY_WORKSPACE.format(name=workspace_config.name)
+        )
+
+
 def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
     if workspace is None:
         return None
@@ -996,6 +1013,10 @@ def start(
         output=output,
         interactive_setup=interactive_setup,
     )
+    active_projects = _start_active_projects(
+        workspace_config, projects, resolved_project_name
+    )
+    _refuse_empty_workspace(workspace_config, update_graph, active_projects)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -1053,10 +1074,6 @@ def start(
             no_embeddings,
             yes,
         )
-
-    active_projects = _start_active_projects(
-        workspace_config, projects, resolved_project_name
-    )
 
     _launch_session(
         target_repo_path,

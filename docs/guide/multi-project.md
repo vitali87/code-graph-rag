@@ -55,7 +55,10 @@ repositories under its own project name, then opens the assistant scoped to
 the workspace. `--repo-path` and the current directory play no part in it.
 `--clean`, `-o` and `--interactive-setup` apply to one repository, so they are
 refused with `--workspace --update-graph`. A sync of your home directory or
-the filesystem root is refused unless you pass `--yes`.
+the filesystem root is refused unless you pass `--yes`. A workspace with no
+repositories is refused too, since it has nothing to sync and no project to
+scope the assistant to; without `--update-graph`, `--projects` can still name
+the projects to chat about.
 
 A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
 identifier, not a path: it starts with a letter or digit and uses only
