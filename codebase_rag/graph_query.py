@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import NamedTuple, TypedDict
+from typing import TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -395,7 +395,7 @@ def _site_sort_key(row: CallSiteRow) -> tuple[int, str, str, int, int]:
     )
 
 
-class _CallReads(NamedTuple):
+class _CallReads(TypedDict):
     # The start's own read (`$qn`), the read of a whole later level (`$qns`),
     # and that read's column naming the frontier node a row hangs off.
     start: str
@@ -404,10 +404,14 @@ class _CallReads(NamedTuple):
 
 
 _CALLERS_READS = _CallReads(
-    cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_CALLERS_OF, cs.KEY_TO_QN
+    start=cq.CYPHER_GRAPH_CALLERS,
+    level=cq.CYPHER_GRAPH_CALLERS_OF,
+    through=cs.KEY_TO_QN,
 )
 _CALLEES_READS = _CallReads(
-    cq.CYPHER_GRAPH_CALLEES, cq.CYPHER_GRAPH_CALLEES_OF, cs.KEY_FROM_QN
+    start=cq.CYPHER_GRAPH_CALLEES,
+    level=cq.CYPHER_GRAPH_CALLEES_OF,
+    through=cs.KEY_FROM_QN,
 )
 
 
@@ -428,15 +432,15 @@ def _walk_sites(
     for level in range(1, max(1, depth) + 1):
         if level == 1:
             rows = fetch_all(
-                reads.start, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: start}
+                reads["start"], {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: start}
             )
             hops = [(start, row) for row in rows]
         else:
             rows = fetch_all(
-                reads.level,
+                reads["level"],
                 {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: sorted(frontier)},
             )
-            hops = [(str(row.get(reads.through, "")), row) for row in rows]
+            hops = [(str(row.get(reads["through"], "")), row) for row in rows]
         next_frontier: list[str] = []
         for through, row in hops:
             # A foreign row is neither reported nor a hop the walk continues
