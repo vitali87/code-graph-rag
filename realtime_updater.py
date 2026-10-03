@@ -284,12 +284,20 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         rules admit (the renamed `out/` file) and deleting what they drop. A
         `git status` that rewrites the index without moving a rule costs one
         `git ls-files` and nothing more.
+
+        A full rebuild a failed re-ingest left owed runs instead, on the new
+        updater, and clears the flag only when it succeeds: the incremental
+        run skips an unchanged file whose nodes that failure deleted, then
+        stamps the partial graph as current (review of PR 2490).
         """
         with self._update_lock:
             if not rules.reload():
                 return
             logger.info(logs.WATCHER_IGNORE_RULES_CHANGED)
             self.updater = rules.build_updater()
+            if self._needs_full_rebuild:
+                self._rebuild_after_failure()
+                return
             try:
                 self.updater.run()
             except Exception as exc:  # noqa: BLE001

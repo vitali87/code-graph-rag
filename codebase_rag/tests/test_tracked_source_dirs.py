@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from loguru import logger
@@ -595,3 +596,98 @@ def test_a_linked_worktree_watches_its_index_outside_the_checkout(
 
 def _never_built(_patterns: object) -> GraphUpdater:
     raise AssertionError("no updater is built while only reading the rules")
+
+
+def _fail_after_delete(*_args: object) -> None:
+    raise RuntimeError("died after the delete")
+
+
+def test_a_rules_change_restores_a_graph_a_failed_reingest_left_partial(
+    defex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A re-ingest that dies after deleting a file's nodes leaves a full
+    # rebuild owed. A rules change ran an incremental sync instead, which
+    # skipped the unchanged file whose nodes were gone and stamped the partial
+    # graph as current (review of PR 2490).
+    store, handler = _start_watcher(defex, monkeypatch)
+    out_go = defex / "pkg" / "out" / "out.go"
+    with monkeypatch.context() as patched:
+        patched.setattr(handler.updater, "_reingest_reparse", _fail_after_delete)
+        handler.dispatch(FileModifiedEvent(str(out_go)))
+    assert "defex.pkg.out.out.Print" not in _functions(store), (
+        "fixture must leave the graph partial"
+    )
+
+    (defex / "pkg" / "out" / "gen.go").write_text("package out\nfunc Gen() {}\n")
+    _git(defex, "add", "pkg/out/gen.go")
+    handler.dispatch(FileModifiedEvent(str(defex / ".git" / "index")))
+
+    assert "defex.pkg.out.out.Print" in _functions(store)
+    assert "defex.pkg.out.gen.Gen" in _functions(store)
+    assert not handler._needs_full_rebuild
+
+
+class _ChangedRules:
+    """Ignore rules that always report a change and build the given updater."""
+
+    def __init__(self, repo: Path, built: MagicMock) -> None:
+        self.repo_path = repo
+        self.inputs = frozenset({repo / ".git" / "index"})
+        self._built = built
+
+    def reload(self) -> bool:
+        return True
+
+    def build_updater(self) -> MagicMock:
+        return self._built
+
+
+def _updater_double(repo: Path) -> MagicMock:
+    # A real updater always carries both sets, as None when unconfigured.
+    return MagicMock(repo_path=repo, exclude_paths=None, unignore_paths=None)
+
+
+def _rules_handler(
+    tmp_path: Path, built: MagicMock, owed_rebuild: bool
+) -> FileSystemEventHandler:
+    handler = realtime_updater.CodeChangeEventHandler(
+        _updater_double(tmp_path),
+        debounce_seconds=0,
+        ignore_rules=_ChangedRules(tmp_path, built),
+    )
+    handler._needs_full_rebuild = owed_rebuild
+    handler.dispatch(FileModifiedEvent(str(tmp_path / ".git" / "index")))
+    return handler
+
+
+def test_a_rules_change_with_a_rebuild_owed_runs_it_on_the_new_updater(
+    tmp_path: Path,
+) -> None:
+    built = _updater_double(tmp_path)
+
+    handler = _rules_handler(tmp_path, built, owed_rebuild=True)
+
+    built.run.assert_called_once_with(force=True)
+    assert not handler._needs_full_rebuild
+
+
+def test_a_rules_change_with_nothing_owed_stays_incremental(tmp_path: Path) -> None:
+    # Negative: the full rebuild is only for a graph a failure left partial.
+    built = _updater_double(tmp_path)
+
+    handler = _rules_handler(tmp_path, built, owed_rebuild=False)
+
+    built.run.assert_called_once_with()
+    assert not handler._needs_full_rebuild
+
+
+def test_a_failed_rebuild_on_a_rules_change_keeps_it_owed(tmp_path: Path) -> None:
+    # Negative: the flag clears only once the rebuild succeeds, and the
+    # failure does not escape the watchdog callback.
+    built = _updater_double(tmp_path)
+    built.run.side_effect = RuntimeError("rebuild died")
+
+    handler = _rules_handler(tmp_path, built, owed_rebuild=True)
+
+    built.run.assert_called_once_with(force=True)
+    assert handler._needs_full_rebuild
