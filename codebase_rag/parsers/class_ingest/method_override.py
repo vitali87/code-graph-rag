@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import deque
+from functools import partial
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 
@@ -10,7 +11,11 @@ from ... import constants as cs
 from ... import logs
 from ...types_defs import NodeType, OverloadSignature
 from ...utils import qn_markers
-from ...utils.cpp_signatures import parameter_types_may_match, pick_overload
+from ...utils.cpp_signatures import (
+    ClassLookups,
+    parameter_types_may_match,
+    pick_overload,
+)
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -346,9 +351,16 @@ def _signed_base_overloads(
     return overloads or None
 
 
+class _OverrideScopes(NamedTuple):
+    # Each signature's names mean what they mean in its own class's scope.
+    base_class: str
+    derived_class: str
+
+
 def _overridden_overload(
     signature: OverloadSignature,
     overloads: list[tuple[str, OverloadSignature]],
+    scopes: _OverrideScopes,
     function_registry: FunctionRegistryTrieProtocol,
 ) -> str | None:
     """The base overload `signature` overrides, if the types allow it at all.
@@ -363,25 +375,52 @@ def _overridden_overload(
     if picked is None:
         return None
     known = dict(overloads)[picked]
+    classes = ClassLookups(
+        left=partial(
+            _is_class_in_scope,
+            scopes=_enclosing_scopes(scopes.base_class),
+            function_registry=function_registry,
+        ),
+        right=partial(
+            _is_class_in_scope,
+            scopes=_enclosing_scopes(scopes.derived_class),
+            function_registry=function_registry,
+        ),
+    )
     if known.text == signature.text or parameter_types_may_match(
-        known.text,
-        signature.text,
-        lambda name: _is_known_class(name, function_registry),
+        known.text, signature.text, classes
     ):
         return picked
     return None
 
 
-def _is_known_class(name: str, function_registry: FunctionRegistryTrieProtocol) -> bool:
-    # A class the graph holds is no typedef; a name it does not hold, or one
-    # it also holds as a Type alias, might be one.
-    simple = name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
-    matches = [
-        function_registry.get(qn)
-        for qn in function_registry.find_ending_with(simple)
-        if qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == simple
-    ]
-    return bool(matches) and all(kind == NodeType.CLASS for kind in matches)
+def _enclosing_scopes(class_qn: str) -> list[str]:
+    # The class, then each scope around it, innermost first: where a name
+    # written in one of its members is looked up.
+    scopes: list[str] = []
+    scope = class_qn
+    while scope:
+        scopes.append(scope)
+        scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+    return scopes
+
+
+def _is_class_in_scope(
+    name: str, scopes: list[str], function_registry: FunctionRegistryTrieProtocol
+) -> bool:
+    """Whether `name`, looked up from these scopes, is a class.
+
+    The innermost declaration of the name decides, as C++ lookup does: a
+    class there is no typedef, and a name found nowhere, or found as a Type
+    alias, might be one. A class of the same name in an unrelated namespace
+    is not what the member can name, so it decides nothing.
+    """
+    dotted = name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+    for scope in scopes:
+        kind = function_registry.get(f"{scope}{cs.SEPARATOR_DOT}{dotted}")
+        if kind is not None:
+            return kind == NodeType.CLASS
+    return False
 
 
 def _parent_method_qn(
@@ -389,6 +428,7 @@ def _parent_method_qn(
     method_name: str,
     function_registry: FunctionRegistryTrieProtocol,
     signature: OverloadSignature | None = None,
+    class_qn: str = "",
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target."""
     if signature is not None and (
@@ -398,7 +438,12 @@ def _parent_method_qn(
     ):
         # No settled match is no edge: the plain-named overload is not a
         # default, it is whichever one happened to be seen first.
-        return _overridden_overload(signature, overloads, function_registry)
+        return _overridden_overload(
+            signature,
+            overloads,
+            _OverrideScopes(base_class=parent_class, derived_class=class_qn),
+            function_registry,
+        )
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
         # Fall back to name+arity so a generic type-var rename in the override
@@ -446,7 +491,9 @@ def check_method_overrides(
         current_class = queue.popleft()
 
         parent_method_qn = (
-            _parent_method_qn(current_class, method_name, function_registry, signature)
+            _parent_method_qn(
+                current_class, method_name, function_registry, signature, class_qn
+            )
             if current_class != class_qn
             else None
         )

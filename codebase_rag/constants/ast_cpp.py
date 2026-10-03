@@ -87,21 +87,31 @@ CPP_BUILTIN_TYPE_WORDS = frozenset(
         "volatile",
     }
 )
-# Standard library types treated the same way, bare or as `std::name`: each
-# is one fixed type, never a project's alias for another.
-CPP_STD_FIXED_TYPE_NAMES = frozenset(
-    {
-        "size_t",
-        "ptrdiff_t",
-        "nullptr_t",
-        "string",
-        "wstring",
-        "u16string",
-        "u32string",
-        "string_view",
-    }
-)
+# A standard library type that is its own type, bare or as `std::name`.
+# `size_t`, `ptrdiff_t` and the <cstdint> names are left out on purpose: each
+# is an implementation-defined alias of a built-in integer type.
+CPP_STD_FIXED_TYPE_NAMES = frozenset({"nullptr_t"})
+# Standard string aliases and the template each instantiates: `std::string`
+# is `std::basic_string<char>`, so it is that spelling's alias and no other
+# type's.
+CPP_STD_STRING_ALIAS_TEMPLATES = {
+    "string": "basic_string",
+    "wstring": "basic_string",
+    "u8string": "basic_string",
+    "u16string": "basic_string",
+    "u32string": "basic_string",
+    "string_view": "basic_string_view",
+    "wstring_view": "basic_string_view",
+    "u8string_view": "basic_string_view",
+    "u16string_view": "basic_string_view",
+    "u32string_view": "basic_string_view",
+}
 CPP_STD_NAMESPACE = "std"
+# The cv-qualifiers: on a by-value parameter they are no part of the
+# function's type; on what a pointer or reference refers to they are.
+CPP_CV_QUALIFIER_WORDS = frozenset({"const", "volatile"})
+# The pointer declarator: a `const` after it qualifies the pointer itself.
+CPP_POINTER_DECLARATOR = "*"
 
 # C++ module declaration prefixes
 CPP_EXPORT_MODULE_PREFIX = "export module "

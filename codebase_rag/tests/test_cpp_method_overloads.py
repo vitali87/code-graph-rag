@@ -29,6 +29,7 @@ from codebase_rag.tests.conftest import (
 )
 from codebase_rag.types_defs import NodeType, OverloadSignature
 from codebase_rag.utils.cpp_signatures import (
+    ClassLookups,
     parameter_types_may_match,
     signature_arity,
 )
@@ -435,6 +436,170 @@ def test_a_member_of_other_parameter_types_hides_the_lone_base_overload(
     assert {edge for edge in _overrides(ingestor) if edge[0] in derived} == set()
 
 
+TEMPLATE_HIDE_CPP = """#include <vector>
+#include <map>
+#include <cstddef>
+class Foo {};
+class Bar {};
+class TB {
+public:
+  virtual int v(std::vector<int> x) { return 0; }
+  virtual int m(std::map<int, Foo> x) { return 0; }
+};
+class TD : public TB {
+public:
+  int v(std::vector<double> x) { return 1; }
+  int m(std::map<int, Bar> x) { return 1; }
+};
+"""
+
+
+def test_a_member_taking_another_instance_of_a_template_hides_the_base_one(
+    temp_repo: Path,
+) -> None:
+    # `std::vector` is the same template on both sides, so its arguments
+    # decide: `int` is not `double`, and `Foo` and `Bar` are two classes.
+    root = _write(temp_repo / PROJECT, {"tpl.cpp": TEMPLATE_HIDE_CPP})
+    ingestor = _index(root)
+
+    assert {
+        edge
+        for edge in _overrides(ingestor)
+        if edge[0].startswith(f"{PROJECT}.tpl.TD.")
+    } == set()
+
+
+ALIAS_OVERRIDE_CPP = """#include <cstddef>
+#include <vector>
+typedef int Alias;
+class AB {
+public:
+  virtual int s(std::size_t n) { return 0; }
+  virtual int u(size_t n) { return 0; }
+  virtual int w(std::vector<int> x) { return 0; }
+  virtual int c(int n) { return 0; }
+};
+class AD : public AB {
+public:
+  int s(unsigned long n) override { return 1; }
+  int u(unsigned int n) override { return 1; }
+  int w(std::vector<Alias> x) override { return 1; }
+  int c(const int n) override { return 1; }
+};
+"""
+
+
+def test_an_override_through_a_platform_or_template_alias_still_links(
+    temp_repo: Path,
+) -> None:
+    # `size_t` is an implementation-defined alias of an unsigned type, so it
+    # may be `unsigned long` or `unsigned int`; `vector<Alias>` may be
+    # `vector<int>`; and a by-value parameter's own `const` is no part of a
+    # function's type.
+    root = _write(temp_repo / PROJECT, {"alias.cpp": ALIAS_OVERRIDE_CPP})
+    ingestor = _index(root)
+
+    base = f"{PROJECT}.alias.AB"
+    derived = f"{PROJECT}.alias.AD"
+    assert {
+        edge for edge in _overrides(ingestor) if edge[0].startswith(f"{derived}.")
+    } == {(f"{derived}.{name}", f"{base}.{name}") for name in ("s", "u", "w", "c")}
+
+
+def test_a_by_value_parameters_own_const_is_not_part_of_the_signature(
+    temp_repo: Path,
+) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "cv.h": (
+                "class Cv {\npublic:\n  void f(int n);\n  void f(const char* s);\n};\n"
+            ),
+            "cv.cpp": (
+                '#include "cv.h"\n'
+                "void Cv::f(const int n) {}\n"
+                "void Cv::f(const char* const s) {}\n"
+            ),
+        },
+    )
+    ingestor = _index(root)
+
+    methods = _final_methods(ingestor, ".Cv.f")
+    assert {
+        qn: (m[cs.KEY_START_LINE], m[cs.KEY_SIGNATURE]) for qn, m in methods.items()
+    } == {
+        f"{PROJECT}.cv.h.Cv.f": (2, "(int)"),
+        f"{PROJECT}.cv.h.Cv.f@4": (3, "(const char*)"),
+    }
+
+
+DECLARATOR_OVERRIDE_CPP = """typedef int Alias;
+class Foo {};
+class DB {
+public:
+  virtual int p(int a) { return 0; }
+  virtual int q(int* a) { return 0; }
+  virtual int v(const Foo a) { return 0; }
+  virtual int r(const Foo& a) { return 0; }
+};
+class DD : public DB {
+public:
+  int p(Alias* a) { return 1; }
+  int q(Alias* a) override { return 1; }
+  int v(Foo a) override { return 1; }
+  int r(Foo& a) { return 1; }
+};
+"""
+
+
+def test_an_override_compares_pointers_references_and_pointee_const_exactly(
+    temp_repo: Path,
+) -> None:
+    # Only the base type may hide behind an alias: `Alias*` is a pointer and
+    # `int` is not, while `Alias*` may be `int*`. A by-value parameter's own
+    # `const` is no part of the type, so `v(Foo)` overrides `v(const Foo)`;
+    # the `const` a reference refers to is, so `r(Foo&)` hides
+    # `r(const Foo&)`.
+    root = _write(temp_repo / PROJECT, {"decl.cpp": DECLARATOR_OVERRIDE_CPP})
+    ingestor = _index(root)
+
+    base = f"{PROJECT}.decl.DB"
+    derived = f"{PROJECT}.decl.DD"
+    assert {
+        edge for edge in _overrides(ingestor) if edge[0].startswith(f"{derived}.")
+    } == {(f"{derived}.q", f"{base}.q"), (f"{derived}.v", f"{base}.v")}
+
+
+SCOPED_ALIAS_CPP = """namespace other { class Foo {}; }
+namespace ns {
+typedef int Foo;
+class SB {
+public:
+  virtual int f(int a) { return 0; }
+};
+class SD : public SB {
+public:
+  int f(Foo a) override { return 1; }
+};
+}
+"""
+
+
+def test_an_unrelated_class_of_the_same_name_does_not_mask_an_alias(
+    temp_repo: Path,
+) -> None:
+    # Inside `ns`, `Foo` is the typedef for `int`; `other::Foo` is a class,
+    # but not one `SD` can name as plain `Foo`, so it must not decide that
+    # `f(Foo)` cannot override `f(int)`.
+    root = _write(temp_repo / PROJECT, {"scoped.cpp": SCOPED_ALIAS_CPP})
+    ingestor = _index(root)
+
+    assert (
+        f"{PROJECT}.scoped.ns.SD.f",
+        f"{PROJECT}.scoped.ns.SB.f",
+    ) in _overrides(ingestor)
+
+
 @pytest.mark.parametrize(
     ("left", "right", "may_match"),
     [
@@ -443,9 +608,32 @@ def test_a_member_of_other_parameter_types_hides_the_lone_base_overload(
         ("(int,Count)", "(int,int)", True),
         ("(int)", "(double)", False),
         ("(int)", "(const char*)", False),
-        ("(std::size_t)", "(double)", False),
+        # `size_t` is whatever unsigned type the platform says: an alias.
+        ("(std::size_t)", "(unsigned long)", True),
+        ("(size_t)", "(unsigned int)", True),
+        ("(std::nullptr_t)", "(int)", False),
         ("(Foo)", "(Bar)", False),
         ("(int) const", "(int)", False),
+        # Same template, so the arguments decide, by the same rules.
+        ("(std::vector<int>)", "(std::vector<double>)", False),
+        ("(std::map<int,Foo>)", "(std::map<int,Bar>)", False),
+        ("(std::vector<Alias>)", "(std::vector<int>)", True),
+        ("(std::vector<T>)", "(std::vector<U>)", True),
+        ("(const std::vector<int>&)", "(const std::vector<int>&)", True),
+        # Another template name may be an alias template.
+        ("(IntVec<int>)", "(std::vector<int>)", True),
+        # `std::string` is `basic_string<char>`, never a built-in.
+        ("(std::string)", "(int)", False),
+        ("(std::string)", "(std::basic_string<char>)", True),
+        ("(std::function<int(int,int)>)", "(std::function<int(int,int)>)", True),
+        # Only the base type may be an alias; the declarators must agree,
+        # unless a bare alias on one side stands for the whole other type.
+        ("(int)", "(Alias*)", False),
+        ("(int*)", "(Alias*)", True),
+        ("(const char*)", "(PtrT)", True),
+        ("(const Foo&)", "(Foo&)", False),
+        ("(const Foo)", "(Foo)", True),
+        ("(Foo*)", "(Foo&)", False),
     ],
 )
 def test_parameter_types_may_match_only_through_a_possible_alias(
@@ -454,7 +642,8 @@ def test_parameter_types_may_match_only_through_a_possible_alias(
     def known_class(name: str) -> bool:
         return name in {"Foo", "Bar"}
 
-    assert parameter_types_may_match(left, right, known_class) is may_match
+    classes = ClassLookups(left=known_class, right=known_class)
+    assert parameter_types_may_match(left, right, classes) is may_match
 
 
 def test_a_definition_of_another_arity_is_not_paired_with_the_lone_declaration() -> (

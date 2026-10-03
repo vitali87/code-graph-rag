@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
 from .. import constants as cs
 from ..types_defs import OverloadSignature
@@ -25,6 +26,11 @@ _TOKEN_RE = re.compile(r"[^\W\d]\w*(?:::[^\W\d]\w*)*|\S")
 _NAME_RE = re.compile(r"[^\W\d]\w*(?:::[^\W\d]\w*)*")
 _OPENERS = frozenset("(<[")
 _CLOSERS = frozenset(")>]")
+# What ends one template argument: the next one, or the list.
+_TEMPLATE_ARGUMENT_ENDS = frozenset({cs.CHAR_COMMA, cs.CHAR_ANGLE_CLOSE})
+# Where a parameter type's declarators begin: a pointer, a reference, an
+# array bound, or a function pointer's parentheses.
+_DECLARATOR_TOKENS = frozenset("*&[(")
 
 
 def _split_signature(text: str) -> tuple[list[str], str]:
@@ -82,34 +88,220 @@ def spellings_agree(left: str, right: str) -> bool:
     )
 
 
-def _is_fixed_type_name(name: str) -> bool:
+class _TypeUnit(NamedTuple):
+    # One name with its template arguments (`std::map<int,Foo>`), or one
+    # punctuation character (`*`, `&`); `arguments` is None for no `<...>`.
+    token: str
+    arguments: tuple[tuple[_TypeUnit, ...], ...] | None
+
+
+def _parse_type(
+    tokens: list[str], position: int, in_template: bool
+) -> tuple[list[_TypeUnit], int]:
+    units: list[_TypeUnit] = []
+    parens = 0
+    while position < len(tokens):
+        token = tokens[position]
+        if in_template and parens == 0 and token in _TEMPLATE_ARGUMENT_ENDS:
+            break
+        position += 1
+        if token == cs.CHAR_PAREN_OPEN:
+            parens += 1
+        elif token == cs.CHAR_PAREN_CLOSE:
+            parens -= 1
+        elif token == cs.CHAR_ANGLE_OPEN and units and _is_name(units[-1].token):
+            arguments: list[tuple[_TypeUnit, ...]] = []
+            while position < len(tokens):
+                argument, position = _parse_type(tokens, position, True)
+                arguments.append(tuple(argument))
+                if position >= len(tokens):
+                    break
+                separator = tokens[position]
+                position += 1
+                if separator == cs.CHAR_ANGLE_CLOSE:
+                    break
+            units[-1] = units[-1]._replace(arguments=tuple(arguments))
+            continue
+        units.append(_TypeUnit(token, None))
+    return units, position
+
+
+def _type_units(type_text: str) -> list[_TypeUnit]:
+    return _parse_type(_TOKEN_RE.findall(type_text), 0, False)[0]
+
+
+def _is_name(token: str) -> bool:
+    return _NAME_RE.fullmatch(token) is not None
+
+
+def _std_name(name: str) -> str | None:
+    # The standard-library leaf of `name`, bare or written `std::leaf`.
     parts = name.split(cs.SEPARATOR_DOUBLE_COLON)
-    if len(parts) == 1:
-        return name in cs.CPP_BUILTIN_TYPE_WORDS or name in cs.CPP_STD_FIXED_TYPE_NAMES
-    return (
-        len(parts) == 2
-        and parts[0] == cs.CPP_STD_NAMESPACE
-        and parts[1] in cs.CPP_STD_FIXED_TYPE_NAMES
+    if len(parts) == 1 or (len(parts) == 2 and parts[0] == cs.CPP_STD_NAMESPACE):
+        return parts[-1]
+    return None
+
+
+def _is_fixed_type_name(name: str) -> bool:
+    if name in cs.CPP_BUILTIN_TYPE_WORDS:
+        return True
+    leaf = _std_name(name)
+    return leaf in cs.CPP_STD_FIXED_TYPE_NAMES or (
+        leaf in cs.CPP_STD_STRING_ALIAS_TEMPLATES
     )
 
 
-def _may_name_an_alias(type_text: str, is_known_class: Callable[[str], bool]) -> bool:
-    return any(
-        not _is_fixed_type_name(name) and not is_known_class(name)
-        for name in _NAME_RE.findall(type_text)
-    )
+class ClassLookups(NamedTuple):
+    # Whether a name is a class, asked in each signature's own scope: a name
+    # means what it means where it is written (issue #2455).
+    left: Callable[[str], bool]
+    right: Callable[[str], bool]
 
 
-def parameter_types_may_match(
-    left: str, right: str, is_known_class: Callable[[str], bool]
+def _may_be_alias(name: str, is_known_class: Callable[[str], bool]) -> bool:
+    return not _is_fixed_type_name(name) and not is_known_class(name)
+
+
+def _is_lone_alias(
+    parts: Sequence[_TypeUnit], is_known_class: Callable[[str], bool]
 ) -> bool:
+    # A bare name that may be an alias can stand for a whole type, pointers
+    # and all (`PtrT` for `const char*`).
+    return (
+        len(parts) == 1
+        and _is_name(parts[0].token)
+        and _may_be_alias(parts[0].token, is_known_class)
+    )
+
+
+def _names_may_match(left: str, right: str, classes: ClassLookups) -> bool:
+    if _names_agree(left, right):
+        return True
+    for alias, template in ((left, right), (right, left)):
+        leaf = _std_name(alias)
+        if (
+            leaf in cs.CPP_STD_STRING_ALIAS_TEMPLATES
+            and template.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+            == cs.CPP_STD_STRING_ALIAS_TEMPLATES[leaf]
+        ):
+            return True
+    return _may_be_alias(left, classes.left) or _may_be_alias(right, classes.right)
+
+
+def _split_declarators(
+    units: Sequence[_TypeUnit],
+) -> tuple[list[_TypeUnit], list[_TypeUnit]]:
+    # `const Foo* const&` -> base [const, Foo], declarators [*, const, &].
+    for index, unit in enumerate(units):
+        if unit.token in _DECLARATOR_TOKENS:
+            return list(units[:index]), list(units[index:])
+    return list(units), []
+
+
+def _cv_and_parts(
+    base: Sequence[_TypeUnit],
+) -> tuple[list[str], list[_TypeUnit]]:
+    cv = sorted(unit.token for unit in base if unit.token in cs.CPP_CV_QUALIFIER_WORDS)
+    return cv, [unit for unit in base if unit.token not in cs.CPP_CV_QUALIFIER_WORDS]
+
+
+def _bases_may_match(
+    left: Sequence[_TypeUnit],
+    right: Sequence[_TypeUnit],
+    classes: ClassLookups,
+    by_value: bool,
+) -> bool:
+    left_cv, left_parts = _cv_and_parts(left)
+    right_cv, right_parts = _cv_and_parts(right)
+    # A by-value parameter's own cv-qualifiers are no part of the function's
+    # type; what a pointer or reference refers to keeps them.
+    if not by_value and left_cv != right_cv:
+        return False
+    if len(left_parts) == len(right_parts):
+        return all(
+            _unit_pair_may_match(a, b, classes)
+            for a, b in zip(left_parts, right_parts, strict=True)
+        )
+    return _is_lone_alias(left_parts, classes.left) or _is_lone_alias(
+        right_parts, classes.right
+    )
+
+
+def _units_may_match(
+    left: Sequence[_TypeUnit], right: Sequence[_TypeUnit], classes: ClassLookups
+) -> bool:
+    """Whether two parameter types may be one type, part by part.
+
+    Only the base type may hide behind an alias: the pointers, references,
+    arrays and the const on what they refer to must agree, so `Alias*` may
+    be `int*` but never `int`. The one exception is a bare alias standing
+    for a whole type with declarators of its own (`PtrT` for `const char*`),
+    whose declarators must then end the other side's.
+    """
+    left_base, left_declarators = _split_declarators(left)
+    right_base, right_declarators = _split_declarators(right)
+    if len(left_declarators) == len(right_declarators):
+        return all(
+            _unit_pair_may_match(a, b, classes)
+            for a, b in zip(left_declarators, right_declarators, strict=True)
+        ) and _bases_may_match(
+            left_base, right_base, classes, by_value=not left_declarators
+        )
+    if len(left_declarators) < len(right_declarators):
+        return _alias_absorbs(
+            left_base, left_declarators, right_declarators, classes.left
+        )
+    return _alias_absorbs(
+        right_base, right_declarators, left_declarators, classes.right
+    )
+
+
+def _alias_absorbs(
+    base: Sequence[_TypeUnit],
+    declarators: Sequence[_TypeUnit],
+    other_declarators: Sequence[_TypeUnit],
+    is_known_class: Callable[[str], bool],
+) -> bool:
+    # `PtrT&` may be `const char*&`: the bare alias stands for what the other
+    # side writes before the declarators the two still share.
+    tail = other_declarators[len(other_declarators) - len(declarators) :]
+    return _is_lone_alias(_cv_and_parts(base)[1], is_known_class) and all(
+        a.token == b.token for a, b in zip(declarators, tail, strict=True)
+    )
+
+
+def _unit_pair_may_match(
+    left: _TypeUnit, right: _TypeUnit, classes: ClassLookups
+) -> bool:
+    if not (_is_name(left.token) and _is_name(right.token)):
+        return left.token == right.token
+    if not _names_agree(left.token, right.token):
+        return _names_may_match(left.token, right.token, classes)
+    # One template on both sides: its arguments decide, by the same rules.
+    # Without arguments on one side (the injected `Box` inside `Box<T>`)
+    # there is nothing to compare.
+    if left.arguments is None or right.arguments is None:
+        return True
+    return len(left.arguments) == len(right.arguments) and all(
+        _units_may_match(a, b, classes)
+        for a, b in zip(left.arguments, right.arguments, strict=True)
+    )
+
+
+def parameter_types_may_match(left: str, right: str, classes: ClassLookups) -> bool:
     """Whether two signatures could be one function once typedefs are seen.
 
-    Every parameter must agree verbatim or up to qualification, or else one
-    side must be written with a name that could be an alias: not a built-in
-    type word, not a fixed standard type, not a class the graph holds. So
-    `(Alias)` may be `(int)`, but `(double)` and `(const char*)` are not, and
-    neither are two classes. The cv/ref qualifiers after the list must be the
+    Every parameter must agree verbatim or up to qualification, or else
+    compare part by part. The pointers, references, arrays and the const on
+    what they refer to must agree; the base types may differ only through a
+    possible alias. Two different names may be one type only if one of them
+    could be an alias in its own scope (not a built-in type word, not
+    `nullptr_t`, not a class that scope can name; `std::string` aliases only
+    `basic_string`), and one template on both sides is one type only if its
+    arguments may be. So `(Alias)` may be `(int)`, `(Alias*)` may be `(int*)`
+    and `(std::size_t)` may be `(unsigned long)`, but `(double)` is not
+    `(int)`, `(Alias*)` is not `(int)`, and `vector<int>` is not
+    `vector<double>`. The cv/ref qualifiers after the list must be the
     same: a `const` member is never the non-`const` one.
     """
     left_types, left_qualifiers = _split_signature(left)
@@ -119,8 +311,7 @@ def parameter_types_may_match(
     return all(
         a == b
         or spellings_agree(a, b)
-        or _may_name_an_alias(a, is_known_class)
-        or _may_name_an_alias(b, is_known_class)
+        or _units_may_match(_type_units(a), _type_units(b), classes)
         for a, b in zip(left_types, right_types, strict=True)
     )
 

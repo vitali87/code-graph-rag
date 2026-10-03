@@ -66,6 +66,16 @@ _PUNCTUATION_SPACE_RE = re.compile(r"\s*([*&<>,()\[\]:])\s*")
 # A leading `::` (the global namespace) names what the bare name names: not
 # after a name or a template's `>`, where it qualifies.
 _GLOBAL_SCOPE_RE = re.compile(r"(?<![\w>])::")
+_CV_WORD_RE = re.compile(r"\b(?:const|volatile)\b")
+# What makes a parameter more than its base type: a pointer, a reference, an
+# array, or a function's parameter list.
+_DECLARATOR_CHARS = frozenset("*&[(")
+_NESTING = {
+    cs.CHAR_ANGLE_OPEN: 1,
+    cs.CHAR_PAREN_OPEN: 1,
+    cs.CHAR_ANGLE_CLOSE: -1,
+    cs.CHAR_PAREN_CLOSE: -1,
+}
 
 
 def cpp_overload_signature(method_node: Node) -> OverloadSignature | None:
@@ -164,7 +174,41 @@ def _parameter_type(parameter: Node) -> str:
         if child.type == cs.CHAR_EQUALS:
             break
         tokens.extend(_tokens(child, name))
-    return _normalize(cs.CHAR_SPACE.join(tokens))
+    return _drop_top_level_cv(_normalize(cs.CHAR_SPACE.join(tokens)))
+
+
+def _drop_top_level_cv(text: str) -> str:
+    """`const int` -> `int`, `const char*const` -> `const char*`.
+
+    A parameter's own `const` is no part of its function's type, so a
+    declaration `f(int)` and a definition `f(const int n)` are one member;
+    the `const` of what a pointer points to, or inside a template argument,
+    is part of it and stays.
+    """
+    depths: list[int] = []
+    depth = 0
+    last_declarator = None
+    for index, char in enumerate(text):
+        depths.append(depth)
+        if depth == 0 and char in _DECLARATOR_CHARS:
+            last_declarator = index
+        depth += _NESTING.get(char, 0)
+
+    def own_qualifier(match: re.Match[str]) -> str:
+        start = match.start()
+        if depths[start] != 0:
+            return match.group(0)
+        if last_declarator is None or (
+            text[last_declarator] == cs.CPP_POINTER_DECLARATOR
+            and start > last_declarator
+        ):
+            return ""
+        return match.group(0)
+
+    stripped = _CV_WORD_RE.sub(own_qualifier, text)
+    return _PUNCTUATION_SPACE_RE.sub(
+        r"\1", _SPACE_RE.sub(cs.CHAR_SPACE, stripped)
+    ).strip()
 
 
 def _tokens(node: Node, name: Node | None) -> list[str]:
