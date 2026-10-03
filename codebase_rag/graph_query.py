@@ -561,11 +561,17 @@ def _binds_whole(row: ImporterRow, imported_qn: str) -> bool:
 
     `import pkg` and `const m = require(...)` record no imported name,
     `from pkg import *` and `import * as ns` record `*`, and Rust records
-    `use crate::m;` and `pub use crate::m::*;` under the module's own name.
+    `use crate::m;` and `pub use crate::m::*;` under the module's own name,
+    as Python does `from pkg import m`. A JS/TS named import binds one
+    export whatever its name: `import { index } from './index'` is the
+    barrel's `index`, not the barrel (#2573 review).
     """
     name = row["imported_name"]
-    last = imported_qn.rpartition(cs.SEPARATOR_DOT)[2]
-    return name is None or name in (cs.IMPORTED_NAME_WILDCARD, last)
+    if name is None or name == cs.IMPORTED_NAME_WILDCARD:
+        return True
+    if (row["path"] or "").endswith(cs.JS_TS_ALL_EXTENSIONS):
+        return False
+    return name == imported_qn.rpartition(cs.SEPARATOR_DOT)[2]
 
 
 def _bound_names(

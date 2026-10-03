@@ -430,6 +430,104 @@ def test_a_name_reaching_a_listed_module_later_still_reaches_its_consumers() -> 
     assert len(rows) == 3
 
 
+def test_a_ts_named_import_sharing_the_barrels_name_is_not_the_whole_barrel() -> None:
+    # `import { index } from './index'` binds the barrel's own `index`
+    # export: a JS/TS named import is never the whole module, whatever its
+    # name (#2573 review).
+    barrel: list[Edge] = [
+        (
+            f"{P}.web.index",
+            "web/index.ts",
+            f"{P}.web.frame",
+            1,
+            0,
+            1,
+            32,
+            "Frame",
+            "Frame",
+        ),
+        (
+            f"{P}.web.conn",
+            "web/conn.ts",
+            f"{P}.web.index",
+            1,
+            0,
+            1,
+            32,
+            "Frame",
+            "Frame",
+        ),
+        (
+            f"{P}.web.named",
+            "web/named.ts",
+            f"{P}.web.index",
+            1,
+            0,
+            1,
+            32,
+            "index",
+            "index",
+        ),
+    ]
+    rows = graph_query.importers_through_reexports(
+        _fetch_for(barrel, budget=10), P, f"{P}.web.frame"
+    )
+    assert _hops(rows) == {
+        (f"{P}.web.index", ()),
+        (f"{P}.web.conn", (f"{P}.web.index",)),
+    }
+
+
+def test_a_whole_module_import_under_its_own_name_still_reaches() -> None:
+    # Negative: Rust `use crate::net;` and Python `from shop import plugins`
+    # record a whole-module import under the module's own name, so a facade
+    # imported that way is still walked through.
+    own_name: list[Edge] = [
+        (
+            f"{P}.src.net",
+            "src/net/mod.rs",
+            f"{P}.src.frame",
+            1,
+            0,
+            1,
+            24,
+            None,
+            "frame",
+        ),
+        (f"{P}.src.user", "src/user.rs", f"{P}.src.net", 1, 0, 1, 13, "net", "net"),
+        (
+            f"{P}.shop.plugins",
+            "shop/plugins/__init__.py",
+            f"{P}.shop._client",
+            1,
+            0,
+            1,
+            27,
+            "Client",
+            "Client",
+        ),
+        (
+            f"{P}.consumer",
+            "consumer.py",
+            f"{P}.shop.plugins",
+            1,
+            0,
+            1,
+            25,
+            "plugins",
+            "plugins",
+        ),
+    ]
+    rust = graph_query.importers_through_reexports(
+        _fetch_for(own_name, budget=10), P, f"{P}.src.frame"
+    )
+    python = graph_query.importers_through_reexports(
+        _fetch_for(own_name, budget=10), P, f"{P}.shop._client"
+    )
+    assert (f"{P}.src.user", (f"{P}.src.net",)) in _hops(rust)
+    assert (f"{P}.consumer", (f"{P}.shop.plugins",)) in _hops(python)
+
+
 def test_an_unknown_target_answers_empty_as_the_direct_query_does() -> None:
     fetch = _fetch_for(EDGES)
     assert graph_query.importers(fetch, P, f"{P}.nope") == []

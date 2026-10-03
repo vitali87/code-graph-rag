@@ -45,9 +45,12 @@ FILES = {
     "web/frame.ts": "export class Frame {}\n",
     "web/codec.ts": 'export function encode(): string {\n  return "";\n}\n',
     "web/index.ts": "export { Frame } from './frame';\n"
-    "export { encode } from './codec';\n",
+    "export { encode } from './codec';\n"
+    "export function index(): number {\n  return 1;\n}\n",
     "web/conn.ts": "import { Frame } from './index';\nexport const f = new Frame();\n",
     "web/wire.ts": "import { encode } from './index';\nexport const e = encode();\n",
+    # The barrel's own `index` export, named like the barrel itself.
+    "web/named.ts": "import { index } from './index';\nexport const n = index();\n",
 }
 
 
@@ -105,6 +108,17 @@ def test_a_ts_barrel_is_followed(indexed: MemgraphIngestor) -> None:
         ("web.index", ()),
         ("web.conn", ("web/index.ts",)),
     }
+
+
+def test_a_ts_named_import_sharing_the_barrels_name_is_not_followed(
+    indexed: MemgraphIngestor,
+) -> None:
+    # `import { index } from './index'` takes one export of the barrel, not
+    # the barrel, so it does not reach what the barrel re-exports.
+    direct = graph_query.importers(indexed.fetch_all, PROJECT, f"{PROJECT}.web.index")
+    named = [r for r in direct if r["module"] == f"{PROJECT}.web.named"]
+    assert [r["imported_name"] for r in named] == ["index"]
+    assert ("web.named", ("web/index.ts",)) not in _hops(indexed, "web.frame")
 
 
 def test_the_direct_query_still_lists_only_direct_importers(
