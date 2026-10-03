@@ -1262,4 +1262,3 @@ JAVA_FRONTEND_FACTS = (
 
 # Sync lock (issue #2441)
 SYNC_LOCK_WAITING = "Waiting for the running sync of {repo} ({holder}) to finish"
-SYNC_LOCK_UNAVAILABLE = "Cannot open the sync lock {path} ({error}); syncing unguarded"

@@ -341,16 +341,17 @@ def _clean_database_only(
     # `--clean` without `--update-graph`: wipe the graph, the vector store and
     # the hash cache, then stop.
     _import_vector_store()
-    with (
-        _sync_lock_or_exit(repo_to_clean, project_name),
-        connect_memgraph(batch_size) as ingestor,
-    ):
-        _confirm_destructive_clean(ingestor, project_name, assume_yes)
-        _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-        ingestor.clean_database()
+    # Held until the embeddings and the hash cache are gone too: a sync let
+    # in after the wipe would publish both, and the clean would then delete
+    # them under that sync's new graph (review of PR 2512).
+    with _sync_lock_or_exit(repo_to_clean, project_name):
+        with connect_memgraph(batch_size) as ingestor:
+            _confirm_destructive_clean(ingestor, project_name, assume_yes)
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
 
-    clear_all_embeddings()
-    _delete_hash_cache(repo_to_clean)
+        clear_all_embeddings()
+        _delete_hash_cache(repo_to_clean)
     _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
 
 

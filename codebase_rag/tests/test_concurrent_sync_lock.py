@@ -12,6 +12,7 @@ before it touches the graph; a scoped reingest waits for the running sync.
 
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
@@ -34,6 +35,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync_lock import (
     SyncInProgressError,
+    SyncLockError,
     UnsafeSyncLockError,
     repo_sync_lock,
 )
@@ -319,16 +321,127 @@ def test_the_holder_reenters_its_own_lock(repo: Path, mock_ingestor: MagicMock) 
     mock_ingestor.ensure_node_batch.assert_called()
 
 
-def test_a_checkout_where_the_lock_cannot_be_created_still_syncs(
+@contextmanager
+def _lock_open_denied(repo: Path) -> Iterator[Path]:
+    # The lock file another user created 0644, as this user finds it in a
+    # shared checkout.
+    lock_path = repo / cs.SYNC_LOCK_FILENAME
+    real_open = os.open
+
+    def open_(path: str | os.PathLike[str], flags: int, *args: int) -> int:
+        if Path(path) == lock_path:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
+        return real_open(path, flags, *args)
+
+    with patch("codebase_rag.sync_lock.os.open", side_effect=open_):
+        yield lock_path
+
+
+def test_a_lock_this_user_cannot_open_refuses_the_sync(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Negative: a read-only or odd checkout keeps syncing, unguarded, as
-    # before; the lock is protection, not a new way to fail.
+    # Greptile review of PR 2512: a lock that could not be opened was
+    # synced around, so a second user of a shared checkout ran unguarded
+    # beside the sync that held it.
+    with _lock_open_denied(repo) as lock_path:
+        with pytest.raises(SyncLockError) as refused:
+            _updater(repo, mock_ingestor).run()
+
+    message = str(refused.value)
+    assert str(lock_path) in message
+    assert os.strerror(errno.EACCES) in message
+    mock_ingestor.ensure_node_batch.assert_not_called()
+    mock_ingestor.execute_write.assert_not_called()
+
+
+def test_a_lock_path_that_is_not_a_file_refuses_the_sync(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
     (repo / cs.SYNC_LOCK_FILENAME).mkdir()
 
-    _updater(repo, mock_ingestor).run()
+    with pytest.raises(SyncLockError):
+        _updater(repo, mock_ingestor).run()
 
-    mock_ingestor.ensure_node_batch.assert_called()
+    mock_ingestor.ensure_node_batch.assert_not_called()
+
+
+def test_the_cli_says_why_it_cannot_take_the_lock(
+    repo: Path, cli_sync: MagicMock
+) -> None:
+    with _lock_open_denied(repo) as lock_path:
+        result = runner.invoke(
+            app,
+            [
+                "start",
+                "--repo-path",
+                str(repo),
+                "--no-start-stack",
+                "--no-embeddings",
+                "--update-graph",
+            ],
+        )
+
+    output = "".join(click.unstyle(result.output).split())
+    assert result.exit_code == 1, output
+    assert "".join(str(lock_path).split()) in output
+    assert "Traceback" not in output
+    cli_sync.assert_not_called()
+
+
+def _competing_sync(repo: Path) -> str:
+    # Another writer trying the checkout's lock: a thread is refused as
+    # another process is.
+    outcome: list[str] = []
+
+    def attempt() -> None:
+        try:
+            with repo_sync_lock(repo, "competitor"):
+                outcome.append("acquired")
+        except SyncInProgressError:
+            outcome.append("refused")
+
+    competitor = threading.Thread(target=attempt, daemon=True)
+    competitor.start()
+    competitor.join(10)
+    return outcome[0]
+
+
+def test_a_clean_holds_the_lock_until_its_cleanup_is_done(
+    repo: Path, cli_sync: MagicMock
+) -> None:
+    # Greptile review of PR 2512: `start --clean` released the lock after
+    # the graph wipe, so another sync could publish embeddings and a hash
+    # cache that the rest of the clean then deleted under its new graph.
+    during: dict[str, str] = {}
+    with (
+        patch(
+            "codebase_rag.cli.clear_all_embeddings",
+            side_effect=lambda: during.setdefault("embeddings", _competing_sync(repo)),
+        ),
+        patch(
+            "codebase_rag.cli._delete_hash_cache",
+            side_effect=lambda _: during.setdefault(
+                "hash cache", _competing_sync(repo)
+            ),
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "start",
+                "--repo-path",
+                str(repo),
+                "--no-start-stack",
+                "--no-embeddings",
+                "--clean",
+                "--yes",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert during == {"embeddings": "refused", "hash cache": "refused"}
+    # Negative: released once the clean is done.
+    assert _competing_sync(repo) == "acquired"
 
 
 def test_the_lock_file_is_not_indexed_and_keeps_the_sync_in_sync(

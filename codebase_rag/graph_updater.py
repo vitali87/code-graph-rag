@@ -2087,8 +2087,9 @@ class GraphUpdater:
 
         Raises `SyncInProgressError`, before anything is written, while
         another writer holds the checkout's sync lock, which
-        `holds_sync_lock` takes around the whole run (issue #2441), and
-        `UnsafeSyncLockError` when that lock file is a symbolic link.
+        `holds_sync_lock` takes around the whole run (issue #2441),
+        `UnsafeSyncLockError` when that lock file is a symbolic link, and
+        `SyncLockUnavailableError` when it cannot be opened.
         """
         if not self.repo_path.is_dir():
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))

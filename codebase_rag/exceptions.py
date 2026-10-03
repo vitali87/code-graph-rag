@@ -181,6 +181,11 @@ SYNC_LOCK_IS_LINK = (
     "The sync lock {path} is a symbolic link. A sync never writes through one, "
     "since it can point outside the checkout; remove it, then run this again."
 )
+SYNC_LOCK_UNAVAILABLE = (
+    "Cannot open the sync lock {path} ({error}). Without it this sync cannot "
+    "tell whether another one is running, so it did not start; make the file "
+    "readable and writable for this user, then run this again."
+)
 
 
 # Deriving from Exception would let every `except Exception` handler between

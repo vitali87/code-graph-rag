@@ -24,7 +24,8 @@ The lock file sits in a checkout that may come from anyone, so it is never
 opened through a symbolic link: a planted `.cgr-sync-lock -> ~/.bashrc`
 would otherwise have its target truncated and overwritten with the holder's
 name. Such a link refuses the sync instead of falling back to an unguarded
-one.
+one, and so does a lock file this user cannot open: a shared checkout's
+second user would otherwise sync beside the first (review of PR 2512).
 """
 
 from __future__ import annotations
@@ -64,6 +65,10 @@ class UnsafeSyncLockError(SyncLockError):
     """The lock path is a symbolic link, which a sync never writes through."""
 
 
+class SyncLockUnavailableError(SyncLockError):
+    """The lock file could not be opened, so no lock could be taken."""
+
+
 class _Syncs(Protocol):
     """What `holds_sync_lock` reads off the instance whose method it wraps."""
 
@@ -78,7 +83,7 @@ class _Syncs(Protocol):
 class _Hold:
     thread: int
     depth: int
-    fd: int | None
+    fd: int
 
 
 _HELD: dict[str, _Hold] = {}
@@ -161,12 +166,11 @@ def _try_acquire(key: str, lock_path: Path, project_name: str) -> bool:
             # synced around: it is the planted file this guards against.
             if lock_path.is_symlink():
                 raise _refuse_link(lock_path) from exc
-            # A read-only or unusual checkout syncs unguarded, as it did
-            # before the lock existed, rather than not at all. Threads of
-            # this process still exclude each other through `_HELD`.
-            logger.debug(ls.SYNC_LOCK_UNAVAILABLE, path=lock_path, error=exc)
-            _HELD[key] = _Hold(threading.get_ident(), 1, None)
-            return True
+            # Refused too: without the lock this run cannot tell whether
+            # another one is syncing the checkout.
+            raise SyncLockUnavailableError(
+                ex.SYNC_LOCK_UNAVAILABLE.format(path=lock_path, error=exc)
+            ) from exc
         if not _try_lock(fd):
             os.close(fd)
             return False
@@ -182,11 +186,10 @@ def _release(key: str) -> None:
         if hold.depth:
             return
         del _HELD[key]
-    if hold.fd is not None:
-        try:
-            _unlock(hold.fd)
-        finally:
-            os.close(hold.fd)
+    try:
+        _unlock(hold.fd)
+    finally:
+        os.close(hold.fd)
 
 
 def _reenter(key: str) -> bool:
@@ -210,7 +213,8 @@ def repo_sync_lock(
     applies its change to the finished graph instead of dropping it.
 
     Raises `UnsafeSyncLockError`, waiting or not, when the lock path is a
-    symbolic link.
+    symbolic link, and `SyncLockUnavailableError` when the lock file cannot
+    be opened.
     """
     key = str(repo_path.resolve())
     if not _reenter(key):
