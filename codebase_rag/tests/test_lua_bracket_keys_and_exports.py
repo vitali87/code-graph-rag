@@ -111,6 +111,59 @@ cfg.f = "s"
 return cfg
 """
 
+# The module table handed out through a chunk-level alias, both ways round:
+# `return api` where `api = M`, and members added through `api` while `M`
+# itself is returned (Greptile, PR #2617). `other` is aliased but never
+# returned, so nothing reaches its member.
+ALIAS_LUA = """\
+local M = {}
+function M.f() return 1 end
+local api = M
+local other = {}
+local other_alias = other
+function other_alias.h() return 3 end
+return api
+"""
+
+ALIAS_BACK_LUA = """\
+local M = {}
+local api = M
+function api.g() return 2 end
+return M
+"""
+
+# A `local M` (or a parameter `M`) inside a function or block is not the
+# chunk's `M`, so its members are not the module's (Greptile, PR #2617). A
+# function that assigns the chunk's own `M` without redeclaring it, and a
+# member defined after a `do` block that shadowed `M`, still are.
+SHADOW_LUA = """\
+local M = {}
+function M.used() return 1 end
+local function build()
+  local M = {}
+  function M.other() return 2 end
+  M.assigned = function() return 3 end
+  M["bracketed"] = function() return 4 end
+  return M
+end
+local function extend(M)
+  function M.added() return 5 end
+end
+local function install()
+  function M.late() return 6 end
+end
+install()
+do
+  local M = {}
+  function M.scoped() return 7 end
+end
+for _, M in ipairs({}) do
+  function M.looped() return 8 end
+end
+function M.after() return 9 end
+return M
+"""
+
 FILES = {
     "mod.lua": MOD_LUA,
     "use.lua": USE_LUA,
@@ -119,6 +172,9 @@ FILES = {
     "ret_fn.lua": RET_FN_LUA,
     "script.lua": SCRIPT_LUA,
     "cfg.lua": CFG_LUA,
+    "alias.lua": ALIAS_LUA,
+    "alias_back.lua": ALIAS_BACK_LUA,
+    "shadow.lua": SHADOW_LUA,
 }
 
 
@@ -275,8 +331,60 @@ class TestModuleExports:
         assert graph.callees(qn) == {"ret_table.helper"}
 
 
+class TestAliasesAndShadowing:
+    def test_module_table_returned_through_a_local_alias_roots_its_members(
+        self, graph: _Graph
+    ) -> None:
+        # `local api = M; return api`: `require` hands out `M` itself.
+        qn = graph.qn_at("alias", 2)
+        assert graph.functions[qn][cs.KEY_IS_EXPORTED] is True, qn
+        assert qn not in graph.dead, qn
+
+    def test_member_added_through_an_alias_of_the_returned_table_is_a_root(
+        self, graph: _Graph
+    ) -> None:
+        qn = graph.qn_at("alias_back", 3)
+        assert graph.functions[qn][cs.KEY_IS_EXPORTED] is True, qn
+        assert qn not in graph.dead, qn
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            5,  # `local M` in `build`: `function M.other`
+            6,  # ... `M.assigned = function`
+            7,  # ... `M["bracketed"] = function`
+            11,  # parameter `M` of `extend`
+            19,  # `local M` in a `do` block
+            22,  # loop variable `M`
+        ],
+    )
+    def test_member_of_a_shadowing_local_table_is_not_exported(
+        self, graph: _Graph, line: int
+    ) -> None:
+        qn = graph.qn_at("shadow", line)
+        assert graph.functions[qn][cs.KEY_IS_EXPORTED] is not True, qn
+        assert qn in graph.dead, qn
+
+
 class TestNegative:
     """What must NOT change, and what must still be reported."""
+
+    @pytest.mark.parametrize("line", [2, 14, 24])
+    def test_members_of_the_chunk_table_stay_exported_beside_a_shadow(
+        self, graph: _Graph, line: int
+    ) -> None:
+        # `M.used`; `M.late`, assigned from a function that never redeclares
+        # `M`; `M.after`, defined once the `do` block's `local M` is gone.
+        qn = graph.qn_at("shadow", line)
+        assert graph.functions[qn][cs.KEY_IS_EXPORTED] is True, qn
+        assert qn not in graph.dead, qn
+
+    def test_member_of_an_aliased_table_nobody_returns_is_not_exported(
+        self, graph: _Graph
+    ) -> None:
+        qn = graph.qn_at("alias", 6)
+        assert graph.functions[qn][cs.KEY_IS_EXPORTED] is not True, qn
+        assert qn in graph.dead, qn
 
     def test_no_forged_nesting_from_a_dotted_string_key(self, graph: _Graph) -> None:
         assert not any(qn.startswith("keys.tests.") for qn in graph.functions), sorted(

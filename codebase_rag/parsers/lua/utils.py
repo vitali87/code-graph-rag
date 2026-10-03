@@ -384,3 +384,83 @@ def _declares_self_parameter(func_node: Node) -> bool:
         and safe_decode_text(param) == cs.KEYWORD_SELF
         for param in params.named_children
     )
+
+
+def root_name(path: str) -> str:
+    """The variable a table path starts from: `M` of `M.sub.f` or `M:f`."""
+    return path.split(cs.LUA_FIELD_SEPARATOR, 1)[0].split(cs.LUA_METHOD_SEPARATOR, 1)[0]
+
+
+def rebinds_locally(node: Node, name: str) -> bool:
+    """True when `name`, read at `node`, is a local of an enclosing scope.
+
+    A `local name` (or `local function name`) earlier in an enclosing block,
+    a parameter of an enclosing function, or a variable of an enclosing
+    `for` loop is a separate variable from the chunk's own `name`, so a
+    table it holds is not the one the chunk returns (Greptile, PR #2617).
+    The chunk's top level is where the module's variable lives, and the
+    walk stops there.
+    """
+    child, parent = node, node.parent
+    while parent is not None and parent.type != cs.TS_LUA_CHUNK:
+        if parent.type == cs.TS_LUA_BLOCK:
+            for statement in parent.children:
+                if statement == child:
+                    break
+                if name in _local_names(statement):
+                    return True
+        elif child.type == cs.TS_LUA_BLOCK and name in _scope_names(parent):
+            return True
+        child, parent = parent, parent.parent
+    return False
+
+
+def _local_names(statement: Node) -> set[str]:
+    """The names a `local` statement declares."""
+    if statement.type == cs.TS_LUA_FUNCTION_DECLARATION:
+        first = statement.children[0] if statement.children else None
+        name = statement.child_by_field_name(cs.FIELD_NAME)
+        if first is None or first.type != cs.TS_LUA_LOCAL_KEYWORD or name is None:
+            return set()
+        return {safe_decode_text(name) or ""}
+    if statement.type != cs.TS_LUA_VARIABLE_DECLARATION:
+        return set()
+    names: set[str] = set()
+    for part in statement.named_children:
+        variables = (
+            next(
+                (c for c in part.named_children if c.type == cs.TS_LUA_VARIABLE_LIST),
+                part,
+            )
+            if part.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+            else part
+        )
+        names |= _identifiers(variables.children_by_field_name(cs.FIELD_NAME))
+    return names
+
+
+def _scope_names(scope: Node) -> set[str]:
+    """The parameters of a function, or the variables of a `for` loop."""
+    if scope.type in (cs.TS_LUA_FUNCTION_DECLARATION, cs.TS_LUA_FUNCTION_DEFINITION):
+        params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
+        return _identifiers(params.named_children) if params is not None else set()
+    clause = (
+        scope.child_by_field_name(cs.TS_LUA_FIELD_CLAUSE)
+        if scope.type == cs.TS_LUA_FOR_STATEMENT
+        else None
+    )
+    if clause is None:
+        return set()
+    names = _identifiers(clause.children_by_field_name(cs.FIELD_NAME))
+    for variables in clause.named_children:
+        if variables.type == cs.TS_LUA_VARIABLE_LIST:
+            names |= _identifiers(variables.children_by_field_name(cs.FIELD_NAME))
+    return names
+
+
+def _identifiers(nodes: list[Node]) -> set[str]:
+    return {
+        text
+        for node in nodes
+        if node.type == cs.TS_LUA_IDENTIFIER and (text := safe_decode_text(node))
+    }

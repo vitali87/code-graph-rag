@@ -39,6 +39,13 @@ TS_LUA_FIELD = "field"
 # The token that opens a computed or string key: `["k"] = v`, `[k] = v`.
 LUA_OPEN_BRACKET = "["
 TS_LUA_TABLE_CONSTRUCTOR = "table_constructor"
+# What can redeclare a name inside a chunk (Greptile, PR #2617): the `local`
+# keyword that opens a `local function`, a `for` loop's variables (the
+# `clause` field: a generic clause's `variable_list`, or a numeric clause's
+# `name`), and a function's parameters.
+TS_LUA_LOCAL_KEYWORD = "local"
+TS_LUA_FOR_STATEMENT = "for_statement"
+TS_LUA_FIELD_CLAUSE = "clause"
 
 # Import processor function names
 IMPORT_REQUIRE = "require"

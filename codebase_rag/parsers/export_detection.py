@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from .. import constants as cs
@@ -538,17 +540,33 @@ def _lua_bracket_member_exported(node: Node, returned: frozenset[str]) -> bool:
     # nameless, but it is still a member of the table it is stored in.
     target = lua_utils.bracket_assignment_target(node)
     table = lua_utils.bracket_table_path(target) if target is not None else None
-    return bool(table) and any(
-        table == exported or _lua_is_member(table, exported) for exported in returned
+    return (
+        bool(table)
+        and any(
+            table == exported or _lua_is_member(table, exported)
+            for exported in returned
+        )
+        and not lua_utils.rebinds_locally(node, lua_utils.root_name(table))
     )
 
 
 def _lua_binding_exported(
     node: Node, name: str, returned: frozenset[str], nested: bool
 ) -> bool:
+    # A table path is matched by name, so the name must be the chunk's own
+    # variable: `M.other` stored in a function's `local M` is not the
+    # returned `M`'s member (Greptile, PR #2617).
     binding = _lua_binding_name(node, name)
-    if not binding:
-        return False
+    return (
+        bool(binding)
+        and _lua_binding_returned(node, binding, returned, nested)
+        and not lua_utils.rebinds_locally(node, lua_utils.root_name(binding))
+    )
+
+
+def _lua_binding_returned(
+    node: Node, binding: str, returned: frozenset[str], nested: bool
+) -> bool:
     for exported in returned:
         if _lua_is_member(binding, exported):
             return True
@@ -590,9 +608,68 @@ def _lua_returned_names(chunk: Node) -> frozenset[str]:
             if lua_utils.is_chunk_return_list(values):
                 for value in values.named_children:
                     _collect_lua_value_names(value, names)
+    _follow_lua_aliases(chunk, names)
     result = frozenset(names)
     _last_lua_returns = (chunk, result)
     return result
+
+
+def _follow_lua_aliases(chunk: Node, names: set[str]) -> None:
+    # A chunk-level alias names the same value as what it was assigned:
+    # `local api = M; return api` returns `M`, and with `return M`,
+    # `function api.g()` adds `g` to the returned table (Greptile, PR
+    # #2617). Closed to a fixpoint, so a chain of aliases is followed.
+    aliases = list(_lua_chunk_aliases(chunk))
+    size = -1
+    while size != len(names):
+        size = len(names)
+        for target, value in aliases:
+            if target in names:
+                _collect_lua_value_names(value, names)
+            elif (path := _lua_value_path(value)) and path in names:
+                names.add(target)
+
+
+def _lua_chunk_aliases(chunk: Node) -> Iterator[tuple[str, Node]]:
+    # (variable, value) of each chunk-level `local x = v` and `x = v`; a
+    # multiple assignment pairs its variables and values by position.
+    for statement in chunk.children:
+        assignment = statement
+        if statement.type == cs.TS_LUA_VARIABLE_DECLARATION:
+            assignment = next(
+                (
+                    c
+                    for c in statement.named_children
+                    if c.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+                ),
+                statement,
+            )
+        if assignment.type != cs.TS_LUA_ASSIGNMENT_STATEMENT:
+            continue
+        targets = _lua_child_of_type(assignment, cs.TS_LUA_VARIABLE_LIST)
+        values = _lua_child_of_type(assignment, cs.TS_LUA_EXPRESSION_LIST)
+        if targets is None or values is None:
+            continue
+        for target, value in zip(
+            targets.children_by_field_name(cs.FIELD_NAME),
+            values.children_by_field_name(cs.FIELD_VALUE),
+            strict=False,
+        ):
+            if path := _lua_value_path(target):
+                yield path, value
+
+
+def _lua_child_of_type(node: Node, node_type: str) -> Node | None:
+    return next((c for c in node.named_children if c.type == node_type), None)
+
+
+def _lua_value_path(value: Node) -> str | None:
+    # The variable or table path an expression spells, if it is one.
+    if value.type in (cs.TS_LUA_IDENTIFIER, cs.TS_DOT_INDEX_EXPRESSION):
+        return safe_decode_text(value)
+    if value.type == cs.TS_LUA_BRACKET_INDEX_EXPRESSION:
+        return lua_utils.bracket_key_path(value)
+    return None
 
 
 def _collect_lua_value_names(value: Node, names: set[str]) -> None:
