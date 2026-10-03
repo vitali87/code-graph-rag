@@ -1878,7 +1878,7 @@ class CallProcessor:
         if registered := self._path_to_module_qn.get(file_path):
             return registered
         file_name = file_path.name
-        if file_name in (cs.INIT_PY, cs.MOD_RS):
+        if file_name in (*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.parent.parts)
             )
