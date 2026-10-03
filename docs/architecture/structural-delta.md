@@ -99,6 +99,10 @@ defaults, so this is a hint, not a finding, and does not trip
 cgr check --base origin/main --fail-on-found
 ```
 
+![cgr check --base origin/main --fail-on-found exiting 1 after helper was renamed by hand, reporting the rename and the dangling caller in pkg/app.py](../assets/demos/structural-delta.gif)
+
+*`helper` was renamed by hand in `pkg/util.py` only; the report is written to a file and read with `jq`.*
+
 The graph is assumed to reflect `--base` (index there, then edit). Files
 that differ between the base and the working tree, untracked files
 included, are re-ingested and the delta printed as JSON. With
