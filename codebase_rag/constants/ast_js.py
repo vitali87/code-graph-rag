@@ -44,6 +44,9 @@ JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 JS_THIS_CALL_PREFIX = "this."
 
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
+# The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
+# spell it as an anonymous token, not Java's named `asterisk` node.
+TS_JS_STAR = "*"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
@@ -264,6 +267,10 @@ TS_GENERIC_TYPE = "generic_type"
 TS_UNION_TYPE = "union_type"
 TS_TYPE_IDENTIFIER = "type_identifier"
 TS_NESTED_TYPE_IDENTIFIER = "nested_type_identifier"
+# What a TS `implements` or interface `extends` entry may name (issue #2560):
+# a bare type, or a namespace member (`r.Plain`). A generic_type (`Router<T>`)
+# names one of these through its `name` field.
+TS_HERITAGE_TYPE_NAME_TYPES = (TS_TYPE_IDENTIFIER, TS_NESTED_TYPE_IDENTIFIER)
 TS_JS_OPERATOR_OF = "of"
 TS_NULLISH_TYPE_TEXTS = frozenset({"null", "undefined"})
 TS_ARRAY_GENERIC_NAMES = frozenset(

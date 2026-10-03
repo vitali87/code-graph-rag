@@ -45,8 +45,10 @@ from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
     extract_modifiers_and_decorators,
+    follow_reexports,
     function_span_key,
     ingest_method,
+    mark_js_ts_module_private,
     module_qn_for_entity,
     record_cpp_definition_span,
     safe_decode_text,
@@ -954,6 +956,8 @@ class ClassIngestMixin:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
+        if (bound := self._js_ts_namespace_member(raw_name, entry)) is not None:
+            return bound, False
         resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
             resolved is not None
@@ -964,6 +968,37 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _js_ts_namespace_member(
+        self, raw_name: str, entry: DeferredInherit
+    ) -> str | None:
+        # `implements r.Plain` or `extends r.Base` after `import * as r from
+        # './router'` (issue #2560): the head is an import binding, so the
+        # member is declared in the module it names, which outranks the name
+        # sweep below. Only a registered type answers. A head bound outside
+        # the project (`React` from a default import is `react.default`)
+        # registers nothing, so `React.Component` keeps the written name it is
+        # externalized under, which React dead-code rooting matches on.
+        if entry.language not in cs.JS_TS_LANGUAGES:
+            return None
+        import_mapping = self.import_processor.import_mapping
+        candidate = pe.js_ts_namespace_member_qn(
+            raw_name, import_mapping.get(entry.module_qn, {})
+        )
+        if candidate is not None:
+            # `r` is often a barrel (`export { Router } from './router'`): the
+            # member is mapped on to its declaring module, not declared there.
+            candidate = follow_reexports(
+                candidate, import_mapping, self.function_registry
+            )
+        if (
+            candidate is None
+            or candidate == entry.child_qn
+            or self.function_registry.get(candidate)
+            not in bt.base_target_kinds(entry.language)
+        ):
+            return None
+        return candidate
 
     def _resolve_self_edge_parent(
         self, entry: DeferredInherit
@@ -1245,6 +1280,9 @@ class ClassIngestMixin:
             self._record_csharp_namespace(class_node, class_qn, class_props)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        mark_js_ts_module_private(
+            self.function_registry, class_qn, is_exported, language
+        )
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
 

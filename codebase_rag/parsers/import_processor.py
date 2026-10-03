@@ -3990,7 +3990,7 @@ class ImportProcessor:
             return
 
         for child in export_node.children:
-            if child.type == cs.TS_ASTERISK:
+            if child.type == cs.TS_JS_STAR:
                 wildcard_key = f"*{source_module}"
                 self.import_mapping[current_module][wildcard_key] = source_module
                 self._record_import_site(

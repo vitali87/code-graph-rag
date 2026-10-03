@@ -53,6 +53,7 @@ from .utils import (
     get_function_captures,
     ingest_method,
     is_method_node,
+    mark_js_ts_module_private,
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
@@ -1446,6 +1447,12 @@ class FunctionIngestMixin:
         )
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        mark_js_ts_module_private(
+            self.function_registry,
+            resolution.qualified_name,
+            resolution.is_exported,
+            language,
+        )
         # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
         # is the key Pass-3 will look this up by.
         rs_utils.record_effective_module(
