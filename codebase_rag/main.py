@@ -65,6 +65,7 @@ from .config import (
     settings,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
+from .editing.transaction import repo_write_lock
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -2024,20 +2025,8 @@ def _offer_to_save_keeps(
         app_context.console.print(style(declined, cs.Color.YELLOW))
         return
     try:
-        existing = (
-            ignore_file.read_text(encoding=cs.ENCODING_UTF8)
-            if ignore_file.is_file()
-            else ""
-        )
-        kept_lines = [
-            line for line in existing.splitlines() if line.strip() not in lifted
-        ]
-        _replace_ignore_file(
-            ignore_file,
-            "".join(
-                f"{line}\n" for line in [*kept_lines, cs.CGRIGNORE_KEEPS_HEADER, *lines]
-            ),
-        )
+        with repo_write_lock(repo_path):
+            _merge_keeps_into_ignore_file(ignore_file, lines, frozenset(lifted))
     except OSError as e:
         app_context.console.print(
             style(
@@ -2056,6 +2045,31 @@ def _offer_to_save_keeps(
             lines=listing, lifted=lifted_listing, file=CGRIGNORE_FILENAME
         )
     app_context.console.print(style(saved, cs.Color.GREEN))
+
+
+def _merge_keeps_into_ignore_file(
+    ignore_file: Path, keep_lines: list[str], lifted: frozenset[str]
+) -> None:
+    """Add `keep_lines` to `ignore_file` and drop its `lifted` exclusions.
+
+    Called under the tree's write lock, and reads the file there rather than
+    reusing what the prompt saw: two setups saving at once each read the old
+    file before either replaced it, so the later save dropped the other's
+    keep (Greptile review of PR 2510).
+    """
+    existing = (
+        ignore_file.read_text(encoding=cs.ENCODING_UTF8)
+        if ignore_file.is_file()
+        else ""
+    )
+    original = existing.splitlines()
+    lines = [line for line in original if line.strip() not in lifted]
+    present = {line.strip() for line in lines}
+    added = [line for line in keep_lines if line not in present]
+    if added:
+        lines += [cs.CGRIGNORE_KEEPS_HEADER, *added]
+    if lines != original:
+        _replace_ignore_file(ignore_file, "".join(f"{line}\n" for line in lines))
 
 
 def _replace_ignore_file(ignore_file: Path, content: str) -> None:

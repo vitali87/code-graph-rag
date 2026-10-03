@@ -21,10 +21,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.config import CGRIGNORE_FILENAME, load_ignore_patterns
 from codebase_rag.main import prompt_for_unignored_directories
-from codebase_rag.utils.path_utils import should_skip_path
+from codebase_rag.utils.path_utils import (
+    is_eligible_rel_file,
+    should_skip_path,
+    walk_eligible_files,
+)
 
 
 @pytest.fixture
@@ -243,9 +248,12 @@ def test_a_failed_write_leaves_the_existing_rules_intact(
         _keep(vendored, "3", confirm=True)
 
     assert (vendored / CGRIGNORE_FILENAME).read_text() == before
-    assert sorted(p.name for p in vendored.iterdir() if p.is_file()) == [
-        CGRIGNORE_FILENAME
-    ]
+    # No temp file left behind; the write lock's own file is cgr state.
+    assert sorted(
+        p.name
+        for p in vendored.iterdir()
+        if p.is_file() and p.name not in cs.CGR_STATE_FILENAMES
+    ) == [CGRIGNORE_FILENAME]
     assert "Could not write" in _printed(console)
 
 
@@ -291,3 +299,138 @@ def test_a_new_file_is_readable_like_any_checkout_file(
     _keep(repo, "1", confirm=True)
 
     assert stat.S_IMODE((repo / CGRIGNORE_FILENAME).stat().st_mode) == 0o644
+
+
+def _walked(repo: Path) -> set[str]:
+    # What an ordinary sync indexes: the real repository walk, fed the
+    # patterns it reads from the saved files alone.
+    patterns = load_ignore_patterns(repo)
+    return {
+        rel
+        for _, _, rel in walk_eligible_files(
+            repo, patterns.exclude or None, patterns.unignore or None
+        )
+    }
+
+
+@pytest.fixture
+def generated(repo: Path) -> Path:
+    # `.gitignore` excludes the directory a kept one sits in.
+    (repo / ".gitignore").write_text("generated/\n")
+    for rel in (
+        "generated/node_modules/pkg/index.js",
+        "generated/out.py",
+        "generated/other/gen.py",
+    ):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("X = 1\n")
+    return repo
+
+
+def test_a_keep_inside_an_excluded_directory_is_walked(
+    generated: Path, console: MagicMock
+) -> None:
+    # Greptile review of PR 2510: `!generated/node_modules` was saved, but the
+    # walk pruned `generated/` before reaching it, so the kept files stayed
+    # out on this run and every later one. Rows: bin, generated, node_modules.
+    assert "generated/node_modules/pkg/index.js" not in _walked(generated)
+
+    kept, _ = _keep(generated, "3", confirm=True)
+
+    assert kept >= {"generated/node_modules"}
+    walked = _walked(generated)
+    assert "generated/node_modules/pkg/index.js" in walked
+    # The rest of the excluded directory stays out.
+    assert "generated/out.py" not in walked
+    assert "generated/other/gen.py" not in walked
+    assert "src/lib.py" in walked
+    # The watcher asks the same question one path at a time.
+    patterns = load_ignore_patterns(generated)
+    assert is_eligible_rel_file(
+        "generated/node_modules/pkg/index.js", patterns.exclude, patterns.unignore
+    )
+    assert not is_eligible_rel_file(
+        "generated/out.py", patterns.exclude, patterns.unignore
+    )
+    # Structure traversal enters the enclosing directory, so the kept files
+    # get their Folder ancestry, and still skips its other children.
+    assert not should_skip_path(
+        generated / "generated",
+        generated,
+        patterns.exclude,
+        patterns.unignore,
+        is_file=False,
+    )
+    assert should_skip_path(
+        generated / "generated" / "other",
+        generated,
+        patterns.exclude,
+        patterns.unignore,
+        is_file=False,
+    )
+
+
+def test_a_keep_with_no_excluded_ancestor_behaves_as_before(
+    generated: Path, console: MagicMock
+) -> None:
+    # Negative: keeping `bin` lifts nothing else, and `generated/` stays out.
+    _keep(generated, "1", confirm=True)
+
+    walked = _walked(generated)
+    assert "bin/cli.py" in walked
+    assert not any(rel.startswith("generated/") for rel in walked)
+
+
+def test_an_excluded_file_inside_a_kept_directory_stays_excluded(
+    generated: Path, console: MagicMock
+) -> None:
+    # Negative: only the exclusion of the ENCLOSING directory gives way; a
+    # pattern naming files inside the kept one still wins.
+    (generated / ".gitignore").write_text("generated/\n*.js\n")
+
+    _keep(generated, "3", confirm=True)
+
+    assert "generated/node_modules/pkg/index.js" not in _walked(generated)
+
+
+def test_concurrent_saves_both_keep_their_choice(
+    vendored: Path, console: MagicMock
+) -> None:
+    # Greptile review of PR 2510: two setups each read `.cgrignore` before
+    # either replaced it, so the later write dropped the other's keep. The
+    # first save stops mid-write until the second has run (or, holding the
+    # lock, until it is clear the second is waiting for it).
+    import threading
+
+    from codebase_rag import main as main_module
+
+    real_replace = main_module._replace_ignore_file
+    first_writing = threading.Event()
+    second_done = threading.Event()
+
+    def stalled_replace(ignore_file: Path, content: str) -> None:
+        if not first_writing.is_set():
+            first_writing.set()
+            second_done.wait(timeout=1.0)
+        real_replace(ignore_file, content)
+
+    def save(keep: str) -> None:
+        main_module._offer_to_save_keeps(vendored, frozenset({keep}), frozenset())
+
+    def second() -> None:
+        first_writing.wait(timeout=5.0)
+        save("docs")
+        second_done.set()
+
+    with (
+        patch.object(main_module, "_replace_ignore_file", stalled_replace),
+        patch("rich.prompt.Confirm.ask", return_value=True),
+    ):
+        other = threading.Thread(target=second)
+        other.start()
+        save("tools")
+        other.join(timeout=10.0)
+
+    assert not other.is_alive()
+    unignore = load_ignore_patterns(vendored).unignore
+    assert {"tools", "docs"} <= unignore

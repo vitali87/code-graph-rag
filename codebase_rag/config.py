@@ -620,10 +620,10 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     # check gives excludes precedence, so a negation overrides a .gitignore
     # exclude only by CANCELLING the exact pattern (`!generated/` drops
     # `generated/`); .cgrignore excludes are never cancelled.
-    # ponytail: root .gitignore only, exact-string cancellation only; a
-    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
-    # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
-    # the upgrade path if real repos need it.
+    # ponytail: root .gitignore only, exact-string cancellation only. A
+    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) is not
+    # cancelled here; the walk predicates let it through instead, lifting
+    # only the enclosing directory's exclusion (path_utils.nested_keeps).
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
     git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
     negations = cgr.unignore | git.unignore
