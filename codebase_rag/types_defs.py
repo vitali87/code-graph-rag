@@ -595,6 +595,13 @@ class DuplicateMember(TypedDict):
     end_line: int
 
 
+class DuplicateLink(TypedDict):
+    # Qualified names of two members whose own pair clears the threshold.
+    first: str
+    second: str
+    similarity: float
+
+
 class DuplicateGroup(TypedDict):
     kind: str
     # Groups are disjoint clusters (issue #2473), so two members of a
@@ -609,6 +616,10 @@ class DuplicateGroup(TypedDict):
     # one list per shared fingerprint. Always empty for an `exact` group,
     # which is one such list as a whole.
     exact_subgroups: list[list[str]]
+    # The qualifying pairs between different fingerprints, strongest first:
+    # with the exact copies, the only member pairs that are duplicates. Empty
+    # for an `exact` group, where every pair is one.
+    links: list[DuplicateLink]
 
 
 class DuplicatesReport(NamedTuple):

@@ -108,12 +108,23 @@ def cgr_duplicates(
 
 
 def duplicate_pairs(groups: list[DuplicateGroup]) -> set[tuple[str, str]]:
-    # Pair-level grading (the clone-detection standard): every unordered
-    # member pair of every group, order-normalized so set algebra works.
+    # Pair-level grading (the clone-detection standard), order-normalized so
+    # set algebra works. An exact group's members are all copies of each
+    # other; a similar group is a cluster whose members may be linked only
+    # through a third (issue #2473), so only its exact copies and its
+    # qualifying links are detected pairs.
     pairs: set[tuple[str, str]] = set()
     for group in groups:
-        names = sorted({member[cs.KEY_QUALIFIED_NAME] for member in group["members"]})
-        pairs.update(combinations(names, 2))
+        if group["kind"] == cs.KIND_EXACT:
+            names = {member[cs.KEY_QUALIFIED_NAME] for member in group["members"]}
+            pairs.update(combinations(sorted(names), 2))
+            continue
+        for copies in group["exact_subgroups"]:
+            pairs.update(combinations(sorted(set(copies)), 2))
+        pairs.update(
+            (min(link["first"], link["second"]), max(link["first"], link["second"]))
+            for link in group["links"]
+        )
     return pairs
 
 

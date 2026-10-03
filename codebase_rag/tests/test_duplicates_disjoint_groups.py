@@ -14,6 +14,7 @@ import asyncio
 import io
 import json
 from collections import Counter
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from typer.testing import CliRunner
 from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.config import settings
 from codebase_rag.duplicates import (
     collect_duplicates,
     collect_duplicates_with_coverage,
@@ -30,14 +32,16 @@ from codebase_rag.duplicates import (
 from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.types_defs import DuplicateGroup, PropertyValue, ResultRow
 from codebase_rag.utils.terminal_console import terminal_aware_console
+from evals.duplicates import duplicate_pairs, score_duplicates
 
 _CONFIG = default_duplicates_config()
 _SHARED = [f"s{i}" for i in range(9)]
 
 
 class FakeIngestor:
-    def __init__(self, rows: list[ResultRow]) -> None:
+    def __init__(self, rows: list[ResultRow], root: str | None = None) -> None:
         self._rows = rows
+        self._root = root
 
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
@@ -45,7 +49,7 @@ class FakeIngestor:
         if query == cq.CYPHER_DUPLICATE_FINGERPRINTS:
             return self._rows
         if query == cq.CYPHER_LIST_PROJECTS:
-            return [{cs.KEY_NAME: "proj"}]
+            return [{cs.KEY_NAME: "proj", cs.KEY_ROOT_PATH: self._root}]
         return [{cs.KEY_SKIPPED: 0}]
 
 
@@ -235,10 +239,10 @@ class TestNeighbouringBehaviourUnchanged:
         assert len(complete.groups) == 2
 
 
-def _cli_ingestor(rows: list[ResultRow]) -> MagicMock:
+def _cli_ingestor(rows: list[ResultRow], root: str | None = None) -> MagicMock:
     mock = MagicMock()
     mock.list_projects.return_value = ["proj"]
-    mock.fetch_all.side_effect = FakeIngestor(rows).fetch_all
+    mock.fetch_all.side_effect = FakeIngestor(rows, root).fetch_all
     mock.__enter__ = MagicMock(return_value=mock)
     mock.__exit__ = MagicMock(return_value=False)
     return mock
@@ -321,3 +325,135 @@ class TestReport:
             in response
         )
         assert response.count("proj.w.T.testNulls") == 1
+
+
+# Review of the cluster change: A-C = 4/6 and B-C = 4/8 qualify at 0.5, A-B =
+# 2/8 does not, and the path order puts A and B first. Anything that reads a
+# cluster's members as pairs must see the two links only.
+_CHAIN_CONFIG = default_duplicates_config(threshold=0.5)
+_A, _B, _C = "proj.a.one", "proj.b.two", "proj.c.three"
+
+
+def _chain_rows() -> list[ResultRow]:
+    return [
+        _row(_A, "aaaa", ["b1", "b2", "b3", "b4"]),
+        _row(_B, "bbbb", ["b3", "b4", "b5", "b6", "b7", "b8"]),
+        _row(_C, "cccc", ["b1", "b2", "b3", "b4", "b5", "b6"]),
+    ]
+
+
+class TestQualifyingPairs:
+    @pytest.fixture(autouse=True)
+    def _neutral_editor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(cs.ENV_CF_BUNDLE_ID, raising=False)
+        monkeypatch.delenv(cs.ENV_TERM_PROGRAM, raising=False)
+        monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_AUTO)
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", None)
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "difftool {left} {right}")
+
+    def test_group_records_its_qualifying_links(self) -> None:
+        groups = collect_duplicates(FakeIngestor(_chain_rows()), "proj", _CHAIN_CONFIG)
+
+        assert groups[0]["links"] == [
+            {"first": _A, "second": _C, "similarity": round(4 / 6, 3)},
+            {"first": _B, "second": _C, "similarity": 0.5},
+        ]
+
+    def test_table_link_previews_the_strongest_link(self) -> None:
+        groups = collect_duplicates(FakeIngestor(_chain_rows()), "proj", _CHAIN_CONFIG)
+
+        cell = cli._duplicates_group_cell(1, groups[0], Path("/repo"))
+
+        assert [span.style for span in cell.spans] == [
+            "link diff://open?left=%2Frepo%2Fproj%2Fa.java%3A1"
+            "&right=%2Frepo%2Fproj%2Fc.java%3A1"
+        ]
+
+    def test_open_diffs_the_strongest_link(self) -> None:
+        ingestor = _cli_ingestor(_chain_rows(), root="/repo")
+        with (
+            patch("codebase_rag.cli.connect_memgraph", return_value=ingestor),
+            patch("codebase_rag.cli.subprocess.Popen") as popen,
+        ):
+            result = CliRunner().invoke(
+                cli.app, ["duplicates", "--threshold", "0.5", "--open", "1"]
+            )
+
+        assert result.exit_code == 0
+        assert popen.call_args.args[0] == [
+            "difftool",
+            str(Path("/repo/proj/a.java")),
+            str(Path("/repo/proj/c.java")),
+        ]
+
+    def test_evaluation_counts_only_qualifying_pairs(self) -> None:
+        groups = collect_duplicates(FakeIngestor(_chain_rows()), "proj", _CHAIN_CONFIG)
+        oracle = {(_A, _C), (_B, _C)}
+
+        pairs = duplicate_pairs(groups)
+        row = score_duplicates(pairs, oracle).rows[0]
+
+        assert pairs == oracle
+        assert (row["precision"], row["recall"]) == (1.0, 1.0)
+
+    def test_exact_group_preview_is_unchanged(self) -> None:
+        rows = [
+            _row("proj.c.copy", "same", _SHARED),
+            _row("proj.a.copy", "same", _SHARED),
+            _row("proj.b.copy", "same", _SHARED),
+        ]
+        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+
+        cell = cli._duplicates_group_cell(1, groups[0], Path("/repo"))
+
+        assert groups[0]["links"] == []
+        assert [span.style for span in cell.spans] == [
+            "link diff://open?left=%2Frepo%2Fproj%2Fa.java%3A1"
+            "&right=%2Frepo%2Fproj%2Fb.java%3A1"
+        ]
+        assert duplicate_pairs(groups) == {
+            ("proj.a.copy", "proj.b.copy"),
+            ("proj.a.copy", "proj.c.copy"),
+            ("proj.b.copy", "proj.c.copy"),
+        }
+
+    def test_fully_connected_cluster_yields_all_its_pairs(self) -> None:
+        rows = [
+            _row("proj.a.one", "aaaa", [*_SHARED, "x1"]),
+            _row("proj.b.two", "bbbb", [*_SHARED, "x2"]),
+            _row("proj.c.three", "cccc", [*_SHARED, "x3"]),
+        ]
+        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+
+        assert len(groups[0]["links"]) == 3
+        assert duplicate_pairs(groups) == {(_A, _B), (_A, _C), (_B, _C)}
+
+    def test_exact_copies_pair_up_but_unlinked_members_do_not(self) -> None:
+        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+
+        pairs = duplicate_pairs(groups)
+
+        assert ("proj.w.T.testEmptyArray", "proj.w.T.testEmptyObject") in pairs
+        assert ("proj.w.T.testClose", "proj.w.T.testDeep") in pairs
+        assert ("proj.w.T.testDeep", "proj.w.T.testNulls") not in pairs
+
+    def test_a_function_never_links_to_its_own_closure(self) -> None:
+        # The closure's external copy puts factory and closure in one
+        # cluster, but the factory-closure pair itself is no duplicate.
+        shared = [f"b{i}" for i in range(9)]
+        factory = _row("proj.m.factory", "aaaa", [*shared, "outer"], line=30)
+        factory["end_line"] = 60
+        inner = _row("proj.m.factory.inner", "bbbb", shared, line=38)
+        inner["path"] = factory["path"]
+        inner["end_line"] = 58
+        copy = _row("proj.o.copy", "bbbb", shared, line=5)
+        groups = collect_duplicates(
+            FakeIngestor([factory, inner, copy]), "proj", _CONFIG
+        )
+
+        pairs = duplicate_pairs(groups)
+
+        assert pairs == {
+            ("proj.m.factory", "proj.o.copy"),
+            ("proj.m.factory.inner", "proj.o.copy"),
+        }

@@ -535,8 +535,10 @@ cgr duplicates --open 3
 
 opens group 3's first two members in your editor's diff view (`code --diff`
 and equivalents; `CGR_DIFF_COMMAND="meld {left} {right}"` substitutes any
-tool). Groups with more than two members open their first pair — the two
-whose paths sort first.
+tool). Groups with more than two members open their first pair. In an
+`exact` group those are the two whose paths sort first; a `similar` group
+lists its most similar qualifying pair first, so the diff never shows two
+members that are linked only through a third.
 
 Both features need the graph to record where the project lives on disk;
 graphs indexed before this existed fall back to plain text until re-indexed.
@@ -577,7 +579,8 @@ could not be analyzed:
           "end_line": 12
         }
       ],
-      "exact_subgroups": []
+      "exact_subgroups": [],
+      "links": []
     }
   ],
   "skipped_symbols": 0,
@@ -589,7 +592,12 @@ could not be analyzed:
 (both `1.0` for an `exact` group). `exact_subgroups` lists, for a `similar`
 group, the qualified names of each set of members that are exact copies of
 each other; it is empty for an `exact` group, which is one such set as a
-whole.
+whole. `links` lists a `similar` group's qualifying pairs between different
+fingerprints, strongest first, as `{"first", "second", "similarity"}` objects
+naming two members by qualified name. Together with `exact_subgroups` they
+are the group's duplicate pairs: two members not paired by either are in the
+group only because a third links them. It is empty for an `exact` group,
+where every pair is a duplicate.
 
 `skipped_symbols` counts functions and methods with no structural
 fingerprint: pattern-tier languages and bodiless declarations. `truncated`

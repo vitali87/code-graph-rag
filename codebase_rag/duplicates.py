@@ -24,6 +24,7 @@ from . import cypher_queries as cq
 from . import logs as ls
 from .types_defs import (
     DuplicateGroup,
+    DuplicateLink,
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
@@ -45,10 +46,11 @@ class _Entry:
 
 
 class _Cluster(NamedTuple):
-    # Positions into the entry order, and the score of every qualifying pair
-    # that joined them: the range of those scores is what the group reports.
+    # Positions into the entry order, and every qualifying (left, right,
+    # score) entry pair that joined them: the group reports those links and
+    # the range of their scores.
     positions: list[int]
-    scores: list[float]
+    links: list[tuple[int, int, float]]
 
 
 def default_duplicates_config(
@@ -179,8 +181,12 @@ def _member_from_row(row: ResultRow, path: str, start_line: int) -> DuplicateMem
     )
 
 
+def _member_key(member: DuplicateMember) -> tuple[str, int]:
+    return member["path"], member["start_line"]
+
+
 def _sorted_members(members: list[DuplicateMember]) -> list[DuplicateMember]:
-    return sorted(members, key=lambda m: (m["path"], m["start_line"]))
+    return sorted(members, key=_member_key)
 
 
 def _exact_groups(order: list[_Entry], clustered: set[int]) -> list[DuplicateGroup]:
@@ -194,6 +200,7 @@ def _exact_groups(order: list[_Entry], clustered: set[int]) -> list[DuplicateGro
             node_count=entry.node_count,
             members=_sorted_members(entry.members),
             exact_subgroups=[],
+            links=[],
         )
         for position, entry in enumerate(order)
         if len(entry.members) > 1 and position not in clustered
@@ -366,8 +373,8 @@ def _link_components(links: list[tuple[int, int, float]]) -> list[_Cluster]:
         if left_root != right_root:
             parent[left_root] = right_root
     clusters: dict[int, _Cluster] = {}
-    for left, _, score in links:
-        clusters.setdefault(root(left), _Cluster([], [])).scores.append(score)
+    for link in links:
+        clusters.setdefault(root(link[0]), _Cluster([], [])).links.append(link)
     for position in sorted(parent):
         clusters[root(position)].positions.append(position)
     return list(clusters.values())
@@ -377,11 +384,7 @@ def _cluster_rank(
     cluster: _Cluster, order: list[_Entry]
 ) -> tuple[int, int, tuple[str, int]]:
     entries = [order[position] for position in cluster.positions]
-    first = min(
-        (member["path"], member["start_line"])
-        for entry in entries
-        for member in entry.members
-    )
+    first = min(_member_key(member) for entry in entries for member in entry.members)
     return (
         -sum(len(entry.members) for entry in entries),
         -max(entry.node_count for entry in entries),
@@ -419,21 +422,62 @@ def _similar_clusters(
     return clusters[:cap], pairs_truncated or capped
 
 
+def _member_links(
+    cluster: _Cluster, order: list[_Entry]
+) -> list[tuple[float, DuplicateMember, DuplicateMember]]:
+    """Every qualifying member pair across the cluster's linked entries.
+
+    A linked entry pair shares one score across all its cross members, but a
+    cross pair that nests one definition in the other is no duplicate (issue
+    #1398), so it is left out even when a sibling pair keeps the link.
+    Strongest first, so the group can lead with a pair that qualifies.
+    """
+    pairs: list[tuple[float, DuplicateMember, DuplicateMember]] = []
+    for left, right, score in cluster.links:
+        for a in order[left].members:
+            for b in order[right].members:
+                if _member_nested_in(a, b) or _member_nested_in(b, a):
+                    continue
+                first, second = sorted((a, b), key=_member_key)
+                pairs.append((score, first, second))
+    pairs.sort(key=lambda pair: (-pair[0], _member_key(pair[1]), _member_key(pair[2])))
+    return pairs
+
+
 def _cluster_group(cluster: _Cluster, order: list[_Entry]) -> DuplicateGroup:
     entries = [order[position] for position in cluster.positions]
     copies = sorted(
         (_sorted_members(entry.members) for entry in entries if len(entry.members) > 1),
-        key=lambda members: (members[0]["path"], members[0]["start_line"]),
+        key=lambda members: _member_key(members[0]),
     )
+    scores = [score for _, _, score in cluster.links]
     # Two exact copies inside the cluster are its strongest possible link.
-    strongest = 1.0 if copies else max(cluster.scores)
+    strongest = 1.0 if copies else max(scores)
+    pairs = _member_links(cluster, order)
+    # The table link and --open preview a group's first two members; in a
+    # cluster those two may not be similar to each other at all, so the
+    # strongest qualifying pair leads and the rest follow in path order.
+    _, lead, partner = pairs[0]
+    rest = [
+        member
+        for member in _sorted_members([m for entry in entries for m in entry.members])
+        if member is not lead and member is not partner
+    ]
     return DuplicateGroup(
         kind=cs.KIND_SIMILAR,
-        similarity=round(min(cluster.scores), 3),
+        similarity=round(min(scores), 3),
         max_similarity=round(strongest, 3),
         node_count=max(entry.node_count for entry in entries),
-        members=_sorted_members([m for entry in entries for m in entry.members]),
+        members=[lead, partner, *rest],
         exact_subgroups=[
             [member["qualified_name"] for member in members] for members in copies
+        ],
+        links=[
+            DuplicateLink(
+                first=first["qualified_name"],
+                second=second["qualified_name"],
+                similarity=round(score, 3),
+            )
+            for score, first, second in pairs
         ],
     )
