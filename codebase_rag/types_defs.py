@@ -605,11 +605,34 @@ class DuplicateMember(TypedDict):
     end_line: int
 
 
+class DuplicateLink(TypedDict):
+    # Qualified names of two members whose own pair clears the threshold.
+    first: str
+    second: str
+    similarity: float
+
+
 class DuplicateGroup(TypedDict):
     kind: str
+    # Groups are disjoint clusters (issue #2473), so two members of a
+    # `similar` group may be linked only through a third: similarity is its
+    # weakest qualifying link and max_similarity its strongest (1.0 for an
+    # `exact` group, and for a cluster holding exact copies).
     similarity: float
+    max_similarity: float
     node_count: int
     members: list[DuplicateMember]
+    # Qualified names of the members that are exact copies of each other,
+    # one list per shared fingerprint. Always empty for an `exact` group,
+    # which is one such list as a whole.
+    exact_subgroups: list[list[str]]
+    # The qualifying pairs between different fingerprints, strongest first:
+    # with the exact copies, the only member pairs that are duplicates. Empty
+    # for an `exact` group, where every pair is one. Collected groups hold one
+    # link per fingerprint pair, named by its best member pair, since two
+    # clone classes would otherwise cost their cross product; the JSON report
+    # expands each over both sides' exact copies (duplicates.expanded_links).
+    links: list[DuplicateLink]
 
 
 class DuplicatesReport(NamedTuple):
