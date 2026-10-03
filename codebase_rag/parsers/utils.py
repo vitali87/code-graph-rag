@@ -1405,6 +1405,31 @@ def _record_method_overrides(
         )
 
 
+def _ingest_method_endpoints(
+    ingestor: IngestorProtocol,
+    pending_endpoints: list | None,
+    method_qn: str,
+    decorators: object,
+    module_qn: str | None,
+) -> None:
+    if pending_endpoints is not None:
+        # Deferred so router mount prefixes can resolve after Pass 2 (#877).
+        queue_endpoints(
+            pending_endpoints,
+            cs.NodeLabel.METHOD,
+            method_qn,
+            decorators,
+            module_qn,
+        )
+    else:
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.METHOD,
+            method_qn,
+            decorators,
+        )
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1536,22 +1561,13 @@ def ingest_method(
         method_props,
         has_receiver=not _is_static_decorator(decorators),
     )
-    if pending_endpoints is not None:
-        # Deferred so router mount prefixes can resolve after Pass 2 (#877).
-        queue_endpoints(
-            pending_endpoints,
-            cs.NodeLabel.METHOD,
-            method_qn,
-            method_props.get(cs.KEY_DECORATORS),
-            module_qn,
-        )
-    else:
-        emit_endpoints(
-            ingestor,
-            cs.NodeLabel.METHOD,
-            method_qn,
-            method_props.get(cs.KEY_DECORATORS),
-        )
+    _ingest_method_endpoints(
+        ingestor,
+        pending_endpoints,
+        method_qn,
+        method_props.get(cs.KEY_DECORATORS),
+        module_qn,
+    )
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)

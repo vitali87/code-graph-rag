@@ -650,23 +650,8 @@ class CSharpTypeInferenceEngine:
         # name-only fallback. Trying the name-only fallback before extensions
         # would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
         # arity-correct `static Foo(this C, int)` extension.
-        if receiver_class_qn is not None and (
-            arity_hit := self._find_arity_across_parts(
-                receiver_class_qn, method_name, arg_count
-            )
-        ):
-            # Same-arity overloads are told apart by argument type; the first
-            # arity match stands when no argument can decide (issue #2619).
-            arity_hit = (
-                self._pick_member_overload(
-                    member_call, receiver_class_qn, compatible=False
-                )
-                or arity_hit
-            )
-            # A delegate-typed PROPERTY registers as a METHOD node with a bare
-            # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
-            # `entry.Callback()` is Delegate.Invoke, not a call to the property.
-            return self._method_or_property_target(arity_hit)
+        if arity_target := self._arity_member_target(member_call, receiver_class_qn):
+            return arity_target
         # An extension method (`static M(this T x, ...)` on an unrelated static
         # class) whose `this` receiver type matches the call's receiver; the
         # only path that binds `x.M()` to a method not in x's hierarchy.
@@ -679,25 +664,10 @@ class CSharpTypeInferenceEngine:
             arg_count,
         ):
             return cs.NodeLabel.METHOD.value, ext
-        # A call that leaves defaulted parameters out (`v.ValidateAsync(p)`
-        # for `ValidateAsync(T, CancellationToken = default)`) matches no
-        # arity exactly. Ranked by argument type among the overloads that
-        # accept it, it is not left to a name-only guess, which used to land
-        # on whatever shared the name, an explicit implementation included.
-        if receiver_class_qn is not None and (
-            defaulted_hit := self._pick_member_overload(
-                member_call, receiver_class_qn, compatible=True
-            )
+        if fallback_target := self._fallback_member_target(
+            member_call, receiver_class_qn
         ):
-            return self._method_or_property_target(defaulted_hit)
-        if receiver_class_qn is not None and (
-            name_hit := self._find_name_across_parts(receiver_class_qn, method_name)
-        ):
-            # A delegate-typed PROPERTY invoked with call syntax
-            # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a method
-            # call; binding the property as a METHOD fabricates an edge. Its
-            # reachability comes from the read pass.
-            return self._method_or_property_target(name_hit)
+            return fallback_target
         return self._external_or_unresolved(
             receiver,
             method_name,
@@ -705,6 +675,54 @@ class CSharpTypeInferenceEngine:
             local_var_types or {},
             caller_qn,
         )
+
+    def _arity_member_target(
+        self, member_call: _MemberCall, receiver_class_qn: str | None
+    ) -> tuple[str, str] | None:
+        """An exact-arity instance method of the receiver's class, if any."""
+        if receiver_class_qn is None:
+            return None
+        arity_hit = self._find_arity_across_parts(
+            receiver_class_qn, member_call.method_name, member_call.arg_count
+        )
+        if not arity_hit:
+            return None
+        # Same-arity overloads are told apart by argument type; the first
+        # arity match stands when no argument can decide (issue #2619).
+        arity_hit = (
+            self._pick_member_overload(member_call, receiver_class_qn, compatible=False)
+            or arity_hit
+        )
+        # A delegate-typed PROPERTY registers as a METHOD node with a bare
+        # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
+        # `entry.Callback()` is Delegate.Invoke, not a call to the property.
+        return self._method_or_property_target(arity_hit)
+
+    def _fallback_member_target(
+        self, member_call: _MemberCall, receiver_class_qn: str | None
+    ) -> tuple[str, str] | None:
+        """The receiver's class member a call binds to once neither an
+        exact-arity method nor an extension method took it."""
+        if receiver_class_qn is None:
+            return None
+        # A call that leaves defaulted parameters out (`v.ValidateAsync(p)`
+        # for `ValidateAsync(T, CancellationToken = default)`) matches no
+        # arity exactly. Ranked by argument type among the overloads that
+        # accept it, it is not left to a name-only guess, which used to land
+        # on whatever shared the name, an explicit implementation included.
+        if defaulted_hit := self._pick_member_overload(
+            member_call, receiver_class_qn, compatible=True
+        ):
+            return self._method_or_property_target(defaulted_hit)
+        if name_hit := self._find_name_across_parts(
+            receiver_class_qn, member_call.method_name
+        ):
+            # A delegate-typed PROPERTY invoked with call syntax
+            # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a method
+            # call; binding the property as a METHOD fabricates an edge. Its
+            # reachability comes from the read pass.
+            return self._method_or_property_target(name_hit)
+        return None
 
     def _external_or_unresolved(
         self,
@@ -2046,30 +2064,36 @@ class CSharpTypeInferenceEngine:
             for decl in statement.named_children:
                 if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
                     continue
-                for declarator in decl.named_children:
-                    if (
-                        declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR
-                        or safe_decode_text(
-                            declarator.child_by_field_name(cs.FIELD_NAME)
-                        )
-                        != name
-                    ):
-                        continue
-                    type_node = decl.child_by_field_name(cs.FIELD_TYPE)
-                    if (
-                        type_node is not None
-                        and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE
-                    ):
-                        return safe_decode_text(type_node)
-                    created = self._descendants_of_type(
-                        declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
-                    )
-                    return (
-                        safe_decode_text(created[0].child_by_field_name(cs.FIELD_TYPE))
-                        if created
-                        else None
-                    )
+                declarator = self._declarator_named(decl, name)
+                if declarator is not None:
+                    return self._declarator_written_type(decl, declarator)
         return None
+
+    @staticmethod
+    def _declarator_named(decl: Node, name: str) -> Node | None:
+        for declarator in decl.named_children:
+            if (
+                declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+                and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+                == name
+            ):
+                return declarator
+        return None
+
+    def _declarator_written_type(self, decl: Node, declarator: Node) -> str | None:
+        # The declaration's own type, or, for a `var` local, the type its
+        # construction spells.
+        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+            return safe_decode_text(type_node)
+        created = self._descendants_of_type(
+            declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
+        )
+        return (
+            safe_decode_text(created[0].child_by_field_name(cs.FIELD_TYPE))
+            if created
+            else None
+        )
 
     @staticmethod
     def _parameter_type(scope: Node, name: str) -> str | None:

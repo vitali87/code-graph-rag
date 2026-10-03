@@ -39,29 +39,18 @@ def process_all_method_overrides(
     for method_qn in function_registry.keys():
         if function_registry[method_qn] != NodeType.METHOD:
             continue
-        if csharp_methods and method_qn in csharp_methods:
-            explicit = _csharp_explicit_member(method_qn)
-            if explicit is not None:
-                # Its leaf names the interface it implements; matching that
-                # leaf by name, as the walk below does, would find nothing.
-                _emit_explicit_impl_override(
-                    method_qn,
-                    explicit,
-                    function_registry,
-                    _ancestors(explicit[0], class_inheritance, implemented_interfaces),
-                    csharp_class_generic_arity or {},
-                    csharp_class_namespaced or {},
-                    ingestor,
-                )
-                continue
-            # A C# signature may spell qualified types (`Put(List<System.
-            # String>)`), whose dots are not the class separator.
-            class_qn, method_name = _csharp_class_and_leaf(method_qn)
-        else:
-            # A dotless qn has no class to walk from; rpartition leaves
-            # class_qn empty for it, which is the same set the membership
-            # test used to skip.
-            class_qn, _, method_name = method_qn.rpartition(cs.SEPARATOR_DOT)
+        if _emit_csharp_explicit_override(
+            method_qn,
+            csharp_methods,
+            function_registry,
+            class_inheritance,
+            implemented_interfaces,
+            csharp_class_generic_arity,
+            csharp_class_namespaced,
+            ingestor,
+        ):
+            continue
+        class_qn, method_name = _override_class_and_leaf(method_qn, csharp_methods)
         if not class_qn:
             continue
         # Positive evidence first: a recorded trait binding names the parent
@@ -96,6 +85,50 @@ def process_all_method_overrides(
             csharp_call_shapes,
         )
     _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
+
+
+def _emit_csharp_explicit_override(
+    method_qn: str,
+    csharp_methods: set[str] | None,
+    function_registry: FunctionRegistryTrieProtocol,
+    class_inheritance: dict[str, list[str]],
+    implemented_interfaces: dict[str, list[str]],
+    generic_arity: Mapping[str, int] | None,
+    namespaced: Mapping[str, str] | None,
+    ingestor: IngestorProtocol,
+) -> bool:
+    """Link a C# explicit interface implementation, if `method_qn` is one."""
+    if not csharp_methods or method_qn not in csharp_methods:
+        return False
+    explicit = _csharp_explicit_member(method_qn)
+    if explicit is None:
+        return False
+    # Its leaf names the interface it implements; matching that
+    # leaf by name, as the walk below does, would find nothing.
+    _emit_explicit_impl_override(
+        method_qn,
+        explicit,
+        function_registry,
+        _ancestors(explicit[0], class_inheritance, implemented_interfaces),
+        generic_arity or {},
+        namespaced or {},
+        ingestor,
+    )
+    return True
+
+
+def _override_class_and_leaf(
+    method_qn: str, csharp_methods: set[str] | None
+) -> tuple[str, str]:
+    if csharp_methods and method_qn in csharp_methods:
+        # A C# signature may spell qualified types (`Put(List<System.
+        # String>)`), whose dots are not the class separator.
+        return _csharp_class_and_leaf(method_qn)
+    # A dotless qn has no class to walk from; rpartition leaves
+    # class_qn empty for it, which is the same set the membership
+    # test used to skip.
+    class_qn, _, method_name = method_qn.rpartition(cs.SEPARATOR_DOT)
+    return class_qn, method_name
 
 
 def _process_mro_shadow_overrides(
@@ -614,12 +647,27 @@ def check_method_overrides(
         ]
         visited.update(fresh)
         queue.extend(fresh)
-        if shapes:
-            for parent_class_qn in fresh:
-                bindings_of[parent_class_qn] = bindings_for_base(
-                    shapes,
-                    csharp_class_generic_arity or {},
-                    current_class,
-                    bindings_of.get(current_class, {}),
-                    parent_class_qn,
-                )
+        _bind_fresh_ancestors(
+            shapes, csharp_class_generic_arity, current_class, fresh, bindings_of
+        )
+
+
+def _bind_fresh_ancestors(
+    shapes: Mapping[str, CSharpGenericShape] | None,
+    generic_arity: Mapping[str, int] | None,
+    current_class: str,
+    fresh: list[str],
+    bindings_of: dict[str, dict[str, str]],
+) -> None:
+    # Each newly queued C# ancestor's parameters, bound in the overriding
+    # class's terms through the class that reached it.
+    if not shapes:
+        return
+    for parent_class_qn in fresh:
+        bindings_of[parent_class_qn] = bindings_for_base(
+            shapes,
+            generic_arity or {},
+            current_class,
+            bindings_of.get(current_class, {}),
+            parent_class_qn,
+        )

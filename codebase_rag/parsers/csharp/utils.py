@@ -202,14 +202,7 @@ def signature_type_name(text: str) -> str:
     depth = 0
     for index, char in enumerate(collapsed):
         if char == cs.CHAR_SPACE:
-            following = collapsed[index + 1 : index + 2]
-            if following == cs.CHAR_ANGLE_OPEN or (
-                depth
-                and (
-                    (out and out[-1] in cs.CSHARP_SIGNATURE_TIGHT_CHARS + char)
-                    or following in cs.CSHARP_SIGNATURE_TIGHT_CHARS
-                )
-            ):
+            if _drops_signature_space(out, collapsed[index + 1 : index + 2], depth):
                 continue
         elif char == cs.CHAR_ANGLE_OPEN:
             depth += 1
@@ -219,6 +212,18 @@ def signature_type_name(text: str) -> str:
         if char == cs.CHAR_COMMA and depth:
             out.append(cs.CHAR_SPACE)
     return "".join(out).strip().rstrip(cs.CHAR_QUESTION_MARK)
+
+
+def _drops_signature_space(out: list[str], following: str, depth: int) -> bool:
+    # Whether `signature_type_name` leaves out the space between what it has
+    # written so far and `following`, the character after that space.
+    if following == cs.CHAR_ANGLE_OPEN:
+        return True
+    if not depth:
+        return False
+    if out and out[-1] in cs.CSHARP_SIGNATURE_TIGHT_CHARS + cs.CHAR_SPACE:
+        return True
+    return following in cs.CSHARP_SIGNATURE_TIGHT_CHARS
 
 
 def extract_parameter_type_names(method_node: Node) -> list[str]:
