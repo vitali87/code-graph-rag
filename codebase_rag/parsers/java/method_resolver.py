@@ -22,6 +22,7 @@ from .utils import (
     extract_method_call_info,
     extract_method_info,
     get_class_context_from_qn,
+    method_reference_receiver_text,
 )
 
 if TYPE_CHECKING:
@@ -858,13 +859,49 @@ class JavaMethodResolverMixin:
                 matches.append((method_type, qn))
         return matches
 
+    def java_method_reference_targets(
+        self,
+        receiver: ASTNode,
+        method_name: str,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> list[tuple[str, str]]:
+        # The receiver is typed exactly as a call's `object` is, so one the call
+        # path cannot type (a lambda parameter, the JDK's `System.out`) binds
+        # nothing instead of a same-named first-party method found by name.
+        if receiver.type in (cs.TS_METHOD_INVOCATION, cs.TS_OBJECT_CREATION_EXPRESSION):
+            receiver_type = self._infer_java_type_from_expression(
+                receiver, module_qn, local_var_types
+            )
+        elif receiver_text := method_reference_receiver_text(receiver):
+            receiver_type = self._resolve_java_object_type(
+                receiver_text, local_var_types or {}, module_qn, receiver
+            )
+        else:
+            receiver_type = None
+        if not receiver_type or not (
+            first := self._resolve_instance_method(
+                receiver_type, method_name, module_qn
+            )
+        ):
+            return []
+        # Which overload a reference denotes is decided by the functional
+        # interface it is assigned to, a type the parser never sees (the C#
+        # method-group shape), so the whole family visible on the receiver is
+        # referenced rather than whichever overload the lookup met first.
+        declaring_qn = (
+            first[1].split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
+        )
+        return self._overload_family(declaring_qn, method_name) or [first]
+
     def _overload_family(
         self, class_qn: str, method_name: str
     ) -> list[tuple[str, str]]:
-        # The overloads of `method_name` a call through `class_qn` can reach:
-        # those it declares plus those it inherits up the superclass chain. A
-        # parent overload with the signature of one a subclass declares is
-        # overridden by it, so it is not a separate candidate. Simple type
+        # The overloads of `method_name` a call or a method reference through
+        # `class_qn` can reach: those it declares plus those it inherits up
+        # the superclass chain. A parent overload with the signature of one a
+        # subclass declares is overridden by it, so it is not a separate
+        # candidate. Simple type
         # names match first, then the types each file resolves them to:
         # `m(java.awt.List)` does not override `m(java.util.List)`. Two
         # overloads of ONE class can match by simple names

@@ -662,11 +662,15 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         (record_declaration
             name: (identifier) @name) @class
         """,
+        # A method reference is no call, but it is captured with the calls so
+        # it is owned by the same caller (method, anonymous-class method, or
+        # the module for a field initializer) and turned into REFERENCES.
         call_query="""
         (method_invocation
             name: (identifier) @name) @call
         (object_creation_expression
             type: (_) @name) @call
+        (method_reference) @call
         """,
     ),
     cs.SupportedLanguage.C: LanguageSpec(

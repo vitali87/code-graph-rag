@@ -403,6 +403,12 @@ class JavaMethodCallInfo(TypedDict):
     arguments: int
 
 
+class JavaMethodReferenceParts(NamedTuple):
+    # `method_name` is None for a constructor reference (`Type::new`).
+    receiver: ASTNode
+    method_name: str | None
+
+
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
@@ -583,6 +589,9 @@ class DeadCodeRow(TypedDict):
     label: str
     name: str
     qualified_name: str
+    # Repo-relative, as a duplicates member's: a qualified name cannot be
+    # turned back into a file in general (issue #2561).
+    path: str
     start_line: int
     end_line: int
 

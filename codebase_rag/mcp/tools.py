@@ -25,7 +25,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
 from codebase_rag.services.provenance import head_commit
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -222,7 +222,7 @@ class MCPToolsRegistry:
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
-        cypher_gen: CypherGenerator,
+        cypher_gen: CypherQueryGenerator,
         workspace: WorkspaceConfig | None = None,
     ) -> None:
         self.project_root = project_root
@@ -3361,7 +3361,7 @@ class MCPToolsRegistry:
 def create_mcp_tools_registry(
     project_root: str,
     ingestor: MemgraphIngestor,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     workspace: WorkspaceConfig | None = None,
 ) -> MCPToolsRegistry:
     return MCPToolsRegistry(

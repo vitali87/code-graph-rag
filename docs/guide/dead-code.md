@@ -120,6 +120,13 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
   --exclude '*_generated*'
 ```
 
+Each JSON row carries `label`, `name`, `qualified_name`, `path`, `start_line`
+and `end_line`. `path` is the repo-relative file (the same path `--exclude`
+matches), so an annotation can point at `path:start_line` without guessing
+the file from the qualified name. The table shows it in its `Path` column.
+A table written with `--output` or to a pipe is as wide as its longest row,
+so no name or path is cut to fit 80 columns.
+
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
@@ -133,6 +140,7 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
    never reaches, minus anything matching an `--exclude` glob.
 
 First-class functions matter for accuracy: a callback stored in an object, an
-inline arrow handed to `useMutation`/`.forEach`/`new Promise`, or a function
-passed as an argument is recorded as a `REFERENCES` edge so it stays reachable
-rather than being reported as dead.
+inline arrow handed to `useMutation`/`.forEach`/`new Promise`, a function
+passed as an argument, or a Java method reference (`Acc::add`, `this::m`,
+`Acc::new`) is recorded as a `REFERENCES` edge so it stays reachable rather
+than being reported as dead.

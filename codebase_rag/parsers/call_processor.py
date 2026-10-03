@@ -4297,6 +4297,9 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
+            self._ingest_java_method_reference(ctx, call_node)
+            return
         call_name = self._scan_call_name(ctx, call_node)
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
@@ -5157,7 +5160,10 @@ class CallProcessor:
                     )
 
     def _redirect_construction(
-        self, ctx: _CallScanContext, callee_qn: str
+        self,
+        ctx: _CallScanContext,
+        callee_qn: str,
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> tuple[str, str] | None:
         class_variants = self._resolver.function_registry.variants(callee_qn)
         self._resolution = (
@@ -5188,7 +5194,8 @@ class CallProcessor:
             # A Java/C#/C++/Dart constructor is a method named like its
             # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
             # runs one, so redirect a CALLS edge to every declared
-            # constructor (overload selection unneeded for reachability).
+            # constructor (overload selection unneeded for reachability);
+            # a Java `Foo::new` runs none yet and passes REFERENCES.
             # C#, C++, and Dart default constructors use the same
             # class-simple-name convention, so java_constructor_targets
             # selects them too (a Dart NAMED constructor is invoked by its
@@ -5196,7 +5203,7 @@ class CallProcessor:
             # redirects to the destructor: the object's `~X` runs at end of
             # lifetime with no call node of its own. sorted(): the target
             # label is a hash-randomized StrEnum, so sort for determinism.
-            self._emit_declared_ctor_calls(ctx, callee_qn, class_variants)
+            self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
@@ -5212,7 +5219,11 @@ class CallProcessor:
         return (cs.NodeLabel.METHOD, init_qn)
 
     def _emit_declared_ctor_calls(
-        self, ctx: _CallScanContext, callee_qn: str, class_variants: list[str]
+        self,
+        ctx: _CallScanContext,
+        callee_qn: str,
+        class_variants: list[str],
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
         if ctx.language == cs.SupportedLanguage.CPP:
             self._emit_cpp_ctor_calls(ctx.caller_spec, callee_qn)
@@ -5243,8 +5254,79 @@ class CallProcessor:
         for ctor_type, variant in ctor_edges:
             ctx.ensure_rel(
                 ctx.caller_spec,
-                cs.RelationshipType.CALLS,
+                ctor_rel,
                 (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+            )
+
+    def _ingest_java_method_reference(
+        self, ctx: _CallScanContext, ref_node: Node
+    ) -> None:
+        # `Type::m`, `expr::m`, `this::m`, `super::m` hand a method over as a
+        # value and nothing runs at this site, so the edge is REFERENCES: what
+        # a C# method group and a callback argument get in every other
+        # language, which keeps the method reachable without asserting a
+        # call the graph cannot see (issue #2546).
+        if (parts := java_utils.method_reference_parts(ref_node)) is None:
+            return
+        if parts.method_name is None:
+            self._ingest_java_constructor_reference(ctx, ref_node, parts.receiver)
+            return
+        engine = self._resolver.type_inference.java_type_inference
+        targets = engine.java_method_reference_targets(
+            parts.receiver, parts.method_name, ctx.local_var_types, ctx.module_qn
+        )
+        registry = self._resolver.function_registry
+        edges = [
+            (label, variant)
+            for target_type, target_qn in targets
+            for variant in registry.variants(target_qn)
+            if (label := registry.get(variant) or target_type)
+            in (NodeType.FUNCTION, NodeType.METHOD)
+        ]
+        if not edges:
+            # Java sees same-package definitions without an import, so the
+            # name is the only link to a file that may define it later.
+            self._note_unresolved(ctx.module_qn, parts.method_name)
+            return
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for label, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    def _ingest_java_constructor_reference(
+        self, ctx: _CallScanContext, ref_node: Node, receiver: Node
+    ) -> None:
+        # `Type::new` is a factory for Type: the type is resolved and
+        # INSTANTIATES'd exactly as `new Type(...)` is, and its constructors are
+        # referenced rather than called, since none runs here. The functional
+        # interface that would pick one is not visible to the parser, so each
+        # declared constructor is referenced, labelled `overload` when there
+        # are several. An array type (`int[]::new`) constructs no class.
+        if not (type_name := java_utils.method_reference_receiver_text(receiver)):
+            return
+        callee = ctx.resolve_func(
+            type_name,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            call_point=ref_node.start_byte,
+            constructing=True,
+        )
+        if callee is None:
+            self._note_unresolved(ctx.module_qn, written_simple_name(type_name))
+            return
+        if self._resolver.function_registry.get(callee[1]) == NodeType.CLASS:
+            self._redirect_construction(
+                ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
             )
 
     def _emit_resolved_callee_targets(

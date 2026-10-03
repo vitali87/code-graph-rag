@@ -14,6 +14,7 @@ from ...types_defs import (
     JavaFieldInfo,
     JavaMethodCallInfo,
     JavaMethodInfo,
+    JavaMethodReferenceParts,
 )
 from ..utils import safe_decode_text
 
@@ -415,6 +416,62 @@ def _java_paren_receiver(object_node: ASTNode) -> str | None:
     return None
 
 
+def _receiver_text(object_node: ASTNode) -> str | None:
+    match object_node.type:
+        case cs.TS_THIS:
+            return cs.TS_THIS
+        case cs.TS_SUPER:
+            return cs.TS_SUPER
+        case cs.TS_IDENTIFIER | cs.TS_FIELD_ACCESS:
+            return safe_decode_text(object_node)
+        case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
+            # A cast receiver `((T) x).m()`: the cast's target type is the
+            # receiver type, so m resolves on T. A parenthesised non-cast receiver
+            # `(reader).m()` keeps its inner identifier/field-access receiver.
+            # Without this the call falls to the unqualified path and never finds
+            # a cross-file/sibling T or the variable's type.
+            return _java_cast_target_type(object_node) or _java_paren_receiver(
+                object_node
+            )
+    return None
+
+
+def method_reference_parts(ref_node: ASTNode) -> JavaMethodReferenceParts | None:
+    if ref_node.type != cs.TS_JAVA_METHOD_REFERENCE:
+        return None
+    # Comments are extras the grammar lets sit between any two tokens, so they
+    # are not counted as the receiver or the name.
+    tokens = [
+        c
+        for c in ref_node.children
+        if c.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+    ]
+    if len(tokens) < 3:
+        return None
+    receiver, name_node = tokens[0], tokens[-1]
+    if name_node.type == cs.TS_JAVA_NEW_KEYWORD:
+        return JavaMethodReferenceParts(receiver=receiver, method_name=None)
+    if name_node.type != cs.TS_IDENTIFIER or not (name := safe_decode_text(name_node)):
+        return None
+    return JavaMethodReferenceParts(receiver=receiver, method_name=name)
+
+
+def method_reference_receiver_text(receiver: ASTNode) -> str | None:
+    # A method reference's receiver may also be a TYPE (`List<String>::size`,
+    # `Outer.Inner::new`), which a call's `object` never is; its generic
+    # arguments are dropped as `new T<A>()` drops them. An array type
+    # (`int[]::new`) names no class and yields None.
+    if receiver.type in (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_SCOPED_TYPE_IDENTIFIER,
+        cs.TS_GENERIC_TYPE,
+    ):
+        if not (text := safe_decode_text(receiver)):
+            return None
+        return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip() or None
+    return _receiver_text(receiver)
+
+
 def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     if call_node.type != cs.TS_METHOD_INVOCATION:
         return None
@@ -425,22 +482,7 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
 
     obj: str | None = None
     if object_node := call_node.child_by_field_name(cs.TS_FIELD_OBJECT):
-        match object_node.type:
-            case cs.TS_THIS:
-                obj = cs.TS_THIS
-            case cs.TS_SUPER:
-                obj = cs.TS_SUPER
-            case cs.TS_IDENTIFIER | cs.TS_FIELD_ACCESS:
-                obj = safe_decode_text(object_node)
-            case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
-                # A cast receiver `((T) x).m()`: the cast's target type is the
-                # receiver type, so m resolves on T. A parenthesised non-cast receiver
-                # `(reader).m()` keeps its inner identifier/field-access receiver.
-                # Without this the call falls to the unqualified path and never finds
-                # a cross-file/sibling T or the variable's type.
-                obj = _java_cast_target_type(object_node) or _java_paren_receiver(
-                    object_node
-                )
+        obj = _receiver_text(object_node)
 
     arguments = 0
     if args_node := call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS):
