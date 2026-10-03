@@ -62,6 +62,18 @@ RESOURCE_QN_FORMAT = "resource::{kind}::{identity}"
 # Identity used when the accessed target is not a static string literal.
 DYNAMIC_TARGET = "<dynamic>"
 
+# The operator that joins a literal URL prefix to the rest of the URL
+# (`"/orders/" + id`, `BASE + "/users"`) in Python and JS/TS (issue #2521).
+URL_CONCAT_OPERATOR = "+"
+
+
+class UrlSyntax(StrEnum):
+    # Which module-constant and binding shapes a URL grammar reads: a Python
+    # module assignment, or a JS/TS `const` declaration.
+    PYTHON = "python"
+    JS_TS = "js_ts"
+
+
 KEY_KIND = "kind"
 
 # Python open()-style mode characters that imply writing / read-write.

@@ -86,7 +86,11 @@ class TestExpressRoutes:
         assert _endpoint(edges, "routes.list", "GET /todos"), edges
         assert _endpoint(edges, "routes.create", "POST /todos"), edges
 
-    def test_anonymous_handler_anchors_to_module(self, tmp_path: Path) -> None:
+    def test_anonymous_handler_anchors_to_its_own_function(
+        self, tmp_path: Path
+    ) -> None:
+        # The inline arrow is a Function node of its own, so it is the
+        # handler rather than the module (issue #2521).
         files = {
             "server.js": (
                 "const express = require('express')\n"
@@ -96,9 +100,9 @@ class TestExpressRoutes:
         }
         edges = _run(tmp_path, files, "javascript")
         anchors = {(label, qn) for label, qn, e in edges if e == "GET /health"}
-        assert anchors, edges
-        # The endpoint stays anchored even without a resolvable handler.
-        assert any(qn.endswith("server") for _label, qn in anchors), edges
+        assert anchors == {
+            (cs.NodeLabel.FUNCTION.value, f"{tmp_path.name}.server.anonymous_3_19")
+        }, edges
 
     def test_client_verb_calls_are_ignored(self, tmp_path: Path) -> None:
         # An HTTP client's `.get('/path')` is an OUTBOUND call, not a route
@@ -125,7 +129,7 @@ class TestExpressRoutes:
             ),
         }
         edges = _run(tmp_path, files, "javascript")
-        assert _endpoint(edges, "server", "GET /health"), edges
+        assert _endpoint(edges, "server.anonymous_3_19", "GET /health"), edges
 
     def test_non_routes_are_ignored(self, tmp_path: Path) -> None:
         files = {
@@ -710,7 +714,10 @@ class TestOptionsObjectRoutes:
             ),
         }
         edges = _run(tmp_path, files, "typescript")
-        assert _endpoint(edges, "gateway", "GET /stems/:stemId/artifacts"), edges
+        # The inline arrow under the `handler` key is its own Function node.
+        assert _endpoint(edges, "gateway.handler", "GET /stems/:stemId/artifacts"), (
+            edges
+        )
 
     def test_endpoint_options_object_with_method_shorthand_handler(
         self, tmp_path: Path
@@ -730,7 +737,7 @@ class TestOptionsObjectRoutes:
             ),
         }
         edges = _run(tmp_path, files, "typescript")
-        assert _endpoint(edges, "gateway", "GET /users"), edges
+        assert _endpoint(edges, "gateway.handler", "GET /users"), edges
 
     def test_client_method_shorthand_without_route_member_is_ignored(
         self, tmp_path: Path
@@ -784,8 +791,8 @@ class TestOptionsObjectRoutes:
             ),
         }
         edges = _run(tmp_path, files, "javascript")
-        assert _endpoint(edges, "server", "GET /ping"), edges
-        assert _endpoint(edges, "server", "HEAD /ping"), edges
+        assert _endpoint(edges, "server.handler", "GET /ping"), edges
+        assert _endpoint(edges, "server.handler", "HEAD /ping"), edges
 
     def test_client_options_object_without_handler_is_ignored(
         self, tmp_path: Path

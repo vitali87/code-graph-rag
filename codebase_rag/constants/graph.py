@@ -23,6 +23,10 @@ KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
+# The relationship types the project's last sync captured (issue #2521), in
+# the shape the index manifest records them: an empty endpoint answer from a
+# project that never captured `io` is "not recorded", not "none".
+KEY_CAPTURED_RELATIONSHIPS = "captured_relationships"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
 # A JS/TS function that is an object literal's property value, reached only

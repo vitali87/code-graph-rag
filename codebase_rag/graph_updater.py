@@ -58,6 +58,7 @@ from .parsers.endpoint_prefixes import (
 )
 from .parsers.endpoint_routes import (
     CYPHER_DELETE_MODULE_EXPOSES,
+    CYPHER_MODULE_FUNCTION_STARTS,
     CYPHER_PROJECT_MODULES,
     ROUTE_CALL_LANGUAGES,
     ROUTE_MODULE_EXTENSIONS,
@@ -108,6 +109,7 @@ from .types_defs import (
     EmbeddingQueryResult,
     FunctionLocation,
     FunctionLocations,
+    FunctionSpanKey,
     JsonValue,
     LanguageQueries,
     NodeType,
@@ -175,6 +177,12 @@ def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
         ):
             owner = candidate
     return owner
+
+
+def _route_label(node_type: NodeType) -> cs.NodeLabel:
+    return (
+        cs.NodeLabel.METHOD if node_type == NodeType.METHOD else cs.NodeLabel.FUNCTION
+    )
 
 
 def _route_handler_entry(
@@ -2124,6 +2132,11 @@ class GraphUpdater:
             {
                 cs.KEY_NAME: self.project_name,
                 cs.KEY_ROOT_PATH: str(self.repo_path.resolve()),
+                # The capture is part of the parser fingerprint, so a run that
+                # returns early as in sync captured this same selection.
+                cs.KEY_CAPTURED_RELATIONSHIPS: sorted(
+                    rel.value for rel in self.capture.enabled_rels
+                ),
             },
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
@@ -2668,14 +2681,90 @@ class GraphUpdater:
         # still sheds its old EXPOSES edges even though it contributes no new
         # registrations.
         self._drop_stale_module_exposes(sorted(modules))
-        for module_qn, (root, language, path) in modules.items():
+        registrations = {
+            module_qn: collect_route_registrations(root, language)
+            for module_qn, (root, language, path) in modules.items()
             # Kept in the cleanup above, skipped for emission (#910).
-            if self._is_test_module(path):
-                continue
-            for registration in collect_route_registrations(root, language):
-                label, source_qn = self._route_source(module_qn, registration)
+            if not self._is_test_module(path)
+        }
+        inline = self._inline_route_handlers(registrations)
+        for module_qn, module_registrations in registrations.items():
+            for registration in module_registrations:
+                label, source_qn = self._route_source(module_qn, registration, inline)
                 identity = f"{registration.method} {registration.path}"
                 _emit_endpoint(self._sink, label, source_qn, identity)
+
+    def _inline_route_handlers(
+        self, registrations: Mapping[str, list[RouteRegistration]]
+    ) -> dict[FunctionSpanKey, tuple[cs.NodeLabel, str]]:
+        # The node of every inline handler, keyed by where the function
+        # starts (issue #2521): recorded by this run's definition pass, else
+        # read back from the graph for a module this run did not parse. A
+        # re-parsed module's old subtree is deleted before its parse, so the
+        # graph never answers for it with a previous parse's node.
+        found: dict[FunctionSpanKey, tuple[cs.NodeLabel, str]] = {}
+        unrecorded: set[str] = set()
+        for module_qn, module_registrations in registrations.items():
+            for registration in module_registrations:
+                if registration.handler_start is None:
+                    continue
+                row, col = registration.handler_start
+                key = (module_qn, row + 1, col)
+                if (source := self._recorded_function_at(key)) is not None:
+                    found[key] = source
+                else:
+                    unrecorded.add(module_qn)
+        if unrecorded:
+            for key, source in self._graph_function_starts(unrecorded).items():
+                found.setdefault(key, source)
+        return found
+
+    def _recorded_function_at(
+        self, key: FunctionSpanKey
+    ) -> tuple[cs.NodeLabel, str] | None:
+        # The function this run's definition pass recorded starting at `key`.
+        dp = self.factory.definition_processor
+        location = dp.function_locations.get(key)
+        if location is None:
+            return None
+        node_type = dp.function_registry.get(location.qualified_name)
+        if node_type is None:
+            return None
+        return _route_label(node_type), location.qualified_name
+
+    def _graph_function_starts(
+        self, module_qns: set[str]
+    ) -> dict[FunctionSpanKey, tuple[cs.NodeLabel, str]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return {}
+        try:
+            rows = self.ingestor.fetch_all(
+                CYPHER_MODULE_FUNCTION_STARTS, {"module_qns": sorted(module_qns)}
+            )
+        except Exception:
+            # The next rung of the ladder still anchors the endpoint.
+            logger.debug(ls.ROUTE_HANDLER_STARTS_UNREADABLE)
+            return {}
+        out: dict[FunctionSpanKey, tuple[cs.NodeLabel, str]] = {}
+        for row in rows:
+            module_qn = row.get(cs.KEY_MODULE_QN)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            line = _persisted_int(row.get(cs.KEY_START_LINE))
+            col = _persisted_int(row.get(cs.KEY_START_COL))
+            if not (
+                isinstance(module_qn, str)
+                and isinstance(qn, str)
+                and line is not None
+                and col is not None
+            ):
+                continue
+            label = (
+                cs.NodeLabel.METHOD
+                if row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD.value
+                else cs.NodeLabel.FUNCTION
+            )
+            out[(module_qn, line, col)] = (label, qn)
+        return out
 
     def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
         # Ownership is the DEFINES containment closure from each Module
@@ -2696,28 +2785,42 @@ class GraphUpdater:
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _route_source(
-        self, module_qn: str, registration: RouteRegistration
+        self,
+        module_qn: str,
+        registration: RouteRegistration,
+        inline: Mapping[FunctionSpanKey, tuple[cs.NodeLabel, str]],
     ) -> tuple[cs.NodeLabel, str]:
-        # Attribution ladder: identifier handler, else the registering call's
-        # enclosing function, else the module, so the endpoint stays anchored
-        # and the trace lands at the wiring site.
+        # Attribution ladder: the handler function (an inline one by where
+        # it starts, a named one in the registering scope before the
+        # module), else the registering call's enclosing function, else the
+        # module, so the endpoint stays anchored and the trace lands at the
+        # wiring site.
+        if registration.handler_start is not None:
+            row, col = registration.handler_start
+            source = inline.get((module_qn, row + 1, col))
+            if source is not None:
+                return source
         registry = self.factory.definition_processor.function_registry
+        scope_qn = (
+            f"{module_qn}{cs.SEPARATOR_DOT}{registration.scope}"
+            if registration.scope
+            else None
+        )
         candidates = []
         if registration.handler_name:
+            if scope_qn is not None:
+                candidates.append(
+                    f"{scope_qn}{cs.SEPARATOR_DOT}{registration.handler_name}"
+                )
             candidates.append(
                 f"{module_qn}{cs.SEPARATOR_DOT}{registration.handler_name}"
             )
-        if registration.scope:
-            candidates.append(f"{module_qn}{cs.SEPARATOR_DOT}{registration.scope}")
+        if scope_qn is not None:
+            candidates.append(scope_qn)
         for qn in candidates:
             node_type = registry.get(qn)
             if node_type is not None:
-                label = (
-                    cs.NodeLabel.METHOD
-                    if node_type == NodeType.METHOD
-                    else cs.NodeLabel.FUNCTION
-                )
-                return label, qn
+                return _route_label(node_type), qn
         return cs.NodeLabel.MODULE, module_qn
 
     def _route_module_asts(
