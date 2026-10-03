@@ -124,6 +124,7 @@ _NOT_GRAPH_READERS = frozenset(
         cs.MCPToolName.UPDATE_REPOSITORY,
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
+        cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -529,6 +530,7 @@ class MCPToolsRegistry:
                 cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
+            cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -3157,6 +3159,160 @@ class MCPToolsRegistry:
             # The graph is partial AND the record of it could not be written.
             # Reported, never swallowed: this needs operational recovery and
             # a restarted process cannot infer it.
+            payload[cs.DICT_KEY_ERROR] = payload_marker_error
+        return payload
+
+    def _change_signature_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.CHANGE_SIGNATURE,
+            description=td.MCP_TOOLS[cs.MCPToolName.CHANGE_SIGNATURE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.NEW_PARAMS: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.ARRAY,
+                        description=td.MCP_PARAM_NEW_PARAMS,
+                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                    ),
+                    cs.MCPParamName.MAPPING: prop(
+                        cs.MCPSchemaType.OBJECT, td.MCP_PARAM_MAPPING
+                    ),
+                    cs.MCPParamName.ALLOW_HEURISTIC: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.NEW_PARAMS,
+                ],
+            ),
+            handler=self.change_signature,
+            returns_json=True,
+        )
+
+    async def change_signature(
+        self,
+        qualified_name: str,
+        new_params: list[str],
+        mapping: dict[str, str] | None = None,
+        allow_heuristic: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        # Under the ingestor lock for the same reason as `rename`: a rebuild
+        # landing between planning and writing would rewrite stale sites.
+        return await self._graph_query(
+            cs.MCPToolName.CHANGE_SIGNATURE,
+            project,
+            lambda name: self._run_change_signature(
+                name, qualified_name, new_params, mapping, allow_heuristic, dry_run
+            ),
+        )
+
+    def _signature_reingest(
+        self, project_name: str
+    ) -> tuple[Callable[[list[str]], ReingestReport] | None, Callable[[], None]]:
+        """The guarded re-ingest callback for an applied signature change, and
+        a release to run once the change returns.
+
+        Built before planning, as for `rename`, so a graph left partial by an
+        earlier run refuses the change before any file is written. Hydrating
+        a cold updater marks the project mid-update, and only the callback
+        clears that mark; a change refused before it re-ingests (a bad
+        parameter list, an unmapped hierarchy) would otherwise leave the
+        project marked and every later read refusing. The release clears the
+        mark this call made when the callback never ran. A retained updater
+        marks nothing up front, so there is nothing to release.
+        """
+        before = self._live_updater
+        guarded = self._guarded_rename_reingest(project_name)
+        hydrated = guarded is not None and self._live_updater is not before
+        ran = False
+
+        def reingest(paths: list[str]) -> ReingestReport:
+            nonlocal ran
+            ran = True
+            assert guarded is not None
+            return guarded(paths)
+
+        def release() -> None:
+            if hydrated and not ran:
+                self._require_marker_cleared(project_name)
+
+        return (reingest if guarded is not None else None), release
+
+    def _run_change_signature(
+        self,
+        project_name: str,
+        qualified_name: str,
+        new_params: list[str],
+        mapping: dict[str, str] | None,
+        allow_heuristic: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.signature import change_signature
+        from codebase_rag.editing.signature_spec import (
+            SignatureRefused,
+            sites_for,
+            unmapped_for,
+        )
+
+        # Paths are meaningful only under the root the project was indexed
+        # from (issue #1542), exactly as for `rename`.
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+        # A preview never re-ingests, so it gets no callback: building one
+        # hydrates an updater and marks the project mid-update, and only the
+        # callback itself clears that mark.
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
+        try:
+            report = change_signature(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                new_params,
+                mapping,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+                reingest=reingest,
+            )
+        except SignatureRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused)}
+        finally:
+            if release is not None:
+                release()
+        payload_marker_error: str | None = None
+        if report.graph_incomplete:
+            # The rollback's re-ingest failed: the same invalidation, in
+            # memory and durably, that `_run_rename` applies.
+            self._live_updater = None
+            self._invalidate_graph_for(project_name)
+            payload_marker_error = self._require_marker(project_name, writing=True)
+        payload = dict(report._asdict())
+        payload[cs.KEY_SITES] = sites_for(report.sites)
+        payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
+        payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+        if payload_marker_error is not None:
             payload[cs.DICT_KEY_ERROR] = payload_marker_error
         return payload
 
