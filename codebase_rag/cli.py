@@ -13,7 +13,7 @@ from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 import typer
@@ -22,6 +22,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from typer.core import TyperGroup
+
+if TYPE_CHECKING:
+    # What `TyperGroup.invoke` takes on the locked typer, which vendors click;
+    # an older typer passes click's own Context at runtime (#1409).
+    from typer._click import Context as _GroupContext
 
 from . import (
     _cli_env,  # noqa: F401  (must run before settings load)
@@ -48,7 +54,7 @@ from .editor_links import (
 from .graph_cli import cli as graph_cli
 from .parser_loader import load_parsers
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
-from .services.graph_service import MemgraphIngestor
+from .services.graph_service import GraphUnavailableError, MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
 from .services.provenance import (
     capture_description,
@@ -164,12 +170,25 @@ def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
     return impl(*args, **kwargs)
 
 
+class _CgrGroup(TyperGroup):
+    def invoke(self, ctx: "_GroupContext") -> object:
+        # Every command reaches the graph through the ingestor, which raises
+        # this at connect time with the fix in its message; printing it here
+        # covers them all, the delegated groups and the chat included (#2443).
+        try:
+            return super().invoke(ctx)
+        except GraphUnavailableError as e:
+            app_context.console.print(style(str(e), cs.Color.RED))
+            raise typer.Exit(1) from e
+
+
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
     help=ch.APP_DESCRIPTION,
     epilog=ch.APP_EPILOG,
     no_args_is_help=True,
     add_completion=False,
+    cls=_CgrGroup,
 )
 
 
@@ -1194,6 +1213,8 @@ def export(
                 missing = [name for name in requested if name not in indexed]
             if not missing:
                 exported = _export_to_file(ingestor, output, requested)
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
@@ -1376,6 +1397,12 @@ def mcp_server(
         _mcp_server_notice(style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED))
         if not settings.QUIET:
             _mcp_server_notice(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        raise typer.Exit(1) from e
+    except GraphUnavailableError as e:
+        # Its message names the fix, so it is printed as is, as the app's
+        # group prints it for every other command (#2443); but to stderr,
+        # since stdout is the stdio transport's protocol stream (#2518).
+        _mcp_server_notice(style(str(e), cs.Color.RED))
         raise typer.Exit(1) from e
     except Exception as e:
         _mcp_server_notice(style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED))
@@ -1873,6 +1900,9 @@ def stats(
                 node_results, rel_results, breakdown = _stats_rows(
                     ingestor, requested, len(projects)
                 )
+
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
@@ -2263,6 +2293,8 @@ def dead_code(
                 )
                 if not endpoint_roots and len(projects) <= 1:
                     _notice_single_project_endpoint_roots(show_progress)
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
@@ -2622,6 +2654,8 @@ def duplicates(
                         exclude_patterns=tuple(exclude),
                     ),
                 )
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
@@ -2723,6 +2757,8 @@ def delete_project(
             _cleanup_project_embeddings(ingestor, project_name)
             ingestor.delete_project(project_name)
     except typer.Exit:
+        raise
+    except GraphUnavailableError:
         raise
     except Exception as e:
         app_context.console.print(

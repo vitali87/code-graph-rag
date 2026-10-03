@@ -181,6 +181,19 @@ class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
 
 
+# Connecting to the graph (issue #2443). One line each, naming the fix.
+GRAPH_UNREACHABLE = (
+    "Error: cannot reach Memgraph at {address} ({error}). Start the stack with "
+    "`cgr daemon up`, or set MEMGRAPH_HOST/MEMGRAPH_PORT. `cgr doctor` checks "
+    "the setup."
+)
+GRAPH_CREDENTIALS_REFUSED = (
+    "Error: Memgraph at {address} refused the credentials ({error}). Set "
+    "MEMGRAPH_USERNAME/MEMGRAPH_PASSWORD to the ones the stack was started "
+    "with. `cgr doctor` checks the setup."
+)
+
+
 # Deriving from Exception would let every `except Exception` handler between
 # the embeddings pass and the top level swallow a Ctrl+C (python:S5709
 # accepted).

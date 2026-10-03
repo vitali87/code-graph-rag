@@ -411,8 +411,8 @@ SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
 # Memgraph logs
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
-MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
+MG_CONNECTED = "Successfully connected to Memgraph."
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"
