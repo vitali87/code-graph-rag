@@ -76,6 +76,7 @@ from .types_defs import (
 )
 from .utils.path_utils import (
     derive_project_name,
+    project_name_error,
     project_roots_from_rows,
     resolve_repo_path,
     unwritable_output_reason,
@@ -109,7 +110,7 @@ def clear_all_embeddings(*args: Any, **kwargs: Any) -> None:
     return impl(*args, **kwargs)
 
 
-def delete_project_embeddings(*args: Any, **kwargs: Any) -> None:
+def delete_project_embeddings(*args: Any, **kwargs: Any) -> bool:
     from .vector_store import delete_project_embeddings as impl
 
     return impl(*args, **kwargs)
@@ -282,6 +283,15 @@ def _pre_chat_sync(
     # workspace is active, else just the target repo.
     if workspace_config is None:
         return repo_sync, cs.MSG_SYNCING_KNOWLEDGE_GRAPH
+    # A workspace file written before names were checked can still hold a
+    # dotted one; syncing it would merge nodes across projects (#2412).
+    for repo in workspace_config.repos:
+        if (error := project_name_error(repo.project_name)) is not None:
+            _exit_with_error(
+                cs.CLI_ERR_WORKSPACE_PROJECT_NAME.format(
+                    workspace=workspace_config.name, path=repo.path, error=error
+                )
+            )
     workspace_sync = partial(
         _sync_workspace,
         workspace_config,
@@ -797,6 +807,12 @@ def _delete_hash_cache(repo_path: Path) -> None:
     (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
 
 
+def _storable_project_name(value: str | None) -> str | None:
+    if value is not None and (error := project_name_error(value)) is not None:
+        raise typer.BadParameter(error)
+    return value
+
+
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     resolved = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
     if not resolved.exists():
@@ -891,6 +907,7 @@ def start(
         None,
         "--project-name",
         help=ch.HELP_PROJECT_NAME,
+        callback=_storable_project_name,
     ),
     exclude: list[str] | None = typer.Option(
         None,

@@ -56,6 +56,14 @@ PROJECT_NAME_DIGEST_MARKER = "__"
 # Hex digits after the marker. Shared so `derive_project_name` and the
 # scoping filter that recognises its output cannot drift apart.
 PROJECT_NAME_DIGEST_LEN = 8
+# Qualified names are `<project>.<package path>.<module>.<symbol>` and nodes
+# merge on them, so a `.` in a project name aliases another project's package
+# (issue #2412).
+ERR_PROJECT_NAME_HAS_SEPARATOR = (
+    "Project name '{name}' contains '.', which separates the parts of a "
+    "qualified name: its nodes would merge with those of a package at the "
+    "same path in another project. Use a name without '.', e.g. '{suggestion}'."
+)
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"

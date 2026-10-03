@@ -76,6 +76,11 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_WORKSPACE_PROJECT_NAME = (
+    "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
+    "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
+    "`cgr workspace add-repo {workspace} {path} --project-name <name>`."
+)
 CLI_ERR_CAPTURE_UNKNOWN = (
     "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
     "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
