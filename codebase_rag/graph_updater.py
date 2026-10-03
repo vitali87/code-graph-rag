@@ -9,7 +9,7 @@ import secrets
 import stat
 import sys
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -2105,12 +2105,13 @@ class GraphUpdater:
         if all(module_qn in mapping for module_qn in module_paths):
             # A full build or a reused updater: every map is already held.
             return
-        pending = deque(mapping)
+        # The walk is a closure, so the order scopes are taken in is moot.
+        pending = list(mapping)
         walked = set(pending)
         tried: set[str] = set()
         restored = 0
         while pending:
-            scope = pending.popleft()
+            scope = pending.pop()
             for target in list(mapping.get(scope, {}).values()):
                 holder = _module_holding(target, module_paths)
                 if holder is None:
