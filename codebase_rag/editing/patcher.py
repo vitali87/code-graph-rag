@@ -131,6 +131,10 @@ _IDENTIFIER_TYPES = frozenset(
         cs.PATCH_TS_FIELD_IDENTIFIER,
         cs.PATCH_TS_NAMESPACE_IDENTIFIER,
         cs.PATCH_TS_STATEMENT_IDENTIFIER,
+        # tree-sitter-php spells every function, method, class and call name
+        # as a `name` node (issue #2768). No other loaded grammar has that
+        # node type, and a `$var` is a `variable_name`, which stays out.
+        cs.TS_PHP_NAME,
     }
 )
 
