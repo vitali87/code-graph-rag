@@ -8,7 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
@@ -359,6 +360,7 @@ def _start_update_graph(
     capture: list[str] | None,
     skip_embeddings: bool | None,
     assume_yes: bool,
+    defer_workspace_sync: bool,
 ) -> bool:
     """`start --update-graph`: sync, and say whether the assistant opens next.
 
@@ -366,18 +368,21 @@ def _start_update_graph(
     --workspace, each of the workspace's repositories is synced under its own
     name, the set the chat's own sync uses, and the assistant then opens
     scoped to the workspace (#2418). `--repo-path`, defaulting to the current
-    directory, is not one of them.
+    directory, is not one of them. With `-a` that sync is deferred: the
+    single query runs it, keeping stdout for the answer (see
+    `_run_single_query`).
     """
     if workspace_config is not None:
-        _sync_workspace(
-            workspace_config,
-            batch_size,
-            exclude,
-            capture=capture,
-            skip_embeddings=skip_embeddings,
-            assume_yes=assume_yes,
-        )
-        _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        if not defer_workspace_sync:
+            _sync_workspace(
+                workspace_config,
+                batch_size,
+                exclude,
+                capture=capture,
+                skip_embeddings=skip_embeddings,
+                assume_yes=assume_yes,
+            )
+            _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return True
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
@@ -433,6 +438,16 @@ def _start_active_projects(
     return active_projects
 
 
+@contextmanager
+def _console_on_stderr() -> Iterator[None]:
+    console = app_context.console
+    app_context.console = terminal_aware_console(stderr=True)
+    try:
+        yield
+    finally:
+        app_context.console = console
+
+
 def _run_single_query(
     target_repo_path: str,
     batch_size: int,
@@ -442,7 +457,11 @@ def _run_single_query(
     sync_task: Callable[[], None] | None,
 ) -> None:
     if sync_task is not None:
-        sync_task()
+        # stdout carries only the answer, which `main_single_query` prints
+        # after routing its logs to stderr: the sync reports there too
+        # (Greptile review of PR 2507).
+        with _console_on_stderr():
+            sync_task()
     main_single_query(
         target_repo_path,
         batch_size,
@@ -489,6 +508,12 @@ def _launch_session(
         app_context.console.print(
             style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
         )
+
+
+def _sync_before_session(no_sync: bool, update_graph: bool, answering: bool) -> bool:
+    # Past `_start_update_graph`, `update_graph` means a workspace's, which
+    # has synced every repository already unless `-a` deferred that sync.
+    return not no_sync and (answering or not update_graph)
 
 
 def _exit_if_output_unusable(output: str | None, update_graph: bool) -> None:
@@ -1110,13 +1135,13 @@ def start(
         capture=capture,
         skip_embeddings=no_embeddings or None,
         assume_yes=yes,
+        defer_workspace_sync=bool(ask_agent),
     ):
         return
 
     sync_task: Callable[[], None] | None = None
     sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
-    # A workspace's `--update-graph` has just synced every repository.
-    if not (no_sync or update_graph):
+    if _sync_before_session(no_sync, update_graph, bool(ask_agent)):
         sync_task, sync_message = _pre_chat_sync(
             workspace_config,
             partial(

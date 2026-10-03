@@ -11,6 +11,7 @@ there, while the workspace's own repositories were not synced at all.
 from __future__ import annotations
 
 import inspect
+import json
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -22,6 +23,7 @@ from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.cli import _launch_session, _run_graph_sync, app
+from codebase_rag.cli_runtime import app_context
 from codebase_rag.workspaces import add_repo, create_workspace, load_workspace
 
 runner = CliRunner()
@@ -263,9 +265,116 @@ def test_the_workspace_assistant_reads_its_options_after_update_graph(
     )
 
     assert result.exit_code == 0, result.output
-    assert sync.call_count == 2
     launched = _launched_with(session)
     assert {name: launched[name] for name in expected} == expected
+    sync_task = launched["sync_task"]
+    if callable(sync_task):
+        # `-a` leaves the workspace's sync to the query, which keeps stdout
+        # for the answer (see the stdout tests below).
+        sync_task()
+    assert sync.call_count == 2
+
+
+_ANSWER = "main calls run"
+
+
+@pytest.fixture
+def ask(sync: MagicMock) -> Generator[MagicMock, None, None]:
+    # The sync prints what `_run_graph_sync` prints when it is done, and the
+    # query prints its answer the way `main_single_query` does, so stdout
+    # holds whatever a caller of `-a` would read.
+    def sync_done(**kwargs: object) -> None:
+        app_context.console.print(
+            cs.CLI_MSG_SYNC_DONE.format(project=kwargs["project_name"], elapsed=0.0)
+        )
+
+    def answer(
+        repo_path: str,
+        batch_size: int,
+        question: str,
+        active_projects: list[str] | None = None,
+        output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
+    ) -> None:
+        if output_format == cs.QueryFormat.JSON:
+            print(json.dumps({"query": question, "response": _ANSWER}))
+        else:
+            print(_ANSWER)
+
+    sync.side_effect = sync_done
+    with patch("codebase_rag.cli.main_single_query", side_effect=answer) as query:
+        yield query
+
+
+@pytest.fixture
+def git_cwd(shop: tuple[Path, Path, Path]) -> Path:
+    # A Git checkout to start from, so `--repo-path`'s own warning stays out.
+    _, _, elsewhere = shop
+    (elsewhere / ".git").mkdir()
+    return elsewhere
+
+
+def test_a_workspace_update_graph_answer_in_json_is_all_of_stdout(
+    sync: MagicMock, ask: MagicMock, git_cwd: Path
+) -> None:
+    # Greptile review of PR 2507: the workspace's sync printed its progress
+    # and "Graph update completed!" to stdout ahead of the JSON payload.
+    result = runner.invoke(
+        app,
+        _start(
+            git_cwd,
+            *("--workspace", "shop", "--update-graph"),
+            *("-a", "where is main?", "--output-format", "json"),
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"query": "where is main?", "response": _ANSWER}
+    assert sync.call_count == 2
+    ask.assert_called_once()
+
+
+def test_a_workspace_update_graph_answer_in_text_is_all_of_stdout(
+    sync: MagicMock, ask: MagicMock, git_cwd: Path
+) -> None:
+    result = runner.invoke(
+        app,
+        _start(
+            git_cwd, "--workspace", "shop", "--update-graph", "-a", "where is main?"
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{_ANSWER}\n"
+    assert sync.call_count == 2
+    # The progress is still shown, on stderr.
+    assert "Syncing workspace 'shop'" in result.stderr
+
+
+def test_an_interactive_workspace_update_graph_still_shows_its_progress(
+    sync: MagicMock, session: MagicMock, git_cwd: Path
+) -> None:
+    # Negative: without `-a`, the sync runs before the chat opens, on stdout.
+    result = runner.invoke(
+        app, _start(git_cwd, "--workspace", "shop", "--update-graph")
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Syncing workspace 'shop'" in result.stdout
+    assert cs.CLI_MSG_GRAPH_UPDATED in result.stdout
+    assert sync.call_count == 2
+    assert _launched_with(session)["sync_task"] is None
+
+
+def test_a_repository_update_graph_still_reports_on_stdout(
+    sync: MagicMock, session: MagicMock, tmp_path: Path
+) -> None:
+    # Negative: a repository's `--update-graph` is unchanged.
+    result = runner.invoke(app, _start(tmp_path, "--update-graph"))
+
+    assert result.exit_code == 0, result.output
+    assert cs.CLI_MSG_GRAPH_UPDATED in result.stdout
+    sync.assert_called_once()
+    session.assert_not_called()
 
 
 @pytest.mark.parametrize(
