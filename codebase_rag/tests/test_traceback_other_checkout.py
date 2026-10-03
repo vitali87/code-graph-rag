@@ -930,3 +930,75 @@ def test_a_windows_frame_in_an_unindexed_directory_stays_unknown(tmp_path):
 
     assert _qns(report) == [*_resolved(_P)[:5], None, None, None]
     assert _reasons(report)[5:] == [_UNKNOWN, _UNKNOWN, _UNKNOWN]
+
+
+# --- one Windows checkout root spelled in two cases ------------------------
+# `sys.path` can hold `c:\users\dev\tbdemo` while a script was started as
+# `C:\Users\dev\tbdemo\...`: two spellings of one root. Each frame votes for
+# the root it spells, so counted apart the votes tie and no root is inferred.
+
+
+def _two_cased_roots(text: str) -> str:
+    """The `pricing.py` frames under a lowercased spelling of the root."""
+    lowered = _WINDOWS_ROOT.lower()
+    return text.replace(
+        f"{_WINDOWS_ROOT}\\shop\\pricing.py", f"{lowered}\\shop\\pricing.py"
+    )
+
+
+def test_a_root_spelled_in_two_cases_still_anchors_the_frames_main_resolved(
+    tmp_path,
+):
+    """Main inferred the root from the `cli.py` frames alone, since the
+    `SHOP\\pricing.py` frames named no indexed path; once those frames vote
+    too, a vote split by case must not lose what main resolved."""
+    text = _recased(
+        _two_cased_roots(_shop_traceback(_WINDOWS_ROOT, "\\")), "SHOP", "pricing.py"
+    )
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert report.inferred_root is not None
+    assert report.inferred_root.casefold() == _WINDOWS_LOCAL_ROOT.casefold()
+    assert _qns(report)[2:5] == _resolved(_P)[2:5]
+
+
+def test_frames_spelling_one_windows_root_in_two_cases_all_resolve(tmp_path):
+    text = _two_cased_roots(_shop_traceback(_WINDOWS_ROOT, "\\"))
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == _resolved(_P)
+    assert report.inferred_root == _WINDOWS_LOCAL_ROOT
+
+
+def test_two_different_windows_roots_still_do_not_merge(tmp_path):
+    """Folding case joins spellings of one root, never two roots."""
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "C:\\Users\\dev\\tbdemo\\shop\\cli.py", line 23, in main\n'
+        '  File "C:\\Users\\dev\\other\\shop\\pricing.py", line 6, in load_rate\n'
+        "ValueError: boom\n"
+    )
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == [None, None]
+    assert _reasons(report) == [_OUTSIDE, _OUTSIDE]
+    assert report.inferred_root is None
+
+
+def test_posix_roots_differing_in_case_still_do_not_merge(tmp_path):
+    """On POSIX `/srv/App` and `/srv/app` are two directories."""
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/srv/App/shop/cli.py", line 23, in main\n'
+        '  File "/srv/app/shop/pricing.py", line 6, in load_rate\n'
+        "ValueError: boom\n"
+    )
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == [None, None]
+    assert _reasons(report) == [_OUTSIDE, _OUTSIDE]
+    assert report.inferred_root is None
