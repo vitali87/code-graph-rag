@@ -238,5 +238,7 @@ def test_a_json_scalar_is_read_where_its_grammar_ends(
 
 @pytest.mark.parametrize("data", [b"nul", b".5", b"+1", b"-", b"True", b"", b'"4"'])
 def test_text_that_starts_no_json_scalar_is_refused(data: bytes) -> None:
+    cursor = _Cursor(data)
+
     with pytest.raises(ValueError):
-        _Cursor(data).scalar()
+        cursor.scalar()
