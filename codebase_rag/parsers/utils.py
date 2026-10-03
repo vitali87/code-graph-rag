@@ -1393,13 +1393,19 @@ def _record_method_overrides(
         )
 
 
+class _CppMember(NamedTuple):
+    qualified_name: str
+    signature: OverloadSignature | None
+    declared_in_class: bool
+
+
 def _register_cpp_member_qn(
     method_node: ASTNode,
     natural_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
     start_line: int,
     start_col: int,
-) -> tuple[str, OverloadSignature | None]:
+) -> _CppMember:
     # A C++ member is seen twice, in-class and out of it, so the plain
     # `@line` dedup would split one member in two; the signature keeps one
     # node per overload instead (issue #2455). Without a readable parameter
@@ -1407,17 +1413,18 @@ def _register_cpp_member_qn(
     # Local import: cpp.overloads imports this module for its decode helper.
     from .cpp.overloads import cpp_overload_signature, declared_in_class_body
 
+    declared = declared_in_class_body(method_node)
     signature = cpp_overload_signature(method_node)
     if signature is None:
-        return natural_qn, None
+        return _CppMember(natural_qn, None, declared)
     qualified_name = function_registry.register_overload_qn(
         natural_qn,
         signature,
         start_line,
         start_col,
-        declared_in_class=declared_in_class_body(method_node),
+        declared_in_class=declared,
     )
-    return qualified_name, signature
+    return _CppMember(qualified_name, signature, declared)
 
 
 def ingest_method(
@@ -1457,15 +1464,16 @@ def ingest_method(
     warn_if_name_truncated(method_node, method_name, file_path)
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    overload_signature = None
+    cpp_member = None
     if language == cs.SupportedLanguage.CPP:
-        method_qn, overload_signature = _register_cpp_member_qn(
+        cpp_member = _register_cpp_member_qn(
             method_node,
             method_qn,
             function_registry,
             method_start_line,
             method_start_col,
         )
+        method_qn = cpp_member.qualified_name
     else:
         method_qn = function_registry.register_unique_qn(
             method_qn, method_start_line, method_start_col
@@ -1503,8 +1511,12 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-    if overload_signature is not None:
-        method_props[cs.KEY_SIGNATURE] = overload_signature.text
+    if cpp_member is not None and cpp_member.signature is not None:
+        method_props[cs.KEY_SIGNATURE] = cpp_member.signature.text
+        # Written only by the class body, never as False: node writes merge,
+        # so the definition written after its declaration leaves it standing.
+        if cpp_member.declared_in_class:
+            method_props[cs.KEY_DECLARED_IN_CLASS] = True
     # Python only, and the receiver is deliberately kept: CPython counts the
     # bound `self` in "takes N positional arguments", so a stored list that
     # dropped it would under-count by one on every method (issue #227).

@@ -8,16 +8,25 @@
 # definition still share one node.
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _MockIngestor, get_relationships, run_updater
+from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
+from codebase_rag.tests.conftest import (
+    _MockIngestor,
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 from codebase_rag.types_defs import NodeType, OverloadSignature
 from codebase_rag.utils.cpp_signatures import signature_arity
 from evals.cgr_graph import _StatefulIngestor
@@ -370,6 +379,41 @@ def test_an_override_matching_no_base_signature_is_not_given_the_plain_name(
     }
 
 
+def test_an_override_of_another_arity_is_not_given_the_lone_base_overload(
+    temp_repo: Path,
+) -> None:
+    # One base `f`, so nothing to confuse it with, but `f(int, int)` takes two
+    # arguments where it takes one: a hiding member, not an override.
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "hide.cpp": (
+                "class B1 { public: virtual int f(int a) { return a; } };\n"
+                "class D1 : public B1 { public: int f(int a, int b) { return 0; } };\n"
+            )
+        },
+    )
+    ingestor = _index(root)
+
+    assert not {
+        edge for edge in _overrides(ingestor) if edge[0] == f"{PROJECT}.hide.D1.f"
+    }
+
+
+def test_a_definition_of_another_arity_is_not_paired_with_the_lone_declaration() -> (
+    None
+):
+    registry = FunctionRegistryTrie()
+    qn = registry.register_overload_qn(
+        "p.C.f", OverloadSignature("(int)", 1), 3, declared_in_class=True
+    )
+    registry[qn] = NodeType.METHOD
+    assert (
+        registry.register_overload_qn("p.C.f", OverloadSignature("(int,int)", 2), 9)
+        == "p.C.f@9"
+    )
+
+
 # --- negative: what must not change --------------------------------------
 
 
@@ -517,6 +561,49 @@ def test_respelled_definitions_of_an_overloaded_member_pair_with_their_declarati
 )
 def test_arity_read_back_from_a_stored_signature(text: str, arity: int) -> None:
     assert signature_arity(text) == arity
+
+
+def test_an_override_spelled_through_a_typedef_still_links_to_the_lone_base(
+    temp_repo: Path,
+) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "tdef.cpp": (
+                "typedef int Alias;\n"
+                "class B2 { public: virtual int f(int a) { return a; } };\n"
+                "class D2 : public B2 { public: int f(Alias a) override { return 0; } };\n"
+            )
+        },
+    )
+    ingestor = _index(root)
+
+    assert (f"{PROJECT}.tdef.D2.f", f"{PROJECT}.tdef.B2.f") in _overrides(ingestor)
+
+
+def test_a_typedef_respelled_definition_of_a_lone_member_stays_one_node(
+    temp_repo: Path,
+) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "one.h": (
+                "typedef int Count;\n"
+                "class One {\n"
+                "public:\n"
+                "  int f(Count n, int base = 0);\n"
+                "};\n"
+            ),
+            "one.cpp": (
+                '#include "one.h"\nint One::f(int n, int base) { return n; }\n'
+            ),
+        },
+    )
+    ingestor = _index(root)
+
+    methods = _final_methods(ingestor, ".One.f")
+    assert set(methods) == {f"{PROJECT}.one.h.One.f"}
+    assert methods[f"{PROJECT}.one.h.One.f"][cs.KEY_PATH] == "one.cpp"
 
 
 def test_same_name_in_different_classes_is_not_an_overload(temp_repo: Path) -> None:
@@ -722,6 +809,41 @@ def test_incremental_respelled_definition_matches_a_clean_index(
     assert incremental[:2] == clean[:2]
 
 
+# A declaration returning a reference is not read from the class body, so
+# these overloads are known only from their definitions. A definition added
+# beside the one already indexed is a new overload, not the old one's twin.
+VREF_H = """class V {
+public:
+  int& at(int i);
+  int& at(long i);
+  int d[4];
+};
+"""
+VREF_CPP = """#include "vref.h"
+int& V::at(int i) { return d[i]; }
+"""
+VREF_CPP_EDITED = VREF_CPP + "int& V::at(long i) { return d[i]; }\n"
+
+
+@pytest.mark.parametrize("mode", ["run", "reingest"])
+def test_incremental_definition_only_overload_matches_a_clean_index(
+    temp_repo: Path, mode: str
+) -> None:
+    incremental, clean = _incremental_and_clean(
+        temp_repo,
+        {"vref.h": VREF_H, "v.cpp": VREF_CPP},
+        "v.cpp",
+        VREF_CPP_EDITED,
+        mode,
+    )
+    assert {qn for qn in clean[2] if ".V.at" in qn} == {
+        f"{PROJECT}.vref.V.at",
+        f"{PROJECT}.vref.V.at@3",
+    }
+    assert incremental[2] == clean[2]
+    assert incremental[:2] == clean[:2]
+
+
 def test_warm_reingest_of_a_definition_file_keeps_each_overload(
     temp_repo: Path,
 ) -> None:
@@ -737,3 +859,181 @@ def test_warm_reingest_of_a_definition_file_keeps_each_overload(
         f"{PROJECT}.sep.h.Sep.g": ("sep.cpp", 4, "(int)"),
         f"{PROJECT}.sep.h.Sep.g@4": ("sep.cpp", 3, "(double)"),
     }
+
+
+# --- the issue's setup: a compile_commands.json, so libclang runs ----------
+
+libclang = pytest.mark.skipif(
+    not cpp_frontend_available(), reason="libclang not available"
+)
+
+# The issue reproduced the collapse "with the libclang frontend enabled": a
+# compile_commands.json beside the sources and the default CPP_FRONTEND, which
+# is HYBRID. Tree-sitter still names every definition there; libclang adds
+# macro nodes and the calls only an expansion shows, joined to tree-sitter's
+# spans by location, so those land on the exact overload.
+LIBCLANG_SEP_H = SEP_H + "#define CALL_G(s, x) (s).g(x)\n"
+LIBCLANG_SEP_CPP = SEP_CPP + (
+    "int use_macro_int() { Sep s; return CALL_G(s, 1); }\n"
+    "int use_macro_dbl() { Sep s; return CALL_G(s, 2.0); }\n"
+)
+
+
+def _write_compdb(root: Path, sources: tuple[str, ...]) -> None:
+    (root / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(root),
+                    "arguments": ["c++", "-std=c++17", f"-I{root}", str(root / src)],
+                    "file": str(root / src),
+                }
+                for src in sources
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+@libclang
+def test_hybrid_libclang_setup_gives_each_overload_its_node(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    root = _write(
+        temp_repo / PROJECT,
+        {"inl.cpp": INL_CPP, "sep.h": LIBCLANG_SEP_H, "sep.cpp": LIBCLANG_SEP_CPP},
+    )
+    _write_compdb(root, ("inl.cpp", "sep.cpp"))
+    ingestor = _index(root)
+
+    # The macro node exists only because libclang ran.
+    functions = get_qualified_names(get_nodes(ingestor, cs.NodeLabel.FUNCTION.value))
+    assert f"{PROJECT}.sep.h.CALL_G" in functions
+    assert set(_final_methods(ingestor, ".Inline.f")) == {
+        f"{PROJECT}.inl.Inline.f",
+        f"{PROJECT}.inl.Inline.f@4",
+    }
+    assert set(_final_methods(ingestor, ".Sep.g")) == {
+        f"{PROJECT}.sep.h.Sep.g",
+        f"{PROJECT}.sep.h.Sep.g@4",
+    }
+    calls = _calls(ingestor)
+    by_caller = {}
+    for src, dst, res in calls:
+        by_caller.setdefault(src.rsplit(".", 1)[-1], set()).add((dst, res))
+    natural = f"{PROJECT}.sep.h.Sep.g"
+    assert by_caller["use_sep"] == {
+        (natural, cs.EdgeResolution.OVERLOAD),
+        (f"{natural}@4", cs.EdgeResolution.OVERLOAD),
+    }
+    # libclang resolved the overload inside each expansion: one edge each,
+    # to the overload the argument selects.
+    assert {dst for dst, _ in by_caller["use_macro_int"]} - {
+        f"{PROJECT}.sep.h.CALL_G"
+    } == {natural}
+    assert {dst for dst, _ in by_caller["use_macro_dbl"]} - {
+        f"{PROJECT}.sep.h.CALL_G"
+    } == {f"{natural}@4"}
+
+
+# `CPP_FRONTEND=libclang` names definitions itself. It keyed a member by its
+# plain qn too, so it collapsed overloads the same way; it now names each one
+# exactly as the tree-sitter path does, and binds every call to the overload
+# libclang resolved.
+PURE_INL_CPP = INL_CPP.replace(
+    "int use_inline() { Inline i; return", "int use_inline(Inline& i) { return"
+)
+PURE_SEP_H = """class Sep {
+public:
+  int g(int a);
+  int g(double a);
+  Sep(int n);
+  Sep(const Sep& o);
+  void k() const;
+  void k();
+};
+"""
+PURE_SEP_CPP = """#include "sep.h"
+int Sep::g(int a) { return a; }
+int Sep::g(double a) { return (int)a; }
+Sep::Sep(int n) {}
+Sep::Sep(const Sep& o) {}
+void Sep::k() const {}
+void Sep::k() {}
+int use_sep(Sep& s) { s.k(); return s.g(1) + s.g(2.0); }
+"""
+PURE_BOX_CPP = """template <typename T> class Box {
+public:
+  void put(T v) { v_ = v; }
+  void put(T a, T b) { v_ = a; }
+  T v_;
+};
+int use_box(Box<int>& b) { b.put(1); b.put(1, 2); return 0; }
+"""
+
+
+def _pure_libclang_project(root: Path) -> Path:
+    _write(
+        root,
+        {
+            "inl.cpp": PURE_INL_CPP,
+            "sep.h": PURE_SEP_H,
+            "sep.cpp": PURE_SEP_CPP,
+            "box.cpp": PURE_BOX_CPP,
+        },
+    )
+    _write_compdb(root, ("inl.cpp", "sep.cpp", "box.cpp"))
+    return root
+
+
+@libclang
+def test_pure_libclang_frontend_names_overloads_as_tree_sitter_does(
+    temp_repo: Path,
+) -> None:
+    root = _pure_libclang_project(temp_repo / PROJECT)
+    tree_sitter = _index(root)
+    frontend = _MockIngestor()
+    run_cpp_frontend(frontend, root, root.name, root)
+
+    label = cs.NodeLabel.METHOD.value
+    expected = {
+        f"{PROJECT}.inl.Inline.f",
+        f"{PROJECT}.inl.Inline.f@4",
+        f"{PROJECT}.sep.h.Sep.g",
+        f"{PROJECT}.sep.h.Sep.g@4",
+        f"{PROJECT}.sep.h.Sep.Sep",
+        f"{PROJECT}.sep.h.Sep.Sep@6",
+        f"{PROJECT}.sep.h.Sep.k",
+        f"{PROJECT}.sep.h.Sep.k@8",
+        f"{PROJECT}.box.Box.put",
+        f"{PROJECT}.box.Box.put@4",
+    }
+    frontend_methods = get_qualified_names(get_nodes(frontend, label))
+    assert frontend_methods >= expected
+    assert frontend_methods == get_qualified_names(get_nodes(tree_sitter, label))
+
+
+@libclang
+def test_pure_libclang_frontend_binds_each_call_to_its_overload(
+    temp_repo: Path,
+) -> None:
+    root = _pure_libclang_project(temp_repo / PROJECT)
+    frontend = _MockIngestor()
+    run_cpp_frontend(frontend, root, root.name, root)
+
+    nodes = get_qualified_names(get_nodes(frontend, cs.NodeLabel.METHOD.value))
+    calls = {(src, dst) for src, dst, _ in _calls(frontend)}
+    sep = f"{PROJECT}.sep.h.Sep"
+    assert {dst for src, dst in calls if src == f"{PROJECT}.sep.use_sep"} == {
+        f"{sep}.g",
+        f"{sep}.g@4",
+        # `s` is a non-const reference, so the non-const `k()` is called.
+        f"{sep}.k@8",
+    }
+    # A call into an instantiated template resolves to the member libclang
+    # instantiated, which carries the template's declaration: it lands on the
+    # emitted overload, never on a name no node holds.
+    box_targets = {dst for src, dst in calls if src == f"{PROJECT}.box.use_box"}
+    assert box_targets == {f"{PROJECT}.box.Box.put", f"{PROJECT}.box.Box.put@4"}
+    assert box_targets <= nodes

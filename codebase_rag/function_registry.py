@@ -188,7 +188,10 @@ class FunctionRegistryTrie:
         return self._overloads.get(qualified_name)
 
     def restore_overload(
-        self, qualified_name: QualifiedName, signature_text: str
+        self,
+        qualified_name: QualifiedName,
+        signature_text: str,
+        declared_in_class: bool,
     ) -> None:
         """Re-record an overload read back from the graph on an incremental run.
 
@@ -202,10 +205,12 @@ class FunctionRegistryTrie:
         self._overloads.setdefault(
             qualified_name, overload_signature_from_text(signature_text)
         )
-        # Its declaration was not re-parsed, so the record is the only
-        # evidence of it: count it as declared, or a definition respelled
-        # since the last run would mint a second node.
-        self._declared_overloads.add(qualified_name)
+        # Only a member its class body declared is a declaration a definition
+        # may pair with by respelling. One known only from a definition is
+        # just that definition, and treating it as declared would hand a
+        # different overload defined beside it the same node.
+        if declared_in_class:
+            self._declared_overloads.add(qualified_name)
         natural = qn_markers.natural_qn(qualified_name)
         if natural != qualified_name:
             bucket = self._duplicates.setdefault(natural, [natural])

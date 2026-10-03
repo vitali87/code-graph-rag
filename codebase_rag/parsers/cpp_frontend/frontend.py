@@ -319,6 +319,7 @@ class _Collector:
         class_qn = self.resolver.class_qn(parent)
         if class_qn is None:
             return None
+        qn = self.resolver.overload_qn(cursor, qn, mint=True)
         self.covered.add(rel)
         name = self.resolver.member_name(cursor)
         self._add_node(
@@ -385,6 +386,9 @@ class _Collector:
         )
         if callee_qn is None:
             return  # callee outside the indexed repo (stdlib, etc.)
+        if callee_label == fc.LABEL_METHOD:
+            # libclang already chose the overload; name that one.
+            callee_qn = self.resolver.overload_qn(callee, callee_qn, mint=False)
         caller = enclosing or self._module_caller(cursor)
         if caller is None:
             return

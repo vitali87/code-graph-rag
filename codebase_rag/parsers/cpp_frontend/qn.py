@@ -101,6 +101,8 @@ class CppQnResolver:
         self._module_qn = build_module_qn_map(
             self.repo_path, project_name, exclude_paths, unignore_paths
         )
+        # {plain method qn: {canonical declaration's (file, line, column): qn}}
+        self._overloads: dict[str, dict[tuple[str, int, int], str]] = {}
 
     def rel_path(self, absolute_file: str) -> str | None:
         try:
@@ -198,3 +200,31 @@ class CppQnResolver:
         if class_qn is None:
             return None
         return cs.SEPARATOR_DOT.join([class_qn, self.member_name(cursor)])
+
+    def overload_qn(self, cursor: Cursor, method_qn: str, mint: bool) -> str:
+        """The qn of the overload `cursor` is, in the tree-sitter path's scheme.
+
+        Every overload of a member shares `method_qn`, so one node stood for
+        all of them (issue #2455). The tree-sitter path keeps the plain name
+        for the first overload its class body declares and gives each other
+        one `@<line>` of that declaration; libclang knows the declaration of
+        any declaration or call target as its canonical cursor, so keying on
+        where that sits reproduces both rules. Only a member the walk visits
+        (`mint`) takes a new name: a call to one it never visits (an implicit
+        constructor, a member of an instantiated template) keeps the plain
+        name it always had rather than target a node nobody emits.
+        """
+        start = cursor.canonical.extent.start
+        key = (start.file.name if start.file else "", start.line, start.column)
+        overloads = self._overloads.setdefault(method_qn, {})
+        if (known := overloads.get(key)) is not None or not mint:
+            return known or method_qn
+        qualified_name = method_qn
+        if overloads:
+            qualified_name = f"{method_qn}{cs.DUP_QN_MARKER}{start.line}"
+            if qualified_name in overloads.values():
+                qualified_name = (
+                    f"{qualified_name}{cs.DUP_QN_COLUMN_MARKER}{start.column - 1}"
+                )
+        overloads[key] = qualified_name
+        return qualified_name

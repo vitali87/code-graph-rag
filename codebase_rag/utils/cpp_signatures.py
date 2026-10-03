@@ -77,9 +77,12 @@ def pick_overload(
 ) -> str | None:
     """The one candidate `signature` names, or None when nothing settles it.
 
-    A verbatim match wins. A lone candidate is taken whatever its spelling,
-    since a member that is not overloaded has nothing to be confused with
-    (a typedef the text cannot see through, `Count` for `int`). Otherwise
+    A verbatim match wins. A lone candidate of the same arity is taken
+    whatever its spelling, since a member that is not overloaded has nothing
+    to be confused with (a typedef the text cannot see through, `Count` for
+    `int`); one of another arity is another function, not a respelling. A
+    declaration's default arguments do not change its arity: they are
+    counted as parameters, as the definition counts them. Otherwise
     the candidates are narrowed first to those whose spelling agrees up to
     qualification, then to those of the same arity, and one survivor is
     taken. Several survivors are a tie that only a guess could break, and a
@@ -89,7 +92,8 @@ def pick_overload(
         if known.text == signature.text:
             return qualified_name
     if len(candidates) == 1:
-        return candidates[0][0]
+        qualified_name, known = candidates[0]
+        return qualified_name if known.arity == signature.arity else None
     for narrowed in (
         [qn for qn, known in candidates if spellings_agree(known.text, signature.text)],
         [qn for qn, known in candidates if known.arity == signature.arity],
