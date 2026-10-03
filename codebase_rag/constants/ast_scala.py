@@ -84,6 +84,17 @@ SCALA_NAMED_PACKAGE_MEMBERS = frozenset(
         TS_SCALA_GIVEN_DEFINITION,
     }
 )
+# The definitions whose names the definition pass puts into a qn, so a class
+# nested in them is named under them (FQN_SCALA_SCOPE_TYPES and the defs).
+SCALA_QN_SCOPE_TYPES = frozenset(
+    {
+        TS_SCALA_CLASS_DEFINITION,
+        TS_SCALA_OBJECT_DEFINITION,
+        TS_SCALA_TRAIT_DEFINITION,
+        TS_SCALA_FUNCTION_DEFINITION,
+        TS_SCALA_FUNCTION_DECLARATION,
+    }
+)
 SCALA_BINDING_DEFINITIONS = frozenset(
     {TS_SCALA_VAL_DEFINITION, TS_SCALA_VAR_DEFINITION}
 )

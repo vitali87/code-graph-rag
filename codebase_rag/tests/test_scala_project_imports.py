@@ -770,6 +770,140 @@ object UseFlat { def make(): C = new C() }
         assert imports == {("Module", f"{SRC}.a.b.C")}, (importer, imports)
 
 
+def test_sibling_blocks_importing_the_same_relative_path_keep_their_own_class(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import model.Item` in `package a { }` and in `package b { }` are two
+    imports of two classes, `a.model.Item` and `b.model.Item`.
+
+    One file-level map per name kept only the second, so the first block's
+    `new Item()` landed on b's class and a's IMPORTS edge was lost.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/a/model/Item.scala": """package a.model
+class Item
+""",
+            "src/main/scala/b/model/Item.scala": """package b.model
+class Item
+""",
+            "src/main/scala/app/Pair.scala": """package a {
+  import model.Item
+  object UseA { def make(): Item = new Item() }
+}
+package b {
+  import model.Item
+  object UseB { def make(): Item = new Item() }
+}
+""",
+        },
+    )
+
+    imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.Pair")
+    use_a = _targets_from(mock_ingestor, "INSTANTIATES", f"{SRC}.app.Pair.UseA.make")
+    use_b = _targets_from(mock_ingestor, "INSTANTIATES", f"{SRC}.app.Pair.UseB.make")
+
+    assert imports == {
+        ("Module", f"{SRC}.a.model.Item"),
+        ("Module", f"{SRC}.b.model.Item"),
+    }, imports
+    assert use_a == {("Class", f"{SRC}.a.model.Item.Item")}, use_a
+    assert use_b == {("Class", f"{SRC}.b.model.Item.Item")}, use_b
+
+
+def test_sibling_blocks_binding_one_name_to_two_classes_resolve_apart(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import a.Item` in `left` and `import b.Item` in `right`: every use in
+    each block (construction, apply, base class, typed receiver) reaches
+    that block's own Item.
+    """
+    item = """case class Item(n: Int) { def size: Int = n }
+"""
+    block = """  package {side} {{
+    import {pkg}.Item
+    class Sub{suffix} extends Item(0)
+    object Use{suffix} {{
+      def make(): Item = new Item(1)
+      def apply(): Item = Item(2)
+      def size(i: Item): Int = i.size
+    }}
+  }}
+"""
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/a/Item.scala": "package a\n" + item,
+            "src/main/scala/b/Item.scala": "package b\n" + item,
+            "src/main/scala/app/Sides.scala": "package outer {\n"
+            + block.format(side="left", pkg="a", suffix="L")
+            + block.format(side="right", pkg="b", suffix="R")
+            + "}\n",
+        },
+    )
+
+    imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.Sides")
+    assert imports == {
+        ("Module", f"{SRC}.a.Item"),
+        ("Module", f"{SRC}.b.Item"),
+    }, imports
+    for suffix, pkg in (("L", "a"), ("R", "b")):
+        item_qn = f"{SRC}.{pkg}.Item.Item"
+        use = f"{SRC}.app.Sides.Use{suffix}"
+        assert _targets_from(mock_ingestor, "INSTANTIATES", f"{use}.make") == {
+            ("Class", item_qn)
+        }
+        assert _targets_from(mock_ingestor, "INSTANTIATES", f"{use}.apply") == {
+            ("Class", item_qn)
+        }
+        assert _targets_from(mock_ingestor, "CALLS", f"{use}.size") == {
+            ("Method", f"{item_qn}.size")
+        }
+        assert _targets_from(
+            mock_ingestor, "INHERITS", f"{SRC}.app.Sides.Sub{suffix}"
+        ) == {("Class", item_qn)}
+
+
+def test_a_block_import_does_not_leak_into_its_sibling_block(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """A name only `left` imports is not bound in `right` or at file level.
+
+    `right` writes `i: Item` with nothing in scope naming it, so its typed
+    selection binds nothing, as before this change.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/a/Item.scala": """package a
+class Item { def size: Int = 1 }
+""",
+            "src/main/scala/app/Sides.scala": """package outer {
+  package left {
+    import a.Item
+    object UseL { def size(i: Item): Int = i.size }
+  }
+  package right {
+    object UseR { def size(i: Item): Int = i.size }
+  }
+}
+""",
+        },
+    )
+
+    left = _targets_from(mock_ingestor, "CALLS", f"{SRC}.app.Sides.UseL.size")
+    right = _targets_from(mock_ingestor, "CALLS", f"{SRC}.app.Sides.UseR.size")
+    imports = _targets_from(mock_ingestor, "IMPORTS", f"{SRC}.app.Sides")
+
+    assert left == {("Method", f"{SRC}.a.Item.Item.size")}, left
+    assert right == set(), right
+    assert imports == {("Module", f"{SRC}.a.Item")}, imports
+
+
 def test_a_root_anchored_import_skips_the_enclosing_packages(
     project: Path, mock_ingestor: MagicMock
 ) -> None:

@@ -930,6 +930,22 @@ class ClassIngestMixin:
         # Only a type declaration is a base: a registered member of the same
         # name (a C# property, a method) is not, however it was reached.
         target_kinds = bt.base_target_kinds(entry.language)
+        if entry.language == cs.SupportedLanguage.SCALA and (
+            (
+                imported := self.import_processor.scala_base_qn(
+                    entry.module_qn,
+                    entry.child_qn,
+                    entry.parent_qn,
+                    entry.base_index,
+                )
+            )
+            is not None
+            and self.function_registry.get(imported) in target_kinds
+        ):
+            # Ahead of the registry check: parse time bound the base by name
+            # alone when only a package block imports it, and a sibling
+            # block's same-named class can be what that found.
+            return imported, False
         if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
@@ -942,18 +958,6 @@ class ClassIngestMixin:
             return self._resolve_deferred_parent_qn(
                 entry._replace(parent_qn=entry.alt_parent_qn, alt_parent_qn=None)
             )
-        if entry.language == cs.SupportedLanguage.SCALA and (
-            (
-                imported := self.import_processor.scala_import_member(
-                    entry.module_qn, entry.parent_qn
-                )
-            )
-            is not None
-            and self.function_registry.get(imported) in target_kinds
-        ):
-            # The base was bound to its import's written path; the path turned
-            # out to name a project package once every file was parsed.
-            return imported, False
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(project_prefix):
             external = entry.parent_qn.replace(

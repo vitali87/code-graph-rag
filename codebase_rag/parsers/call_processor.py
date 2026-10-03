@@ -4419,7 +4419,7 @@ class CallProcessor:
         if receiver_type is None:
             return
         callee_info = self._resolver.resolve_scala_selection(
-            receiver_type, member, ctx.module_qn, ctx.class_context
+            receiver_type, member, ctx.module_qn, ctx.class_context, node.start_byte
         )
         if callee_info is None:
             return
@@ -4611,15 +4611,19 @@ class CallProcessor:
         call_name: str,
         call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
-        if (
-            ctx.language == cs.SupportedLanguage.SCALA
-            and call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION
-            and (class_qn := self._resolver.scala_class_qn(call_name, ctx.module_qn))
-        ):
-            # Named the way the compiler looks it up: an import, the file, its
-            # package's other files. A path-qualified `new shop.Cart()` names
-            # no import, so only the package index reaches it.
-            return cs.NodeLabel.CLASS, class_qn
+        if ctx.language == cs.SupportedLanguage.SCALA:
+            # Named the way the compiler looks it up: the imports in scope at
+            # the call, the file, its package's other files. A path-qualified
+            # `new shop.Cart()` names no import, so only the package index
+            # reaches it.
+            decided, scala_callee = self._resolver.resolve_scala_callee(
+                call_name,
+                ctx.module_qn,
+                call_node.start_byte,
+                constructing=call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION,
+            )
+            if decided:
+                return scala_callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
             return self._resolve_java_callee(ctx, call_node)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:

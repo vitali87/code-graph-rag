@@ -8,7 +8,9 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import (
     ScalaBinding,
+    ScalaClassBases,
     ScalaImportTarget,
+    ScalaPackageBlock,
     ScalaPackageIndex,
     ScalaPackageScan,
 )
@@ -149,6 +151,88 @@ def _mentions(root: Node) -> frozenset[str]:
     return frozenset(names)
 
 
+def _package_block(clause: Node) -> ScalaPackageBlock | None:
+    body = clause.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return None
+    return ScalaPackageBlock(
+        start=body.start_byte,
+        end=body.end_byte,
+        enclosing=scala_enclosing_packages_at(body),
+    )
+
+
+def _package_blocks(root: Node) -> tuple[ScalaPackageBlock, ...]:
+    blocks: list[ScalaPackageBlock] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        # Package clauses sit only at the top level and in package bodies.
+        for child in node.named_children:
+            if child.type == cs.TS_SCALA_PACKAGE_CLAUSE and (
+                block := _package_block(child)
+            ):
+                blocks.append(block)
+                body = child.child_by_field_name(cs.FIELD_BODY)
+                if body is not None:
+                    stack.append(body)
+    return tuple(blocks)
+
+
+def scala_import_block(import_node: Node) -> ScalaPackageBlock | None:
+    """The package block an import is visible in; None for the whole file."""
+    current = import_node.parent
+    while current is not None:
+        if current.type == cs.TS_SCALA_PACKAGE_CLAUSE and (
+            block := _package_block(current)
+        ):
+            return block
+        current = current.parent
+    return None
+
+
+def _written_base(node: Node) -> str | None:
+    # The base as written, qualifier kept and type arguments dropped: the
+    # spelling the class-ingest pass binds (`foo.Service[Int]` -> foo.Service).
+    match node.type:
+        case cs.TS_SCALA_TYPE_IDENTIFIER | cs.TS_SCALA_STABLE_TYPE_IDENTIFIER:
+            return safe_decode_text(node)
+        case cs.TS_SCALA_GENERIC_TYPE:
+            return _written_base(node.child_by_field_name(cs.FIELD_TYPE) or node)
+    return None
+
+
+def _class_bases(root: Node) -> dict[str, ScalaClassBases]:
+    # Keyed the way the definition pass names a class under its module: the
+    # enclosing classes, objects, traits and defs; package blocks add nothing.
+    found: dict[str, ScalaClassBases] = {}
+    stack: list[tuple[Node, tuple[str, ...]]] = [(root, ())]
+    while stack:
+        node, path = stack.pop()
+        for child in node.named_children:
+            child_path = path
+            if child.type in cs.SCALA_QN_SCOPE_TYPES and (
+                name := safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
+            ):
+                child_path = (*path, name)
+                clause = next(
+                    (c for c in child.children if c.type == cs.TS_EXTENDS_CLAUSE),
+                    None,
+                )
+                bases = (
+                    tuple(b for c in clause.children if (b := _written_base(c)))
+                    if clause is not None
+                    else ()
+                )
+                if bases:
+                    found.setdefault(
+                        cs.SEPARATOR_DOT.join(child_path),
+                        ScalaClassBases(child.start_byte, bases),
+                    )
+            stack.append((child, child_path))
+    return found
+
+
 def scan_scala_packages(root: Node) -> ScalaPackageScan:
     """The packages a Scala file declares, opens and the names it mentions."""
     found: dict[str, set[str]] = {}
@@ -157,6 +241,18 @@ def scan_scala_packages(root: Node) -> ScalaPackageScan:
         packages={package: frozenset(names) for package, names in found.items()},
         enclosing=_enclosing_packages(root),
         mentions=_mentions(root),
+        blocks=_package_blocks(root),
+        class_bases=_class_bases(root),
+    )
+
+
+def scala_blocks_at(
+    blocks: tuple[ScalaPackageBlock, ...], position: int
+) -> list[ScalaPackageBlock]:
+    """The package blocks holding byte `position`, innermost first."""
+    return sorted(
+        (block for block in blocks if block.start <= position < block.end),
+        key=lambda block: block.end - block.start,
     )
 
 
@@ -410,3 +506,26 @@ def resolve_scala_import(
         if (target := _resolve_absolute(candidate, index)) is not None:
             return target
     return None
+
+
+def bind_scala_import(
+    mapping: dict[str, str],
+    local_name: str,
+    path: str,
+    target: ScalaImportTarget | None,
+) -> None:
+    """Bind one written import into an import map, resolved when it can be."""
+    is_wildcard = local_name.startswith(cs.SCALA_WILDCARD_PREFIX)
+    if target is None or (target.member_qn is None and not is_wildcard):
+        # Not the project's, or `import a.b` binding the package itself,
+        # which names no single qn.
+        mapping[local_name] = path
+    elif target.member_qn is None:
+        # A package's members are spread over the files declaring it; each
+        # one's own wildcard lets the resolver find them.
+        for module_qn in sorted(target.declaring):
+            mapping[f"{cs.SCALA_WILDCARD_PREFIX}{module_qn}"] = module_qn
+    elif is_wildcard:
+        mapping[f"{cs.SCALA_WILDCARD_PREFIX}{target.member_qn}"] = target.member_qn
+    else:
+        mapping[local_name] = target.member_qn

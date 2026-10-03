@@ -939,6 +939,22 @@ class DeferredImportEdge(NamedTuple):
     site: PropertyDict | None = None
 
 
+class ScalaPackageBlock(NamedTuple):
+    """The body of one `package p { ... }` block, as a byte span."""
+
+    start: int
+    end: int
+    # The packages its body opens, innermost first, for relative lookups.
+    enclosing: tuple[str, ...]
+
+
+class ScalaClassBases(NamedTuple):
+    """A Scala class's `extends ... with ...` bases, as written, and its start."""
+
+    point: int
+    bases: tuple[str, ...]
+
+
 class ScalaPackageScan(NamedTuple):
     """What one Scala file declares and mentions (issue #2450).
 
@@ -954,6 +970,30 @@ class ScalaPackageScan(NamedTuple):
     # Every name the file writes outside its import and package clauses: the
     # evidence that pins a wildcard import to the modules actually used.
     mentions: frozenset[str]
+    # Every `package p { ... }` block: sibling blocks see different packages.
+    blocks: tuple[ScalaPackageBlock, ...]
+    # Class qn relative to the module -> where it sits and its bases as
+    # written, so a base resolves through the imports of its own block.
+    class_bases: dict[str, ScalaClassBases]
+
+
+class ScalaImportBinding(NamedTuple):
+    """One name a Scala import binds, where it is visible, and its site."""
+
+    local_name: str
+    path: str
+    # The packages the import sits in, innermost first.
+    enclosing: tuple[str, ...]
+    # The package block the import is visible in; None for the whole file.
+    block: ScalaPackageBlock | None
+    site: PropertyDict | None
+
+
+class ScalaBlockImports(NamedTuple):
+    """The resolved import map of one package block."""
+
+    block: ScalaPackageBlock
+    mapping: dict[str, str]
 
 
 class ScalaBinding(NamedTuple):
