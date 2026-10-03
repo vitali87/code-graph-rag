@@ -254,6 +254,14 @@ RENAME_IMPORT_KEYWORDS = frozenset(
 )
 RENAME_IMPORT_ALIAS = "as"
 RENAME_IMPORT_ALL = "*"
+# Where a bare name reaches a function of another file only through an
+# import: a bare `sorted(xs)` there that imports no project `sorted` is the
+# builtin. Go, Java, C#, Scala and their like see a same-package function
+# with no import, Dart imports a library whole, and a Lua global is shared
+# by every file, so there a bare name is held to the plan as before.
+RENAME_IMPORT_REQUIRED_LANGUAGES = frozenset(
+    {SupportedLanguage.PYTHON, SupportedLanguage.RUST, *JS_TS_LANGUAGES}
+)
 # How far above a binding its declaration's type and value may sit:
 # `Parse* p = ...` puts `p` three levels under the declaration.
 RENAME_DECLARATION_DEPTH = 3

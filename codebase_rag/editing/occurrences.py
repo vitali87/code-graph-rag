@@ -60,6 +60,8 @@ _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
 _TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
 # A name as written, qualified or not: `Cache`, `other.Cache`, `a::Parse`.
+# Where a statement may import every name of a module: `import *`, `::*`.
+_WILDCARD_IMPORT = re.compile(rb"\bimport\s*\(?\s*\*|::\s*\*")
 _SPELLING = re.compile(rb"\w+(?:\s*(?:::|\.|\\)\s*\w+)*")
 _SEPARATORS = re.compile(
     "|".join(re.escape(separator) for separator in cs.RENAME_TYPE_SEPARATORS)
@@ -431,6 +433,45 @@ class _File:
             return not self._contested(name) or Path(self.path).parent in owner_dirs
         return self._is_home(name, bound)
 
+    def bare_function_use(self, token: Node) -> bool | None:
+        """Whether a bare token names the target function. Where a name
+        reaches another file's function only through an import (Python,
+        JS/TS, Rust), it does so outside the function's own file only through
+        an import of it: `sorted(xs)` that imports no project `sorted` is the
+        builtin. A star import may bring it in, so one from elsewhere keeps
+        the use as refusal-only evidence (False)."""
+        if (
+            self.path == self.target.path
+            or self.language not in cs.RENAME_IMPORT_REQUIRED_LANGUAGES
+        ):
+            return True
+        name = self.target.name
+        statement = _import_statement(token)
+        if statement is not None:
+            paths = self._read(statement).paths
+            return True if self._is_home(name, paths) else None
+        bound = self._bound_at(name, token.start_byte)
+        if bound is None:
+            return None
+        if not isinstance(bound, _Unbound):
+            return True if self._is_home(name, bound) else None
+        if not self.wildcards:
+            return None
+        return all(self._is_home(name, paths) for paths in self.wildcards)
+
+    @cached_property
+    def wildcards(self) -> tuple[tuple[ModulePath, ...], ...]:
+        """The modules the file imports every name of, each as the paths it
+        may be: `from pkg.util import *`, `use crate::util::*`."""
+        found: dict[tuple[int, int], tuple[tuple[ModulePath, ...], ...]] = {}
+        for match in _WILDCARD_IMPORT.finditer(self.source):
+            node = self.root.descendant_for_byte_range(match.start(), match.end())
+            statement = None if node is None else _import_statement(node)
+            if statement is not None:
+                span = (statement.start_byte, statement.end_byte)
+                found[span] = self._read(statement).wildcards
+        return tuple(paths for wildcards in found.values() for paths in wildcards)
+
     def is_home_module(self, spelling: str, at: int) -> bool:
         """Whether a qualifier written at byte `at` (`util`, `u`, `pkg.util`)
         is the module defining the target function."""
@@ -552,7 +593,7 @@ def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
     `util::helper`, a name the file imports the module as). Through anything
     else it is another object's method: `d.get(x)`, `subprocess.run(...)`."""
     if access is _Access.BARE:
-        return True
+        return file.bare_function_use(token)
     receiver = _receiver_node(token)
     if receiver is not None and file.is_home_module(
         _text(receiver), receiver.start_byte
@@ -566,28 +607,42 @@ def _method_use(file: _File, token: Node, access: _Access, called: bool) -> bool
     it only may (a call through an object of unknown type, in a file that
     may hold one of the class), None where it does not."""
     if access is _Access.BARE:
-        if not called or file.language not in _IMPLICIT_RECEIVER_LANGUAGES:
-            return None
-        if file.in_owner_class(token) or file.imports_method:
-            return True
-        return False if file.may_hold_owner else None
-    receiver = _receiver_node(token)
-    name = None if receiver is None else _last_name(receiver)
-    # `Cache().get()` builds one and calls it: the class itself.
-    if receiver is not None and file.is_owner(
-        _text(receiver).removesuffix(cs.EMPTY_PARENS), receiver.start_byte
-    ):
-        return True
+        return _bare_method_use(file, token, called)
     invoked = called or access is _Access.SCOPED
-    if invoked or file.language in _METHOD_READ_LANGUAGES:
-        if name in _SELF_RECEIVERS.get(file.language, frozenset()):
-            if file.in_owner_class(token):
-                return True
-        elif receiver is not None and file.typed_as_owner(receiver):
-            return True
+    if _receiver_is_owner(file, token, invoked):
+        return True
     if not invoked:
         return None
     return False if file.may_hold_owner else None
+
+
+def _bare_method_use(file: _File, token: Node, called: bool) -> bool | None:
+    # A bare call reaches a method through an implicit `this`, inside a class
+    # that is or extends its own, or after a static import of it.
+    if not called or file.language not in _IMPLICIT_RECEIVER_LANGUAGES:
+        return None
+    if file.in_owner_class(token) or file.imports_method:
+        return True
+    return False if file.may_hold_owner else None
+
+
+def _receiver_is_owner(file: _File, token: Node, invoked: bool) -> bool:
+    """Whether the object a member token is read from is of the method's
+    class: the class itself (`Cache().get()` builds one and calls it), its
+    own object in the class's body (`self.get`), or a variable declared or
+    built as the class."""
+    receiver = _receiver_node(token)
+    if receiver is None:
+        return False
+    if file.is_owner(
+        _text(receiver).removesuffix(cs.EMPTY_PARENS), receiver.start_byte
+    ):
+        return True
+    if not invoked and file.language not in _METHOD_READ_LANGUAGES:
+        return False
+    if _last_name(receiver) in _SELF_RECEIVERS.get(file.language, frozenset()):
+        return file.in_owner_class(token)
+    return file.typed_as_owner(receiver)
 
 
 def _field(parent: Node, child: Node) -> str | None:

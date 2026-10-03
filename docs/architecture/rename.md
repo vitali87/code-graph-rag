@@ -75,7 +75,14 @@ family are read (the indexer's own walk, under `.cgrignore` and
   module (`util.helper` after `from pkg import util`, `util::helper`, or
   `u.helper` after `import pkg.util as u`; not `util.helper` after
   `from vendor import util`): `d.get(key)` and `subprocess.run(...)` are other
-  objects' methods, whatever the function is called;
+  objects' methods, whatever the function is called. In Python, JavaScript,
+  TypeScript and Rust a bare name reaches another file's function only
+  through an import, so outside the function's own file a bare use counts
+  only where an import of it reaches it (`from pkg.util import sorted`, or
+  `from pkg.util import *`): a `sorted(xs)` that imports no project `sorted`
+  is the builtin. After a star import from another module it may still be
+  the function, and is held to the plan as uncertain. In Go, Java, C# and the
+  like a same-package call needs no import, and every bare use counts;
 - for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),
   through its own object in the body of its class or of one whose header
   names it (`self.name`, `this.name()`, `Self::name`, `super().name`), or

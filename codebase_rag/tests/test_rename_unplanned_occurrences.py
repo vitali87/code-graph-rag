@@ -22,6 +22,7 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.editing.occurrences import Target, find_occurrences
 from codebase_rag.editing.rename import QueryFn, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -555,7 +556,8 @@ def test_the_refusal_names_ten_locations_and_counts_the_rest(tmp_path: Path) -> 
     root.mkdir()
     calls = "".join(f"    helper({n}, {n})\n" for n in range(12))
     store, _updater = _indexed(
-        root, {**PY, "pkg/many.py": f"from pkg import util\n\n\ndef many():\n{calls}"}
+        root,
+        {**PY, "pkg/many.py": f"from pkg.util import helper\n\n\ndef many():\n{calls}"},
     )
     with pytest.raises(RenameRefused) as refused:
         rename(
@@ -1678,3 +1680,185 @@ def test_a_parameter_named_like_the_class_shadows_it_in_its_own_function(
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
     ] == [("call", "pkg/use.py", 6, 13, "receiver_unknown")]
     assert _tree(root) == before
+
+
+# --- review of PR #2797, fifth round ----------------------------------------
+
+# A project function named like a builtin or a global, its importer, and a
+# file that calls the builtin: (files, function, new name, that file).
+BUILTIN_NAMESAKES = {
+    "python-sorted": (
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def sorted(xs):\n    return xs\n",
+            "pkg/app.py": (
+                "from pkg.util import sorted\n\n\ndef go():\n    return sorted([2, 1])\n"
+            ),
+            "pkg/other.py": "def order(xs):\n    return sorted(xs)\n",
+        },
+        f"{PROJECT}.pkg.util.sorted",
+        "arrange",
+        "pkg/other.py",
+    ),
+    "js-fetch": (
+        {
+            "package.json": '{"name": "web", "type": "module"}\n',
+            "src/net.js": "export function fetch(url) {\n  return url;\n}\n",
+            "src/app.js": (
+                "import { fetch } from './net.js';\n\n"
+                "export function go() {\n  return fetch('/a');\n}\n"
+            ),
+            "src/page.js": "export function load() {\n  return fetch('/b');\n}\n",
+        },
+        f"{PROJECT}.src.net.fetch",
+        "request",
+        "src/page.js",
+    ),
+}
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+@pytest.mark.parametrize("case", sorted(BUILTIN_NAMESAKES))
+def test_a_builtin_named_like_the_function_is_not_its_use(
+    tmp_path: Path, case: str, allow_heuristic: bool
+) -> None:
+    # Review of PR #2797: `sorted(xs)` in a file that never imports the
+    # project's `sorted` is the builtin; a bare name in Python or JS reaches
+    # another file's function only through an import.
+    files, qn, new_name, builtin_user = BUILTIN_NAMESAKES[case]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _missing(store, builtin_user),
+        PROJECT,
+        qn,
+        new_name,
+        allow_heuristic=allow_heuristic,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / builtin_user).read_text() == files[builtin_user]
+
+
+# The same file with the project's `sorted` reached three ways: the second
+# element is the resolution the bare call at (5, 11) gets.
+SORTED_USERS = {
+    "imported": ("from pkg.util import sorted\n\n\ndef order(xs):\n", "unplanned"),
+    "star-from-its-module": (
+        "from pkg.util import *\n\n\ndef order(xs):\n",
+        "unplanned",
+    ),
+    "star-from-elsewhere": (
+        "from os.path import *\n\n\ndef order(xs):\n",
+        "receiver_unknown",
+    ),
+}
+
+
+@pytest.mark.parametrize("user", sorted(SORTED_USERS))
+def test_a_bare_call_reached_through_an_import_still_counts(
+    tmp_path: Path, user: str
+) -> None:
+    head, resolution = SORTED_USERS[user]
+    files, qn, new_name, _builtin_user = BUILTIN_NAMESAKES["python-sorted"]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(
+        root, {**files, "pkg/other.py": f"{head}    return sorted(xs)\n"}
+    )
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root, _missing(store, "pkg/other.py"), PROJECT, qn, new_name, dry_run=True
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/other.py", 5, 11, resolution)]
+
+
+def test_a_bare_call_in_the_functions_own_file_still_counts(tmp_path: Path) -> None:
+    files, qn, new_name, _builtin_user = BUILTIN_NAMESAKES["python-sorted"]
+    own = "def sorted(xs):\n    return xs\n\n\ndef again(xs):\n    return sorted(xs)\n"
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {**files, "pkg/util.py": own})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root, _missing(store, "pkg/util.py"), PROJECT, qn, new_name, dry_run=True
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/util.py", 6, 11, "unplanned")]
+
+
+def _function_occurrences(
+    root: Path, files: dict[str, str], name: str, language: cs.SupportedLanguage
+) -> list[tuple[str, int, bool]]:
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    definition = next(iter(files))
+    target = Target(
+        name,
+        language,
+        cs.RenameTargetKind.FUNCTION,
+        definition,
+        frozenset(),
+        frozenset({definition}),
+    )
+    return [
+        (found.path, found.line, found.certain)
+        for found in find_occurrences(root, target)
+    ]
+
+
+def test_a_go_call_in_the_same_package_needs_no_import(tmp_path: Path) -> None:
+    files = {
+        "pkg/util.go": "package pkg\n\nfunc Helper() int {\n\treturn 1\n}\n",
+        "pkg/use.go": "package pkg\n\nfunc Use() int {\n\treturn Helper()\n}\n",
+    }
+
+    found = _function_occurrences(tmp_path, files, "Helper", cs.SupportedLanguage.GO)
+
+    assert ("pkg/use.go", 4, True) in found
+
+
+RUST_FUNCTION_USERS = {
+    "named-use": ("use crate::util::helper;\n", True),
+    "glob-use": ("use crate::util::*;\n", True),
+    "glob-elsewhere": ("use std::cmp::*;\n", False),
+}
+
+
+@pytest.mark.parametrize("user", sorted(RUST_FUNCTION_USERS))
+def test_a_rust_bare_call_follows_its_use(tmp_path: Path, user: str) -> None:
+    head, certain = RUST_FUNCTION_USERS[user]
+    files = {
+        "src/util.rs": "pub fn helper() -> i32 {\n    1\n}\n",
+        "src/lib.rs": "mod util;\nmod app;\n",
+        "src/app.rs": f"{head}\npub fn go() -> i32 {{\n    helper()\n}}\n",
+    }
+
+    found = _function_occurrences(tmp_path, files, "helper", cs.SupportedLanguage.RUST)
+
+    assert ("src/app.rs", 4, certain) in found
+
+
+def test_a_rust_bare_call_without_a_use_is_not_the_function(tmp_path: Path) -> None:
+    files = {
+        "src/util.rs": "pub fn helper() -> i32 {\n    1\n}\n",
+        "src/lib.rs": "mod util;\nmod app;\n",
+        "src/app.rs": "pub fn go() -> i32 {\n    helper()\n}\n",
+    }
+
+    found = _function_occurrences(tmp_path, files, "helper", cs.SupportedLanguage.RUST)
+
+    assert [found for found in found if found[0] == "src/app.rs"] == []

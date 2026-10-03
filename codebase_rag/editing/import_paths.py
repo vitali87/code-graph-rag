@@ -37,6 +37,7 @@ _GO_SPEC = re.compile(r"""(?:(\w+|\.)\s+)?"([^"]+)\"""")
 _RUST_GROUP = re.compile(r"((?:\w+\s*::\s*)+)\{([^{}]*)\}")
 _SEPARATOR = re.compile(r"\s*(?:::|\.|\\)\s*")
 _JS_FROM = re.compile(r"\bfrom\b")
+_WILDCARD = re.compile(r"\s*(?:::|\.|\\)\s*\*")
 
 
 class PathKind(Enum):
@@ -55,6 +56,9 @@ class ImportRead(NamedTuple):
     # binds comes from: `cache` -> pkg/cache for `from pkg import cache`.
     paths: tuple[ModulePath, ...]
     bindings: dict[str, tuple[ModulePath, ...]]
+    # The modules it imports every name of (`from pkg import *`,
+    # `use crate::util::*`), each as the paths it may be.
+    wildcards: tuple[tuple[ModulePath, ...], ...] = ()
 
 
 def module_key(path: str) -> tuple[str, ...]:
@@ -164,31 +168,35 @@ class ImportReader:
         return ModulePath((*self.own, name), PathKind.EXACT)
 
     def _python(self, text: str) -> ImportRead:
+        if (found := _PY_FROM.match(text)) is not None:
+            return self._python_from(*found.groups())
         paths: list[ModulePath] = []
         bindings: dict[str, tuple[ModulePath, ...]] = {}
-        if (found := _PY_FROM.match(text)) is not None:
-            dots, dotted, items = found.groups()
-            module = self._python_module(dots, dotted)
-            if module is None:
-                return ImportRead((), {})
-            paths.append(module)
-            for name, alias in _ITEM.findall(items.strip(" \t\r\n()\\")):
-                if name == cs.RENAME_IMPORT_ALL:
-                    continue
-                member = ModulePath((*module.segments, name), module.kind)
-                paths.append(member)
-                bindings[alias or name] = (module, member)
-            return ImportRead(tuple(paths), bindings)
-        body = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ""
-        for dotted, alias in _ITEM.findall(body):
+        words = text.split(None, 1)
+        for dotted, alias in _ITEM.findall(words[1] if len(words) > 1 else ""):
             segments = tuple(dotted.split(cs.SEPARATOR_DOT))
             module = ModulePath(segments, PathKind.SUFFIX)
             paths.append(module)
             # `import pkg.cache` binds `pkg`; `import pkg.cache as c`, `c`.
-            bindings[alias or segments[0]] = (
-                (module,) if alias else (ModulePath(segments[:1], PathKind.SUFFIX),)
-            )
+            bound = module if alias else ModulePath(segments[:1], PathKind.SUFFIX)
+            bindings[alias or segments[0]] = (bound,)
         return ImportRead(tuple(paths), bindings)
+
+    def _python_from(self, dots: str, dotted: str, items: str) -> ImportRead:
+        module = self._python_module(dots, dotted)
+        if module is None:
+            return ImportRead((), {})
+        paths = [module]
+        bindings: dict[str, tuple[ModulePath, ...]] = {}
+        wildcards: list[tuple[ModulePath, ...]] = []
+        for name, alias in _ITEM.findall(items.strip(" \t\r\n()\\")):
+            if name == cs.RENAME_IMPORT_ALL:
+                wildcards.append((module,))
+                continue
+            member = ModulePath((*module.segments, name), module.kind)
+            paths.append(member)
+            bindings[alias or name] = (module, member)
+        return ImportRead(tuple(paths), bindings, tuple(wildcards))
 
     def _python_module(self, dots: str, dotted: str) -> ModulePath | None:
         segments = tuple(dotted.split(cs.SEPARATOR_DOT)) if dotted else ()
@@ -237,22 +245,24 @@ class ImportReader:
         paths: list[ModulePath] = []
         bindings: dict[str, tuple[ModulePath, ...]] = {}
         for found in _QUOTED.finditer(text):
-            if (module := self._specifier(found.group(2))) is not None:
+            module = self._specifier(found.group(2))
+            if module is not None and module.segments:
                 paths.append(module)
                 bindings[module.segments[-1]] = (module,)
         code = _RUST_GROUP.sub(_expand_group, _QUOTED.sub(" ", text))
+        wildcards: list[tuple[ModulePath, ...]] = []
         for found in _PATH.finditer(code):
-            raw = found.group(0)
-            if raw in cs.RENAME_IMPORT_KEYWORDS or _is_alias(code, found.start()):
+            segments = _import_path(code, found)
+            if not segments:
                 continue
-            segments = tuple(part for part in _SEPARATOR.split(raw) if part)
-            if len(segments) > 1 and segments[-1] == cs.RENAME_RUST_SELF:
-                segments = segments[:-1]
             named = self.spelled(segments)
             paths.extend(named)
+            if _WILDCARD.match(code, found.end()):
+                wildcards.append(named)
+                continue
             alias = _ALIAS.match(code, found.end())
             bindings[alias.group(1) if alias else segments[-1]] = named
-        return ImportRead(tuple(paths), bindings)
+        return ImportRead(tuple(paths), bindings, tuple(wildcards))
 
     def _specifier(self, spec: str) -> ModulePath | None:
         if not spec.startswith(cs.SEPARATOR_DOT):
@@ -307,6 +317,18 @@ def _expand_group(found: re.Match[str]) -> str:
     return " ".join(
         f"{prefix}{item.strip()}" for item in found.group(2).split(",") if item.strip()
     )
+
+
+def _import_path(code: str, found: re.Match[str]) -> tuple[str, ...]:
+    """The segments of a path an import spells; none for a keyword or the
+    name after `as`. `use crate::cache::{self}` names `crate::cache`."""
+    raw = found.group(0)
+    if raw in cs.RENAME_IMPORT_KEYWORDS or _is_alias(code, found.start()):
+        return ()
+    segments = tuple(part for part in _SEPARATOR.split(raw) if part)
+    if len(segments) > 1 and segments[-1] == cs.RENAME_RUST_SELF:
+        return segments[:-1]
+    return segments
 
 
 def _is_alias(code: str, start: int) -> bool:
