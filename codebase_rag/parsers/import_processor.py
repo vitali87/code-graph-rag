@@ -2292,8 +2292,11 @@ class ImportProcessor:
         # The slash-join above splits a dotted stem or directory
         # (`users.service.ts`, `v1.2/`) into two path segments, so the disk
         # probe misses it. The registry of real module qns spells it the way
-        # the indexer did (issue #2565).
-        if _is_known_js_module(potential_module, known):
+        # the indexer did (issue #2565); a directory is found by its `index`
+        # entry point, as the disk probe finds `v1/`.
+        if _is_known_js_module(potential_module, known) or _is_known_js_module(
+            f"{potential_module}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}", known
+        ):
             return potential_module
 
         return full_name

@@ -354,6 +354,43 @@ class TestDottedTarget:
 
         assert _imports(ingestor) == {("src.app", "src.utils")}
 
+    def test_dotted_directory_index_is_imported(self, temp_repo: Path) -> None:
+        # `./v1.2` names the directory `v1.2/`, whose entry point is its
+        # `index` file: the registry spells it `src.v1.2.index`, which the
+        # dot-split prefix `src.v1.2` must reach the way `./v1` reaches
+        # `src.v1.index`.
+        for ext in (".ts", ".js"):
+            ingestor, _ = _index(
+                temp_repo / f"dotteddir{ext[1:]}",
+                {
+                    f"src/v1/index{ext}": "export function foo() { return 1 }\n",
+                    f"src/v1.2/index{ext}": "export function bar() { return 2 }\n",
+                    f"src/main{ext}": (
+                        "import { foo } from './v1'\n"
+                        "import { bar } from './v1.2'\n"
+                        "export function run() { return foo() + bar() }\n"
+                    ),
+                },
+            )
+            imports = _imports(ingestor)
+            assert ("src.main", "src.v1.2.index") in imports, (ext, imports)
+            assert ("src.main", "src.v1.index") in imports, (ext, imports)
+
+    def test_dotted_directory_without_an_index_imports_nothing(
+        self, temp_repo: Path
+    ) -> None:
+        ingestor, _ = _index(
+            temp_repo / "dotteddirnoindex",
+            {
+                "src/v1.2/util.ts": "export function bar() { return 2 }\n",
+                "src/main.ts": (
+                    "import { bar } from './v1.2'\n"
+                    "export function run() { return bar() }\n"
+                ),
+            },
+        )
+        assert not {i for i in _imports(ingestor) if i[0] == "src.main"}
+
 
 class TestOtherModuleFlavours:
     def test_commonjs_require_of_dotted_files(self, temp_repo: Path) -> None:
