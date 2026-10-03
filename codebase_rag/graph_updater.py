@@ -130,6 +130,7 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    normalize_project_name,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -1239,9 +1240,7 @@ class GraphUpdater:
             if project_named is None
             else project_named
         )
-        self.project_name = (
-            project_name and project_name.strip()
-        ) or repo_path.resolve().name
+        self.project_name = normalize_project_name(project_name, repo_path)
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup

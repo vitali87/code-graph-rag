@@ -16,15 +16,17 @@ from unittest.mock import MagicMock, patch
 
 import click
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.cli import app
+from codebase_rag.cli import _pre_chat_sync, app
 from codebase_rag.cli_help import HELP_PROJECT_NAME
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 from evals.cgr_graph import _StatefulIngestor
 
 runner = CliRunner()
@@ -342,6 +344,44 @@ def test_a_padded_name_this_repo_owns_syncs_under_the_stripped_name(
     result = runner.invoke(app, args)
 
     assert result.exit_code == 0, result.output
+    assert graph.updater.call_args.kwargs["project_name"] == "api2"
+
+
+def _workspace_sync(repo: Path, project_name: str) -> None:
+    # The pre-chat sync of an active workspace, whose repositories carry the
+    # project name their workspace file records.
+    workspace = WorkspaceConfig(
+        name="ws", repos=[WorkspaceRepo(path=str(repo), project_name=project_name)]
+    )
+    sync, _ = _pre_chat_sync(workspace, lambda: None, 10, None, None, False)
+    sync()
+
+
+@pytest.mark.parametrize("padded", [" api2", "api2 ", "  api2  "])
+def test_a_padded_workspace_name_is_checked_as_the_name_it_writes(
+    graph: MagicMock, tmp_path: Path, padded: str
+) -> None:
+    # Greptile review of PR 2499: a workspace file can hold a padded name,
+    # which the check looked up as given while the updater wrote it stripped.
+    org_a, org_b = _repos(tmp_path)
+    _owned_by(graph, org_a)
+
+    with pytest.raises(typer.Exit) as refused:
+        _workspace_sync(org_b, padded)
+
+    assert refused.value.exit_code == 1
+    graph.updater.assert_not_called()
+
+
+def test_a_padded_workspace_name_this_repo_owns_syncs_under_the_stripped_name(
+    graph: MagicMock, tmp_path: Path
+) -> None:
+    # Negative: the name checked is the name handed to the updater.
+    org_a, _ = _repos(tmp_path)
+    _owned_by(graph, org_a)
+
+    _workspace_sync(org_a, " api2 ")
+
     assert graph.updater.call_args.kwargs["project_name"] == "api2"
 
 

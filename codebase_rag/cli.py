@@ -76,6 +76,7 @@ from .types_defs import (
 )
 from .utils.path_utils import (
     derive_project_name,
+    normalize_project_name,
     project_roots_from_rows,
     resolve_repo_path,
     unwritable_output_reason,
@@ -716,6 +717,9 @@ def _run_graph_sync(
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
 
+    # Once, as the updater would: the ownership check, the marker and the
+    # write below must all name the same project.
+    project_name = normalize_project_name(project_name, repo)
     if clean:
         _import_vector_store()
 
