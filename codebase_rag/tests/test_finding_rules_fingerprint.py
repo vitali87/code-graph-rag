@@ -89,7 +89,9 @@ class TestRuleFilesAreFingerprintInputs:
     def test_unchanged_rules_keep_the_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
         _write(pkg / _SECURITY_JS, _OLD_SECURITY_JS)
-        assert compute_parser_fingerprint(pkg) == compute_parser_fingerprint(pkg)
+        first = compute_parser_fingerprint(pkg)
+        second = compute_parser_fingerprint(pkg)
+        assert first == second
 
     def test_a_non_rule_file_beside_the_rules_is_not_an_input(
         self, tmp_path: Path
