@@ -748,3 +748,100 @@ def test_unqualified_receiver_type_still_binds_the_local_class(
     calls = _edges(mock_ingestor, RelationshipType.CALLS)
     assert (f"{module}.f.A.local_b", f"{module}.f.A.B.ping") in calls
     assert (f"{module}.f.A.local_b", f"{module}.B.ping") not in calls
+
+
+# The overloads may sit in two blocks of one reopened namespace (#2631
+# re-review): the second is still the second.
+_REOPENED_OVERLOADS = """\
+int g1(int x) { return x; }
+int g2(int x) { return x; }
+
+namespace ui {
+class Widget {
+public:
+  int run(int n);
+  int run(double d);
+};
+}
+
+namespace ui {
+int Widget::run(int n) {
+  struct L { int a(int v) { return g1(v); } } l;
+  return l.a(n);
+}
+}
+
+namespace ui {
+int Widget::run(double d) {
+  struct L { int a(int v) { return g2(v); } } l;
+  return l.a(1);
+}
+}
+"""
+
+
+def test_overloads_in_reopened_namespace_blocks_keep_their_own_local_structs(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(temp_repo, mock_ingestor, reopen=_REOPENED_OVERLOADS)
+
+    run = f"{_PROJECT}.reopen.ui.Widget.run"
+    second_l = f"{run}@20.L"
+    assert second_l in get_node_names(mock_ingestor, NodeLabel.CLASS)
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{second_l}.a", f"{_PROJECT}.reopen.g2") in calls
+    assert (run, f"{second_l}.a") in calls
+
+
+def test_first_overload_in_a_reopened_namespace_keeps_its_unmarked_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: the first definition's local `L` keeps `Widget.run.L`.
+    _index(temp_repo, mock_ingestor, reopen=_REOPENED_OVERLOADS)
+
+    run = f"{_PROJECT}.reopen.ui.Widget.run"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{run}.L.a", f"{_PROJECT}.reopen.g1") in calls
+    assert (run, f"{run}.L.a") in calls
+
+
+# A local or parameter of a member function hides a field of the same name
+# (#2631 re-review): its unqualified type is what binds.
+_SHADOWED_FIELD = """\
+struct B { int ping() { return 1; } };
+
+int f() {
+  struct A {
+    struct B { int ping() { return 2; } };
+    ::B b;
+    int local() { B b; return b.ping(); }
+    int param(B b) { return b.ping(); }
+    int field() { return b.ping(); }
+  } a;
+  return a.local() + a.param(A::B{}) + a.field();
+}
+"""
+
+
+def test_local_shadowing_a_qualified_field_binds_the_local_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(temp_repo, mock_ingestor, shadow=_SHADOWED_FIELD)
+
+    module = f"{_PROJECT}.shadow"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.local", f"{module}.f.A.B.ping") in calls
+    assert (f"{module}.f.A.param", f"{module}.f.A.B.ping") in calls
+    assert (f"{module}.f.A.local", f"{module}.B.ping") not in calls
+
+
+def test_unshadowed_qualified_field_still_binds_the_named_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: where nothing hides it, the `::B` field is `B`, not `A::B`.
+    _index(temp_repo, mock_ingestor, shadow=_SHADOWED_FIELD)
+
+    module = f"{_PROJECT}.shadow"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.field", f"{module}.B.ping") in calls
+    assert (f"{module}.f.A.field", f"{module}.f.A.B.ping") not in calls

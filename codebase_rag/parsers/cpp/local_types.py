@@ -39,6 +39,10 @@ _NON_LOCAL_SCOPE_TYPES = frozenset(
         cs.TS_CPP_LINKAGE_SPECIFICATION,
     }
 )
+# Nodes whose children are file- or namespace-scope declarations.
+_FILE_SCOPE_CONTAINER_TYPES = (
+    _NON_LOCAL_SCOPE_TYPES | cs.CPP_DECLARATION_CONTAINER_TYPES
+)
 _POSITIONAL_NAME_RE = re.compile(rf"{re.escape(cs.PREFIX_ANONYMOUS)}\d+_\d+")
 
 
@@ -178,35 +182,46 @@ def _overload_marker(callable_node: Node) -> str:
     # overload's qn does (`over@4`). Its local types then stay its own in
     # both the definition and the call pass (#2631 re-review). Read from the
     # file alone, so a header parsed later cannot move it between runs.
-    parent = callable_node.parent
-    if parent is None:
-        return ""
-    return _overload_markers(parent).get(callable_node.start_byte, "")
+    root = callable_node
+    while root.parent is not None:
+        root = root.parent
+    return _overload_markers(root).get(callable_node.start_byte, "")
 
 
 @functools.lru_cache(maxsize=16)
-def _overload_markers(container: Node) -> dict[int, str]:
-    # One pass over a namespace or file body: start byte -> marker for each
-    # out-of-class definition after the first of its written name. Cached
-    # per body, as every callable in it asks.
+def _overload_markers(root: Node) -> dict[int, str]:
+    # One pass over the file's declarations, reopened namespace blocks
+    # included: start byte -> marker for each out-of-class definition after
+    # the first of its namespace-qualified written name. Cached per file, as
+    # every callable in it asks.
     claimed: dict[str, list[int]] = {}
     markers: dict[int, str] = {}
-    for child in container.named_children:
-        if child.type != cs.CppNodeType.FUNCTION_DEFINITION or not (
-            cpp_utils.is_out_of_class_method_definition(child)
-        ):
+    for definition in _out_of_class_definitions(root):
+        if (written := _out_of_class_written_name(definition)) is None:
             continue
-        if (written := _out_of_class_written_name(child)) is None:
-            continue
-        line, col = child.start_point
-        earlier = claimed.setdefault(written, [])
+        key = cpp_utils.build_qualified_name(definition, "", written)
+        line, col = definition.start_point
+        earlier = claimed.setdefault(key, [])
         if earlier:
             marker = f"{cs.DUP_QN_MARKER}{line + 1}"
             if line in earlier:
                 marker = f"{marker}{cs.DUP_QN_COLUMN_MARKER}{col}"
-            markers[child.start_byte] = marker
+            markers[definition.start_byte] = marker
         earlier.append(line)
     return markers
+
+
+def _out_of_class_definitions(root: Node) -> Iterator[Node]:
+    # Out-of-class method definitions in source order, through namespaces,
+    # `extern "C"`, templates and preprocessor blocks; never into a body.
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
+            if cpp_utils.is_out_of_class_method_definition(node):
+                yield node
+        elif node.type in _FILE_SCOPE_CONTAINER_TYPES:
+            stack.extend(reversed(node.named_children))
 
 
 def is_qualified_type(node: Node) -> bool:

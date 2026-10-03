@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -15,6 +17,19 @@ _QUALIFIABLE_DECLARATION_TYPES = frozenset(
         cs.CppNodeType.FIELD_DECLARATION,
     }
 )
+
+
+def _scope_declarations(scope: Node | None) -> list[Node]:
+    # Every node under `scope` outside the nested scopes (lambdas, local
+    # classes, nested functions) it holds.
+    found: list[Node] = []
+    pending = [scope] if scope is not None else []
+    while pending:
+        for child in pending.pop().children:
+            if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+                found.append(child)
+                pending.append(child)
+    return found
 
 
 class CppTypeInferenceEngine:
@@ -303,32 +318,47 @@ class CppTypeInferenceEngine:
         class) fields whose declared type is spelled qualified (`::B`,
         `ns::B`). The type map keeps only the bare `B`, but such a name means
         the class the qualifier names, never a local type the bare name would
-        find (#2631 re-review)."""
-        declarations: list[Node] = []
+        find (#2631 re-review). A parameter or local hides a field of its
+        name, as it does in the type map."""
+        own: list[Node] = []
         if (declarator := self._function_declarator(caller_node)) is not None and (
             params := declarator.child_by_field_name(cs.KEY_PARAMETERS)
         ) is not None:
-            declarations.extend(params.children)
-        scopes = [caller_node.child_by_field_name(cs.FIELD_BODY), caller_node.parent]
-        if scopes[1] is None or scopes[1].type != cs.TS_CPP_FIELD_DECLARATION_LIST:
-            scopes.pop()
-        while scopes:
-            if (scope := scopes.pop()) is None:
-                continue
-            for child in scope.children:
-                if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
-                    declarations.append(child)
-                    scopes.append(child)
+            own.extend(params.children)
+        own.extend(_scope_declarations(caller_node.child_by_field_name(cs.FIELD_BODY)))
+        members = caller_node.parent
+        fields = (
+            _scope_declarations(members)
+            if members is not None and members.type == cs.TS_CPP_FIELD_DECLARATION_LIST
+            else []
+        )
+        hidden = {name for name, _ in self._declared_names(own)}
         return frozenset(
             name
-            for declaration in declarations
-            if declaration.type in _QUALIFIABLE_DECLARATION_TYPES
-            and (type_node := declaration.child_by_field_name(cs.FIELD_TYPE))
-            is not None
-            and local_types.is_qualified_type(type_node)
-            for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR)
-            if (name := self._declarator_name(declarator)) is not None
+            for name, qualified in (
+                *self._declared_names(own),
+                *(
+                    entry
+                    for entry in self._declared_names(fields)
+                    if entry[0] not in hidden
+                ),
+            )
+            if qualified
         )
+
+    def _declared_names(self, declarations: list[Node]) -> Iterator[tuple[str, bool]]:
+        # (name, whether its declared type is spelled qualified) for each
+        # name the declarations introduce.
+        for declaration in declarations:
+            if declaration.type not in _QUALIFIABLE_DECLARATION_TYPES:
+                continue
+            type_node = declaration.child_by_field_name(cs.FIELD_TYPE)
+            qualified = type_node is not None and local_types.is_qualified_type(
+                type_node
+            )
+            for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR):
+                if (name := self._declarator_name(declarator)) is not None:
+                    yield name, qualified
 
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)

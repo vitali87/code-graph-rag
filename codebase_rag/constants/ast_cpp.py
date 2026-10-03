@@ -165,6 +165,20 @@ TS_CPP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CPP_FIELD_DECLARATION_LIST = "field_declaration_list"
 # `Cmp{}` / `Point{1, 2}`: a braced temporary of the named type.
 TS_CPP_COMPOUND_LITERAL_EXPRESSION = "compound_literal_expression"
+# Nodes that hold namespace-scope declarations without opening a function
+# scope: a namespace body, a template's declaration, preprocessor blocks.
+TS_CPP_DECLARATION_LIST = "declaration_list"
+CPP_DECLARATION_CONTAINER_TYPES = frozenset(
+    {
+        TS_CPP_DECLARATION_LIST,
+        TS_CPP_TEMPLATE_DECLARATION,
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_else",
+        "preproc_elif",
+        "preproc_elifdef",
+    }
+)
 TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
 TS_CPP_CALL_EXPRESSION = "call_expression"
