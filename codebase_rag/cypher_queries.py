@@ -81,6 +81,49 @@ CYPHER_LIST_PROJECTS = (
 CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
+# A sync's claim on a project name (issue #2411): one statement, so two syncs
+# of the same unowned name cannot both read "no owner" before either writes.
+# The first claim records its root; every later one, this repository's own
+# included, gets back the root already stored and compares it with its own.
+# `created` says this claim made the Project, so only it may release it.
+CYPHER_CLAIM_PROJECT_ROOT = (
+    "OPTIONAL MATCH (held:Project {name: $project_name}) "
+    "WITH count(held) AS holders "
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "RETURN p.root_path AS root_path, holders = 0 AS created"
+)
+# The marker write of a sync that holds a claim (review of PR 2499). Another
+# sync of this repository may have created the claim, failed and released it
+# since this sync's check, and a different repository claimed the name. So
+# the marker goes down only while the Project's root is still one the check
+# accepted, read in this same statement; a Project released meanwhile is
+# claimed again here. Setting the name to itself writes the Project, so a
+# release at the same moment conflicts with this write instead of deleting
+# the node out from under the marker.
+CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE = (
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "WITH p WHERE p.root_path IN $root_paths "
+    "SET p.name = p.name "
+    "MERGE (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "SET m.run_incomplete = true, "
+    "m.writing = coalesce(m.writing, false) OR $writing "
+    "RETURN p.root_path AS root_path"
+)
+# Gives back a claim whose first sync failed before writing anything (review
+# of PR 2499): a bare Project would refuse every other repository the name.
+# Kept once the sync has put down its incomplete-run marker or any node hangs
+# off the Project, since a partial graph is then this repository's to finish.
+CYPHER_RELEASE_PROJECT_CLAIM = (
+    "MATCH (p:Project {name: $project_name, root_path: $root_path}) "
+    "OPTIONAL MATCH (p)--(linked) "
+    "WITH p, count(linked) AS links "
+    "OPTIONAL MATCH (m:IncompleteRun {project: $project_name}) "
+    "WITH p, links, count(m) AS markers "
+    "WHERE links = 0 AND markers = 0 "
+    "DELETE p"
+)
 
 # The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
 # registry only ever covered the process that ran the failed update: a crash or

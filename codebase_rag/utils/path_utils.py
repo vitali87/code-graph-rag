@@ -29,6 +29,13 @@ def derive_project_name(repo_path: Path) -> str:
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
 
 
+def normalize_project_name(project_name: str | None, repo_path: Path) -> str:
+    # The name a sync writes its project under. The CLI's ownership check
+    # asks about the same name, so a padded one cannot pass the check under
+    # one spelling and be written under another (review of PR 2499).
+    return (project_name and project_name.strip()) or repo_path.resolve().name
+
+
 def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
     if repo_path:
         return Path(repo_path).resolve()

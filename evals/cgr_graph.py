@@ -686,6 +686,41 @@ class _StatefulIngestor:
             return []
         return [{cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH))}]
 
+    def _claim_project_root(self, params: PropertyDict) -> list[ResultRow]:
+        """The MERGE's ON CREATE: only a name nobody holds takes this root."""
+        name = _str(params.get(cs.KEY_PROJECT_NAME))
+        key = (cs.NodeLabel.PROJECT.value, name)
+        created = key not in self.nodes
+        if created:
+            self.nodes[key] = {
+                cs.KEY_NAME: name,
+                cs.KEY_ROOT_PATH: params.get(cs.KEY_ROOT_PATH),
+            }
+        return [
+            {**row, cs.KEY_CREATED: created} for row in self._project_root_rows(params)
+        ]
+
+    def _mark_claimed_project(self, params: PropertyDict) -> list[ResultRow]:
+        # Its marker is not kept (see CYPHER_PROJECT_IS_INCOMPLETE below):
+        # only whether the claim still holds, and the root it holds.
+        rows = self._claim_project_root(params)
+        roots = params.get(cs.KEY_ROOT_PATHS)
+        held = [row.get(cs.KEY_ROOT_PATH) for row in rows]
+        if not isinstance(roots, list) or not set(held) & set(roots):
+            return []
+        return [{cs.KEY_ROOT_PATH: root} for root in held]
+
+    def _release_project_claim(self, params: PropertyDict) -> None:
+        # Never holds an incomplete-run marker (see CYPHER_PROJECT_IS_INCOMPLETE
+        # below), so only the root and the Project's edges decide.
+        key = (cs.NodeLabel.PROJECT.value, _str(params.get(cs.KEY_PROJECT_NAME)))
+        props = self.nodes.get(key)
+        if props is None or props.get(cs.KEY_ROOT_PATH) != params.get(cs.KEY_ROOT_PATH):
+            return
+        if self._out.get(key) or self._in.get(key):
+            return
+        del self.nodes[key]
+
     _GRAPH_RESOLVE_LABELS = frozenset(
         {
             cs.NodeLabel.FUNCTION.value,
@@ -1019,6 +1054,10 @@ class _StatefulIngestor:
                 return self._delta_rows(query, params or {})
             case cq.CYPHER_PROJECT_ROOT_PATH:
                 return self._project_root_rows(params or {})
+            case cq.CYPHER_CLAIM_PROJECT_ROOT:
+                return self._claim_project_root(params or {})
+            case cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
+                return self._mark_claimed_project(params or {})
             case (
                 cq.CYPHER_GRAPH_DEFINITION
                 | cq.CYPHER_GRAPH_CALLERS
@@ -1605,6 +1644,8 @@ class _StatefulIngestor:
         _require_bound_params(query, params)
         path = params.get(cs.KEY_PATH) if params else None
         match query:
+            case cq.CYPHER_RELEASE_PROJECT_CLAIM:
+                self._release_project_claim(params or {})
             case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
                 # Modules with nothing unresolved this parse (issue #1568).
                 raw_qns = params.get(cs.KEY_QNS) if params else None
