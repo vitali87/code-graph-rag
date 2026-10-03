@@ -548,12 +548,17 @@ class Renamer:
         return by_name, aliased, self._js_star_bound(module_qn, name)
 
     def _js_star_bound(self, module_qn: str, name: str) -> dict[str, str]:
-        """Files importing `name` from a barrel that passes it on through
-        `export *` (from the module, or from a barrel that does), each with
-        the path of the barrel it imports from."""
+        """Files importing `name` through a chain of re-exports that passes
+        an `export *`, each with the path of the first such barrel.
+
+        The chain may name the definition before the star
+        (`export { foo } from "../a"` in `b`, then `export * from "../b"` in
+        `c`): the import walk rewrites `b`, but not the consumer importing
+        `foo` from `c`.
+        """
         bound: dict[str, str] = {}
         pending = [(module_qn, "")]
-        seen = {module_qn}
+        seen = {(module_qn, False)}
         while pending:
             source, barrel = pending.pop()
             for row in graph_query.importers(self.fetch_all, self.project, source):
@@ -565,11 +570,17 @@ class Renamer:
                     row["imported_name"] == cs.IMPORTED_NAME_WILDCARD
                     and row["alias"] is None
                 ):
-                    if row["module"] not in seen:
-                        seen.add(row["module"])
-                        pending.append((row["module"], path))
-                elif barrel and row["alias"] == name and row["imported_name"] == name:
-                    bound.setdefault(path, barrel)
+                    following = barrel or path
+                elif row["alias"] == name and row["imported_name"] == name:
+                    # A consumer, or a barrel passing the name on by name.
+                    following = barrel
+                    if barrel:
+                        bound.setdefault(path, barrel)
+                else:
+                    continue
+                if (row["module"], bool(following)) not in seen:
+                    seen.add((row["module"], bool(following)))
+                    pending.append((row["module"], following))
         return bound
 
     def _definition_site(

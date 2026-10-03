@@ -625,3 +625,58 @@ def test_a_require_binding_keeps_the_importers_own_name(
     assert report.applied, report.message
     assert "function product(a, b)" in _read(temp_repo, "src/mul.js")
     assert _read(temp_repo, "src/app.js") == files["src/app.js"]
+
+
+def _chain_files(c_barrel: str) -> dict[str, str]:
+    # `foo` passes from `a` through the named re-export in `b` and then
+    # through `c`, which either re-exports it by name or with `export *`.
+    return {
+        "src/a.ts": "export function foo(): number {\n  return 1;\n}\n",
+        "src/b/index.ts": 'export { foo } from "../a";\n',
+        "src/c/index.ts": c_barrel,
+        "src/app.ts": (
+            'import { foo } from "./c";\n\n'
+            "export function run(): number {\n  return foo();\n}\n"
+        ),
+    }
+
+
+def test_a_star_after_a_named_reexport_refuses_even_with_allow_heuristic(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The star is one hop past the named re-export `b`: the rename rewrites
+    # `b`'s `export { foo }` and the call, but `app.ts` imports `foo` from
+    # `c`, through `export *`, and that import is out of its reach.
+    files = _chain_files('export * from "../b";\n')
+    graph = _rename_graph(temp_repo, files, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            temp_repo,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.src.a.foo",
+            "bar",
+            allow_heuristic=True,
+        )
+    assert "src/c/index.ts" in str(refused.value)
+    sites = [(s.path, s.resolution) for s in refused.value.ambiguous]
+    assert sites == [("src/app.ts", cs.RENAME_SITE_STAR_REEXPORT)]
+    assert {rel: _read(temp_repo, rel) for rel in files} == files
+
+
+def test_a_chain_of_named_reexports_renames_without_leave(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # With no star on the way, every hop names `foo`, so each re-export and
+    # the consumer's import are rewritten with the definition.
+    files = _chain_files('export { foo } from "../b";\n')
+    graph = _rename_graph(temp_repo, files, mock_ingestor)
+    report = rename(
+        temp_repo, graph.fetch_all, graph.project, f"{graph.project}.src.a.foo", "bar"
+    )
+    assert report.applied, report.message
+    assert _read(temp_repo, "src/b/index.ts") == 'export { bar } from "../a";\n'
+    assert _read(temp_repo, "src/c/index.ts") == 'export { bar } from "../b";\n'
+    app = _read(temp_repo, "src/app.ts")
+    assert app.startswith('import { bar } from "./c";\n')
+    assert "return bar();" in app
