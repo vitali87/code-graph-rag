@@ -30,6 +30,7 @@ class FunctionRegistryTrie:
         "_object_members",
         "_abstracts",
         "_callable_params",
+        "_reserved",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -49,6 +50,7 @@ class FunctionRegistryTrie:
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
+        self._reserved: dict[QualifiedName, tuple[int, int]] = {}
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -58,6 +60,19 @@ class FunctionRegistryTrie:
 
     def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
         return self._callable_params.get(qualified_name)
+
+    def reserve_qns(self, reservations: dict[QualifiedName, tuple[int, int]]) -> None:
+        """Keep each plain name for the definition at its (line, col).
+
+        Passes register one kind at a time, not in document order: Python's
+        functions go before its classes, so a `def Tool` shim below `class
+        Tool` took the plain name and the class, written first, took `@line`
+        (issue #2621). A reserved name goes to that position when it
+        registers; a definition above it still takes the plain name first,
+        and one below takes the `@line` variant. Each call replaces the last
+        file's reservations, which only ever name that file's definitions.
+        """
+        self._reserved = reservations
 
     def mark_property(self, qualified_name: QualifiedName) -> None:
         self._properties.add(qualified_name)
@@ -93,7 +108,10 @@ class FunctionRegistryTrie:
         way it always was, and keeps the call idempotent: two passes
         registering one definition must agree on its name, not mint a second.
         """
-        if natural_qn not in self._entries:
+        # A definition written above this one but registered by a later pass
+        # is still owed the plain name (issue #2621, see `reserve_qns`).
+        held = self._reserved.get(natural_qn, (start_line, start_col))
+        if natural_qn not in self._entries and held >= (start_line, start_col):
             return natural_qn
         variant = f"{natural_qn}{cs.DUP_QN_MARKER}{start_line}"
         claimed_col = self._variant_columns.setdefault(variant, start_col)

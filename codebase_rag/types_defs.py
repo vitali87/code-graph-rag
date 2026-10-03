@@ -176,6 +176,10 @@ class FunctionRegistryTrieProtocol(Protocol):
         self, qualified_name: QualifiedName
     ) -> dict[str, int] | None: ...
 
+    def reserve_qns(
+        self, reservations: dict[QualifiedName, tuple[int, int]]
+    ) -> None: ...
+
 
 class ASTCacheProtocol(Protocol):
     def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None: ...

@@ -567,6 +567,42 @@ class ClassIngestMixin:
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
+    def _reserve_python_class_qns(
+        self,
+        combined_captures: dict[str, list] | None,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> None:
+        # A file's functions and methods register before its classes, so a
+        # `def Tool` shim written below `class Tool` took the plain name the
+        # class is owed as the first definition (issue #2621). Only a class
+        # sharing its name with a def can lose it, which spares every other
+        # class a second identity pass (and a second truncated-name warning).
+        reservations: dict[str, tuple[int, int]] = {}
+        captures = combined_captures or {}
+        def_names = {
+            safe_decode_text(func_node.child_by_field_name(cs.FIELD_NAME))
+            for func_node in captures.get(cs.CAPTURE_FUNCTION, [])
+        }
+        for class_node in captures.get(cs.CAPTURE_CLASS, []):
+            name = safe_decode_text(class_node.child_by_field_name(cs.FIELD_NAME))
+            if name is None or name not in def_names:
+                continue
+            identity = id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                cs.SupportedLanguage.PYTHON,
+                lang_config,
+                file_path,
+            )
+            if identity is None:
+                continue
+            class_qn = identity[0]
+            start = _class_start_point(class_node, cs.SupportedLanguage.PYTHON)
+            reservations[class_qn] = min(reservations.get(class_qn, start), start)
+        self.function_registry.reserve_qns(reservations)
+
     def resolve_deferred_forward_declarations(self) -> int:
         # Run after every file's definitions are registered. A deferred forward
         # declaration whose class name already produced a real node is a phantom
