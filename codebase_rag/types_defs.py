@@ -568,7 +568,6 @@ class DeadCodeConfig(NamedTuple):
     include_classes: bool
     root_decorators: frozenset[str]
     entry_points: tuple[str, ...]
-    test_patterns: tuple[str, ...]
     exclude_patterns: tuple[str, ...] = ()
     # Drop CALLS/REFERENCES edges below this confidence before the walk
     # (issue #1526); None keeps every edge.
