@@ -779,6 +779,35 @@ def _rust_dep_requirement(value: object) -> str | None:
     return version if isinstance(version, str) else None
 
 
+def _rust_patch_winner(
+    local: list[tuple[str | None, tuple[str, ...]]], foreign: list[str | None]
+) -> tuple[str, ...] | None:
+    # The repo dir Cargo builds against, given the qualifying in-repo
+    # patches as (version, dir) and every other patch of the package by its
+    # own `version` requirement. Cargo takes the highest qualifying version
+    # wherever it comes from, and an out-of-repo patch's version cannot be
+    # read, so the local copy wins only when each of those is pinned below
+    # it; otherwise the dependency is external, as for any unreadable
+    # version.
+    if not local:
+        return None
+    version, target = max(local, key=lambda candidate: _rust_version_rank(candidate[0]))
+    if foreign and (
+        version is None
+        or not all(
+            req is not None and cargo_semver.all_below(req, version) for req in foreign
+        )
+    ):
+        return None
+    return target
+
+
+def _rust_version_rank(version: str | None) -> tuple[bool, tuple]:
+    # Readable versions in Cargo's order, after every unreadable one.
+    key = cargo_semver.version_key(version) if version else None
+    return key is not None, key or ()
+
+
 def _rust_dep_package(key: str, value: object) -> str:
     # The package a dependency entry names, underscore-spelled: its
     # `package =` rename, else its key.
@@ -2886,24 +2915,24 @@ class ImportProcessor:
         otherwise it warns "patch was not used" and builds against the
         source's own copy, which no local call reaches (PR #2791 review).
         Among several patched versions it takes the highest that qualifies,
-        wherever the table lists it. A dependency stating no requirement
-        takes any of them; a version that cannot be read or checked never
-        meets a requirement, so the dependency stays external.
+        wherever the table lists it, a git or out-of-repo patch included
+        (PR #2791 review). A dependency stating no requirement takes any of
+        them; a version that cannot be read or checked never meets a
+        requirement, so the dependency stays external.
         """
-        candidates = []
+        local: list[tuple[str | None, tuple[str, ...]]] = []
+        foreign: list[str | None] = []
         for key, value in patches:
             target = self._rust_dep_target_dir((), key, value)
             if target is None:
+                foreign.append(_rust_dep_requirement(value))
                 continue
             version = self._rust_package_version(target)
             if requirement is None or (
                 version is not None and cargo_semver.satisfies(version, requirement)
             ):
-                rank = cargo_semver.version_key(version) if version else None
-                candidates.append(((rank is not None, rank or ()), target))
-        if not candidates:
-            return None
-        return max(candidates, key=lambda candidate: candidate[0])[1]
+                local.append((version, target))
+        return _rust_patch_winner(local, foreign)
 
     def _rust_package_version(self, pkg: tuple[str, ...]) -> str | None:
         # A package's `[package] version`, or the root `[workspace.package]`

@@ -60,6 +60,24 @@ def satisfies(version: str, requirement: str) -> bool:
     return all(_matches(c, key) for c in comparators)
 
 
+def all_below(requirement: str, version: str) -> bool:
+    """Whether every version meeting `requirement` sorts before `version`.
+
+    False when unsure: an unreadable side, or a requirement with no upper
+    bound (`>=1.2`, `*`).
+    """
+    key = version_key(version)
+    comparators = _parse_requirement(requirement)
+    if key is None or comparators is None:
+        return False
+    bounds = [b for c in comparators if (b := _comparator_ceiling(c)) is not None]
+    if not bounds:
+        return False
+    # The tightest bound; at an equal key an exclusive one is tighter.
+    ceiling, inclusive = min(bounds)
+    return ceiling < key if inclusive else ceiling <= key
+
+
 def version_key(version: str) -> _Key | None:
     """A sort key ordering versions as Cargo does; None when unreadable."""
     match = _VERSION_RE.match(version.strip())
@@ -138,6 +156,23 @@ def _tilde_ceiling(c: _Comparator) -> _Key:
     if c.minor is None:
         return major + 1, 0, 0, _RELEASE
     return major, c.minor + 1, 0, _RELEASE
+
+
+def _comparator_ceiling(c: _Comparator) -> tuple[_Key, bool] | None:
+    # The bound every version meeting `c` stays under, as (key, inclusive),
+    # or None when `c` sets no upper bound.
+    if c.major is None or c.op in (">", ">="):
+        return None
+    bump = _bump(c)
+    match c.op:
+        case "<":
+            return _floor(c), False
+        case "<=" | "=":
+            return (_floor(c), True) if bump is None else (bump, False)
+        case "~":
+            return _tilde_ceiling(c), False
+        case _:
+            return _caret_ceiling(c), False
 
 
 def _matches(c: _Comparator, key: _Key) -> bool:

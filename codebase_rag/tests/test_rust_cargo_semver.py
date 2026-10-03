@@ -8,7 +8,7 @@ anything it cannot read.
 
 import pytest
 
-from codebase_rag.parsers.rs.cargo_semver import satisfies
+from codebase_rag.parsers.rs.cargo_semver import all_below, satisfies
 
 
 @pytest.mark.parametrize(
@@ -78,3 +78,29 @@ from codebase_rag.parsers.rs.cargo_semver import satisfies
 )
 def test_satisfies(version: str, requirement: str, expected: bool) -> None:
     assert satisfies(version, requirement) is expected
+
+
+@pytest.mark.parametrize(
+    ("requirement", "version", "expected"),
+    [
+        # Pinned or bounded below the version: every match sorts first.
+        ("=1.2.0", "1.5.0", True),
+        ("~1.2", "1.5.0", True),
+        ("~1.2", "1.3.0", True),
+        ("<1.5", "1.5.0", True),
+        ("<=1.4", "1.5.0", True),
+        (">=1.0, <1.3", "1.3.0", True),
+        # A match may reach the version or pass it.
+        ("~1.2", "1.2.9", False),
+        ("=1.5.0", "1.5.0", False),
+        ("<=1.5.0", "1.5.0", False),
+        ("1.2", "1.5.0", False),
+        # No upper bound, or nothing readable: never sure.
+        (">=1.2", "9.0.0", False),
+        ("*", "9.0.0", False),
+        ("latest", "1.0.0", False),
+        ("1", "1.0", False),
+    ],
+)
+def test_all_below(requirement: str, version: str, expected: bool) -> None:
+    assert all_below(requirement, version) is expected
