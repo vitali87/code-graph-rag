@@ -137,6 +137,13 @@ NO_LANGUAGES = "No Tree-sitter languages available."
 
 # LLM errors
 LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
+LLM_CYPHER_UNAVAILABLE = (
+    "Natural-language queries need a Cypher model, and none is available "
+    "({error}). Start the configured provider, or set CYPHER_PROVIDER and "
+    "CYPHER_MODEL (plus CYPHER_API_KEY for a hosted one). Indexing and the "
+    "deterministic graph tools (resolve, definition, callers, ...) work "
+    "without it."
+)
 LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
 LLM_DANGEROUS_QUERY = "LLM generated a destructive Cypher query (found '{keyword}'). Query rejected: {query}"
 LLM_UNBOUNDED_PATH = (
@@ -183,6 +190,10 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 # Exception classes
 class LLMGenerationError(Exception):
     pass
+
+
+class CypherModelUnavailableError(LLMGenerationError):
+    """No Cypher model could be built, so nothing was generated or run."""
 
 
 class ReadOnlyQueryError(Exception):
