@@ -299,8 +299,8 @@ def _last_identifier(
     source: bytes,
     line: int,
     col: int,
-    end_line: int,
-    end_col: int,
+    end_line: int | None,
+    end_col: int | None,
     name: str,
     language: cs.SupportedLanguage | None = None,
     is_call: bool = False,
@@ -312,7 +312,14 @@ def _last_identifier(
     its arguments; for any other site it is the rightmost `name` in the span.
     """
     start = line_col_to_byte(source, line, col)
-    end = line_col_to_byte(source, end_line, end_col)
+    # A site with no recorded end gets a span that covers the name, for the
+    # text fallback only: handed to the call lookup it would read as a
+    # recorded end that no call matches, and mark a live call stale.
+    end = line_col_to_byte(
+        source,
+        end_line if end_line is not None else line,
+        end_col if end_col is not None else col + len(name),
+    )
     callee = _callee_span(source, language, line, col, end_line, end_col)
     if callee is None and is_call and _calls_start_at(source, language, line, col):
         # Calls DO start at the recorded position but none ends where the
@@ -556,8 +563,8 @@ class Renamer:
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else line,
-            end_col if isinstance(end_col, int) else col + len(old_name),
+            end_line if isinstance(end_line, int) else None,
+            end_col if isinstance(end_col, int) else None,
             old_name,
             get_language_for_extension(Path(path).suffix),
             is_call=kind == "call",
