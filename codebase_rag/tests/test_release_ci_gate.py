@@ -17,6 +17,9 @@ REPO = "vitali87/code-graph-rag"
 SHA = "58670b840701c5c4212ee20d622705548da1c164"
 WORKFLOW_ID = 229278790
 GATE_NAME = "Require successful CI for the release source"
+RELEASE_PUSHED = (
+    "steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'"
+)
 STUBS = r"""
 git() {
   if [[ "$*" == 'rev-parse HEAD^' ]]; then
@@ -118,11 +121,12 @@ def _execute(
         names.index("Commit version bump") : names.index("Create git tag") + 1
     ]:
         condition = step.get("if")
-        if condition == "steps.decide.outputs.release == 'true'" and not release:
+        if condition == RELEASE_PUSHED and not release:
             continue
         assert condition in {
             "steps.check_manual.outputs.skip == 'false'",
-            "steps.decide.outputs.release == 'true'",
+            "steps.commit.outputs.pushed == 'true'",
+            RELEASE_PUSHED,
         }
         assert "${{" not in step["run"]
         scripts.append("(\n" + step["run"] + "\n)\n")
@@ -160,6 +164,7 @@ def _execute(
             "GH_NEXT_PAGES": "",
             "NEW_VERSION": "0.0.951",
             "RELEASE": str(release).lower(),
+            "GITHUB_OUTPUT": os.devnull,
             **(env or {}),
         },
         capture_output=True,
@@ -434,7 +439,7 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
         < names.index("Create git tag")
         < names.index("Create release")
     )
-    assert gate["if"] == "steps.decide.outputs.release == 'true'"
+    assert gate["if"] == RELEASE_PUSHED
     assert not gate.get("continue-on-error", False)
     assert gate["timeout-minutes"] == 50
     assert gate["env"]["CI_WAIT_ATTEMPTS"] == 90
