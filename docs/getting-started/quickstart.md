@@ -76,16 +76,17 @@ cgr start --repo-path /path/to/your/repo \
 
 ## Step 3: Export Graph Data
 
-**Export during graph update:**
+**Export during graph update** (this repository's project only):
 
 ```bash
 cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
 
-**Export existing graph without updating:**
+**Export existing graph without updating** (every indexed project, or one with `--project-name`):
 
 ```bash
 cgr export -o my_graph.json
+cgr export -o my_project.json --project-name my-project
 ```
 
 **Work with exported data in Python:**

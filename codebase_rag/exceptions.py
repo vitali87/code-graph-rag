@@ -95,6 +95,20 @@ EMBEDDING_DIM_MISMATCH = (
 # Graph loading errors
 GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 FAILED_TO_LOAD_DATA = "Failed to load data from file"
+# A JSON file that is not a graph export (issue #2446).
+GRAPH_FILE_NOT_AN_EXPORT = "{name} is not a cgr graph export: {reason}"
+GRAPH_FILE_NOT_AN_OBJECT = (
+    'expected a JSON object with "nodes" and "relationships" arrays, found a '
+    "JSON {found}"
+)
+GRAPH_FILE_MISSING_KEYS = (
+    'expected a JSON object with "nodes" and "relationships" arrays '
+    "(missing: {missing})"
+)
+GRAPH_FILE_NOT_AN_ARRAY = '"{key}" is not an array'
+GRAPH_FILE_ITEM_NOT_AN_OBJECT = "{kind} {index} is not an object"
+GRAPH_FILE_ITEM_MISSING = "{kind} {index} is missing {missing}"
+GRAPH_FILE_ITEM_KINDS = {"nodes": "node", "relationships": "relationship"}
 NODES_NOT_LOADED = "Nodes should be loaded"
 RELATIONSHIPS_NOT_LOADED = "Relationships should be loaded"
 DATA_NOT_LOADED = "Data should be loaded"
@@ -104,6 +118,13 @@ NO_LANGUAGES = "No Tree-sitter languages available."
 
 # LLM errors
 LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
+LLM_CYPHER_UNAVAILABLE = (
+    "Natural-language queries need a Cypher model, and none is available "
+    "({error}). Start the configured provider, or set CYPHER_PROVIDER and "
+    "CYPHER_MODEL (plus CYPHER_API_KEY for a hosted one). Indexing and the "
+    "deterministic graph tools (resolve, definition, callers, ...) work "
+    "without it."
+)
 LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
 LLM_DANGEROUS_QUERY = "LLM generated a destructive Cypher query (found '{keyword}'). Query rejected: {query}"
 LLM_UNBOUNDED_PATH = (
@@ -152,5 +173,21 @@ class LLMGenerationError(Exception):
     pass
 
 
+class CypherModelUnavailableError(LLMGenerationError):
+    """No Cypher model could be built, so nothing was generated or run."""
+
+
 class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
+
+
+# Deriving from Exception would let every `except Exception` handler between
+# the embeddings pass and the top level swallow a Ctrl+C (python:S5709
+# accepted).
+class EmbeddingsInterrupted(KeyboardInterrupt):  # NOSONAR
+    """Ctrl+C stopped the embeddings pass of a run that has already committed.
+
+    A `KeyboardInterrupt`, so a caller that does not look for it still stops
+    where it would have; one that does can finish its own bookkeeping first,
+    because the graph and the hash cache are already saved.
+    """
