@@ -92,3 +92,62 @@ def test_a_project_named_under_the_old_one_keeps_their_shared_module(
     assert {"acme.web", "acme.web.api"} <= _projects(memgraph_ingestor)
     assert "acme.web.api.views" in _modules(memgraph_ingestor)
     assert "acme.web.api.views.api_view" in _functions(memgraph_ingestor)
+
+
+def _qns_of(ingestor: MemgraphIngestor, project: str) -> set[str]:
+    # The bare name (a root Package and Module) and everything under it.
+    every = _strings(
+        ingestor,
+        "MATCH (n) WHERE n.qualified_name IS NOT NULL RETURN n.qualified_name AS v",
+    )
+    return {qn for qn in every if qn == project or qn.startswith(f"{project}.")}
+
+
+def _with_root_package(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "__init__.py").write_text("def root_helper():\n    return 0\n")
+    (root / "views.py").write_text("def render_page():\n    return 1\n")
+    return root
+
+
+def test_retiring_the_old_project_takes_its_root_package_and_module(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # Greptile on PR 2497: the root Package and Module of a checkout with an
+    # `__init__.py` are named `acme.web` exactly, not `acme.web.`-prefixed.
+    root = _with_root_package(tmp_path / "acme.web")
+    _index(memgraph_ingestor, root, "acme.web")
+    assert {"acme.web", "acme.web.root_helper"} <= _qns_of(
+        memgraph_ingestor, "acme.web"
+    )
+    new = derive_project_name(root)
+
+    _index(memgraph_ingestor, root, None)
+
+    assert _projects(memgraph_ingestor) == {new}
+    assert _qns_of(memgraph_ingestor, "acme.web") == set()
+    assert {new, f"{new}.root_helper"} <= _qns_of(memgraph_ingestor, new)
+
+
+def test_retiring_the_old_project_keeps_one_whose_name_only_starts_with_it(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # Negative: `acme.webapp`'s names start with `acme.web` but are not that
+    # name or under `acme.web.`. Its checkout sits inside the old one's, so
+    # the retirement walk reaches its modules through the Folders they share.
+    # It is indexed first: indexing it after drops the outer project's Folder
+    # at its root, which would cut the walk off before it got there.
+    root = _with_root_package(tmp_path / "acme.web")
+    nested = root / "plugins"
+    (nested / "app").mkdir(parents=True)
+    (nested / "app" / "hooks.py").write_text("def on_load():\n    return 1\n")
+    _index(memgraph_ingestor, nested, "acme.webapp")
+    _index(memgraph_ingestor, root, "acme.web")
+    kept = _qns_of(memgraph_ingestor, "acme.webapp")
+    assert "acme.webapp.app.hooks.on_load" in kept
+
+    _index(memgraph_ingestor, root, None)
+
+    assert "acme.web" not in _projects(memgraph_ingestor)
+    assert _qns_of(memgraph_ingestor, "acme.web") == set()
+    assert _qns_of(memgraph_ingestor, "acme.webapp") == kept

@@ -110,7 +110,7 @@ def clear_all_embeddings(*args: Any, **kwargs: Any) -> None:
     return impl(*args, **kwargs)
 
 
-def delete_project_embeddings(*args: Any, **kwargs: Any) -> None:
+def delete_project_embeddings(*args: Any, **kwargs: Any) -> bool:
     from .vector_store import delete_project_embeddings as impl
 
     return impl(*args, **kwargs)

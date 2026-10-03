@@ -5022,7 +5022,8 @@ class GraphUpdater:
         under the new default would leave that project beside it (review of
         PR 2497). It goes only once this run is committed, so a failed sync
         keeps it; its vectors go first, since they are keyed by node id and
-        cannot be found once the nodes are gone.
+        cannot be found once the nodes are gone, and while they cannot be
+        deleted the project stays for the next sync to try again.
         """
         ingestor = self.ingestor
         if not isinstance(ingestor, QueryProtocol):
@@ -5031,7 +5032,11 @@ class GraphUpdater:
         if legacy is None:
             return
         try:
-            self._delete_legacy_embeddings(legacy)
+            if not self._delete_legacy_embeddings(legacy):
+                logger.warning(
+                    ls.LEGACY_DOTTED_PROJECT_VECTORS_KEPT.format(legacy=legacy)
+                )
+                return
             ingestor.execute_write(
                 cq.CYPHER_RETIRE_PROJECT,
                 {
@@ -5106,9 +5111,11 @@ class GraphUpdater:
             return None
         return legacy
 
-    def _delete_legacy_embeddings(self, legacy: str) -> None:
+    def _delete_legacy_embeddings(self, legacy: str) -> bool:
         # A failed read raises: without the ids the vectors could never be
-        # found again, so the project must stay until a read succeeds.
+        # found again, so the project must stay until a read succeeds. A
+        # failed delete, which the vector store logs and swallows, returns
+        # False for the same reason (review of PR 2497).
         rows = self._graph_rows(
             cs.CYPHER_QUERY_PROJECT_NODE_IDS, {cs.KEY_PROJECT_NAME: legacy}
         )
@@ -5118,10 +5125,10 @@ class GraphUpdater:
             if isinstance(node_id := row.get(cs.KEY_NODE_ID), int)
         ]
         if not node_ids:
-            return
+            return True
         from .vector_store import delete_project_embeddings
 
-        delete_project_embeddings(legacy, node_ids)
+        return delete_project_embeddings(legacy, node_ids)
 
     def _drop_cache_if_graph_lost(self) -> None:
         """Discard the hash cache when the graph no longer holds this project.

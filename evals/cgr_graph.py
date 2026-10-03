@@ -1888,7 +1888,8 @@ class _StatefulIngestor:
     def _retire_project(self, project_name: PropertyValue, prefix: str) -> None:
         # Mirrors CYPHER_RETIRE_PROJECT: the walk may pass through Folder and
         # File nodes another project shares, but only containers carrying the
-        # retired project's prefix are deleted, with what they define.
+        # retired project's qualified name are deleted, with what they define:
+        # its bare name (a root Package or Module) or anything under it.
         project = (_PROJECT_LABEL, project_name)
         if project not in self.nodes:
             return
@@ -1898,7 +1899,7 @@ class _StatefulIngestor:
             if isinstance(
                 qn := self.nodes.get(node, {}).get(cs.KEY_QUALIFIED_NAME), str
             )
-            and qn.startswith(prefix)
+            and (qn == project_name or qn.startswith(prefix))
         }
         doomed = {project} | containers
         for container in containers:

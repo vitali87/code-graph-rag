@@ -199,12 +199,17 @@ DETACH DELETE p, container, defined
 # (issue #2412). Both projects index the same files, so they share every
 # Folder and File node (keyed on absolute path), and the walk above would
 # cross those into the new project's modules. Only containers carrying the
-# old project's qualified-name prefix go, with what they define; the shared
-# Folder and File nodes stay with the project that still contains them.
+# old project's qualified name go, with what they define; the shared Folder
+# and File nodes stay with the project that still contains them. A
+# repository-root `__init__.py` makes the root Package and Module's qn the
+# bare project name, so the prefix test alone would miss them (review of PR
+# 2497); the trailing dot of the prefix still keeps a project whose name only
+# starts with this one (`acme.webapp` beside `acme.web`).
 CYPHER_RETIRE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-WHERE container.qualified_name STARTS WITH $project_prefix
+WHERE container.qualified_name = $project_name
+   OR container.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
 DETACH DELETE p, container, defined
 """

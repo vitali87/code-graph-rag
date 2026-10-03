@@ -29,6 +29,11 @@ LEGACY_DOTTED_PROJECT_RETIRE_FAILED = (
     "Could not remove project '{legacy}', this checkout's graph from before "
     "project names could not hold '.': {error}. The next sync tries again"
 )
+LEGACY_DOTTED_PROJECT_VECTORS_KEPT = (
+    "Kept project '{legacy}', this checkout's graph from before project names "
+    "could not hold '.': its vectors could not be deleted, and once its nodes "
+    "are gone nothing could find them. The next sync tries again"
+)
 
 # Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"

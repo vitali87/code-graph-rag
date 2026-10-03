@@ -493,8 +493,9 @@ def test_the_old_projects_vectors_go_before_its_nodes(dotted_checkout: Path) -> 
     store = _WithVectors()
     _legacy_project(store, "acme.web", dotted_checkout)
 
-    def delete_vectors(project: str, node_ids: list[int]) -> None:
+    def delete_vectors(project: str, node_ids: list[int]) -> bool:
         store.calls.append(f"vectors {project} {node_ids}")
+        return True
 
     with patch(
         "codebase_rag.vector_store.delete_project_embeddings",
@@ -531,6 +532,71 @@ def test_an_unreadable_vector_list_keeps_the_old_project(
     assert store.deleted == []
     assert (cs.NodeLabel.PROJECT, "acme.web") in store.nodes
     assert any("acme.web" in r and "graph read failed" in r for r in records)
+
+
+@pytest.fixture
+def vector_client() -> Generator[MagicMock, None, None]:
+    # The real vector-store path down to the backend client, which swallows a
+    # failed delete into a warning; patched past the dependency check so the
+    # base install, which has no qdrant-client, runs it too.
+    from codebase_rag import vector_store
+
+    client = MagicMock()
+    with (
+        patch.object(
+            vector_store.settings,
+            "VECTOR_STORE_BACKEND",
+            cs.VectorStoreBackend.QDRANT,
+        ),
+        patch.object(vector_store, "has_qdrant_client", return_value=True),
+        patch.object(vector_store, "get_qdrant_client", return_value=client),
+    ):
+        yield client
+
+
+def test_an_old_project_whose_vectors_could_not_be_deleted_is_kept(
+    dotted_checkout: Path, vector_client: MagicMock
+) -> None:
+    # Greptile on PR 2497: the store logged the failed delete and returned,
+    # the project and its node ids went, and the vectors stayed in unscoped
+    # search with nothing left to find them by.
+    store = _WithVectors()
+    _legacy_project(store, "acme.web", dotted_checkout)
+    vector_client.delete.side_effect = RuntimeError("vector store down")
+    records: list[str] = []
+    sink = logger.add(records.append, level="WARNING", format="{message}")
+    try:
+        _index(dotted_checkout, store, None)
+    finally:
+        logger.remove(sink)
+
+    assert store.deleted == []
+    assert (cs.NodeLabel.PROJECT, "acme.web") in store.nodes
+    assert ls.LEGACY_DOTTED_PROJECT_VECTORS_KEPT.format(legacy="acme.web") in [
+        r.rstrip("\n") for r in records
+    ]
+
+
+def test_the_next_sync_retires_the_old_project_once_its_vectors_go(
+    dotted_checkout: Path, vector_client: MagicMock
+) -> None:
+    # Negative: a delete that succeeds lets the project go, on the sync after
+    # a failed one as on the first.
+    store = _WithVectors()
+    _legacy_project(store, "acme.web", dotted_checkout)
+    vector_client.delete.side_effect = RuntimeError("vector store down")
+    _index(dotted_checkout, store, None)
+    assert store.deleted == []
+    vector_client.delete.side_effect = None
+    vector_client.delete.reset_mock()
+
+    parsers, queries = load_parsers()
+    GraphUpdater(store, dotted_checkout, parsers, queries).run()
+
+    assert store.deleted == ["acme.web"]
+    assert (cs.NodeLabel.PROJECT, "acme.web") not in store.nodes
+    assert vector_client.delete.call_count == 1
+    assert vector_client.delete.call_args.kwargs["points_selector"] == [7, 9]
 
 
 def _shared_module_graph(tmp_path: Path, store: _StatefulIngestor) -> Path:
@@ -586,6 +652,66 @@ def test_a_project_that_only_starts_with_the_old_name_does_not_block_it(
 
     assert store.deleted == ["acme.web"]
     assert (cs.NodeLabel.PROJECT, "acme.webapp") in store.nodes
+
+
+def _qns_of(store: _StatefulIngestor, project: str) -> set[str]:
+    # A project's qualified names: the bare name (its root Package and
+    # Module) and everything under `<project>.`.
+    return {
+        qn
+        for props in store.nodes.values()
+        if isinstance(qn := props.get(cs.KEY_QUALIFIED_NAME), str)
+        and (qn == project or qn.startswith(f"{project}{cs.SEPARATOR_DOT}"))
+    }
+
+
+def _with_root_package(root: Path) -> Path:
+    # A repository-root `__init__.py` makes the checkout itself a Package,
+    # whose qualified name, and its Module's, is the bare project name.
+    (root / "__init__.py").write_text("def root_helper():\n    return 0\n")
+    return root
+
+
+def test_retiring_the_old_project_takes_its_root_package_and_module(
+    dotted_checkout: Path,
+) -> None:
+    # Greptile on PR 2497: the retirement matched only `acme.web.` prefixes,
+    # so the root Package and Module `acme.web`, and what they define, stayed.
+    store = _Retiring()
+    _index(_with_root_package(dotted_checkout), store, "acme.web")
+    assert {"acme.web", "acme.web.root_helper"} <= _qns_of(store, "acme.web")
+    new = derive_project_name(dotted_checkout)
+
+    _index(dotted_checkout, store, None)
+
+    assert store.deleted == ["acme.web"]
+    assert _qns_of(store, "acme.web") == set()
+    assert {new, f"{new}.root_helper"} <= _qns_of(store, new)
+
+
+def test_retiring_the_old_project_keeps_one_whose_name_only_starts_with_it(
+    dotted_checkout: Path,
+) -> None:
+    # Negative: `acme.webapp`'s names start with `acme.web` but are not that
+    # name or under `acme.web.`. Its checkout sits inside the old one's, so
+    # the retirement walk reaches its modules through the Folders they share.
+    # It is indexed first: indexing it after drops the outer project's Folder
+    # at its root, which would cut the walk off before it got there.
+    root = _with_root_package(dotted_checkout)
+    nested = root / "plugins"
+    (nested / "app").mkdir(parents=True)
+    (nested / "app" / "hooks.py").write_text("def on_load():\n    return 1\n")
+    store = _Retiring()
+    _index(nested, store, "acme.webapp")
+    _index(root, store, "acme.web")
+    kept = _qns_of(store, "acme.webapp")
+    assert "acme.webapp.app.hooks.on_load" in kept
+
+    _index(root, store, None)
+
+    assert store.deleted == ["acme.web"]
+    assert _qns_of(store, "acme.web") == set()
+    assert _qns_of(store, "acme.webapp") == kept
 
 
 def _rels_in(query: str, anchor: str) -> frozenset[str]:
