@@ -207,6 +207,30 @@ cgr language cleanup-orphaned-modules
 
 `add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
 
+### `cgr graph`
+
+Deterministic graph queries, printed as JSON, with no LLM in the path.
+
+```bash
+cgr graph resolve helper
+cgr graph callers myrepo__1a2b3c4d.pkg.util.helper --depth 2
+cgr graph tests-reaching myrepo__1a2b3c4d.pkg.util.helper --project myrepo__1a2b3c4d
+```
+
+The project is `--project`, or else the one `--repo-path` (default `.`) was
+indexed as. The exit status tells an empty answer apart from a question the
+graph cannot answer, and a refusal prints nothing on stdout:
+
+| Status | Meaning |
+|--------|---------|
+| `0` | The JSON answer. `[]` means the name is in the graph and nothing matches it. |
+| `3` | The project is not indexed, or, without `--project`, the directory was never indexed. The message on stderr names close matches. |
+| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold. The message names close matches, or points at `cgr graph resolve`. |
+
+`resolve` answers `[]` when no name matches, and `definition` answers
+`{"found": false, ...}` for a qualified name it does not find; neither exits
+with `4`.
+
 ## Makefile Commands
 
 <!-- SECTION:makefile_commands -->

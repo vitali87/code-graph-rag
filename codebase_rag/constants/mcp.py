@@ -181,6 +181,22 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
+# With a close match the full list is noise: a shared graph holds dozens of
+# `<dir>__<hash>` names, and the one meant is the one to name (issue #2461).
+MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
+MCP_ROOT_NOT_INDEXED = (
+    "No project is indexed for this server's root {path}; run "
+    "index_repository or update_repository first, or pass `project`."
+)
+# An empty answer for a name the graph does not hold read as "nothing calls
+# it" / "no test reaches it" (issue #2461).
+MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
+MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+GRAPH_DID_YOU_MEAN = " Did you mean: {names}?"
+# How many close matches a refusal names, and how close a spelling must be
+# (difflib's ratio) to be offered at all.
+GRAPH_SUGGESTION_LIMIT = 5
+GRAPH_SUGGESTION_CUTOFF = 0.6
 # A workspace narrows the choice to its own projects (issue #1494). This is
 # an allow-list on top of the graph check, never a substitute: a name in the
 # workspace that is not indexed is still refused as unknown.

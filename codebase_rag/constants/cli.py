@@ -329,6 +329,28 @@ CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
     "Project '{project}' is not indexed. Indexed projects: {projects}."
 )
 
+# `cgr graph` refuses a project or a name the graph does not hold (issue
+# #2461). Both used to answer `[]` with exit 0, the same as "exists, nothing
+# matches", and scripts and agents act on that answer: a function nobody
+# calls is safe to delete, a change no test reaches needs no test run. The
+# statuses sit above click's 1 (error) and 2 (usage) so a caller can tell
+# them apart.
+GRAPH_EXIT_UNKNOWN_PROJECT = 3
+GRAPH_EXIT_UNKNOWN_TARGET = 4
+CLI_ERR_GRAPH_UNKNOWN_PROJECT = "Project '{project}' is not indexed."
+CLI_ERR_GRAPH_INDEXED_PROJECTS = " Indexed projects: {projects}."
+CLI_ERR_GRAPH_NOTHING_INDEXED = (
+    " No project is indexed yet; run 'cgr start --update-graph' in a repository."
+)
+CLI_ERR_GRAPH_REPO_NOT_INDEXED = (
+    "No project is indexed for {path}; run 'cgr start --update-graph' there "
+    "first, or pass --project."
+)
+CLI_ERR_GRAPH_UNKNOWN_TARGET = "'{qualified_name}' is not in the graph."
+CLI_ERR_GRAPH_RESOLVE_HINT = (
+    " 'cgr graph resolve NAME' lists the qualified names a name matches."
+)
+
 # Clickable report locations (OSC 8 hyperlinks) and `duplicates --open`.
 # A template receives {path} (absolute, URL-quoted for URLs) and {line};
 # diff-command templates receive {left} and {right}.

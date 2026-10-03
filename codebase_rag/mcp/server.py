@@ -187,7 +187,18 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             else:
                 result_text = str(result)
 
-            return [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            # A JSON tool refuses with a result that is nothing but its error
+            # (an unknown project or name, a partial graph, a failed read).
+            # One that carries an error beside its data, such as an applied
+            # rename reporting a marker it could not clear, did its work.
+            if (
+                returns_json
+                and isinstance(result, dict)
+                and result.keys() == {cs.DICT_KEY_ERROR}
+            ):
+                return CallToolResult(content=content, isError=True)
+            return content
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)

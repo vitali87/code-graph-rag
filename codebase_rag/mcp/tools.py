@@ -882,10 +882,7 @@ class MCPToolsRegistry:
         if scope_error is None and default is not None:
             indexed = self.ingestor.list_projects()
             if default not in indexed:
-                scope_error = cs.MCP_UNKNOWN_PROJECT.format(
-                    project=default,
-                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(indexed)),
-                )
+                scope_error = self._unknown_project_error(default, sorted(indexed))
                 default = None
         if scope_error is None and default is not None:
             return create_query_tool(
@@ -2294,9 +2291,7 @@ class MCPToolsRegistry:
         if project is not None:
             known = await asyncio.to_thread(self.ingestor.list_projects)
             if project not in known:
-                return cs.MCP_UNKNOWN_PROJECT.format(
-                    project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
-                )
+                return self._unknown_project_error(project, known)
         # The vector store is searched first, but the hits are hydrated from
         # the GRAPH, so a partial graph loses matches the embeddings still
         # know about.
@@ -2596,12 +2591,15 @@ class MCPToolsRegistry:
         tool: cs.MCPToolName,
         project: str | None,
         run: Callable[[str], object],
+        target: str | None = None,
     ) -> object:
         # Every path that reads the graph, the project check included, runs
         # under the ingestor lock so an index/update rebuild cannot tear the
         # read (issue #1471). A typo in `project` would otherwise read as a
         # genuine empty result; the default is the project this server's
-        # root derives to.
+        # root derives to. `target` is the qualified name the query walks
+        # from: an empty answer for a name the graph never saw is refused,
+        # not returned as "nothing calls it" (issue #2461).
         try:
             async with self._ingestor_lock:
                 # The workspace allow-list is checked FIRST and narrows only:
@@ -2612,16 +2610,21 @@ class MCPToolsRegistry:
                 project, scope_error = self._workspace_scope(project)
                 if scope_error is not None:
                     return {cs.DICT_KEY_ERROR: scope_error}
-                if project is not None:
-                    known = await asyncio.to_thread(self.ingestor.list_projects)
-                    if project not in known:
-                        return {
-                            cs.DICT_KEY_ERROR: cs.MCP_UNKNOWN_PROJECT.format(
-                                project=project,
-                                known=cs.SEPARATOR_COMMA_SPACE.join(known),
-                            )
-                        }
+                known = await asyncio.to_thread(self.ingestor.list_projects)
+                if project is not None and project not in known:
+                    return {
+                        cs.DICT_KEY_ERROR: self._unknown_project_error(project, known)
+                    }
                 project_name = project or derive_project_name(Path(self.project_root))
+                # The derived default is held to the same check: a server
+                # rooted in a directory that was never indexed answered every
+                # read with nothing (issue #2461).
+                if project_name not in known:
+                    return {
+                        cs.DICT_KEY_ERROR: await asyncio.to_thread(
+                            self._root_not_indexed_error, project_name, known
+                        )
+                    }
                 # A read is as wrong as a reingest when the graph is known
                 # partial: a failed run (or a rollback whose re-ingest
                 # failed) leaves definitions and edges missing, and every
@@ -2650,12 +2653,52 @@ class MCPToolsRegistry:
                     )
                 ):
                     return {cs.DICT_KEY_ERROR: refusal}
-                return await asyncio.to_thread(run, project_name)
+                result = await asyncio.to_thread(run, project_name)
+                if target is not None and result == []:
+                    if unknown := await asyncio.to_thread(
+                        self._unknown_target_error, project_name, target
+                    ):
+                        return {cs.DICT_KEY_ERROR: unknown}
+                return result
         except Exception as e:
             logger.error(lg.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
             return {
                 cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             }
+
+    @staticmethod
+    def _unknown_project_error(project: str, known: list[str]) -> str:
+        # The close matches when there are any; a shared graph lists dozens
+        # of `<dir>__<hash>` names, and the one meant is the one to name.
+        close = graph_query.close_project_names(project, known)
+        if close:
+            return cs.MCP_UNKNOWN_PROJECT_NAMED.format(
+                project=project
+            ) + graph_query.did_you_mean(close)
+        return cs.MCP_UNKNOWN_PROJECT.format(
+            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+        )
+
+    def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
+        root = Path(self.project_root)
+        # A repository indexed under a name of its own is the likeliest
+        # meaning, then names spelled close to the derived one.
+        rooted = graph_query.projects_rooted_at(
+            self.ingestor.list_project_roots(), root
+        )
+        close = graph_query.close_project_names(project_name, known)
+        return cs.MCP_ROOT_NOT_INDEXED.format(
+            path=root.resolve()
+        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+
+    def _unknown_target_error(self, project_name: str, target: str) -> str | None:
+        fetch_all = self.ingestor.fetch_all
+        if graph_query.node_exists(fetch_all, target):
+            return None
+        close = graph_query.similar_targets(fetch_all, project_name, target)
+        return cs.MCP_UNKNOWN_TARGET.format(qualified_name=target) + (
+            graph_query.did_you_mean(close) if close else cs.MCP_UNKNOWN_TARGET_HINT
+        )
 
     @staticmethod
     def _depth(depth: int | None) -> int:
@@ -2800,6 +2843,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.callers(
                 self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
+            target=qualified_name,
         )
 
     async def callees(
@@ -2811,6 +2855,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.callees(
                 self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
+            target=qualified_name,
         )
 
     async def implementors(
@@ -2822,6 +2867,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.implementors(
                 self.ingestor.fetch_all, name, qualified_name
             ),
+            target=qualified_name,
         )
 
     async def overrides(
@@ -2833,6 +2879,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.overrides(
                 self.ingestor.fetch_all, name, qualified_name
             ),
+            target=qualified_name,
         )
 
     async def importers(
@@ -2844,6 +2891,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.importers(
                 self.ingestor.fetch_all, name, module_qualified_name
             ),
+            target=module_qualified_name,
         )
 
     async def tests_reaching(
@@ -2855,6 +2903,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.tests_reaching(
                 self.ingestor.fetch_all, name, qualified_name
             ),
+            target=qualified_name,
         )
 
     # --- graph-driven edit operations (issue #1532) ------------------------------
@@ -3179,15 +3228,12 @@ class MCPToolsRegistry:
             if project is not None:
                 known = await asyncio.to_thread(self.ingestor.list_projects)
                 if project not in known:
+                    unknown = self._unknown_project_error(project, known)
                     return QueryResultDict(
-                        error=cs.MCP_UNKNOWN_PROJECT.format(
-                            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
-                        ),
+                        error=unknown,
                         query_used=cs.QUERY_NOT_AVAILABLE,
                         results=[],
-                        summary=cs.MCP_UNKNOWN_PROJECT.format(
-                            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
-                        ),
+                        summary=unknown,
                     )
             # The same refusal the eight `_graph_query` tools apply. This one
             # does not share that path -- it binds a per-request query tool
