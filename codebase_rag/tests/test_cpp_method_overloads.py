@@ -600,6 +600,94 @@ def test_an_unrelated_class_of_the_same_name_does_not_mask_an_alias(
     ) in _overrides(ingestor)
 
 
+HEADER_TYPES = {
+    "types.h": (
+        "namespace lib {\n"
+        "class Foo {};\n"
+        "class Bar {};\n"
+        "}\n"
+        "class Top {};\n"
+        "class Other {};\n"
+    ),
+    "alias.h": "typedef int Count;\n",
+    "base.h": (
+        '#include "types.h"\n'
+        '#include "alias.h"\n'
+        "namespace lib {\n"
+        "class Base {\n"
+        "public:\n"
+        "  virtual int g(Foo x);\n"
+        "  virtual int t(Top x);\n"
+        "  virtual int c(int n);\n"
+        "};\n"
+        "}\n"
+    ),
+    "derived.h": (
+        '#include "base.h"\n'
+        "namespace lib {\n"
+        "class Derived : public Base {\n"
+        "public:\n"
+        "  int g(Bar x);\n"
+        "  int t(Other x);\n"
+        "  int c(Count n) override;\n"
+        "};\n"
+        "}\n"
+    ),
+    "derived.cpp": (
+        '#include "derived.h"\n'
+        "namespace lib {\n"
+        "int Derived::g(Bar x) { return 0; }\n"
+        "int Derived::t(Other x) { return 0; }\n"
+        "int Derived::c(Count n) { return n; }\n"
+        "}\n"
+    ),
+}
+
+
+def test_classes_declared_in_another_header_are_classes_in_scope(
+    temp_repo: Path,
+) -> None:
+    # `lib::Foo`, `lib::Bar`, `Top` and `Other` live in types.h, a module of
+    # their own, while `Base` and `Derived` are in other headers. They are
+    # still the classes `Derived` names, from its namespace or the global
+    # one: two classes, so `g(Bar)` and `t(Other)` hide the base members.
+    # `Count` is a typedef the graph holds no class for, so `c(Count)` may
+    # still be `c(int)`.
+    root = _write(temp_repo / PROJECT, HEADER_TYPES)
+    ingestor = _index(root)
+
+    derived = f"{PROJECT}.derived.h.lib.Derived"
+    assert {
+        edge for edge in _overrides(ingestor) if edge[0].startswith(f"{derived}.")
+    } == {(f"{derived}.c", f"{PROJECT}.base.lib.Base.c")}
+
+
+STRING_HIDE_CPP = """#include <string>
+class SB {
+public:
+  virtual int f(std::string s) { return 0; }
+  virtual int g(std::string s) { return 0; }
+};
+class SD : public SB {
+public:
+  int f(std::basic_string<wchar_t> s) { return 1; }
+  int g(std::basic_string<char> s) override { return 1; }
+};
+"""
+
+
+def test_a_string_alias_matches_only_its_own_character_type(
+    temp_repo: Path,
+) -> None:
+    root = _write(temp_repo / PROJECT, {"str.cpp": STRING_HIDE_CPP})
+    ingestor = _index(root)
+
+    derived = f"{PROJECT}.str.SD"
+    assert {
+        edge for edge in _overrides(ingestor) if edge[0].startswith(f"{derived}.")
+    } == {(f"{derived}.g", f"{PROJECT}.str.SB.g")}
+
+
 @pytest.mark.parametrize(
     ("left", "right", "may_match"),
     [
@@ -625,6 +713,19 @@ def test_an_unrelated_class_of_the_same_name_does_not_mask_an_alias(
         # `std::string` is `basic_string<char>`, never a built-in.
         ("(std::string)", "(int)", False),
         ("(std::string)", "(std::basic_string<char>)", True),
+        ("(std::string)", "(std::basic_string<wchar_t>)", False),
+        ("(std::wstring)", "(basic_string<wchar_t>)", True),
+        (
+            "(std::string)",
+            "(std::basic_string<char,std::char_traits<char>,std::allocator<char>>)",
+            True,
+        ),
+        ("(std::u16string)", "(std::basic_string<char16_t>)", True),
+        ("(std::u16string)", "(std::basic_string<char32_t>)", False),
+        ("(std::string_view)", "(std::basic_string_view<char>)", True),
+        ("(std::string_view)", "(std::basic_string_view<wchar_t>)", False),
+        ("(std::string)", "(std::wstring)", False),
+        ("(std::string)", "(std::basic_string<CharT>)", True),
         ("(std::function<int(int,int)>)", "(std::function<int(int,int)>)", True),
         # Only the base type may be an alias; the declarators must agree,
         # unless a bare alias on one side stands for the whole other type.

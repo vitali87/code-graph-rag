@@ -2276,7 +2276,9 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
 
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
 
         # Deferred endpoint emission: every module is parsed now, so router
         # mount prefixes (possibly cross-module) can resolve (issue #877).
@@ -7151,7 +7153,9 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
         # AST, which on a fresh updater means re-parsing most of the repo.

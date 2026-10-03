@@ -177,15 +177,33 @@ def _is_lone_alias(
 def _names_may_match(left: str, right: str, classes: ClassLookups) -> bool:
     if _names_agree(left, right):
         return True
-    for alias, template in ((left, right), (right, left)):
-        leaf = _std_name(alias)
-        if (
-            leaf in cs.CPP_STD_STRING_ALIAS_TEMPLATES
-            and template.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
-            == cs.CPP_STD_STRING_ALIAS_TEMPLATES[leaf]
-        ):
-            return True
     return _may_be_alias(left, classes.left) or _may_be_alias(right, classes.right)
+
+
+def _string_alias_match(
+    left: _TypeUnit, right: _TypeUnit, classes: ClassLookups
+) -> bool | None:
+    """Whether a standard string alias and its template's spelling agree.
+
+    `std::string` is `basic_string<char>`, so against a `basic_string` it
+    matches only when the first argument may be `char`; the defaulted
+    `char_traits` and allocator arguments after it change nothing. None when
+    neither side is such an alias written against its own template.
+    """
+    for alias, template in ((left, right), (right, left)):
+        leaf = _std_name(alias.token)
+        spec = cs.CPP_STD_STRING_ALIAS_TEMPLATES.get(leaf) if leaf else None
+        if spec is None:
+            continue
+        template_name, character = spec
+        if template.token.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1] != template_name:
+            continue
+        if not template.arguments:
+            return True
+        return _units_may_match(
+            template.arguments[0], (_TypeUnit(character, None),), classes
+        )
+    return None
 
 
 def _split_declarators(
@@ -276,6 +294,9 @@ def _unit_pair_may_match(
     if not (_is_name(left.token) and _is_name(right.token)):
         return left.token == right.token
     if not _names_agree(left.token, right.token):
+        string_match = _string_alias_match(left, right, classes)
+        if string_match is not None:
+            return string_match
         return _names_may_match(left.token, right.token, classes)
     # One template on both sides: its arguments decide, by the same rules.
     # Without arguments on one side (the injected `Box` inside `Box<T>`)

@@ -91,20 +91,20 @@ CPP_BUILTIN_TYPE_WORDS = frozenset(
 # `size_t`, `ptrdiff_t` and the <cstdint> names are left out on purpose: each
 # is an implementation-defined alias of a built-in integer type.
 CPP_STD_FIXED_TYPE_NAMES = frozenset({"nullptr_t"})
-# Standard string aliases and the template each instantiates: `std::string`
-# is `std::basic_string<char>`, so it is that spelling's alias and no other
-# type's.
-CPP_STD_STRING_ALIAS_TEMPLATES = {
-    "string": "basic_string",
-    "wstring": "basic_string",
-    "u8string": "basic_string",
-    "u16string": "basic_string",
-    "u32string": "basic_string",
-    "string_view": "basic_string_view",
-    "wstring_view": "basic_string_view",
-    "u8string_view": "basic_string_view",
-    "u16string_view": "basic_string_view",
-    "u32string_view": "basic_string_view",
+# Standard string aliases, the template each instantiates and its character
+# type: `std::string` is `std::basic_string<char>`, so it is that spelling's
+# alias and no other type's.
+CPP_STD_STRING_ALIAS_TEMPLATES: dict[str, tuple[str, str]] = {
+    "string": ("basic_string", "char"),
+    "wstring": ("basic_string", "wchar_t"),
+    "u8string": ("basic_string", "char8_t"),
+    "u16string": ("basic_string", "char16_t"),
+    "u32string": ("basic_string", "char32_t"),
+    "string_view": ("basic_string_view", "char"),
+    "wstring_view": ("basic_string_view", "wchar_t"),
+    "u8string_view": ("basic_string_view", "char8_t"),
+    "u16string_view": ("basic_string_view", "char16_t"),
+    "u32string_view": ("basic_string_view", "char32_t"),
 }
 CPP_STD_NAMESPACE = "std"
 # The cv-qualifiers: on a by-value parameter they are no part of the

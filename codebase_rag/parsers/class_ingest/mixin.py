@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -2329,7 +2329,9 @@ class ClassIngestMixin:
             else cs.SEPARATOR_DOT.join([self.project_name, *parts])
         )
 
-    def process_all_method_overrides(self) -> None:
+    def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
+        # Every module the graph holds, read-back ones included: a C++ type
+        # name is looked up by its path within its module (issue #2455).
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
@@ -2339,6 +2341,7 @@ class ClassIngestMixin:
             self.csharp_override_methods,
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
+            module_qns={*self.module_qn_to_file_path, *module_qns},
         )
         self._resolve_java_anon_overrides()
 
