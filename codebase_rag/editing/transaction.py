@@ -7,10 +7,11 @@ overlay idiom), lets a verifier inspect the staged tree, and only then writes
 to the real tree: each file through a temp sibling and `os.replace`, with the
 originals held so a failure part-way restores what was already written.
 
-Every committed transaction is appended to `.cgr-edit-history.json` at the
-repo root (the patch set plus the verification outcome), so `cgr edits show`
-can list the last N and `cgr edits undo` can reverse them, each undo being a
-transaction itself that refuses if the tree has moved on since.
+Every committed transaction is appended to `.cgr-edit-history.json` in the
+checkout's state directory under CGR_HOME (the patch set plus the
+verification outcome), so `cgr edits show` can list the last N and
+`cgr edits undo` can reverse them, each undo being a transaction itself that
+refuses if the tree has moved on since.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import difflib
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -34,6 +36,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from ..checkout_state import prepare_state_dir, state_file
 from ..config import load_ignore_patterns
 from ..utils.path_utils import should_skip_path
 
@@ -82,10 +85,17 @@ class TransactionError(ValueError):
 
 # Two transactions committing into the same tree must serialise their
 # read-verify-write windows, and `cgr edits undo` may run in another process
-# than the agent's server: the lock is an OS advisory lock on a file at the
-# repo root, held across the baseline check, the verifier, the writes and the
-# history update. A thread lock per root sits in front of it so threads of
-# one process queue rather than contend for the file.
+# than the agent's server: the lock is an OS advisory lock on a file in the
+# checkout's state directory, held across the baseline check, the verifier,
+# the writes and the history update. A thread lock per root sits in front of
+# it so threads of one process queue rather than contend for the file.
+#
+# An older cgr locked `.cgr-edit-lock` at the checkout root instead, and one
+# still running (an agent's server started before the upgrade) goes on
+# doing so. That file is never moved, copied or removed, since another
+# process may hold it or be about to open it by that path; while it is there
+# it is taken too, after the state directory's, so old and new editors of one
+# tree still exclude each other (issue #2427).
 _REPO_LOCKS: dict[str, threading.Lock] = {}
 _REPO_LOCKS_GUARD = threading.Lock()
 
@@ -119,15 +129,44 @@ def _unlock_file(handle: IO[bytes]) -> None:
 
 
 @contextmanager
+def _locked(handle: IO[bytes]) -> Iterator[None]:
+    _lock_file(handle)
+    try:
+        yield
+    finally:
+        _unlock_file(handle)
+
+
+def _open_tree_lock(root: Path) -> IO[bytes] | None:
+    """The lock an older cgr takes at the checkout root, if one is there.
+
+    Opened for reading, never created: a tree no older cgr edited gets no
+    lock file. Only a regular file is cgr's; a link or a FIFO by that name
+    is neither followed nor opened.
+    """
+    path = root / cs.EDIT_LOCK_FILENAME
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return None
+        return path.open("rb")
+    except OSError:
+        return None
+
+
+@contextmanager
 def _repo_lock(root: Path) -> Iterator[None]:
     with _thread_lock(root):
-        lock_path = root / cs.EDIT_LOCK_FILENAME
-        with lock_path.open("ab") as handle:
-            _lock_file(handle)
-            try:
+        # Created, not adopted: the history moves in once both locks are
+        # held, so an older cgr part-way through an edit records its entry
+        # in the tree's copy first.
+        lock_path = prepare_state_dir(root, adopt=False) / cs.EDIT_LOCK_FILENAME
+        with lock_path.open("ab") as handle, _locked(handle):
+            tree_lock = _open_tree_lock(root)
+            if tree_lock is None:
                 yield
-            finally:
-                _unlock_file(handle)
+                return
+            with tree_lock, _locked(tree_lock):
+                yield
 
 
 def _decode(data: bytes | None) -> list[str]:
@@ -502,7 +541,7 @@ def _write_file(path: Path, content: bytes | None, mode: int | None = None) -> N
 
 
 def history_path(repo_root: Path) -> Path:
-    return repo_root / cs.EDIT_HISTORY_FILENAME
+    return state_file(repo_root, cs.EDIT_HISTORY_FILENAME)
 
 
 def _b64(data: bytes | None) -> str | None:

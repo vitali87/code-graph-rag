@@ -16,6 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -985,7 +986,7 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_b.")
         for properties in store.nodes.values()
     )
-    assert _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME) == {
+    assert _load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME)) == {
         "exclude": [],
         "unignore": [],
         "project": "project_a",
@@ -1138,9 +1139,10 @@ def test_check_ignores_cgr_state_files(
         check=True,
     )
     store = _StatefulIngestor()
-    # Indexing after the commit leaves cgr's state files untracked.
     _updater(store, root).run(force=True)
-    assert any(p.name.startswith(".cgr-") for p in root.iterdir())
+    # Indexing keeps its state out of the tree (issue #2427); one an older
+    # cgr left there is still untracked and must not count as an edit.
+    (root / cs.HASH_CACHE_FILENAME).write_text("{}")
     assert changed_since(root, "HEAD") == ([], [])
     parsers, queries = load_parsers()
     delta = run_check(root, "HEAD", PROJECT, store, parsers, queries)

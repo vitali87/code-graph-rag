@@ -39,6 +39,7 @@ from .capture import (
     split_spec,
     unknown_tokens,
 )
+from .checkout_state import prepare_state_dir
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -788,7 +789,10 @@ def _run_graph_sync(
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
-    cache_path = repo_path / cs.HASH_CACHE_FILENAME
+    # Resolving the state directory also moves in what an older cgr left in
+    # the tree, so a clean right after upgrading clears that copy too.
+    state = prepare_state_dir(repo_path)
+    cache_path = state / cs.HASH_CACHE_FILENAME
     if cache_path.exists():
         _info(
             style(
@@ -797,10 +801,10 @@ def _delete_hash_cache(repo_path: Path) -> None:
             )
         )
         cache_path.unlink(missing_ok=True)
-    (repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
-    (repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).unlink(missing_ok=True)
-    (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
-    (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
+    (state / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
+    (state / cs.EXPOSES_CLEANUP_PENDING_FILENAME).unlink(missing_ok=True)
+    (state / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
+    (state / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
 
 
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:

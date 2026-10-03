@@ -16,6 +16,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends import go as go_fe
@@ -73,7 +74,7 @@ def _updater(
 
 
 def _bump(root: Path, rel: str) -> None:
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
 
 

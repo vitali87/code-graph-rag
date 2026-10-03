@@ -14,6 +14,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
+from codebase_rag.checkout_state import state_file
 from codebase_rag.tests.conftest import create_and_run_updater
 
 
@@ -21,7 +22,7 @@ def test_query_failure_keeps_cache_and_sync(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-    cache_path = temp_repo / cs.HASH_CACHE_FILENAME
+    cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
     cache_path.write_text(json.dumps({"m.py": "stale"}), encoding="utf-8")
     # Backdate the cache so the mtime fast path cannot skip the source file
     # before the hash comparison sees the stale entry.
@@ -63,9 +64,9 @@ def test_a_cache_that_cannot_be_discarded_does_not_end_the_run(
     worst of both: no index, and the stale cache still there.
     """
     (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-    cache_path = temp_repo / cs.HASH_CACHE_FILENAME
+    cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
     cache_path.write_text(json.dumps({"m.py": "stale"}), encoding="utf-8")
-    mtimes_path = temp_repo / cs.DIR_MTIMES_FILENAME
+    mtimes_path = state_file(temp_repo, cs.DIR_MTIMES_FILENAME)
     mtimes_path.write_text(json.dumps({".": 1.0}), encoding="utf-8")
     # Stamp the cache AFTER the sources, which is what a real completed run
     # leaves behind (`os.utime(observed_at)` at the commit point). Backdating

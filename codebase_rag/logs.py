@@ -1283,3 +1283,15 @@ JAVA_FRONTEND_UNAVAILABLE = (
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
 )
+
+# Checkout state kept under CGR_HOME (issue #2427)
+CHECKOUT_STATE_DIR_UNAVAILABLE = (
+    "Cannot create the sync state directory {path} ({error}); this checkout's "
+    "incremental state is not kept, so every sync re-parses it. Point CGR_HOME "
+    "at a writable directory to keep it."
+)
+CHECKOUT_STATE_ADOPTED = (
+    "Moved cgr's state for {repo} out of the working tree into {path}: {names}"
+)
+CHECKOUT_STATE_ADOPT_FAILED = "Could not move {legacy} to {target}: {error}"
+CHECKOUT_STATE_LEGACY_LEFT = "Could not remove {legacy} from the working tree: {error}"

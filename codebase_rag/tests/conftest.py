@@ -21,6 +21,7 @@ from loguru import logger
 from codebase_rag import constants as rag_cs
 from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
@@ -633,7 +634,7 @@ def force_mtime_after_cache(repo: Path, source: Path) -> None:
     needs the rewrite re-hashed (issue #1640); the margin such a test gets
     otherwise is whatever the preceding run happened to cost.
     """
-    cache_mtime = (repo / rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(repo, rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
     # Read back and advance until the STORED stamp is strictly later: a
     # filesystem with coarse mtime resolution can round the requested value
     # onto the cache's own tick, which is the collision this exists to

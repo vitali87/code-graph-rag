@@ -26,6 +26,7 @@ from . import logs as ls
 from .analyzers import FindingAnalyzer
 from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
+from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
@@ -963,10 +964,11 @@ def _project_root_for_single_file(target: Path) -> Path:
     Two markers, and they are NOT interchangeable -- the cache outranks `.git`
     at any depth, which is the whole subtlety here:
 
-    * the hash cache (`repo_path / HASH_CACHE_FILENAME`) is written by every
-      directory run, so an ancestor holding one is EVIDENCE of the root that
-      actually indexed this file. Agreeing with it is the entire point, since
-      disagreeing is what writes a second identity for the same file;
+    * the hash cache (in `state_dir(repo_path)`, or in the tree itself where
+      an older cgr wrote it) is written by every directory run, so an
+      ancestor holding one is EVIDENCE of the root that actually indexed
+      this file. Agreeing with it is the entire point, since disagreeing is
+      what writes a second identity for the same file;
     * `.git` is only a GUESS at a root. It earns its place because the cache
       alone leaves a reachable gap -- the first single-file run on a fresh
       clone finds no cache and reproduces #1775 exactly -- but it says nothing
@@ -980,9 +982,19 @@ def _project_root_for_single_file(target: Path) -> Path:
     level down, and overwriting `Project.root_path` with the nested directory.
     Measured on a nested worktree-style marker during review of this change.
 
-    So: the nearest CACHED ancestor wins outright; only if there is none does
-    the nearest `.git` apply. Two nested caches still resolve to the nearer,
+    So: the nearest CACHED ancestor wins; only if there is none does the
+    nearest `.git` apply. Two nested caches still resolve to the nearer,
     which is the project that genuinely indexed the target.
+
+    A cache outranks a nearer `.git` only when it lists a file inside that
+    nested checkout, which is what makes it evidence about the target. The
+    cache lives under CGR_HOME, keyed by the checkout's path, so it outlives
+    the tree it describes: a removed checkout's path reused for a different
+    tree still holds the old cache, and that tree's nested checkout was never
+    indexed from there (Greptile, PR #2557). With no nested `.git` between
+    them the cached ancestor still wins whatever it lists. A nested checkout
+    added since the enclosing root's last directory run is listed by neither
+    and roots at its `.git`, as on a fresh clone, until that run.
 
     The final fallback is the old behaviour: a target under neither marker is
     not identifiably part of a project here, so there is no root to agree with
@@ -992,11 +1004,43 @@ def _project_root_for_single_file(target: Path) -> Path:
     """
     git_root: Path | None = None
     for ancestor in target.parents:
-        if (ancestor / cs.HASH_CACHE_FILENAME).is_file():
+        cache = _hash_cache_marking(ancestor)
+        if cache is not None and (
+            git_root is None or _cache_lists_under(cache, ancestor, git_root)
+        ):
             return ancestor
         if git_root is None and (ancestor / cs.GIT_DIR_NAME).exists():
             git_root = ancestor
     return git_root if git_root is not None else target.parent
+
+
+def _hash_cache_marking(ancestor: Path) -> Path | None:
+    """The hash cache a directory run at `ancestor` wrote, if there is one.
+
+    In its state directory, or in the tree itself where an older cgr wrote
+    it. `state_dir`, not `prepare_state_dir`: a lookup must not create a
+    state directory for every ancestor it asks about (issue #2427).
+    """
+    for cache in (
+        state_dir(ancestor) / cs.HASH_CACHE_FILENAME,
+        ancestor / cs.HASH_CACHE_FILENAME,
+    ):
+        if cache.is_file():
+            return cache
+    return None
+
+
+def _cache_lists_under(cache: Path, root: Path, checkout: Path) -> bool:
+    """Whether the run at `root` that wrote `cache` indexed a file in
+    `checkout`. Keys are POSIX paths relative to `root`; one that cannot be
+    read lists nothing."""
+    prefix = f"{checkout.relative_to(root).as_posix()}{cs.SEPARATOR_SLASH}"
+    try:
+        with cache.open(encoding=cs.ENCODING_UTF8) as f:
+            entries = load_json(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(entries, dict) and any(key.startswith(prefix) for key in entries)
 
 
 def _definition_names(node: Node) -> set[str]:
@@ -1226,11 +1270,12 @@ class GraphUpdater:
         self.capture = capture if capture is not None else default_capture()
         # Where the incremental-sync state (hash cache, dir mtimes, exclusion
         # stamp, parser fingerprint, pending markers) is read and written.
-        # None keeps it in the repository, beside the graph it describes. A
-        # snapshot run points it at a throwaway directory so it neither
+        # None resolves on first use to this checkout's directory under
+        # CGR_HOME (issue #2427), keeping construction free of side effects.
+        # A snapshot run points it at a throwaway directory so it neither
         # builds incrementally from a sync's state nor leaves state claiming
         # a live graph is current (issue #2401).
-        self._state_dir = state_dir
+        self._state_dir: Path | None = state_dir
         # `ingestor` stays the raw object for DB queries (QueryProtocol),
         # flushes, and test introspection. `_sink` is a filtering wrapper that
         # drops disabled relationships/nodes at one choke point, so the ~20
@@ -2086,7 +2131,16 @@ class GraphUpdater:
 
     @property
     def state_dir(self) -> Path:
-        return self._state_dir if self._state_dir is not None else self.repo_path
+        """Where this checkout's sync state is read and written.
+
+        Under CGR_HOME rather than in the working tree, where it showed up in
+        `git status` and a read-only checkout could not keep it (issue
+        #2427). Resolving it moves in what an older cgr left in the tree, so
+        the first sync after an upgrade reads the hash cache it had.
+        """
+        if self._state_dir is None:
+            self._state_dir = prepare_state_dir(self.repo_path)
+        return self._state_dir
 
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
@@ -5139,7 +5193,7 @@ class GraphUpdater:
             # Only an index built before the stamp existed is being upgraded;
             # a repository never indexed has nothing to re-run "once", and a
             # first-time user was told otherwise (issue #2404).
-            if (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+            if (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
                 logger.info(ls.EXCLUSION_STATE_MISSING)
             else:
                 logger.debug(ls.EXCLUSION_STATE_FIRST_INDEX)
