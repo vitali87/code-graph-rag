@@ -1,5 +1,7 @@
 # Rust tree-sitter node types and resolution constants.
 
+import re
+
 from .ast_java import TS_GENERIC_TYPE
 from .ast_nodes import TS_IDENTIFIER, TS_SCOPED_IDENTIFIER, TS_TYPE_IDENTIFIER
 from .ast_scala import TS_GENERIC_FUNCTION
@@ -326,6 +328,48 @@ RS_PRELUDE_TRAITS = frozenset(
         "TryFrom",
         "TryInto",
     }
+)
+# Types the Rust prelude puts in scope with no `use`. A `Type::f()` path
+# through one of them names std's associated function unless a first-party
+# type of that name is in scope (issue #2543).
+RS_PRELUDE_TYPES = frozenset({"Box", "Option", "Result", "String", "Vec"})
+RS_STR_TYPE = "str"
+RS_CHAR_TYPE = "char"
+RS_BOOL_TYPE = "bool"
+RS_BYTE_TYPE = "u8"
+RS_NUMERIC_TYPES = frozenset(
+    {
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "isize",
+        RS_BYTE_TYPE,
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "usize",
+        "f32",
+        "f64",
+    }
+)
+RS_PRIMITIVE_TYPES = RS_NUMERIC_TYPES | {RS_STR_TYPE, RS_CHAR_TYPE, RS_BOOL_TYPE}
+# Every name a Rust scope holds from the prelude or the language itself.
+RS_PRELUDE_NAMES = RS_PRELUDE_TYPES | RS_PRELUDE_TRAITS | RS_PRIMITIVE_TYPES
+# Literal receivers of a Rust method call, as the call name spells them. A
+# byte string (`b"..."`, `br#"..."#`) is a `[u8; N]` array, which no impl
+# block is keyed by; a string (`"..."`, `r#"..."#`) is a `str`.
+RS_BYTE_STRING_LITERAL = re.compile(r'^br?#*"')
+RS_STRING_LITERAL = re.compile(r'^r?#*"')
+RS_BYTE_LITERAL_PREFIX = "b'"
+RS_CHAR_LITERAL_PREFIX = "'"
+RS_BOOL_LITERALS = frozenset({"true", "false"})
+# A numeric literal's type suffix (`1u32`, `2.5f64`); an unsuffixed one may
+# be any numeric type.
+RS_NUMERIC_SUFFIX = re.compile(
+    r"(?:i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64)$"
 )
 
 # Iterator-adaptor closure typing (issue #1045): a closure argument of one

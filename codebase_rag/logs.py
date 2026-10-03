@@ -686,6 +686,9 @@ CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
+CALL_RUST_OWNER_UNRESOLVED = (
+    "No method of the type a Rust call names matches: {call_name}"
+)
 CALL_EXTERNAL_MODULE_RECEIVER = (
     "Call on external module receiver, no first-party target: {call_name} "
     "(module {target})"

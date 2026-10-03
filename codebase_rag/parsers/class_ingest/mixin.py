@@ -1645,6 +1645,11 @@ class ClassIngestMixin:
             else module_qn
         )
         class_qn = f"{owner_module_qn}.{impl_target}"
+        written_path = rs_utils.extract_impl_target_path(class_node)
+        if written_path:
+            self.import_processor.record_rust_impl_self_path(
+                module_qn, class_qn, written_path
+            )
 
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source
@@ -1708,6 +1713,15 @@ class ClassIngestMixin:
                 ),
                 impl_method_qns,
             )
+
+        # Two blocks of one module can share `class_qn` while naming
+        # different types (the crate's `String` and `std::string::String`),
+        # so each method keeps its own block's self type (#2595 review).
+        if written_path:
+            for method_qn in impl_method_qns:
+                self.import_processor.record_rust_impl_self_path(
+                    module_qn, method_qn, written_path
+                )
 
         # The PATH decides, not the name: `extract_impl_trait` reads no name
         # off `impl std::ops::Add<u32> for S`, and calling that inherent would

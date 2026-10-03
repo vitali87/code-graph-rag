@@ -320,6 +320,27 @@ def extract_impl_target(impl_node: Node) -> str | None:
     return _impl_field_type_name(impl_node, cs.FIELD_TYPE)
 
 
+def extract_impl_target_path(impl_node: Node) -> str | None:
+    """The impl block's self type as written, generics and references
+    peeled: `std::string::String`, `crate::shadow::String`, `String`, `u8`.
+    Its first segment is what decides which type the block is on."""
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    type_node = impl_node.child_by_field_name(cs.FIELD_TYPE)
+    while type_node is not None and type_node.type in (
+        cs.TS_GENERIC_TYPE,
+        cs.TS_RS_REFERENCE_TYPE,
+    ):
+        type_node = type_node.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.type not in (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_RS_SCOPED_TYPE_IDENTIFIER,
+        cs.TS_RS_PRIMITIVE_TYPE,
+    ):
+        return None
+    return safe_decode_text(type_node) or None
+
+
 def extract_impl_trait(impl_node: Node) -> str | None:
     # The `trait` field of `impl Trait for Type` -> the implemented trait's
     # simple name (a trait impl means Type IMPLEMENTS Trait).
@@ -496,6 +517,30 @@ def block_item_at(
         if (best is None or end - start < best[0]) and item_qn in registry:
             best = (end - start, item_qn)
     return best[1] if best else None
+
+
+def literal_receiver_types(receiver: str) -> frozenset[str] | None:
+    """The primitive types a literal method-call receiver can have.
+
+    None when `receiver` is not a literal at all. A literal's type is a
+    primitive (or an array, which yields the empty set), so only an impl
+    block on that primitive can hold the method it calls (issue #2543).
+    """
+    if cs.RS_BYTE_STRING_LITERAL.match(receiver):
+        return frozenset()
+    if cs.RS_STRING_LITERAL.match(receiver):
+        return frozenset({cs.RS_STR_TYPE})
+    if receiver.startswith(cs.RS_BYTE_LITERAL_PREFIX):
+        return frozenset({cs.RS_BYTE_TYPE})
+    if receiver.startswith(cs.RS_CHAR_LITERAL_PREFIX):
+        return frozenset({cs.RS_CHAR_TYPE})
+    if receiver in cs.RS_BOOL_LITERALS:
+        return frozenset({cs.RS_BOOL_TYPE})
+    if receiver[:1].isdigit():
+        if suffix := cs.RS_NUMERIC_SUFFIX.search(receiver):
+            return frozenset({suffix.group()})
+        return cs.RS_NUMERIC_TYPES
+    return None
 
 
 def is_body_local(node: Node) -> bool:

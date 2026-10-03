@@ -837,6 +837,8 @@ class ImportProcessor:
         "_rust_workspace_crates",
         "_rust_pkg_deps",
         "_rust_inline_scope_keys",
+        "rust_impl_self_paths",
+        "_rust_impl_self_path_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
@@ -981,6 +983,14 @@ class ImportProcessor:
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
+        # An impl block's registration qn (`<module>.<Type>`) -> the self
+        # types written for it (`std::string::String`, `crate::shadow::String`,
+        # `String`). The qn alone cannot tell an impl on a foreign type from
+        # one on the crate's own same-named type written in another module
+        # (#2595 review); the path, read in the impl's module, can. Keys are
+        # tracked per declaring file for the re-parse drop.
+        self.rust_impl_self_paths: dict[str, set[str]] = {}
+        self._rust_impl_self_path_keys: dict[str, set[str]] = {}
         # Function-body uses parsed BEFORE the file's functions register:
         # the enclosing function's REGISTERED qn (colliding naturals are
         # deduplicated to `natural@<start_line>`) is only knowable after
@@ -4338,6 +4348,14 @@ class ImportProcessor:
             self.rust_fn_scope_mod_imports.pop(key, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
             self.import_mapping.pop(key, None)
+        for key in self._rust_impl_self_path_keys.pop(module_qn, ()):
+            self.rust_impl_self_paths.pop(key, None)
+
+    def record_rust_impl_self_path(
+        self, module_qn: str, impl_qn: str, written_path: str
+    ) -> None:
+        self.rust_impl_self_paths.setdefault(impl_qn, set()).add(written_path)
+        self._rust_impl_self_path_keys.setdefault(module_qn, set()).add(impl_qn)
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         self.drop_rust_module_import_state(module_qn)
