@@ -48,6 +48,7 @@ from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .module_docstring import extract_module_docstring
 from .parameter_nodes import PendingParameterType
+from .py.overloads import folded_overload_stubs
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -122,6 +123,10 @@ class DefinitionProcessor(
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
         self.dart_constructor_qns: set[str] = set()
+        # {python module qn: start bytes of its `@overload` stubs that an
+        # implementation follows}; both the function and the method pass skip
+        # them so the implementation owns the name (issue #2590).
+        self.python_overload_stubs: dict[str, frozenset[int]] = {}
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
@@ -563,6 +568,8 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
+            if language == cs.SupportedLanguage.PYTHON:
+                self.python_overload_stubs[module_qn] = folded_overload_stubs(root_node)
             self._ingest_all_functions(
                 root_node,
                 module_qn,

@@ -39,6 +39,7 @@ from .. import graph_query
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
@@ -375,6 +376,32 @@ def _last_identifier(
     return byte_to_line_col(source, offset)
 
 
+def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[RenameSite]:
+    """The name tokens of the `@overload` stubs a Python definition owns.
+
+    The graph folds the stubs into their implementation (issue #2590), so no
+    node names them; renaming only the implementation would strand them
+    under the old name with no implementation to describe.
+    """
+    language = get_language_for_extension(Path(definition.path).suffix)
+    if language != cs.SupportedLanguage.PYTHON:
+        return []
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return []
+    root = parser.parse(patcher.source(definition.path)).root_node
+    point = (definition.line - 1, definition.col)
+    token = root.descendant_for_point_range(point, point)
+    function = token.parent if token is not None else None
+    if function is None or function.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return []
+    return [
+        definition._replace(line=name.start_point[0] + 1, col=name.start_point[1])
+        for name in overload_stub_names(function, root)
+    ]
+
+
 class Renamer:
     """Plan and apply one rename against a project's graph."""
 
@@ -420,6 +447,7 @@ class Renamer:
         sites: list[RenameSite] = [
             self._definition_site(qn, definition, path, old_name, patcher)
         ]
+        sites.extend(_overload_stub_sites(sites[0], patcher))
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             self._add_site(sites, unlocatable, "call", row, old_name, patcher)
