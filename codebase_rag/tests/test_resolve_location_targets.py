@@ -462,7 +462,7 @@ def test_cli_an_unrelated_repo_path_does_not_lend_its_files(tmp_path: Path) -> N
     result = _cli_resolve(Graph(), f"{tmp_path}/{SESSIONS}:15", tmp_path)
     assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE, result.output
     assert result.stdout == ""
-    assert f"{tmp_path}/{SESSIONS}" in result.stderr
+    assert f"{tmp_path.as_posix()}/{SESSIONS}" in result.stderr
 
 
 async def test_mcp_an_unrelated_server_root_does_not_lend_its_files(
@@ -471,7 +471,7 @@ async def test_mcp_an_unrelated_server_root_does_not_lend_its_files(
     registry = _registry(Graph(), tmp_path)
     result = await registry.resolve(f"{tmp_path}/{SESSIONS}:15", project=P)
     assert isinstance(result, dict), result
-    assert f"{tmp_path}/{SESSIONS}" in result[cs.DICT_KEY_ERROR]
+    assert f"{tmp_path.as_posix()}/{SESSIONS}" in result[cs.DICT_KEY_ERROR]
 
 
 async def test_mcp_annotate_and_glosses_ignore_an_unrelated_server_root(
@@ -486,13 +486,15 @@ async def test_mcp_annotate_and_glosses_ignore_an_unrelated_server_root(
         target, gt.BODY, cs.GlossKind.SAFETY_PRECONDITION.value, project=gt.P
     )
     assert isinstance(written, dict)
-    assert f"{tmp_path}/app.py" in written.get(cs.DICT_KEY_ERROR, ""), written
+    assert f"{tmp_path.as_posix()}/app.py" in written.get(cs.DICT_KEY_ERROR, ""), (
+        written
+    )
     assert graph.writes == [], "nothing is written on another checkout's file"
     assert graph.glosses == {}
     notes = await registry.glosses(target, project=gt.P)
     assert isinstance(notes, dict)
     assert "target" not in notes, notes
-    assert f"{tmp_path}/app.py" in notes[cs.DICT_KEY_ERROR]
+    assert f"{tmp_path.as_posix()}/app.py" in notes[cs.DICT_KEY_ERROR]
 
 
 def test_the_projects_own_root_through_a_symlink_still_resolves(
