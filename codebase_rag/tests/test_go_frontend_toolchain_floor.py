@@ -12,8 +12,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
+from codebase_rag.parsers import build_lock
 from codebase_rag.parsers.go_frontend import frontend as fe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +33,9 @@ HELPER = REPO_ROOT / "codebase_rag" / "parsers" / "go_frontend" / "gotypes"
 # OSV reports as reachable from it: GO-2024-3105 and GO-2024-3107 (1.22.7),
 # GO-2025-3750 (1.23.10) and GO-2025-3956 (1.23.12).
 SUPPORTED_FLOOR = (1, 23, 12)
+# Bounds every wait in the two-worker tests, so a regression fails them
+# instead of hanging the run.
+_RACE_TIMEOUT_S = 30.0
 
 
 def _directive(name: str) -> str | None:
@@ -73,6 +78,33 @@ class _FakeGo:
                 cmd, 1, stdout="", stderr="go: go.mod requires go >= 9.0"
             )
         return subprocess.CompletedProcess(cmd, 0, stdout='{"calls": []}\n', stderr="")
+
+
+class _GatedFakeGo(_FakeGo):
+    """A `go` whose first build holds the build lock until a second worker is
+    queued on that lock, so the two syncs race the same way on every run."""
+
+    def __init__(self, version: str, build_ok: bool) -> None:
+        super().__init__(version, build_ok)
+        self.building = threading.Event()
+        self.waiter_queued = threading.Event()
+
+    def watch_lock(self, try_lock: Callable[[int], bool]) -> Callable[[int], bool]:
+        def spy(fd: int) -> bool:
+            taken = try_lock(fd)
+            if not taken:
+                self.waiter_queued.set()
+            return taken
+
+        return spy
+
+    def __call__(
+        self, cmd: Sequence[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if len(cmd) > 1 and cmd[1] == "build" and not self.building.is_set():
+            self.building.set()
+            self.waiter_queued.wait(_RACE_TIMEOUT_S)
+        return super().__call__(cmd, **kwargs)
 
 
 class _Clock:
@@ -121,6 +153,83 @@ def _run(
     finally:
         logger.remove(sink)
     return facts, warnings
+
+
+def _race_two_workers(
+    monkeypatch: pytest.MonkeyPatch, fake: _GatedFakeGo
+) -> tuple[dict[str, Path | None], list[str]]:
+    """Two syncs build the helper at once over the real build lock: the second
+    starts while the first is building, and the first's build returns only
+    once the second is queued on the lock. The lock is an OS file lock taken
+    through a descriptor of its own per acquire (flock / msvcrt.locking), so
+    two threads exclude each other just as two processes do."""
+    monkeypatch.setattr(fe.subprocess, "run", fake)
+    monkeypatch.setattr(build_lock, "_try_lock", fake.watch_lock(build_lock._try_lock))
+    monkeypatch.setattr(fe, "_LOCK_POLL_SECONDS", 0.01)
+    results: dict[str, Path | None] = {}
+
+    def worker(name: str) -> None:
+        results[name] = fe._build_tool("/usr/bin/go")
+
+    first = threading.Thread(target=worker, args=("first",))
+    second = threading.Thread(target=worker, args=("second",))
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        first.start()
+        fake.building.wait(_RACE_TIMEOUT_S)
+        second.start()
+        first.join(_RACE_TIMEOUT_S)
+        second.join(_RACE_TIMEOUT_S)
+    finally:
+        logger.remove(sink)
+    assert fake.waiter_queued.is_set()
+    return results, warnings
+
+
+def test_parallel_syncs_share_one_failed_build(
+    monkeypatch: pytest.MonkeyPatch, cgr_home: Path
+) -> None:
+    # Both syncs pass the marker check before the first build fails; the one
+    # queued on the lock must find the marker that build dated instead of
+    # running another failing build (PR #2417 review).
+    fake = _GatedFakeGo("go1.26.0", build_ok=False)
+
+    results, warnings = _race_two_workers(monkeypatch, fake)
+
+    assert fake.builds == 1
+    assert results == {"first": None, "second": None}
+    assert len(warnings) == 2
+    assert sum("go.mod requires go" in w for w in warnings) == 1
+    assert sum("go1.26.0" in w for w in warnings) == 1
+
+
+def test_parallel_syncs_retry_an_expired_failure_once(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, clock: _Clock
+) -> None:
+    # Past the TTL the queued sync still defers to the retry the first one
+    # just made and failed, so an expired marker costs one build, not one each.
+    _run(monkeypatch, go_repo, _FakeGo("go1.26.0", build_ok=False))
+    clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S + 1
+    fake = _GatedFakeGo("go1.26.0", build_ok=False)
+
+    results, _warnings = _race_two_workers(monkeypatch, fake)
+
+    assert fake.builds == 1
+    assert results == {"first": None, "second": None}
+
+
+def test_a_queued_sync_reuses_the_helper_just_built(
+    monkeypatch: pytest.MonkeyPatch, cgr_home: Path
+) -> None:
+    fake = _GatedFakeGo("go1.26.0", build_ok=True)
+
+    results, warnings = _race_two_workers(monkeypatch, fake)
+
+    binary = fe._cache_dir() / "out" / fe._BINARY_NAME
+    assert fake.builds == 1
+    assert results == {"first": binary, "second": binary}
+    assert warnings == []
 
 
 def test_the_helper_asks_for_no_newer_go_than_the_floor() -> None:

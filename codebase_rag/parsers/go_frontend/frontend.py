@@ -297,9 +297,33 @@ def _remember_failure(marker: Path, version: str | None) -> None:
     )
 
 
+def _skip_for_recent_failure(marker: Path, version: str | None) -> bool:
+    """True, after one warning, while a failed build with this Go is
+    remembered and not yet due for a retry."""
+    retry_in = _failure_retry_in(marker, version)
+    if retry_in is None:
+        return False
+    logger.warning(
+        ls.GO_FRONTEND_BUILD_FAILED_EARLIER.format(
+            version=version,
+            minutes=math.ceil(retry_in / _SECONDS_PER_MINUTE),
+            marker=marker,
+        )
+    )
+    return True
+
+
 def _compile_and_remember(
     go: str, src: Path, out: Path, marker: Path, version: str | None
 ) -> bool:
+    # Runs under the build lock. A worker that passed `_build_tool`'s marker
+    # check while another worker's build held the lock checks again here:
+    # that build may just have failed and dated the marker, and building
+    # anyway would cost every queued sync one more failing build (PR #2417
+    # review). A build that succeeded meanwhile never gets here, because
+    # build_cached_artifact rechecks the binary's freshness under the lock.
+    if _skip_for_recent_failure(marker, version):
+        return False
     built = _compile_tool(go, src, out)
     try:
         if built:
@@ -333,14 +357,9 @@ def _build_tool(go: str) -> Path | None:
         )
         return None
     marker = cache / _BUILD_FAILED_MARKER
-    if (retry_in := _failure_retry_in(marker, version)) is not None:
-        logger.warning(
-            ls.GO_FRONTEND_BUILD_FAILED_EARLIER.format(
-                version=version,
-                minutes=math.ceil(retry_in / _SECONDS_PER_MINUTE),
-                marker=marker,
-            )
-        )
+    # The fast path: a remembered failure skips the lock, and any wait on it,
+    # entirely. `_compile_and_remember` checks again once the lock is held.
+    if _skip_for_recent_failure(marker, version):
         return None
     return build_cached_artifact(
         cache,
