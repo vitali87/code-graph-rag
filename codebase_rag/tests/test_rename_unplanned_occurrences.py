@@ -2880,12 +2880,12 @@ ALIAS_IMPORTERS = {
 
 def _unseen(store: _StatefulIngestor, *paths: str) -> QueryFn:
     """The graph as an indexer that recorded nothing in `paths`: no call,
-    reference or import."""
+    reference, type edge or import."""
     calls = _missing(store, *paths)
 
     def fetch_all(query: str, params: PropertyParams | None) -> list[ResultRow]:
         rows = calls(query, params)
-        if query == cq.CYPHER_GRAPH_IMPORTERS:
+        if query in (cq.CYPHER_GRAPH_IMPORTERS, cq.CYPHER_GRAPH_TYPE_EDGES):
             return [row for row in rows if row.get(cs.KEY_PATH) not in paths]
         return rows
 
@@ -3160,3 +3160,230 @@ def test_a_same_named_declaration_nested_elsewhere_is_not_the_targets(
     assert report.applied, report.message
     assert report.unplanned == ()
     assert (root / "src/util.d.ts").read_text() == nested
+
+
+# --- review of PR #2797: a class another module's import binds --------------
+
+PY_CLASS_BODY = (
+    "\n\n\ndef build(x: Widget) -> Widget:\n"
+    "    if isinstance(x, Widget):\n"
+    "        return x\n"
+    "    return Widget()\n"
+    "\n\n"
+    "class Sub(Widget):\n"
+    "    pass\n"
+)
+TWO_WIDGETS = {
+    "pkg/__init__.py": "",
+    "pkg/widget.py": "class Widget:\n    pass\n",
+    "other/__init__.py": "",
+    "other/widget.py": "class Widget:\n    pass\n",
+}
+# `Widget` in each position of PY_CLASS_BODY after a one-line import.
+PY_CLASS_USES = [(4, 13), (4, 24), (5, 21), (7, 11), (10, 10)]
+
+
+# How a file reaches a module's `Widget`: imported by name, under its own
+# name, or through the module (`other.widget.Widget`).
+def _class_user(module: str, how: str) -> str:
+    match how:
+        case "import":
+            return f"from {module} import Widget" + PY_CLASS_BODY
+        case "alias":
+            return f"from {module} import Widget as Widget" + PY_CLASS_BODY
+        case _:
+            return f"import {module}" + PY_CLASS_BODY.replace(
+                "Widget", f"{module}.Widget"
+            )
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+@pytest.mark.parametrize("how", ["import", "alias", "qualified"])
+def test_another_modules_class_bound_by_an_import_is_not_the_target(
+    tmp_path: Path, how: str, allow_heuristic: bool
+) -> None:
+    # Review of PR #2797: a class counted every occurrence, so after
+    # `from other.widget import Widget` the import, the annotations, the
+    # `isinstance`, the call and the base class were all held to the plan,
+    # and `allow_heuristic` rewrote another class's import and uses.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    user = _class_user("other.widget", how)
+    store, updater = _indexed(root, {**TWO_WIDGETS, "app.py": user})
+
+    report = rename(
+        root,
+        _unseen(store, "app.py"),
+        PROJECT,
+        f"{PROJECT}.pkg.widget.Widget",
+        "Gadget",
+        allow_heuristic=allow_heuristic,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "app.py").read_text() == user
+
+
+@pytest.mark.parametrize("how", ["import", "alias", "qualified", "wildcard"])
+def test_the_targets_class_bound_by_an_import_still_counts(
+    tmp_path: Path, how: str
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    user = (
+        "from pkg.widget import *" + PY_CLASS_BODY
+        if how == "wildcard"
+        else _class_user("pkg.widget", how)
+    )
+    store, _updater = _indexed(root, {**TWO_WIDGETS, "app.py": user})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _unseen(store, "app.py"),
+            PROJECT,
+            f"{PROJECT}.pkg.widget.Widget",
+            "Gadget",
+            dry_run=True,
+        )
+
+    found = {(s.line, s.resolution) for s in refused.value.unplanned}
+    assert {(line, "unplanned") for line, _col in PY_CLASS_USES} <= found
+
+
+def test_a_class_through_a_star_import_from_elsewhere_is_held_uncertain(
+    tmp_path: Path,
+) -> None:
+    # `from other.widget import *` may bring in the other `Widget`: held to
+    # the plan, never rewritten.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    user = "from other.widget import *" + PY_CLASS_BODY
+    store, _updater = _indexed(root, {**TWO_WIDGETS, "app.py": user})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _unseen(store, "app.py"),
+            PROJECT,
+            f"{PROJECT}.pkg.widget.Widget",
+            "Gadget",
+            allow_heuristic=True,
+        )
+
+    assert {(s.line, s.col) for s in refused.value.unplanned} == set(PY_CLASS_USES)
+    assert {s.resolution for s in refused.value.unplanned} == {"receiver_unknown"}
+
+
+def _type_occurrences(
+    root: Path, files: dict[str, str], name: str, language: cs.SupportedLanguage
+) -> list[tuple[str, int, int, bool]]:
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    definition = next(iter(files))
+    target = Target(
+        name,
+        language,
+        cs.RenameTargetKind.TYPE,
+        definition,
+        frozenset(),
+        frozenset({definition}),
+    )
+    return [
+        (found.path, found.line, found.col, found.certain)
+        for found in find_occurrences(root, target)
+        if found.path != definition
+    ]
+
+
+TS_WIDGETS = {
+    "src/widget.ts": "export class Widget {}\n",
+    "src/other.ts": "export class Widget {}\n",
+}
+TS_CLASS_BODY = (
+    "\n\nexport function build(x: Widget): Widget {\n"
+    "  return x instanceof Widget ? x : new Widget();\n"
+    "}\n\nexport class Sub extends Widget {}\n"
+)
+TS_CLASS_USES = [(3, 25), (3, 34), (4, 22), (4, 39), (7, 25)]
+RUST_WIDGETS = {
+    "src/widget.rs": "pub struct Widget;\n",
+    "Cargo.toml": RUST["Cargo.toml"],
+    "src/lib.rs": "pub mod widget;\npub mod other;\npub mod app;\n",
+    "src/other.rs": "pub struct Widget;\n",
+}
+RUST_CLASS_BODY = "\n\npub fn make() -> Widget {\n    Widget\n}\n"
+RUST_CLASS_USES = [(3, 17), (4, 4)]
+# Each language's files, the user's path and body, how an import names
+# the other `Widget` and how one names the target's, and the uses.
+TYPE_IMPORTS = {
+    "typescript": (
+        cs.SupportedLanguage.TS,
+        TS_WIDGETS,
+        "src/app.ts",
+        TS_CLASS_BODY,
+        "import { Widget } from './other';",
+        "import { Widget } from './widget';",
+        TS_CLASS_USES,
+    ),
+    "rust": (
+        cs.SupportedLanguage.RUST,
+        RUST_WIDGETS,
+        "src/app.rs",
+        RUST_CLASS_BODY,
+        "use other::Widget;",
+        "use crate::widget::Widget;",
+        RUST_CLASS_USES,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(TYPE_IMPORTS))
+def test_another_modules_class_is_not_the_target_in_each_language(
+    tmp_path: Path, case: str
+) -> None:
+    language, files, path, body, other, _own, _uses = TYPE_IMPORTS[case]
+
+    found = _type_occurrences(
+        tmp_path, {**files, path: other + body}, "Widget", language
+    )
+
+    assert found == []
+
+
+@pytest.mark.parametrize("case", sorted(TYPE_IMPORTS))
+def test_the_targets_class_still_counts_in_each_language(
+    tmp_path: Path, case: str
+) -> None:
+    language, files, path, body, _other, own, uses = TYPE_IMPORTS[case]
+
+    found = _type_occurrences(tmp_path, {**files, path: own + body}, "Widget", language)
+
+    assert [(line, col, certain) for _path, line, col, certain in found] == [
+        (1, own.index("Widget"), True),
+        *((line, col, True) for line, col in uses),
+    ]
+
+
+def test_a_class_through_an_alias_the_config_cannot_resolve_is_uncertain(
+    tmp_path: Path,
+) -> None:
+    # `web/tsconfig.json` extends the root's, whose `@/*` the reader does not
+    # follow there: the import may be the target's, held, never rewritten.
+    files = {
+        **TS_WIDGETS,
+        "tsconfig.json": TS_ALIAS_CONFIG,
+        "web/tsconfig.json": '{"extends": "../tsconfig.json"}\n',
+        "web/app.ts": "import { Widget } from '@/widget';" + TS_CLASS_BODY,
+    }
+
+    found = _type_occurrences(tmp_path, files, "Widget", cs.SupportedLanguage.TS)
+
+    assert [(line, col, certain) for _path, line, col, certain in found] == [
+        (1, 9, False),
+        *((line, col, False) for line, col in TS_CLASS_USES),
+    ]

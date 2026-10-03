@@ -134,7 +134,18 @@ family are read (the indexer's own walk, under `.cgrignore` and
   a dict's. A read without a call counts only in Python, JavaScript and
   TypeScript, where a method is an attribute; in Rust, Java or C++
   `self.name` is the field of the name;
-- for anything else (a class, an interface, a type), every occurrence.
+- for anything else (a class, an interface, a type), every occurrence,
+  except where the name is another module's. In Python, JavaScript,
+  TypeScript and Rust a class of another file is reached only through an
+  import, so an import that says it is another module's (`from
+  other.widget import Widget`, `import { Widget } from './other'`,
+  `use other::Widget;`) and every use it binds (a call, an annotation, an
+  `isinstance`, a base class, `extends` or `implements`) do not count, nor
+  does `other.widget.Widget` through an import of that module. An import
+  of the class's own module or of a package above it counts, and so does
+  one through an alias of the project's config the reader cannot resolve,
+  held as uncertain. With no import binding the name it counts as before,
+  as uncertain where a star import from another module may bring it in.
 
 A Python `.pyi` stub of a defining file (`widget.pyi` beside `widget.py`,
 `__init__.pyi` beside `__init__.py`, `pkg.pyi` beside the package `pkg/`)

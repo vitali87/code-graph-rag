@@ -190,7 +190,9 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
       names the class or imports from its module, and uncertain. The class
       is spelled by its name, bare or qualified, only where that spelling
       reaches the class's module: `other.Cache()` is another Cache;
-    - a type: every occurrence.
+    - a type: every occurrence, except, where the language reaches another
+      file's class only through an import, one an import says is another
+      module's (`from other.widget import Widget`, then `Widget()`).
 
     A declaration file of a defining file (a `.pyi` stub, a `.d.ts`) is
     read as that file: its module-level `class Widget:` is the symbol's own
@@ -755,6 +757,41 @@ class _File:
             return False if self.modules.script_global else None
         return all(self._is_home(name, paths) for paths in self.wildcards)
 
+    def bare_type_use(self, token: Node) -> bool | None:
+        """Whether a bare token, or one in an import statement (`use
+        other::Widget;`), names the target class: in its own module or a
+        declaration file of it, as the import says or binds it, and with
+        no import binding it, as before (a class of the file's own package,
+        or one a star import may bring in, which is held uncertain unless
+        every star import is from the class's module)."""
+        name = self.target.name
+        if self.own_module:
+            return True
+        statement = _import_statement(token)
+        if statement is not None:
+            return self._verdict(name, self._read(statement).paths)
+        bound = self._bound_at(name, token.start_byte)
+        if bound is None:
+            return None
+        if not isinstance(bound, _Unbound):
+            return self._verdict(name, bound)
+        return all(self._is_home(name, paths) for paths in self.wildcards)
+
+    def qualified_type_use(self, spelling: str, at: int) -> bool | None:
+        """Whether the class name after a qualifier written at byte `at`
+        (`widget.`, `pkg.widget.`, `crate::other::`) is the target: decided
+        where the qualifier resolves to a module (an import binds its head,
+        or a Rust path from the crate's root), counted as before where it
+        does not (`self.Widget`, an object's attribute)."""
+        segments = tuple(part.strip() for part in _SEPARATORS.split(spelling))
+        paths = self._spelled((*segments, self.target.name), at)
+        resolved = not isinstance(self._bound_at(segments[0], at), _Unbound) or any(
+            path.kind is PathKind.EXACT for path in paths
+        )
+        if not paths or not resolved:
+            return True
+        return self._verdict(self.target.name, paths)
+
     @cached_property
     def wildcards(self) -> tuple[tuple[ModulePath, ...], ...]:
         """The modules the file imports every name of, each as the paths it
@@ -904,7 +941,7 @@ def _use(file: _File, token: Node, shadows: list[tuple[int, int]]) -> Occurrence
     called = _CALL_OPEN.match(file.source, token.end_byte) is not None
     match file.target.kind:
         case cs.RenameTargetKind.TYPE:
-            certain: bool | None = True
+            certain: bool | None = _type_use(file, token, access)
         case cs.RenameTargetKind.FUNCTION:
             certain = _function_use(file, token, access)
         case _:
@@ -920,6 +957,23 @@ def _occurrence(
     return Occurrence(
         path, token.start_point[0] + 1, token.start_point[1], called, bare, certain
     )
+
+
+def _type_use(file: _File, token: Node, access: _Access) -> bool | None:
+    """A class or type by any spelling, except where the language reaches
+    another file's class only through an import (Python, JS/TS, Rust) and
+    the import says it is another module's: `from other.widget import
+    Widget`, then `Widget()`, `x: Widget`, `isinstance(x, Widget)` or
+    `class Sub(Widget)`, or `other.widget.Widget` after `import
+    other.widget`. Rewriting those would rename another class."""
+    if file.language not in cs.RENAME_IMPORT_REQUIRED_LANGUAGES:
+        return True
+    if access is _Access.BARE or _import_statement(token) is not None:
+        return file.bare_type_use(token)
+    receiver = _receiver_node(token)
+    if receiver is None:
+        return True
+    return file.qualified_type_use(_text(receiver), receiver.start_byte)
 
 
 def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
