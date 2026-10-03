@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Iterable, Sequence
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -178,30 +179,17 @@ def _overload_rank(
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
         return None
-    type_variables: frozenset[str] | None = None
-    declared: tuple[str | None, ...] | None = None
+    declaration = _CandidateDeclaration(qn, lookups)
     unproven = conversions = distance = 0
     for index, (at, pt) in enumerate(zip(arg_types, params, strict=True)):
         if at is None:
             continue
         known = supertypes[index] if index < len(supertypes) else _NO_SUPERTYPES
-        arg_type = _simple_type_name(at)
-        if (rank := _argument_rank(arg_type, pt, known)) is None:
-            if type_variables is None:
-                type_variables = lookups.type_variables(qn) if lookups else frozenset()
-            if _element_type_text(
-                pt
-            ) not in type_variables or not _type_variable_accepts(arg_type, pt):
-                return None
-            rank = cs.JAVA_RANK_UNPROVEN, 0
-        elif rank[0] == cs.JAVA_RANK_EXACT and known.qualified and lookups:
-            if declared is None:
-                declared = lookups.parameter_types(qn)
-            if index < len(declared) and declared[index] not in (
-                None,
-                known.qualified,
-            ):
-                rank = cs.JAVA_RANK_UNPROVEN, 0
+        rank = _candidate_argument_rank(
+            _simple_type_name(at), pt, index, known, declaration
+        )
+        if rank is None:
+            return None
         conversion, depth = rank
         if conversion == cs.JAVA_RANK_UNPROVEN:
             unproven += 1
@@ -209,6 +197,62 @@ def _overload_rank(
             conversions += conversion
             distance += depth
     return JavaOverloadRank(unproven, conversions, distance)
+
+
+class _CandidateDeclaration:
+    # What ranking reads from one candidate's declaration. Each read walks the
+    # declaring file, so it happens at most once per candidate, and only when
+    # some argument's rank turns on it.
+
+    def __init__(self, qn: str, lookups: JavaCandidateLookups | None) -> None:
+        self._qn = qn
+        self._lookups = lookups
+
+    @cached_property
+    def type_variables(self) -> frozenset[str]:
+        return self._lookups.type_variables(self._qn) if self._lookups else frozenset()
+
+    @cached_property
+    def parameter_types(self) -> tuple[str | None, ...]:
+        return self._lookups.parameter_types(self._qn) if self._lookups else ()
+
+    def names_another_type(self, index: int, qualified: str) -> bool:
+        # Parameter `index` as the declaring file resolves it denotes a type
+        # other than `qualified`. One it cannot resolve proves nothing.
+        declared = self.parameter_types
+        return index < len(declared) and declared[index] not in (None, qualified)
+
+
+def _candidate_argument_rank(
+    arg_type: str,
+    param_type: str,
+    index: int,
+    known: JavaSupertypes,
+    declaration: _CandidateDeclaration,
+) -> tuple[int, int] | None:
+    # One known argument against its parameter, or None when it provably
+    # cannot reach it (see `_overload_rank`).
+    if (rank := _argument_rank(arg_type, param_type, known)) is None:
+        return _type_variable_rank(arg_type, param_type, declaration.type_variables)
+    if (
+        rank[0] == cs.JAVA_RANK_EXACT
+        and known.qualified
+        and declaration.names_another_type(index, known.qualified)
+    ):
+        return cs.JAVA_RANK_UNPROVEN, 0
+    return rank
+
+
+def _type_variable_rank(
+    arg_type: str, param_type: str, type_variables: frozenset[str]
+) -> tuple[int, int] | None:
+    # An argument no conversion reaches stays possible only for a parameter
+    # typed by one of the candidate's type variables, and only unproven.
+    if _element_type_text(param_type) in type_variables and _type_variable_accepts(
+        arg_type, param_type
+    ):
+        return cs.JAVA_RANK_UNPROVEN, 0
+    return None
 
 
 def _type_variable_accepts(arg_type: str, param_type: str) -> bool:

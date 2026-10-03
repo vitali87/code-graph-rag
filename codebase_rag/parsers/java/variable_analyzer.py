@@ -51,6 +51,19 @@ def _java_literal_type(expr_node: ASTNode) -> str | None:
     return None
 
 
+def _java_type_field_text(expr_node: ASTNode) -> str | None:
+    # The type an object creation or a cast names, as written.
+    if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
+        return safe_decode_text(type_node)
+    return None
+
+
+def _java_array_creation_type(expr_node: ASTNode) -> str | None:
+    if base_type := _java_type_field_text(expr_node):
+        return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
+    return None
+
+
 def _first_type_identifier_text(parent: ASTNode) -> str | None:
     for sibling in parent.children:
         if sibling.type == cs.TS_TYPE_IDENTIFIER and (
@@ -387,8 +400,7 @@ class JavaVariableAnalyzerMixin:
 
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
-                if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
-                    return safe_decode_text(type_node)
+                return _java_type_field_text(expr_node)
 
             case cs.TS_METHOD_INVOCATION:
                 return self._infer_java_method_return_type(
@@ -396,13 +408,9 @@ class JavaVariableAnalyzerMixin:
                 )
 
             case cs.TS_IDENTIFIER:
-                if var_name := safe_decode_text(expr_node):
-                    # The caller's own locals first: the module-wide lookup is
-                    # name-keyed across every method, so a same-named local in
-                    # another method would answer for this one (issue #1348).
-                    if local_var_types and var_name in local_var_types:
-                        return local_var_types[var_name]
-                    return self._lookup_variable_type(var_name, module_qn)
+                return self._infer_java_identifier_type(
+                    expr_node, module_qn, local_var_types
+                )
 
             case cs.TS_FIELD_ACCESS:
                 return self._infer_java_field_access_type(
@@ -410,29 +418,48 @@ class JavaVariableAnalyzerMixin:
                 )
 
             case cs.TS_ARRAY_CREATION_EXPRESSION:
-                if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
-                    if base_type := safe_decode_text(type_node):
-                        return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
+                return _java_array_creation_type(expr_node)
 
             case cs.TS_JAVA_CAST_EXPRESSION:
                 # The cast names the static type the value has from here on,
                 # which is the type overload resolution goes by (issue #2548).
-                if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
-                    return safe_decode_text(type_node)
+                return _java_type_field_text(expr_node)
 
             case cs.TS_PARENTHESIZED_EXPRESSION:
-                if inner := next(
-                    (
-                        c
-                        for c in expr_node.children
-                        if c.type not in cs.DELIMITER_TOKENS
-                    ),
-                    None,
-                ):
-                    return self._infer_java_type_from_expression(
-                        inner, module_qn, local_var_types
-                    )
+                return self._infer_java_parenthesized_type(
+                    expr_node, module_qn, local_var_types
+                )
 
+        return None
+
+    def _infer_java_identifier_type(
+        self,
+        expr_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> str | None:
+        if not (var_name := safe_decode_text(expr_node)):
+            return None
+        # The caller's own locals first: the module-wide lookup is name-keyed
+        # across every method, so a same-named local in another method would
+        # answer for this one (issue #1348).
+        if local_var_types and var_name in local_var_types:
+            return local_var_types[var_name]
+        return self._lookup_variable_type(var_name, module_qn)
+
+    def _infer_java_parenthesized_type(
+        self,
+        expr_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> str | None:
+        if inner := next(
+            (c for c in expr_node.children if c.type not in cs.DELIMITER_TOKENS),
+            None,
+        ):
+            return self._infer_java_type_from_expression(
+                inner, module_qn, local_var_types
+            )
         return None
 
     def _infer_java_method_return_type(

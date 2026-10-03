@@ -18,7 +18,11 @@ from codebase_rag.parsers.java.method_resolver import (
     _overload_rank,
 )
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.types_defs import JavaOverloadRank, JavaSupertypes
+from codebase_rag.types_defs import (
+    JavaCandidateLookups,
+    JavaOverloadRank,
+    JavaSupertypes,
+)
 
 PROJECT = "jover"
 
@@ -887,6 +891,73 @@ def test_types_with_fixed_supertypes_still_rule_out_other_parameters(
     arg_type: str,
 ) -> None:
     assert _overload_rank("C.take(Widget)", (arg_type,)) is None
+
+
+# A `java.util.List` argument, as the caller's file resolves it.
+_QUALIFIED_LIST = JavaSupertypes({}, frozenset(), "java.util.List")
+
+
+def test_lookups_are_not_read_when_every_argument_ranks_on_its_own() -> None:
+    # Both reads walk the candidate's declaration; a call whose arguments
+    # all convert needs neither.
+    type_variables = MagicMock(return_value=frozenset())
+    parameter_types = MagicMock(return_value=())
+    rank = _overload_rank(
+        "C.take(long,Object)",
+        ("int", "String"),
+        (),
+        JavaCandidateLookups(type_variables, parameter_types),
+    )
+    assert rank == JavaOverloadRank(
+        unproven=0,
+        conversions=cs.JAVA_RANK_WIDENED + cs.JAVA_RANK_OBJECT,
+        distance=0,
+    )
+    type_variables.assert_not_called()
+    parameter_types.assert_not_called()
+
+
+def test_type_variables_are_read_once_for_every_argument_they_type() -> None:
+    type_variables = MagicMock(return_value=frozenset({"T"}))
+    rank = _overload_rank(
+        "C.pair(T,T)",
+        ("String", "Integer"),
+        (),
+        JavaCandidateLookups(type_variables, MagicMock(return_value=())),
+    )
+    assert rank == JavaOverloadRank(unproven=2, conversions=0, distance=0)
+    type_variables.assert_called_once_with("C.pair(T,T)")
+
+
+def test_declared_parameter_types_are_read_once_for_every_exact_argument() -> None:
+    # The first `List` is the caller's; the second only shares its name.
+    parameter_types = MagicMock(return_value=("java.util.List", "java.awt.List"))
+    rank = _overload_rank(
+        "C.both(List,List)",
+        ("List", "List"),
+        (_QUALIFIED_LIST, _QUALIFIED_LIST),
+        JavaCandidateLookups(MagicMock(return_value=frozenset()), parameter_types),
+    )
+    assert rank == JavaOverloadRank(unproven=1, conversions=0, distance=0)
+    parameter_types.assert_called_once_with("C.both(List,List)")
+
+
+@pytest.mark.parametrize(
+    "lookups",
+    [
+        None,
+        JavaCandidateLookups(lambda _qn: frozenset(), lambda _qn: ()),
+        JavaCandidateLookups(lambda _qn: frozenset(), lambda _qn: (None,)),
+    ],
+    ids=["no-lookups", "declaration-unread", "declared-type-unknown"],
+)
+def test_an_exact_match_stays_exact_unless_the_declaration_names_another_type(
+    lookups: JavaCandidateLookups | None,
+) -> None:
+    rank = _overload_rank("C.take(List)", ("List",), (_QUALIFIED_LIST,), lookups)
+    assert rank == JavaOverloadRank(
+        unproven=0, conversions=cs.JAVA_RANK_EXACT, distance=0
+    )
 
 
 def test_generic_array_type_keeps_its_dimensions() -> None:
