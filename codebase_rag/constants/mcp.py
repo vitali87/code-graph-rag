@@ -106,6 +106,7 @@ class MCPParamName(StrEnum):
     SINK_QN = "sink_qualified_name"
     DRY_RUN = "dry_run"
     TRACEBACK_TEXT = "traceback_text"
+    PATH_PREFIX_MAP = "path_prefix_map"
     NODE_ID = "node_id"
     THRESHOLD = "threshold"
     MIN_SIZE = "min_size"
