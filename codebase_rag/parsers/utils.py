@@ -710,6 +710,13 @@ _PY_IMPORT_STATEMENTS = frozenset(
 )
 
 
+def python_import_bound_names(node: Node) -> set[str]:
+    # The names one `import` / `from ... import` statement binds.
+    out: set[str] = set()
+    _python_collect_import_bound_names(node, out)
+    return out
+
+
 def _python_collect_import_bound_names(node: Node, out: set[str]) -> None:
     # `import a.b` binds `a`; `import a.b as c` binds `c`; `from m import x` binds
     # `x`; `from m import x as y` binds `y`. The imported items live under the
