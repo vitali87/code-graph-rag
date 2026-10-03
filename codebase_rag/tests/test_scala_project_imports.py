@@ -12,14 +12,28 @@
 # both to the phantom ExternalModule.
 import os
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.scala import (
+    scala_bindings,
+    scala_selection,
+    scan_scala_packages,
+)
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
+from codebase_rag.types_defs import ScalaBinding
 from evals.cgr_graph import _StatefulIngestor
 
 SKIP = "scala"
@@ -1029,3 +1043,242 @@ def test_package_blocks_declare_and_use_like_package_clauses(
 
     assert imports == {("Module", f"{SRC}.shop.Cart")}, imports
     assert ("Class", f"{SRC}.shop.Cart.Cart") in instantiates, instantiates
+
+
+# --- the shapes the scans and lookups skip ----------------------------------------
+
+
+def _parse_scala(source: str) -> Node:
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.SCALA not in parsers:
+        pytest.skip("scala parser not available")
+    return parsers[cs.SupportedLanguage.SCALA].parse(source.encode()).root_node
+
+
+def _nodes_of(root: Node, node_type: str) -> list[Node]:
+    found: list[Node] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == node_type:
+            found.append(node)
+        stack.extend(reversed(node.children))
+    return found
+
+
+def test_case_and_for_binders_are_untyped_and_scoped_to_their_clause() -> None:
+    """`case c =>` binds c in its clause, `for (c <- xs)` in its for.
+
+    Neither binder says a type, so each only hides an outer `c` there.
+    """
+    root = _parse_scala(
+        "object O { def f(): Unit = "
+        "{ xs.foreach { case c => c.size }; for (c <- xs) yield c.size } }"
+    )
+    (case_clause,) = _nodes_of(root, cs.TS_SCALA_CASE_CLAUSE)
+    (for_expression,) = _nodes_of(root, cs.TS_SCALA_FOR_EXPRESSION)
+
+    bindings = scala_bindings(root)
+
+    assert set(bindings) == {"c"}
+    assert sorted(bindings["c"]) == sorted(
+        [
+            ScalaBinding("c", None, case_clause.start_byte, case_clause.end_byte),
+            ScalaBinding("c", None, for_expression.start_byte, for_expression.end_byte),
+        ]
+    )
+
+
+def test_destructuring_binders_bind_no_name_of_their_own() -> None:
+    """Tuple and wildcard patterns bind no single name to scope.
+
+    `val (p, q) = ...`, `case _: Cart`, `for ((k, v) <- m)` and the
+    `(a, b) =>` parameter list are not one name; only the lambda's own
+    parameters bind, each scoped to the lambda.
+    """
+    root = _parse_scala(
+        "object O { def f(): Unit = { val (p, q) = (1, 2); xs.map((a, b) => a); "
+        "xs.collect { case _: Cart => 1 }; for ((k, v) <- m) yield k } }"
+    )
+    (lambda_expression,) = _nodes_of(root, cs.TS_SCALA_LAMBDA_EXPRESSION)
+    scope = (lambda_expression.start_byte, lambda_expression.end_byte)
+
+    bindings = scala_bindings(root)
+
+    assert bindings == {
+        "a": [ScalaBinding("a", None, *scope)],
+        "b": [ScalaBinding("b", None, *scope)],
+    }
+
+
+def test_a_package_object_declares_its_members_in_its_own_package() -> None:
+    """`package object util` inside `package shop` holds shop.util's members.
+
+    A package object with no body declares nothing at all.
+    """
+    with_body = _parse_scala(
+        "package shop\npackage object util { def helper(): Int = 1; val rate = 2 }"
+    )
+    bodiless = _parse_scala("package shop\npackage object util")
+
+    assert scan_scala_packages(with_body).packages == {
+        "shop": frozenset(),
+        "shop.util": frozenset({"helper", "rate"}),
+    }
+    assert scan_scala_packages(bodiless).packages == {"shop": frozenset()}
+
+
+def test_a_package_clause_missing_its_name_opens_no_package() -> None:
+    """`package ;` parses with an empty name, so A stays in the root package."""
+    root = _parse_scala("package ;\nclass A")
+
+    assert scan_scala_packages(root).packages == {"": frozenset({"A"})}
+
+
+@pytest.mark.parametrize(
+    ("statement", "selections"),
+    [
+        ("g(c.size)", [("c", "size")]),
+        ("x = c.size", [("c", "size")]),
+        ("c.size = 3", [None]),
+        ("f().size", [None]),
+        ("a.b.size", [None, ("a", "b")]),
+    ],
+)
+def test_a_selection_is_a_read_only_on_a_plain_name_and_off_the_assigned_side(
+    statement: str, selections: list[tuple[str, str] | None]
+) -> None:
+    """An argument or a right-hand side reads; an assignment target does not.
+
+    A receiver that is itself a call or a selection names no binding, while
+    the inner `a.b` of `a.b.size` still reads `b` from `a`.
+    """
+    root = _parse_scala(f"object O {{ def f(): Unit = {{ {statement} }} }}")
+
+    found = [
+        scala_selection(node) for node in _nodes_of(root, cs.TS_SCALA_FIELD_EXPRESSION)
+    ]
+
+    assert found == selections
+
+
+class _CallOf:
+    """A call or generic-function parent whose callee is some other node."""
+
+    def __init__(self, node_type: str, callee: Node) -> None:
+        self.type = node_type
+        self._callee = callee
+
+    def child_by_field_name(self, name: str) -> Node | None:
+        return self._callee if name == cs.TS_FIELD_FUNCTION else None
+
+
+class _Reparented:
+    """A real selection node seen under a parent the grammar never gives it."""
+
+    def __init__(self, node: Node, parent: _CallOf | None) -> None:
+        self.id = node.id
+        self.parent = parent
+        self.child_by_field_name = node.child_by_field_name
+
+
+@pytest.mark.parametrize(
+    "parent_type",
+    [None, cs.TS_SCALA_CALL_EXPRESSION, cs.TS_SCALA_GENERIC_FUNCTION],
+)
+def test_a_selection_that_is_no_callee_reads_its_receiver(
+    parent_type: str | None,
+) -> None:
+    """With no parent, or under a call it is not the callee of, `c.size` reads.
+
+    The grammar always puts a call's arguments under an `arguments` node, so
+    neither parent comes from a parse.
+    """
+    root = _parse_scala("object O { def f(): Int = g(c.size) }")
+    (selection,) = _nodes_of(root, cs.TS_SCALA_FIELD_EXPRESSION)
+    (call,) = _nodes_of(root, cs.TS_SCALA_CALL_EXPRESSION)
+    callee = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    assert callee is not None
+    parent = None if parent_type is None else _CallOf(parent_type, callee)
+
+    reparented = cast(Node, _Reparented(selection, parent))
+
+    assert scala_selection(reparented) == ("c", "size")
+
+
+def test_an_external_wildcard_before_a_project_one_does_not_hide_the_class(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import scala.collection.mutable._` first, then `import shop._`.
+
+    The library wildcard names no project class, so the lookup moves on to
+    the next wildcard and `new Cart()` still lands on shop's Cart.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA,
+            "src/main/scala/app/App.scala": """package app
+import scala.collection.mutable._
+import shop._
+object App { def run(): Cart = new Cart() }
+""",
+        },
+    )
+
+    instantiates = _targets_from(
+        mock_ingestor, "INSTANTIATES", f"{SRC}.app.App.App.run"
+    )
+
+    assert instantiates == {("Class", f"{SRC}.shop.Cart.Cart")}, instantiates
+
+
+def test_a_type_lookup_without_a_position_or_a_scan_uses_what_is_known(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """No position means no package block: the file's imports answer.
+
+    A module never scanned has no packages and no imports, so nothing does.
+    """
+    _write(
+        project,
+        {
+            "src/main/scala/shop/Cart.scala": CART_SCALA,
+            "src/main/scala/app/App.scala": """package app
+import shop.Cart
+object App { def run(): Cart = new Cart() }
+""",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    processor = updater.factory.import_processor
+
+    assert processor.scala_type_qn(f"{SRC}.app.App", "Cart") == (
+        f"{SRC}.shop.Cart.Cart"
+    )
+    assert processor.scala_type_qn(f"{SRC}.app.App", "Missing") is None
+    assert processor.scala_type_qn(f"{SRC}.nowhere.Gone", "Cart", 0) is None
+
+
+def test_a_resolved_scala_edge_to_a_module_no_longer_known_is_dropped(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """An edge resolved onto the project's module never goes external.
+
+    When that module is not among the known modules at flush time there is
+    no Module to land on, and no ExternalModule stands in for it.
+    """
+    importer = "proj.app.App"
+    gone = "proj.shop.Cart"
+    processor = ImportProcessor(
+        repo_path=tmp_path, project_name="proj", ingestor=mock_ingestor
+    )
+    processor.defer_import_edge(importer, gone, cs.SupportedLanguage.SCALA)
+    processor._scala_resolved_edges.add((importer, gone))
+
+    emitted = processor.flush_deferred_import_edges({importer: ""})
+
+    assert emitted == 0
+    assert get_relationships(mock_ingestor, "IMPORTS") == []
+    assert get_nodes(mock_ingestor, cs.NodeLabel.EXTERNAL_MODULE) == []
