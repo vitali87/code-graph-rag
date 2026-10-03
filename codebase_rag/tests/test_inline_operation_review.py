@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing import InlineRefused, InlineReport, inline
 from codebase_rag.tests.extract_inline_helpers import PROJECT, _index, _write
 from evals.cgr_graph import _StatefulIngestor
@@ -45,7 +46,7 @@ def _python(root: Path, code: str) -> str:
         [sys.executable, "-c", code],
         cwd=root,
         capture_output=True,
-        text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     return (done.stdout + done.stderr).strip()
@@ -56,7 +57,11 @@ def _node(root: Path, rel: str) -> str | None:
     if node is None:
         return None
     done = subprocess.run(
-        [node, rel], cwd=root, capture_output=True, text=True, check=False
+        [node, rel],
+        cwd=root,
+        capture_output=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
     )
     return (done.stdout + done.stderr).strip()
 
