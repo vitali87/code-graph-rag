@@ -368,6 +368,12 @@ class JavaMethodCallInfo(TypedDict):
     arguments: int
 
 
+class JavaMethodReferenceParts(NamedTuple):
+    # `method_name` is None for a constructor reference (`Type::new`).
+    receiver: ASTNode
+    method_name: str | None
+
+
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
@@ -500,7 +506,7 @@ class FunctionNodeProps(TypedDict, total=False):
 # float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
 # bool is listed for documentation only, being already a subtype of int, and
 # structural_replace's dry_run default has relied on that since it was added.
-MCPToolArguments = dict[str, str | int | float | bool | None]
+MCPToolArguments = dict[str, str | int | float | bool | dict[str, str] | None]
 
 
 class MCPInputSchemaProperty(TypedDict, total=False):
@@ -508,6 +514,8 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     description: str
     default: str | int | float | bool
     items: dict[str, str]
+    # JSON Schema's key for the value type of an object used as a map.
+    additionalProperties: dict[str, str]
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
@@ -548,6 +556,9 @@ class DeadCodeRow(TypedDict):
     label: str
     name: str
     qualified_name: str
+    # Repo-relative, as a duplicates member's: a qualified name cannot be
+    # turned back into a file in general (issue #2561).
+    path: str
     start_line: int
     end_line: int
 
@@ -557,7 +568,6 @@ class DeadCodeConfig(NamedTuple):
     include_classes: bool
     root_decorators: frozenset[str]
     entry_points: tuple[str, ...]
-    test_patterns: tuple[str, ...]
     exclude_patterns: tuple[str, ...] = ()
     # Drop CALLS/REFERENCES edges below this confidence before the walk
     # (issue #1526); None keeps every edge.
@@ -1124,7 +1134,8 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
             RelationshipType.INSTANTIATES,
         ),
         "{line: int?, col: int?, end_line: int?, end_col: int?, "
-        "arg_count: int?, kwarg_names: list[string]?, resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
+        "arg_count: int?, kwarg_names: list[string]?, star_args: boolean?, star_kwargs: boolean?, "
+        "resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
     ),
     RelationshipPropertySchema(
         (RelationshipType.IMPORTS,),
