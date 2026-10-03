@@ -29,6 +29,7 @@ from codebase_rag.flow_verdict import (
     CYPHER_FLOW_REMOTE_EDGES,
 )
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.trace import resolution
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
     CallRecord,
@@ -605,8 +606,11 @@ class _IngestGraph:
         pass
 
 
-def _write_trace(trace_path: Path, recorded_root: str, frames_root: str) -> None:
+def _write_trace(
+    trace_path: Path, recorded_root: str, frames_root: str, package: str = "shop"
+) -> None:
     def point(rel: str, name: str, line: int) -> FramePoint:
+        rel = rel.replace("shop/", f"{package}/", 1)
         return FramePoint(path=f"{frames_root}/{rel}", qualname=name, line=line)
 
     write_trace_file(
@@ -740,3 +744,189 @@ def test_a_frame_under_the_checkout_in_another_case_stays_under_it():
 
     assert rebase.apply(frame).path == "C:/Users/dev/tbdemo/shop/pricing.py"
     assert not rebase.matches(frame)
+
+
+# --- a Windows frame spelling an in-repo directory in another case ----------
+# Windows names one file whatever the case of its path, so a traceback or
+# trace recorded there can spell `shop\pricing.py` as `SHOP\pricing.py`
+# (the script typed on the command line, a tool that normalises case). The
+# rebase kept that recorded spelling, so the frame matched no graph node: the
+# trace lost its call edge and the traceback lost the frame (follow-up to
+# issue #2587).
+
+_WINDOWS_LOCAL_ROOT = "C:/Users/dev/tbdemo/"
+
+
+def _recased(text: str, package: str, *files: str) -> str:
+    for name in files:
+        text = text.replace(f"\\shop\\{name}", f"\\{package}\\{name}")
+    return text
+
+
+def _ambiguous_fetch_all(project: str):
+    """A POSIX checkout may hold two files whose paths differ only in case."""
+    nodes = [
+        _row(cs.NodeLabel.MODULE, f"{project}.shop.cli", "shop/cli.py"),
+        _row(cs.NodeLabel.FUNCTION, f"{project}.shop.cli.main", "shop/cli.py", 20, 24),
+        _row(cs.NodeLabel.MODULE, f"{project}.shop.util", "shop/util.py"),
+        _row(cs.NodeLabel.FUNCTION, f"{project}.shop.util.fmt", "shop/util.py", 1, 9),
+        _row(cs.NodeLabel.MODULE, f"{project}.Shop.util", "Shop/util.py"),
+        _row(cs.NodeLabel.FUNCTION, f"{project}.Shop.util.fmt", "Shop/util.py", 1, 9),
+    ]
+
+    def fetch_all(query: str, params: dict | None = None) -> list[dict]:
+        return nodes if query == CYPHER_TRACE_CALLABLES else []
+
+    return fetch_all
+
+
+def test_a_windows_frame_in_a_differently_cased_directory_resolves(tmp_path):
+    """The reported case: `cli.py` frames name `shop`, `pricing.py` frames
+    name `SHOP`. Both are this checkout's `shop/` package."""
+    text = _recased(_shop_traceback(_WINDOWS_ROOT, "\\"), "SHOP", "pricing.py")
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == _resolved(_P)
+    assert report.resolution.resolved == 6
+
+
+def test_a_windows_traceback_wholly_under_a_differently_cased_directory_resolves(
+    tmp_path,
+):
+    """With no frame spelled as indexed, the checkout root is still inferred."""
+    text = _recased(
+        _shop_traceback(_WINDOWS_ROOT, "\\"), "Shop", "cli.py", "pricing.py"
+    )
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == _resolved(_P)
+    assert report.inferred_root == _WINDOWS_LOCAL_ROOT
+
+
+def test_a_frame_under_a_windows_checkout_in_another_case_resolves(
+    tmp_path, monkeypatch
+):
+    """The checkout itself on Windows: no rebase moves the frame, yet its
+    in-repo directory is spelled differently from the indexed path. The
+    frames use forward slashes, the form `Path.as_posix` gives on Windows,
+    so the simulated checkout behaves alike on every host."""
+    monkeypatch.setattr(
+        resolution, "_repo_root_posix", lambda _root: _WINDOWS_LOCAL_ROOT
+    )
+    text = _recased(
+        _shop_traceback(_WINDOWS_ROOT, "\\"), "SHOP", "cli.py", "pricing.py"
+    ).replace("\\", "/")
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == _resolved(_P)
+    assert report.inferred_root is None
+
+
+def test_a_windows_frame_mapped_into_a_subdirectory_is_respelled_below_it(
+    tmp_path,
+):
+    """Only the recorded part is re-spelled; the mapped target `src` is this
+    checkout's own directory and is used as given."""
+    nodes = [
+        {**row, cs.KEY_PATH: f"src/{row[cs.KEY_PATH]}"}
+        for row in _shop_nodes(_P)
+        if row[cs.KEY_PATH].startswith("shop/")
+    ]
+
+    def fetch_all(query: str, params: dict | None = None) -> list[dict]:
+        return nodes if query == CYPHER_TRACE_CALLABLES else []
+
+    report = explain_traceback(
+        fetch_all,
+        _P,
+        tmp_path,
+        _recased(_shop_traceback("D:\\build", "\\"), "SHOP", "pricing.py"),
+        path_prefix_map={"D:\\build": "src"},
+    )
+
+    assert _qns(report) == _resolved(_P)
+
+
+def test_trace_ingest_matches_a_windows_frame_whose_directory_case_differs(
+    tmp_path,
+):
+    repo = tmp_path.resolve() / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, _WINDOWS_ROOT, _WINDOWS_ROOT, package="SHOP")
+    graph = _IngestGraph(_P)
+
+    summary = ingest_trace(trace_path, graph, repo, _P)
+
+    assert summary.unresolved == 0
+    assert sorted(graph.edges) == [
+        (f"{_P}.shop.pricing.Cart.total", f"{_P}.shop.pricing.apply_tax"),
+        (f"{_P}.shop.pricing.apply_tax", f"{_P}.shop.pricing.load_rate"),
+    ]
+
+
+# --- negative: case still matters where the recording OS says it does -------
+
+
+def test_a_windows_frame_spelled_as_indexed_resolves_as_before(tmp_path):
+    report = explain_traceback(
+        _fetch_all_for(_P), _P, tmp_path, _shop_traceback(_WINDOWS_ROOT, "\\")
+    )
+
+    assert _qns(report) == _resolved(_P)
+    assert report.inferred_root == _WINDOWS_LOCAL_ROOT
+
+
+def test_a_posix_frame_in_a_differently_cased_directory_stays_unknown(tmp_path):
+    """On a POSIX machine `SHOP/` and `shop/` are two directories, so the
+    frame names a file the graph does not hold."""
+    text = _shop_traceback(_DOCKER_ROOT).replace("/shop/pricing.py", "/SHOP/pricing.py")
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == [*_resolved(_P)[:5], None, None, None]
+    assert _reasons(report)[5:] == [_UNKNOWN, _UNKNOWN, _UNKNOWN]
+
+
+def test_trace_ingest_keeps_posix_in_repo_directories_case_sensitive(tmp_path):
+    repo = tmp_path.resolve() / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, _CI_ROOT, _CI_ROOT, package="SHOP")
+    graph = _IngestGraph(_P)
+
+    summary = ingest_trace(trace_path, graph, repo, _P)
+
+    assert summary.edges == 0
+    assert summary.resolution.unresolved == {_UNKNOWN: 2}
+
+
+def test_a_windows_frame_matching_two_indexed_spellings_picks_neither(tmp_path):
+    """`shop/util.py` and `Shop/util.py` are both indexed; `SHOP\\util.py`
+    names one file on Windows but cannot say which of the two it is."""
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "C:\\work\\shop\\cli.py", line 23, in main\n'
+        '  File "C:\\work\\SHOP\\util.py", line 3, in fmt\n'
+        '  File "C:\\work\\Shop\\util.py", line 3, in fmt\n'
+        "ValueError: boom\n"
+    )
+
+    report = explain_traceback(_ambiguous_fetch_all(_P), _P, tmp_path, text)
+
+    assert _qns(report) == [f"{_P}.shop.cli.main", None, f"{_P}.Shop.util.fmt"]
+    assert _reasons(report)[1] == _UNKNOWN
+
+
+def test_a_windows_frame_in_an_unindexed_directory_stays_unknown(tmp_path):
+    text = _shop_traceback(_WINDOWS_ROOT, "\\").replace(
+        "\\shop\\pricing.py", "\\shop2\\pricing.py"
+    )
+
+    report = explain_traceback(_fetch_all_for(_P), _P, tmp_path, text)
+
+    assert _qns(report) == [*_resolved(_P)[:5], None, None, None]
+    assert _reasons(report)[5:] == [_UNKNOWN, _UNKNOWN, _UNKNOWN]
