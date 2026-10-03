@@ -4854,10 +4854,43 @@ class CallProcessor:
             results = {
                 self._go_result_class((NodeType.FUNCTION, qn))
                 for qn in self._go_package_functions(package_qn, name)
+                if self._go_function_visible_to(
+                    qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn, module_qn
+                )
             }
             if results:
                 return True, results.pop() if len(results) == 1 else None
         return True, None
+
+    def _go_function_visible_to(
+        self, declaring_qn: str, package_qn: str, module_qn: str
+    ) -> bool:
+        # Whether a function declared in file `declaring_qn` of `package_qn` is
+        # one `module_qn` can call. The rules `_go_package_receiver_qn` uses: a
+        # `_test.go` file compiles only under `go test`, so only a test file
+        # of the same package sees it, and within the caller's own directory
+        # the `package` clauses must agree (`package m_test` is another
+        # package). An imported package is never the caller's own, so only the
+        # test-file rule applies to it.
+        declaring_path = self.module_qn_to_file_path.get(declaring_qn)
+        if declaring_path is None:
+            return True
+        requester = self.module_qn_to_file_path.get(module_qn)
+        requester_is_test = requester is not None and requester.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
+        own_package = package_qn == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
+            requester_is_test and own_package
+        ):
+            return False
+        if not own_package:
+            return True
+        requester_package = self._go_package_names.get(module_qn)
+        return (
+            requester_package is None
+            or self._go_package_names.get(declaring_qn) == requester_package
+        )
 
     def _go_package_functions(self, package_qn: str, name: str) -> list[str]:
         # The free functions `name` filed directly under a file of

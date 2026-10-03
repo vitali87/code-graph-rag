@@ -573,3 +573,79 @@ def test_a_call_through_an_import_never_binds_a_local_namesake(
     # The caller's own NewBuffer, called by its bare name, is the local one.
     local = _calls(store, "proj.m.box.viaLocal")
     assert local.get("proj.m.box.Local.Len") == EXACT, local
+
+
+# A `_test.go` file is compiled only under `go test`, and a `package m_test`
+# file is another package: neither declares anything a production file sees.
+
+TEST_SIBLING_GO = (
+    "package m\n\n"
+    "type Other2 struct{}\n\n"
+    "func (o *Other2) Bump() int { return 4 }\n\n"
+    "func NewBox() *Other2 { return &Other2{} }\n"
+)
+
+
+def test_a_test_file_namesake_does_not_hide_the_production_function(
+    tmp_path: Path,
+) -> None:
+    # Production `NewBox() *Box` beside a `_test.go` `NewBox() *Other2`: the
+    # production caller sees only the first, so its chain still binds.
+    store = _project(
+        tmp_path,
+        {
+            "m/box.go": BOX_GO,
+            "m/box_test.go": TEST_SIBLING_GO,
+            "m/use.go": "package m\n\nfunc prod() int { return NewBox().Bump() }\n",
+        },
+    )
+    calls = _calls(store, "proj.m.use.prod")
+    assert calls.get("proj.m.box.Box.Bump") == EXACT, calls
+    assert "proj.m.box_test.Other2.Bump" not in calls, calls
+
+
+def test_a_test_file_caller_still_binds_its_constructor(tmp_path: Path) -> None:
+    # An internal test (`package m`) sees the production NewBox; an external
+    # test package (`package m_test`) declaring its own NewBox sees only that.
+    store = _project(
+        tmp_path,
+        {
+            "m/box.go": BOX_GO,
+            "m/box_test.go": (
+                "package m\n\nfunc TestChain() int { return NewBox().Bump() }\n"
+            ),
+            "m/ext_test.go": (
+                "package m_test\n\n"
+                "type Ext struct{}\n\n"
+                "func (e *Ext) Bump() int { return 5 }\n\n"
+                "func NewBox() *Ext { return &Ext{} }\n\n"
+                "func TestExt() int { return NewBox().Bump() }\n"
+            ),
+        },
+    )
+    internal = _calls(store, "proj.m.box_test.TestChain")
+    assert internal.get("proj.m.box.Box.Bump") == EXACT, internal
+    external = _calls(store, "proj.m.ext_test.TestExt")
+    assert external.get("proj.m.ext_test.Ext.Bump") == EXACT, external
+    assert "proj.m.box.Box.Bump" not in external, external
+
+
+def test_build_variants_returning_one_struct_still_bind(tmp_path: Path) -> None:
+    # `//go:build` variants each declare NewBox; they agree on the result.
+    store = _project(
+        tmp_path,
+        {
+            "m/box.go": BOX_GO.replace("func NewBox() *Box { return &Box{} }\n\n", ""),
+            "m/new_linux.go": (
+                "//go:build linux\n\npackage m\n\n"
+                "func NewBox() *Box { return &Box{} }\n"
+            ),
+            "m/new_other.go": (
+                "//go:build !linux\n\npackage m\n\n"
+                "func NewBox() *Box { return new(Box) }\n"
+            ),
+            "m/use.go": "package m\n\nfunc variants() int { return NewBox().Bump() }\n",
+        },
+    )
+    calls = _calls(store, "proj.m.use.variants")
+    assert calls.get("proj.m.box.Box.Bump") == EXACT, calls
