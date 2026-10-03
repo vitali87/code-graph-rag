@@ -52,7 +52,9 @@ workspace command set.
 
 `cgr start --workspace backend --update-graph` syncs each of the workspace's
 repositories under its own project name, then opens the assistant scoped to
-the workspace. `--repo-path` and the current directory play no part in it.
+the workspace, which `-a`, `--output-format` and `--projects` reach as they
+do without `--update-graph`; `--no-sync` is refused. `--repo-path` and the
+current directory play no part in it.
 `--clean`, `-o` and `--interactive-setup` apply to one repository, so they are
 refused with `--workspace --update-graph`. A sync of your home directory or
 the filesystem root is refused unless you pass `--yes`. A workspace with no

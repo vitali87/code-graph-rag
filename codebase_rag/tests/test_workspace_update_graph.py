@@ -20,6 +20,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from codebase_rag import constants as cs
 from codebase_rag.cli import _launch_session, _run_graph_sync, app
 from codebase_rag.workspaces import add_repo, create_workspace, load_workspace
 
@@ -233,6 +234,85 @@ def test_update_graph_without_a_workspace_still_stops_after_the_sync(
     session.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        (["-a", "where is main?"], {"ask_agent": "where is main?"}),
+        (
+            ["-a", "where is main?", "--output-format", "json"],
+            {"ask_agent": "where is main?", "output_format": cs.QueryFormat.JSON},
+        ),
+        (["--projects", "alpha,beta"], {"active_projects": ["alpha", "beta"]}),
+    ],
+    ids=["ask-agent", "ask-agent-json", "projects"],
+)
+def test_the_workspace_assistant_reads_its_options_after_update_graph(
+    sync: MagicMock,
+    session: MagicMock,
+    shop: tuple[Path, Path, Path],
+    extra: list[str],
+    expected: dict[str, object],
+) -> None:
+    # #2478 refuses these with a repository's `--update-graph`, which exits
+    # before anything reads them. A workspace's opens the assistant next, so
+    # they reach it instead of being refused.
+    _, _, elsewhere = shop
+
+    result = runner.invoke(
+        app, _start(elsewhere, "--workspace", "shop", "--update-graph", *extra)
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sync.call_count == 2
+    launched = _launched_with(session)
+    assert {name: launched[name] for name in expected} == expected
+
+
+@pytest.mark.parametrize(
+    ("extra", "option"),
+    [
+        (["-a", "where is main?"], "--ask-agent"),
+        (["--output-format", "json"], "--output-format json"),
+        (["--projects", "alpha,beta"], "--projects"),
+        (["--no-sync"], "--no-sync"),
+    ],
+    ids=["ask-agent", "output-format-json", "projects", "no-sync"],
+)
+def test_a_repository_update_graph_still_refuses_what_it_would_drop(
+    sync: MagicMock,
+    session: MagicMock,
+    tmp_path: Path,
+    extra: list[str],
+    option: str,
+) -> None:
+    # Negative: without `--workspace`, #2478's refusals stand.
+    result = runner.invoke(app, _start(tmp_path, "--update-graph", *extra))
+
+    out = " ".join(click.unstyle(result.output).split())
+    assert result.exit_code == 1, out
+    assert f"{option} cannot be combined with --update-graph" in out
+    sync.assert_not_called()
+    session.assert_not_called()
+
+
+def test_a_workspace_update_graph_still_refuses_no_sync(
+    sync: MagicMock, session: MagicMock, shop: tuple[Path, Path, Path]
+) -> None:
+    # Negative: `--update-graph --no-sync` contradicts itself in either mode.
+    _, _, elsewhere = shop
+
+    result = runner.invoke(
+        app,
+        _start(elsewhere, "--workspace", "shop", "--update-graph", "--no-sync"),
+    )
+
+    out = " ".join(click.unstyle(result.output).split())
+    assert result.exit_code == 1, out
+    assert "--no-sync cannot be combined with --update-graph" in out
+    sync.assert_not_called()
+    session.assert_not_called()
+
+
 @pytest.fixture
 def home_workspace(home: Path) -> Path:
     create_workspace("dotfiles")
@@ -297,31 +377,20 @@ def empty(tmp_path: Path) -> Path:
     return elsewhere
 
 
-_EMPTY_WORKSPACE = "'empty' has no repositories"
-
-
 @pytest.mark.parametrize(
-    ("extra", "refusal"),
+    "extra",
     [
-        (["--update-graph"], _EMPTY_WORKSPACE),
-        # #2478 refuses `-a` and `--projects` with any `--update-graph`, before
-        # the workspace is loaded; either way nothing opens or syncs.
-        (
-            ["--update-graph", "-a", "where is main?"],
-            "--ask-agent cannot be combined with --update-graph",
-        ),
-        (
-            ["--update-graph", "--projects", "alpha"],
-            "--projects cannot be combined with --update-graph",
-        ),
-        ([], _EMPTY_WORKSPACE),
-        (["--no-sync"], _EMPTY_WORKSPACE),
-        (["-a", "where is main?"], _EMPTY_WORKSPACE),
+        ["--update-graph"],
+        ["--update-graph", "-a", "where is main?"],
+        ["--update-graph", "--projects", "alpha"],
+        [],
+        ["--no-sync"],
+        ["-a", "where is main?"],
     ],
     ids=["update", "update-ask", "update-projects", "chat", "no-sync", "ask"],
 )
 def test_an_empty_workspace_opens_no_assistant(
-    sync: MagicMock, session: MagicMock, empty: Path, extra: list[str], refusal: str
+    sync: MagicMock, session: MagicMock, empty: Path, extra: list[str]
 ) -> None:
     # Greptile review of PR 2507: a workspace with no repositories left the
     # project scope empty, and an empty scope is what "no scope" looks like
@@ -331,7 +400,7 @@ def test_an_empty_workspace_opens_no_assistant(
 
     out = " ".join(click.unstyle(result.output).split())
     assert result.exit_code == 1, out
-    assert refusal in out
+    assert "'empty' has no repositories" in out
     assert "Graph update completed" not in out
     session.assert_not_called()
     sync.assert_not_called()

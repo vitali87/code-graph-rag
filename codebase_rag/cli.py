@@ -314,21 +314,35 @@ def _refuse_options_update_graph_drops(
     output_format: cs.QueryFormat,
     no_sync: bool,
     projects: str | None,
+    *,
+    workspace_given: bool,
 ) -> None:
     # `--update-graph` returns once its sync is done, before anything that
     # reads these, so they were accepted and dropped with exit 0 (#2478).
-    # `--workspace` is left out: it decides what the sync covers (#2418).
+    # With `--workspace` it syncs the workspace's repositories and then opens
+    # the assistant, which reads `-a`, `--output-format` and `--projects`, so
+    # those are not refused there (#2418). `--no-sync` is refused in both
+    # modes: a sync asked for with `--no-sync` contradicts itself.
     if not update_graph:
         return
+    dropped = not workspace_given
     for option, given, remedy in (
-        (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
+        (
+            cs.CLI_OPT_ASK_AGENT,
+            dropped and ask_agent is not None,
+            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+        ),
         (
             cs.CLI_OPT_OUTPUT_FORMAT_JSON,
-            output_format == cs.QueryFormat.JSON,
+            dropped and output_format == cs.QueryFormat.JSON,
             cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
         ),
         (cs.CLI_OPT_NO_SYNC, no_sync, cs.CLI_REMEDY_SYNC_OR_NO_SYNC),
-        (cs.CLI_OPT_PROJECTS, projects is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
+        (
+            cs.CLI_OPT_PROJECTS,
+            dropped and projects is not None,
+            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+        ),
     ):
         if given:
             _exit_with_error(
@@ -1043,7 +1057,12 @@ def start(
     app_context.session.load_cgr_instructions = not no_instructions
 
     _refuse_options_update_graph_drops(
-        update_graph, ask_agent, output_format, no_sync, projects
+        update_graph,
+        ask_agent,
+        output_format,
+        no_sync,
+        projects,
+        workspace_given=workspace is not None,
     )
     if output_format == cs.QueryFormat.JSON and not ask_agent:
         _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
