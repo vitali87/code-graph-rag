@@ -1288,9 +1288,11 @@ class CallResolver:
         impl_qn = self._interface_impl_map().get(class_qn)
         if impl_qn is None:
             return set()
-        if result := self._try_resolve_method(impl_qn, method_name):
-            return {result}
+        # A C# class that implements the member explicitly runs that body for
+        # an interface-typed call, even beside a public same-signature one.
         if result := self._explicit_implementation(impl_qn, class_qn, method_name):
+            return {result}
+        if result := self._try_resolve_method(impl_qn, method_name):
             return {result}
         return set()
 
@@ -1299,10 +1301,15 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         # A C# implementer that implements the member EXPLICITLY registers it
         # as `IValidator#Validate(Ctx)` (issue #2619), and that body is the one
-        # an interface-typed call runs.
-        interface = csharp_utils.split_type_ref(
-            qn_markers.strip_dup_marker(interface_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
-        )[0]
+        # an interface-typed call runs. Its spelling must name this interface,
+        # so `A.IRun.Go` and `B.IRun.Go` on one class stay apart.
+        if self._module_language(impl_qn) != cs.SupportedLanguage.CSHARP:
+            return None
+        inference = self.type_inference
+        path = inference.csharp_class_namespaced.get(
+            interface_qn
+        ) or qn_markers.natural_qn(interface_qn)
+        arity = inference.csharp_class_generic_arity.get(interface_qn, 0)
         prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
         for qn, node_type in self.function_registry.find_with_prefix(impl_qn):
             if not qn.startswith(prefix):
@@ -1311,10 +1318,7 @@ class CallResolver:
             if (
                 explicit is not None
                 and explicit[1] == method_name
-                and csharp_utils.strip_generic_arguments(
-                    csharp_utils.leaf_type_segment(explicit[0])
-                )
-                == interface
+                and csharp_utils.names_interface(explicit[0], path, arity)
             ):
                 return node_type, qn
         return None

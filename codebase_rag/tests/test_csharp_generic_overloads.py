@@ -306,6 +306,46 @@ public class Use {
             f"{validator}.Validate(T)"
         }
 
+    def test_a_constructed_receivers_type_arguments_bind_too(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # No subclass closes `T` here: the receiver's own written type does,
+        # whether constructed in place, through a `var` local or a declared
+        # parameter. Bound to Person, `Handle(T)` cannot take a Circle.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "Recv.cs": """\
+namespace S;
+public class Person { }
+public class Shape { }
+public class Circle : Shape { }
+public class Handler<T> {
+    public int Handle(T item) => 1;
+    public int Handle(Shape shape) => 2;
+}
+public class Use {
+    public int Direct() { return new Handler<Person>().Handle(new Circle()); }
+    public int Local() { var h = new Handler<Person>(); return h.Handle(new Circle()); }
+    public int Declared(Handler<Person> h) { return h.Handle(new Circle()); }
+    public int Same() { var h = new Handler<Person>(); return h.Handle(new Person()); }
+}
+"""
+            },
+        )
+        handler = f"{PROJECT}.Recv.S.Handler"
+        use = f"{PROJECT}.Recv.S.Use"
+        for caller in ("Direct", "Local", "Declared(Handler<Person>)"):
+            calls = _calls_from(mock_ingestor, f"{use}.{caller}")
+            assert set(calls) == {f"{handler}.Handle(Shape)"}, (caller, calls)
+            assert _resolution(calls[f"{handler}.Handle(Shape)"]) == (
+                cs.EdgeResolution.EXACT
+            )
+        assert set(_calls_from(mock_ingestor, f"{use}.Same")) == {
+            f"{handler}.Handle(T)"
+        }
+
 
 class TestACallThatLeavesADefaultedArgumentOut:
     # No overload has the call's arity, so the arity walk finds nothing and
@@ -346,6 +386,44 @@ class TestACallThatLeavesADefaultedArgumentOut:
         named = updater.function_registry.find_ending_with("ValidateAsync")
         assert ASYNC_EXPLICIT not in named, named
         assert {ASYNC_T, ASYNC_CTX_T} <= set(named), named
+
+    def test_an_expanded_params_call_scores_every_argument(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Two `params` overloads of different length both take four ints
+        # expanded. Scored on the declared parameters alone, their fits had
+        # different lengths, the comparison raised, and the file lost this
+        # call and every later one.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "Params.cs": """\
+namespace P;
+public class C {
+    public int M(params int[] xs) => 0;
+    public int M(int x, params int[] xs) => 1;
+    public int N(params int[] xs) => 2;
+    public int N(string s, params int[] xs) => 3;
+    public int Other() => 4;
+}
+public class Use {
+    public int Four() { var c = new C(); return c.M(1, 2, 3, 4); }
+    public int Three() { var c = new C(); return c.N(1, 2, 3); }
+    public int Later() { var c = new C(); return c.Other(); }
+}
+"""
+            },
+        )
+        klass = f"{PROJECT}.Params.P.C"
+        use = f"{PROJECT}.Params.P.Use"
+        four = _calls_from(mock_ingestor, f"{use}.Four")
+        assert set(four) == {f"{klass}.M(int[])", f"{klass}.M(int, int[])"}, four
+        assert {_resolution(p) for p in four.values()} == {cs.EdgeResolution.OVERLOAD}
+        # The element type is what each expanded argument is scored against,
+        # so the overload whose fixed `string` a literal int cannot bind drops.
+        assert set(_calls_from(mock_ingestor, f"{use}.Three")) == {f"{klass}.N(int[])"}
+        assert set(_calls_from(mock_ingestor, f"{use}.Later")) == {f"{klass}.Other"}
 
 
 class TestTheExplicitImplementationStillImplementsItsInterface:
@@ -390,6 +468,151 @@ public class Use { public int A(IRun r) { return r.Go(1); } }
             f"{PROJECT}.Run.R.Runner.IRun#Go(int)",
             f"{PROJECT}.Run.R.IRun.Go(int)",
         ) in _overrides(mock_ingestor)
+
+    def test_an_interface_call_runs_the_explicit_body_beside_a_public_one(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Both bodies take an int; an `IRun` receiver runs the explicit one,
+        # a `Runner` receiver the public one.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "Both.cs": """\
+namespace R;
+public interface IRun { int Go(int x); }
+public class Runner : IRun {
+    int IRun.Go(int x) => x;
+    public int Go(int x) => 0;
+}
+public class Use {
+    public int ViaInterface(IRun r) { return r.Go(1); }
+    public int ViaClass() { var r = new Runner(); return r.Go(1); }
+}
+"""
+            },
+        )
+        runner = f"{PROJECT}.Both.R.Runner"
+        use = f"{PROJECT}.Both.R.Use"
+        assert set(_calls_from(mock_ingestor, f"{use}.ViaInterface(IRun)")) == {
+            f"{PROJECT}.Both.R.IRun.Go(int)",
+            f"{runner}.IRun#Go(int)",
+        }
+        assert set(_calls_from(mock_ingestor, f"{use}.ViaClass")) == {
+            f"{runner}.Go(int)"
+        }
+
+    def test_same_named_interfaces_in_two_namespaces_stay_apart(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "Twins.cs": """\
+namespace A { public interface IRun { int Go(int x); } }
+namespace B { public interface IRun { int Go(int x); } }
+namespace C {
+  public class Runner : A.IRun, B.IRun {
+    int A.IRun.Go(int x) => 1;
+    int B.IRun.Go(int x) => 2;
+  }
+  public class Use {
+    public int ViaA(A.IRun r) { return r.Go(1); }
+    public int ViaB(B.IRun r) { return r.Go(1); }
+  }
+}
+"""
+            },
+        )
+        base = f"{PROJECT}.Twins"
+        runner = f"{base}.C.Runner"
+        assert {
+            (f"{runner}.A#IRun#Go(int)", f"{base}.A.IRun.Go(int)"),
+            (f"{runner}.B#IRun#Go(int)", f"{base}.B.IRun.Go(int)"),
+        } <= _overrides(mock_ingestor)
+        assert (f"{runner}.B#IRun#Go(int)", f"{base}.A.IRun.Go(int)") not in (
+            _overrides(mock_ingestor)
+        )
+        assert set(_calls_from(mock_ingestor, f"{base}.C.Use.ViaA(A.IRun)")) == {
+            f"{base}.A.IRun.Go(int)",
+            f"{runner}.A#IRun#Go(int)",
+        }
+        assert set(_calls_from(mock_ingestor, f"{base}.C.Use.ViaB(B.IRun)")) == {
+            f"{base}.B.IRun.Go(int)",
+            f"{runner}.B#IRun#Go(int)",
+        }
+
+
+class TestOverridesReachTheirBaseMember:
+    def test_an_override_spelling_qualified_types_still_overrides(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The dot in `System.String` is not where the class ends.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "Qual.cs": """\
+using System.Collections.Generic;
+namespace Q;
+public class Base {
+    public virtual void Put(List<System.String> items) { }
+    public virtual void Plain(System.String s) { }
+}
+public class Derived : Base {
+    public override void Put(List<System.String> items) { }
+    public override void Plain(System.String s) { }
+}
+"""
+            },
+        )
+        q = f"{PROJECT}.Qual.Q"
+        assert {
+            (
+                f"{q}.Derived.Put(List<System.String>)",
+                f"{q}.Base.Put(List<System.String>)",
+            ),
+            (f"{q}.Derived.Plain(System.String)", f"{q}.Base.Plain(System.String)"),
+        } <= _overrides(mock_ingestor)
+
+    def test_an_override_binds_the_base_overload_its_type_arguments_spell(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Both base overloads erase to `Put(List)` and take one argument, so
+        # only substituting `T := int` tells which one `Put(List<int>)`
+        # overrides; through `Mid<U>` the binding is carried a level further.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "Subst.cs": """\
+using System.Collections.Generic;
+namespace G;
+public class Base<T> {
+    public virtual void Put(List<T> items) { }
+    public virtual void Put(List<string> items) { }
+}
+public class Derived : Base<int> {
+    public override void Put(List<int> items) { }
+}
+public class Other : Base<int> {
+    public override void Put(List<string> items) { }
+}
+public class Mid<U> : Base<U> { }
+public class Deep : Mid<int> {
+    public override void Put(List<int> items) { }
+}
+"""
+            },
+        )
+        g = f"{PROJECT}.Subst.G"
+        overrides = _overrides(mock_ingestor)
+        assert {
+            (f"{g}.Derived.Put(List<int>)", f"{g}.Base.Put(List<T>)"),
+            (f"{g}.Other.Put(List<string>)", f"{g}.Base.Put(List<string>)"),
+            (f"{g}.Deep.Put(List<int>)", f"{g}.Base.Put(List<T>)"),
+        } <= overrides, sorted(overrides)
 
 
 class TestWhatStaysAsItWas:

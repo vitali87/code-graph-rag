@@ -19,9 +19,12 @@ from enum import IntEnum
 from typing import NamedTuple
 
 from ... import constants as cs
+from ...types_defs import CSharpGenericShape
+from ...utils import qn_markers
 from .utils import (
     generic_arity_of_type_text,
     leaf_type_segment,
+    split_type_ref,
     strip_generic_arguments,
 )
 
@@ -75,6 +78,41 @@ def substitute(type_text: str, bindings: Mapping[str, str]) -> str:
     return _TYPE_IDENTIFIER.sub(
         lambda match: bindings.get(match.group(0), match.group(0)), type_text
     )
+
+
+def bindings_for_base(
+    shapes: Mapping[str, CSharpGenericShape],
+    generic_arity: Mapping[str, int],
+    class_qn: str,
+    bindings: Mapping[str, str],
+    base_qn: str,
+) -> dict[str, str]:
+    """What `class_qn`'s base list passes `base_qn`'s type parameters, in
+    `class_qn`'s own bound terms: `Derived : Base<int>` gives Base's T
+    `int`. An argument naming one of `class_qn`'s still unbound parameters
+    binds nothing: `Inline<T> : Validator<T>` says Validator's T is
+    Inline's T, which only a subclass can close."""
+    shape = shapes.get(class_qn)
+    base_shape = shapes.get(base_qn)
+    if shape is None or base_shape is None or not base_shape.parameters:
+        return {}
+    leaf = qn_markers.strip_dup_marker(base_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    name = split_type_ref(leaf)[0]
+    arity = generic_arity.get(base_qn, 0)
+    written = next(
+        (b for b in shape.bases if b.name == name and len(b.arguments) == arity),
+        None,
+    )
+    if written is None:
+        return {}
+    unbound = set(shape.parameters) - bindings.keys()
+    return {
+        parameter: substitute(argument, bindings)
+        for parameter, argument in zip(
+            base_shape.parameters, written.arguments, strict=False
+        )
+        if not mentioned_names(argument) & unbound
+    }
 
 
 def type_arguments(type_text: str) -> tuple[str, ...]:
@@ -175,6 +213,10 @@ def fit(
 
 
 def _dominates(better: Sequence[Fit], worse: Sequence[Fit]) -> bool:
+    # Fits of different lengths scored different arguments, so neither can
+    # be said to beat the other.
+    if len(better) != len(worse):
+        return False
     return all(b >= w for b, w in zip(better, worse, strict=True)) and any(
         b > w for b, w in zip(better, worse, strict=True)
     )

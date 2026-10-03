@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
 
@@ -27,8 +27,8 @@ from ..utils import safe_decode_text
 from .overloads import (
     ArgumentType,
     best_candidates,
+    bindings_for_base,
     fit,
-    mentioned_names,
     plain_type_name,
     substitute,
     type_arguments,
@@ -211,6 +211,18 @@ def _extension_receiver_matches(
     if cand_qualified:
         return False
     return not ambiguous_unqualified
+
+
+class _MemberCall(NamedTuple):
+    """A member call being bound, as overload ranking reads it."""
+
+    node: Node
+    receiver: Node
+    method_name: str
+    arg_count: int
+    local_var_types: dict[str, str]
+    module_qn: str
+    caller_qn: str | None
 
 
 class CSharpTypeInferenceEngine:
@@ -621,6 +633,15 @@ class CSharpTypeInferenceEngine:
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
+        member_call = _MemberCall(
+            call_node,
+            receiver,
+            method_name,
+            arg_count,
+            local_var_types or {},
+            module_qn,
+            caller_qn,
+        )
         # Resolution order matters: an EXACT-ARITY instance method wins, then
         # an (always arity-exact) extension method, and only then the instance
         # name-only fallback. Trying the name-only fallback before extensions
@@ -635,14 +656,7 @@ class CSharpTypeInferenceEngine:
             # arity match stands when no argument can decide (issue #2619).
             arity_hit = (
                 self._pick_member_overload(
-                    receiver_class_qn,
-                    method_name,
-                    arg_count,
-                    call_node,
-                    local_var_types or {},
-                    module_qn,
-                    caller_qn,
-                    compatible=False,
+                    member_call, receiver_class_qn, compatible=False
                 )
                 or arity_hit
             )
@@ -669,14 +683,7 @@ class CSharpTypeInferenceEngine:
         # on whatever shared the name, an explicit implementation included.
         if receiver_class_qn is not None and (
             defaulted_hit := self._pick_member_overload(
-                receiver_class_qn,
-                method_name,
-                arg_count,
-                call_node,
-                local_var_types or {},
-                module_qn,
-                caller_qn,
-                compatible=True,
+                member_call, receiver_class_qn, compatible=True
             )
         ):
             return self._method_or_property_target(defaulted_hit)
@@ -1891,47 +1898,22 @@ class CSharpTypeInferenceEngine:
     # --- overloads by argument type (issue #2619) ------------------------
 
     def _pick_member_overload(
-        self,
-        class_qn: str,
-        method_name: str,
-        arg_count: int,
-        call_node: Node,
-        local_var_types: dict[str, str],
-        module_qn: str,
-        caller_qn: str | None,
-        compatible: bool,
+        self, call: _MemberCall, class_qn: str, compatible: bool
     ) -> str | None:
         """The overload a member call binds, or None when none applies.
 
         Overloads its arguments fit equally well are kept for the call pass,
         which fans the call out to all of them.
         """
-        ranked = self._rank_member_overloads(
-            class_qn,
-            method_name,
-            arg_count,
-            call_node,
-            local_var_types,
-            module_qn,
-            caller_qn,
-            compatible,
-        )
+        ranked = self._rank_member_overloads(call, class_qn, compatible)
         if len(ranked) > 1:
-            self._overload_families[self._call_key(call_node, module_qn, caller_qn)] = (
-                ranked[1:]
-            )
+            self._overload_families[
+                self._call_key(call.node, call.module_qn, call.caller_qn)
+            ] = ranked[1:]
         return ranked[0] if ranked else None
 
     def _rank_member_overloads(
-        self,
-        class_qn: str,
-        method_name: str,
-        arg_count: int,
-        call_node: Node,
-        local_var_types: dict[str, str],
-        module_qn: str,
-        caller_qn: str | None,
-        compatible: bool,
+        self, call: _MemberCall, class_qn: str, compatible: bool
     ) -> list[str]:
         """The overloads a member call fits best, best first.
 
@@ -1942,24 +1924,28 @@ class CSharpTypeInferenceEngine:
         bind decides: C# drops a base's methods once a derived one applies.
         Each type is seen with the type arguments its subclasses pass it, so
         `Validator<T>.Validate(T)` takes a Person on a `PersonValidator :
-        Inline<Person>`. Empty when no overload is applicable.
+        Inline<Person>`, and the receiver's own with the ones its written
+        type passes (`new Handler<Person>()`). Empty when no overload is
+        applicable.
         """
         arguments: list[ArgumentType | None] | None = None
 
         def relation(
             arg: str, arg_arity: int, param: str, param_arity: int
         ) -> bool | None:
-            return self._converts_to(arg, arg_arity, param, param_arity, module_qn)
+            return self._converts_to(arg, arg_arity, param, param_arity, call.module_qn)
 
-        for declaring, bindings, open_names in self._typed_hierarchy(class_qn):
+        for declaring, bindings, open_names in self._typed_hierarchy(
+            class_qn, self._receiver_bindings(call.receiver, class_qn)
+        ):
             qns = self._applicable_methods(
-                declaring, method_name, arg_count, compatible
+                declaring, call.method_name, call.arg_count, compatible
             )
             if not qns:
                 continue
             if arguments is None:
                 arguments = self._argument_types(
-                    call_node, local_var_types, module_qn, caller_qn
+                    call.node, call.local_var_types, call.module_qn, call.caller_qn
                 )
             scored = [
                 (
@@ -1968,11 +1954,14 @@ class CSharpTypeInferenceEngine:
                         fit(
                             substitute(parameter, bindings),
                             argument,
-                            open_names | self._method_type_parameters(qn, module_qn),
+                            open_names
+                            | self._method_type_parameters(qn, call.module_qn),
                             relation,
                         )
                         for parameter, argument in zip(
-                            _param_types(qn), arguments, strict=False
+                            self._call_parameters(qn, len(arguments)),
+                            arguments,
+                            strict=True,
                         )
                     ],
                 )
@@ -1982,15 +1971,119 @@ class CSharpTypeInferenceEngine:
                 return best
         return []
 
+    def _call_parameters(self, method_qn: str, arg_count: int) -> list[str]:
+        # The parameter each of `arg_count` arguments binds, one per argument,
+        # so every overload is scored on every argument. A call that expands
+        # a `params T[]` tail passes its trailing arguments as `T`; one that
+        # leaves defaulted parameters out binds the leading ones. A position
+        # no parameter takes (an overload that cannot apply) is unknown.
+        types = _param_types(method_qn)
+        shape = self.csharp_call_shapes.get(method_qn)
+        variadic = (
+            shape.variadic
+            if shape is not None
+            else bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
+        )
+        if variadic and arg_count != len(types):
+            element = types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)
+            types = types[:-1] + [element] * max(arg_count - len(types) + 1, 0)
+        return (types + [""] * arg_count)[:arg_count]
+
+    def _receiver_bindings(self, receiver: Node, class_qn: str) -> dict[str, str]:
+        # The type arguments the receiver's written type passes its class's
+        # parameters: `new Handler<Person>()`, or `Handler<Person> h`. Empty
+        # when the syntax spells none, or not one per parameter.
+        shape = self.csharp_generic_shapes.get(class_qn)
+        if shape is None or not shape.parameters:
+            return {}
+        written = self._written_receiver_type(receiver)
+        if not written:
+            return {}
+        arguments = type_arguments(signature_type_name(written))
+        if len(arguments) != len(shape.parameters):
+            return {}
+        return dict(zip(shape.parameters, arguments, strict=True))
+
+    def _written_receiver_type(self, receiver: Node) -> str | None:
+        # The type a receiver is written with: a construction's own type, or
+        # the declared type of the parameter or local it names (a `var`
+        # local's construction). Searched outward through the enclosing
+        # blocks and callables, stopping at the type body.
+        while (
+            receiver.type == cs.TS_PARENTHESIZED_EXPRESSION and receiver.named_children
+        ):
+            receiver = receiver.named_children[0]
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+            return safe_decode_text(receiver.child_by_field_name(cs.FIELD_TYPE))
+        if receiver.type != cs.TS_CSHARP_IDENTIFIER:
+            return None
+        name = safe_decode_text(receiver)
+        current = receiver.parent
+        while name and current is not None:
+            if current.type == cs.TS_CSHARP_DECLARATION_LIST:
+                return None
+            if current.type == cs.TS_CSHARP_BLOCK and (
+                declared := self._block_local_type(current, name)
+            ):
+                return declared
+            if declared := self._parameter_type(current, name):
+                return declared
+            current = current.parent
+        return None
+
+    def _block_local_type(self, block: Node, name: str) -> str | None:
+        for statement in block.named_children:
+            for decl in statement.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                for declarator in decl.named_children:
+                    if (
+                        declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR
+                        or safe_decode_text(
+                            declarator.child_by_field_name(cs.FIELD_NAME)
+                        )
+                        != name
+                    ):
+                        continue
+                    type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+                    if (
+                        type_node is not None
+                        and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE
+                    ):
+                        return safe_decode_text(type_node)
+                    created = self._descendants_of_type(
+                        declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
+                    )
+                    return (
+                        safe_decode_text(created[0].child_by_field_name(cs.FIELD_TYPE))
+                        if created
+                        else None
+                    )
+        return None
+
+    @staticmethod
+    def _parameter_type(scope: Node, name: str) -> str | None:
+        param_list = scope.child_by_field_name(cs.FIELD_PARAMETERS)
+        if param_list is None:
+            return None
+        for param in param_list.named_children:
+            if (
+                param.type == cs.TS_CSHARP_PARAMETER
+                and safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)) == name
+            ):
+                return safe_decode_text(param.child_by_field_name(cs.FIELD_TYPE))
+        return None
+
     def _typed_hierarchy(
-        self, class_qn: str
+        self, class_qn: str, receiver_bindings: dict[str, str]
     ) -> Iterator[tuple[str, dict[str, str], frozenset[str]]]:
         # (type, the type arguments bound to its parameters, its parameters
         # left unbound) from the receiver's parts up through every base, in
         # the depth-first order `_find_method_by_arity` walks.
         seen: set[str] = set()
         stack: list[tuple[str, dict[str, str]]] = [
-            (root, {}) for root in reversed(self._partial_roots(class_qn))
+            (root, receiver_bindings)
+            for root in reversed(self._partial_roots(class_qn))
         ]
         while stack:
             current, bindings = stack.pop()
@@ -2005,40 +2098,18 @@ class CSharpTypeInferenceEngine:
                 frozenset(p for p in parameters if p not in bindings),
             )
             stack.extend(
-                (base, self._base_bindings(shape, bindings, base))
+                (
+                    base,
+                    bindings_for_base(
+                        self.csharp_generic_shapes,
+                        self.csharp_class_generic_arity,
+                        current,
+                        bindings,
+                        base,
+                    ),
+                )
                 for base in reversed(self.class_inheritance.get(current, []))
             )
-
-    def _base_bindings(
-        self,
-        shape: CSharpGenericShape | None,
-        bindings: dict[str, str],
-        base_qn: str,
-    ) -> dict[str, str]:
-        # What a type's base list passes `base_qn`'s parameters, in the
-        # type's own bound terms. An argument naming one of the type's still
-        # unbound parameters binds nothing: `Inline<T> : Validator<T>` says
-        # Validator's T is Inline's T, which only a subclass can close.
-        base_shape = self.csharp_generic_shapes.get(base_qn)
-        if shape is None or base_shape is None or not base_shape.parameters:
-            return {}
-        leaf = qn_markers.strip_dup_marker(base_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
-        name = split_type_ref(leaf)[0]
-        arity = self.csharp_class_generic_arity.get(base_qn, 0)
-        written = next(
-            (b for b in shape.bases if b.name == name and len(b.arguments) == arity),
-            None,
-        )
-        if written is None:
-            return {}
-        unbound = set(shape.parameters) - bindings.keys()
-        return {
-            parameter: substitute(argument, bindings)
-            for parameter, argument in zip(
-                base_shape.parameters, written.arguments, strict=False
-            )
-            if not mentioned_names(argument) & unbound
-        }
 
     def _applicable_methods(
         self, class_qn: str, method_name: str, arg_count: int, compatible: bool

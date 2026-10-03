@@ -2342,6 +2342,8 @@ class ClassIngestMixin:
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
             self.csharp_class_generic_arity,
+            self.csharp_generic_shapes,
+            self.csharp_class_namespaced,
         )
         self._resolve_java_anon_overrides()
 

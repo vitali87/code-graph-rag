@@ -354,6 +354,24 @@ def split_explicit_member(leaf: str) -> tuple[str, str] | None:
     )
 
 
+def names_interface(written: str, interface_path: str, interface_arity: int) -> bool:
+    """Whether the interface an explicit implementation spells (`IRun`,
+    `B.IRun`, `IRun<T>`) can be the one whose namespace-qualified name is
+    `interface_path` (`B.IRun`).
+
+    Every segment the spelling writes must agree, so `A.IRun.Go` and
+    `B.IRun.Go` on one class stay with their own interfaces (issue #2619),
+    and so must the generic arity.
+    """
+    path = written.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    segments = strip_generic_arguments(path).split(cs.SEPARATOR_DOT)
+    target = strip_generic_arguments(interface_path).split(cs.SEPARATOR_DOT)
+    return (
+        target[-len(segments) :] == segments
+        and generic_arity_of_type_text(path) == interface_arity
+    )
+
+
 _CSHARP_TYPE_DECLARATIONS = frozenset(
     {
         cs.TS_CSHARP_CLASS_DECLARATION,
