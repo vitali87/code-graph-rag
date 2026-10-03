@@ -7,7 +7,6 @@ import re
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -524,18 +523,22 @@ def test_an_unusable_fd_2_that_refuses_the_capture_is_left_as_it_was(
     tmp_path: Path,
 ) -> None:
     # msvcrt.dll's fd 2 still taken, but by a handle it can no longer dup:
-    # when it will not take the capture either, nothing is closed after.
+    # when it will not take the capture either, the probe still runs and
+    # reports its result, and nothing is closed after.
     with (tmp_path / "terminal").open("wb") as file:
         runtime = _SeparateCRuntime(file.fileno())
+    failure = health.mgclient.OperationalError("failed to receive handshake")
     try:
         with (
+            patch.object(health, "_mgclient_own_c_runtime", return_value=runtime),
             patch.object(runtime, "dup", side_effect=OSError(errno.EBADF, "gone")),
             patch.object(runtime, "dup2", side_effect=OSError(errno.EBADF, "bad")),
-            tempfile.TemporaryFile() as capture,
-            pytest.raises(OSError, match="bad"),
-            health._stderr_into(runtime, capture),
+            patch.object(health.mgclient, "connect", side_effect=failure),
         ):
-            pass
+            assert (
+                health.memgraph_anonymous_access(cs.LOOPBACK_HOST, 7687)
+                is cs.AnonymousAccess.NO_ANSWER
+            )
 
         assert set(runtime.fds) == {STDERR_FD}
     finally:
