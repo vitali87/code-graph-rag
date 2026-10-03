@@ -278,6 +278,7 @@ def _updater(repo: Path, ingestor: MagicMock) -> GraphUpdater:
 
 
 def _interrupted_run(repo: Path, ingestor: MagicMock) -> None:
+    updater = _updater(repo, ingestor)
     # Pass 3, where the issue's Ctrl+C landed: after Pass 2 wrote modules,
     # before the run's commit point.
     with (
@@ -286,7 +287,7 @@ def _interrupted_run(repo: Path, ingestor: MagicMock) -> None:
         ),
         pytest.raises(KeyboardInterrupt),
     ):
-        _updater(repo, ingestor).run()
+        updater.run()
 
 
 def _graph_holds_no_modules(ingestor: MagicMock) -> None:
