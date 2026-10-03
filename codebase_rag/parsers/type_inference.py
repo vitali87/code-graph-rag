@@ -730,11 +730,17 @@ class TypeInferenceEngine:
         return_type = self._go_package_fn_return_type(package_qn, name)
         if not return_type or cs.SEPARATOR_DOT in return_type:
             return None
+        # The import map knows the package by its qn, not its directory, so
+        # its files are the modules one segment below that qn, the shape
+        # `_go_package_fn_return_type` keys its functions by.
         declared = go_utils.package_level_definitions(
             self.function_registry,
-            package_qn,
             return_type,
             go_utils.TYPE_DECLARATION_TYPES,
+            lambda qn: (
+                qn.rpartition(cs.SEPARATOR_DOT)[0].rpartition(cs.SEPARATOR_DOT)[0]
+                == package_qn
+            ),
         )
         return declared[0] if len(declared) == 1 else None
 

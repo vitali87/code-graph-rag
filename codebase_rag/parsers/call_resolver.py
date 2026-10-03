@@ -1189,11 +1189,25 @@ class CallResolver:
                 targets.add((label, qn))
         return targets
 
-    def go_declaration_is_visible(
-        self, declaration_qn: str, package_qn: str, module_qn: str
-    ) -> bool:
-        """Whether `declaration_qn`, filed under a module of Go package
-        `package_qn`, is in scope for `module_qn`.
+    def _go_declaring_path(self, declaration_qn: str) -> PurePath | None:
+        # The file declaring Go `declaration_qn`, which cgr files directly
+        # under that file's module (`pkg.file.Name`). An incremental run
+        # parses changed files only, so an unchanged file is known by the
+        # repo-relative path its definition was rehydrated with.
+        modules = self.type_inference.module_qn_to_file_path
+        declaring_qn = declaration_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if (path := modules.get(declaring_qn)) is not None:
+            return path
+        if rehydrated := self.rehydrated_definition_paths.get(declaration_qn):
+            return self.type_inference.repo_path / rehydrated
+        return None
+
+    def _go_declaring_dir(self, declaration_qn: str) -> PurePath | None:
+        path = self._go_declaring_path(declaration_qn)
+        return path.parent if path is not None else None
+
+    def go_declaration_is_visible(self, declaration_qn: str, module_qn: str) -> bool:
+        """Whether Go `declaration_qn` is in scope for `module_qn`.
 
         A directory is not a package: `package m_test` files sit beside
         `package m` files and are a DIFFERENT package, and any `_test.go` is
@@ -1210,20 +1224,22 @@ class CallResolver:
         declaring file is known by the path its definition was rehydrated
         with; its clause is unknown then and does not exclude it.
         """
-        declaring_qn = declaration_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        modules = self.type_inference.module_qn_to_file_path
-        declaring_path: PurePath | None = modules.get(declaring_qn)
-        if declaring_path is None and (
-            rehydrated := self.rehydrated_definition_paths.get(declaration_qn)
-        ):
-            declaring_path = PurePath(rehydrated)
+        declaring_path = self._go_declaring_path(declaration_qn)
         if declaring_path is None:
             return True
-        requester = modules.get(module_qn)
+        declaring_qn = declaration_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        requester = self.type_inference.module_qn_to_file_path.get(module_qn)
         requester_is_test = requester is not None and requester.stem.endswith(
             cs.GO_TEST_FILE_SUFFIX
         )
-        own_package = package_qn == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        # The package is the directory, whatever dots the file stems hold
+        # (#2616 review); path-less registrations (mock harnesses) group by qn.
+        own_package = (
+            declaring_path.parent == requester.parent
+            if requester is not None
+            else declaring_qn.rpartition(cs.SEPARATOR_DOT)[0]
+            == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        )
         if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
             requester_is_test and own_package
         ):
@@ -1248,19 +1264,39 @@ class CallResolver:
         # without one is another language and gets no answer here.
         if module_qn not in self.go_package_names:
             return []
-        package_qn, sep, _file = module_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
+        requester = self.type_inference.module_qn_to_file_path.get(module_qn)
+        if requester is None:
             return []
+        package_dir = requester.parent
+        prefix = self._go_package_prefix(module_qn, package_dir)
         return [
             qn
             for qn in go_utils.package_level_definitions(
-                self.function_registry, package_qn, name, labels
+                self.function_registry,
+                name,
+                labels,
+                lambda qn: (
+                    qn.startswith(prefix) and self._go_declaring_dir(qn) == package_dir
+                ),
             )
-            # The qn shape alone would let `pkg/helper.py`'s `helper` pass
+            # The directory alone would let `pkg/helper.py`'s `helper` pass
             # for a Go function of `pkg`.
             if self._module_language(qn) == cs.SupportedLanguage.GO
-            and self.go_declaration_is_visible(qn, package_qn, module_qn)
+            and self.go_declaration_is_visible(qn, module_qn)
         ]
+
+    def _go_package_prefix(self, module_qn: str, package_dir: PurePath) -> str:
+        # `project.dir.`, the qn prefix `base_module_qn` gives every file of
+        # `package_dir`: a string test that drops the other packages' same
+        # names before any path lookup. Empty, dropping nothing, when the
+        # caller's own qn does not carry it.
+        try:
+            parts = package_dir.relative_to(self.type_inference.repo_path).parts
+        except ValueError:
+            return ""
+        project = self.import_processor.project_name
+        prefix = cs.SEPARATOR_DOT.join((project, *parts, ""))
+        return prefix if module_qn.startswith(prefix) else ""
 
     def _try_resolve_go_same_package(
         self, call_name: str, module_qn: str
@@ -1292,11 +1328,13 @@ class CallResolver:
         )
         if len(candidates) > 1:
             # A function-local type is filed directly under its module too,
-            # and shadows the package-level one in its own file.
+            # and shadows the package-level one in its own file. Directly:
+            # a sibling's stem can extend this file's (`helper.gen.go` beside
+            # `helper.go`), so a qn prefix is not enough.
             own = [
                 qn
                 for qn in candidates
-                if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+                if qn.rpartition(cs.SEPARATOR_DOT)[0] == module_qn
             ]
             candidates = own if own else candidates
         if len(candidates) != 1:

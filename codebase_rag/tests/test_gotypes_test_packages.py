@@ -534,3 +534,49 @@ def test_a_test_type_implements_edge_reaches_the_graph(
     assert ("proj.impl.speak.Dog", speaker) in edges
     assert ("proj.impl.speak_test.loud", speaker) in edges
     assert ("proj.impl.quiet_test.quiet", speaker) in edges
+
+
+# --- #2616 review: file stems with dots, with go/types on ---------------------
+
+# `tagged.go` is behind a tag no build sets, so go/types never loads it and
+# its calls fall back to the tree-sitter package lookup; `a.go` gets facts.
+# The sub-package `aaa` declares every name again and sorts ahead of the
+# package's own files, so a name-only pick lands there.
+_DOTTED_CALLS = "\tHelper()\n\tFromPb()\n\tvar m Mux\n\tm.Get()\n"
+DOTTED_FILES = {
+    "go.mod": GO_MOD,
+    "pkg/a.go": f"package pkg\n\nfunc Run() {{\n{_DOTTED_CALLS}}}\n",
+    "pkg/tagged.go": (
+        f"//go:build cgrnever\n\npackage pkg\n\nfunc Tagged() {{\n{_DOTTED_CALLS}}}\n"
+    ),
+    "pkg/helper.gen.go": "package pkg\n\nfunc Helper() {}\n",
+    "pkg/y.pb.go": "package pkg\n\nfunc FromPb() {}\n",
+    "pkg/types.gen.go": "package pkg\n\ntype Mux struct{}\n\nfunc (m *Mux) Get() {}\n",
+    "pkg/aaa/x.go": (
+        "package aaa\n\n"
+        "type Mux struct{}\n\nfunc (m *Mux) Get() {}\n\n"
+        "func Helper() {}\n\nfunc FromPb() {}\n"
+    ),
+}
+
+
+def test_calls_into_files_with_dotted_stems_are_exact_with_go_types(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _helper()
+    root = _write(temp_repo / "proj", DOTTED_FILES)
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    ingestor = MagicMock()
+    run_updater(root, ingestor)
+
+    calls: dict[tuple[str, str], set[str]] = {}
+    for c in get_relationships(ingestor, cs.RelationshipType.CALLS):
+        props = c.kwargs.get("properties") or {}
+        key = (str(c.args[0][2]), str(c.args[2][2]))
+        calls.setdefault(key, set()).add(str(props.get(cs.KEY_RESOLUTION)))
+    exact = {cs.EdgeResolution.EXACT}
+    for caller in ("proj.pkg.a.Run", "proj.pkg.tagged.Tagged"):
+        assert calls[(caller, "proj.pkg.helper.gen.Helper")] == exact, caller
+        assert calls[(caller, "proj.pkg.y.pb.FromPb")] == exact, caller
+        assert calls[(caller, "proj.pkg.types.gen.Mux.Get")] == exact, caller
+    assert not [edge for edge in calls if edge[1].startswith("proj.pkg.aaa.")]

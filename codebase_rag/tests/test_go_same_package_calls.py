@@ -635,3 +635,152 @@ def test_an_incremental_run_keeps_build_tag_variants_heuristic(
         ("proj.p.app.Build", "proj.p.v_b.helper"),
     }
     assert cs.EdgeResolution.EXACT not in set(calls.values())
+
+
+# --- #2616 review: a file's stem can hold dots (`helper.gen.go`, `y.pb.go`),
+# so the qn segments below the package are not one per file. The file's
+# directory decides its package, not the depth of its qn. ---
+
+_DOTTED_APP = (
+    "package pkg\n"
+    "\n"
+    "func Run() {\n"
+    "\tHelper()\n"
+    "\tFromPb()\n"
+    "\tPlain()\n"
+    "\tvar m Mux\n"
+    "\tm.Get()\n"
+    "}\n"
+)
+_DOTTED_TEST = (
+    "package pkg\n"
+    "\n"
+    'import "testing"\n'
+    "\n"
+    "func TestRun(t *testing.T) {\n"
+    "\tHelper()\n"
+    "\tFromPb()\n"
+    "\t_ = t\n"
+    "}\n"
+)
+# A sub-package declaring every name again. Its qns sort ahead of the
+# package's own (`aaa` < `helper`, `types`, `y`) at the same import
+# distance, so a name-only pick lands here first.
+_SUB_PACKAGE = (
+    "package aaa\n"
+    "\n"
+    "type Mux struct{}\n"
+    "\n"
+    "func (m *Mux) Get() {}\n"
+    "\n"
+    "func Helper() {}\n"
+    "\n"
+    "func FromPb() {}\n"
+    "\n"
+    "func Plain() {}\n"
+)
+_DOTTED_FILES = {
+    "go.mod": GO_MOD,
+    "pkg/a.go": _DOTTED_APP,
+    "pkg/a_test.go": _DOTTED_TEST,
+    "pkg/helper.gen.go": "package pkg\n\nfunc Helper() {}\n",
+    "pkg/y.pb.go": "package pkg\n\nfunc FromPb() {}\n\nfunc PbCaller() {\n\tPlain()\n}\n",
+    "pkg/types.gen.go": "package pkg\n\ntype Mux struct{}\n\nfunc (m *Mux) Get() {}\n",
+    "pkg/plain.go": "package pkg\n\nfunc Plain() {}\n",
+    "pkg/aaa/x.go": _SUB_PACKAGE,
+}
+
+
+def test_a_call_into_a_file_with_a_dotted_stem_is_exact(temp_repo: Path) -> None:
+    calls = _calls(temp_repo / "proj", _DOTTED_FILES)
+
+    exact = {cs.EdgeResolution.EXACT}
+    assert calls[("proj.pkg.a.Run", "proj.pkg.helper.gen.Helper")] == exact
+    assert calls[("proj.pkg.a.Run", "proj.pkg.y.pb.FromPb")] == exact
+    assert ("proj.pkg.a.Run", "proj.pkg.aaa.x.Helper") not in calls
+    assert ("proj.pkg.a.Run", "proj.pkg.aaa.x.FromPb") not in calls
+
+
+def test_a_test_file_calls_into_a_file_with_a_dotted_stem_exactly(
+    temp_repo: Path,
+) -> None:
+    calls = _calls(temp_repo / "proj", _DOTTED_FILES)
+
+    exact = {cs.EdgeResolution.EXACT}
+    assert calls[("proj.pkg.a_test.TestRun", "proj.pkg.helper.gen.Helper")] == exact
+    assert calls[("proj.pkg.a_test.TestRun", "proj.pkg.y.pb.FromPb")] == exact
+    assert ("proj.pkg.a_test.TestRun", "proj.pkg.aaa.x.Helper") not in calls
+
+
+def test_a_file_with_a_dotted_stem_calls_its_package_exactly(
+    temp_repo: Path,
+) -> None:
+    calls = _calls(temp_repo / "proj", _DOTTED_FILES)
+
+    assert calls[("proj.pkg.y.pb.PbCaller", "proj.pkg.plain.Plain")] == {
+        cs.EdgeResolution.EXACT
+    }
+
+
+def test_a_type_declared_in_a_file_with_a_dotted_stem_is_the_packages(
+    temp_repo: Path,
+) -> None:
+    calls = _calls(temp_repo / "proj", _DOTTED_FILES)
+
+    assert calls[("proj.pkg.a.Run", "proj.pkg.types.gen.Mux.Get")] == {
+        cs.EdgeResolution.EXACT
+    }
+    assert ("proj.pkg.a.Run", "proj.pkg.aaa.x.Mux.Get") not in calls
+
+
+def test_a_plain_file_still_calls_its_package_exactly(temp_repo: Path) -> None:
+    # Negative: the ordinary `plain.go` answers exactly as before, beside the
+    # sub-package's `Plain`.
+    calls = _calls(temp_repo / "proj", _DOTTED_FILES)
+
+    assert calls[("proj.pkg.a.Run", "proj.pkg.plain.Plain")] == {
+        cs.EdgeResolution.EXACT
+    }
+    assert ("proj.pkg.a.Run", "proj.pkg.aaa.x.Plain") not in calls
+
+
+def test_a_sub_package_is_not_the_package_whatever_its_qn(temp_repo: Path) -> None:
+    # Negative: `pkg/helper/gen.go` (package `helper`) spells the same qn
+    # prefix as a `pkg/helper.gen.go` would, `proj.pkg.helper.gen`. It is a
+    # sub-package, so `Only()` in package `pkg` cannot name it unqualified.
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "pkg/a.go": "package pkg\n\nfunc Run() {\n\tOnly()\n\tDeep()\n}\n",
+            "pkg/helper/gen.go": "package helper\n\nfunc Only() {}\n",
+            "pkg/aaa/x.go": "package aaa\n\nfunc Deep() {}\n",
+        },
+    )
+
+    assert cs.EdgeResolution.EXACT not in calls.get(
+        ("proj.pkg.a.Run", "proj.pkg.helper.gen.Only"), set()
+    )
+    assert cs.EdgeResolution.EXACT not in calls.get(
+        ("proj.pkg.a.Run", "proj.pkg.aaa.x.Deep"), set()
+    )
+
+
+def test_an_incremental_run_finds_an_unchanged_file_with_a_dotted_stem(
+    temp_repo: Path,
+) -> None:
+    # The unchanged `helper.gen.go` is known only by the path its definition
+    # was rehydrated with; that path's directory still makes it the package's.
+    calls = _incremental_calls(
+        temp_repo / "proj",
+        {
+            "pkg/helper.gen.go": "package pkg\n\nfunc Helper() {}\n",
+            "pkg/aaa/x.go": _SUB_PACKAGE,
+            "pkg/a.go": "package pkg\n\nfunc Run() { Helper() }\n",
+        },
+        ("pkg/a.go", "package pkg\n\nfunc Run() {\n\tHelper()\n}\n"),
+    )
+
+    assert calls == {
+        ("proj.pkg.a.Run", "proj.pkg.helper.gen.Helper"): cs.EdgeResolution.EXACT
+    }

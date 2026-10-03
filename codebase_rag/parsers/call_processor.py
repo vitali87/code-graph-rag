@@ -6664,7 +6664,7 @@ class CallProcessor:
             for qn in registry.find_with_prefix_and_suffix(package_qn, name)
             if registry.get(qn) == NodeType.CLASS
             and qn.count(cs.SEPARATOR_DOT) == depth
-            and self._resolver.go_declaration_is_visible(qn, package_qn, module_qn)
+            and self._resolver.go_declaration_is_visible(qn, module_qn)
         ]
         if len(candidates) > 1:
             own = [

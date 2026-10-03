@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 
 from tree_sitter import Node
 
@@ -15,22 +15,21 @@ TYPE_DECLARATION_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTE
 
 def package_level_definitions(
     registry: FunctionRegistryTrieProtocol,
-    package_qn: str,
     name: str,
     labels: Collection[str],
+    in_package: Callable[[str], bool],
 ) -> list[str]:
     # A Go package spans its directory's files, and cgr files each package-level
     # declaration under its FILE module (`pkg.file.Name`), a segment the source
-    # never writes. So `Name` of package `pkg` is any `labels` entry exactly one
-    # segment below `pkg`: deeper qns are methods or another package's files.
-    prefix = f"{package_qn}{cs.SEPARATOR_DOT}"
-    depth = package_qn.count(cs.SEPARATOR_DOT) + 2
+    # never writes. That segment is the file's stem, which can hold dots
+    # (`helper.gen.go` files under `pkg.helper.gen`), so a qn's depth cannot
+    # tell a file of `pkg` from one of the sub-package `pkg/helper` (whose
+    # `gen.go` spells the same qn). `in_package` decides by the declaring
+    # file, from its recorded path where the caller knows it (#2616 review).
     return [
         qn
         for qn in registry.find_ending_with(name)
-        if qn.startswith(prefix)
-        and qn.count(cs.SEPARATOR_DOT) == depth
-        and registry.get(qn) in labels
+        if registry.get(qn) in labels and in_package(qn)
     ]
 
 
