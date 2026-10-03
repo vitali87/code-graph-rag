@@ -435,7 +435,8 @@ def test_renaming_either_part_renames_every_part(temp_repo: Path, part: str) -> 
     )
 
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None, report
+    assert report.verdict.ok, report.verdict
     assert set(report.hierarchy) == {FIRST_PART, SECOND_PART}
     sources = _cs_sources(root)
     assert "public partial class Purchase {" in sources["Order.cs"]
