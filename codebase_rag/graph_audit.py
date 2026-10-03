@@ -203,6 +203,8 @@ def collect_live_violations(
     """Run the structural audit against a live graph via Cypher (doctor)."""
     violations: list[AuditViolation] = []
     for row in fetch_all(cq.CYPHER_AUDIT_ORPHANS):
+        if row["label"] in cs.AUDIT_BOOKKEEPING_LABELS:
+            continue
         violations.append(
             AuditViolation(
                 cs.AuditCheck.ORPHAN_NODE,
@@ -213,7 +215,10 @@ def collect_live_violations(
         )
     documented_props = documented_node_properties()
     for row in fetch_all(cq.CYPHER_AUDIT_LABELS):
-        if row["label"] not in documented_props:
+        if (
+            row["label"] not in documented_props
+            and row["label"] not in cs.AUDIT_BOOKKEEPING_LABELS
+        ):
             violations.append(
                 AuditViolation(
                     cs.AuditCheck.UNDOCUMENTED_LABEL,
