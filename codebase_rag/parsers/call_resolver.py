@@ -1389,13 +1389,7 @@ class CallResolver:
             call_point,
             constructing,
         )
-        handled, result = self._resolve_receiver_shadow(call)
-        if handled:
-            return result
-        handled, result = self._resolve_rust_block_scope(call)
-        if handled:
-            return result
-        handled, result = self._resolve_caller_scope(call)
+        handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
             return result
         # After the scope walk, which answers a nested def or class of the
@@ -1452,6 +1446,21 @@ class CallResolver:
         )
         self._remember_cacheable(cache_key, result)
         return result
+
+    def _resolve_caller_scoped_stages(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # The stages whose answers depend on the caller, in order, ahead of
+        # the caller-independent resolution cache.
+        for stage in (
+            self._resolve_receiver_shadow,
+            self._resolve_rust_block_scope,
+            self._resolve_caller_scope,
+        ):
+            handled, result = stage(call)
+            if handled:
+                return True, result
+        return False, None
 
     def _resolve_receiver_shadow(
         self, call: _CallSite
