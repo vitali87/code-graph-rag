@@ -290,6 +290,7 @@ RS_MANIFEST_DEP_SOURCE_KEYS = (
     RS_MANIFEST_REGISTRY_KEY,
 )
 RS_MANIFEST_PATCH_KEY = "patch"
+RS_MANIFEST_VERSION_KEY = "version"
 RS_DEFAULT_REGISTRY = "crates-io"
 # Crates shipped with the toolchain: external by construction, no
 # manifest needed to know a use head naming one is outside the project.

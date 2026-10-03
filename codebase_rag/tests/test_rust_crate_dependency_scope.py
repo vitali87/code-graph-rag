@@ -475,3 +475,110 @@ def test_git_dependency_patched_to_the_member_keeps_its_edges(
     assert (f"{top}.level", f"{meter}.new") in edges, edges
     assert (f"{top}.level", f"{meter}.gauge") in edges, edges
     assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges
+
+
+# A root `[patch.<source>]` path to the member stands in for a dependency
+# only when the member's version meets the dependency's requirement; Cargo
+# ignores any other patch ("patch was not used") and builds against the
+# source's own copy. (`top`'s entry, patched source, member's [package]
+# version line, root [workspace.package] table, whether the member is used.)
+_PATCH_CASES = {
+    "git_incompatible": (
+        f'my-base = {{ git = "{_GIT_URL}", version = "1" }}\n',
+        f'"{_GIT_URL}"',
+        'version = "0.1.0"',
+        "",
+        False,
+    ),
+    "git_compatible": (
+        f'my-base = {{ git = "{_GIT_URL}", version = "1" }}\n',
+        f'"{_GIT_URL}"',
+        'version = "1.2.0"',
+        "",
+        True,
+    ),
+    "git_no_requirement": (
+        f'my-base = {{ git = "{_GIT_URL}" }}\n',
+        f'"{_GIT_URL}"',
+        'version = "0.1.0"',
+        "",
+        True,
+    ),
+    "crates_io_compatible": (
+        'my-base = "1"\n',
+        "crates-io",
+        'version = "1.2.0"',
+        "",
+        True,
+    ),
+    "crates_io_incompatible": (
+        'my-base = "1"\n',
+        "crates-io",
+        'version = "0.1.0"',
+        "",
+        False,
+    ),
+    "inherited_compatible": (
+        f'my-base = {{ git = "{_GIT_URL}", version = "~1.4" }}\n',
+        f'"{_GIT_URL}"',
+        "version.workspace = true",
+        '\n[workspace.package]\nversion = "1.4.2"\n',
+        True,
+    ),
+    "inherited_incompatible": (
+        f'my-base = {{ git = "{_GIT_URL}", version = ">=1.5, <2" }}\n',
+        f'"{_GIT_URL}"',
+        "version.workspace = true",
+        '\n[workspace.package]\nversion = "1.4.2"\n',
+        False,
+    ),
+    "member_without_version": (
+        f'my-base = {{ git = "{_GIT_URL}", version = "1" }}\n',
+        f'"{_GIT_URL}"',
+        "",
+        "",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_PATCH_CASES))
+def test_root_patch_stands_in_only_for_a_version_it_satisfies(
+    temp_repo: Path, mock_ingestor: MagicMock, case: str
+) -> None:
+    # An incompatible patch linked `top` to the local member as if Cargo
+    # used it (PR #2791 review); a member with no version, which no
+    # requirement can be checked against, stays external too.
+    dep, source, version_line, workspace_package, used = _PATCH_CASES[case]
+    project = f"rs_dep_patch_{case}"
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        project,
+        {
+            "Cargo.toml": (
+                '[workspace]\nmembers = ["crates/base", "crates/top"]\n'
+                f"{workspace_package}"
+                f'\n[patch.{source}]\nmy-base = {{ path = "crates/base" }}\n'
+            ),
+            "crates/base/Cargo.toml": (
+                f'[package]\nname = "my-base"\n{version_line}\n'
+            ),
+            "crates/base/src/lib.rs": _METER_RS,
+            "crates/top/Cargo.toml": _manifest("top", dep),
+            "crates/top/src/lib.rs": _ALIAS_TOP_RS.replace("base_alias", "my_base"),
+        },
+    )
+    meter = f"{project}.crates.base.src.lib.Meter"
+    top = f"{project}.crates.top.src.lib"
+    leaked = {
+        (src, callee)
+        for src, callee in edges
+        if src.startswith(f"{top}.") and callee.startswith(f"{meter}.")
+    }
+    if not used:
+        assert not leaked, edges
+        return
+    assert (f"{top}.level", f"{meter}.new") in edges, edges
+    assert (f"{top}.level", f"{meter}.gauge") in edges, edges
+    assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges

@@ -53,6 +53,7 @@ from .js_ts.module_paths import (
 )
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
+from .rs import cargo_semver
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
     StdlibCacheStats,
@@ -768,6 +769,14 @@ def _rust_dep_source(value: object) -> str | None:
         if isinstance(source := value.get(key), str):
             return source
     return cs.RS_DEFAULT_REGISTRY
+
+
+def _rust_dep_requirement(value: object) -> str | None:
+    # The version requirement a dependency entry states, if any.
+    if isinstance(value, str):
+        return value
+    version = value.get(cs.RS_MANIFEST_VERSION_KEY) if isinstance(value, dict) else None
+    return version if isinstance(version, str) else None
 
 
 def _rust_dep_package(key: str, value: object) -> str:
@@ -2833,8 +2842,10 @@ class ImportProcessor:
         name, the published-workspace shape (#1048). A git, alternate
         registry or out-of-repo path entry fetches another copy of the
         package, which only a root `[patch.<source>]` path makes a repo
-        package (PR #2791 review). `workspace = true` inherits the root's
-        [workspace.dependencies] entry, source and rename included.
+        package (PR #2791 review). A patch of the package decides for its
+        source either way, the crates.io name rule included.
+        `workspace = true` inherits the root's [workspace.dependencies]
+        entry, source, rename and requirement included.
         """
         if isinstance(value, dict) and value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
             value = self._rust_workspace_dep_value(key)
@@ -2842,23 +2853,75 @@ class ImportProcessor:
         if source is None:
             return None
         package = _rust_dep_package(key, value)
-        patched = self._rust_patched_dir(source, package)
-        if patched is not None or source != cs.RS_DEFAULT_REGISTRY:
-            return patched
+        if (patch := self._rust_patch_entry(source, package)) is not None:
+            return self._rust_patch_target(*patch, _rust_dep_requirement(value))
+        if source != cs.RS_DEFAULT_REGISTRY:
+            return None
         return self._rust_member_package_dirs().get(package)
 
-    def _rust_patched_dir(self, source: str, package: str) -> tuple[str, ...] | None:
-        # The repo dir the root manifest's `[patch.<source>]` table puts in
-        # place of `package` from `source` (a git URL, as written, or a
-        # registry name). Only a path patch lands in the repo.
+    def _rust_patch_entry(
+        self, source: str, package: str
+    ) -> tuple[str, dict[str, object]] | None:
+        # The root manifest's `[patch.<source>]` entry for `package`, keyed
+        # by a git URL as written or a registry name.
         patch = self._rust_read_manifest(self.repo_path).get(cs.RS_MANIFEST_PATCH_KEY)
         entries = patch.get(source) if isinstance(patch, dict) else None
         if not isinstance(entries, dict):
             return None
         for key, value in entries.items():
             if isinstance(value, dict) and _rust_dep_package(key, value) == package:
-                return self._rust_dep_target_dir((), key, value)
+                return key, value
         return None
+
+    def _rust_patch_target(
+        self, key: str, value: dict[str, object], requirement: str | None
+    ) -> tuple[str, ...] | None:
+        """The repo dir a patch puts in place of the dependency, if Cargo uses it.
+
+        Only a path patch lands in the repo, and Cargo applies it only when
+        the patched package's version meets the dependency's requirement;
+        otherwise it warns "patch was not used" and builds against the
+        source's own copy, which no local call reaches (PR #2791 review). A
+        dependency stating no requirement takes the patch. A version that
+        cannot be read or checked keeps the dependency external.
+        """
+        target = self._rust_dep_target_dir((), key, value)
+        if target is None or requirement is None:
+            return target
+        version = self._rust_package_version(target)
+        if version is None or not cargo_semver.satisfies(version, requirement):
+            return None
+        return target
+
+    def _rust_package_version(self, pkg: tuple[str, ...]) -> str | None:
+        # A package's `[package] version`, or the root `[workspace.package]`
+        # one it inherits through `version.workspace = true`.
+        package = self._rust_read_manifest(self.repo_path.joinpath(*pkg)).get(
+            cs.RS_MANIFEST_PACKAGE_KEY
+        )
+        version = (
+            package.get(cs.RS_MANIFEST_VERSION_KEY)
+            if isinstance(package, dict)
+            else None
+        )
+        if (
+            isinstance(version, dict)
+            and version.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True
+        ):
+            workspace = self._rust_read_manifest(self.repo_path).get(
+                cs.RS_MANIFEST_WORKSPACE_KEY
+            )
+            inherited = (
+                workspace.get(cs.RS_MANIFEST_PACKAGE_KEY)
+                if isinstance(workspace, dict)
+                else None
+            )
+            version = (
+                inherited.get(cs.RS_MANIFEST_VERSION_KEY)
+                if isinstance(inherited, dict)
+                else None
+            )
+        return version if isinstance(version, str) else None
 
     def _rust_member_package_dirs(self) -> dict[str, tuple[str, ...]]:
         # Workspace members with a lib target, by [package] name
