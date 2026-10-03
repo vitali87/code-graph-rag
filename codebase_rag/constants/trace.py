@@ -128,6 +128,14 @@ TRACE_JVM_NESTED_MARKER = "$"
 # separator-delimited fragments, so matching works with both POSIX and Windows
 # separators in co_filename.
 TRACE_EXCLUDED_DIR_NAMES = frozenset({"site-packages", ".venv", "node_modules"})
+# Installed code never counts as evidence of where another machine's checkout
+# lives, even when it is a copy of the indexed package. Debian's system Python
+# installs into dist-packages rather than site-packages.
+TRACE_INSTALLED_DIR_NAMES = TRACE_EXCLUDED_DIR_NAMES | {"dist-packages"}
+
+# Frames recorded on Windows name files with this separator; tracebacks are
+# pasted across OSes, so it is read as a path separator wherever cgr runs.
+TRACE_WINDOWS_PATH_SEPARATOR = "\\"
 
 # Names whose first parameter marks a bound receiver worth sampling.
 TRACE_RECEIVER_PARAMS = ("self", "cls")
@@ -179,6 +187,16 @@ class TraceUnresolvedReason(StrEnum):
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
 
+
+# Said instead of handing back an empty result that reads as "the graph does
+# not know this code" when only the paths failed to line up (issue #2587).
+TRACEBACK_NOTE_NOTHING_RESOLVED = (
+    "0 of {total} frames resolved: {outside} lie outside the indexed checkout "
+    "{root}, and no checkout root they share matches a file the graph indexes. "
+    "If the traceback comes from another machine, a container or a CI runner, "
+    "pass {param} to map its checkout root onto the repository, "
+    'e.g. {{"/app": "."}}.'
+)
 
 TRACE_ERR_BAD_HEADER = "Trace file {path} does not start with a valid cgr trace header."
 TRACE_ERR_VERSION = (

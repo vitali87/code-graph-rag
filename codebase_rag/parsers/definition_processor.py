@@ -32,6 +32,7 @@ from ..utils.path_utils import (
     declaration_extension,
     has_implementation_sibling,
 )
+from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
@@ -610,7 +611,9 @@ class DefinitionProcessor(
             if parser is None:
                 logger.warning(ls.DEF_NO_PARSER.format(language=language))
                 return None
-            tree = parse_with_preproc_recovery(parser, source_bytes, language)
+            tree = parse_with_preproc_recovery(
+                parser, grammar_bytes(source_bytes, language, file_path), language
+            )
             root_node = tree.root_node
             pre_combined_captures = None
         return root_node, pre_combined_captures
