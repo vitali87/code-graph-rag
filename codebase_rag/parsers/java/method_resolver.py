@@ -23,6 +23,7 @@ from .utils import (
     extract_method_call_info,
     extract_method_info,
     get_class_context_from_qn,
+    java_written_supertype_count,
     method_reference_receiver_text,
 )
 
@@ -1217,10 +1218,29 @@ class JavaMethodResolverMixin:
         if (declaration := self._java_type_declaration(type_ref, owner)) is None:
             return parents, False
         parents.extend(
-            self._java_type_ref(name, owner)
+            self._java_member_type_ref(name, owner)
             for name in extract_class_info(declaration)[cs.FIELD_INTERFACES]
         )
-        return parents, declaration.type in _JAVA_FULLY_DECLARED_TYPES
+        # A supertype written in a form neither reader names (`@A Base`) is
+        # one the walk never sees: the list is whole only when it holds as
+        # many as the declaration writes.
+        return parents, (
+            declaration.type in _JAVA_FULLY_DECLARED_TYPES
+            and len(parents) == java_written_supertype_count(declaration)
+        )
+
+    def _java_member_type_ref(self, type_name: str, module_qn: str) -> str:
+        # `_java_type_ref`, which leaves a dotted name as written, plus a
+        # member type named through its enclosing one (`Outer.Inner`): the
+        # registered type `Outer` names here, then `.Inner`.
+        ref = self._java_type_ref(type_name, module_qn)
+        outer, dot, member = ref.partition(cs.SEPARATOR_DOT)
+        if not dot or self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES:
+            return ref
+        nested = f"{self._java_type_ref(outer, module_qn)}{cs.SEPARATOR_DOT}{member}"
+        if self.function_registry.get(nested) in _JAVA_TYPE_NODE_TYPES:
+            return nested
+        return ref
 
     def _java_type_variables(self, method_qn: str) -> frozenset[str]:
         # The type variables a method's parameters may name: its own and

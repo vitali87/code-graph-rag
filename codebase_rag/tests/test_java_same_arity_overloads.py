@@ -418,6 +418,68 @@ public class GenericArrays {
 }
 """
 
+# CodeRabbit on #2800: supertypes written as scoped names (`Outer.Port`,
+# `Map.Entry<K, V>`, `extends Outer.Frame`). One the walk drops must not let
+# it claim it saw every supertype, which rules out the overload it applies to.
+OUTER = """package com.acme;
+
+public class Outer {
+  public interface Port {}
+  public static class Frame {}
+}
+"""
+
+SCOPED = """package com.acme;
+
+import java.util.Map;
+
+interface Unplugged {}
+interface Socket {}
+interface Holder<T> {}
+class PortImpl implements Outer.Port {}
+abstract class EntryImpl implements Map.Entry<String, Integer> {}
+class FrameChild extends Outer.Frame {}
+class Both implements Socket, Holder<String> {}
+@interface Mark {}
+class Plate {}
+class Marked implements @Mark Socket {}
+class MarkedPlate extends @Mark Plate {}
+
+public class Scoped {
+  static String plug(Unplugged u) { return "unplugged"; }
+  static String plug(Outer.Port p) { return "port"; }
+  static String viaPort(PortImpl p) { return plug(p); }
+
+  static String wear(Outer.Port p) { return "port"; }
+  static String wear(Object o) { return "object"; }
+  static String viaPortOrObject(PortImpl p) { return wear(p); }
+
+  static String hold(Map.Entry<String, Integer> e) { return "entry"; }
+  static String hold(Object o) { return "object"; }
+  static String viaEntry(EntryImpl e) { return hold(e); }
+
+  static String fit(Unplugged u) { return "unplugged"; }
+  static String fit(Outer.Frame f) { return "frame"; }
+  static String viaFrame(FrameChild c) { return fit(c); }
+
+  static String wrap(Outer.Frame f) { return "frame"; }
+  static String wrap(Object o) { return "object"; }
+  static String viaFrameOrObject(FrameChild c) { return wrap(c); }
+
+  static String mix(Unplugged u) { return "unplugged"; }
+  static String mix(Holder<String> h) { return "holder"; }
+  static String viaBoth(Both b) { return mix(b); }
+
+  static String tag(Socket s) { return "socket"; }
+  static String tag(Object o) { return "object"; }
+  static String viaMarked(Marked m) { return tag(m); }
+
+  static String rest(Plate p) { return "plate"; }
+  static String rest(Object o) { return "object"; }
+  static String viaMarkedPlate(MarkedPlate p) { return rest(p); }
+}
+"""
+
 FILES = {
     "Names.java": NAMES,
     "Ext.java": EXT,
@@ -445,6 +507,8 @@ FILES = {
     "Plugin.java": PLUGIN,
     "Plugins.java": PLUGINS,
     "GenericArrays.java": GENERIC_ARRAYS,
+    "Outer.java": OUTER,
+    "Scoped.java": SCOPED,
 }
 
 ACME = f"{PROJECT}.com.acme"
@@ -576,6 +640,72 @@ def test_project_interface_parameter_selects_the_overload(
 ) -> None:
     assert _callees(calls, "Iface.Iface.viaImpl(Impl)") == {
         "Iface.Iface.accept(Api)": cs.EdgeResolution.EXACT
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("Scoped.Scoped.viaPort(PortImpl)", "Scoped.Scoped.plug(Outer.Port)"),
+        (
+            "Scoped.Scoped.viaPortOrObject(PortImpl)",
+            "Scoped.Scoped.wear(Outer.Port)",
+        ),
+        (
+            "Scoped.Scoped.viaEntry(EntryImpl)",
+            "Scoped.Scoped.hold(Map.Entry<String, Integer>)",
+        ),
+    ],
+)
+def test_scoped_interface_parameter_selects_the_overload(
+    calls: dict[str, dict[str, str]], caller: str, expected: str
+) -> None:
+    assert _callees(calls, caller) == {expected: cs.EdgeResolution.EXACT}
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("Scoped.Scoped.viaFrame(FrameChild)", "Scoped.Scoped.fit(Outer.Frame)"),
+        (
+            "Scoped.Scoped.viaFrameOrObject(FrameChild)",
+            "Scoped.Scoped.wrap(Outer.Frame)",
+        ),
+    ],
+)
+def test_scoped_superclass_parameter_selects_the_overload(
+    calls: dict[str, dict[str, str]], caller: str, expected: str
+) -> None:
+    assert _callees(calls, caller) == {expected: cs.EdgeResolution.EXACT}
+
+
+@pytest.mark.parametrize(
+    ("caller", "applicable"),
+    [
+        ("Scoped.Scoped.viaMarked(Marked)", "Scoped.Scoped.tag(Socket)"),
+        ("Scoped.Scoped.viaMarkedPlate(MarkedPlate)", "Scoped.Scoped.rest(Plate)"),
+    ],
+)
+def test_a_supertype_the_walk_cannot_read_never_rules_its_overload_out(
+    calls: dict[str, dict[str, str]], caller: str, applicable: str
+) -> None:
+    # Neither reader names an annotated supertype (`implements @Mark Socket`,
+    # `extends @Mark Plate`), so the walk cannot prove the parameter out of
+    # reach; the overload stays a contender beside Object.
+    callees = _callees(calls, caller)
+    assert callees == {
+        applicable: cs.EdgeResolution.OVERLOAD,
+        f"{applicable.split('(', 1)[0]}(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_every_unscoped_interface_named_keeps_the_walk_complete(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # Both of Both's interfaces are read, one of them generic, so the walk
+    # proves mix(Unplugged) inapplicable instead of weighing it.
+    assert _callees(calls, "Scoped.Scoped.viaBoth(Both)") == {
+        "Scoped.Scoped.mix(Holder<String>)": cs.EdgeResolution.EXACT
     }
 
 

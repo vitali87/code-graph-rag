@@ -145,29 +145,66 @@ def _extract_type_identifier_name(node: ASTNode) -> str | None:
             return None
 
 
+_JAVA_NAMED_TYPE_NODES = (cs.TS_TYPE_IDENTIFIER, cs.TS_SCOPED_TYPE_IDENTIFIER)
+
+
 def _extract_interface_name(type_child: ASTNode) -> str | None:
+    # A scoped name (`Outer.Inner`, `Map.Entry<K, V>`) stays whole, as the
+    # superclass does: its last segment alone may name another type.
     match type_child.type:
-        case cs.TS_TYPE_IDENTIFIER:
+        case cs.TS_TYPE_IDENTIFIER | cs.TS_SCOPED_TYPE_IDENTIFIER:
             return safe_decode_text(type_child)
         case cs.TS_GENERIC_TYPE:
             for sub_child in type_child.children:
-                if sub_child.type == cs.TS_TYPE_IDENTIFIER:
+                if sub_child.type in _JAVA_NAMED_TYPE_NODES:
                     return safe_decode_text(sub_child)
     return None
 
 
-def _extract_interfaces(class_node: ASTNode) -> list[str]:
-    interfaces_node = class_node.child_by_field_name(cs.TS_FIELD_INTERFACES)
-    if not interfaces_node:
+def _clause_types(clause: ASTNode | None) -> list[ASTNode]:
+    # The types an `extends` or `implements` clause writes, one node each;
+    # keywords, commas and comments are none.
+    if clause is None:
         return []
-
-    interfaces: list[str] = []
-    for child in interfaces_node.children:
+    types: list[ASTNode] = []
+    for child in clause.named_children:
         if child.type == cs.TS_TYPE_LIST:
-            for type_child in child.children:
-                if interface_name := _extract_interface_name(type_child):
-                    interfaces.append(interface_name)
-    return interfaces
+            types.extend(entry for entry in child.named_children if not entry.is_extra)
+        elif not child.is_extra:
+            types.append(child)
+    return types
+
+
+def _extract_interfaces(class_node: ASTNode) -> list[str]:
+    return [
+        interface_name
+        for type_child in _clause_types(
+            class_node.child_by_field_name(cs.TS_FIELD_INTERFACES)
+        )
+        if (interface_name := _extract_interface_name(type_child))
+    ]
+
+
+def java_written_supertype_count(declaration: ASTNode) -> int:
+    # Every supertype a type declaration writes, whether or not a reader
+    # names it: its superclass, the interfaces it implements and, for an
+    # interface, the ones it extends.
+    extends_interfaces = next(
+        (
+            child
+            for child in declaration.children
+            if child.type == cs.TS_JAVA_EXTENDS_INTERFACES
+        ),
+        None,
+    )
+    return sum(
+        len(_clause_types(clause))
+        for clause in (
+            declaration.child_by_field_name(cs.TS_FIELD_SUPERCLASS),
+            declaration.child_by_field_name(cs.TS_FIELD_INTERFACES),
+            extends_interfaces,
+        )
+    )
 
 
 def _extract_type_parameters(declaration: ASTNode) -> list[str]:
