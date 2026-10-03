@@ -199,6 +199,56 @@ class TestWhatIsNotGuessed:
         accesses = _accesses(tmp_path, {"client.py": source}, "python")
         assert _urls(accesses, "get_users") == {"{BASE}/users"}
 
+    @pytest.mark.parametrize(
+        "client",
+        [
+            pytest.param(
+                "import requests\n"
+                "from settings import *\n\n\n"
+                "def get_users():\n"
+                '    return requests.get(BASE + "/users")\n\n\n'
+                "get_users()\n"
+                'BASE = "/other"\n',
+                id="assigned-after-the-star-import",
+            ),
+            pytest.param(
+                "import requests\n\n"
+                'BASE = "/other"\n'
+                "try:\n"
+                "    from settings import *\n"
+                "except ImportError:\n"
+                "    pass\n\n\n"
+                "def get_users():\n"
+                '    return requests.get(BASE + "/users")\n',
+                id="star-import-inside-a-try",
+            ),
+        ],
+    )
+    def test_a_name_a_star_import_may_bind_does_not_fold(
+        self, tmp_path: Path, client: str
+    ) -> None:
+        # Bot review on PR #2596: `settings` supplies BASE, and `get_users()`
+        # runs before the module reassigns it, so Python requests
+        # /imported/users. Which binding a call sees is not knowable here,
+        # so the URL stays unresolved rather than folding `/other`.
+        files = {"settings.py": 'BASE = "/imported"\n', "client.py": client}
+        accesses = _accesses(tmp_path, files, "python")
+        assert _urls(accesses, "get_users") == {"{BASE}/users"}
+
+    def test_a_named_import_beside_the_constant_still_folds(
+        self, tmp_path: Path
+    ) -> None:
+        source = (
+            "import requests\n"
+            "from settings import TIMEOUT\n\n"
+            'BASE = "http://localhost:5000"\n\n\n'
+            "def get_users():\n"
+            '    return requests.get(BASE + "/users", timeout=TIMEOUT)\n'
+        )
+        files = {"settings.py": "TIMEOUT = 5\n", "client.py": source}
+        accesses = _accesses(tmp_path, files, "python")
+        assert _urls(accesses, "get_users") == {"http://localhost:5000/users"}
+
     def test_a_converted_substitution_does_not_fold(self, tmp_path: Path) -> None:
         # `!r` and `=` change the rendered text, so the value is not the URL.
         source = (

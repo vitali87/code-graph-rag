@@ -45,10 +45,14 @@ class _Graph:
     """One project; answers the Project read and the endpoint reads."""
 
     def __init__(
-        self, captured: list[str] | None, rows: list[ResultRow] | None = None
+        self,
+        captured: list[str] | None,
+        rows: list[ResultRow] | None = None,
+        callers: list[ResultRow] | None = None,
     ) -> None:
         self.captured = captured
         self.rows = rows or []
+        self.callers = callers or []
         self.queries: list[str] = []
 
     def list_projects(self) -> list[str]:
@@ -62,6 +66,8 @@ class _Graph:
             return [{_CAPTURED_KEY: self.captured, cs.KEY_ROOT_PATH: ROOT}]
         if query == cq.CYPHER_GRAPH_ENDPOINTS:
             return list(self.rows)
+        if query == cq.CYPHER_GRAPH_ENDPOINT_CALLERS:
+            return list(self.callers)
         return []
 
 
@@ -130,6 +136,96 @@ class TestUncapturedIoIsSaid:
         assert f"cgr start --repo-path {ROOT} --update-graph --capture io" in message, (
             message
         )
+
+
+def _io_without(*left_out: cs.RelationshipType) -> list[str]:
+    return [rel for rel in _WITH_IO if rel not in {r.value for r in left_out}]
+
+
+_CALLER = {
+    "label": "Function",
+    "qualified_name": "web.client.load_order",
+    "path": "client.py",
+    "url": "/orders/{id}",
+    "direction": cs.RelationshipType.READS_FROM.value,
+    "endpoint": "GET /orders/{id}",
+    "handler": f"{P}.api.get_order",
+}
+
+
+class TestCallersNeedTheCallSideCaptured:
+    # Bot review on PR #2596: `endpoint_callers` reads the handler's EXPOSES
+    # and the callers' READS_FROM / WRITES_TO, joined through RESOLVES_TO for
+    # a URL, but only EXPOSES was checked. A project that captured EXPOSES
+    # alone answered `[]`: "no callers", where none could have been recorded.
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "left_out",
+        [
+            (cs.RelationshipType.READS_FROM, cs.RelationshipType.WRITES_TO),
+            (cs.RelationshipType.WRITES_TO,),
+            (cs.RelationshipType.RESOLVES_TO,),
+        ],
+        ids=["reads-and-writes", "writes", "resolves-to"],
+    )
+    async def test_an_empty_answer_names_the_relationships_left_out(
+        self, tmp_path: Path, left_out: tuple[cs.RelationshipType, ...]
+    ) -> None:
+        graph = _Graph(_io_without(*left_out))
+        answer = await _ask(_registry(tmp_path, graph), cs.MCPToolName.ENDPOINT_CALLERS)
+        assert isinstance(answer, dict), answer
+        message = answer[cs.DICT_KEY_ERROR]
+        assert "`io`" in message, message
+        assert ", ".join(sorted(rel.value for rel in left_out)) in message, message
+        assert f"cgr start --repo-path {ROOT} --update-graph --capture io" in message, (
+            message
+        )
+
+    @pytest.mark.anyio
+    async def test_callers_found_are_returned_whatever_was_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        graph = _Graph(
+            _io_without(cs.RelationshipType.READS_FROM, cs.RelationshipType.WRITES_TO),
+            callers=[_CALLER],
+        )
+        answer = await _ask(_registry(tmp_path, graph), cs.MCPToolName.ENDPOINT_CALLERS)
+        assert answer == [_CALLER]
+        assert not any(_CAPTURED_KEY in query for query in graph.queries)
+
+    @pytest.mark.anyio
+    async def test_callers_found_with_everything_captured_are_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        graph = _Graph(_WITH_IO, callers=[_CALLER])
+        answer = await _ask(_registry(tmp_path, graph), cs.MCPToolName.ENDPOINT_CALLERS)
+        assert answer == [_CALLER]
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("tool", "left_out"),
+        [
+            (
+                cs.MCPToolName.ENDPOINTS,
+                (cs.RelationshipType.READS_FROM, cs.RelationshipType.WRITES_TO),
+            ),
+            (
+                cs.MCPToolName.REMOTE_DEPENDENCIES,
+                (cs.RelationshipType.EXPOSES, cs.RelationshipType.RESOLVES_TO),
+            ),
+        ],
+    )
+    async def test_the_other_tools_still_need_only_what_they_read(
+        self,
+        tmp_path: Path,
+        tool: cs.MCPToolName,
+        left_out: tuple[cs.RelationshipType, ...],
+    ) -> None:
+        # Their emptiness turns on what they MATCH, not on what they count or
+        # optionally join: `endpoints` on EXPOSES, `remote_dependencies` on
+        # READS_FROM / WRITES_TO.
+        graph = _Graph(_io_without(*left_out))
+        assert await _ask(_registry(tmp_path, graph), tool) == []
 
 
 class TestWhatStaysAnAnswer:

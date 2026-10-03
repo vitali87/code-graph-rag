@@ -160,12 +160,23 @@ _READS_THE_GRAPH = frozenset(
     }
 )
 
-# The relationships each cross-service tool reads from the asked project.
-# All three sit in the opt-in `io` group, so on a project synced without it
+# The relationships each cross-service tool needs for a non-empty answer:
+# every one its queries MATCH, not the ones they only count or optionally
+# join. All sit in the opt-in `io` group, so on a project synced without one
 # an empty answer means "never recorded", not "none" (issue #2521).
 _CAPTURE_READ_BY: dict[cs.MCPToolName, frozenset[cs.RelationshipType]] = {
     cs.MCPToolName.ENDPOINTS: frozenset({cs.RelationshipType.EXPOSES}),
-    cs.MCPToolName.ENDPOINT_CALLERS: frozenset({cs.RelationshipType.EXPOSES}),
+    # A caller reaches the handler's EXPOSES through its own READS_FROM or
+    # WRITES_TO, by way of RESOLVES_TO for a URL: with any of them left out
+    # some callers could never have been recorded (bot review on PR #2596).
+    cs.MCPToolName.ENDPOINT_CALLERS: frozenset(
+        {
+            cs.RelationshipType.EXPOSES,
+            cs.RelationshipType.READS_FROM,
+            cs.RelationshipType.WRITES_TO,
+            cs.RelationshipType.RESOLVES_TO,
+        }
+    ),
     cs.MCPToolName.REMOTE_DEPENDENCIES: frozenset(
         {cs.RelationshipType.READS_FROM, cs.RelationshipType.WRITES_TO}
     ),

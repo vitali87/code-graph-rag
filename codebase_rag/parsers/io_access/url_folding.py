@@ -12,8 +12,11 @@ Folding is conservative. A constant qualifies only when the module binds its
 name exactly once: a plain module-level assignment (Python) or `const`
 declaration (JS/TS) whose value is itself static. A parameter, local,
 import or second assignment of the same name anywhere in the module leaves
-it unfolded, since that may be the binding a call site actually sees. An
-unfolded name stays a placeholder, so a URL built from it is never guessed.
+it unfolded, since that may be the binding a call site actually sees. A
+Python star import anywhere in the module leaves every name unfolded: it may
+bind any of them, and which binding a call sees then depends on when the
+call runs, which indexing cannot know. An unfolded name stays a placeholder,
+so a URL built from it is never guessed.
 """
 
 from __future__ import annotations
@@ -53,7 +56,11 @@ def module_url_constants(root: Node, grammar: UrlGrammar) -> dict[str, str]:
         binder = _js_names_bound_by
     if not candidates:
         return {}
-    bound = Counter(name for node in _walk(root) for name in binder(node))
+    bound: Counter[str] = Counter()
+    for node in _walk(root):
+        if _is_python_star_import(node):
+            return {}
+        bound.update(binder(node))
     constants: dict[str, str] = {}
     # Source order, so a constant built from an earlier one
     # (`API = HOST + "/api"`) folds too.
@@ -136,16 +143,20 @@ def _unparenthesised(node: Node) -> Node:
     return node
 
 
+def _is_python_star_import(node: Node) -> bool:
+    # `from m import *`, at module level or nested in an `if` or `try`. It may
+    # bind any name, before or after the module's own assignment of it (bot
+    # review on PR #2596: a call made between the two sees the imported
+    # value, not the later constant).
+    return node.type == cs.TS_PY_IMPORT_FROM_STATEMENT and any(
+        child.type == cs.TS_WILDCARD_IMPORT for child in node.named_children
+    )
+
+
 def _python_candidates(root: Node) -> list[tuple[str, Node]]:
-    # `NAME = <value>` (optionally annotated) as a module-level statement. A
-    # star import may rebind any name, so it voids the candidates before it.
+    # `NAME = <value>` (optionally annotated) as a module-level statement.
     candidates: dict[str, Node] = {}
     for statement in root.named_children:
-        if statement.type == cs.TS_PY_IMPORT_FROM_STATEMENT and any(
-            child.type == cs.TS_WILDCARD_IMPORT for child in statement.named_children
-        ):
-            candidates.clear()
-            continue
         if statement.type != cs.TS_PY_EXPRESSION_STATEMENT:
             continue
         assignments = statement.named_children

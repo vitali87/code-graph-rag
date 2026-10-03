@@ -119,8 +119,10 @@ identity (`GET /users/{id}`); `remote_dependencies` lists every network
 access a project makes with the handler it resolves to, keeping the
 unresolved ones. These edges exist only where the `io` group was
 captured, and each sync records its capture on the Project node: on a
-project whose last sync left `io` out, an empty answer comes back as an
-error naming the group and the re-index command rather than as `[]` (a
+project whose last sync left out an `io` relationship the tool needs
+(`endpoint_callers` needs `EXPOSES`, `READS_FROM`, `WRITES_TO` and
+`RESOLVES_TO`), an empty answer comes back as an error naming the group,
+the missing relationships and the re-index command rather than as `[]` (a
 graph synced before the record existed answers as before).
 `cgr dead-code --no-endpoint-roots` stops rooting a decorator-routed
 handler (FastAPI, Flask) by its decorator alone: such a handler whose
