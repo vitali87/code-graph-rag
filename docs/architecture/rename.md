@@ -154,6 +154,11 @@ target, a definition), a bare use such a binding shadows in its function,
 a keyword argument's name (`f(helper=1)`), or a key that labels a property
 (`{ helper: 1 }` in JavaScript; a Python dict key, `{MyError: on_error}`, is
 evaluated and counts, as does JavaScript shorthand, `{ helper }`). An
+import of a module-level target under its own name, from the target's own
+module (`from .widget import Widget as Widget`, the re-export idiom of a
+package's `__init__.py` and its `__init__.pyi`), binds the target itself:
+it hides none of the file's uses, and its alias counts with the imported
+name. Under another name (`as W`) only the imported name counts. An
 occurrence counts as planned when a site of the plan covers it, or the
 import statement of one (its own span, not its line:
 `from pkg.util import helper; helper(1)` still holds the call), or when the

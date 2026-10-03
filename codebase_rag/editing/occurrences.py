@@ -254,6 +254,9 @@ class _Modules(NamedTuple):
     crates: dict[str, tuple[str, ...]] = {}
     # The project's TypeScript and JavaScript configs (`paths`, `baseUrl`).
     scripts: ScriptConfigs | None = None
+    # Whether the target is a module-level definition, which an import
+    # names: not a method, nor a class or function nested in another.
+    importable: bool = False
 
 
 def _modules(repo_root: Path, target: Target) -> _Modules:
@@ -269,16 +272,21 @@ def _modules(repo_root: Path, target: Target) -> _Modules:
         module_key(path): spelled_length(repo_root, path)
         for _name, path in target.rivals
     }
+    declared = _declared(repo_root, target)
     return _Modules(
         home,
         packages,
         rivals,
-        _script_global(repo_root, target),
-        _declared(repo_root, target),
-        crate_roots(repo_root, owner_paths)
+        script_global=_script_global(repo_root, target),
+        declared=declared,
+        crates=crate_roots(repo_root, owner_paths)
         if target.language is cs.SupportedLanguage.RUST
         else {},
-        ScriptConfigs(repo_root) if target.language in cs.JS_TS_LANGUAGES else None,
+        scripts=ScriptConfigs(repo_root)
+        if target.language in cs.JS_TS_LANGUAGES
+        else None,
+        importable=target.kind is not cs.RenameTargetKind.METHOD
+        and all(len(names) == 1 for _path, names in declared),
     )
 
 
@@ -484,6 +492,29 @@ class _File:
         return names is not None and any(
             (path, names) in self.modules.declared for path in self.stub_of
         )
+
+    def imports_target(self, binding: Node) -> bool:
+        """Whether a binding is an import of the target under its own name,
+        from the target's module: `from .widget import Widget as Widget`,
+        the re-export idiom of a package's `__init__` and its stub. It binds
+        the target, so it hides none of the file's uses, and it is renamed
+        with it. Only a module-level definition is imported by name."""
+        parent = binding.parent
+        statement = _import_statement(binding)
+        if (
+            parent is None
+            or statement is None
+            or _field(parent, binding) != cs.FIELD_ALIAS
+            or not self.modules.importable
+        ):
+            return False
+        imported = next(
+            (child for child in parent.named_children if child != binding), None
+        )
+        if imported is None or _last_name(imported) != self.target.name:
+            return False
+        paths = self._read(statement).bindings.get(self.target.name)
+        return paths is not None and self._is_home(self.target.name, paths)
 
     def _names(self, names: frozenset[str]) -> Iterator[Node]:
         """The identifier tokens in code spelling one of `names`."""
@@ -790,22 +821,34 @@ class _File:
 
 def _file_occurrences(file: _File) -> Iterator[Occurrence]:
     bindings = [token for token in file.tokens if _binds(token)]
-    bound = {(token.start_byte, token.end_byte) for token in bindings}
+    bound = {_token_span(token) for token in bindings}
+    # Bindings of the target itself: a declaration file's declaration of it
+    # (`class Widget:` in `widget.pyi`), and an import of it under its own
+    # name (`from .widget import Widget as Widget`). Each is renamed with
+    # it, and hides nothing.
+    own = {
+        _token_span(token)
+        for token in file.tokens
+        if file.declares(token)
+        or (_token_span(token) in bound and file.imports_target(token))
+    }
     shadows = [
         span
         for binding in bindings
-        if (span := _shadow(binding, file.own_module, len(file.source))) is not None
+        if _token_span(binding) not in own
+        and (span := _shadow(binding, file.own_module, len(file.source))) is not None
     ]
     for token in file.tokens:
-        if file.declares(token):
-            # `class Widget:` in `widget.pyi`: the stub states the module's
-            # interface, and keeping the old name there breaks every checker
-            # reading it.
+        if _token_span(token) in own:
             yield _occurrence(file.path, token, called=False, bare=True)
-        elif (token.start_byte, token.end_byte) not in bound and not _labels(token):
+        elif _token_span(token) not in bound and not _labels(token):
             found = _use(file, token, shadows)
             if found is not None:
                 yield found
+
+
+def _token_span(token: Node) -> tuple[int, int]:
+    return token.start_byte, token.end_byte
 
 
 def _use(file: _File, token: Node, shadows: list[tuple[int, int]]) -> Occurrence | None:

@@ -2838,3 +2838,156 @@ def test_an_external_import_does_not_refuse_the_rename(
 
     assert report.unplanned == ()
     assert "src/app.ts" not in {s.path for s in report.sites}
+
+
+# --- review of PR #2797: the re-export alias idiom --------------------------
+
+ALIASED = {
+    "pkg/__init__.py": "from .widget import Widget, helper\n",
+    "pkg/widget.py": "class Widget:\n    pass\n\n\ndef helper():\n    return 1\n",
+}
+# A file the graph has no site in, importing the target under its own name
+# or another, with the positions that name the target: the imported name,
+# then the alias and its uses where the alias spells the target.
+ALIAS_IMPORTERS = {
+    "stub-class": (
+        "pkg/__init__.pyi",
+        "from .widget import Widget as Widget\n\nDEFAULT: Widget\n",
+        f"{PROJECT}.pkg.widget.Widget",
+        [(1, 20), (1, 30), (3, 9)],
+    ),
+    "stub-function": (
+        "pkg/__init__.pyi",
+        "from .widget import helper as helper\n\nDEFAULT: int = helper()\n",
+        f"{PROJECT}.pkg.widget.helper",
+        [(1, 20), (1, 30), (3, 15)],
+    ),
+    "module-class": (
+        "app.py",
+        "from pkg.widget import Widget as Widget\n\n\ndef build():\n"
+        "    return Widget()\n",
+        f"{PROJECT}.pkg.widget.Widget",
+        [(1, 23), (1, 33), (5, 11)],
+    ),
+    "other-name": (
+        "pkg/__init__.pyi",
+        "from .widget import Widget as W\n\nDEFAULT: W\n",
+        f"{PROJECT}.pkg.widget.Widget",
+        [(1, 20)],
+    ),
+}
+
+
+def _unseen(store: _StatefulIngestor, *paths: str) -> QueryFn:
+    """The graph as an indexer that recorded nothing in `paths`: no call,
+    reference or import."""
+    calls = _missing(store, *paths)
+
+    def fetch_all(query: str, params: PropertyParams | None) -> list[ResultRow]:
+        rows = calls(query, params)
+        if query == cq.CYPHER_GRAPH_IMPORTERS:
+            return [row for row in rows if row.get(cs.KEY_PATH) not in paths]
+        return rows
+
+    return fetch_all
+
+
+@pytest.mark.parametrize("case", sorted(ALIAS_IMPORTERS))
+def test_an_import_of_the_target_under_its_own_name_is_held_to_the_plan(
+    tmp_path: Path, case: str
+) -> None:
+    # Review of PR #2797: `from .widget import Widget as Widget` binds
+    # `Widget` in the file, and that binding hid the import and every use
+    # behind it as another symbol's, so the rename reported success and left
+    # them all under the old name.
+    path, text, qn, positions = ALIAS_IMPORTERS[case]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {**ALIASED, path: text})
+
+    graph = _unseen(store, path)
+    with pytest.raises(RenameRefused) as refused:
+        rename(root, graph, PROJECT, qn, "Renamed", dry_run=True)
+
+    assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
+        (path, line, col, "unplanned") for line, col in positions
+    ]
+
+
+@pytest.mark.parametrize("case", sorted(ALIAS_IMPORTERS))
+def test_allow_heuristic_renames_an_import_under_the_targets_own_name(
+    tmp_path: Path, case: str
+) -> None:
+    path, text, qn, positions = ALIAS_IMPORTERS[case]
+    old_name = qn.rsplit(".", 1)[-1]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {**ALIASED, path: text})
+
+    report = rename(
+        root,
+        _unseen(store, path),
+        PROJECT,
+        qn,
+        "Renamed",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col) for s in report.unplanned] == [
+        (path, line, col) for line, col in positions
+    ]
+    assert (root / path).read_text() == text.replace(old_name, "Renamed")
+
+
+def test_an_import_under_the_targets_name_from_another_module_is_not_held(
+    tmp_path: Path,
+) -> None:
+    # `other` has a `Widget` of its own; its stub re-exports that one.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    other_stub = "from .widget import Widget as Widget\n\nDEFAULT: Widget\n"
+    files = {
+        **ALIASED,
+        "other/__init__.py": "from .widget import Widget\n",
+        "other/__init__.pyi": other_stub,
+        "other/widget.py": "class Widget:\n    pass\n",
+    }
+    store, updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.pkg.widget.Widget",
+        "Gadget",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "other/__init__.pyi").read_text() == other_stub
+
+
+def test_a_module_imported_under_the_targets_name_is_not_the_target(
+    tmp_path: Path,
+) -> None:
+    # `import pkg.widget as Widget` binds the module, not the class: the
+    # file's `Widget` is that module, as before.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    user = "import pkg.widget as Widget\n\nDEFAULT = Widget\n"
+    store, _updater = _indexed(root, {**ALIASED, "app.py": user})
+
+    report = rename(
+        root,
+        _unseen(store, "app.py"),
+        PROJECT,
+        f"{PROJECT}.pkg.widget.Widget",
+        "Gadget",
+        dry_run=True,
+    )
+
+    assert report.unplanned == ()
