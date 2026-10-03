@@ -4447,6 +4447,26 @@ class ImportProcessor:
                     module_qn, resolved, cs.SupportedLanguage.RUST, site=site
                 )
             logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
+        self._store_rust_use_imports(
+            use_node,
+            module_qn,
+            effective_qn,
+            scope_node,
+            scope_parts,
+            pure_chain,
+            resolved_imports,
+        )
+
+    def _store_rust_use_imports(
+        self,
+        use_node: Node,
+        module_qn: str,
+        effective_qn: str,
+        scope_node: Node | None,
+        scope_parts: list[str] | None,
+        pure_chain: bool,
+        resolved_imports: dict[str, str],
+    ) -> None:
         if scope_node is not None:
             self._record_rust_body_scope_use(scope_node, module_qn, resolved_imports)
             return
