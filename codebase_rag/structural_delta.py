@@ -81,6 +81,10 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    # (importer, target, imported name) per import statement; "" for a
+    # whole-module import. Tells an import of a name the module still binds
+    # (a constant the graph has no node for) from one of a moved symbol.
+    imported: frozenset[tuple[str, str, str]] = frozenset()
 
 
 class RenameFinding(TypedDict):
@@ -328,12 +332,14 @@ def snapshot(
                 callees[definition.qualified_name] = definition
     imports: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
+    imported: set[tuple[str, str, str]] = set()
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
         source = _text(row.get(cs.KEY_FROM_QN))
         target = _text(row.get(cs.KEY_TO_QN))
         if not source or not target:
             continue
         imports.setdefault(source, set()).add(target)
+        imported.add((source, target, _text(row.get(cs.KEY_IMPORTED_NAME))))
         imports.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
     return Snapshot(
@@ -343,6 +349,7 @@ def snapshot(
         sites=sites,
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
+        imported=frozenset(imported),
     )
 
 
@@ -1302,11 +1309,16 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
     report every importer of its remaining siblings.
     """
     vacated: set[str] = set()
+    moved_names: dict[str, set[str]] = {}
     for renamed in symbols["renamed"]:
-        old_module = _module_of(str(renamed["old"]))
+        old_qn = str(renamed["old"])
+        old_module = _module_of(old_qn)
         new_module = _module_of(str(renamed["new"]))
         if old_module and old_module != new_module:
             vacated.add(old_module)
+            moved_names.setdefault(old_module, set()).add(
+                old_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
     if not vacated:
         return []
     # Anything the graph still defines under a vacated module means the module
@@ -1322,7 +1334,10 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
         # One entry per IMPORTER, not per stale target: the finding is that
         # this module still points at somewhere the move emptied, and naming
         # the same importer once per vacated target would repeat it.
-        if not targets & vacated:
+        if not any(
+            _imports_what_left(after, importer, target, moved_names[target])
+            for target in targets & vacated
+        ):
             continue
         stale.append(
             StaleImporter(
@@ -1332,6 +1347,24 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
             )
         )
     return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
+
+
+def _imports_what_left(
+    after: Snapshot, importer: str, target: str, moved: set[str]
+) -> bool:
+    """Whether `importer`'s import of the vacated `target` can reach a moved name.
+
+    The graph has no node for a module constant, so a module left holding
+    only `TAX_RATE = 0.2` reads as vacated; the moved function's own
+    `from old import TAX_RATE` then failed the move it was carried for.
+    Only a named import of something that did NOT move is cleared; a
+    whole-module import, or one the graph recorded without names, may still
+    reach the moved symbol and stays stale.
+    """
+    names = {
+        name for (src, dst, name) in after.imported if src == importer and dst == target
+    }
+    return not names or "" in names or bool(names & moved)
 
 
 def observe(
