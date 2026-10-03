@@ -27,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
@@ -878,6 +879,52 @@ def test_a_module_class_in_the_runtime_branch_of_type_checking_still_wins(
     )
     types = _local_types(tmp_path, source, "use")
     assert types["client"] == f"{PROJECT}.app.pkg.Client"
+
+
+def _guarded_pkg_class(guard: str) -> str:
+    return (
+        "import pkg\n"
+        "import typing\n"
+        "from typing import TYPE_CHECKING\n\n"
+        f"if {guard}:\n"
+        "    class pkg:\n"
+        "        class Client:\n"
+        "            def send(self, request):\n"
+        "                return request\n\n"
+        "def use():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        # Greptile on #2582: a negated guard is what runs.
+        pytest.param("not typing.TYPE_CHECKING", id="qualified"),
+        pytest.param("not TYPE_CHECKING", id="bare"),
+    ],
+)
+def test_a_module_class_under_a_negated_type_checking_guard_still_wins(
+    tmp_path: Path, guard: str
+) -> None:
+    source = _guarded_pkg_class(guard)
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == f"{PROJECT}.app.pkg.Client"
+    assert calls["use"].get(f"{PROJECT}.app.pkg.Client.send") == EXACT
+    assert f"{CLIENT}.send" not in calls["use"]
+
+
+def test_a_module_class_under_a_qualified_type_checking_guard_does_not_win(
+    tmp_path: Path,
+) -> None:
+    source = _guarded_pkg_class("typing.TYPE_CHECKING")
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == CLIENT
+    assert calls["use"].get(f"{CLIENT}.send") == EXACT
+    assert f"{PROJECT}.app.pkg.Client.send" not in calls["use"]
 
 
 def test_a_function_that_imports_the_name_again_reaches_the_import(

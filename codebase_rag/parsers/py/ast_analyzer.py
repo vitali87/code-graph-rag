@@ -676,20 +676,28 @@ def _own_bound_names(scope: Node) -> frozenset[str]:
     return frozenset(names)
 
 
+def _is_type_checking_guard(condition: Node | None) -> bool:
+    """Whether an `if` condition is the `TYPE_CHECKING` flag itself, bare or
+    qualified (`typing.TYPE_CHECKING`). `not typing.TYPE_CHECKING` guards
+    the code that runs (Greptile, #2582), so any other expression is not."""
+    if condition is not None and condition.type == cs.TS_PY_ATTRIBUTE:
+        condition = condition.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    return (
+        condition is not None
+        and condition.type == cs.TS_PY_IDENTIFIER
+        and safe_decode_text(condition) == cs.PY_TYPE_CHECKING
+    )
+
+
 def _under_type_checking(node: Node) -> bool:
     """Whether `node` sits in the body of an `if TYPE_CHECKING:` block."""
     current = node.parent
     while current is not None:
-        if current.type == cs.TS_PY_IF_STATEMENT:
-            condition = current.child_by_field_name(cs.TS_FIELD_CONDITION)
+        if current.type == cs.TS_PY_IF_STATEMENT and _is_type_checking_guard(
+            current.child_by_field_name(cs.TS_FIELD_CONDITION)
+        ):
             body = current.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
-            if (
-                condition is not None
-                and body is not None
-                and (safe_decode_text(condition) or "").rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                == cs.PY_TYPE_CHECKING
-                and body.start_byte <= node.start_byte < body.end_byte
-            ):
+            if body is not None and body.start_byte <= node.start_byte < body.end_byte:
                 return True
         current = current.parent
     return False
