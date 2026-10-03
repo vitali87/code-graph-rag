@@ -4756,21 +4756,14 @@ class CallProcessor:
         if root.type == cs.TS_GO_COMPOSITE_LITERAL:
             class_qn, owned = self._go_literal_receiver_class(root, ctx.module_qn)
         else:
-            root_name = self._get_call_target_name(root, ctx.language)
-            if not root_name:
-                return undecided
-            root_callee = self._resolve_go_callee(ctx, root, root_name, call_var_types)
-            if root_callee is None or root_callee[0] not in (
-                NodeType.FUNCTION,
-                NodeType.METHOD,
-            ):
-                return undecided
-            owned = root_callee[0] == NodeType.FUNCTION
-            if not owned and self._resolver.last_resolution != cs.EdgeResolution.EXACT:
-                # A method bound by its name alone (an untyped receiver) says
-                # nothing about the value it returns.
-                return undecided
-            class_qn = self._go_result_class(root_callee)
+            owned, class_qn = self._go_package_function_root(
+                root, ctx.module_qn, call_var_types
+            )
+            if not owned:
+                called = self._go_resolved_root_class(ctx, root, call_var_types)
+                if called is None:
+                    return undecided
+                owned, class_qn = called
         *hops, method = methods
         for hop in hops:
             if class_qn is None:
@@ -4785,6 +4778,107 @@ class CallProcessor:
             self._resolver._try_resolve_method(class_qn, method) if class_qn else None
         )
         return _GoValueReceiverCallee(owned or callee is not None, callee)
+
+    def _go_resolved_root_class(
+        self,
+        ctx: _CallScanContext,
+        root: Node,
+        call_var_types: dict[str, str] | None,
+    ) -> tuple[bool, str | None] | None:
+        # (owned, struct) for a root the resolver binds (`c.Root()`), None when
+        # it binds no function or method. Only an EXACT binding types the
+        # result: a callee matched by its name alone (an untyped receiver)
+        # says nothing about the value it returns. A free function's result
+        # stays owned either way, since the name-based resolver never typed
+        # one before and would now look its type name up project-wide.
+        root_name = self._get_call_target_name(root, ctx.language)
+        if not root_name:
+            return None
+        root_callee = self._resolve_go_callee(ctx, root, root_name, call_var_types)
+        if root_callee is None or root_callee[0] not in (
+            NodeType.FUNCTION,
+            NodeType.METHOD,
+        ):
+            return None
+        owned = root_callee[0] == NodeType.FUNCTION
+        if self._resolver.last_resolution != cs.EdgeResolution.EXACT:
+            return owned, None
+        return owned, self._go_result_class(root_callee)
+
+    def _go_package_function_root(
+        self,
+        root: Node,
+        module_qn: str,
+        call_var_types: dict[str, str] | None,
+    ) -> tuple[bool, str | None]:
+        """(calls a package's function, the struct it returns) for a root.
+
+        A bare `NewBox()` names a function of the caller's own package (or a
+        dot-imported one) and `box.New()` one of the package the import binds
+        `box` to. Both are looked up there and nowhere else: the name trie
+        answered `bytes.NewBuffer` with the caller's own `NewBuffer` when the
+        standard library's was not indexed, and that guess typed every hop
+        after it. Any other root (a method on a variable) is not one.
+        """
+        function = root.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if function is None:
+            return False, None
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
+        if function.type == cs.TS_GO_IDENTIFIER:
+            name = safe_decode_text(function)
+            if not name or (call_var_types and name in call_var_types):
+                return False, None
+            packages = [module_qn.rpartition(cs.SEPARATOR_DOT)[0]] + [
+                path
+                for key, path in import_map.items()
+                if key.startswith(cs.SEPARATOR_DOT)
+            ]
+        elif function.type == cs.TS_GO_SELECTOR_EXPRESSION:
+            operand = function.child_by_field_name(cs.FIELD_OPERAND)
+            field = function.child_by_field_name(cs.FIELD_FIELD)
+            if operand is None or field is None or operand.type != cs.TS_GO_IDENTIFIER:
+                return False, None
+            alias = safe_decode_text(operand)
+            name = safe_decode_text(field)
+            target = import_map.get(alias) if alias else None
+            if not target or not name or (call_var_types and alias in call_var_types):
+                return False, None
+            if self._go_import_is_external(target):
+                return True, None
+            packages = [target]
+        else:
+            return False, None
+        for package_qn in packages:
+            # Build-variant files may each declare the function; they count as
+            # one when every copy returns the same struct.
+            results = {
+                self._go_result_class((NodeType.FUNCTION, qn))
+                for qn in self._go_package_functions(package_qn, name)
+            }
+            if results:
+                return True, results.pop() if len(results) == 1 else None
+        return True, None
+
+    def _go_package_functions(self, package_qn: str, name: str) -> list[str]:
+        # The free functions `name` filed directly under a file of
+        # `package_qn`: cgr files a package's functions by FILE, a segment the
+        # source never writes, and anything deeper is a method.
+        registry = self._resolver.function_registry
+        depth = package_qn.count(cs.SEPARATOR_DOT) + 2
+        return [
+            qn
+            for qn in registry.find_with_prefix_and_suffix(package_qn, name)
+            if registry.get(qn) == NodeType.FUNCTION
+            and qn.count(cs.SEPARATOR_DOT) == depth
+        ]
+
+    def _go_import_is_external(self, target: str) -> bool:
+        # Local import paths were rewritten to project qns at import time, so
+        # a target outside the project's qn space is an external package.
+        project = self._resolver.import_processor.project_name
+        return not (
+            target == project or target.startswith(f"{project}{cs.SEPARATOR_DOT}")
+        )
 
     def _go_literal_receiver_class(
         self, literal: Node, module_qn: str
@@ -4804,12 +4898,7 @@ class CallProcessor:
         target = import_map.get(package_alias) if package_alias else None
         if not target:
             return None, False
-        # Local import paths were rewritten to project qns at import time, so
-        # a target outside the project's qn space is an external package.
-        project = self._resolver.import_processor.project_name
-        return None, not (
-            target == project or target.startswith(f"{project}{cs.SEPARATOR_DOT}")
-        )
+        return None, self._go_import_is_external(target)
 
     def _go_result_class(self, callee: tuple[str, str] | None) -> str | None:
         # The struct a Go function's or method's single result names. The

@@ -39,13 +39,20 @@ def extract_receiver_type_name(node: Node) -> str | None:
 
 
 def extract_return_type_name(node: Node) -> str | None:
-    # Bare name of a Go function/method's single return type (`Root() *Command`
-    # -> "Command"), for chained-call resolution. A parameter_list result
-    # (multiple/named returns) is ambiguous for chaining, so it is skipped.
+    # Name of a Go function/method's single return type as its file spells it
+    # (`Root() *Command` -> "Command", `Item() *model.Item` -> "model.Item"), for
+    # chained-call resolution. A parameter_list result (multiple/named returns)
+    # is ambiguous for chaining, so it is skipped.
     result = node.child_by_field_name(cs.FIELD_RESULT)
     if result is None or result.type == cs.TS_GO_PARAMETER_LIST:
         return None
-    return _return_type_identifier(result)
+    name = _return_type_identifier(result)
+    # A type parameter (`Identity[T any](v T) T`, `(h *Holder[T]) Get() T`)
+    # stands for the call's type argument; a declared type sharing its name
+    # (a struct `T`) is not what the call returns.
+    if name is not None and name in _type_parameter_names(node):
+        return None
+    return name
 
 
 def extract_first_return_type_name(node: Node) -> str | None:
@@ -83,11 +90,20 @@ def _return_type_identifier(type_node: Node) -> str | None:
     # `[]Command`/`map[k]Command`/`chan Command` return is a container, and a chained
     # call lands on the container, not the element, so it must not be unwrapped to
     # "Command" (which would emit a false edge). Only a plain type_identifier, a
-    # pointer to one (`*Command`), or a generic base resolves.
+    # pointer to one (`*Command`), or a generic base resolves. A type of another
+    # package keeps its qualifier (`model.Item`, issue #2467): the bare `Item`
+    # would name whatever the reader's own package calls Item, so the reader
+    # resolves the qualifier through the declaring file's imports instead.
     if type_node.type in cs.TS_GO_CONTAINER_TYPES:
         return None
     if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
         return safe_decode_text(type_node)
+    if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
+        package = type_node.child_by_field_name(cs.FIELD_GO_PACKAGE)
+        name = type_node.child_by_field_name(cs.FIELD_NAME)
+        if package is None or name is None:
+            return None
+        return f"{safe_decode_text(package)}{cs.SEPARATOR_DOT}{safe_decode_text(name)}"
     if type_node.type in (cs.TS_GO_POINTER_TYPE, cs.TS_GENERIC_TYPE):
         for child in type_node.children:
             if name := _return_type_identifier(child):
@@ -154,3 +170,42 @@ def _unparenthesized(node: Node | None) -> Node | None:
     while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
         node = next(iter(node.named_children), None)
     return node
+
+
+def _type_parameter_names(node: Node) -> frozenset[str]:
+    # The function's own `[T any, U comparable]` list, plus for a method the
+    # names its generic receiver binds (`(h *Holder[T])` binds `T`).
+    names: set[str] = set()
+    params = node.child_by_field_name(cs.FIELD_GO_TYPE_PARAMETERS)
+    if params is not None:
+        for decl in params.named_children:
+            if decl.type == cs.TS_GO_TYPE_PARAMETER_DECLARATION:
+                names.update(
+                    text
+                    for child in decl.children_by_field_name(cs.FIELD_NAME)
+                    if (text := safe_decode_text(child))
+                )
+    receiver = node.child_by_field_name(cs.FIELD_RECEIVER)
+    if receiver is not None:
+        for param in receiver.named_children:
+            if param.type == cs.TS_GO_PARAMETER_DECLARATION:
+                names.update(_receiver_type_arguments(param))
+    return frozenset(names)
+
+
+def _receiver_type_arguments(param: Node) -> set[str]:
+    type_node = param.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
+        type_node = next(iter(type_node.named_children), None)
+    if type_node is None or type_node.type != cs.TS_GO_GENERIC_TYPE:
+        return set()
+    arguments = type_node.child_by_field_name(cs.FIELD_GO_TYPE_ARGUMENTS)
+    if arguments is None:
+        return set()
+    return {
+        text
+        for elem in arguments.named_children
+        if elem.type == cs.TS_GO_TYPE_ELEM
+        for ident in elem.named_children
+        if ident.type == cs.TS_TYPE_IDENTIFIER and (text := safe_decode_text(ident))
+    }

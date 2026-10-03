@@ -179,8 +179,8 @@ def test_a_constructor_in_a_sibling_file_types_the_chain(tmp_path: Path) -> None
         },
     )
     calls = _calls(store, "proj.m.use.sibling")
-    assert "proj.m.box.Box.With" in calls, calls
-    assert "proj.m.box.Box.Bump" in calls, calls
+    assert calls.get("proj.m.box.Box.With") == EXACT, calls
+    assert calls.get("proj.m.box.Box.Bump") == EXACT, calls
     assert "proj.m.box.Other.Bump" not in calls, calls
 
 
@@ -370,3 +370,206 @@ def test_a_method_rooted_chain_still_binds(tmp_path: Path) -> None:
         _calls(store, "proj.m.cmd.Command.Use").get("proj.m.cmd.Command.Run") == EXACT
     )
     assert "proj.m.cmd.Command.Run" not in _calls(store, "proj.m.cmd.Command.Fan")
+
+
+# A result type spelled with another package's name (`*model.Item`) is read
+# through the DECLARING file's imports, the way a qualified literal is.
+
+MODEL_GO = (
+    "package model\n\n"
+    "type Item struct{}\n\n"
+    'func (i *Item) Name() string { return "" }\n'
+    "func (i *Item) Next() *Item  { return i }\n"
+)
+QUALIFIED_BOX_GO = (
+    "package box\n\n"
+    "import (\n"
+    '\t"bytes"\n\n'
+    '\t"proj/model"\n'
+    '\tm "proj/model"\n'
+    ")\n\n"
+    "type Box struct{}\n\n"
+    "func (b *Box) Item() *model.Item     { return &model.Item{} }\n"
+    "func (b *Box) Buf() *bytes.Buffer    { return nil }\n"
+    "func (b *Box) Ghost() *model.Ghost   { return nil }\n"
+    "func (b *Box) Len() int              { return 0 }\n"
+    'func (b *Box) Name() string          { return "" }\n\n'
+    "func New() *Box                      { return &Box{} }\n"
+    "func NewItem() *model.Item           { return &model.Item{} }\n"
+    "func NewAliased() *m.Item            { return &m.Item{} }\n"
+    "func NewBuf() *bytes.Buffer          { return nil }\n\n"
+    "func sameFile() string { return NewItem().Next().Name() }\n"
+)
+
+
+def _qualified_project(tmp_path: Path, app_body: str) -> _StatefulIngestor:
+    # The app imports only box: every result type is spelled in box's file.
+    return _project(
+        tmp_path,
+        {
+            "model/item.go": MODEL_GO,
+            "box/box.go": QUALIFIED_BOX_GO,
+            "app/main.go": (
+                'package app\n\nimport "proj/box"\n\n'
+                "type Item struct{}\n\n"
+                'func (i *Item) Name() string { return "" }\n\n' + app_body
+            ),
+        },
+    )
+
+
+def test_a_hop_returning_another_packages_struct_binds(tmp_path: Path) -> None:
+    store = _qualified_project(
+        tmp_path,
+        "func viaMethod() string { return box.New().Item().Next().Name() }\n\n"
+        "func viaConstructor() string { return box.NewItem().Name() }\n",
+    )
+    via_method = _calls(store, "proj.app.main.viaMethod")
+    assert via_method.get("proj.box.box.Box.Item") == EXACT, via_method
+    assert via_method.get("proj.model.item.Item.Next") == EXACT, via_method
+    assert via_method.get("proj.model.item.Item.Name") == EXACT, via_method
+    # The caller's own Item is not what box's methods return.
+    assert "proj.app.main.Item.Name" not in via_method, via_method
+
+    via_constructor = _calls(store, "proj.app.main.viaConstructor")
+    assert via_constructor.get("proj.model.item.Item.Name") == EXACT, via_constructor
+    assert "proj.app.main.Item.Name" not in via_constructor, via_constructor
+
+    same_file = _calls(store, "proj.box.box.sameFile")
+    assert same_file.get("proj.model.item.Item.Next") == EXACT, same_file
+    assert same_file.get("proj.model.item.Item.Name") == EXACT, same_file
+    assert "proj.box.box.Box.Name" not in same_file, same_file
+
+
+def test_an_aliased_import_resolves_through_its_alias(tmp_path: Path) -> None:
+    # `m "proj/model"` binds `m`, so `*m.Item` is model's Item.
+    store = _qualified_project(
+        tmp_path, "func viaAlias() string { return box.NewAliased().Name() }\n"
+    )
+    calls = _calls(store, "proj.app.main.viaAlias")
+    assert calls.get("proj.model.item.Item.Name") == EXACT, calls
+    assert "proj.app.main.Item.Name" not in calls, calls
+
+
+def test_an_external_or_unknown_qualified_result_binds_nothing(tmp_path: Path) -> None:
+    # bytes.Buffer is the standard library's and model has no Ghost: Box's
+    # own Len and Name merely share the method names.
+    store = _qualified_project(
+        tmp_path,
+        "func extCtor() int { return box.NewBuf().Len() }\n\n"
+        "func extHop() int { return box.New().Buf().Len() }\n\n"
+        "func ghostHop() string { return box.New().Ghost().Name() }\n",
+    )
+    assert set(_calls(store, "proj.app.main.extCtor")) == {"proj.box.box.NewBuf"}
+    assert set(_calls(store, "proj.app.main.extHop")) == {
+        "proj.box.box.New",
+        "proj.box.box.Box.Buf",
+    }
+    assert set(_calls(store, "proj.app.main.ghostHop")) == {
+        "proj.box.box.New",
+        "proj.box.box.Box.Ghost",
+    }
+
+
+def test_a_local_bound_from_a_qualified_result_keeps_its_edge(tmp_path: Path) -> None:
+    # `y := b.Item()` stays untyped, as before: a qualified type read in the
+    # caller's file names nothing the resolver can look up, and typing `y`
+    # with it would drop the edge `y.Name()` already gets by name.
+    store = _project(
+        tmp_path,
+        {
+            "model/item.go": MODEL_GO,
+            "box/box.go": (
+                'package box\n\nimport "proj/model"\n\ntype Box struct{}\n\n'
+                "func (b *Box) Item() *model.Item { return &model.Item{} }\n"
+            ),
+            "app/main.go": (
+                'package app\n\nimport "proj/box"\n\n'
+                "func viaLocal(b *box.Box) string { y := b.Item(); return y.Name() }\n"
+            ),
+        },
+    )
+    calls = _calls(store, "proj.app.main.viaLocal")
+    assert "proj.model.item.Item.Name" in calls, calls
+
+
+# A result type that is a type parameter names the call's type argument, not a
+# declared type; a call through an import names that package's function only.
+
+
+def test_a_type_parameter_result_binds_no_same_named_struct(tmp_path: Path) -> None:
+    # `Identity[T any](v T) T` returns whatever it is given; the package's
+    # struct `T` only shares the parameter's name. Same for a method of a
+    # generic receiver (`Holder[T].Get() T`).
+    store = _project(
+        tmp_path,
+        {
+            "m/box.go": BOX_GO
+            + "\ntype T struct{}\n\nfunc (t T) Bump() int { return 3 }\n\n"
+            "type Holder[T any] struct{ v T }\n\n"
+            "func (h *Holder[T]) Get() T { return h.v }\n\n"
+            "func Identity[T any](v T) T { return v }\n\n"
+            "func Wrap[T any](v T) *Box { return &Box{} }\n",
+            "m/use.go": (
+                "package m\n\n"
+                "func viaFunction() int { return Identity(Other{}).Bump() }\n\n"
+                "func viaMethod() int { return (&Holder[Other]{}).Get().Bump() }\n\n"
+                "func viaConcrete() int { return Wrap(Other{}).Bump() }\n"
+            ),
+        },
+    )
+    for caller in ("proj.m.use.viaFunction", "proj.m.use.viaMethod"):
+        calls = _calls(store, caller)
+        assert "proj.m.box.T.Bump" not in calls, (caller, calls)
+    # A generic function whose result names a declared type still types it.
+    concrete = _calls(store, "proj.m.use.viaConcrete")
+    assert concrete.get("proj.m.box.Box.Bump") == EXACT, concrete
+
+
+def test_an_instantiated_generic_result_binds_its_base_type(tmp_path: Path) -> None:
+    store = _project(
+        tmp_path,
+        {
+            "m/gen.go": (
+                "package m\n\n"
+                "type Gen[X any] struct{}\n\n"
+                "func (g *Gen[X]) Bump() int { return 1 }\n\n"
+                "func NewGen() *Gen[int] { return &Gen[int]{} }\n\n"
+                "func generic() int { return NewGen().Bump() }\n"
+            ),
+        },
+    )
+    calls = _calls(store, "proj.m.gen.generic")
+    assert calls.get("proj.m.gen.Gen.Bump") == EXACT, calls
+
+
+def test_a_call_through_an_import_never_binds_a_local_namesake(
+    tmp_path: Path,
+) -> None:
+    # `bytes.NewBuffer` is the standard library's and `box.Missing` does not
+    # exist; the caller's own NewBuffer and Missing only share the names, so
+    # their results type nothing.
+    store = _project(
+        tmp_path,
+        {
+            "box/box.go": "package box\n\ntype Box struct{}\n",
+            "m/box.go": (
+                "package m\n\n"
+                'import (\n\t"bytes"\n\n\t"proj/box"\n)\n\n'
+                "type Local struct{}\n\n"
+                "func (l *Local) Len() int { return 0 }\n\n"
+                "func NewBuffer(b []byte) *Local { return &Local{} }\n"
+                "func Missing() *Local           { return &Local{} }\n\n"
+                "var _ = box.Box{}\n\n"
+                "func viaStdlib() int  { return bytes.NewBuffer(nil).Len() }\n"
+                "func viaMissing() int { return box.Missing().Len() }\n"
+                "func viaLocal() int   { return NewBuffer(nil).Len() }\n"
+            ),
+        },
+    )
+    for caller in ("proj.m.box.viaStdlib", "proj.m.box.viaMissing"):
+        calls = _calls(store, caller)
+        assert "proj.m.box.Local.Len" not in calls, (caller, calls)
+    # The caller's own NewBuffer, called by its bare name, is the local one.
+    local = _calls(store, "proj.m.box.viaLocal")
+    assert local.get("proj.m.box.Local.Len") == EXACT, local

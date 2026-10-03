@@ -93,3 +93,10 @@ TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )
 FIELD_OPERAND = "operand"
+# A generic declaration's `[T any]` list (`type_parameter_declaration`s naming
+# the parameters) and a generic receiver's `Box[T]` arguments (`type_elem`s):
+# the names a result type can spell without naming any declared type.
+FIELD_GO_TYPE_PARAMETERS = "type_parameters"
+TS_GO_TYPE_PARAMETER_DECLARATION = "type_parameter_declaration"
+FIELD_GO_TYPE_ARGUMENTS = "type_arguments"
+TS_GO_TYPE_ELEM = "type_elem"
