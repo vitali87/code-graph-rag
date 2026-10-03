@@ -36,3 +36,10 @@ def test_a_reference_site_is_not_treated_as_a_stale_call() -> None:
     token = _last_identifier(SOURCE, 2, 4, 2, 15, "helper", LANG, is_call=False)
     assert token is not None
     assert token != _STALE_CALL
+
+
+def test_a_call_site_with_no_recorded_end_names_the_outer_callee() -> None:
+    # A CALLS row with a start but no end must not be held to a synthetic
+    # end: no call ends there, so it read as stale and refused the rename.
+    token = _last_identifier(SOURCE, 2, 4, None, None, "helper", LANG, is_call=True)
+    assert token == (2, 4)
