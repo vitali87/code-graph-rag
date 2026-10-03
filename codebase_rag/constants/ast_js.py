@@ -38,6 +38,11 @@ TS_LOCALS_PATTERN = """
 # `module.exports.x()`, prototype-pattern `this`): only these bind a dotted call
 # to a same-module free function; `view.render()` is an instance call.
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
+# A chained call's receiver written as a construction (`new Box()`,
+# `(new Box())`): only text that reads `new` once these are stripped is
+# parsed back to see whether it IS a construction (issue #2465).
+JS_NEW_KEYWORD = "new"
+JS_RECEIVER_LEADING_CHARS = "( \t\r\n"
 # `this.` receiver prefix of a call name; a prototype-assigned function
 # (`Date.prototype.strftime`) dispatches such calls to a sibling method of
 # the same prototype target before the module-receiver fallback applies.
