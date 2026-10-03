@@ -47,6 +47,13 @@ _VARIABLES = (
 # without a database.
 _A_COMMAND = ("delete-project", "--name", "demo")
 _NOT_JSON = '\'ls,cat\' is not a JSON list, such as ["ls", "cat"].'
+# Far past any interpreter's recursion limit for `json.loads`, and shown
+# shortened in the refusal rather than echoed whole.
+_TOO_DEEP = "[" * 100_000
+_NESTED_TOO_DEEPLY = (
+    "'[[[[[[[[[[[[...[[[[[[[[[[[[[' is nested too deeply to read as a JSON "
+    'list, such as ["ls", "cat"].'
+)
 
 
 def _cgr(
@@ -166,6 +173,30 @@ class TestTheCliStartsWithAnInvalidSetting:
             "Error: Invalid value for SHELL_COMMAND_ALLOWLIST in the environment: "
             f"{_NOT_JSON}"
         )
+
+    def test_a_list_setting_nested_too_deeply_is_reported_not_raised(
+        self, tmp_path: Path
+    ) -> None:
+        # `json.loads` raises RecursionError, not JSONDecodeError, on arrays
+        # nested past the interpreter's limit, and it escaped the import of
+        # the settings: `--version` and `--help` failed with a traceback
+        # (Greptile, PR #2556). Written to `.env`, as no OS takes a variable
+        # this long from the environment.
+        dotenv = f"SHELL_COMMAND_ALLOWLIST={_TOO_DEEP}"
+
+        version = _cgr(tmp_path, "--version", dotenv=dotenv)
+        usage = _cgr(tmp_path, "--help", dotenv=dotenv)
+        command = _cgr(tmp_path, *_A_COMMAND, dotenv=dotenv)
+
+        assert version.returncode == 0, version.stderr
+        assert usage.returncode == 0, usage.stderr
+        assert command.returncode == 2, command.stderr
+        assert command.stderr.strip() == (
+            "Error: Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: "
+            f"{_NESTED_TOO_DEEPLY}"
+        )
+        for result in (version, usage, command):
+            assert "Traceback" not in result.stdout + result.stderr
 
 
 class TestEmptyValues:
@@ -318,6 +349,39 @@ class TestAListSettingThatIsNotJson:
             "Invalid value for MEMGRAPH_PORT",
             "Invalid value for SHELL_COMMAND_ALLOWLIST",
         ]
+
+    def test_one_nested_too_deeply_falls_back_to_its_default(
+        self, clean_env: Path
+    ) -> None:
+        (clean_env / ".env").write_text(
+            f"SHELL_COMMAND_ALLOWLIST={_TOO_DEEP}\nMEMGRAPH_HOST=db.internal\n",
+            encoding="utf-8",
+        )
+
+        loaded, errors = config.load_settings(frozenset(os.environ))
+
+        assert errors == (
+            "Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: "
+            f"{_NESTED_TOO_DEEPLY}",
+        )
+        default = config.AppConfig.model_fields["SHELL_COMMAND_ALLOWLIST"]
+        assert loaded.SHELL_COMMAND_ALLOWLIST == default.get_default(
+            call_default_factory=True
+        )
+        assert loaded.MEMGRAPH_HOST == "db.internal"
+
+    def test_a_nested_list_that_decodes_is_refused_by_type_as_before(
+        self, clean_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Negative: nesting the decoder can read reaches type validation,
+        # which refuses it as a list of non-strings, as before.
+        monkeypatch.setenv("SHELL_COMMAND_ALLOWLIST", '[["ls"]]')
+
+        _, errors = config.load_settings(frozenset(os.environ))
+
+        assert len(errors) == 1
+        assert errors[0].startswith("Invalid value for SHELL_COMMAND_ALLOWLIST ")
+        assert _NESTED_TOO_DEEPLY not in errors[0]
 
     @pytest.mark.parametrize("name", _LIST_SETTINGS)
     def test_a_json_list_is_still_honoured(

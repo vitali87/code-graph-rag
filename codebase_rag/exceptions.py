@@ -77,6 +77,9 @@ SETTING_PROBLEMS = {
 }
 SETTING_PROBLEM_OTHER = "{input!r}: {msg}"
 SETTING_NOT_JSON_LIST = '{value!r} is not a JSON list, such as ["ls", "cat"].'
+SETTING_JSON_LIST_TOO_DEEP = (
+    '{value} is nested too deeply to read as a JSON list, such as ["ls", "cat"].'
+)
 CONFIG = "{role} configuration error: {error}"
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "

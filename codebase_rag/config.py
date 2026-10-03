@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import reprlib
 from collections.abc import Collection
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -469,6 +470,14 @@ class AppConfig(BaseSettings):
             return json.loads(value)
         except json.JSONDecodeError as error:
             raise ValueError(ex.SETTING_NOT_JSON_LIST.format(value=value)) from error
+        except RecursionError as error:
+            # Arrays nested past the decoder's limit raise this rather than a
+            # decode error; it is not a ValueError, so pydantic let it escape
+            # the settings import and `--version` failed with it (Greptile,
+            # PR #2556). The value runs to thousands of brackets: shortened.
+            raise ValueError(
+                ex.SETTING_JSON_LIST_TOO_DEEP.format(value=reprlib.repr(value))
+            ) from error
 
     @field_validator("GRAPH_BACKEND")
     @classmethod
