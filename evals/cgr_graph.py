@@ -1210,6 +1210,9 @@ class _StatefulIngestor:
                         cs.KEY_LABEL: label,
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
+                        cs.KEY_IS_BODY_SCOPED_NAME: bool(
+                            props.get(cs.KEY_IS_BODY_SCOPED_NAME)
+                        ),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
                         cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
