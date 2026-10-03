@@ -265,26 +265,36 @@ def _js_names_bound_by(node: Node) -> set[str]:
     return set()
 
 
+_JS_PATTERN_NAME_NODES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN}
+)
+_JS_DEFAULTED_PATTERNS = frozenset(
+    {cs.TS_ASSIGNMENT_PATTERN, cs.TS_OBJECT_ASSIGNMENT_PATTERN}
+)
+
+
 def _js_pattern_names(node: Node | None) -> set[str]:
     names: set[str] = set()
     stack = [node] if node is not None else []
     while stack:
         current = stack.pop()
-        if current.type in (
-            cs.TS_IDENTIFIER,
-            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
-        ):
-            if current.text is not None:
-                names.add(current.text.decode(cs.ENCODING_UTF8))
-        elif current.type == cs.TS_PAIR_PATTERN:
-            value = current.child_by_field_name(cs.FIELD_VALUE)
-            stack.extend([value] if value is not None else [])
-        elif current.type in (
-            cs.TS_ASSIGNMENT_PATTERN,
-            cs.TS_OBJECT_ASSIGNMENT_PATTERN,
-        ):
-            left = current.child_by_field_name(cs.FIELD_LEFT)
-            stack.extend([left] if left is not None else [])
-        elif current.type in _JS_PATTERN_CONTAINERS:
-            stack.extend(current.named_children)
+        if current.type not in _JS_PATTERN_NAME_NODES:
+            stack.extend(_js_nested_patterns(current))
+        elif current.text is not None:
+            names.add(current.text.decode(cs.ENCODING_UTF8))
     return names
+
+
+def _js_nested_patterns(pattern: Node) -> list[Node]:
+    # The patterns one destructuring pattern holds: a pair's value, the
+    # target of a defaulted binding, every element of an object, array or
+    # rest pattern. Anything else binds nothing.
+    if pattern.type in _JS_PATTERN_CONTAINERS:
+        return list(pattern.named_children)
+    if pattern.type == cs.TS_PAIR_PATTERN:
+        nested = pattern.child_by_field_name(cs.FIELD_VALUE)
+    elif pattern.type in _JS_DEFAULTED_PATTERNS:
+        nested = pattern.child_by_field_name(cs.FIELD_LEFT)
+    else:
+        return []
+    return [nested] if nested is not None else []
