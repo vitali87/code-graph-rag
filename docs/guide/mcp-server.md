@@ -19,6 +19,8 @@ claude mcp add --transport stdio code-graph-rag \
   -- code-graph-rag mcp-server
 ```
 
+![claude mcp add registering code-graph-rag for pallets/itsdangerous, then claude mcp list reporting it Connected](../assets/demos/mcp-server-setup.gif)
+
 **If installed from source:**
 
 ```bash
@@ -104,6 +106,10 @@ not hold. A refusal is a result with `isError: true` and the JSON
 means the name is in the graph and nothing matches it. `definition` still
 answers `found: false` for a qualified name it does not find.
 
+![A Python MCP client over stdio listing the server's tools and calling list_projects, resolve, callers, get_code_snippet and find_duplicate_code on pallets/itsdangerous](../assets/demos/mcp-server-tools.gif)
+
+*`call_tools.py` is a small client built on the `mcp` Python SDK; none of these tools calls an LLM.*
+
 ## Example Usage
 
 ```
@@ -159,6 +165,8 @@ claude mcp add --transport stdio code-graph-rag-frontend \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
+![Two named instances, code-graph-rag-backend and code-graph-rag-frontend, added with claude mcp add and both reported Connected by claude mcp list](../assets/demos/mcp-server-multi-repo.gif)
+
 !!! note
     Each MCP instance indexes and updates the project for its own `TARGET_REPO_PATH`. `index_repository` rebuilds that project from scratch (its nodes and embeddings), and `update_repository` syncs it incrementally. Other projects in the shared graph are not touched, so several instances, one per repository, can share one Memgraph, and cross-service links between their projects keep working (see [multi-project](multi-project.md)). Only `wipe_database` removes every project.
 
@@ -172,6 +180,8 @@ claude mcp add --transport stdio code-graph-rag-workspace \
   --env TARGET_REPO_PATH=/path/to/one/of/its/repos \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
+
+![A workspace server for the backend workspace added and connected, then list_projects showing only the workspace's two projects and resolve refusing a project outside it](../assets/demos/mcp-server-workspace.gif)
 
 A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace.
 
@@ -189,3 +199,5 @@ A workspace server lists the workspace's indexed projects, refuses a `project` a
 ```bash
 claude mcp remove code-graph-rag
 ```
+
+![claude mcp remove code-graph-rag, then claude mcp list showing no servers configured](../assets/demos/mcp-server-remove.gif)
