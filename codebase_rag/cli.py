@@ -1461,11 +1461,23 @@ _DELEGATED_GROUP_CONTEXT = {
 
 
 def _run_delegated_group(group: click.Group, ctx: typer.Context) -> None:
-    group.main(
-        args=list(ctx.args),
-        prog_name=ctx.command_path,
-        standalone_mode=False,
-    )
+    # The groups are the real click's and run non-standalone, so their usage
+    # errors and aborts reach typer, and a typer that vendors click handles
+    # only its own classes: they escaped as a traceback with exit 1. Reported
+    # here the way click's standalone mode would, whichever typer is
+    # installed (#2416).
+    try:
+        group.main(
+            args=list(ctx.args),
+            prog_name=ctx.command_path,
+            standalone_mode=False,
+        )
+    except click.ClickException as e:
+        e.show()
+        raise typer.Exit(e.exit_code) from e
+    except click.exceptions.Abort as e:
+        typer.echo(cs.CLI_MSG_ABORTED, err=True)
+        raise typer.Exit(1) from e
 
 
 @app.command(
