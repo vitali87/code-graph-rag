@@ -27,10 +27,16 @@ imports cleanly.
 - Ensure Docker containers are running: `docker compose ps`
 - Verify Memgraph is accessible on port 7687
 
+![docker compose ps in ~/.cgr listing the memgraph, lab and qdrant containers, then cgr daemon status reporting both stores reachable](../assets/demos/troubleshooting-compose-ps.gif)
+
+*`docker compose ps` reads the compose file in the current directory; for the stack `cgr daemon up` starts, that is `~/.cgr`.*
+
 ## View Database in Memgraph Lab
 
 - Open [http://localhost:3000](http://localhost:3000)
 - Connect to `memgraph:7687`
+
+![Memgraph Lab connected to memgraph:7687, drawing the result of MATCH (n)-[r]->(m) RETURN n,r,m LIMIT 60 on the indexed graph](../assets/demos/troubleshooting-memgraph-lab.png)
 
 ## Local Model Issues (Ollama)
 
@@ -46,6 +52,8 @@ imports cleanly.
 3. Ensure all environment variables are set
 4. Review the graph schema matches your expectations
 5. Run `cgr doctor` to validate your setup
+
+![cgr doctor checking Docker, Memgraph, the configured models and ripgrep](../assets/demos/installation-doctor.gif)
 
 ## Language Grammar Issues
 
