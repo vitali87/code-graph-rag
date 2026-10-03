@@ -250,6 +250,22 @@ _DART_NON_READ_PARENT_TYPES = (
 _CHAIN_SPINE_WALK_LIMIT = cs.MAX_RECEIVER_CHAIN_HOPS * 8
 
 
+def _cpp_without_parentheses(operand: Node | None) -> Node | None:
+    """`(a)` and `((a))` as `a`."""
+    while operand is not None and operand.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        operand = operand.named_children[0] if operand.named_children else None
+    return operand
+
+
+def _is_cpp_dereference(operand: Node) -> bool:
+    """Whether `operand` is `*p`, as opposed to another pointer expression (`&a`)."""
+    return (
+        operand.type == cs.TS_CPP_POINTER_EXPRESSION
+        and safe_decode_text(operand.child_by_field_name(cs.FIELD_OPERATOR))
+        == cs.CPP_DEREFERENCE
+    )
+
+
 def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     """Whether `call_node` ends a receiver chain of too many calls (#2262).
 
@@ -3316,25 +3332,34 @@ class CallProcessor:
         # parameter of that type (not a pointer or array of it), `*p` on a
         # single pointer to it, or `*this`. A field, a call result or a
         # literal is never typed here, so it selects no overload.
-        while operand is not None and operand.type == cs.TS_PARENTHESIZED_EXPRESSION:
-            operand = operand.named_children[0] if operand.named_children else None
+        operand = _cpp_without_parentheses(operand)
         depth = 0
-        if (
-            operand is not None
-            and operand.type == cs.TS_CPP_POINTER_EXPRESSION
-            and safe_decode_text(operand.child_by_field_name(cs.FIELD_OPERATOR))
-            == cs.CPP_DEREFERENCE
-        ):
+        if operand is not None and _is_cpp_dereference(operand):
             operand = operand.child_by_field_name(cs.TS_FIELD_ARGUMENT)
             depth = 1
             if operand is not None and operand.type == cs.CppNodeType.THIS:
-                class_qn = ctx.class_context
-                if class_qn and class_qn in self._resolver.function_registry:
-                    return class_qn
-                return None
+                return self._cpp_this_class(ctx)
         if operand is None or operand.type != cs.TS_IDENTIFIER:
             return None
-        name = safe_decode_text(operand)
+        return self._cpp_variable_class(ctx, operand, depth, var_types)
+
+    def _cpp_this_class(self, ctx: _CallScanContext) -> str | None:
+        # `*this`: the enclosing class, when it is a registered one.
+        class_qn = ctx.class_context
+        if class_qn and class_qn in self._resolver.function_registry:
+            return class_qn
+        return None
+
+    def _cpp_variable_class(
+        self,
+        ctx: _CallScanContext,
+        identifier: Node,
+        depth: int,
+        var_types: dict[str, str] | None,
+    ) -> str | None:
+        # A variable's class, when it is reached through exactly `depth`
+        # pointers: `a` for a value, `*p` for a single pointer.
+        name = safe_decode_text(identifier)
         if ctx.cpp_indirection is None:
             ctx.cpp_indirection = CppTypeInferenceEngine().build_indirection_map(
                 ctx.caller_node
