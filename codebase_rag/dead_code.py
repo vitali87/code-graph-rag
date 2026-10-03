@@ -944,6 +944,88 @@ def _drop_excluded_paths(
     }
 
 
+def _is_php_test_path(path: str) -> bool:
+    # PHPUnit finds test classes by file suffix wherever its suite points, and
+    # PSR-4 components (Symfony) keep them in a `Tests/` directory beside the
+    # code, so a PHP test need not sit under a lowercase `tests/` root (issue
+    # #2472). A file named just `Test.php` declares a class called Test, which
+    # is a domain name as often as a test.
+    if not path.endswith(cs.PHP_EXTENSIONS):
+        return False
+    normalized = cs.SEPARATOR_SLASH + path.lstrip(cs.SEPARATOR_SLASH)
+    filename = normalized.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    return cs.PHP_TEST_DIR_SEGMENT in normalized or (
+        filename.endswith(cs.PHP_TEST_FILE_SUFFIX)
+        and filename != cs.PHP_TEST_FILE_SUFFIX
+    )
+
+
+def _is_php_test_case_name(qn: str) -> bool:
+    return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].endswith(cs.PHP_TEST_CASE_SUFFIX)
+
+
+def _php_test_classes(
+    nodes: dict[_NodeId, PropertyDict], inherits_subclasses: dict[str, set[str]]
+) -> set[str]:
+    # PHPUnit runs `test*`, `@test` and `#[Test]` methods (and their data
+    # providers) only on a class extending its TestCase, so that ancestry,
+    # not the directory, makes a PHP class test code: flysystem keeps
+    # `src/**/XxxTest.php` beside its adapters, extending the abstract
+    # `src/AdapterTestUtilities/FilesystemAdapterTestCase.php`. A base outside
+    # the repo is known by name only (`PHPUnit.Framework.TestCase`, Symfony's
+    # `KernelTestCase`), so the name suffix seeds the walk, which then follows
+    # first-party subclasses down any depth.
+    php_classes = {
+        str(uid)
+        for (label, uid), props in nodes.items()
+        if label == _CLASS
+        and str(props.get(cs.KEY_PATH, "")).endswith(cs.PHP_EXTENSIONS)
+    }
+    seeds = {qn for qn in php_classes if _is_php_test_case_name(qn)}
+    for base, subclasses in inherits_subclasses.items():
+        if _is_php_test_case_name(base):
+            seeds |= subclasses & php_classes
+    found = set(seeds)
+    _walk(seeds, inherits_subclasses, found)
+    return found & php_classes
+
+
+def _within_php_test_class(qn: str, php_test_classes: set[str]) -> bool:
+    # A test class's methods, the closures in them and the anonymous test
+    # doubles they build all register under the class's qn, so a prefix walk
+    # finds every one of them (and the class itself, with --classes).
+    prefix = qn
+    while prefix:
+        if prefix in php_test_classes:
+            return True
+        prefix = prefix.rpartition(cs.SEPARATOR_DOT)[0]
+    return False
+
+
+def _php_test_symbols(
+    scan: _CandidateScan,
+    nodes: dict[_NodeId, PropertyDict],
+    inherits_subclasses: dict[str, set[str]],
+) -> set[str]:
+    """PHP candidates that are test code by PHPUnit's conventions (issue
+    #2472): a `*Test.php` file, a `Tests/` directory, or a class extending
+    TestCase directly or through any number of first-party bases."""
+    php_candidates = {
+        qn
+        for qn in scan.candidates
+        if str(scan.props_by_qn[qn].get(cs.KEY_PATH, "")).endswith(cs.PHP_EXTENSIONS)
+    }
+    if not php_candidates:
+        return set()
+    test_classes = _php_test_classes(nodes, inherits_subclasses)
+    return {
+        qn
+        for qn in php_candidates
+        if _is_php_test_path(str(scan.props_by_qn[qn].get(cs.KEY_PATH, "")))
+        or _within_php_test_class(qn, test_classes)
+    }
+
+
 def dead_code_from_graph(
     nodes: dict[_NodeId, PropertyDict],
     rels: list[_RelTuple],
@@ -972,6 +1054,16 @@ def dead_code_from_graph(
     )
     structural = _scan_structural_rels(rels, project_prefix)
     roots = _module_roots(rels, module_rels, scan, config)
+    # PHPUnit names its tests by class ancestry, which only the INHERITS
+    # edges show, so the per-symbol test rule in _scan_candidates cannot see
+    # them. Both polarities still read one set: rooted with tests on,
+    # neither a candidate nor a root with them off.
+    php_tests = _php_test_symbols(scan, nodes, structural.inherits_subclasses)
+    if config.include_tests:
+        roots |= php_tests
+    else:
+        scan.candidates -= php_tests
+        roots -= php_tests
 
     protocol_stubs = {
         m for c, m in structural.class_methods if c in structural.protocol_classes

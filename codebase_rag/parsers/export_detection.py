@@ -62,6 +62,10 @@ _CSHARP_PUBLIC_MODIFIERS = frozenset(
     }
 )
 _PY_FUNCTION_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
+_PHP_CALLABLE_SCOPES = frozenset(cs.FQN_PHP_FUNCTION_TYPES)
+_PHP_TYPE_DECLARATIONS = frozenset(cs.SPEC_PHP_CLASS_TYPES)
+_PHP_NAMED_TYPE_DECLARATIONS = _PHP_TYPE_DECLARATIONS - {cs.TS_PHP_ANONYMOUS_CLASS}
+_PHP_PRIVATE_BYTES = cs.PHP_VISIBILITY_PRIVATE.encode(cs.ENCODING_UTF8)
 
 
 def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
@@ -74,6 +78,8 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _python_exported(node, name)
         case cs.SupportedLanguage.GO:
             return _go_exported(name)
+        case cs.SupportedLanguage.PHP:
+            return _php_exported(node)
         case lang if lang in cs.JS_TS_LANGUAGES:
             return _js_ts_exported(node, name)
         case cs.SupportedLanguage.JAVA:
@@ -113,6 +119,44 @@ def _python_nested_in_function(node: Node) -> bool:
 
 def _go_exported(name: str) -> bool:
     return bool(name) and name[0].isupper()
+
+
+def _php_exported(node: Node) -> bool:
+    # PHP has no module privacy: a named class, interface, trait or enum and a
+    # function declared outside any callable body are global once their file
+    # loads, so code outside the repo can call them (issue #2472). A member
+    # is API unless it is `private`; `protected` is the inheritance surface,
+    # as for Java and TS. A closure, a function declared inside another
+    # callable's body and an anonymous class (with its members) cannot be
+    # named from outside: the graph's own edges decide whether they are live.
+    if node.type == cs.TS_PHP_METHOD_DECLARATION:
+        return _php_member_exported(node)
+    if node.type == cs.TS_PHP_FUNCTION_DEFINITION:
+        return not _php_inside_callable(node)
+    return node.type in _PHP_NAMED_TYPE_DECLARATIONS
+
+
+def _php_member_exported(node: Node) -> bool:
+    owner = node.parent
+    while owner is not None and owner.type not in _PHP_TYPE_DECLARATIONS:
+        owner = owner.parent
+    if owner is None or owner.type not in _PHP_NAMED_TYPE_DECLARATIONS:
+        return False
+    # Keywords are case-insensitive in PHP: `PRIVATE function` is private too.
+    return not any(
+        child.type == cs.TS_PHP_VISIBILITY_MODIFIER
+        and (child.text or b"").lower() == _PHP_PRIVATE_BYTES
+        for child in node.children
+    )
+
+
+def _php_inside_callable(node: Node) -> bool:
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _PHP_CALLABLE_SCOPES:
+            return True
+        parent = parent.parent
+    return False
 
 
 _DART_PRIVATE_BYTE = cs.DART_PRIVATE_PREFIX.encode(cs.ENCODING_UTF8)

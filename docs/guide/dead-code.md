@@ -32,6 +32,14 @@ No unreachable functions or methods found.
 12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
 ```
 
+PHP has no module privacy, so every function declared at file level and every
+non-`private` member of a named class, interface, trait or enum is a public
+root; closures and anonymous-class members are not. A PHP test is recognised
+wherever it lives: a `*Test.php` file, a `Tests/` directory, or a class
+extending PHPUnit's `TestCase` (directly, through a project base class, or
+through a framework base such as Symfony's `KernelTestCase`), together with
+everything declared in it.
+
 ## Prerequisites
 
 Index the repository first, so the graph exists in Memgraph:

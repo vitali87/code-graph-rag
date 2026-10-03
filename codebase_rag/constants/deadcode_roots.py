@@ -353,3 +353,14 @@ JS_WELL_KNOWN_SYMBOLS: frozenset[str] = frozenset(
         "asyncDispose",
     }
 )
+
+# PHP test code that lives beside the production code (issue #2472):
+# PHPUnit's default test-file suffix, the PSR-4 `Tests/` directory that
+# Symfony-style components keep their tests in, and the name suffix of the
+# base every PHPUnit test class extends (PHPUnit's `TestCase`, Symfony's
+# `KernelTestCase`/`WebTestCase`, a project's abstract `*TestCase`). All three
+# apply to .php files only, so the capitalised directory and the suffixes keep
+# their meaning in other languages.
+PHP_TEST_FILE_SUFFIX = "Test.php"
+PHP_TEST_DIR_SEGMENT = "/Tests/"
+PHP_TEST_CASE_SUFFIX = "TestCase"
