@@ -688,6 +688,47 @@ def test_a_string_alias_matches_only_its_own_character_type(
     } == {(f"{derived}.g", f"{PROJECT}.str.SB.g")}
 
 
+SCOPED_STRING_CPP = """#include <string>
+class GB {
+public:
+  class CharAlias {};
+  virtual int f(std::string s) { return 0; }
+};
+class GD : public GB {
+public:
+  using CharAlias = char;
+  int f(std::basic_string<CharAlias> s) override { return 1; }
+};
+class MB {
+public:
+  using CharAlias = char;
+  virtual int g(std::string s) { return 0; }
+};
+class MD : public MB {
+public:
+  class CharAlias {};
+  int g(std::basic_string<CharAlias> s) { return 1; }
+};
+"""
+
+
+def test_a_string_template_argument_is_read_in_its_own_class_scope(
+    temp_repo: Path,
+) -> None:
+    # In `GD`, `CharAlias` is its own alias for `char`, shadowing the base's
+    # nested class, so `basic_string<CharAlias>` is `std::string` and `f`
+    # overrides. In `MD` it is a nested class, so `basic_string<CharAlias>`
+    # is no `std::string` and `g` hides the base's.
+    root = _write(temp_repo / PROJECT, {"scope.cpp": SCOPED_STRING_CPP})
+    ingestor = _index(root)
+
+    assert {
+        edge
+        for edge in _overrides(ingestor)
+        if edge[0].startswith((f"{PROJECT}.scope.GD.", f"{PROJECT}.scope.MD."))
+    } == {(f"{PROJECT}.scope.GD.f", f"{PROJECT}.scope.GB.f")}
+
+
 @pytest.mark.parametrize(
     ("left", "right", "may_match"),
     [

@@ -190,7 +190,10 @@ def _string_alias_match(
     `char_traits` and allocator arguments after it change nothing. None when
     neither side is such an alias written against its own template.
     """
-    for alias, template in ((left, right), (right, left)):
+    for alias, template, template_is_left in (
+        (left, right, False),
+        (right, left, True),
+    ):
         leaf = _std_name(alias.token)
         spec = cs.CPP_STD_STRING_ALIAS_TEMPLATES.get(leaf) if leaf else None
         if spec is None:
@@ -200,9 +203,13 @@ def _string_alias_match(
             continue
         if not template.arguments:
             return True
-        return _units_may_match(
-            template.arguments[0], (_TypeUnit(character, None),), classes
-        )
+        # Each side keeps its own place, so the template's argument is read
+        # with its own side's class lookup, not the alias side's.
+        written = template.arguments[0]
+        implied = (_TypeUnit(character, None),)
+        if template_is_left:
+            return _units_may_match(written, implied, classes)
+        return _units_may_match(implied, written, classes)
     return None
 
 
