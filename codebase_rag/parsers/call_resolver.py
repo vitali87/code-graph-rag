@@ -192,6 +192,14 @@ def _binds_identifier(target: Node, name: str) -> bool:
     return False
 
 
+def _file_language(suffix: str) -> cs.SupportedLanguage | None:
+    # `.ipynb` maps to no grammar, but the only notebooks that become modules
+    # are Python ones, whose cells are parsed as Python (issue #2480).
+    if suffix == cs.EXT_IPYNB:
+        return cs.SupportedLanguage.PYTHON
+    return get_language_for_extension(suffix)
+
+
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
@@ -3101,13 +3109,13 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None
         while probe:
             if (path := modules.get(probe)) is not None:
-                language = get_language_for_extension(path.suffix)
+                language = _file_language(path.suffix)
                 break
             # An incremental run only re-parses changed files, so an
             # unchanged module is absent above; its definitions carry the
             # file path recorded on their graph nodes instead.
             if (rehydrated := self.rehydrated_definition_paths.get(probe)) is not None:
-                language = get_language_for_extension(PurePath(rehydrated).suffix)
+                language = _file_language(PurePath(rehydrated).suffix)
                 break
             if cs.SEPARATOR_DOT not in probe:
                 break

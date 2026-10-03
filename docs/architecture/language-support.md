@@ -137,6 +137,64 @@ after parses nothing again (issues #1630 and #1977). The warning it logs says
 what such a re-parse cannot do: it removes only what a re-parsed module
 DEFINES, so a change that renames nodes still needs the wipe above.
 
+## Jupyter Notebooks
+
+The code cells of a Python notebook (`.ipynb`) are indexed as one Python
+module, so the functions and classes they define, and their imports and
+calls, are in the graph as a `.py` file's would be. A notebook that imports
+and calls `pkg.data.load` is one of the rows
+`cgr graph callers <project>.pkg.data.load` answers with, and a private
+helper that only a notebook calls is not reported by `cgr dead-code`.
+
+- **Module name.** The module keeps its extension:
+  `notebooks/analysis.ipynb` becomes `<project>.notebooks.analysis.ipynb`,
+  and a function `summarize` defined in it becomes
+  `<project>.notebooks.analysis.ipynb.summarize`. No import can load a
+  notebook, so the bare name always belongs to `analysis.py` or the package
+  `analysis/`, whether or not one exists beside the notebook.
+- **Cells.** Code cells are read in order, the way they run from top to
+  bottom. Markdown and raw cells are skipped, and outputs are never read, so
+  printed results, tables and images add nothing to the graph. Statements at
+  the top level of a cell are module-level code, as in a script: a call made
+  there is a `CALLS` edge from the notebook's `Module`, which is an entry
+  point for dead-code analysis.
+- **Lines.** Recorded lines are lines of the `.ipynb` file itself. Jupyter
+  writes each line of a cell's source as a separate JSON string on its own
+  line, and a definition's `start_line`, a call site's `line`, and `cgr graph`
+  output such as `analysis.ipynb:14` point at that line inside the cell.
+  Columns are counted in the code line, not in the JSON text around it. A
+  cell stored as one string, or a notebook written on a single line, is
+  still indexed, but its lines are numbered on from the line where the
+  cell's source starts, so they no longer match the file's lines exactly.
+- **IPython syntax.** Before parsing, line magics (`%matplotlib inline`),
+  shell escapes (`!pip install ...`, `files = !ls`) and help requests
+  (`?obj`) are replaced with `pass`, so they hide nothing around them. A cell
+  magic that runs its body as Python in the kernel (`%%time`, `%%timeit`,
+  `%%capture`, `%%prun`, `%%debug`, `%%python`) keeps that body. Any other
+  cell magic (`%%bash`, `%%html`, `%%sql`, `%%writefile`, ...) means the cell
+  is not Python, and the cell is skipped.
+- **Kernel language.** Only Python notebooks are parsed. The language comes
+  from `metadata.language_info.name`, or from `metadata.kernelspec.language`
+  when that is missing. A notebook that declares neither is read as Python,
+  the language of Jupyter's default kernel. An R, Julia or other notebook
+  keeps only its `File` node. So does a file that is not valid nbformat 4
+  JSON, and a warning names it.
+- **Size and opting out.** Only the cells' `source` is decoded: outputs are
+  skipped without being decoded, so large embedded images cost a scan of
+  their bytes and nothing more. Jupyter's `.ipynb_checkpoints/` copies are
+  never indexed. To leave notebooks out entirely, add `*.ipynb` to
+  `.cgrignore`.
+- **Sync.** A notebook is hashed and re-parsed like any other file, so the
+  next `--update-graph` sync, the realtime watcher and the MCP `reingest`
+  tool all re-index an edited notebook. On a graph built before notebooks
+  were indexed, the first sync after upgrading re-parses every file once,
+  because the parser changed, and that indexes the notebooks the graph
+  already holds as files.
+- **Not covered yet.** The refactoring commands (`cgr rename` and the other
+  edit tools) do not rewrite notebook cells. The Jedi Python frontend
+  (`PythonFrontend.JEDI`) does not read notebooks, so their calls are
+  resolved by the tree-sitter rules.
+
 ## Language-Agnostic Design
 
 All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.
