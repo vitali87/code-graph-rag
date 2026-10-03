@@ -342,33 +342,42 @@ class FrameResolver:
         already under the checkout, the traceback came from here, so every
         other frame is genuinely outside it and nothing is inferred.
         """
+        # Votes are keyed as the recording OS compares paths: `C:\Work` and
+        # `c:\work` are one Windows root, and counted apart they would tie.
+        # The first spelling seen names the root.
         votes: Counter[str] = Counter()
+        spelled: dict[str, str] = {}
         for frame in frames:
             if frame.path.startswith(cs.TRACE_SYNTHETIC_PREFIX):
                 continue
             if _repo_relative(self._root_posix, frame.path) is not None:
                 return None
-            path = _portable_posix(frame.path)
-            parts = path.split(cs.SEPARATOR_SLASH)
-            if not cs.TRACE_INSTALLED_DIR_NAMES.isdisjoint(parts):
-                continue
-            windows = _recorded_on_windows(path)
-            votes.update(
-                {
-                    _dir_prefix(cs.SEPARATOR_SLASH.join(parts[:cut]))
-                    for cut in range(1, len(parts))
-                    if self._names_frame(
-                        cs.SEPARATOR_SLASH.join(parts[cut:]), frame.qualname, windows
-                    )
-                }
-            )
+            for prefix in self._root_votes(frame):
+                key = _prefix_key(prefix)
+                spelled.setdefault(key, prefix)
+                votes[key] += 1
         if not votes:
             return None
         top = max(votes.values())
         leaders = sorted((p for p, n in votes.items() if n == top), key=len)
         if all(prefix.startswith(leaders[0]) for prefix in leaders):
-            return leaders[0]
+            return spelled[leaders[0]]
         return None
+
+    def _root_votes(self, frame: FramePoint) -> set[str]:
+        """The roots whose removal leaves a graph path naming ``frame``."""
+        path = _portable_posix(frame.path)
+        parts = path.split(cs.SEPARATOR_SLASH)
+        if not cs.TRACE_INSTALLED_DIR_NAMES.isdisjoint(parts):
+            return set()
+        windows = _recorded_on_windows(path)
+        return {
+            _dir_prefix(cs.SEPARATOR_SLASH.join(parts[:cut]))
+            for cut in range(1, len(parts))
+            if self._names_frame(
+                cs.SEPARATOR_SLASH.join(parts[cut:]), frame.qualname, windows
+            )
+        }
 
     def _names_frame(self, rel_path: str, qualname: str, windows: bool) -> bool:
         """Whether a node at ``rel_path`` matches the frame by name alone."""
