@@ -10,7 +10,6 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.tools import ToolFuncPlain
-from rich.console import Console
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -26,7 +25,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
 from codebase_rag.services.provenance import head_commit
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -67,6 +66,7 @@ from codebase_rag.types_defs import (
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
 
@@ -222,7 +222,7 @@ class MCPToolsRegistry:
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
-        cypher_gen: CypherGenerator,
+        cypher_gen: CypherQueryGenerator,
         workspace: WorkspaceConfig | None = None,
     ) -> None:
         self.project_root = project_root
@@ -296,7 +296,7 @@ class MCPToolsRegistry:
 
         # Kept on self: a scoped request builds its own query tool per call,
         # and that tool must print to the same console as the pre-built one.
-        self._stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
+        self._stderr_console = terminal_aware_console(file=sys.stderr)
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=self._stderr_console
         )
@@ -835,7 +835,14 @@ class MCPToolsRegistry:
                 cs.MCPParamName.TRACEBACK_TEXT: MCPInputSchemaProperty(
                     type=cs.MCPSchemaType.STRING,
                     description=td.MCP_PARAM_TRACEBACK_TEXT,
-                )
+                ),
+                cs.MCPParamName.PATH_PREFIX_MAP: MCPInputSchemaProperty(
+                    type=cs.MCPSchemaType.OBJECT,
+                    description=td.MCP_PARAM_PATH_PREFIX_MAP,
+                    additionalProperties={
+                        cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING
+                    },
+                ),
             },
             required=[cs.MCPParamName.TRACEBACK_TEXT],
         )
@@ -1091,7 +1098,9 @@ class MCPToolsRegistry:
             "remote_hops": [list(hop) for hop in result.remote_hops],
         }
 
-    async def explain_traceback(self, traceback_text: str) -> dict:
+    async def explain_traceback(
+        self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
+    ) -> dict:
         from codebase_rag.crash_correlation import explain_traceback
 
         project, workspace_refusal = self._fixed_root_project()
@@ -1108,6 +1117,7 @@ class MCPToolsRegistry:
                 project,
                 Path(self.project_root),
                 traceback_text,
+                path_prefix_map,
             )
         return {
             "exception_type": report.exception_type,
@@ -1121,9 +1131,13 @@ class MCPToolsRegistry:
                 "resolved": report.resolution.resolved,
                 "rate": report.resolution.rate,
             },
+            "inferred_checkout_root": report.inferred_root,
+            "note": report.note,
         }
 
-    async def rank_root_causes(self, traceback_text: str) -> dict:
+    async def rank_root_causes(
+        self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
+    ) -> dict:
         from codebase_rag.crash_correlation import rank_root_causes
 
         project, workspace_refusal = self._fixed_root_project()
@@ -1140,6 +1154,7 @@ class MCPToolsRegistry:
                 project,
                 Path(self.project_root),
                 traceback_text,
+                path_prefix_map,
             )
         return {
             "exception_type": report.exception_type,
@@ -1149,6 +1164,13 @@ class MCPToolsRegistry:
             "candidates": [candidate._asdict() for candidate in report.candidates],
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),
+            "resolution": {
+                "total": report.resolution.total,
+                "resolved": report.resolution.resolved,
+                "rate": report.resolution.rate,
+            },
+            "inferred_checkout_root": report.inferred_root,
+            "note": report.note,
         }
 
     async def list_projects(self) -> ListProjectsResult:
@@ -2364,6 +2386,8 @@ class MCPToolsRegistry:
                 pattern=pattern, rewrite=rewrite, language=language, dry_run=dry_run
             )
             written = list(self._structural_written)
+            if isinstance(result, te.ToolFailure):
+                return result
             if dry_run or not written:
                 return str(result)
             return str(result) + await asyncio.to_thread(
@@ -3281,12 +3305,12 @@ class MCPToolsRegistry:
                     replacement_code=replacement_code,
                 )
                 if str(result) != cs.MSG_SURGICAL_SUCCESS.format(path=file_path):
-                    return str(result)
+                    return te.ToolFailure(result)
                 delta = await asyncio.to_thread(self._delta_after_write, [file_path])
                 return str(result) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
@@ -3299,22 +3323,20 @@ class MCPToolsRegistry:
                     full_path = (project_root / file_path).resolve()
                     full_path.relative_to(project_root)
                 except (ValueError, RuntimeError):
-                    return te.ERROR_WRAPPER.format(
-                        message=lg.FILE_OUTSIDE_ROOT.format(action="access")
-                    )
+                    return te.failure(lg.FILE_OUTSIDE_ROOT.format(action="access"))
                 start = offset if offset is not None else 0
                 return await asyncio.to_thread(
                     _read_file_slice, full_path, start, limit
                 )
             else:
-                result = await _plain_function(self._file_reader_tool)(
+                # Returned as is: a ToolFailure must stay one (issue #2650).
+                return await _plain_function(self._file_reader_tool)(
                     file_path=file_path
                 )
-                return str(result)
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     async def write_file(self, file_path: str, content: str) -> str:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
@@ -3324,25 +3346,24 @@ class MCPToolsRegistry:
                     file_path=file_path, content=content
                 )
                 if not result.success:
-                    return te.ERROR_WRAPPER.format(message=result.error_message)
+                    return te.failure(result.error_message)
                 delta = await asyncio.to_thread(self._delta_after_write, [file_path])
                 return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_WRITE.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     async def list_directory(
         self, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
     ) -> str:
         logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
-            result = _plain_function(self._directory_lister_tool)(
+            return _plain_function(self._directory_lister_tool)(
                 directory_path=directory_path
             )
-            return str(result)
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
-            return te.ERROR_WRAPPER.format(message=e)
+            return te.failure(e)
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [
@@ -3362,7 +3383,7 @@ class MCPToolsRegistry:
 def create_mcp_tools_registry(
     project_root: str,
     ingestor: MemgraphIngestor,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     workspace: WorkspaceConfig | None = None,
 ) -> MCPToolsRegistry:
     return MCPToolsRegistry(

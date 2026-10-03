@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
@@ -19,7 +19,7 @@ from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
@@ -132,7 +132,10 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         if workspace_config is not None
         else [derive_project_name(project_root)]
     )
-    cypher_generator = CypherGenerator(active_projects=active_projects)
+    # Built on the first natural-language query, not here: indexing and the
+    # deterministic tools need no LLM, and an unreachable provider must not
+    # keep them from starting (issue #2518).
+    cypher_generator = LazyCypherGenerator(active_projects=active_projects)
 
     tools = create_mcp_tools_registry(
         project_root=str(project_root),
@@ -145,13 +148,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     server = Server(cs.MCP_SERVER_NAME)
 
-    def _create_error_content(message: str) -> list[TextContent]:
-        return [
-            TextContent(
-                type=cs.MCP_CONTENT_TYPE_TEXT,
-                text=te.ERROR_WRAPPER.format(message=message),
-            )
-        ]
+    def _create_error_content(message: str) -> CallToolResult:
+        return _failed_call(te.failure(message))
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -166,7 +164,9 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: MCPToolArguments) -> list[TextContent]:
+    async def call_tool(
+        name: str, arguments: MCPToolArguments
+    ) -> list[TextContent] | CallToolResult:
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
@@ -180,6 +180,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
             result = await handler(**arguments)
 
+            if isinstance(result, te.ToolFailure):
+                return _failed_call(result)
             if returns_json:
                 result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
             else:
@@ -193,6 +195,16 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             return _create_error_content(error_msg)
 
     return server, ingestor
+
+
+def _failed_call(message: str) -> CallToolResult:
+    # A returned content list reaches the client as `isError: false`; a
+    # failure the server or a tool detected must say so in the protocol, not
+    # only in its prose (issue #2650).
+    return CallToolResult(
+        content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=message)],
+        isError=True,
+    )
 
 
 @contextlib.contextmanager

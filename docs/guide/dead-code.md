@@ -65,8 +65,11 @@ not reported:
 cgr dead-code -e main -e cli.run -e handlers.webhook
 
 # Treat symbols carrying a decorator as roots (extends the built-in set:
-# route, task, fixture, command, ...)
-cgr dead-code --decorator-root celery_app.task --decorator-root my_registry.register
+# route, task, fixture, command, ...). A dotted value matches the decorator's
+# trailing segments: `plugins.register` roots `@plugins.register(...)` and
+# `@app.plugins.register`, not `@other.register`; a bare `register` roots any
+# `@x.register`.
+cgr dead-code --decorator-root plugins.register --decorator-root signal_handler
 ```
 
 ## Excluding Generated Code
@@ -99,7 +102,7 @@ Two rules keep a pattern from silently excluding nothing:
 |--------|-------------|
 | `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
 | `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
-| `--decorator-root` | Treat symbols carrying this decorator as roots. Extends the built-in set. Repeatable. |
+| `--decorator-root` | Treat symbols carrying this decorator as roots: a bare name matches the decorator's last segment, a dotted one (`plugins.register`) its trailing whole segments. Extends the built-in set. Repeatable. |
 | `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots so the production code it exercises is not reported. On by default. |
 | `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
@@ -117,6 +120,13 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
   --exclude '*_generated*'
 ```
 
+Each JSON row carries `label`, `name`, `qualified_name`, `path`, `start_line`
+and `end_line`. `path` is the repo-relative file (the same path `--exclude`
+matches), so an annotation can point at `path:start_line` without guessing
+the file from the qualified name. The table shows it in its `Path` column.
+A table written with `--output` or to a pipe is as wide as its longest row,
+so no name or path is cut to fit 80 columns.
+
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
@@ -129,7 +139,30 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
 
+### What counts as test code
+
+`--include-tests`, `--no-include-tests`, `cgr graph tests-reaching` and
+`cgr check` all classify a symbol as test code the same way. Its file path is
+read as whole words of its directories and file name, never as a substring,
+so `shortest_paths/` and `latest_prices.py` stay production code:
+
+- a snake or kebab-case word, in any case: `test`, `tests`, `unittest`,
+  `unittests` or `conftest` (`tests/`, `Tests/`, `__tests__/`, `test_app.py`,
+  `server_test.go`, `snappy_unittest.cc`, `e2e-tests/`);
+- a CamelCase name ending in `Test` or `Tests`, or starting with `test`
+  followed by a capital (`ParserTests.cs`, `AppTests/`, `src/androidTest/`,
+  `src/integrationTest/`, `src/testFixtures/`);
+- a dotted qualifier `test`, `tests`, `spec` or `specs` (`app.test.ts`,
+  `app.spec.tsx`, `src/Acme.Tests/`, `src/Acme.Specs/`);
+- a `testing/` or `_testing/` directory, and a `spec/` or `specs/` directory
+  at the repository root (RSpec, Jasmine). A nested `spec/` is left alone,
+  since it is often a package such as `java/security/spec/`.
+
+Rust `#[test]` functions and `#[cfg(test)]` modules count as test code too,
+wherever they are.
+
 First-class functions matter for accuracy: a callback stored in an object, an
-inline arrow handed to `useMutation`/`.forEach`/`new Promise`, or a function
-passed as an argument is recorded as a `REFERENCES` edge so it stays reachable
-rather than being reported as dead.
+inline arrow handed to `useMutation`/`.forEach`/`new Promise`, a function
+passed as an argument, or a Java method reference (`Acc::add`, `this::m`,
+`Acc::new`) is recorded as a `REFERENCES` edge so it stays reachable rather
+than being reported as dead.

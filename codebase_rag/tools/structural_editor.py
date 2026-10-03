@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pydantic_ai import Tool
 
 from .. import constants as cs
+from .. import tool_errors as te
 from ..taint import ReadContentRecord
 from ..types_defs import StructuralReplaceChange
 from ..utils.dependencies import has_ast_grep
@@ -46,7 +47,7 @@ def create_structural_editor_tool(
     ) -> str:
         """Rewrite by AST pattern, recording the diff it returns."""
         if not has_ast_grep():
-            return cs.AST_GREP_NOT_AVAILABLE
+            return te.ToolFailure(cs.AST_GREP_NOT_AVAILABLE)
         try:
             # offload to a thread: replace does blocking os.walk, file I/O, and
             # CPU-bound AST parsing, which would stall the event loop.
@@ -60,7 +61,7 @@ def create_structural_editor_tool(
         # catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
         # (RuntimeError and others); report it rather than crash the turn.
         except Exception as e:
-            return str(e)
+            return te.ToolFailure(str(e))
         if not changes:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)
         if on_changes is not None:

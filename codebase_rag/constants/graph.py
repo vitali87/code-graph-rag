@@ -13,6 +13,8 @@ KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
 KEY_METADATA = "metadata"
+# Shown for a graph file whose informational metadata has no timestamp.
+GRAPH_EXPORTED_AT_UNKNOWN = "unknown"
 KEY_TOTAL_NODES = "total_nodes"
 KEY_TOTAL_RELATIONSHIPS = "total_relationships"
 KEY_NODE_LABELS = "node_labels"
@@ -23,6 +25,9 @@ KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+# A JS/TS function that is an object literal's property value, reached only
+# through its object (issue #2435).
+KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -103,6 +108,14 @@ KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
+# Call-site flags, present (true) only when the argument list unpacks a
+# sequence (`*rest`) or a mapping (`**opts`). Neither is counted in
+# `arg_count`: each passes an unknown number of arguments (issue #2635).
+KEY_STAR_ARGS = "star_args"
+KEY_STAR_KWARGS = "star_kwargs"
+# Call-site rows: where the invoked symbol is defined. `path` on those rows is
+# the file holding the site, which is the caller's (issue #2460).
+KEY_CALLEE_PATH = "callee_path"
 # IMPORTS only: the name the statement binds in the importing scope (the
 # `as` name when renamed, else the imported/module name) and, for
 # symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
@@ -142,6 +155,10 @@ KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+# Columns of the endpoint lookup a relationship flush runs when rows were lost:
+# whether each failed row's source/target node was absent (issue #2438).
+KEY_FROM_MISSING = "from_missing"
+KEY_TO_MISSING = "to_missing"
 KEY_FROM_LABEL = "from_label"
 KEY_FROM_QN = "from_qn"
 KEY_REL_TYPE = "rel_type"
@@ -151,6 +168,13 @@ KEY_TO_QN = "to_qn"
 KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
+# Trace-edge carry rows and parameters (issue #2429): each endpoint's
+# `anchor_hash` when the edge was read, and the qualified names whose static
+# edges are looked up after the re-parse.
+KEY_FROM_HASH = "from_hash"
+KEY_TO_HASH = "to_hash"
+KEY_FROM_QNS = "from_qns"
+KEY_TO_QNS = "to_qns"
 KEY_PROJECT_PREFIX = "project_prefix"
 KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
@@ -182,6 +206,16 @@ PROTOBUF_INDEX_FILE = "index.bin"
 PROTOBUF_PAYLOAD_ONEOF = "payload"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
+
+DIFF_ERR_NO_MANIFEST = (
+    "schema metadata missing: no readable manifest in {path}; "
+    "re-export with a manifest before diffing"
+)
+DIFF_ERR_NO_SCHEMA_HASH = (
+    "schema metadata missing: {manifest} records no codec_schema_sha256 because "
+    "the cgr that wrote it could not find codec/schema.proto; "
+    "upgrade code-graph-rag and re-index before diffing"
+)
 
 ONEOF_PROJECT = "project"
 ONEOF_PACKAGE = "package"
@@ -528,6 +562,53 @@ DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
     }
 )
 
+# What each group adds, for the generated Capture Groups table in
+# docs/architecture/graph-schema.md; its labels and relationships come from
+# the maps above. Keyed by group so a new group without a line fails
+# test_capture_groups_docs instead of reaching the docs undescribed (#2584).
+CAPTURE_GROUP_SUMMARIES: dict[CaptureGroup, str] = {
+    CaptureGroup.STRUCTURE: (
+        "The containment tree from the project down to modules and document "
+        "sections, and what each module, class or function defines."
+    ),
+    CaptureGroup.CALLS: (
+        "Call sites, functions and classes used as values, and class instantiations."
+    ),
+    CaptureGroup.TYPES: (
+        "Inheritance, interface and module implementation, method overrides, "
+        "and the project types a signature returns or accepts."
+    ),
+    CaptureGroup.IMPORTS: (
+        "Imports and exports between modules, the project's external package "
+        "dependencies, and document links to files."
+    ),
+    CaptureGroup.IO: (
+        "External resources code reads, writes or exposes (files, environment "
+        "variables, network, databases, endpoints), value flow between them, "
+        "and client calls resolved to the endpoints they reach."
+    ),
+    CaptureGroup.FINDINGS: (
+        "ast-grep findings on each module: design patterns, code smells and "
+        "security issues."
+    ),
+    CaptureGroup.GLOSSES: (
+        "Notes agents write about definitions with the annotate MCP tool, "
+        "rather than anything parsed from source."
+    ),
+    CaptureGroup.PARAMETERS: (
+        "One node per declared parameter of a function or method, and the "
+        "OF_TYPE edge from a parameter or field to the project type its "
+        "annotation names."
+    ),
+    CaptureGroup.FIELDS: (
+        "One node per field of a class, interface, enum, type or union. A "
+        "field's OF_TYPE edge belongs to parameters, so field types need both."
+    ),
+    CaptureGroup.ENUM_VARIANTS: (
+        "One node per enum member, with its position and value."
+    ),
+}
+
 CAPTURE_TOKEN_ALL = "all"
 CAPTURE_TOKEN_NONE = "none"
 CAPTURE_DROP_PREFIX = "-"
@@ -735,6 +816,22 @@ CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "WHERE inbound = 0 "
     "DETACH DELETE m"
 )
+# A manifest re-parse only MERGEs the dependencies it still names, and an edge
+# does not record which manifest declared it, so the project's edges are
+# dropped and rebuilt from every manifest whenever one changes (issue #2396).
+CYPHER_DELETE_PROJECT_DEPENDENCIES = (
+    "MATCH (:Project {name: $project_name})-[r:DEPENDS_ON_EXTERNAL]->(:ExternalPackage) "
+    "DELETE r"
+)
+# ExternalPackage nodes are shared by name across projects, so only a package
+# no project depends on any more goes.
+CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES = (
+    "MATCH (e:ExternalPackage) "
+    "OPTIONAL MATCH (x)-->(e) "
+    "WITH e, count(x) AS inbound "
+    "WHERE inbound = 0 "
+    "DETACH DELETE e"
+)
 CYPHER_PROJECT_MODULE_PATHS = (
     # The bare-name alternative covers the repository-root __init__.py,
     # whose module qn is the project name itself.
@@ -752,13 +849,59 @@ CYPHER_COUNT_PROJECT_MODULES = (
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
-# Containers of one File key, for legacy-identity sweep attribution: File
+# Containers of the legacy-identity sweep's File keys, for attribution: File
 # nodes MERGE globally on absolute_path, so a key can be shared with another
-# project and must not be deleted from under it (issue #1156).
+# project and must not be deleted from under it (issue #1156). One query for
+# every candidate: asked per key, a sync paid a round trip per File of every
+# other project in the shared graph (issue #2405).
 CYPHER_FILE_CONTAINERS = (
-    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: $path}) "
-    "RETURN labels(p) AS labels, p.name AS name, "
+    "UNWIND $paths AS file_key "
+    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: file_key}) "
+    "RETURN file_key, labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
+)
+KEY_FILE_KEY = "file_key"
+KEY_REPO_ROOT = "repo_root"
+KEY_REPO_PREFIX = "repo_prefix"
+# The orphan prune's reads, scoped to this repository or project. Unscoped,
+# every sync with changes read every File, Folder, Module and Package of
+# every project in the shared graph, so its cost grew with the graph, not
+# the repository (issue #2405). A key outside the repository was skipped by
+# the prune anyway; the legacy-identity sweep finds its own candidates below.
+CYPHER_REPO_FILE_PATHS = (
+    "MATCH (f:File) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_REPO_FOLDER_PATHS = (
+    "MATCH (f:Folder) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_PROJECT_PACKAGE_PATHS = (
+    "MATCH (p:Package) WHERE p.qualified_name = $project_name "
+    "OR p.qualified_name STARTS WITH $project_prefix "
+    "RETURN p.path AS path, p.absolute_path AS absolute_path, "
+    "p.qualified_name AS qualified_name"
+)
+# Modules the prune can act on: this project's, with a path to test.
+CYPHER_PROJECT_PRUNABLE_MODULES = (
+    "MATCH (m:Module) WHERE m.path IS NOT NULL "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+)
+# The legacy-identity sweep's only possible candidates: out-of-repo File keys
+# this project's own containers (its Project node, or a Folder or Package in
+# the repository) hold. Every other project's Files used to be candidates,
+# each one vetoed after its own containers query (issue #2405).
+CYPHER_PROJECT_OUTSIDE_FILE_KEYS = (
+    "MATCH (c)-[:CONTAINS_FILE]->(f:File) "
+    "WHERE ((c:Project AND c.name = $project_name) "
+    "OR c.absolute_path = $repo_root OR c.absolute_path STARTS WITH $repo_prefix) "
+    "AND NOT (f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix) "
+    "RETURN DISTINCT f.path AS path, f.absolute_path AS absolute_path"
 )
 # The module names a project records, by file path, for the incremental
 # requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
@@ -807,7 +950,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1063,6 +1206,7 @@ KEY_MOVED_FROM = "moved_from"
 # off `target_qn`; a note written before this property existed falls back to
 # the longest registered project name that prefixes its `target_qn`.
 KEY_PROJECT = "project"
+KEY_PROJECT_NAMES = "project_names"
 KEY_CANDIDATE_QNS = "candidate_qns"
 KEY_HASHES = "hashes"
 # Prefix on every anchor hash. A Gloss written before this format existed
@@ -1120,6 +1264,12 @@ class GlossAnchorState(StrEnum):
 
 
 REL_TYPE_CALLS = "CALLS"
+# How many lost rows of one flushed relationship batch the warning names, and
+# the words it names their missing endpoints with (issue #2438).
+FAILED_REL_ROWS_SHOWN = 10
+REL_ENDPOINT_SOURCE = "source"
+REL_ENDPOINT_TARGET = "target"
+REL_ENDPOINT_JOINER = " and "
 
 # Rel types where multiple semantically-distinct edges may exist between the
 # same node pair; these props join the MERGE key so parallel edges are not

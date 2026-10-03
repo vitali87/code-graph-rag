@@ -223,10 +223,12 @@ with MemgraphIngestor(host="localhost", port=7687) as db:
 import asyncio
 from cgr import CypherGenerator
 
+
 async def main():
     gen = CypherGenerator()
     cypher = await gen.generate("Find all classes that inherit from BaseModel")
     print(cypher)
+
 
 asyncio.run(main())
 ```
