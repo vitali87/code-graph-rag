@@ -146,7 +146,8 @@ HELP_CHECK_ISOLATED = (
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
-    "and reference sites, imports, overrides, __all__); refuses on guessed sites."
+    "and reference sites, imports, overrides, __all__); refuses on guessed sites "
+    "and on occurrences the graph has no site for."
 )
 EXAMPLES_RENAME = (
     "Examples:\n  cgr rename myproj.pkg.util.helper assist --dry-run\n"
@@ -155,7 +156,8 @@ EXAMPLES_RENAME = (
 HELP_RENAME_QN = "Qualified name of the definition to rename."
 HELP_RENAME_NEW_NAME = "The new identifier."
 HELP_RENAME_ALLOW_HEURISTIC = (
-    "Rewrite through heuristic, overload and trace-only sites as well."
+    "Rewrite through heuristic, overload and trace-only sites, and through "
+    "occurrences of the old name the graph has no site for, as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"

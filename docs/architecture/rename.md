@@ -19,7 +19,8 @@ same report as JSON.
 
 ## What gets rewritten
 
-Sites come from the graph, never from text search:
+Sites come from the graph, never from text search (the source is read only
+to [cross-check](#cross-check-against-the-source) the plan):
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
@@ -58,6 +59,94 @@ is only instantiated or called renames normally.
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's
 name token cannot be found at the recorded position (a stale graph).
+
+### Cross-check against the source
+
+The plan is only as complete as the index, and the index misses sites in
+known ways (a Rust re-export, a Java static import or method reference).
+Applying only the sites the graph knows would leave the others under the old
+name and break the build while reporting success (issue #2564). So before
+anything is written, the project's sources in the definition's language
+family are read (the indexer's own walk, under `.cgrignore` and
+`.gitignore`) for identifier tokens spelling the old name:
+
+- for a function, every bare use, called or not (`callback = helper`,
+  `map(helper, xs)`, `return helper`), and a qualified one only through its
+  module (`util.helper` after `from pkg import util`, `util::helper`, or
+  `u.helper` after `import pkg.util as u`; not `util.helper` after
+  `from vendor import util`): `d.get(key)` and `subprocess.run(...)` are other
+  objects' methods, whatever the function is called. In Python, JavaScript,
+  TypeScript and Rust a bare name reaches another file's function only
+  through an import, so outside the function's own file a bare use counts
+  only where an import of it reaches it (`from pkg.util import sorted`, or
+  `from pkg.util import *`): a `sorted(xs)` that imports no project `sorted`
+  is the builtin. After a star import from another module it may still be
+  the function, and is held to the plan as uncertain, as is a bare use of a
+  top-level function of a classic JavaScript script (a file whose code has
+  no import or export and no `require()`, `module.exports` or `exports`
+  of Node's own; a comment, a string, or a use that a local or parameter of
+  that name declared around it shadows does not count, and a `const` holds
+  only in its block), which every script on the
+  page shares. In Go, Java, C# and the
+  like a same-package call needs no import, and every bare use counts;
+- for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),
+  through its own object in the body of its class or of one whose header
+  names it (`self.name`, `this.name()`, `Self::name`, `super().name`), or
+  through a variable every binding of which declares or builds the class
+  (`parse: &mut Parse`, `Greeter g`, `let parse = Parse::new(frame)?`).
+  These are certain. The class's name counts as the class only where it
+  reaches the class's own module: qualified through that module
+  (`cache.Cache()`, `pc.Cache()` after `import pkg.cache as pc`,
+  `crate::parse::Parse`), or bare in its own file, in its package, or after
+  an import that names its module. A module is told by its path, not its
+  last name: `pkg.cache`, `vendor.cache` and `pkg2.cache` are three modules.
+  A relative import (`from .cache import x`, `'./cache.js'`) and a Rust path
+  from `crate`, `self` or `super` are resolved from the importing file; a
+  Python import from a source root spells the module from its top-level
+  package down (`pkg.cache` once `pkg/__init__.py` exists). Where two
+  source roots hold the spelled module (`pkg/cache.py` and
+  `src/pkg/cache.py`), Python's import path decides which one loads, and
+  the source does not say: a call through it is uncertain, held to the plan
+  and never rewritten. When another
+  symbol of the project shares the name, `other.Cache()`,
+  `from pkg.other import Cache` and `class Sub(other.Cache)` are that one;
+  an import through a package above the class (`use crate::Parse`,
+  `from pkg import Cache`) counts only when no other symbol shares it. A
+  Java file is named after its class, so there the import's package tells
+  the two apart (`import a.Greeter`). A bare name means what the scope
+  around it binds: a parameter `Cache` hides the imported class in its own
+  function only. A call through any other object, or a bare call in a
+  language with an implicit `this` (Java, C#, C++, Scala, Dart) outside the
+  class and without a static import of the method, counts only in a file
+  that may hold an object of the class: one that names it, or imports from
+  its module, where a factory may build one (`cache = make_cache()` after
+  `from pkg.cache import make_cache`). It is uncertain: `d.get(key)` may be
+  a dict's. A read without a call counts only in Python, JavaScript and
+  TypeScript, where a method is an attribute; in Rust, Java or C++
+  `self.name` is the field of the name;
+- for anything else (a class, an interface, a type), every occurrence.
+
+Comments and strings are prose and never count, and neither does a token
+that binds the name instead of using it (a parameter, an assignment or loop
+target, a definition), a bare use such a binding shadows in its function,
+a keyword argument's name (`f(helper=1)`), or a key that labels a property
+(`{ helper: 1 }` in JavaScript; a Python dict key, `{MyError: on_error}`, is
+evaluated and counts, as does JavaScript shorthand, `{ helper }`). An
+occurrence counts as planned when a site of the plan covers it, or the
+import statement of one (its own span, not its line:
+`from pkg.util import helper; helper(1)` still holds the call), or when the
+graph gives it to another symbol of the same name: that symbol's
+definition, sites and import statements, and every bare use where an import
+binds the name to it (the whole file at module level, only the function
+around an import written inside one). Files whose sites the graph gives to a project
+whose name extends this one are left out, as the plan leaves them.
+Whatever is left is `unplanned`: the rename refuses and lists each one, the
+way it refuses a guessed site. `--allow-heuristic` (`allow_heuristic: true`)
+rewrites the certain ones as guessed sites, and the report lists them in
+`unplanned`. An uncertain one is listed with resolution `receiver_unknown`
+and refuses the rename even under `--allow-heuristic`: rewriting it could
+rename another type's method, which no postcondition would notice, so it is
+left to be checked by hand.
 
 ## Postcondition contract
 
@@ -102,6 +191,7 @@ history, so `cgr edits undo` reverses them.
   "files": ["pkg/__init__.py", "pkg/app.py", "pkg/util.py"],
   "sites": [{"kind": "call", "path": "pkg/app.py", "line": 4, "col": 11, "owner": "myproj.pkg.app.run", "resolution": "exact"}],
   "ambiguous": [],
+  "unplanned": [],
   "unlocatable": [],
   "doc_mentions": ["README.md:12"],
   "hierarchy": ["myproj.pkg.util.helper"],
@@ -110,6 +200,7 @@ history, so `cgr edits undo` reverses them.
 }
 ```
 
-`sites` and `ambiguous` are the located sites, `hierarchy` the definitions
-renamed together, and `diff` the unified diff of what was (or, on
-`--dry-run`, would be) written.
+`sites` and `ambiguous` are the located sites, `unplanned` the occurrences
+the graph had no site for (rewritten only under `--allow-heuristic`, and
+also listed in `sites`), `hierarchy` the definitions renamed together, and
+`diff` the unified diff of what was (or, on `--dry-run`, would be) written.

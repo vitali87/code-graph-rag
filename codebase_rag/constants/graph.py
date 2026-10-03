@@ -67,6 +67,22 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+# Occurrences of the old name in code that no graph site accounts for (#2564).
+KEY_UNPLANNED = "unplanned"
+
+
+class RenameTargetKind(StrEnum):
+    """Which occurrences of a renamed name the cross-check holds against the
+    plan (#2564): a function's bare uses and those through its module, a
+    method's uses through its class, its own object or a variable of its
+    class (and, uncertain, other calls in files naming the class or
+    importing from its module), a type's every occurrence."""
+
+    FUNCTION = "function"
+    METHOD = "method"
+    TYPE = "type"
+
+
 KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
