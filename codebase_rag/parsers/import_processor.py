@@ -740,6 +740,22 @@ def _rust_manifest_section_tables(manifest: dict, section: str) -> list[dict]:
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
+def _rust_manifest_dep_entries(
+    manifest: dict,
+) -> Iterator[tuple[str, str | dict[str, object]]]:
+    # Every dependency entry a manifest declares, of every kind, its
+    # `[target.<cfg>]` tables included: a version string or a table.
+    tables = [manifest]
+    target = manifest.get(cs.RS_MANIFEST_TARGET_TABLE_KEY)
+    if isinstance(target, dict):
+        tables.extend(t for t in target.values() if isinstance(t, dict))
+    for table in tables:
+        for section in cs.RS_MANIFEST_DEP_SECTIONS:
+            entries = table.get(section)
+            if isinstance(entries, dict):
+                yield from entries.items()
+
+
 def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
     # (imported path, is static, is wildcard) of a Java import declaration.
     imported_path = None
@@ -837,6 +853,8 @@ class ImportProcessor:
         "_rust_pkg_deps",
         "_rust_dep_closures",
         "_rust_qn_packages",
+        "_rust_dep_members",
+        "_rust_member_packages",
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
@@ -979,6 +997,11 @@ class ImportProcessor:
             tuple[str, ...], frozenset[tuple[str, ...]] | None
         ] = {}
         self._rust_qn_packages: dict[str, tuple[str, ...] | None] = {}
+        # Per-package dependency name (as the code spells it) -> the
+        # workspace member a pathless entry fetches by package name, and the
+        # members' package names -> package dir. Manifest-derived as well.
+        self._rust_dep_members: dict[tuple[str, ...], dict[str, tuple[str, ...]]] = {}
+        self._rust_member_packages: dict[str, tuple[str, ...]] | None = None
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -2623,34 +2646,17 @@ class ImportProcessor:
         if (cached := self._rust_pkg_deps.get(pkg_parts)) is not None:
             return cached
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
-        tables = [manifest]
-        target = manifest.get(cs.RS_MANIFEST_TARGET_TABLE_KEY)
-        if isinstance(target, dict):
-            tables.extend(t for t in target.values() if isinstance(t, dict))
         deps: dict[str, tuple[str, ...] | None] = {}
-        for table in tables:
-            self._rust_collect_dep_table(pkg_parts, table, deps)
+        for key, value in _rust_manifest_dep_entries(manifest):
+            name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+            resolved = self._rust_dep_target_dir(pkg_parts, key, value)
+            # A path target from any section wins over a registry
+            # spelling elsewhere (version + path in one entry is the
+            # common published-workspace shape).
+            if resolved is not None or name not in deps:
+                deps[name] = resolved
         self._rust_pkg_deps[pkg_parts] = deps
         return deps
-
-    def _rust_collect_dep_table(
-        self,
-        pkg_parts: tuple[str, ...],
-        table: dict,
-        deps: dict[str, tuple[str, ...] | None],
-    ) -> None:
-        for section in cs.RS_MANIFEST_DEP_SECTIONS:
-            entries = table.get(section)
-            if not isinstance(entries, dict):
-                continue
-            for key, value in entries.items():
-                name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
-                resolved = self._rust_dep_target_dir(pkg_parts, key, value)
-                # A path target from any section wins over a registry
-                # spelling elsewhere (version + path in one entry is the
-                # common published-workspace shape).
-                if resolved is not None or name not in deps:
-                    deps[name] = resolved
 
     def _rust_dep_target_dir(
         self, pkg_parts: tuple[str, ...], key: str, value: str | dict[str, object]
@@ -2664,15 +2670,8 @@ class ImportProcessor:
             return None
         base = self.repo_path.joinpath(*pkg_parts)
         if value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
-            workspace = self._rust_read_manifest(self.repo_path).get(
-                cs.RS_MANIFEST_WORKSPACE_KEY
-            )
-            entry = (
-                workspace.get(cs.RS_MANIFEST_DEP_SECTIONS[0], {}).get(key)
-                if isinstance(workspace, dict)
-                else None
-            )
-            if not isinstance(entry, dict):
+            entry = self._rust_workspace_dep_entry(key)
+            if entry is None:
                 return None
             value = entry
             base = self.repo_path
@@ -2753,21 +2752,111 @@ class ImportProcessor:
         closure: frozenset[tuple[str, ...]] | None = None
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
         if isinstance(manifest.get(cs.RS_MANIFEST_PACKAGE_KEY), dict):
-            # A workspace member declared by version alone is still the
-            # member the repo holds (the published-workspace shape, #1048).
-            members = self._rust_workspace_crate_roots()
             seen = {pkg}
             pending = [pkg]
             while pending:
-                for name, target in self._rust_package_deps(pending.pop()).items():
-                    if target is None and (member := members.get(name)) is not None:
-                        target = member[0]
-                    if target is not None and target not in seen:
+                for target in self._rust_dep_targets(pending.pop()):
+                    if target not in seen:
                         seen.add(target)
                         pending.append(target)
             closure = frozenset(seen)
         self._rust_dep_closures[pkg] = closure
         return closure
+
+    def _rust_dep_targets(self, pkg: tuple[str, ...]) -> Iterator[tuple[str, ...]]:
+        # The repo package each dependency of `pkg` fetches: a path entry's
+        # dir, or the workspace member a pathless entry names, since a member
+        # declared by version alone is still the member the repo holds (the
+        # published-workspace shape, #1048).
+        members = self._rust_dep_members_of(pkg)
+        for name, target in self._rust_package_deps(pkg).items():
+            found = target if target is not None else members.get(name)
+            if found is not None:
+                yield found
+
+    def rust_head_is_member_dep(self, head: str, module_qn: str) -> bool:
+        """Whether the importer's manifest fetches this head as a member crate.
+
+        A pathless entry names the PACKAGE it fetches, by its key or by a
+        `package =` rename that leaves the key as the name the code writes
+        (`base-alias = { version = "1", package = "my-base" }`, then
+        `base_alias::Meter`). Naming a workspace member, it binds the crate
+        the repo holds, exactly as a version-only entry spelled with the
+        member's own name does (issue #1048), though no lib is called
+        `base_alias` (PR #2791 review).
+        """
+        pkg = self._rust_package_of(module_qn)
+        return pkg is not None and head in self._rust_dep_members_of(pkg)
+
+    def _rust_dep_members_of(self, pkg: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
+        if (cached := self._rust_dep_members.get(pkg)) is not None:
+            return cached
+        members = self._rust_member_package_dirs()
+        manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
+        found: dict[str, tuple[str, ...]] = {}
+        for key, value in _rust_manifest_dep_entries(manifest):
+            if self._rust_dep_target_dir(pkg, key, value) is not None:
+                continue
+            member = members.get(self._rust_dep_package_name(key, value))
+            if member is not None:
+                found.setdefault(
+                    key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE), member
+                )
+        self._rust_dep_members[pkg] = found
+        return found
+
+    def _rust_dep_package_name(self, key: str, value: object) -> str:
+        # The package a dependency entry fetches, underscore-spelled: its
+        # `package =` rename, else its key. `workspace = true` inherits the
+        # root's [workspace.dependencies] entry, rename included.
+        if isinstance(value, dict) and value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
+            value = self._rust_workspace_dep_entry(key)
+        package = (
+            value.get(cs.RS_MANIFEST_PACKAGE_KEY) if isinstance(value, dict) else None
+        )
+        name = package if isinstance(package, str) and package else key
+        return name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+
+    def _rust_member_package_dirs(self) -> dict[str, tuple[str, ...]]:
+        # Workspace members with a lib target, by [package] name
+        # (underscore-spelled) -> package dir. A dependency entry names the
+        # package, never the lib target, whose `[lib] name` may differ.
+        if self._rust_member_packages is not None:
+            return self._rust_member_packages
+        mapping: dict[str, tuple[str, ...]] = {}
+        for member in self._rust_workspace_member_dirs():
+            manifest = self._rust_read_manifest(member)
+            package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+            name = (
+                package.get(cs.RS_MANIFEST_NAME_KEY)
+                if isinstance(package, dict)
+                else None
+            )
+            if (
+                isinstance(name, str)
+                and name
+                and self._rust_member_lib_root(member, manifest) is not None
+            ):
+                mapping.setdefault(
+                    name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE),
+                    member.relative_to(self.repo_path).parts,
+                )
+        self._rust_member_packages = mapping
+        return mapping
+
+    def _rust_workspace_dep_entry(self, key: str) -> dict | None:
+        # The root manifest's [workspace.dependencies] entry a member's
+        # `key = { workspace = true }` inherits, when it is a table.
+        workspace = self._rust_read_manifest(self.repo_path).get(
+            cs.RS_MANIFEST_WORKSPACE_KEY
+        )
+        deps = (
+            workspace.get(cs.RS_MANIFEST_DEP_SECTIONS[0])
+            if isinstance(workspace, dict)
+            else None
+        )
+        entry = deps.get(key) if isinstance(deps, dict) else None
+        return entry if isinstance(entry, dict) else None
 
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.
@@ -4229,6 +4318,8 @@ class ImportProcessor:
         self._rust_pkg_deps.clear()
         self._rust_dep_closures.clear()
         self._rust_qn_packages.clear()
+        self._rust_dep_members.clear()
+        self._rust_member_packages = None
 
     def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
         # The realtime watcher re-parses through process_file without
@@ -4348,6 +4439,8 @@ class ImportProcessor:
         self._rust_pkg_deps.clear()
         self._rust_dep_closures.clear()
         self._rust_qn_packages.clear()
+        self._rust_dep_members.clear()
+        self._rust_member_packages = None
         for key, stems in self._rust_entry_mod_decls.items():
             allowed = {
                 name[: -len(cs.EXT_RS)] for name in self._rust_explicit_entry_files(key)

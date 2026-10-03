@@ -468,3 +468,180 @@ def test_bare_declared_type_follows_the_scoped_use(
     assert edges.get((caller, "rs_use_bare_decl.src.b.Builder.build")) == {"exact"}, (
         edges
     )
+
+
+# --- a module path written in an inline mod counts from that mod ---------------
+
+
+def _builder_in(module: str, n: int) -> str:
+    # A `Builder` with `new`/`build` inside `mod <module>`, or at file level.
+    body = (
+        "pub struct Builder {\n    n: u32,\n}\n\n"
+        "impl Builder {\n"
+        f"    pub fn new() -> Builder {{\n        Builder {{ n: {n} }}\n    }}\n"
+        "    pub fn build(&self) -> u32 {\n        self.n\n    }\n"
+        "}\n"
+    )
+    if not module:
+        return body
+    inner = "".join(f"    {line}" if line else line for line in body.splitlines(True))
+    return f"pub mod {module} {{\n{inner}}}\n"
+
+
+def _inline_mods_lib(project: str, body: str) -> dict[str, str]:
+    # A file-level `Builder` and a `sibling` mod holding another, written
+    # before the mod under test so a search by name meets them first.
+    return {
+        "Cargo.toml": f'[package]\nname = "{project}"\nversion = "0.1.0"\n',
+        "src/lib.rs": _builder_in("", 1) + "\n" + _builder_in("sibling", 3) + body,
+    }
+
+
+def test_self_path_in_inline_mod_binds_the_mod_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `self::` inside `mod inner` is `inner`, never the file: the receiver
+    # declared `self::Builder` bound the file's `Builder` (PR #2791 review).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_inline_self",
+        _inline_mods_lib(
+            "rs_inline_self",
+            "\npub mod inner {\n"
+            "    pub struct Builder;\n\n"
+            "    impl Builder {\n"
+            "        pub fn new() -> Builder {\n            Builder\n        }\n"
+            "        pub fn build(&self) -> u32 {\n            2\n        }\n"
+            "    }\n\n"
+            "    pub fn param(x: self::Builder) -> u32 {\n        x.build()\n    }\n\n"
+            "    pub fn local() -> u32 {\n"
+            "        let y: self::Builder = self::Builder::new();\n"
+            "        y.build()\n"
+            "    }\n"
+            "}\n",
+        ),
+    )
+    lib = "rs_inline_self.src.lib"
+    for caller in (f"{lib}.inner.param", f"{lib}.inner.local"):
+        assert edges.get((caller, f"{lib}.inner.Builder.build")) == {"exact"}, edges
+        assert (caller, f"{lib}.Builder.build") not in edges, edges
+        assert (caller, f"{lib}.sibling.Builder.build") not in edges, edges
+
+
+def test_super_path_in_nested_inline_mod_binds_the_parent_mod_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `super::` inside `mod inner { mod deeper { .. } }` is `inner`. Read
+    # through the file module, the path counted from the file and bound its
+    # `Builder`; read as the bare leaf, `deeper`'s own `Builder` answered
+    # (PR #2791 review). Two `super::`s reach the file.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_inline_super",
+        _inline_mods_lib(
+            "rs_inline_super",
+            "\npub mod inner {\n"
+            "    pub struct Builder;\n\n"
+            "    impl Builder {\n"
+            "        pub fn build(&self) -> u32 {\n            2\n        }\n"
+            "    }\n\n"
+            "    pub mod deeper {\n"
+            "        pub struct Builder;\n\n"
+            "        impl Builder {\n"
+            "            pub fn build(&self) -> u32 {\n                4\n            }\n"
+            "        }\n\n"
+            "        pub fn up_one(x: super::Builder) -> u32 {\n"
+            "            x.build()\n"
+            "        }\n\n"
+            "        pub fn up_two(x: super::super::Builder) -> u32 {\n"
+            "            x.build()\n"
+            "        }\n"
+            "    }\n"
+            "}\n",
+        ),
+    )
+    lib = "rs_inline_super.src.lib"
+    up_one = f"{lib}.inner.deeper.up_one"
+    up_two = f"{lib}.inner.deeper.up_two"
+    assert edges.get((up_one, f"{lib}.inner.Builder.build")) == {"exact"}, edges
+    assert _callees(edges, up_one) == {f"{lib}.inner.Builder.build"}, edges
+    assert edges.get((up_two, f"{lib}.Builder.build")) == {"exact"}, edges
+    assert _callees(edges, up_two) == {f"{lib}.Builder.build"}, edges
+
+
+def test_bare_path_in_inline_mod_binds_the_mod_child_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `kinds::Builder` inside `mod inner` names `inner::kinds`, not the
+    # file's own `kinds`.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_inline_bare",
+        _inline_mods_lib(
+            "rs_inline_bare",
+            "\n" + _builder_in("kinds", 4) + "\npub mod inner {\n"
+            "    pub mod kinds {\n"
+            "        pub struct Builder;\n\n"
+            "        impl Builder {\n"
+            "            pub fn build(&self) -> u32 {\n                5\n            }\n"
+            "        }\n"
+            "    }\n\n"
+            "    pub fn child(x: kinds::Builder) -> u32 {\n        x.build()\n    }\n"
+            "}\n",
+        ),
+    )
+    lib = "rs_inline_bare.src.lib"
+    caller = f"{lib}.inner.child"
+    assert edges.get((caller, f"{lib}.inner.kinds.Builder.build")) == {"exact"}, edges
+    assert _callees(edges, caller) == {f"{lib}.inner.kinds.Builder.build"}, edges
+
+
+def test_module_path_without_inline_shadowing_binds_the_file_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # No inline mod defines `Builder` here: a file-level `self::`, an inline
+    # mod's `super::`, and an inline mod's `self::` reaching the file's type
+    # through `use super::*;` all name the file's `Builder`, and the
+    # sibling mod's never answers.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_inline_none",
+        _inline_mods_lib(
+            "rs_inline_none",
+            "\npub fn file_self(x: self::Builder) -> u32 {\n    x.build()\n}\n\n"
+            "pub mod plain {\n"
+            "    pub fn up(x: super::Builder) -> u32 {\n        x.build()\n    }\n"
+            "}\n\n"
+            "pub mod globbed {\n"
+            "    use super::*;\n\n"
+            "    pub fn via_glob(x: self::Builder) -> u32 {\n        x.build()\n    }\n"
+            "}\n",
+        ),
+    )
+    lib = "rs_inline_none.src.lib"
+    for caller in (f"{lib}.file_self", f"{lib}.plain.up", f"{lib}.globbed.via_glob"):
+        assert edges.get((caller, f"{lib}.Builder.build")) == {"exact"}, edges
+        assert _callees(edges, caller) == {f"{lib}.Builder.build"}, edges
+
+
+def test_inline_mod_path_to_an_external_type_binds_no_sibling_or_file_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `mod ext` takes its `Builder` from a registry crate's glob, so its
+    # `self::Builder` is that crate's: neither the file's `Builder` nor the
+    # sibling mod's may answer for it.
+    files = _inline_mods_lib(
+        "rs_inline_ext",
+        "\npub mod ext {\n"
+        "    use regex_syntax::*;\n\n"
+        "    pub fn external(x: self::Builder) -> u32 {\n        x.build()\n    }\n"
+        "}\n",
+    )
+    files["Cargo.toml"] += '\n[dependencies]\nregex-syntax = "0.8"\n'
+    edges = _index(temp_repo, mock_ingestor, "rs_inline_ext", files)
+    callees = _callees(edges, "rs_inline_ext.src.lib.ext.external")
+    assert not {c for c in callees if c.endswith(".Builder.build")}, edges

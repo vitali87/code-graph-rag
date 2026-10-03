@@ -12,6 +12,8 @@ depends on no workspace crate, "called" into `ignore`, and ripgrep's
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _write,
@@ -249,3 +251,133 @@ def test_dev_dependency_and_version_only_workspace_member_keep_their_edges(
     level = "rs_dep_dev.crates.top.src.lib.level"
     assert (level, f"{meter}.new") in edges, edges
     assert (level, f"{meter}.gauge") in edges, edges
+
+
+# --- a dependency names the package it fetches, whatever the code calls it -----
+
+_ALIAS_TOP_RS = (
+    "use base_alias::Meter;\n\n"
+    "pub fn level() -> usize {\n    Meter::new().gauge()\n}\n\n"
+    "pub fn qualified() -> usize {\n    base_alias::Meter::new().gauge()\n}\n\n"
+    "pub fn guessed(items: &str) -> usize {\n"
+    "    let parts = items.split(',');\n"
+    "    parts.gauge()\n"
+    "}\n"
+)
+
+
+# How `top` declares its dependency on the member `my-base` under the name
+# `base-alias`: (its own entry, the root's [workspace.dependencies] entry).
+_ALIAS_FORMS = {
+    "version": ('base-alias = { version = "0.1", package = "my-base" }\n', ""),
+    "path": ('base-alias = { path = "../base", package = "my-base" }\n', ""),
+    "ws_version": (
+        "base-alias = { workspace = true }\n",
+        'base-alias = { version = "0.1", package = "my-base" }\n',
+    ),
+    "ws_path": (
+        "base-alias = { workspace = true }\n",
+        'base-alias = { path = "crates/base", package = "my-base" }\n',
+    ),
+}
+
+
+@pytest.mark.parametrize("form", list(_ALIAS_FORMS))
+def test_renamed_workspace_member_dependency_keeps_its_edges(
+    temp_repo: Path, mock_ingestor: MagicMock, form: str
+) -> None:
+    # `package = "my-base"` fetches the member `my-base`, which the code
+    # names by the entry's key, `base_alias`. A pathless entry was looked up
+    # by that key among the members' lib names, so the member fell out of
+    # `top`'s closure and `base_alias::` read as an external crate: every
+    # call into it was dropped (PR #2791 review). The path forms always
+    # kept them, and all four must agree.
+    dep, workspace_deps = _ALIAS_FORMS[form]
+    root = '[workspace]\nmembers = ["crates/base", "crates/top"]\n'
+    if workspace_deps:
+        root += f"\n[workspace.dependencies]\n{workspace_deps}"
+    project = f"rs_dep_alias_{form}"
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        project,
+        {
+            "Cargo.toml": root,
+            "crates/base/Cargo.toml": _manifest("my-base"),
+            "crates/base/src/lib.rs": _METER_RS,
+            "crates/top/Cargo.toml": _manifest("top", dep),
+            "crates/top/src/lib.rs": _ALIAS_TOP_RS,
+        },
+    )
+    meter = f"{project}.crates.base.src.lib.Meter"
+    top = f"{project}.crates.top.src.lib"
+    assert (f"{top}.level", f"{meter}.new") in edges, edges
+    assert (f"{top}.level", f"{meter}.gauge") in edges, edges
+    assert (f"{top}.qualified", f"{meter}.gauge") in edges, edges
+    assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges
+
+
+def test_version_only_member_named_apart_from_its_lib_keeps_its_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Unrenamed, the entry's key is the member's package name, while the
+    # code says the lib target's name (`[lib] name = "basics"`).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_dep_libname",
+        {
+            "Cargo.toml": '[workspace]\nmembers = ["crates/base", "crates/top"]\n',
+            "crates/base/Cargo.toml": _manifest("my-base")
+            + '\n[lib]\nname = "basics"\n',
+            "crates/base/src/lib.rs": _METER_RS,
+            "crates/top/Cargo.toml": _manifest("top", 'my-base = "0.1"\n'),
+            "crates/top/src/lib.rs": _ALIAS_TOP_RS.replace("base_alias", "basics"),
+        },
+    )
+    meter = "rs_dep_libname.crates.base.src.lib.Meter"
+    top = "rs_dep_libname.crates.top.src.lib"
+    assert (f"{top}.level", f"{meter}.new") in edges, edges
+    assert (f"{top}.level", f"{meter}.gauge") in edges, edges
+    assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges
+
+
+def test_dependency_renamed_to_a_registry_package_stays_external(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Both entries fetch registry packages the repo does not hold, one of
+    # them under the name of a workspace member: neither the member `meters`
+    # nor `my-base`, which `top` does not depend on, is called.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_dep_alias_ext",
+        {
+            "Cargo.toml": (
+                '[workspace]\nmembers = ["crates/base", "crates/meters", '
+                '"crates/top"]\n'
+            ),
+            "crates/base/Cargo.toml": _manifest("my-base"),
+            "crates/base/src/lib.rs": _METER_RS,
+            "crates/meters/Cargo.toml": _manifest("meters"),
+            "crates/meters/src/lib.rs": _METER_RS,
+            "crates/top/Cargo.toml": _manifest(
+                "top",
+                'base-alias = { version = "1", package = "serde" }\n'
+                'meters = { version = "1", package = "serde_json" }\n',
+            ),
+            "crates/top/src/lib.rs": _ALIAS_TOP_RS
+            + (
+                "\npub fn member_named() -> usize {\n"
+                "    meters::Meter::new().gauge()\n"
+                "}\n"
+            ),
+        },
+    )
+    leaked = {
+        (src, callee)
+        for src, callee in edges
+        if src.startswith("rs_dep_alias_ext.crates.top.")
+        and not callee.startswith("rs_dep_alias_ext.crates.top.")
+    }
+    assert not leaked, edges

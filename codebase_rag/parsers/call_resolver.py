@@ -1418,7 +1418,10 @@ class CallResolver:
         # A `use` in the caller's own body or enclosing inline mod rebinds
         # that name for this caller alone, so `b.build()` in
         # `mod tests { use my_beta::Builder; }` reached the crate's own
-        # `Builder` (issue #2622). Rebinding the map once covers them all.
+        # `Builder` (issue #2622). A declared module path (`x: self::Builder`)
+        # is read through the file module too, which an inline mod's
+        # `self::`, `super::` and bare paths do not count from. Rebinding the
+        # map once covers them all.
         if (
             language != cs.SupportedLanguage.RUST
             or not local_var_types
@@ -1427,15 +1430,54 @@ class CallResolver:
             return local_var_types
         scoped: dict[str, str] | None = None
         for name, type_name in local_var_types.items():
-            if cs.SEPARATOR_DOT in type_name or cs.SEPARATOR_DOUBLE_COLON in type_name:
+            if cs.SEPARATOR_DOT in type_name:
                 continue
-            bound = self._rust_scoped_type(type_name, module_qn, caller_qn)
+            if cs.SEPARATOR_DOUBLE_COLON in type_name:
+                bound = self._rust_inline_path_type(type_name, module_qn, caller_qn)
+            else:
+                bound = self._rust_scoped_type(type_name, module_qn, caller_qn)
             if bound is None:
                 continue
             if scoped is None:
                 scoped = dict(local_var_types)
             scoped[name] = bound
         return local_var_types if scoped is None else scoped
+
+    def _rust_inline_path_type(
+        self, path: str, module_qn: str, caller_qn: str
+    ) -> str | None:
+        """The type a module path declared in an inline `mod` names there.
+
+        `self::` and `super::` count from the innermost inline mod around the
+        caller, and a bare head names that mod's own child module or `use`
+        first. Read through the file module instead, `x: self::Builder` in
+        `mod inner` bound the file's `Builder` and `super::Builder` in
+        `mod inner { mod deeper {..} }` climbed past `inner` (PR #2791
+        review). A `self::`/`super::` path naming no type there names none
+        of the file's either, so it binds the unresolvable sentinel. None
+        for a caller at file level, a `crate::` path, and a bare path the mod
+        does not resolve: the file's reading then decides, as before.
+        """
+        effective = self.rust_function_modules.get(caller_qn)
+        if effective is None:
+            # No ingest record (a rehydrated definition): the innermost
+            # declared mod around the caller stands in for it.
+            mods = self._rust_enclosing_mod_scopes(module_qn, caller_qn)
+            effective = mods[0] if mods else module_qn
+        head = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        if effective == module_qn or head == cs.RUST_CRATE_KEYWORD:
+            return None
+        relative = head in (cs.KEYWORD_SELF, cs.KEYWORD_SUPER)
+        hit = self._rust_module_path_type(path, effective)
+        if hit is None and not relative:
+            # A child mod written inline has no file and no import-map key
+            # of its own, so only its qn under the mod finds it.
+            hit = self._rust_module_path_type(
+                f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOUBLE_COLON}{path}", effective
+            )
+        if hit is None and relative:
+            return cs.RUST_UNRESOLVABLE_QN
+        return hit
 
     def _resolve_receiver_shadow(
         self, call: _CallSite
@@ -3002,9 +3044,11 @@ class CallResolver:
         )
 
     def _rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
+        imports = self.import_processor
         return crate in cs.RS_STDLIB_CRATES or (
-            not self.import_processor.rust_head_is_repo_crate(crate)
-            and self.import_processor.rust_head_is_external_dep(crate, module_qn)
+            not imports.rust_head_is_repo_crate(crate)
+            and not imports.rust_head_is_member_dep(crate, module_qn)
+            and imports.rust_head_is_external_dep(crate, module_qn)
         )
 
     def _rust_file_use_is_external(self, name: str, module_qn: str) -> bool:
