@@ -1057,7 +1057,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
@@ -1288,11 +1288,14 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     # A relative link in a Markdown document to a file in the repository
-    # (issue #2394: emitted by the document tier but never documented).
+    # (issue #2394: emitted by the document tier but never documented). It
+    # starts at the innermost Section holding it, or at the Module above the
+    # first heading, and ends at the Section its anchor names, or at the File
+    # (issue #2458).
     RelationshipSchema(
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.SECTION),
         RelationshipType.LINKS_TO,
-        (NodeLabel.FILE,),
+        (NodeLabel.FILE, NodeLabel.SECTION),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),

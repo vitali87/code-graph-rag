@@ -132,6 +132,10 @@ EXCLUSION_STATE_NOT_RECORDED = (
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"
 REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolution"
 INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
+MARKDOWN_BROKEN_LINKS = (
+    "{count} relative Markdown link(s) in {documents} document(s) point at files "
+    "that do not exist; each document lists them in its Module's broken_links"
+)
 ANALYSIS_COMPLETE = "\n--- Analysis complete. Flushing all data to database... ---"
 REMOVING_STATE = "Removing in-memory state for: {path}"
 REMOVED_FROM_CACHE = "  - Removed from ast_cache"

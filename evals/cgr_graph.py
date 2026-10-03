@@ -176,6 +176,8 @@ _INBOUND_DEPENDENT_RELS = frozenset(
         # A gloss's edges are restored, never re-derived (issue #1808).
         cs.RelationshipType.ANNOTATES.value,
         cs.RelationshipType.MENTIONS.value,
+        # A link into a re-parsed document's Section (issue #2458).
+        cs.RelationshipType.LINKS_TO.value,
     }
 )
 # The dependency relations CYPHER_AFFECTED_CALLER_PATHS walks: a file holding
@@ -876,11 +878,7 @@ class _StatefulIngestor:
             doc_label, doc_qn = doc_id
             if doc_label != module or not _str(doc_qn).startswith(prefix):
                 continue
-            links = any(
-                e[2] == cs.RelationshipType.LINKS_TO.value and _str(e[4]) == absolute
-                for e in edges
-            )
-            if not links:
+            if not self._document_links_to(doc_id, absolute):
                 continue
             for e in edges:
                 if e[2] != cs.RelationshipType.CONTAINS_SECTION.value:
@@ -1432,6 +1430,10 @@ class _StatefulIngestor:
                     ):
                         waiting.add(path)
                 return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
+            case cs.CYPHER_LINKING_DOCUMENT_PATHS:
+                return self._linking_document_rows(params or {})
+            case cs.CYPHER_BROKEN_LINK_DOCUMENTS:
+                return self._broken_link_rows(params or {})
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
                 # Modules carrying a dropped relative specifier (issue #1714).
                 # Emulated rather than left to fall through: an unanswered
@@ -1691,6 +1693,77 @@ class _StatefulIngestor:
                     cs.KEY_PROPS: _result_props(props),
                 }
             )
+        return rows
+
+    def _document_links_to(self, doc_id: _NodeId, absolute: str) -> bool:
+        # The document or any section under it links to the File: a link
+        # starts at its innermost section (issue #2458).
+        stack = [doc_id]
+        while stack:
+            for edge in self._out.get(stack.pop(), ()):
+                if edge[2] == cs.RelationshipType.CONTAINS_SECTION.value:
+                    stack.append((edge[3], edge[4]))
+                elif (
+                    edge[2] == cs.RelationshipType.LINKS_TO.value
+                    and edge[3] == _FILE_LABEL
+                    and _str(edge[4]) == absolute
+                ):
+                    return True
+        return False
+
+    def _linking_document_rows(self, params: PropertyDict) -> list[ResultRow]:
+        # CYPHER_LINKING_DOCUMENT_PATHS (issue #2458): documents whose links
+        # end at a node of a re-indexed path, with that node's label and path.
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        found: set[tuple[str, str, str]] = set()
+        for from_label, from_val, rel_type, to_label, to_val, _site in self._edges_into(
+            paths
+        ):
+            if rel_type != cs.RelationshipType.LINKS_TO.value:
+                continue
+            source = self.nodes.get((from_label, from_val))
+            target = self.nodes.get((to_label, to_val))
+            if source is None or target is None:
+                continue
+            source_path = source.get(cs.KEY_PATH)
+            if (
+                not isinstance(source_path, str)
+                or source_path in paths
+                or not _str(from_val).startswith(prefix)
+            ):
+                continue
+            found.add((source_path, to_label, _str(target.get(cs.KEY_PATH))))
+        return [
+            {
+                cs.KEY_CALLER_PATH: source_path,
+                cs.KEY_TARGET_LABEL: label,
+                cs.KEY_TARGET_PATH: path,
+            }
+            for source_path, label, path in sorted(found)
+        ]
+
+    def _broken_link_rows(self, params: PropertyDict) -> list[ResultRow]:
+        # CYPHER_BROKEN_LINK_DOCUMENTS (issue #2458): emulated rather than left
+        # to fall through, since an unanswered query returns [] here, which
+        # reads as "no document waits" and would let a test pass against a
+        # lookup that never ran.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        rows: list[ResultRow] = []
+        for (label, uid), props in self.nodes.items():
+            if label != _MODULE_LABEL:
+                continue
+            path = _text(props.get(cs.KEY_PATH))
+            links = props.get(cs.KEY_BROKEN_LINKS)
+            if not path or not _str(props.get(cs.KEY_QUALIFIED_NAME, uid)).startswith(
+                prefix
+            ):
+                continue
+            if isinstance(links, list) and links:
+                rows.append(
+                    {cs.KEY_CALLER_PATH: path, cs.KEY_BROKEN_LINKS: list(links)}
+                )
         return rows
 
     def _edges_into(self, paths: set[str]) -> list[_EdgeKey]:
