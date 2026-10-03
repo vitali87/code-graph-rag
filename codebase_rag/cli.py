@@ -713,7 +713,7 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        interrupted: ex.EmbeddingsInterrupted | None = None
+        interrupted: KeyboardInterrupt | None = None
         try:
             updater.run()
         except ex.EmbeddingsInterrupted as stop:
@@ -723,9 +723,14 @@ def _run_graph_sync(
             # it as a failed write.
             interrupted = stop
         except KeyboardInterrupt as stop:
-            # Anywhere else the run stopped short of its commit: the marker
-            # stays down, and only the caller knows whether to say so.
-            raise ex.SyncInterrupted from stop
+            # Decided by whether the run committed, not by where the interrupt
+            # surfaced: a Ctrl+C between the commit and the return found the
+            # graph whole, and must be recorded and unmarked the same way.
+            if not updater.committed:
+                # Stopped short of the commit: the marker stays down, and only
+                # the caller knows whether to say so.
+                raise ex.SyncInterrupted from stop
+            interrupted = stop
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
 

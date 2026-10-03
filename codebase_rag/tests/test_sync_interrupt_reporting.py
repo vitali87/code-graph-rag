@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Generator, Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import NamedTuple
 from unittest.mock import MagicMock, patch
@@ -25,6 +26,7 @@ import typer
 from loguru import logger
 from typer.testing import CliRunner
 
+from codebase_rag import cgr_state
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
@@ -70,7 +72,9 @@ def cli_sync() -> Generator[_CliSync, None, None]:
     connection = MagicMock()
     connection.__enter__.return_value = ingestor
     connection.__exit__.return_value = False
-    updater = MagicMock(skipped_because_in_sync=False)
+    # `committed` set: a bare MagicMock attribute is truthy, which would read
+    # every interrupt as one that landed after the run committed.
+    updater = MagicMock(skipped_because_in_sync=False, committed=False)
     with (
         patch("codebase_rag.cli.connect_memgraph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
@@ -424,3 +428,117 @@ class TestWarningsThatMustStay:
 
         assert _unfinished_notes(log_sink) == []
         assert ls.PARSER_FINGERPRINT_MISMATCH not in _warnings(log_sink)
+
+
+@pytest.fixture
+def real_sync(mock_ingestor: MagicMock) -> Generator[MagicMock, None, None]:
+    # The real updater and parsers behind the CLI; only the database is fake.
+    connection = MagicMock()
+    connection.__enter__.return_value = mock_ingestor
+    connection.__exit__.return_value = False
+    with (
+        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli._update_and_validate_models"),
+    ):
+        yield mock_ingestor
+
+
+def _marker_events(ingestor: MagicMock) -> list[str]:
+    names = {
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE: "mark",
+        cq.CYPHER_CLEAR_PROJECT_INCOMPLETE: "clear",
+    }
+    return [
+        names[call.args[0]]
+        for call in ingestor.execute_write.call_args_list
+        if call.args and call.args[0] in names
+    ]
+
+
+def _interrupt_right_after_the_commit() -> AbstractContextManager[MagicMock]:
+    commit = GraphUpdater._commit_run_state
+
+    def commit_then_interrupt(self: GraphUpdater) -> None:
+        commit(self)
+        raise KeyboardInterrupt
+
+    return patch.object(
+        GraphUpdater,
+        "_commit_run_state",
+        autospec=True,
+        side_effect=commit_then_interrupt,
+    )
+
+
+class TestAnInterruptAroundTheCommit:
+    def test_one_right_after_the_commit_finds_the_graph_whole(
+        self, py_project: Path, real_sync: MagicMock
+    ) -> None:
+        # The cache, stamps and graph are saved; only the return is left.
+        with _interrupt_right_after_the_commit():
+            exit_code, output = _invoke_update_graph(py_project)
+
+        assert exit_code == 130, output
+        assert _lines_calling_the_graph_incomplete(output) == [], output
+        # Recorded and unmarked like any finished sync, so `cgr status` and
+        # the MCP hydration guard do not take a whole graph for a partial one.
+        assert _marker_events(real_sync) == ["mark", "clear"]
+        assert PROJECT in cgr_state.read_sync_timestamps()
+        assert (py_project / cs.PARSER_FINGERPRINT_FILENAME).is_file()
+
+    def test_one_before_the_commit_is_still_called_incomplete(
+        self, py_project: Path, real_sync: MagicMock
+    ) -> None:
+        with patch.object(
+            GraphUpdater, "_process_function_calls", side_effect=KeyboardInterrupt
+        ):
+            exit_code, output = _invoke_update_graph(py_project)
+
+        assert exit_code == 130, output
+        assert len(_lines_calling_the_graph_incomplete(output)) == 1, output
+        assert _marker_events(real_sync) == ["mark"]
+        assert PROJECT not in cgr_state.read_sync_timestamps()
+
+    def test_one_during_the_commit_is_still_called_incomplete(
+        self, py_project: Path, real_sync: MagicMock
+    ) -> None:
+        # Stopped part-way through saving its state, the run cannot vouch for
+        # the graph; the next sync re-checks it.
+        with patch(
+            "codebase_rag.graph_updater._publish_hash_cache",
+            side_effect=KeyboardInterrupt,
+        ):
+            exit_code, output = _invoke_update_graph(py_project)
+
+        assert exit_code == 130, output
+        assert len(_lines_calling_the_graph_incomplete(output)) == 1, output
+        assert _marker_events(real_sync) == ["mark"]
+
+    def test_a_reused_updater_does_not_keep_a_previous_runs_commit(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        updater = _updater(py_project, mock_ingestor)
+        updater.run()
+        assert updater.committed is True
+        (py_project / "module_a.py").write_text("def func_a():\n    return 2\n")
+
+        with (
+            patch.object(
+                GraphUpdater, "_process_function_calls", side_effect=KeyboardInterrupt
+            ),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            updater.run()
+
+        assert updater.committed is False
+
+    def test_the_in_sync_fast_path_leaves_nothing_partial(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _updater(py_project, mock_ingestor).run()
+        updater = _updater(py_project, mock_ingestor)
+
+        updater.run()
+
+        assert updater.skipped_because_in_sync is True
+        assert updater.committed is True
