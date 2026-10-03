@@ -369,8 +369,9 @@ def test_a_lock_this_user_cannot_open_refuses_the_sync(
     # synced around, so a second user of a shared checkout ran unguarded
     # beside the sync that held it.
     with _lock_open_denied(repo) as lock_path:
+        updater = _updater(repo, mock_ingestor)
         with pytest.raises(SyncLockError) as refused:
-            _updater(repo, mock_ingestor).run()
+            updater.run()
 
     message = str(refused.value)
     assert str(lock_path) in message
@@ -383,9 +384,10 @@ def test_a_lock_path_that_is_not_a_file_refuses_the_sync(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
     (repo / cs.SYNC_LOCK_FILENAME).mkdir()
+    updater = _updater(repo, mock_ingestor)
 
     with pytest.raises(SyncLockError):
-        _updater(repo, mock_ingestor).run()
+        updater.run()
 
     mock_ingestor.ensure_node_batch.assert_not_called()
 
@@ -429,8 +431,9 @@ def test_a_failed_lock_call_is_not_taken_for_another_sync(
     # CodeRabbit review of PR 2512: every error from the lock call read as
     # contention, so a sync nobody was running refused this one.
     with _lock_call_fails(errno.ENOLCK) as calls:
+        updater = _updater(repo, mock_ingestor)
         with pytest.raises(SyncLockUnavailableError) as refused:
-            _updater(repo, mock_ingestor).run()
+            updater.run()
 
     message = str(refused.value)
     assert str(repo / cs.SYNC_LOCK_FILENAME) in message
