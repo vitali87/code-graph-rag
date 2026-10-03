@@ -133,6 +133,112 @@ async def test_anything_else_still_asks(
     assert spawned == []
 
 
+@pytest.fixture
+def outside_patterns(tmp_path: Path) -> str:
+    # Beside the project root, not in it. POSIX spelling, because shlex would
+    # eat a Windows path's backslashes.
+    patterns = tmp_path / "outside-patterns.txt"
+    patterns.write_text("OUTSIDE_SECRET\n")
+    return patterns.as_posix()
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        # The reproduction: a value attached to a short option is a path
+        # too, and ripgrep reads it and quotes its patterns in stderr.
+        "rg -f{outside} README.md",
+        "rg -nf{outside} README.md",
+        "rg -f {outside} README.md",
+        "rg --file={outside} README.md",
+        "rg --file {outside} README.md",
+        "rg --ignore-file {outside} run pkg",
+        "rg --ignore-file={outside} run pkg",
+        "rg -f../outside-patterns.txt README.md",
+        "rg -nf../outside-patterns.txt README.md",
+    ],
+)
+async def test_an_option_naming_an_outside_file_still_asks(
+    project: Path, spawned: list[list[str]], outside_patterns: str, template: str
+) -> None:
+    tool = _tool(project)
+    with pytest.raises(ApprovalRequired):
+        await tool.function(_unapproved(), template.format(outside=outside_patterns))
+
+    assert spawned == []
+
+
+async def test_an_attached_option_value_through_an_outward_symlink_still_asks(
+    project: Path, spawned: list[list[str]], outside_patterns: str
+) -> None:
+    (project / "linked_patterns").symlink_to(outside_patterns)
+
+    with pytest.raises(ApprovalRequired):
+        await _tool(project).function(_unapproved(), "rg -flinked_patterns pkg")
+
+    assert spawned == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # An option the confinement rules do not know may read a file, so
+        # it asks rather than being assumed harmless.
+        "rg --some-future-option run pkg",
+        "rg -Y run pkg",
+        "cat --unknown README.md",
+        "head -Q README.md",
+        "find pkg -newerish x",
+        # GNU abbreviations are not resolved; the full spelling is required.
+        "sort --rev README.md",
+    ],
+)
+async def test_an_option_the_rules_do_not_know_asks(
+    project: Path, spawned: list[list[str]], command: str
+) -> None:
+    with pytest.raises(ApprovalRequired):
+        await _tool(project).function(_unapproved(), command)
+
+    assert spawned == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Negative: a patterns file inside the project, in every spelling,
+        # and the everyday searches and reads stay prompt-free.
+        "rg -f patterns.txt README.md",
+        "rg -fpatterns.txt README.md",
+        "rg -nfpatterns.txt README.md",
+        "rg --file=patterns.txt README.md",
+        "rg --ignore-file patterns.txt run pkg",
+        "rg foo pkg/",
+        "rg -n -i --type py -g '*.py' run pkg",
+        "rg -nC2 -e run --no-heading pkg",
+        "rg -l --hidden --max-count=3 run",
+        "head -n 5 README.md",
+        "tail -20 README.md",
+        "cut -d/ -f2 README.md",
+        "sort -k2,2 -t: README.md",
+        "uniq -c README.md",
+        "wc -lw README.md",
+        "ls -la pkg",
+        "cat -n README.md",
+        "find pkg -type f -name '*.py' -maxdepth 2 -print",
+        "find pkg -size -10k -newer README.md",
+    ],
+)
+async def test_a_known_option_inside_the_project_runs_without_a_prompt(
+    project: Path, spawned: list[list[str]], command: str
+) -> None:
+    (project / "patterns.txt").write_text("run\n")
+
+    result = await _tool(project).function(_unapproved(), command)
+
+    assert result.return_code == 0, result.stderr
+    assert spawned == [[command]]
+
+
 async def test_a_command_the_allowlist_rejects_is_refused_without_a_prompt(
     project: Path, spawned: list[list[str]]
 ) -> None:

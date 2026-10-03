@@ -56,6 +56,9 @@ NONINTERACTIVE_PATH_ESCAPES = "absolute and parent-traversal paths are not avail
 NONINTERACTIVE_OPTION_CARRIED_INPUT = (
     "options that read file lists or run programs are not available"
 )
+NONINTERACTIVE_UNKNOWN_OPTION = (
+    "'{option}' is not among the options a confined read may use"
+)
 COMMAND_INVALID_SYNTAX = "Invalid command syntax: {segment}"
 COMMAND_SPAWN_FAILED = "Failed to spawn '{segment}' (executable: {executable}): {error}"
 COMMAND_NOT_INSTALLED = (

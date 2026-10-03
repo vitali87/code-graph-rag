@@ -7,7 +7,7 @@ import shlex
 import shutil
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
@@ -1997,6 +1997,129 @@ def _option_carries_file_input(parts: list[str]) -> bool:
     return False
 
 
+_CONFINED_READ_OPTION_KINDS: dict[str, dict[str, cs.ReadOptionKind]] = {
+    command: {
+        option: kind for kind, options in table.items() for option in options.split()
+    }
+    for command, table in cs.SHELL_CONFINED_READ_OPTIONS.items()
+}
+_FIND_NEWER_XY = re.compile(cs.SHELL_FIND_NEWER_XY)
+_VALUED_OPTION_KINDS = (cs.ReadOptionKind.VALUE, cs.ReadOptionKind.PATH)
+
+
+class _ReadOption(NamedTuple):
+    name: str
+    # None when SHELL_CONFINED_READ_OPTIONS does not list the option.
+    kind: cs.ReadOptionKind | None
+    value: str
+
+
+def _confined_option_denial(parts: list[str], root: Path) -> str | None:
+    """Why an option of this read is refused, or None when every one may run.
+
+    An allowlist (SHELL_CONFINED_READ_OPTIONS): an option it does not list is
+    refused, and a file-naming option's value is confined like an operand in
+    every spelling (`-f F`, `-fF`, `-nfF`, `--file F`, `--file=F`). Only the
+    `=` spelling was checked before, so `rg -f/outside/patterns inside.txt`
+    read an outside file without a prompt and quoted it in stderr (Greptile
+    security review on PR #2485).
+    """
+    kinds = _CONFINED_READ_OPTION_KINDS.get(parts[0], {})
+    scan = _find_options if parts[0] == cs.SHELL_CMD_FIND else _getopt_options
+    for option in scan(parts, kinds):
+        if option.kind is None:
+            return te.NONINTERACTIVE_UNKNOWN_OPTION.format(option=option.name)
+        if option.kind == cs.ReadOptionKind.PATH and _path_value_escapes(
+            option.value, root
+        ):
+            return te.NONINTERACTIVE_PATH_ESCAPES
+    return None
+
+
+def _getopt_options(
+    parts: list[str], kinds: dict[str, cs.ReadOptionKind]
+) -> Iterator[_ReadOption]:
+    # GNU getopt and ripgrep alike: options may follow operands, `--` ends
+    # them, short options cluster (`-nf`), and a value-taking one takes the
+    # rest of its cluster or else the next argument.
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "--":
+            return
+        if arg == "-" or not arg.startswith("-"):
+            continue
+        if arg.startswith("--"):
+            yield _long_option(parts[0], arg, kinds, rest)
+        elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
+            yield from _short_options(arg, kinds, rest)
+
+
+def _long_option(
+    command: str,
+    arg: str,
+    kinds: dict[str, cs.ReadOptionKind],
+    rest: Iterator[str],
+) -> _ReadOption:
+    name, attached, value = arg.partition("=")
+    kind = kinds.get(name)
+    if (
+        kind is None
+        and command in cs.SHELL_NEGATABLE_READS
+        and name.startswith(cs.SHELL_NEGATION_PREFIX)
+    ):
+        kind = cs.ReadOptionKind.FLAG
+    if kind == cs.ReadOptionKind.FLAG and attached:
+        # A switch given a value is a spelling these rules do not model.
+        kind = None
+    elif kind in _VALUED_OPTION_KINDS and not attached:
+        value = next(rest, "")
+    return _ReadOption(name, kind, value)
+
+
+def _short_options(
+    arg: str, kinds: dict[str, cs.ReadOptionKind], rest: Iterator[str]
+) -> Iterator[_ReadOption]:
+    for offset in range(1, len(arg)):
+        name = f"-{arg[offset]}"
+        kind = kinds.get(name)
+        if kind in _VALUED_OPTION_KINDS:
+            yield _ReadOption(name, kind, arg[offset + 1 :] or next(rest, ""))
+            return
+        yield _ReadOption(name, kind, "")
+
+
+def _find_options(
+    parts: list[str], kinds: dict[str, cs.ReadOptionKind]
+) -> Iterator[_ReadOption]:
+    # find's options are whole words, and each takes the next argument as
+    # its value even when that starts with a dash (`-size -10k`).
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "-" or not arg.startswith("-"):
+            continue
+        kind = kinds.get(arg)
+        if kind is None and _FIND_NEWER_XY.fullmatch(arg):
+            kind = cs.ReadOptionKind.PATH
+        value = next(rest, "") if kind in _VALUED_OPTION_KINDS else ""
+        yield _ReadOption(arg, kind, value)
+
+
+def _path_value_escapes(value: str, root: Path) -> bool:
+    # ripgrep drops an `=` between a short option and its value (`-f=F`
+    # reads F) where GNU getopt keeps it, so both readings are confined.
+    return any(
+        _path_escapes(candidate, root)
+        for candidate in (value, value.removeprefix("="))
+        if candidate
+    )
+
+
+def _path_escapes(path: str, root: Path) -> bool:
+    if _ESCAPING_PATH_ARG.search(path) or ".." in path.split("/"):
+        return True
+    return _escapes_root(root / path, root)
+
+
 def _noninteractive_denial(command: str, project_root: Path) -> str | None:
     # The denial reason for an operator-less run, or None when every segment
     # is a confined read: a read-only command in a non-writing form, no
@@ -2061,6 +2184,8 @@ def _noninteractive_segment_denial(
         return te.COMMAND_NONINTERACTIVE_DENIED.format(
             command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
         )
+    if reason := _confined_option_denial(parts, root):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(command=segment, reason=reason)
     return None
 
 

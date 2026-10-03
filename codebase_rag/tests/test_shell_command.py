@@ -684,6 +684,14 @@ class TestNoninteractiveMode:
         for command in (
             "rg --file=../patterns.txt .",
             "rg --file=linked_pats .",
+            # A value attached to a SHORT option is a path too, alone or
+            # behind a flag cluster, and ripgrep reads `-f=F` as F (Greptile
+            # security review on PR #2485).
+            "rg -f../patterns.txt .",
+            "rg -flinked_pats .",
+            "rg -nflinked_pats .",
+            "rg -f=../patterns.txt .",
+            f"rg -f{secret.as_posix()} .",
         ):
             result = await tool.function(mock_ctx, command)
             assert result.return_code != 0, command
