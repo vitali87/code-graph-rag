@@ -19,6 +19,8 @@ TS_JAVA_CAST_EXPRESSION = "cast_expression"
 # Java tree-sitter node types
 TS_FORMAL_PARAMETER = "formal_parameter"
 TS_SPREAD_PARAMETER = "spread_parameter"
+# A method's parameter list; a lambda's may be `inferred_parameters` instead.
+TS_JAVA_FORMAL_PARAMETERS = "formal_parameters"
 TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
 TS_FIELD_DECLARATION = "field_declaration"
 # An interface field. The grammar names it after what it implicitly is

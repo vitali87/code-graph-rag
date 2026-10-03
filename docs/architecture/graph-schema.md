@@ -104,6 +104,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | CALLS, REFERENCES, INSTANTIATES | `resolution: string?` | How the edge was bound (issue #1526): `exact` (scope, import, type or signature), `overload` (one edge per same-named candidate), `heuristic` (name-only: trie suffix, wildcard import, package member), `trace_confirmed` (a static edge a runtime trace observed), `dynamic` (a call only a trace saw). Absent on edges emitted before the label existed; they rank as `exact`. |
 | INHERITS, IMPLEMENTS (C#) | `resolution: string?` | `heuristic` when neither the class's namespace, an enclosing namespace, nor a `using` alias or namespace declares the base, and it was bound by a project-wide name match instead (issue #2534). Absent when scope resolved it. |
 | CALLS (`dynamic` only) | `dispatch_literal: boolean?`, `unlocatable: boolean?` | `dispatch_literal: true` with `line`/`col` pointing at the `getattr(obj, "name")` argument or the registry-key literal the call went through; `unlocatable: true` when the caller's own body (nested definitions excluded) holds no such literal, or more than one, since two candidates cannot be told apart statically. |
+| CALLS, REFERENCES, INSTANTIATES | `spread_args: boolean?` | `true` when a TypeScript, JavaScript, PHP or Go call passes a number of values its written arguments do not show: `f(...xs)`, `f(...$xs)`, `f(xs...)`, a Go call whose lone argument is itself a call (`f(pair())` passes every result of `pair`), or a tagged template, which passes its strings array and one value per substitution. `arg_count` keeps what is written; absent otherwise (issue #2517). `cgr check` gives such a site no definite arity verdict. |
 
 Sites are stored as **one edge per site**: a function that calls `g` twice has two `CALLS` edges to `g`, one per call expression, and `from x import a, b` yields two `IMPORTS` edges to `x` (same statement span, different `alias`). The site properties join the write-time `MERGE` key (`line`, `col`; plus `alias` for `IMPORTS`), the same mechanism that keeps parallel `FLOWS_TO` edges apart, so re-indexing is idempotent. A query that wants callers rather than call sites should `DISTINCT` on the endpoint; a query that wants the sites reads `r.line`.
 
@@ -121,6 +122,17 @@ source order, one entry per parameter and `""` for an unannotated one; it is
 absent, not empty, for languages the extractor does not read (Python,
 TypeScript/JavaScript, Go, Java, Rust, C# and, return type only, C/C++ are
 read). Receivers (`self`, `&self`) count as a parameter with `""`.
+
+`positional_params` lists a Python definition's positional parameter names
+as CPython counts them, receiver included (issue #227). TypeScript,
+JavaScript, Go, Rust, PHP, Java and C# definitions list every parameter a
+call fills, marked with the optionality the signature declares (issue
+#2517): `pad?` may be left out, `...rest` takes any number of trailing
+arguments, and `self` (Rust) or `this s` (a C# extension method) is a
+receiver one call form passes and another does not. The property is absent,
+never empty, for every other language and for a bodiless TypeScript
+signature, which reads as "kinds unknown". `cgr check` compares the lists to
+report [signature changes](structural-delta.md#signatures-outside-python).
 
 The names an annotation mentions are resolved after every file is parsed:
 through the module's imports first, then the module and its enclosing

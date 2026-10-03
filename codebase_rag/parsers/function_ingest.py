@@ -44,6 +44,7 @@ from .parameter_nodes import (
     emit_declared_parameters,
 )
 from .php import utils as php_utils
+from .positional_params import declared_positional_params
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -1590,13 +1591,16 @@ class FunctionIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        # Python only: the other frontends have no positional/keyword-only
-        # distinction extracted, and an absent property reads as "kinds
-        # unknown" downstream rather than as "zero positional parameters".
+        # Python's list is CPython's positional names; the languages that
+        # declare optionality store every parameter marked with it (issue
+        # #2517). The rest stay absent, which reads as "kinds unknown"
+        # downstream rather than as "zero positional parameters".
         if language == cs.SupportedLanguage.PYTHON:
             props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
                 func_node
             )
+        elif (declared := declared_positional_params(func_node, language)) is not None:
+            props[cs.KEY_POSITIONAL_PARAMS] = declared
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))

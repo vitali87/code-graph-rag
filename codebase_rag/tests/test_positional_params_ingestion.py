@@ -6,10 +6,11 @@ diagnosis reads back. A correct extractor that no frontend calls would pass
 those tests and leave the feature dead, which is the exact failure this
 property exists to fix.
 
-Non-Python frontends must leave the property ABSENT rather than empty. Absent
-means "the kinds were never extracted"; empty asserts "declares no positional
-parameters" and would make every correct Go or Java callee look like an arity
-mismatch.
+A frontend that does not read its parameters must leave the property ABSENT
+rather than empty. Absent means "the kinds were never extracted"; empty
+asserts "declares no positional parameters" and would make every correct
+callee look like an arity mismatch. The languages that declare optionality in
+the signature store their own marked lists (issue #2517).
 """
 
 from __future__ import annotations
@@ -79,15 +80,29 @@ def test_python_methods_keep_the_receiver(temp_repo: Path, mock_ingestor) -> Non
     assert stored == [["self", "a"]]
 
 
-def test_a_non_python_frontend_leaves_the_property_absent(
+def test_an_unread_frontend_leaves_the_property_absent(
     temp_repo: Path, mock_ingestor
 ) -> None:
     """Absent, never empty: empty would assert zero positional parameters."""
+    (temp_repo / "main.lua").write_text(
+        "local function handle(a, b)\n  return a\nend\n",
+    )
+    (temp_repo / "main.c").write_text("int handle(int a, int b) { return a; }\n")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    functions = _props_by_qn(mock_ingestor, cs.NodeLabel.FUNCTION)
+    assert functions
+    for props in functions.values():
+        assert cs.KEY_POSITIONAL_PARAMS not in props
+
+
+def test_a_go_function_records_its_declared_parameters(
+    temp_repo: Path, mock_ingestor
+) -> None:
     (temp_repo / "main.go").write_text(
-        "package main\n\nfunc Handle(a int, b int) int {\n\treturn a\n}\n",
+        "package main\n\nfunc Handle(a int, rest ...int) int {\n\treturn a\n}\n",
     )
     create_and_run_updater(temp_repo, mock_ingestor)
 
-    for label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
-        for props in _props_by_qn(mock_ingestor, label).values():
-            assert cs.KEY_POSITIONAL_PARAMS not in props
+    (props,) = _props_by_qn(mock_ingestor, cs.NodeLabel.FUNCTION).values()
+    assert props[cs.KEY_POSITIONAL_PARAMS] == ["a", "...rest"]

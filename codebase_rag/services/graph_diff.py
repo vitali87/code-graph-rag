@@ -137,6 +137,7 @@ _SITE_PROPS = frozenset(
         cs.KEY_COL,
         cs.KEY_END_LINE,
         cs.KEY_END_COL,
+        cs.KEY_SPREAD_ARGS,
         cs.KEY_ARG_COUNT,
         cs.KEY_KWARG_NAMES,
         cs.KEY_ALIAS,

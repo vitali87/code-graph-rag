@@ -923,7 +923,54 @@ def call_site_properties(node: Node) -> PropertyDict:
         positional, keyword = _split_call_arguments(args_node)
         props[cs.KEY_ARG_COUNT] = len(positional) + len(keyword)
         props[cs.KEY_KWARG_NAMES] = list(keyword)
+        if _count_unknown(args_node, positional):
+            props[cs.KEY_SPREAD_ARGS] = True
     return props
+
+
+def _count_unknown(args_node: Node, positional: list[Node]) -> bool:
+    """Whether the call passes a number of values its arguments do not show.
+
+    Counted as one argument, `f(...args)` would read as too few for
+    `f(a, b)` on a call that type-checks (issue #2517). A tagged template
+    passes its strings array and one value per substitution, not the
+    fragments its node holds.
+    """
+    if args_node.type == cs.TS_TEMPLATE_STRING:
+        return True
+    return any(
+        argument.type in _SPREAD_ARGUMENTS for argument in positional
+    ) or _passes_every_result(args_node, positional)
+
+
+def _passes_every_result(args_node: Node, positional: list[Node]) -> bool:
+    """Go's `f(pair())`: a lone call argument passes all of `pair`'s results.
+
+    Go is the one grammar with an `argument_list` under a `source_file` root
+    (Rust's list is `arguments`, C's root a `translation_unit`), and only
+    this shape is walked up to its root.
+    """
+    if (
+        args_node.type != cs.TS_ARGUMENT_LIST
+        or len(positional) != 1
+        or positional[0].type != cs.TS_GO_CALL_EXPRESSION
+    ):
+        return False
+    root = args_node
+    while root.parent is not None:
+        root = root.parent
+    return root.type == cs.TS_GO_SOURCE_FILE
+
+
+# Arguments passing an unknown number of values. PHP's `argument` wrapper is
+# unwrapped with C#'s, which shares its node type, so the unpacking is seen.
+_SPREAD_ARGUMENTS = frozenset(
+    {
+        cs.TS_SPREAD_ELEMENT,
+        cs.TS_GO_VARIADIC_ARGUMENT,
+        cs.TS_PHP_VARIADIC_UNPACKING,
+    }
+)
 
 
 _RESOLVED_RELS = frozenset(

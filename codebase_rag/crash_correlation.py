@@ -14,6 +14,7 @@ from typing import NamedTuple
 
 from . import constants as cs
 from .flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES, QueryFn
+from .language_spec import get_language_for_extension
 from .trace.records import FramePoint
 from .trace.resolution import CallableNode, FrameResolver, ResolutionStats
 
@@ -27,13 +28,16 @@ WHERE a.qualified_name STARTS WITH $prefix
 RETURN a.qualified_name AS from_qn, b.qualified_name AS to_qn
 """
 
-# Declared positional parameters, for the arity check. Only Python ingestion
-# writes this property, so a node without it yields NULL and the diagnosis
-# declines rather than comparing against a phantom empty signature.
+# Declared positional parameters, for the arity check. A node without the
+# property yields NULL and the diagnosis declines rather than comparing
+# against a phantom empty signature. The path comes along because other
+# languages store their own lists (issue #2517), and a Python TypeError is
+# never raised by one of their functions.
 CYPHER_CRASH_POSITIONAL_PARAMS = f"""MATCH (n)
 WHERE n.qualified_name STARTS WITH $prefix
   AND n.{cs.KEY_POSITIONAL_PARAMS} IS NOT NULL
-RETURN n.qualified_name AS qn, n.{cs.KEY_POSITIONAL_PARAMS} AS positional_params
+RETURN n.qualified_name AS qn, n.{cs.KEY_POSITIONAL_PARAMS} AS positional_params,
+       n.{cs.KEY_PATH} AS path
 """
 
 _TYPE_ERROR = "TypeError"
@@ -285,6 +289,11 @@ def diagnose_arity(
     )
 
 
+def _declares_its_arity(path: str) -> bool:
+    """Whether the node's list follows another language's rules (#2517)."""
+    return get_language_for_extension(Path(path).suffix) in cs.DECLARED_ARITY_LANGUAGES
+
+
 class RootCause(NamedTuple):
     qualified_name: str
     path: str | None
@@ -400,7 +409,12 @@ class _CrashGraph:
         self.positional_params: dict[str, tuple[str, ...]] = {}
         for row in fetch_all(CYPHER_CRASH_POSITIONAL_PARAMS, {cs.KEY_PREFIX: prefix}):
             qn, declared = row.get("qn"), row.get("positional_params")
-            if isinstance(qn, str) and isinstance(declared, list):
+            path = row.get(cs.KEY_PATH)
+            if (
+                isinstance(qn, str)
+                and isinstance(declared, list)
+                and not (isinstance(path, str) and _declares_its_arity(path))
+            ):
                 self.positional_params[qn] = tuple(
                     name for name in declared if isinstance(name, str)
                 )

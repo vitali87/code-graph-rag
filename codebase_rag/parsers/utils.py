@@ -1473,6 +1473,15 @@ def ingest_method(
         method_props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
             method_node
         )
+    else:
+        # The languages that declare optionality store their parameters
+        # marked with it (issue #2517). Local import: positional_params
+        # imports this module for its decoder.
+        from .positional_params import declared_positional_params
+
+        declared = declared_positional_params(method_node, language)
+        if declared is not None:
+            method_props[cs.KEY_POSITIONAL_PARAMS] = declared
     # Local import: type_facts imports this module for safe_decode_with_fallback.
     from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 
@@ -1610,6 +1619,13 @@ def module_function_props(
     if file_path is not None and repo_path is not None:
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    # Local import: positional_params imports this module for its decoder.
+    # One reader serves both grammars, whose parameter node types differ.
+    from .positional_params import declared_positional_params
+
+    declared = declared_positional_params(function_node, cs.SupportedLanguage.JS)
+    if declared is not None:
+        props[cs.KEY_POSITIONAL_PARAMS] = declared
     props.update(fingerprint_props(function_node))
     props.update(anchor_hash_props(function_node))
     return props

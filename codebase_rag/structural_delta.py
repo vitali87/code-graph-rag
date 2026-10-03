@@ -35,6 +35,7 @@ from .dead_code import (
 )
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _prefix
+from .language_spec import get_language_for_extension
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -57,6 +58,11 @@ class CallSite(NamedTuple):
     caller: str
     caller_path: str
     rel: str
+    # How the edge was bound and whether an argument spreads a sequence:
+    # outside Python only an exact binding with a countable argument list
+    # gets a definite arity verdict (issue #2517).
+    resolution: str
+    spread_args: bool
     callee: str
     callee_path: str
     line: int | None
@@ -248,6 +254,8 @@ def _site(row: ResultRow) -> CallSite:
         caller=_text(row.get(cs.KEY_FROM_QN)),
         caller_path=_text(row.get(cs.KEY_FROM_PATH)),
         rel=_text(row.get(cs.KEY_REL_TYPE)),
+        resolution=_text(row.get(cs.KEY_RESOLUTION)),
+        spread_args=row.get(cs.KEY_SPREAD_ARGS) is True,
         callee=_text(row.get(cs.KEY_TO_QN)),
         callee_path=_text(row.get(cs.KEY_TO_PATH)),
         line=_opt_int(row.get(cs.KEY_LINE)),
@@ -527,14 +535,28 @@ def _renames(
     return renames
 
 
+def _language(path: str) -> cs.SupportedLanguage | None:
+    return get_language_for_extension(Path(path).suffix) if path else None
+
+
+def _params_moved(old: Definition, new: Definition) -> bool:
+    """Whether the declared parameters differ between the two snapshots.
+
+    Outside Python a list on one side only was never extracted on the other
+    (a graph indexed before issue #2517), which is no signature change.
+    """
+    if old.positional_params == new.positional_params:
+        return False
+    if _language(new.path) not in cs.DECLARED_ARITY_LANGUAGES:
+        return True
+    return old.positional_params is not None and new.positional_params is not None
+
+
 def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     changed: list[str] = []
     for qn in sorted(set(before.definitions) & set(after.definitions)):
         old, new = before.definitions[qn], after.definitions[qn]
-        if (old.fingerprint, old.positional_params) != (
-            new.fingerprint,
-            new.positional_params,
-        ):
+        if old.fingerprint != new.fingerprint or _params_moved(old, new):
             changed.append(qn)
     return changed
 
@@ -637,9 +659,84 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     return _VARIADIC.search(text[open_at:close_at]) is not None
 
 
+# The verdicts that name a call the language rejects; the rest are hints.
+_DEFINITE_VERDICTS = frozenset({cs.DELTA_ARITY_TOO_MANY, cs.DELTA_ARITY_TOO_FEW})
+# Bindings that name the function the call runs. Absent is the legacy exact.
+_DEFINITE_RESOLUTIONS = frozenset(
+    {"", cs.EdgeResolution.EXACT.value, cs.EdgeResolution.TRACE_CONFIRMED.value}
+)
+
+
+def _is_receiver(entry: str) -> bool:
+    return entry == cs.POSITIONAL_RECEIVER_SELF or entry.startswith(
+        cs.POSITIONAL_RECEIVER_THIS_PREFIX
+    )
+
+
+def _declared_bounds(declared: tuple[str, ...]) -> tuple[int, int, int | None]:
+    """(fixed parameters, fewest arguments a call passes, most or None).
+
+    A receiver one call form passes and another does not widens the most
+    by one; a default before a required parameter still has to be passed
+    to reach it, so the fewest runs to the last required one.
+    """
+    receiver = bool(declared) and _is_receiver(declared[0])
+    params = declared[1:] if receiver else declared
+    fixed = [p for p in params if not p.startswith(cs.POSITIONAL_REST_PREFIX)]
+    fewest = max(
+        (
+            index + 1
+            for index, entry in enumerate(fixed)
+            if not entry.endswith(cs.POSITIONAL_OPTIONAL_SUFFIX)
+        ),
+        default=0,
+    )
+    if len(fixed) < len(params):
+        return len(fixed), fewest, None
+    return len(fixed), fewest, len(fixed) + (1 if receiver else 0)
+
+
+def _rejected(
+    rule: frozenset[cs.SupportedLanguage], site: CallSite, definition: Definition
+) -> bool:
+    # Both ends: nothing checks a JavaScript caller of a TypeScript callee.
+    return _language(site.caller_path) in rule and _language(definition.path) in rule
+
+
+def _declared_arity_verdict(site: CallSite, definition: Definition) -> tuple[int, str]:
+    """A site's verdict against a signature that declares its optionality.
+
+    Unlike Python's, these lists say which parameters may be left out, so
+    fewer arguments than the required ones is a finding where the language
+    rejects the call (issue #2517).
+    """
+    declared = definition.positional_params
+    if declared is None:
+        return -1, cs.DELTA_ARITY_UNKNOWN
+    fixed, fewest, most = _declared_bounds(declared)
+    passed = site.arg_count
+    if passed is None or site.spread_args:
+        return fixed, cs.DELTA_ARITY_UNKNOWN
+    if passed >= fewest and (most is None or passed <= most):
+        return fixed, cs.DELTA_ARITY_OK
+    # Bound by name alone, the edge may lead to a same-named function the
+    # call never runs, whose count proves nothing about this one.
+    if site.resolution not in _DEFINITE_RESOLUTIONS:
+        return fixed, cs.DELTA_ARITY_UNKNOWN
+    if passed < fewest:
+        if _rejected(cs.ARITY_REJECTS_MISSING, site, definition):
+            return fixed, cs.DELTA_ARITY_TOO_FEW
+        return fixed, cs.DELTA_ARITY_POSSIBLY_MISSING
+    if _rejected(cs.ARITY_REJECTS_SURPLUS, site, definition):
+        return fixed, cs.DELTA_ARITY_TOO_MANY
+    return fixed, cs.DELTA_ARITY_OK
+
+
 def _arity_verdict(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> tuple[int, str]:
+    if _language(definition.path) in cs.DECLARED_ARITY_LANGUAGES:
+        return _declared_arity_verdict(site, definition)
     declared = definition.positional_params
     if declared is None:
         return -1, cs.DELTA_ARITY_UNKNOWN
@@ -694,10 +791,11 @@ def _site_order(finding: ArityAtSite) -> tuple[str, int, int]:
 
 
 def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite]:
-    """Call sites in the re-parsed files that pass more than the callee takes.
+    """Call sites in the re-parsed files the callee's language rejects.
 
-    The definitive verdict only: a site passing fewer positional arguments
-    may be relying on defaults the graph does not record.
+    The definitive verdicts only: a Python site passing fewer positional
+    arguments may be relying on defaults the graph does not record, so only
+    a signature that declares its optionality yields `too_few`.
     """
     out: list[ArityAtSite] = []
     for site in after.sites:
@@ -709,7 +807,7 @@ def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite
         ):
             continue
         finding = _site_finding(site, callee, repo_root)
-        if finding["verdict"] == cs.DELTA_ARITY_TOO_MANY:
+        if finding["verdict"] in _DEFINITE_VERDICTS:
             out.append(finding)
     return sorted(out, key=_site_order)
 
@@ -769,8 +867,7 @@ def _signature_changes(
     changed = [
         qn
         for qn in symbols["changed"]
-        if before.definitions[qn].positional_params
-        != after.definitions[qn].positional_params
+        if _params_moved(before.definitions[qn], after.definitions[qn])
     ]
     remote = (
         _remote_callers(fetch_all, project_name, changed)
@@ -1318,7 +1415,7 @@ def has_findings(delta: StructuralDelta) -> bool:
         # channel=None)`) is a hint the JSON keeps, not a finding (issue
         # #2656, as structural-delta.md documents).
         or any(
-            site["verdict"] == cs.DELTA_ARITY_TOO_MANY
+            site["verdict"] in _DEFINITE_VERDICTS
             for change in delta["signature_changes"]
             for site in change["sites"]
         )

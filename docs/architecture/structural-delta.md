@@ -71,7 +71,7 @@ records it next to the re-ingest itself.
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
 | `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
-| `arity_findings`     | Call sites in the edited files that pass more positional arguments than the callee declares (`too_many`), the only verdict that needs no knowledge of defaults. |
+| `arity_findings`     | Call sites in the edited files the callee's language rejects: more positional arguments than the callee declares (`too_many`), the only verdict that needs no knowledge of defaults, and, where the signature declares which parameters are optional, fewer than it requires (`too_few`, see [signatures outside Python](#signatures-outside-python)). |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
 | `tests_reaching`     | Test functions from which any symbol of the edited files is reachable through the call graph, with the shortest distance and the symbol it is reached through. |
@@ -79,13 +79,49 @@ records it next to the re-ingest itself.
 ### Arity verdicts
 
 Verdicts use the receiver arithmetic of `crash_correlation.diagnose_arity`:
-a method's `self` counts for CPython but is not caller-supplied. Only
-Python definitions carry `positional_params`, so sites of other languages
-read `unknown`. The stored parameter list ends at `*args`; the definition
+a method's `self` counts for CPython but is not caller-supplied. That is
+Python's rule; the languages whose signatures declare optionality follow
+[their own](#signatures-outside-python). The stored Python list ends at `*args`; the definition
 header is read back so a variadic callee is never reported as receiving
 too many arguments. `possibly_missing` means fewer arguments than
 parameters: the graph does not record defaults, so this is a hint, not a
 finding, and does not trip `--fail-on-found`.
+
+### Signatures outside Python
+
+TypeScript, JavaScript, Go, Rust, PHP, Java and C# definitions store
+`positional_params` too (issue #2517): every parameter a call fills, marked
+with the optionality the signature declares. `pad?` may be left out (a
+TypeScript `?`, any default value), `...rest` takes any number of trailing
+arguments (rest, variadic, C# `params`), and `self` (Rust) or `this s` (a C#
+extension method) is a receiver that a method call leaves implicit and a
+path call (`S::m(s, 1)`, `Util.Ext(s, 1)`) passes. A TypeScript `this:`
+parameter, Java's `C this` and Go's receiver field are never passed and are
+not listed. A change to the list is a signature change, and each site is
+judged by the number of arguments it passes:
+
+| Verdict            | When |
+|--------------------|------|
+| `ok`               | The count fits: every required parameter at least, every parameter (and the receiver) at most, any number past a rest parameter. A surplus is `ok` too where JavaScript is either end of the call or in PHP, both of which drop it at run time. |
+| `too_few`          | Fewer arguments than the required parameters, where the language rejects the call: TypeScript, Go, Rust, PHP (`ArgumentCountError`), Java and C#. A finding: it trips `--fail-on-found` as `too_many` does. |
+| `too_many`         | More arguments than the parameters, where the language rejects the call: TypeScript, Go, Rust, Java and C#. A finding. |
+| `possibly_missing` | Fewer arguments than the required parameters where JavaScript is either end of the call: it passes `undefined`, and nothing type-checks a JavaScript caller. A hint. |
+| `unknown`          | The site passes a number of values its arguments do not show (`f(...args)`, `f(...$args)`, `f(xs...)`, Go's `f(pair())` passing every result of `pair`, a tagged template; the edge's `spread_args`), or the edge was bound by name alone (`resolution` `heuristic` or `overload`) and may lead to a same-named function the call never runs. |
+
+Java and C# put a method's parameter types in its qualified name, so a
+parameter added, removed or retyped renames the node, and its callers are
+reported under `dangling_callers` with `renamed_to`. A change that keeps
+the types (a parameter renamed, a C# default added or dropped) is a
+signature change as above.
+
+Not read, so their edits never reach `signature_changes`: C and C++ (a
+default sits on the header declaration, which the definition need not
+repeat), Scala and Dart (named and curried parameter lists), Lua (any count
+is accepted) and bodiless TypeScript signatures (an overload, an interface
+or abstract member: a call matches one of possibly several). A definition
+indexed before these lists existed has none on the base side and is not
+compared; the first sync after upgrading re-parses every file, since the
+parser changed, and records the lists and every site's `spread_args`.
 
 ## `cgr check`
 
