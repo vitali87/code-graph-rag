@@ -3,6 +3,9 @@ language: solidity
 ast_grep_id: solidity
 extensions:
   - ".sol"
+# Functions are named under their contract and overloads stay distinct
+# nodes, the way the tree-sitter tier names them (issue #2589).
+scoped_names: true
 functions:
   # visibility/mutability keywords follow the name, so the kind rule catches
   # public/internal/pure/view variants uniformly
