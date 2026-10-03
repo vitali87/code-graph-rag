@@ -76,6 +76,7 @@ from .types_defs import (
 )
 from .utils.path_utils import (
     derive_project_name,
+    keeps_outside_run_excludes,
     project_roots_from_rows,
     resolve_repo_path,
     unwritable_output_reason,
@@ -671,6 +672,7 @@ def _run_graph_sync(
         cgrignore = load_ignore_patterns(repo)
     else:
         unignore_paths = cgrignore.unignore or None
+    unignore_paths = keeps_outside_run_excludes(unignore_paths, cli_excludes)
     exclude_paths = cli_excludes | cgrignore.exclude or None
 
     elapsed = time.monotonic()
@@ -1047,6 +1049,7 @@ def index(
     else:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
         unignore_paths = cgrignore.unignore or None
+    unignore_paths = keeps_outside_run_excludes(unignore_paths, cli_excludes)
     exclude_paths = cli_excludes | cgrignore.exclude or None
 
     try:

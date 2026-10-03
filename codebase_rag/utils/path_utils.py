@@ -152,12 +152,44 @@ def nested_keeps(unignore_paths: frozenset[str]) -> tuple[str, ...]:
     interactive setup saves: only such a keep has enclosing directories a
     walk can be sent through. A bare name or a glob names no single path.
     """
-    keeps: list[str] = []
-    for pattern in unignore_paths:
-        keep = pattern.strip().strip(cs.SEPARATOR_SLASH)
-        if cs.SEPARATOR_SLASH in keep and not _GLOB_MAGIC.search(keep):
-            keeps.append(keep)
-    return tuple(sorted(keeps))
+    return tuple(
+        sorted(
+            keep
+            for pattern in unignore_paths
+            if (keep := _nested_keep(pattern)) is not None
+        )
+    )
+
+
+def _nested_keep(pattern: str) -> str | None:
+    keep = pattern.strip().strip(cs.SEPARATOR_SLASH)
+    if cs.SEPARATOR_SLASH in keep and not _GLOB_MAGIC.search(keep):
+        return keep
+    return None
+
+
+def keeps_outside_run_excludes(
+    unignore_paths: frozenset[str] | None, run_excludes: frozenset[str]
+) -> frozenset[str] | None:
+    """`unignore_paths` without the nested keeps a run's `--exclude` encloses.
+
+    A nested keep lifts the exclusion of the directories enclosing it, which
+    is meant for the ignore files it is saved in. `--exclude` is the run's
+    own choice and must win: with `!generated/node_modules` saved,
+    `--exclude generated` indexed the kept directory anyway (Greptile review
+    of PR 2510). Dropping the keep for the run, rather than telling the walk
+    which excludes came from where, keeps the recorded exclusion state the
+    exact scope that was indexed.
+    """
+    if not unignore_paths or not run_excludes:
+        return unignore_paths
+    overridden = frozenset(
+        pattern
+        for pattern in unignore_paths
+        if (keep := _nested_keep(pattern)) is not None
+        and _enclosing_excludes(keep, run_excludes)
+    )
+    return unignore_paths - overridden or None
 
 
 @lru_cache(maxsize=256)

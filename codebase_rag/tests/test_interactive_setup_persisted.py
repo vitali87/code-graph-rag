@@ -434,3 +434,83 @@ def test_concurrent_saves_both_keep_their_choice(
     assert not other.is_alive()
     unignore = load_ignore_patterns(vendored).unignore
     assert {"tools", "docs"} <= unignore
+
+
+def _walked_by_cli(repo: Path, command: list[str]) -> set[str]:
+    # The files the CLI's own run would index: the exclude and unignore sets
+    # it hands GraphUpdater, fed to the real walk.
+    with (
+        patch("codebase_rag.cli.connect_memgraph") as connect,
+        patch("codebase_rag.graph_updater.GraphUpdater") as updater,
+        patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
+    ):
+        connect.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        connect.return_value.__exit__ = MagicMock(return_value=False)
+        result = CliRunner().invoke(app, [*command, "--repo-path", str(repo)])
+    assert result.exit_code == 0, result.output
+    kwargs = updater.call_args.kwargs
+    return {
+        rel
+        for _, _, rel in walk_eligible_files(
+            repo, kwargs["exclude_paths"], kwargs["unignore_paths"]
+        )
+    }
+
+
+@pytest.fixture
+def saved_nested_keep(repo: Path) -> Path:
+    (repo / CGRIGNORE_FILENAME).write_text("!generated/node_modules\n")
+    for rel in ("generated/node_modules/kept.py", "generated/out.py"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("X = 1\n")
+    return repo
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["start", "--update-graph"],
+        ["index", "-o", "out"],
+    ],
+)
+def test_a_run_level_exclusion_beats_a_saved_nested_keep(
+    saved_nested_keep: Path, tmp_path: Path, command: list[str]
+) -> None:
+    # Greptile review of PR 2510: `--exclude generated` is this run's own
+    # choice, so a keep saved beneath it in `.cgrignore` does not reopen it.
+    if command[0] == "index":
+        command = ["index", "-o", str(tmp_path / "out")]
+
+    walked = _walked_by_cli(saved_nested_keep, [*command, "--exclude", "generated"])
+
+    assert not any(rel.startswith("generated/") for rel in walked)
+    assert "src/lib.py" in walked
+
+
+def test_a_saved_nested_keep_still_lifts_an_ignore_file_exclusion(
+    saved_nested_keep: Path,
+) -> None:
+    # Negative: the same keep under a `.gitignore`d directory, with no
+    # `--exclude`, is walked as before.
+    (saved_nested_keep / ".gitignore").write_text("generated/\n")
+
+    walked = _walked_by_cli(saved_nested_keep, ["start", "--update-graph"])
+
+    assert "generated/node_modules/kept.py" in walked
+    assert "generated/out.py" not in walked
+
+
+def test_a_run_level_file_pattern_still_applies_inside_a_kept_directory(
+    saved_nested_keep: Path,
+) -> None:
+    # Negative: an `--exclude` that encloses nothing keeps the keep, and
+    # still wins for the files it names inside it.
+    (saved_nested_keep / ".gitignore").write_text("generated/\n")
+    (saved_nested_keep / "generated/node_modules/skip.js").write_text("x\n")
+
+    walked = _walked_by_cli(
+        saved_nested_keep, ["start", "--update-graph", "--exclude", "*.js"]
+    )
+
+    assert "generated/node_modules/kept.py" in walked
+    assert "generated/node_modules/skip.js" not in walked
