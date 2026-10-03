@@ -44,6 +44,10 @@ given a `reingest` callable; the MCP `rename` tool and `cgr rename` pass the
 live updater's. The verdict rides on the operation's report (`verdict`), so
 an agent sees the reasons and the affected tests in one place.
 
+![cgr rename of helper onto the existing name clamp failing the rename contract with four reasons, rolled back with undone true and a clean working tree](../assets/demos/postcondition-contract.gif)
+
+![cgr rename of helper to assist passing the contract, with no failures and test_run listed as the affected test](../assets/demos/postcondition-contract-pass.gif)
+
 The transaction's own verifier runs before the commit and answers a
 narrower question (does every staged file still parse); the contract runs
 after, because the graph can only measure what is on disk.

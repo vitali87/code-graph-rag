@@ -20,6 +20,8 @@ cgr start --repo-path ~/services/user-service --update-graph
 cgr start --repo-path ~/services/order-service --update-graph
 ```
 
+![cgr start --update-graph indexing user-service and then order-service into the same graph](../assets/demos/multi-project-index.gif)
+
 Project names are derived from the directory name plus a short hash of the
 full path (for example `user-service__a1b2c3d4`), so two checkouts with the
 same folder name never overwrite each other. Pass `--project-name` to choose
@@ -45,6 +47,10 @@ cgr workspace add-repo backend ~/services/user-service
 cgr workspace add-repo backend ~/services/order-service
 cgr start --workspace backend
 ```
+
+![cgr workspace create, add-repo and show for the backend workspace, cgr export --workspace backend, and cgr stats --workspace backend counting both projects](../assets/demos/multi-project-workspace.gif)
+
+*`cgr start --workspace backend` opens the LLM chat and is not part of the recording.*
 
 `--projects` overrides `--project-name`; `--workspace` expands to every
 repository saved in the workspace. See `cgr help workspace` for the full
@@ -85,6 +91,8 @@ MATCH (caller)-[:READS_FROM|WRITES_TO]->(:Resource {kind: 'NETWORK'})
       -[:RESOLVES_TO]->(:Resource {kind: 'ENDPOINT'})<-[:EXPOSES]-(handler)
 RETURN caller.qualified_name, handler.qualified_name
 ```
+
+![Both services indexed with --capture io, then the query in mgconsole linking order-service's fetch_user to user-service's get_user handler](../assets/demos/multi-project-tracing.gif)
 
 Matching uses the URL path only: dynamic (non-literal) URLs and requests
 whose paths match no known template stay unlinked.
@@ -138,5 +146,7 @@ name.
 # Remove one project without touching the others
 cgr delete-project --name user-service__a1b2c3d4
 ```
+
+![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)
 
 Deleting a project also removes its embeddings from the vector store.
