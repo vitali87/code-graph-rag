@@ -72,8 +72,35 @@ def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
     if stderr is None:
         return None
     return ec.NODE_SKIP_CANNOT_REQUIRE.format(
-        package=package, stderr=stderr.strip()[: ec.SKIP_REASON_STDERR_CHARS]
+        package=package, stderr=reason_stderr(stderr)
     )
+
+
+def reason_stderr(stderr: str) -> str:
+    """The part of a child's stderr a skip reason quotes.
+
+    gRPC's fork handlers run in the child between fork and exec, so what they
+    log is always a LEADING block, ahead of anything the exec'd program
+    writes. Cut as-is, that block can fill the whole budget (both macOS jobs
+    of PR #2550 lost ERR_REQUIRE_ESM this way). So the block moves behind the
+    child's output instead of being dropped: the child's lines come first and
+    in their own order, and nothing is lost when the budget allows. Past the
+    child's first line nothing moves, even a fork-source line, because by
+    then the order is the child's.
+    """
+    lines = stderr.splitlines()
+    first_own = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if not ec.INHERITED_LOG_LINE_PATTERN.match(line)
+        ),
+        len(lines),
+    )
+    # Rotating by len(lines) is the identity, so a stderr made only of
+    # inherited lines keeps its order: noise still beats a bare colon.
+    reordered = lines[first_own:] + lines[:first_own]
+    return "\n".join(reordered).strip()[: ec.SKIP_REASON_STDERR_CHARS]
 
 
 def node_oracle_available(oracle_dir: Path | None = None) -> bool:
@@ -222,9 +249,7 @@ def ensure_node_deps(oracle_dir: Path) -> None:
         # its stderr is the most useful thing a developer can be shown here.
         raise NodeOracleUnavailable(
             ec.NODE_SKIP_INSTALL_FAILED.format(
-                stderr=((e.stderr or e.stdout or "").strip())[
-                    : ec.SKIP_REASON_STDERR_CHARS
-                ]
+                stderr=reason_stderr(e.stderr or e.stdout or "")
             )
         ) from e
     finally:

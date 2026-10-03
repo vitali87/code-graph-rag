@@ -60,7 +60,22 @@ def test_delete_project_cleans_embeddings_with_node_ids(
     result = runner.invoke(app, ["delete-project", "--name", "platform"])
 
     assert result.exit_code == 0, result.output
-    mock_delete_embeddings.assert_called_once_with("platform", [1, 2])
+    mock_delete_embeddings.assert_called_once_with("platform", [1, 2], [])
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_leaves_a_nested_projects_embeddings(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # `platform.` also prefixes `platform.v2`, a project of its own.
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.list_projects.return_value = ["platform", "platform.v2", "platform2"]
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    mock_delete_embeddings.assert_called_once_with("platform", [1, 2], ["platform.v2"])
 
 
 @patch("codebase_rag.cli.delete_project_embeddings")

@@ -711,6 +711,11 @@ KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
 CYPHER_DEFAULT_LIMIT = 50
 
+# The labels the embeddings query matches; a row of any other is malformed.
+EMBEDDED_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {NodeLabel.FUNCTION, NodeLabel.METHOD}
+)
+
 _CYPHER_EMBEDDING_DIRECT = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
@@ -723,7 +728,7 @@ WHERE m.qualified_name STARTS WITH ($project_name + '.')
 """
 
 _CYPHER_EMBEDDING_COLUMNS = """RETURN id(n) AS node_id,
-       n.qualified_name AS qualified_name,
+       n.qualified_name AS qualified_name, head(labels(n)) AS label,
        n.start_line AS start_line, n.end_line AS end_line,
        m.path AS path
 """
@@ -748,6 +753,22 @@ CYPHER_QUERY_PROJECT_NODE_IDS = (
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
+# The project a Qdrant point belongs to. Points written before issue #2447
+# have none and are keyed by Memgraph's internal node id instead.
+PAYLOAD_PROJECT = "project"
+# The UUIDv5 namespace a Qdrant point id is derived in, from the project, the
+# symbol's label and its qualified name. Changing it re-keys every stored point.
+EMBEDDING_POINT_ID_NAMESPACE = "4c6a2f1e-8d3b-5e7a-9f10-2b6c8d4e0a17"
+# A project's Milvus rows are the qualified names in [name + ".", name + "/"):
+# "/" is the character after ".", so the range holds exactly the names under
+# the prefix. LIKE would read the `_` of many project names as a wildcard.
+QN_PREFIX_RANGE_END = "/"
+MILVUS_PREFIX_RANGE_EXPR = "{field} >= {low} and {field} < {high}"
+MILVUS_STALE_ROWS_EXPR = "({scope}) and not ({field} in {ids})"
+MILVUS_EXCLUDE_EXPR = "({scope}) and not ({excluded})"
+MILVUS_IDS_EXPR = "{field} in {ids}"
+# Milvus answers a delete with the deleted keys or with this count.
+MILVUS_DELETE_COUNT_KEY = "delete_count"
 
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the

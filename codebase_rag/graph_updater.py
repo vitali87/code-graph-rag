@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple, cast
@@ -105,7 +105,9 @@ from .services.resource_cleanup import prune_unanchored_resources
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
+    EmbeddingPoint,
     EmbeddingQueryResult,
+    EmbeddingSymbol,
     FunctionLocation,
     FunctionLocations,
     JsonValue,
@@ -212,13 +214,16 @@ _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 
 def _flush_embedding_batch(
-    pending: list[tuple[int, str, str]],
-    expected_ids: set[int],
+    pending: list[tuple[int, EmbeddingSymbol, str]],
+    expected: dict[int, EmbeddingSymbol],
+    stored_ids: set[int],
     embed_code_batch: Callable[[list[str]], list[list[float]]],
-    store_embedding_batch: Callable[[list[tuple[int, list[float], str]]], int],
+    store_embedding_batch: Callable[[list[EmbeddingPoint]], int],
 ) -> int:
     # Embeds and stores the pending batch, then empties it in place so the
-    # caller keeps appending to the same list.
+    # caller keeps appending to the same list. `stored_ids` gains the nodes
+    # whose points the store confirmed, which `expected` cannot vouch for: it
+    # is filled before the store is asked.
     if not pending:
         return 0
     snippets = [item[2] for item in pending]
@@ -232,14 +237,33 @@ def _flush_embedding_batch(
         )
         pending.clear()
         return 0
-    points: list[tuple[int, list[float], str]] = [
-        (node_id, emb, qname) for (node_id, qname, _), emb in zip(pending, embeddings)
+    points: list[EmbeddingPoint] = [
+        (node_id, emb, symbol) for (node_id, symbol, _), emb in zip(pending, embeddings)
     ]
-    for node_id, _qname, _src in pending:
-        expected_ids.add(node_id)
+    for node_id, symbol, _src in pending:
+        expected[node_id] = symbol
     stored = store_embedding_batch(points)
+    if stored:
+        stored_ids.update(node_id for node_id, _emb, _symbol in points)
     pending.clear()
     return stored
+
+
+def _embedded_label(label: ResultValue | None) -> cs.NodeLabel | None:
+    if isinstance(label, str) and label in cs.EMBEDDED_NODE_LABELS:
+        return cs.NodeLabel(label)
+    return None
+
+
+def _embedding_symbol(parsed: EmbeddingQueryResult) -> EmbeddingSymbol:
+    return EmbeddingSymbol(parsed[cs.KEY_LABEL], parsed[cs.KEY_QUALIFIED_NAME])
+
+
+def _under_any_project(qualified_name: object, projects: Sequence[str]) -> bool:
+    return isinstance(qualified_name, str) and any(
+        qualified_name.startswith(f"{project}{cs.SEPARATOR_DOT}")
+        for project in projects
+    )
 
 
 def _log_embedding_progress(embedded_count: int, total: int) -> None:
@@ -7957,9 +7981,11 @@ class GraphUpdater:
             return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
         return False
 
-    def _embedding_candidate(self, row: ResultRow) -> tuple[int, str, str] | None:
-        # (node id, qualified name, source) for one query row; None when the
-        # row does not parse or its source cannot be read back from disk.
+    def _embedding_candidate(
+        self, row: ResultRow
+    ) -> tuple[int, EmbeddingSymbol, str] | None:
+        # (node id, symbol, source) for one query row; None when the row does
+        # not parse or its source cannot be read back from disk.
         parsed = self._parse_embedding_result(row)
         if parsed is None:
             return None
@@ -7977,7 +8003,7 @@ class GraphUpdater:
         if not source_code:
             logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
             return None
-        return parsed[cs.KEY_NODE_ID], qualified_name, source_code
+        return parsed[cs.KEY_NODE_ID], _embedding_symbol(parsed), source_code
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:
@@ -7996,30 +8022,50 @@ class GraphUpdater:
             from .embedder import embed_code_batch, get_embedding_cache
             from .vector_store import (
                 close_qdrant_client,
+                delete_stale_embeddings,
                 store_embedding_batch,
                 verify_stored_ids,
             )
 
             logger.info(ls.PASS_5_EMBEDDINGS)
 
-            results = self.ingestor.fetch_all(
-                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
-            )
+            # The query is prefix-scoped, and `svc.` also selects a nested
+            # `svc.v2` project's functions, which that project embeds itself.
+            nested = self._nested_project_names()
+            results = [
+                row
+                for row in self.ingestor.fetch_all(
+                    cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
+                )
+                if not _under_any_project(row.get(cs.KEY_QUALIFIED_NAME), nested)
+            ]
+            current = self._current_symbols(results)
+            stored_ids: set[int] = set()
 
             if not results:
                 logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
+                # The project's last function may just have gone; its point
+                # must go with it.
+                self._delete_stale_embeddings(
+                    current, stored_ids, delete_stale_embeddings
+                )
+                close_qdrant_client()
                 return
 
             logger.info(ls.GENERATING_EMBEDDINGS, count=len(results))
 
             embedded_count = 0
-            expected_ids: set[int] = set()
-            pending: list[tuple[int, str, str]] = []
+            expected: dict[int, EmbeddingSymbol] = {}
+            pending: list[tuple[int, EmbeddingSymbol, str]] = []
             flush_at = settings.QDRANT_BATCH_SIZE
+            project_name = self.project_name
+
+            def store(points: list[EmbeddingPoint]) -> int:
+                return store_embedding_batch(project_name, points)
 
             def flush() -> int:
                 return _flush_embedding_batch(
-                    pending, expected_ids, embed_code_batch, store_embedding_batch
+                    pending, expected, stored_ids, embed_code_batch, store
                 )
 
             for row in results:
@@ -8035,7 +8081,9 @@ class GraphUpdater:
 
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
-            self._reconcile_embeddings(expected_ids, verify_stored_ids)
+            # Before the check, so it reads the store as the sync leaves it.
+            self._delete_stale_embeddings(current, stored_ids, delete_stale_embeddings)
+            self._reconcile_embeddings(expected, verify_stored_ids)
 
             get_embedding_cache().save()
             close_qdrant_client()
@@ -8044,6 +8092,52 @@ class GraphUpdater:
             self._stop_interrupted_embeddings()
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+
+    def _current_symbols(self, rows: list[ResultRow]) -> dict[int, EmbeddingSymbol]:
+        """Every function and method the graph holds for the project now,
+        by node id, whether or not its source can be read to embed it."""
+        current: dict[int, EmbeddingSymbol] = {}
+        for row in rows:
+            parsed = self._parse_embedding_result(row)
+            if parsed is not None:
+                current[parsed[cs.KEY_NODE_ID]] = _embedding_symbol(parsed)
+        return current
+
+    def _delete_stale_embeddings(
+        self,
+        current: Mapping[int, EmbeddingSymbol],
+        stored_ids: Collection[int],
+        delete_fn: Callable[
+            [str, Mapping[int, EmbeddingSymbol], Collection[int], Sequence[str]], int
+        ],
+    ) -> None:
+        """Drop the project's vectors of symbols `current` no longer holds.
+
+        A re-parse re-creates a file's nodes, and a deleted function leaves
+        nothing to overwrite its vector, so without this the store kept a
+        vector per edit and every deleted function's (issue #2447). A vector
+        keyed the old way goes only once `stored_ids` says its replacement is
+        in, and a nested project's vectors are its own sync's business.
+        With the registry unread a nested project's vectors pass as this
+        one's, so nothing goes until a sync that reads it.
+        """
+        nested = self._nested_project_names()
+        if self._registry_unread:
+            logger.warning(ls.EMBEDDING_STALE_SKIPPED.format(project=self.project_name))
+            return
+        try:
+            removed = delete_fn(self.project_name, current, stored_ids, nested)
+        except Exception as e:
+            logger.warning(
+                ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)
+            )
+            return
+        if removed:
+            logger.info(
+                ls.EMBEDDING_STALE_REMOVED.format(
+                    count=removed, project=self.project_name
+                )
+            )
 
     def _stop_interrupted_embeddings(self) -> None:
         """Hold a Ctrl+C in the embeddings pass until `run` has committed.
@@ -8065,25 +8159,25 @@ class GraphUpdater:
 
     def _reconcile_embeddings(
         self,
-        expected_ids: set[int],
-        verify_fn: Callable[[set[int]], set[int]],
+        expected: Mapping[int, EmbeddingSymbol],
+        verify_fn: Callable[[str, Mapping[int, EmbeddingSymbol]], set[int]],
     ) -> None:
-        if not expected_ids:
+        if not expected:
             return
         try:
-            stored_ids = verify_fn(expected_ids)
-            missing = expected_ids - stored_ids
+            stored_ids = verify_fn(self.project_name, expected)
+            missing = set(expected) - stored_ids
             if missing:
                 sample = sorted(missing)[:10]
                 logger.warning(
                     ls.EMBEDDING_RECONCILE_MISSING.format(
                         missing=len(missing),
-                        expected=len(expected_ids),
+                        expected=len(expected),
                         sample_ids=sample,
                     )
                 )
             else:
-                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected_ids)))
+                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
 
@@ -8121,8 +8215,15 @@ class GraphUpdater:
     def _parse_embedding_result(self, row: ResultRow) -> EmbeddingQueryResult | None:
         node_id = row.get(cs.KEY_NODE_ID)
         qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
+        # Part of the symbol's identity: a Function and a Method may share a
+        # qualified name, so a row without its label cannot be keyed.
+        label = _embedded_label(row.get(cs.KEY_LABEL))
 
-        if not isinstance(node_id, int) or not isinstance(qualified_name, str):
+        if (
+            not isinstance(node_id, int)
+            or not isinstance(qualified_name, str)
+            or label is None
+        ):
             return None
 
         start_line = row.get(cs.KEY_START_LINE)
@@ -8132,6 +8233,7 @@ class GraphUpdater:
         return EmbeddingQueryResult(
             node_id=node_id,
             qualified_name=qualified_name,
+            label=label,
             start_line=start_line if isinstance(start_line, int) else None,
             end_line=end_line if isinstance(end_line, int) else None,
             path=file_path if isinstance(file_path, str) else None,

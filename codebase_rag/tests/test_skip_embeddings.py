@@ -50,6 +50,16 @@ def _make_updater(
     )
 
 
+def _embedding_reads(ingestor: MagicMock) -> int:
+    # The pass also reads the registered projects, to leave a nested
+    # project's functions to that project (issue #2447).
+    return sum(
+        1
+        for call in ingestor.fetch_all.call_args_list
+        if call.args and call.args[0] == cs.CYPHER_QUERY_EMBEDDINGS
+    )
+
+
 class TestGraphUpdaterSkipEmbeddings:
     @_PATCH_DEPS
     def test_skip_flag_skips_embedding_pass(
@@ -66,7 +76,7 @@ class TestGraphUpdaterSkipEmbeddings:
         updater = _make_updater(temp_repo, query_ingestor)
         assert updater.skip_embeddings is False
         updater._generate_semantic_embeddings()
-        query_ingestor.fetch_all.assert_called_once()
+        assert _embedding_reads(query_ingestor) == 1
 
     @_PATCH_DEPS
     def test_env_setting_skips_by_default(
@@ -93,7 +103,7 @@ class TestGraphUpdaterSkipEmbeddings:
         monkeypatch.setattr(settings, "SKIP_EMBEDDINGS", True)
         updater = _make_updater(temp_repo, query_ingestor, skip_embeddings=False)
         updater._generate_semantic_embeddings()
-        query_ingestor.fetch_all.assert_called_once()
+        assert _embedding_reads(query_ingestor) == 1
 
 
 class TestCliNoEmbeddingsFlag:
