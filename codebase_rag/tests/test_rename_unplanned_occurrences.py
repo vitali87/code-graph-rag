@@ -1862,3 +1862,61 @@ def test_a_rust_bare_call_without_a_use_is_not_the_function(tmp_path: Path) -> N
     found = _function_occurrences(tmp_path, files, "helper", cs.SupportedLanguage.RUST)
 
     assert [found for found in found if found[0] == "src/app.rs"] == []
+
+
+# --- review of PR #2797, sixth round ----------------------------------------
+
+_CACHE_CLASS = "class Cache:\n    def get(self, key):\n        return key\n"
+# `pkg.cache` under two source roots: the repository's and `src/`.
+TWO_ROOTS = {
+    "pkg/__init__.py": "",
+    "pkg/cache.py": _CACHE_CLASS,
+    "src/pkg/__init__.py": "",
+    "src/pkg/cache.py": _CACHE_CLASS,
+}
+_ROOT_USER = (
+    "from pkg.cache import Cache\n\n\ndef read(key):\n"
+    "    c = Cache()\n    return c.get(key)\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("target", "user", "resolution"),
+    [
+        # The import resolves at the importer's own source root.
+        (f"{PROJECT}.pkg.cache.Cache.get", "app/use.py", "unplanned"),
+        (f"{PROJECT}.src.pkg.cache.Cache.get", "src/app/use.py", "unplanned"),
+        # The other root's `pkg.cache` is another module.
+        (f"{PROJECT}.src.pkg.cache.Cache.get", "app/use.py", "receiver_unknown"),
+        (f"{PROJECT}.pkg.cache.Cache.get", "src/app/use.py", "receiver_unknown"),
+    ],
+    ids=["root-target", "src-target", "root-import-of-src", "src-import-of-root"],
+)
+def test_an_import_resolves_at_the_importers_own_source_root(
+    tmp_path: Path, target: str, user: str, resolution: str
+) -> None:
+    # Review of PR #2797: `pkg/cache.py` and `src/pkg/cache.py` are both
+    # spelled `pkg.cache`; which one an import means depends on the source
+    # root the importing file sits under, and the target's own module must
+    # not count as its rival.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {**TWO_ROOTS, user: _ROOT_USER})
+
+    try:
+        report = rename(
+            root,
+            _missing(store, user),
+            PROJECT,
+            target,
+            "fetch",
+            allow_heuristic=True,
+            dry_run=True,
+        )
+        unplanned = list(report.unplanned)
+    except RenameRefused as refused:
+        unplanned = refused.unplanned
+
+    assert [(s.kind, s.path, s.line, s.col, s.resolution) for s in unplanned] == [
+        ("call", user, 6, 13, resolution)
+    ]

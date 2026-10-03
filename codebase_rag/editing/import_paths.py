@@ -21,6 +21,7 @@ How sure a spelled path is depends on where it starts:
 import posixpath
 import re
 from enum import Enum, auto
+from itertools import product
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
@@ -99,15 +100,65 @@ def resolves_to(path: ModulePath, key: tuple[str, ...], length: int) -> bool:
         case PathKind.EXACT:
             return segments[: len(key)] == key
         case PathKind.SUFFIX:
-            return any(
-                segments[:size] == key[-size:]
-                for size in range(max(length, 1), min(len(segments), len(key)) + 1)
-            )
+            return bool(_suffix_roots(segments, key, length))
         case _:
             return bool(key) and (
                 segments[-len(key) :] == key
                 or (len(key) > 1 and segments[-(len(key) - 1) :] == key[:-1])
             )
+
+
+def _suffix_roots(
+    segments: tuple[str, ...], key: tuple[str, ...], length: int
+) -> tuple[tuple[str, ...], ...]:
+    # The source roots under which `segments` spell the module `key`:
+    # `pkg.cache` names `src/pkg/cache.py` from `src`.
+    return tuple(
+        key[: len(key) - size]
+        for size in range(max(length, 1), min(len(segments), len(key)) + 1)
+        if segments[:size] == key[-size:]
+    )
+
+
+def closest_match(
+    paths: tuple[ModulePath, ...],
+    modules: tuple[tuple[tuple[str, ...], int, bool], ...],
+    directory: tuple[str, ...],
+) -> bool | None:
+    """Which of `modules` (each a module, how much of it an import must
+    spell, and a verdict) the importing file in `directory` means by
+    `paths`, as its verdict; None when they name none of them.
+
+    `pkg.cache` may name `pkg/cache.py` and `src/pkg/cache.py` alike.
+    Python finds it under the source root on its path, which the importing
+    file's own is: the deepest root that holds the importer, else the
+    shallowest. A path resolved from the importer (a relative one) is
+    exact, and on a tie the first verdict that is true wins."""
+    ranked = [
+        (_root_rank(root, directory), verdict)
+        for path, (key, length, verdict) in product(paths, modules)
+        for root in _match_roots(path, key, length)
+    ]
+    return max(ranked)[1] if ranked else None
+
+
+def _match_roots(
+    path: ModulePath, key: tuple[str, ...], length: int
+) -> tuple[tuple[str, ...] | None, ...]:
+    # None stands for a path resolved from the importer: it has no root.
+    if path.kind is PathKind.SUFFIX:
+        return _suffix_roots(path.segments, key, length)
+    return (None,) if resolves_to(path, key, length) else ()
+
+
+def _root_rank(
+    root: tuple[str, ...] | None, directory: tuple[str, ...]
+) -> tuple[int, int]:
+    if root is None:
+        return (2, 0)
+    if directory[: len(root)] == root:
+        return (1, len(root))
+    return (0, -len(root))
 
 
 def resolves_above(path: ModulePath, key: tuple[str, ...], length: int) -> bool:

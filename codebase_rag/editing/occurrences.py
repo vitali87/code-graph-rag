@@ -47,6 +47,7 @@ from .import_paths import (
     ImportRead,
     ImportReader,
     ModulePath,
+    closest_match,
     module_key,
     resolves_above,
     resolves_to,
@@ -389,15 +390,24 @@ class _File:
     def _contested(self, name: str) -> bool:
         return any(rival == name for rival, _path in self.target.rivals)
 
+    @cached_property
+    def _candidates(self) -> tuple[tuple[tuple[str, ...], int, bool], ...]:
+        # The modules a path may name, each with whether it is the target's.
+        return (
+            *((key, length, True) for key, length in self.modules.home.items()),
+            *((key, length, False) for key, length in self.modules.rivals.items()),
+        )
+
     def _is_home(self, name: str, paths: tuple[ModulePath, ...]) -> bool:
         """Whether `paths` lead to the class `name` of the target rather than
-        to another of the name: to its module and not another's, or, when no
+        to another of the name: to its module and not another's, the one the
+        importing file's source root holds where the same path names both
+        (`pkg.cache` under the repository and under `src/`), or, when no
         other symbol of the project shares the name, to a package above it
         that may re-export it (`use crate::Parse`, `from pkg import Cache`)."""
-        if _reaches(paths, self.modules.rivals):
-            return False
-        if _reaches(paths, self.modules.home):
-            return True
+        verdict = closest_match(paths, self._candidates, self.imports.directory)
+        if verdict is not None:
+            return verdict
         return not self._contested(name) and any(
             resolves_above(path, key, length)
             for path in paths

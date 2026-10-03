@@ -97,7 +97,9 @@ family are read (the indexer's own walk, under `.cgrignore` and
   A relative import (`from .cache import x`, `'./cache.js'`) and a Rust path
   from `crate`, `self` or `super` are resolved from the importing file; a
   Python import from a source root spells the module from its top-level
-  package down (`pkg.cache` once `pkg/__init__.py` exists). When another
+  package down (`pkg.cache` once `pkg/__init__.py` exists). Where two
+  source roots hold the spelled module (`pkg/cache.py` and
+  `src/pkg/cache.py`), it is the one under the importing file's own root. When another
   symbol of the project shares the name, `other.Cache()`,
   `from pkg.other import Cache` and `class Sub(other.Cache)` are that one;
   an import through a package above the class (`use crate::Parse`,

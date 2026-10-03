@@ -14,6 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.editing.import_paths import (
     ImportReader,
+    closest_match,
     module_key,
     resolves_above,
     resolves_to,
@@ -280,3 +281,37 @@ def test_the_names_an_import_binds(tmp_path: Path) -> None:
     assert sorted(bindings) == ["c", "other"]
     assert [path.segments for path in plain["pkg"]] == [("pkg",)]
     assert [path.segments for path in aliased["pc"]] == [("pkg", "cache")]
+
+
+@pytest.mark.parametrize(
+    ("importer", "statement", "verdict"),
+    [
+        # `pkg.cache` is the target's `pkg/cache.py` from the repository's
+        # root, and the rival `src/pkg/cache.py` from under `src/`.
+        ("app/use.py", "from pkg.cache import Cache", True),
+        ("src/app/use.py", "from pkg.cache import Cache", False),
+        # A module of another name is the rival wherever it is imported.
+        ("app/use.py", "from pkg2.cache import Cache", False),
+        ("app/use.py", "from vendor.cache import Cache", None),
+    ],
+)
+def test_one_import_names_one_module_by_the_importers_source_root(
+    tmp_path: Path, importer: str, statement: str, verdict: bool | None
+) -> None:
+    _write(
+        tmp_path,
+        "pkg/__init__.py",
+        "src/pkg/__init__.py",
+        "pkg2/__init__.py",
+    )
+    modules = (
+        (module_key("pkg/cache.py"), spelled_length(tmp_path, "pkg/cache.py"), True),
+        *(
+            (module_key(path), spelled_length(tmp_path, path), False)
+            for path in ("src/pkg/cache.py", "pkg2/cache.py")
+        ),
+    )
+    reader = ImportReader(tmp_path, importer, cs.SupportedLanguage.PYTHON)
+    paths = reader.read(statement).bindings["Cache"]
+
+    assert closest_match(paths, modules, reader.directory) is verdict
