@@ -1,0 +1,51 @@
+name: Diag Windows quiet wait
+on:
+  push:
+    branches: [diag/windows-quiet-wait]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        shell: bash
+        run: uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
+      - name: Plain process
+        shell: bash
+        continue-on-error: true
+        env:
+          CGR_DIAG: ${{ runner.temp }}/plain.txt
+        run: |
+          uv run --no-sync pytest -p no:xdist codebase_rag/tests/test_stack_quiet_wait.py -k c_library -v --tb=short || true
+          cat "$CGR_DIAG" || true
+      - name: xdist
+        shell: bash
+        continue-on-error: true
+        env:
+          CGR_DIAG: ${{ runner.temp }}/xdist.txt
+        run: |
+          for i in 1 2 3 4 5; do uv run --no-sync pytest -n 4 codebase_rag/tests/test_stack_quiet_wait.py -k c_library --tb=short -q || true; done
+          cat "$CGR_DIAG" || true
+      - name: Full suite file xdist
+        shell: bash
+        continue-on-error: true
+        env:
+          CGR_DIAG: ${{ runner.temp }}/full.txt
+        run: |
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short -q || true
+          grep -c . "$CGR_DIAG" || true
+          grep -v "captured 0 chars" "$CGR_DIAG" | head -50 || true
+          cat "$CGR_DIAG" || true

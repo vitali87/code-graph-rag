@@ -65,6 +65,13 @@ _DIRECT_OPENER = urllib.request.build_opener(
 _NATIVE_STDERR_LOCK = threading.Lock()
 
 
+def _diag(msg: str) -> None:
+    path = os.environ.get("CGR_DIAG")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"pid={os.getpid()} {msg}\n")
+
+
 class _CRuntime(Protocol):
     # A C runtime's descriptor table. POSIX has one per process, the kernel's;
     # on Windows each C runtime DLL keeps its own, so fd 2 in one is not fd 2
@@ -156,7 +163,8 @@ def _mgclient_own_c_runtime() -> _CRuntime | None:
 def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
     try:
         saved = runtime.dup(cs.NATIVE_STDERR_FD)
-    except OSError:
+    except OSError as exc:
+        _diag(f"dup(2) failed in {type(runtime).__name__}: {exc!r}")
         # With fd 2 closed there is no terminal to keep clean.
         yield
         return
@@ -190,6 +198,7 @@ def _mgclient_stderr_to_debug_log() -> Iterator[None]:
             # never answers; the probe's own result is what reports it.
             capture.seek(0)
             output = capture.read().decode(root_cs.ENCODING_UTF8, errors="replace")
+            _diag(f"captured {len(output)} chars: {output.strip()[:80]!r}")
             if output := output.strip():
                 logger.debug(cs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
 
