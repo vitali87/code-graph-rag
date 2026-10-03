@@ -1469,6 +1469,8 @@ class CallResolver:
             return None
         relative = head in (cs.KEYWORD_SELF, cs.KEYWORD_SUPER)
         hit = self._rust_module_path_type(path, effective)
+        if hit is None and relative:
+            hit = self._rust_relative_use_path_type(path, effective)
         if hit is None and not relative:
             # A child mod written inline has no file and no import-map key
             # of its own, so only its qn under the mod finds it.
@@ -1478,6 +1480,55 @@ class CallResolver:
         if hit is None and relative:
             return cs.RUST_UNRESOLVABLE_QN
         return hit
+
+    def _rust_relative_use_path_type(self, path: str, effective: str) -> str | None:
+        """The type a `self::`/`super::` path names through `use` bindings.
+
+        The relative rewrite attaches every segment as a child module, so a
+        segment the named mod binds by `use` led nowhere: `self::alias::X`
+        after `use crate::a as alias;` lost its edge (PR #2791 review). Each
+        segment is read as the current mod's child module first, then as its
+        `use` binding; a binding that leaves the repo names no first-party
+        type, so the walk stops with None.
+        """
+        parts = path.split(cs.SEPARATOR_DOUBLE_COLON)
+        depth = 0
+        while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
+            depth += 1
+        if depth:
+            current: str | None = self.import_processor._rust_super_base(
+                effective, depth
+            )
+            rest = parts[depth:]
+        else:
+            current, rest = effective, parts[1:]
+        for segment in rest[:-1]:
+            if current is None:
+                return None
+            current = self._rust_scope_module(current, segment)
+        if current is None or not rest:
+            return None
+        hit = self._follow_rust_scope_target(f"{current}{cs.SEPARATOR_DOT}{rest[-1]}")
+        return hit[1] if hit is not None and hit[0] in _RS_TYPE_NODE_TYPES else None
+
+    def _rust_scope_module(self, scope: str, segment: str) -> str | None:
+        # The module `segment` names inside `scope`: a child module, or the
+        # module a `use` there binds it to (`{self}` imports first, as they
+        # name a module even where a value took the shared slot, #1054).
+        child = f"{scope}{cs.SEPARATOR_DOT}{segment}"
+        if (
+            child in self.declared_module_qns
+            or child in self.type_inference.module_qn_to_file_path
+            or child in self.import_processor.import_mapping
+        ):
+            return child
+        imports = self.import_processor
+        mapped = imports.rust_self_module_imports.get(scope, {}).get(
+            segment
+        ) or imports.import_mapping.get(scope, {}).get(segment)
+        if mapped is None or mapped == cs.RUST_UNRESOLVABLE_QN:
+            return None
+        return self._rust_local_qn(mapped, scope)
 
     def _resolve_receiver_shadow(
         self, call: _CallSite

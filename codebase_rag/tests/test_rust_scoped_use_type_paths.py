@@ -645,3 +645,68 @@ def test_inline_mod_path_to_an_external_type_binds_no_sibling_or_file_type(
     edges = _index(temp_repo, mock_ingestor, "rs_inline_ext", files)
     callees = _callees(edges, "rs_inline_ext.src.lib.ext.external")
     assert not {c for c in callees if c.endswith(".Builder.build")}, edges
+
+
+def test_relative_path_through_a_mod_use_binds_its_target_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # After `self::` or `super::`, the next segment may be a `use` binding of
+    # the mod the prefix names, renamed or not, and a glob may supply the
+    # type itself. Each names a first-party `Builder`, which the inline
+    # lookup marked unresolvable, dropping the edge (PR #2791 review).
+    files = _inline_mods_lib(
+        "rs_inline_alias",
+        "\npub mod outer {\n"
+        "    use crate::a as alias;\n\n"
+        "    pub mod inner {\n"
+        "        use crate::b as alias;\n"
+        "        use crate::a;\n\n"
+        "        pub fn via_self(x: self::alias::Builder) -> u32 {\n"
+        "            x.build()\n"
+        "        }\n\n"
+        "        pub fn via_super(x: super::alias::Builder) -> u32 {\n"
+        "            x.build()\n"
+        "        }\n\n"
+        "        pub fn via_plain(x: self::a::Builder) -> u32 {\n"
+        "            x.build()\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "pub mod globbed {\n"
+        "    use crate::b::*;\n\n"
+        "    pub fn via_glob(x: self::Builder) -> u32 {\n        x.build()\n    }\n"
+        "}\n",
+    )
+    files["src/lib.rs"] = "pub mod a;\npub mod b;\n\n" + files["src/lib.rs"]
+    files["src/a.rs"] = _BUILDER_RS
+    files["src/b.rs"] = _BETA_LIB_RS
+    edges = _index(temp_repo, mock_ingestor, "rs_inline_alias", files)
+    root = "rs_inline_alias.src"
+    inner = f"{root}.lib.outer.inner"
+    expected = {
+        f"{inner}.via_self": f"{root}.b.Builder.build",
+        f"{inner}.via_super": f"{root}.a.Builder.build",
+        f"{inner}.via_plain": f"{root}.a.Builder.build",
+        f"{root}.lib.globbed.via_glob": f"{root}.b.Builder.build",
+    }
+    for caller, callee in expected.items():
+        assert edges.get((caller, callee)) == {"exact"}, edges
+        assert _callees(edges, caller) == {callee}, edges
+
+
+def test_relative_path_through_an_external_alias_binds_no_first_party_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `self::rx::Builder` with `use regex_syntax as rx;` is the registry
+    # crate's type: neither the file's `Builder` nor the sibling mod's.
+    files = _inline_mods_lib(
+        "rs_inline_ext_alias",
+        "\npub mod ext {\n"
+        "    use regex_syntax as rx;\n\n"
+        "    pub fn external(x: self::rx::Builder) -> u32 {\n        x.build()\n    }\n"
+        "}\n",
+    )
+    files["Cargo.toml"] += '\n[dependencies]\nregex-syntax = "0.8"\n'
+    edges = _index(temp_repo, mock_ingestor, "rs_inline_ext_alias", files)
+    callees = _callees(edges, "rs_inline_ext_alias.src.lib.ext.external")
+    assert not {c for c in callees if c.endswith(".Builder.build")}, edges

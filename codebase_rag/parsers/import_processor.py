@@ -756,6 +756,28 @@ def _rust_manifest_dep_entries(
                 yield from entries.items()
 
 
+def _rust_dep_source(value: object) -> str | None:
+    # Where a pathless dependency entry fetches its package from: its git
+    # URL, its alternate registry, or crates.io. None for a path entry,
+    # which binds a directory instead, and for a malformed one.
+    if isinstance(value, str):
+        return cs.RS_DEFAULT_REGISTRY
+    if not isinstance(value, dict) or cs.RS_MANIFEST_PATH_KEY in value:
+        return None
+    for key in cs.RS_MANIFEST_DEP_SOURCE_KEYS:
+        if isinstance(source := value.get(key), str):
+            return source
+    return cs.RS_DEFAULT_REGISTRY
+
+
+def _rust_dep_package(key: str, value: object) -> str:
+    # The package a dependency entry names, underscore-spelled: its
+    # `package =` rename, else its key.
+    package = value.get(cs.RS_MANIFEST_PACKAGE_KEY) if isinstance(value, dict) else None
+    name = package if isinstance(package, str) and package else key
+    return name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+
+
 def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
     # (imported path, is static, is wildcard) of a Java import declaration.
     imported_path = None
@@ -2791,13 +2813,12 @@ class ImportProcessor:
     def _rust_dep_members_of(self, pkg: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
         if (cached := self._rust_dep_members.get(pkg)) is not None:
             return cached
-        members = self._rust_member_package_dirs()
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
         found: dict[str, tuple[str, ...]] = {}
         for key, value in _rust_manifest_dep_entries(manifest):
             if self._rust_dep_target_dir(pkg, key, value) is not None:
                 continue
-            member = members.get(self._rust_dep_package_name(key, value))
+            member = self._rust_fetched_member(key, value)
             if member is not None:
                 found.setdefault(
                     key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE), member
@@ -2805,17 +2826,39 @@ class ImportProcessor:
         self._rust_dep_members[pkg] = found
         return found
 
-    def _rust_dep_package_name(self, key: str, value: object) -> str:
-        # The package a dependency entry fetches, underscore-spelled: its
-        # `package =` rename, else its key. `workspace = true` inherits the
-        # root's [workspace.dependencies] entry, rename included.
+    def _rust_fetched_member(self, key: str, value: object) -> tuple[str, ...] | None:
+        """The repo package a pathless dependency entry builds against.
+
+        A crates.io entry stands for the workspace member of its package
+        name, the published-workspace shape (#1048). A git, alternate
+        registry or out-of-repo path entry fetches another copy of the
+        package, which only a root `[patch.<source>]` path makes a repo
+        package (PR #2791 review). `workspace = true` inherits the root's
+        [workspace.dependencies] entry, source and rename included.
+        """
         if isinstance(value, dict) and value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
-            value = self._rust_workspace_dep_entry(key)
-        package = (
-            value.get(cs.RS_MANIFEST_PACKAGE_KEY) if isinstance(value, dict) else None
-        )
-        name = package if isinstance(package, str) and package else key
-        return name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+            value = self._rust_workspace_dep_value(key)
+        source = _rust_dep_source(value)
+        if source is None:
+            return None
+        package = _rust_dep_package(key, value)
+        patched = self._rust_patched_dir(source, package)
+        if patched is not None or source != cs.RS_DEFAULT_REGISTRY:
+            return patched
+        return self._rust_member_package_dirs().get(package)
+
+    def _rust_patched_dir(self, source: str, package: str) -> tuple[str, ...] | None:
+        # The repo dir the root manifest's `[patch.<source>]` table puts in
+        # place of `package` from `source` (a git URL, as written, or a
+        # registry name). Only a path patch lands in the repo.
+        patch = self._rust_read_manifest(self.repo_path).get(cs.RS_MANIFEST_PATCH_KEY)
+        entries = patch.get(source) if isinstance(patch, dict) else None
+        if not isinstance(entries, dict):
+            return None
+        for key, value in entries.items():
+            if isinstance(value, dict) and _rust_dep_package(key, value) == package:
+                return self._rust_dep_target_dir((), key, value)
+        return None
 
     def _rust_member_package_dirs(self) -> dict[str, tuple[str, ...]]:
         # Workspace members with a lib target, by [package] name
@@ -2847,6 +2890,11 @@ class ImportProcessor:
     def _rust_workspace_dep_entry(self, key: str) -> dict | None:
         # The root manifest's [workspace.dependencies] entry a member's
         # `key = { workspace = true }` inherits, when it is a table.
+        entry = self._rust_workspace_dep_value(key)
+        return entry if isinstance(entry, dict) else None
+
+    def _rust_workspace_dep_value(self, key: str) -> object:
+        # That entry as written: a table, a bare version string, or None.
         workspace = self._rust_read_manifest(self.repo_path).get(
             cs.RS_MANIFEST_WORKSPACE_KEY
         )
@@ -2855,8 +2903,7 @@ class ImportProcessor:
             if isinstance(workspace, dict)
             else None
         )
-        entry = deps.get(key) if isinstance(deps, dict) else None
-        return entry if isinstance(entry, dict) else None
+        return deps.get(key) if isinstance(deps, dict) else None
 
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.

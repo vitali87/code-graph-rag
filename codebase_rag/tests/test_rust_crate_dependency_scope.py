@@ -381,3 +381,97 @@ def test_dependency_renamed_to_a_registry_package_stays_external(
         and not callee.startswith("rs_dep_alias_ext.crates.top.")
     }
     assert not leaked, edges
+
+
+_GIT_URL = "https://example.com/upstream/base.git"
+
+# A dependency spelled with a member's package name but fetched from
+# somewhere else: (`top`'s entry, the root's [workspace.dependencies] entry,
+# the crate name `top`'s code writes).
+_ELSEWHERE_FORMS = {
+    "git_renamed": (
+        f'base-alias = {{ git = "{_GIT_URL}", package = "my-base" }}\n',
+        "",
+        "base_alias",
+    ),
+    "git_plain": (f'my-base = {{ git = "{_GIT_URL}" }}\n', "", "my_base"),
+    "ws_git": (
+        "base-alias = { workspace = true }\n",
+        f'base-alias = {{ git = "{_GIT_URL}", package = "my-base" }}\n',
+        "base_alias",
+    ),
+    "alt_registry": (
+        'base-alias = { version = "1", registry = "corp", package = "my-base" }\n',
+        "",
+        "base_alias",
+    ),
+    "path_outside": (
+        'base-alias = { path = "../../../vendor/base", package = "my-base" }\n',
+        "",
+        "base_alias",
+    ),
+}
+
+
+@pytest.mark.parametrize("form", list(_ELSEWHERE_FORMS))
+def test_member_named_dependency_from_another_source_stays_external(
+    temp_repo: Path, mock_ingestor: MagicMock, form: str
+) -> None:
+    # Only a crates.io entry stands for the workspace member of its package
+    # name (the published-workspace shape). A git, alternate-registry or
+    # out-of-repo path entry fetches some other copy, so the member joined
+    # `top`'s closure by name and its methods took the calls (PR #2791
+    # review).
+    dep, workspace_deps, crate = _ELSEWHERE_FORMS[form]
+    root = '[workspace]\nmembers = ["crates/base", "crates/top"]\n'
+    if workspace_deps:
+        root += f"\n[workspace.dependencies]\n{workspace_deps}"
+    project = f"rs_dep_src_{form}"
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        project,
+        {
+            "Cargo.toml": root,
+            "crates/base/Cargo.toml": _manifest("my-base"),
+            "crates/base/src/lib.rs": _METER_RS,
+            "crates/top/Cargo.toml": _manifest("top", dep),
+            "crates/top/src/lib.rs": _ALIAS_TOP_RS.replace("base_alias", crate),
+        },
+    )
+    leaked = {
+        (src, callee)
+        for src, callee in edges
+        if src.startswith(f"{project}.crates.top.")
+        and callee.startswith(f"{project}.crates.base.")
+    }
+    assert not leaked, edges
+
+
+def test_git_dependency_patched_to_the_member_keeps_its_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `[patch."<url>"]` replaces the git source with the member's path, so
+    # the member is the crate `top` builds against after all.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_dep_patched",
+        {
+            "Cargo.toml": (
+                '[workspace]\nmembers = ["crates/base", "crates/top"]\n\n'
+                f'[patch."{_GIT_URL}"]\nmy-base = {{ path = "crates/base" }}\n'
+            ),
+            "crates/base/Cargo.toml": _manifest("my-base"),
+            "crates/base/src/lib.rs": _METER_RS,
+            "crates/top/Cargo.toml": _manifest(
+                "top", f'base-alias = {{ git = "{_GIT_URL}", package = "my-base" }}\n'
+            ),
+            "crates/top/src/lib.rs": _ALIAS_TOP_RS,
+        },
+    )
+    meter = "rs_dep_patched.crates.base.src.lib.Meter"
+    top = "rs_dep_patched.crates.top.src.lib"
+    assert (f"{top}.level", f"{meter}.new") in edges, edges
+    assert (f"{top}.level", f"{meter}.gauge") in edges, edges
+    assert (f"{top}.guessed", f"{meter}.gauge") in edges, edges
