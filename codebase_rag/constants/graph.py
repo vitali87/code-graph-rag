@@ -555,6 +555,53 @@ DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
     }
 )
 
+# What each group adds, for the generated Capture Groups table in
+# docs/architecture/graph-schema.md; its labels and relationships come from
+# the maps above. Keyed by group so a new group without a line fails
+# test_capture_groups_docs instead of reaching the docs undescribed (#2584).
+CAPTURE_GROUP_SUMMARIES: dict[CaptureGroup, str] = {
+    CaptureGroup.STRUCTURE: (
+        "The containment tree from the project down to modules and document "
+        "sections, and what each module, class or function defines."
+    ),
+    CaptureGroup.CALLS: (
+        "Call sites, functions and classes used as values, and class instantiations."
+    ),
+    CaptureGroup.TYPES: (
+        "Inheritance, interface and module implementation, method overrides, "
+        "and the project types a signature returns or accepts."
+    ),
+    CaptureGroup.IMPORTS: (
+        "Imports and exports between modules, the project's external package "
+        "dependencies, and document links to files."
+    ),
+    CaptureGroup.IO: (
+        "External resources code reads, writes or exposes (files, environment "
+        "variables, network, databases, endpoints), value flow between them, "
+        "and client calls resolved to the endpoints they reach."
+    ),
+    CaptureGroup.FINDINGS: (
+        "ast-grep findings on each module: design patterns, code smells and "
+        "security issues."
+    ),
+    CaptureGroup.GLOSSES: (
+        "Notes agents write about definitions with the annotate MCP tool, "
+        "rather than anything parsed from source."
+    ),
+    CaptureGroup.PARAMETERS: (
+        "One node per declared parameter of a function or method, and the "
+        "OF_TYPE edge from a parameter or field to the project type its "
+        "annotation names."
+    ),
+    CaptureGroup.FIELDS: (
+        "One node per field of a class, interface, enum, type or union. A "
+        "field's OF_TYPE edge belongs to parameters, so field types need both."
+    ),
+    CaptureGroup.ENUM_VARIANTS: (
+        "One node per enum member, with its position and value."
+    ),
+}
+
 CAPTURE_TOKEN_ALL = "all"
 CAPTURE_TOKEN_NONE = "none"
 CAPTURE_DROP_PREFIX = "-"

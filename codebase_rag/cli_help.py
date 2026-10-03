@@ -214,7 +214,8 @@ EPILOG_TRACE = "Run 'cgr help trace COMMAND' for command-specific help."
 
 HELP_TRACE_REPO_PATH = (
     "Repository the trace was recorded against. Used to derive the project "
-    "name and re-anchor traced file paths."
+    "name and re-anchor traced file paths, including paths recorded under the "
+    "checkout root the trace header names (a CI runner's or container's)."
 )
 HELP_TRACE_PROJECT_NAME = (
     "Project name to ingest into. Defaults to the name derived from --repo-path."
@@ -370,7 +371,11 @@ HELP_MAX_WAIT = (
     "Maximum wait time in seconds before forcing an update during continuous edits."
 )
 
-HELP_UPDATE_GRAPH = "Parse the repository and sync its graph before continuing."
+HELP_UPDATE_GRAPH = (
+    "Parse the repository, sync its graph, then exit without starting the "
+    "assistant (cgr start already syncs before it starts). Cannot be combined "
+    "with --ask-agent, --no-sync or --projects."
+)
 HELP_CLEAN_DB = (
     "DESTRUCTIVE: Delete every project from the shared graph and clear the selected "
     "repository's sync cache. With --update-graph, rebuild after deletion. Asks for "
@@ -380,7 +385,10 @@ HELP_ASSUME_YES = (
     "Answer yes to destructive confirmations, such as the one --clean asks before "
     "deleting other projects from the shared graph."
 )
-HELP_OUTPUT_GRAPH = "Write the updated graph to PATH as JSON. Requires --update-graph."
+HELP_OUTPUT_GRAPH = (
+    "Write this repository's project graph to PATH as JSON. Requires "
+    "--update-graph. Use cgr export for the whole shared graph."
+)
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
 HELP_EXPORT_PROJECT_NAME = (
     "Export only this project: what it owns, the relationships that start "
@@ -404,18 +412,22 @@ HELP_KEEP_SUBMODULE = (
 )
 
 HELP_PROJECT_NAME = (
-    "Project name to store in the graph. Defaults to the repo directory name."
+    "Project name to store in the graph. Defaults to the directory name plus a "
+    "hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the "
+    "names already stored."
 )
 HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
 )
 HELP_INTERACTIVE_SETUP = "Choose which detected directories remain included."
+# Filled in by `capture.capture_help` from the capture model, so the groups
+# the help names cannot drift from the ones the resolver accepts (#2584).
 HELP_CAPTURE = (
-    "Capture GROUP (structure, calls, types, imports, io, findings, glosses, "
-    "parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. "
-    "A GROUP is added to the defaults (structure, calls, types, imports); use "
-    "none first to capture only what follows (none,structure) and -GROUP to drop "
-    "one. Repeatable or comma-separated; later values override CGR_CAPTURE. An "
+    "Capture GROUP on top of the defaults ({default_groups}). Opt-in groups: "
+    "{opt_in_groups}. {add}NAME adds and {drop}NAME drops a GROUP or a "
+    "relationship type such as {example_type}; {all} or {none} replaces the "
+    "selection, so {none} first captures only what follows ({none},{example_group}). "
+    "Repeatable or comma-separated; later values override CGR_CAPTURE. An "
     "unknown group or type is an error."
 )
 
