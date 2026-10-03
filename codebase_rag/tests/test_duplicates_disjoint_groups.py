@@ -252,6 +252,9 @@ def _render_table(monkeypatch: pytest.MonkeyPatch, groups: list[DuplicateGroup])
     buffer = io.StringIO()
     console = terminal_aware_console(file=buffer)
     console.width = 200
+    # Without a VT console (Windows CI) rich draws the header with the body's
+    # border, so a header row would parse as a member row.
+    console.legacy_windows = False
     monkeypatch.setattr(cli.app_context, "console", console)
     cli._emit_duplicates(
         groups, cs.DuplicatesFormat.TABLE, None, "proj", analyzed_symbols=5
