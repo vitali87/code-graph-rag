@@ -237,6 +237,17 @@ EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
+# Held by the one writer syncing the checkout (issue #2441).
+SYNC_LOCK_FILENAME = ".cgr-sync-lock"
+# How often a scoped reingest re-checks a lock a running sync holds.
+SYNC_LOCK_POLL_SECONDS = 0.2
+# The byte a Windows sync locks, far past the holder's pid and project at
+# the start of the file: a byte-range lock there also blocks other
+# processes' reads, and a refused writer must read whom it waits for.
+SYNC_LOCK_REGION_OFFSET = 1 << 20
+# A refused writer reads at most this much of the holder's name, well short
+# of the locked byte above.
+SYNC_LOCK_HOLDER_MAX_BYTES = 4096
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
 EDIT_MODE_MASK = 0o7777
@@ -252,6 +263,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
         EDIT_LOCK_FILENAME,
+        SYNC_LOCK_FILENAME,
     }
 )
 # Edit transactions (issue #1528).

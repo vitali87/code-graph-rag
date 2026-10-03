@@ -541,7 +541,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["anthropic", "google", "openai"], specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
     { name = "pygments", specifier = ">=2.20.0" },
-    { name = "pymgclient", specifier = ">=1.5.1" },
+    { name = "pymgclient", specifier = ">=1.6.0" },
     { name = "pymilvus", extras = ["milvus-lite"], marker = "extra == 'milvus'", specifier = ">=3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },

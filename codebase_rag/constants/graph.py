@@ -196,6 +196,11 @@ KEY_AST_FINGERPRINT_NODES = "ast_fingerprint_nodes"
 KEY_AST_BRANCH_FINGERPRINTS = "ast_branch_fingerprints"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
+# A statement Memgraph rejects as a transient conflict (another transaction
+# holds what it writes) is sent again after a doubling wait: 0.2 s, 0.4 s,
+# 0.8 s, 1.6 s, then the error stands (issue #2441).
+MG_TRANSIENT_RETRY_ATTEMPTS = 5
+MG_TRANSIENT_RETRY_BASE_DELAY_S = 0.2
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 PROTOBUF_INDEX_FILE = "index.bin"

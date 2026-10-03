@@ -53,6 +53,35 @@ python realtime_updater.py ~/my-project
 cgr start --repo-path ~/my-project
 ```
 
+### One sync of a checkout at a time
+
+Every writer of a checkout (`cgr start --update-graph`, `cgr index`, the MCP
+server's index and update tools, the watcher, `cgr check` and the MCP
+`reingest`) takes the checkout's sync lock, `.cgr-sync-lock`, beside its other
+`.cgr-*` state files. Two syncs of one checkout at once would interleave their
+deletes and re-creates and leave the graph incomplete, so:
+
+- A full sync started while another holds the lock stops before it changes
+  anything and names the running one:
+  `Another sync of /path/to/repo is running (pid 4242, project 'repo__a4231746') ...`.
+  Run it again when that sync has finished.
+- The watcher's first scan and every scoped reingest (a watched change, an MCP
+  edit's reingest, `cgr check`) wait for the running sync instead, then apply
+  their change to the graph it finished.
+
+The lock is an OS file lock, so a sync that crashes or is killed releases it
+with its process; there is never a stale lock to delete. The lock file is
+never opened through a symbolic link: a checkout that ships `.cgr-sync-lock`
+as a link is refused with a message naming it, since writing the holder's
+name through the link would overwrite whatever file it points at. A lock file
+the current user cannot open, such as one another user of a shared checkout
+created, is refused too, with the reason: without the lock a sync cannot tell
+whether another one is running. Make the file readable and writable for every
+user who syncs the checkout.
+
+A write Memgraph rejects as a conflicting transaction is retried a few times
+with a short, growing wait before it is reported.
+
 ## CLI Arguments
 
 | Argument | Required | Default | Description |
