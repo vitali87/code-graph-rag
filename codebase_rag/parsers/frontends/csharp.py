@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from ...constants.languages import SupportedLanguage
+from ...constants.languages import IGNORE_PATTERNS, SupportedLanguage
 from ..csharp_frontend import (
     CSharpSemanticFacts,
     csharp_frontend_available,
@@ -59,8 +59,15 @@ class CSharpFrontend:
     def applies(self, repo_path: Path) -> bool:
         return find_csharp_project(repo_path) is not None
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
-        return _adapt_csharp_semantic_facts(run_csharp_frontend(repo_path))
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        ignored_dirs: frozenset[str] = IGNORE_PATTERNS,
+    ) -> SemanticFacts:
+        return _adapt_csharp_semantic_facts(
+            run_csharp_frontend(repo_path, ignored_dirs=ignored_dirs)
+        )
 
 
 register_frontend(CSharpFrontend())

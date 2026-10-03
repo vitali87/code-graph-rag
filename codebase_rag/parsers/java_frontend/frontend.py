@@ -198,7 +198,9 @@ def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
     return facts
 
 
-def run_java_frontend(repo_path: Path) -> JavaSemanticFacts:
+def run_java_frontend(
+    repo_path: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
+) -> JavaSemanticFacts:
     javac = shutil.which(cs.JAVAC_BIN)
     java = shutil.which(cs.JAVA_BIN)
     if javac is None or java is None:
@@ -218,7 +220,7 @@ def run_java_frontend(repo_path: Path) -> JavaSemanticFacts:
             timeout=_RUN_TIMEOUT,
             env={
                 **os.environ,
-                "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS)),
+                "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
             },
         )
     except (subprocess.SubprocessError, OSError) as error:

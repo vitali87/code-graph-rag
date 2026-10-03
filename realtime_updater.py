@@ -20,7 +20,7 @@ from watchdog.observers import Observer
 from codebase_rag import cli_help as ch
 from codebase_rag import logs
 from codebase_rag import tool_errors as te
-from codebase_rag.config import settings
+from codebase_rag.config import load_ignore_patterns, settings
 from codebase_rag.constants import (
     CONTENT_EVENT_TYPES,
     DEFAULT_DEBOUNCE_SECONDS,
@@ -490,11 +490,19 @@ def _run_watcher_loop(
     # bare-directory fallback: live updates must land in the project every
     # other command reads, and the two writers share one hash cache and
     # exclusion stamp (issue #2432).
+    #
+    # The same ignore sets `cgr index` loads, or the initial scan skips what
+    # `.cgrignore`, `.gitignore` and the git-tracked rescue decide and the
+    # event filter, which reads them from the updater, drops their edits
+    # (review of PR 2490).
+    patterns = load_ignore_patterns(repo_path_obj)
     updater = GraphUpdater(
         ingestor,
         repo_path_obj,
         parsers,
         queries,
+        unignore_paths=patterns.unignore or None,
+        exclude_paths=patterns.exclude or None,
         project_name=project_name or derive_project_name(repo_path_obj),
         project_named=project_name is not None,
     )

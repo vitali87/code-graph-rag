@@ -492,6 +492,33 @@ def walk_eligible_files(
                 yield dirpath, fname, rel_path_str
 
 
+def frontend_ignored_dirs(
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """The default-excluded directory names a compiler frontend may skip whole.
+
+    gotypes, javac and Roslyn take the exclusions as bare names and drop every
+    file under one, so a file the walk keeps there (a git-tracked
+    `pkg/out/out.go`, a `!` line) reached the graph without its compiler facts
+    (review of PR 2490). A name the walk yields any file under is left out.
+    The tool then also reports on files under that name the walk skipped,
+    which is harmless: every fact joins to a definition by the position the
+    parse registered, and a file the walk skipped registers none.
+    """
+    kept: set[str] = set()
+    for _dirpath, _fname, rel_path_str in walk_eligible_files(
+        repo_path, exclude_paths, unignore_paths
+    ):
+        kept.update(
+            part
+            for part in rel_path_str.split(cs.SEPARATOR_SLASH)[:-1]
+            if part in cs.IGNORE_PATTERNS
+        )
+    return cs.IGNORE_PATTERNS - kept
+
+
 def is_walked_dir(
     dir_parts: tuple[str, ...],
     exclude_paths: frozenset[str] | None = None,

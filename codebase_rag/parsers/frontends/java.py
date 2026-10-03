@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from ...constants.languages import SupportedLanguage
+from ...constants.languages import IGNORE_PATTERNS, SupportedLanguage
 from ..java_frontend import java_frontend_available, run_java_frontend
 from .protocol import ResolvedCallSite, SemanticFacts
 from .registry import register_frontend
@@ -37,11 +37,18 @@ class JavaJavacFrontend:
     def applies(self, repo_path: Path) -> bool:
         return repo_path.exists()
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        ignored_dirs: frozenset[str] = IGNORE_PATTERNS,
+    ) -> SemanticFacts:
         # Stage 1 attributes the whole repo in one javac run: a narrowed file
         # list cannot bind calls whose targets live in the files it omits.
         del files
-        return _adapt_java_semantic_facts(run_java_frontend(repo_path))
+        return _adapt_java_semantic_facts(
+            run_java_frontend(repo_path, ignored_dirs=ignored_dirs)
+        )
 
 
 register_frontend(JavaJavacFrontend())

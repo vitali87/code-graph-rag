@@ -316,7 +316,9 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
     )
 
 
-def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
+def _run_tool_once(
+    binary: Path, module_root: Path, ignored_dirs: frozenset[str]
+) -> GoSemanticFacts | None:
     """Facts for one module anchor, or None when the tool run FAILED.
 
     None rather than empty facts, because they are different facts and the
@@ -335,7 +337,7 @@ def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
             env={
                 **os.environ,
                 **_GO_ENV,
-                "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS)),
+                "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
             },
         )
     except (subprocess.SubprocessError, OSError) as error:
@@ -352,7 +354,9 @@ def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
     return _parse_payload(proc.stdout, proc.stderr)
 
 
-def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
+def run_go_frontend(
+    repo_path: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
+) -> GoSemanticFacts:
     go = shutil.which(_GO)
     if go is None:
         return _empty_facts()
@@ -367,7 +371,7 @@ def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
     degraded: list[str] = []
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
-        raw = _run_tool_once(binary, anchor)
+        raw = _run_tool_once(binary, anchor, ignored_dirs)
         if raw is None:
             # This module drops to the heuristics, and the others keep their
             # compiler facts -- one wedged build must not blind a ten-module

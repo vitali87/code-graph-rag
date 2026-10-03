@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from ...constants.languages import SupportedLanguage
+from ...constants.languages import IGNORE_PATTERNS, SupportedLanguage
 from ..py_frontend import python_frontend_available, run_python_frontend
 from .protocol import SemanticFacts
 from .registry import register_frontend
@@ -26,7 +26,14 @@ class PythonJediFrontend:
         # anyway, so existence is the only meaningful precondition.
         return repo_path.exists()
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        ignored_dirs: frozenset[str] = IGNORE_PATTERNS,
+    ) -> SemanticFacts:
+        # Handed the files the walk parsed, so it has no directories to skip.
+        del ignored_dirs
         return run_python_frontend(repo_path, list(files))
 
 
