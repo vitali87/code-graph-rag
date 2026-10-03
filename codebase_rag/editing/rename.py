@@ -386,6 +386,7 @@ class Renamer:
         verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
+        heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
@@ -396,6 +397,9 @@ class Renamer:
         # (issue #1531): the delta of what it wrote is measured and the
         # transaction undone when the contract fails.
         self.reingest = reingest
+        # How the caller spells the opt-in the heuristic refusal tells the
+        # user to pass: a CLI flag is not an MCP parameter (issue #2886).
+        self.heuristic_opt_in = heuristic_opt_in
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -718,7 +722,9 @@ class Renamer:
         ]
         if ambiguous and not allow_heuristic:
             raise RenameRefused(
-                cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous)),
+                cs.RENAME_AMBIGUOUS.format(
+                    qn=qn, count=len(ambiguous), option=self.heuristic_opt_in
+                ),
                 ambiguous,
                 unlocatable,
             )
@@ -1277,6 +1283,7 @@ def rename(
     verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
     after_apply: Callable[[list[str]], None] | None = None,
     reingest: Reingest | None = None,
+    heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
@@ -1290,6 +1297,7 @@ def rename(
         verify=verify,
         after_apply=after_apply,
         reingest=reingest,
+        heuristic_opt_in=heuristic_opt_in,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)

@@ -3127,6 +3127,7 @@ class MCPToolsRegistry:
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
                 reingest=reingest,
+                heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:
             return {

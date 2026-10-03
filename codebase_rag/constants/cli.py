@@ -704,10 +704,13 @@ RENAME_DEFINITION_UNREADABLE = (
     "The index names a file the tree no longer has; re-index and retry."
 )
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
+# `{option}` is the opt-in as the caller spells it: `--allow-heuristic` on the
+# command line, `allow_heuristic` in MCP (issue #2886).
 RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
-    "fan-out, or only by a trace; pass allow_heuristic to rewrite through them"
+    "fan-out, or only by a trace; pass {option} to rewrite through them"
 )
+RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
