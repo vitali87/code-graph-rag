@@ -3043,22 +3043,46 @@ class CallResolver:
         """
         if not caller_qn:
             return None
-        imports = self.import_processor
         effective = self.rust_function_modules.get(caller_qn, module_qn)
-        target = imports.rust_fn_scope_imports.get(caller_qn, {}).get(name)
-        owner = effective
-        if target is None:
-            weak = imports.rust_fn_scope_mod_imports.get(caller_qn, {}).get(name)
-            for scope in self._rust_enclosing_scopes(module_qn, caller_qn):
-                local = f"{scope}{cs.SEPARATOR_DOT}{name}"
-                if self.function_registry.get(local) in _RS_TYPE_NODE_TYPES:
-                    return local
-                raw = imports.import_mapping.get(scope, {}).get(name)
-                if (target := raw if weak is None else weak) is not None:
-                    owner = scope if weak is None else effective
-                    break
-        if target is None:
-            return None
+        fn_scope = self.import_processor.rust_fn_scope_imports.get(caller_qn, {})
+        target = fn_scope.get(name)
+        if target is not None:
+            return self._rust_scoped_use_type(target, effective, module_qn)
+        return self._rust_enclosing_scope_type(name, module_qn, caller_qn, effective)
+
+    def _rust_enclosing_scope_type(
+        self, name: str, module_qn: str, caller_qn: str, effective: str
+    ) -> str | None:
+        """Bind `name` in the scopes between the caller and its file module.
+
+        Innermost first, a type the scope defines outranks the scope's
+        `use`. The weak binding (an impure inline mod's own `use` fanned out
+        to the functions its block declares) has mod-level precedence: it
+        answers once the innermost scope defines no such type, read from
+        the caller's effective module rather than that scope.
+        """
+        imports = self.import_processor
+        weak = imports.rust_fn_scope_mod_imports.get(caller_qn, {}).get(name)
+        for scope in self._rust_enclosing_scopes(module_qn, caller_qn):
+            local = f"{scope}{cs.SEPARATOR_DOT}{name}"
+            if self.function_registry.get(local) in _RS_TYPE_NODE_TYPES:
+                return local
+            if weak is not None:
+                return self._rust_scoped_use_type(weak, effective, module_qn)
+            raw = imports.import_mapping.get(scope, {}).get(name)
+            if raw is not None:
+                return self._rust_scoped_use_type(raw, scope, module_qn)
+        return None
+
+    def _rust_scoped_use_type(
+        self, target: str, owner: str, module_qn: str
+    ) -> str | None:
+        """The type an inner scope's `use` target names, read from `owner`.
+
+        An unrepresentable module and a provably external path speak for
+        the name as they are; a first-party path counts only when it lands
+        on a type.
+        """
         if target == cs.RUST_UNRESOLVABLE_QN:
             return target
         resolved = self._rust_local_qn(target, owner)
