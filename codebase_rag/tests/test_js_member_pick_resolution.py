@@ -396,6 +396,40 @@ def test_package_imports_and_platform_globals_still_take_no_edge(
     assert _calls(mock_ingestor, ".handlers.warm")["cache.Cache.get"] == {EXACT}
 
 
+def test_a_package_generic_is_not_read_through_to_its_argument(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Only TypeScript's own `Readonly<T>` keeps T's members. A package's
+    # generic, even one spelled like that utility, is the package's type:
+    # its argument says nothing about the receiver's methods.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "cache.ts": CACHE_TS,
+            "wrapped.ts": (
+                "import { Cache } from './cache';\n"
+                "import { Wrapper } from 'lib';\n"
+                "export function wrap(w: Wrapper<Cache>) { return w.get('x'); }\n"
+            ),
+            "shadowed.ts": (
+                "import { Cache } from './cache';\n"
+                "import { Readonly } from 'lib';\n"
+                "export function frozen(r: Readonly<Cache>) { return r.get('x'); }\n"
+            ),
+            "builtin.ts": (
+                "import { Cache } from './cache';\n"
+                "export function frozen(r: Readonly<Cache>) { return r.get('x'); }\n"
+                "export function boxed(b: Box<Cache>) { return b.get('x'); }\n"
+            ),
+        },
+    )
+    assert "cache.Cache.get" not in _calls(mock_ingestor, ".wrapped.wrap")
+    assert "cache.Cache.get" not in _calls(mock_ingestor, ".shadowed.frozen")
+    assert _calls(mock_ingestor, ".builtin.frozen")["cache.Cache.get"] == {EXACT}
+    assert _calls(mock_ingestor, ".builtin.boxed")["cache.Cache.get"] == {HEURISTIC}
+
+
 # --- negative: a receiver whose declaration names the owner stays exact ---------
 
 

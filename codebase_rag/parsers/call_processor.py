@@ -4983,18 +4983,18 @@ class CallProcessor:
         if not name:
             return None
         declared = self._ts_type_name_declaration(name, node, module_qn)
-        # A global utility type is no value type of its own: it is read
-        # through, unless the project defines a type of that name.
-        if declared is not None and not declared.foreign:
+        # TypeScript's own utility types are no value type of their own and
+        # are read through. A name the project defines or a package exports
+        # (`Wrapper<Cache>`, or an imported `Readonly`) is that type, whatever
+        # its arguments, so only a name resolving to nothing is a utility.
+        if declared is not None or name in cs.TS_UNSETTLED_UTILITY_TYPES:
             return declared
-        if name in cs.TS_UNSETTLED_UTILITY_TYPES:
-            return None
         if name in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
             # `Readonly<A>` and friends keep A's members: A is the declaration.
             arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
             first = next(iter(arguments.named_children), None) if arguments else None
             return self._ts_type_declaration(first, module_qn) if first else None
-        return declared
+        return None
 
     def _ts_type_name_declaration(
         self, name: str, anchor: Node, module_qn: str
