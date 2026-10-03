@@ -1645,6 +1645,10 @@ class ClassIngestMixin:
             else module_qn
         )
         class_qn = f"{owner_module_qn}.{impl_target}"
+        if written_path := rs_utils.extract_impl_target_path(class_node):
+            self.import_processor.record_rust_impl_self_path(
+                module_qn, class_qn, written_path
+            )
 
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source

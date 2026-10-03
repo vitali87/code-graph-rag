@@ -2009,15 +2009,30 @@ class CallResolver:
 
         An impl block registers under `<its module>.<Type>`, a qn nothing
         else holds, both for a type outside the crate (`impl From<Foo> for
-        u8`) and for the crate's own type written away from its definition
-        (`impl String { fn new() }` beside a `use crate::shadow::String`).
-        Where the impl's module names the type, that binding decides. Where
-        nothing there names it, the target was written as a path or is the
-        prelude's: Rust allows an impl on a foreign type only for a trait, so
-        a crate that defines a type of that name is taken to mean its own
-        (#2595 review: the prelude `String::new()` bound the crate
-        `String`'s `new`, impl'd in another module).
+        u8`, `impl Describe for std::string::String`) and for the crate's own
+        type written away from its definition (`impl String { fn new() }`
+        beside a `use crate::shadow::String`). The self type as written
+        decides, read the way rustc reads it in the impl's own module: its
+        first segment's binding there, the prelude for a bare `String`
+        nothing rebinds, `crate::`/`self::`/`super::` for the crate's own
+        (#2595 review). A crate type that merely shares the name decides
+        nothing.
         """
+        impl_module = owner.rpartition(cs.SEPARATOR_DOT)[0]
+        written = self.import_processor.rust_impl_self_paths.get(owner)
+        if not written:
+            # Not parsed this run (an unchanged file on an incremental run):
+            # no path to read, so a crate type of the name is taken to mean
+            # its own, as rustc allows a foreign type only a trait impl.
+            return self._rust_unwritten_impl_is_external(owner)
+        return any(
+            self._rust_head_is_external(
+                path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0], impl_module, None
+            )
+            for path in written
+        )
+
+    def _rust_unwritten_impl_is_external(self, owner: str) -> bool:
         impl_module, _sep, name = owner.rpartition(cs.SEPARATOR_DOT)
         if self._rust_head_binding(name, impl_module, None) is not None:
             return self._rust_head_is_external(name, impl_module, None)

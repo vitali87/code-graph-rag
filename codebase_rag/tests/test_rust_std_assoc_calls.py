@@ -557,3 +557,47 @@ def test_trait_impl_on_the_prelude_type_still_binds(
     )
     callees = _callees(edges, "rs_trait_on_std.src.app.build")
     assert "rs_trait_on_std.src.describe.String.describe" in callees, edges
+
+
+def test_trait_impl_on_a_std_path_reaches_it_beside_the_crates_own_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # #2595 re-review: the crate's own `String` shares the name, but the
+    # impl block is written on `std::string::String` (or a bare `String`
+    # nothing in its module rebinds, which is the prelude's), so an explicit
+    # std path call reaches it.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_std_path_impl",
+        {
+            "src/lib.rs": "pub mod shadow;\npub mod describe;\npub mod bare;\npub mod app;\n",
+            "src/shadow.rs": "pub struct String { n: usize }\n",
+            "src/describe.rs": (
+                "pub trait Describe {\n"
+                "    fn describe() -> usize;\n"
+                "}\n\n"
+                "impl Describe for std::string::String {\n"
+                "    fn describe() -> usize { 6 }\n"
+                "}\n"
+            ),
+            "src/bare.rs": (
+                "pub trait Label {\n"
+                "    fn label() -> usize;\n"
+                "}\n\n"
+                "impl Label for String {\n"
+                "    fn label() -> usize { 7 }\n"
+                "}\n"
+            ),
+            "src/app.rs": (
+                "use crate::bare::Label;\n"
+                "use crate::describe::Describe;\n\n"
+                "pub fn build() -> usize {\n"
+                "    std::string::String::describe() + String::label()\n"
+                "}\n"
+            ),
+        },
+    )
+    callees = _callees(edges, "rs_std_path_impl.src.app.build")
+    assert "rs_std_path_impl.src.describe.String.describe" in callees, edges
+    assert "rs_std_path_impl.src.bare.String.label" in callees, edges

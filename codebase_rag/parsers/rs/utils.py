@@ -320,6 +320,27 @@ def extract_impl_target(impl_node: Node) -> str | None:
     return _impl_field_type_name(impl_node, cs.FIELD_TYPE)
 
 
+def extract_impl_target_path(impl_node: Node) -> str | None:
+    """The impl block's self type as written, generics and references
+    peeled: `std::string::String`, `crate::shadow::String`, `String`, `u8`.
+    Its first segment is what decides which type the block is on."""
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    type_node = impl_node.child_by_field_name(cs.FIELD_TYPE)
+    while type_node is not None and type_node.type in (
+        cs.TS_GENERIC_TYPE,
+        cs.TS_RS_REFERENCE_TYPE,
+    ):
+        type_node = type_node.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.type not in (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_RS_SCOPED_TYPE_IDENTIFIER,
+        cs.TS_RS_PRIMITIVE_TYPE,
+    ):
+        return None
+    return safe_decode_text(type_node) or None
+
+
 def extract_impl_trait(impl_node: Node) -> str | None:
     # The `trait` field of `impl Trait for Type` -> the implemented trait's
     # simple name (a trait impl means Type IMPLEMENTS Trait).
