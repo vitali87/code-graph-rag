@@ -180,21 +180,8 @@ def extract_modifiers_and_decorators(
     body_node = node.child_by_field_name(cs.FIELD_BODY)
     header_end_byte = body_node.start_byte if body_node else node.end_byte
 
-    target_node = node
-    if node.parent and node.parent.type in (
-        cs.TS_PY_DECORATED_DEFINITION,
-        cs.TS_EXPORT_STATEMENT,
-        # Dart wraps a class member's function_signature in a
-        # method_signature that owns the `static` token.
-        cs.TS_DART_METHOD_SIGNATURE,
-    ):
-        target_node = node.parent
-
-    query_nodes = [target_node]
-    curr_sibling = target_node.prev_named_sibling
-    while curr_sibling and _is_leading_annotation(target_node, curr_sibling):
-        query_nodes.insert(0, curr_sibling)
-        curr_sibling = curr_sibling.prev_named_sibling
+    query_nodes = _annotated_nodes(node)
+    target_node = query_nodes[-1]
 
     modifiers: list[str] = []
     decorators: list[str] = []
@@ -207,6 +194,43 @@ def extract_modifiers_and_decorators(
         )
 
     return modifiers, decorators
+
+
+def _annotated_nodes(node: ASTNode) -> list[ASTNode]:
+    """The nodes a definition's modifiers and decorators are written on, in
+    source order: its leading annotation siblings, then the definition's own
+    node or the wrapper that owns them."""
+    target_node = node
+    if node.parent and node.parent.type in (
+        cs.TS_PY_DECORATED_DEFINITION,
+        cs.TS_EXPORT_STATEMENT,
+        # Dart wraps a class member's function_signature in a
+        # method_signature that owns the `static` token.
+        cs.TS_DART_METHOD_SIGNATURE,
+    ):
+        target_node = node.parent
+
+    nodes = [target_node]
+    curr_sibling = target_node.prev_named_sibling
+    while curr_sibling and _is_leading_annotation(target_node, curr_sibling):
+        nodes.insert(0, curr_sibling)
+        curr_sibling = curr_sibling.prev_named_sibling
+    return nodes
+
+
+def decorated_start_props(node: ASTNode) -> PropertyDict:
+    """`decorated_start_line` when decorators or attributes sit above `node`
+    but outside its own span, else nothing (issue #2428).
+
+    Read from the same nodes the `decorators` list is, so the decorated
+    source of a definition starts at the first of them; a wrapper that starts
+    on the definition's own line (`export class`) widens nothing. The node's
+    `start_line` stays where it is: everything line-based keys on it.
+    """
+    first_row = _annotated_nodes(node)[0].start_point[0]
+    if first_row >= node.start_point[0]:
+        return {}
+    return {cs.KEY_DECORATED_START_LINE: first_row + 1}
 
 
 def _is_leading_annotation(target_node: ASTNode, sibling: ASTNode) -> bool:
@@ -1489,6 +1513,7 @@ def ingest_method(
     )
     method_props.update(fingerprint_props(method_node))
     method_props.update(anchor_hash_props(method_node, decorators))
+    method_props.update(decorated_start_props(method_node))
 
     is_property = _method_is_property(method_node, language, decorators)
     if is_property:

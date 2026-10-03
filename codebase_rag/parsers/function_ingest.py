@@ -48,6 +48,7 @@ from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
     callable_parameter_indices,
+    decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
@@ -1600,6 +1601,7 @@ class FunctionIngestMixin:
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
+        props.update(decorated_start_props(func_node))
         return props
 
     def _create_function_relationships(
