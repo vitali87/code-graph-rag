@@ -92,6 +92,7 @@ from .parsers.java_lombok import (
     overlay_identity,
 )
 from .parsers.parameter_nodes import PendingParameterType
+from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
@@ -929,6 +930,19 @@ def _natural_qn(qualified_name: str) -> str:
 _GLOSS_RELS = frozenset(
     {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
 )
+
+
+def _module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
+    """The file module `name` lives in: its longest dotted prefix that is one.
+
+    The name itself counts, since an import can name a whole module.
+    """
+    parts = name.split(cs.SEPARATOR_DOT)
+    for end in range(len(parts), 0, -1):
+        prefix = cs.SEPARATOR_DOT.join(parts[:end])
+        if prefix in module_paths:
+            return prefix
+    return None
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -1962,6 +1976,10 @@ class GraphUpdater:
         if rehydrate:
             self._rehydrate_registry_from_graph()
 
+        # After rehydration, which tells a re-export from a definition, and
+        # before every stage below that resolves through the import maps.
+        self._restore_reached_import_state()
+
         # After rehydration: an incremental run re-parses the `.cpp` holding
         # an out-of-class method while its class stays in an unchanged
         # header, and the class is only known once the registry is read back
@@ -2064,6 +2082,107 @@ class GraphUpdater:
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
+
+    def _restore_reached_import_state(self) -> None:
+        """Parse the imports of the unchanged modules re-parsed files reach.
+
+        An incremental run parses only the changed files, yet resolving them
+        follows re-exports through the import maps of the modules they import
+        from: `from pkg import Client` names `pkg.Client`, which only
+        `pkg/__init__.py`'s map turns into `pkg._client.Client`. A clean index
+        holds every map; without them the receiver lost its type and the call
+        bound by name to whatever else carries it (issue #2559).
+
+        What is read is the import closure of the re-parsed files: each module
+        an import names is restored and then walked in turn. A reached
+        definition carries the walk on too, since resolving its own
+        annotations (`def make() -> Client` in an unchanged module) reads its
+        module's map, and that can lead to yet another re-export. A module no
+        re-parsed file reaches is never opened, and a module whose imports
+        this updater already holds is not parsed again.
+        """
+        mapping = self.factory.import_processor.import_mapping
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        if all(module_qn in mapping for module_qn in module_paths):
+            # A full build or a reused updater: every map is already held.
+            return
+        restored = self._restore_import_closure(module_paths)
+        if restored:
+            logger.info(ls.IMPORT_STATE_RESTORED, count=restored)
+
+    def _restore_import_closure(self, module_paths: Mapping[str, Path]) -> int:
+        """Walk out from every held map, restoring each unheld module reached.
+
+        Returns how many modules had their imports restored.
+        """
+        import_processor = self.factory.import_processor
+        mapping = import_processor.import_mapping
+        # Read once: each restored map is re-pointed before the walk reads it.
+        siblings = import_processor.stem_sibling_modules(module_paths)
+        # The walk is a closure, so the order scopes are taken in is moot.
+        pending = list(mapping)
+        walked = set(pending)
+        restored = 0
+        while pending:
+            scope = pending.pop()
+            # A copy, not a live view: restoring a Rust module commits its
+            # inline-`mod` uses under their scope keys until its parse is
+            # retracted, and `mod b {}` in `a.rs` keys on the same qn as a
+            # cfg-twin `a/b.rs`, so `scope`'s own dict can change mid-loop.
+            targets = list(mapping.get(scope, {}).values())
+            for target in targets:
+                holder = _module_holding(target, module_paths)
+                if holder is None or holder in walked:
+                    continue
+                walked.add(holder)
+                if holder not in mapping:
+                    if not self._restore_module_imports(holder, module_paths[holder]):
+                        continue
+                    restored += 1
+                    # A restored map names a shared stem as written
+                    # (`proj.shim.Widget`), while the module carries its
+                    # suffix (`proj.shim.py`, issue #2586). The re-parsed
+                    # maps were re-pointed before this walk; a restored one
+                    # must be too before its targets are looked up, or the
+                    # suffixed module is never found and never restored.
+                    import_processor.point_module_imports_at_own_language_siblings(
+                        holder, module_paths, siblings
+                    )
+                pending.append(holder)
+        return restored
+
+    def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
+        """Parse one unchanged module's imports; False when Pass 2 would not."""
+        spec = get_language_spec(path.suffix)
+        if spec is None or not isinstance(spec.language, cs.SupportedLanguage):
+            return False
+        language = spec.language
+        language_queries = self.queries.get(language)
+        if (
+            language not in self.parsers
+            or language_queries is None
+            or not language_queries.get(cs.QUERY_IMPORTS)
+        ):
+            return False
+        try:
+            rel = path.relative_to(self.repo_path).as_posix()
+        except ValueError:
+            return False
+        if rel in self._cpp_frontend_covered:
+            # The libclang frontend emitted this file, so Pass 2 parses none
+            # of its imports either.
+            return False
+        entry = self.ast_cache.load(path)
+        if entry is None:
+            return False
+        self.factory.import_processor.restore_unparsed_imports(
+            entry[0],
+            module_qn,
+            language,
+            self.queries,
+            self.factory.definition_processor.function_locations,
+        )
+        return True
 
     @property
     def state_dir(self) -> Path:
@@ -3126,7 +3245,6 @@ class GraphUpdater:
         # Read afresh each run: a module may have gained or lost its suffix
         # since the last one, and the requeues below all consult this.
         self._module_qns_by_path = None
-        added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
             rows = self._owned_rows(
@@ -3142,11 +3260,15 @@ class GraphUpdater:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
+        restored: list[ResultRow] = []
         for row in rows:
             if self._rehydrate_definition_row(row):
-                added += 1
-        if added:
-            logger.info(ls.REGISTRY_REHYDRATED, count=added)
+                restored.append(row)
+        if restored:
+            logger.info(ls.REGISTRY_REHYDRATED, count=len(restored))
+        # After the loop: whether a method's owner is a trait needs the whole
+        # registry, and its rows arrive in no particular order.
+        self._rehydrate_rust_return_types(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
@@ -3233,6 +3355,66 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
+        # Pass 2 records a Rust fn's return type only while it parses the
+        # file, and a chained or call-bound receiver (`Get::new(k).m()`,
+        # `let b = Builder::new(); b.m()`) types from that record. Without it
+        # an unchanged file's fn types nothing, and the method falls to a
+        # name-only match a clean index never makes (issue #2559).
+        records = [
+            record
+            for row in rows
+            if (record := self._rust_return_type_record(row)) is not None
+        ]
+        if not records:
+            return
+        # Read only now: the parser view loads a grammar on first access, and
+        # a project with no Rust must not pay for one.
+        parser = self.parsers.get(cs.SupportedLanguage.RUST)
+        if parser is None:
+            return
+        return_types = self.factory.definition_processor.method_return_types
+        reduced: dict[tuple[str, str | None], str | None] = {}
+        for key, annotation, impl_target in records:
+            if (annotation, impl_target) not in reduced:
+                reduced[(annotation, impl_target)] = (
+                    rs_utils.return_type_name_from_annotation(
+                        parser, annotation, impl_target
+                    )
+                )
+            if name := reduced[(annotation, impl_target)]:
+                # A re-parsed file's own record is current; keep it.
+                return_types.setdefault(key, name)
+
+    def _rust_return_type_record(
+        self, row: ResultRow
+    ) -> tuple[str, str, str | None] | None:
+        """(record key, return annotation, impl target) for a Rust fn row."""
+        qn = row.get(cs.KEY_QUALIFIED_NAME)
+        label = row.get(cs.KEY_LABEL)
+        path = row.get(cs.KEY_PATH)
+        annotation = row.get(cs.KEY_RETURN_TYPE)
+        if not (
+            isinstance(qn, str)
+            and isinstance(path, str)
+            and isinstance(annotation, str)
+            and annotation
+            and path.endswith(cs.EXT_RS)
+        ):
+            return None
+        if label == cs.NodeLabel.FUNCTION.value:
+            # A free fn has no impl, so its `Self` names nothing.
+            return qn, annotation, None
+        if label != cs.NodeLabel.METHOD.value:
+            return None
+        # Pass 2 keys an impl method by its impl target and name, which the
+        # natural qn spells, and records none for a trait's own methods.
+        natural = _natural_qn(qn)
+        owner = natural.rpartition(cs.SEPARATOR_DOT)[0]
+        if self.function_registry.get(owner) == NodeType.INTERFACE:
+            return None
+        return natural, annotation, owner.rpartition(cs.SEPARATOR_DOT)[2]
 
     def _rehydrate_definition_path(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow

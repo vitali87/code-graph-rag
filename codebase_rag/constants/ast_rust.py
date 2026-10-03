@@ -143,6 +143,9 @@ RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
 RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
+# A bodied fn around a persisted return annotation, so the text parses back
+# into the `return_type` node the extraction at parse time reads (issue #2559).
+RS_RETURN_TYPE_STUB = "fn stub() -> {annotation} {{}}"
 # Transparent smart pointers that auto-deref to their inner type: a method call
 # on the pointer dispatches to the inner type's method, so strip them from any
 # type name (receiver OR return) to reach the real type.
