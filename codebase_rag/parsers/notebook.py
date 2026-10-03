@@ -25,6 +25,7 @@ import json
 import re
 from bisect import bisect_right
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import PurePath
 from typing import NamedTuple
 
@@ -41,6 +42,12 @@ _QUOTE, _COLON, _COMMA, _BACKSLASH = ord('"'), ord(":"), ord(","), ord("\\")
 _OPEN_OBJECT, _CLOSE_OBJECT = ord("{"), ord("}")
 _OPEN_ARRAY, _CLOSE_ARRAY = ord("["), ord("]")
 _OPENERS = frozenset({_OPEN_OBJECT, _OPEN_ARRAY})
+_PY_QUOTES = frozenset({"'", '"'})
+_PY_OPEN_BRACKETS = frozenset({"(", "[", "{"})
+_PY_CLOSE_BRACKETS = frozenset({")", "]", "}"})
+_PY_COMMENT = "#"
+_PY_ESCAPE = "\\"
+_TRIPLE_QUOTE_LENGTH = 3
 
 
 class NotebookCell(NamedTuple):
@@ -128,16 +135,26 @@ class _Cursor:
             raise ValueError(self.pos)
         return decoded
 
+    def scalar(self) -> bytes:
+        """The JSON text of the number, `true`, `false` or `null` here."""
+        self.peek()
+        match = _SCALAR.match(self.data, self.pos)
+        if match is None:
+            raise ValueError(self.pos)
+        self.pos = match.end()
+        return match.group()
+
+    def at_end(self) -> bool:
+        return self.peek() is None
+
     def skip(self) -> None:
         first = self.peek()
         if first == _QUOTE:
             self.string()
         elif first in _OPENERS:
             self._skip_container()
-        elif match := _SCALAR.match(self.data, self.pos):
-            self.pos = match.end()
         else:
-            raise ValueError(self.pos)
+            self.scalar()
 
     def _skip_container(self) -> None:
         depth = 0
@@ -222,6 +239,7 @@ def notebook_source_text(data: bytes) -> str | None:
 def _read_cells(cursor: _Cursor) -> tuple[list[_CodeCell] | None, str | None]:
     cells: list[_CodeCell] | None = None
     language: str | None = None
+    version: bytes | None = None
     for key in cursor.keys():
         match key:
             case cs.NB_KEY_CELLS:
@@ -231,8 +249,16 @@ def _read_cells(cursor: _Cursor) -> tuple[list[_CodeCell] | None, str | None]:
                         cells.append(cell)
             case cs.NB_KEY_METADATA:
                 language = _read_language(cursor)
+            case cs.NB_KEY_NBFORMAT:
+                version = cursor.scalar()
             case _:
                 cursor.skip()
+    # One nbformat 4 document and only whitespace after it, as Jupyter
+    # requires: another version lays cells out differently, and more text
+    # after the object (a merge conflict, two documents pasted together)
+    # means the file is not the notebook its first object describes.
+    if version != cs.NB_FORMAT_VERSION or not cursor.at_end():
+        raise ValueError(cursor.pos)
     return cells, language
 
 
@@ -347,12 +373,72 @@ def _python_lines(fragments: list[_Fragment]) -> list[_Fragment]:
         magic.group(1) not in cs.NB_PYTHON_BODY_CELL_MAGICS
     ):
         return []
-    return [
-        _Fragment(line.file_line, _neutralised(line.text))
-        if _MAGIC_LINE.match(line.text)
-        else line
-        for line in lines
-    ]
+    still_open = _StillOpen()
+    python: list[_Fragment] = []
+    for line in lines:
+        if still_open.at_statement_start() and _MAGIC_LINE.match(line.text):
+            # IPython's own syntax, so nothing in it opens a string or a
+            # bracket for the lines after it.
+            python.append(_Fragment(line.file_line, _neutralised(line.text)))
+        else:
+            still_open.advance(line.text)
+            python.append(line)
+    return python
+
+
+@dataclass
+class _StillOpen:
+    """What the cell's lines so far leave open, as Python reads them.
+
+    IPython rewrites a magic or a shell escape only where a statement starts.
+    The same text inside a string, inside brackets or after a backslash
+    continuation is Python (a docstring line, a `%divisor()` modulo) and
+    must be parsed as written.
+    """
+
+    string_end: str | None = None
+    depth: int = 0
+    backslash: bool = False
+
+    def at_statement_start(self) -> bool:
+        return self.string_end is None and self.depth == 0 and not self.backslash
+
+    def advance(self, line: str) -> None:
+        pos = 0
+        while pos < len(line):
+            if self.string_end is not None:
+                pos = self._close_string(line, pos, self.string_end)
+                continue
+            char = line[pos]
+            if char == _PY_COMMENT:
+                self.backslash = False
+                return
+            if char in _PY_QUOTES:
+                triple = char * _TRIPLE_QUOTE_LENGTH
+                self.string_end = triple if line.startswith(triple, pos) else char
+                pos += len(self.string_end)
+                continue
+            if char in _PY_OPEN_BRACKETS:
+                self.depth += 1
+            elif char in _PY_CLOSE_BRACKETS:
+                self.depth = max(0, self.depth - 1)
+            pos += 1
+        continued = line.endswith(_PY_ESCAPE)
+        # A one-quote string ends with its line unless a backslash carries it.
+        if self.string_end is not None and len(self.string_end) == 1:
+            self.string_end = self.string_end if continued else None
+        self.backslash = continued and self.string_end is None
+
+    def _close_string(self, line: str, pos: int, end: str) -> int:
+        while pos < len(line):
+            if line[pos] == _PY_ESCAPE:
+                pos += 2
+            elif line.startswith(end, pos):
+                self.string_end = None
+                return pos + len(end)
+            else:
+                pos += 1
+        return len(line)
 
 
 def _neutralised(line: str) -> str:

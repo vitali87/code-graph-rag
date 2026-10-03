@@ -166,9 +166,13 @@ helper that only a notebook calls is not reported by `cgr dead-code`.
   cell stored as one string, or a notebook written on a single line, is
   still indexed, but its lines are numbered on from the line where the
   cell's source starts, so they no longer match the file's lines exactly.
-- **IPython syntax.** Before parsing, line magics (`%matplotlib inline`),
-  shell escapes (`!pip install ...`, `files = !ls`) and help requests
-  (`?obj`) are replaced with `pass`, so they hide nothing around them. A cell
+- **IPython syntax.** Before parsing, a line that starts a statement with a
+  line magic (`%matplotlib inline`), a shell escape (`!pip install ...`,
+  `files = !ls`) or a help request (`?obj`) is replaced with `pass`, so it
+  hides nothing around it. The same text inside a string, inside brackets or
+  after a backslash continuation is Python, as it is to IPython, and is
+  parsed as written: a docstring line `%timeit f()` stays in the docstring,
+  and a continuation line `%divisor()` stays a modulo and a call. A cell
   magic that runs its body as Python in the kernel (`%%time`, `%%timeit`,
   `%%capture`, `%%prun`, `%%debug`, `%%python`) keeps that body. Any other
   cell magic (`%%bash`, `%%html`, `%%sql`, `%%writefile`, ...) means the cell
@@ -177,8 +181,10 @@ helper that only a notebook calls is not reported by `cgr dead-code`.
   from `metadata.language_info.name`, or from `metadata.kernelspec.language`
   when that is missing. A notebook that declares neither is read as Python,
   the language of Jupyter's default kernel. An R, Julia or other notebook
-  keeps only its `File` node. So does a file that is not valid nbformat 4
-  JSON, and a warning names it.
+  keeps only its `File` node. So does a file that is not one valid nbformat
+  4 JSON document: one with a missing `nbformat` or a version other than 4,
+  or with anything but whitespace after the document (a merge-conflict
+  marker, a second object). A warning names it.
 - **Size and opting out.** Only the cells' `source` is decoded: outputs are
   skipped without being decoded, so large embedded images cost a scan of
   their bytes and nothing more. Jupyter's `.ipynb_checkpoints/` copies are

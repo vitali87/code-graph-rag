@@ -103,6 +103,53 @@ def test_a_continuation_line_is_not_taken_for_a_magic() -> None:
     assert "    != c" in _lines(notebook)
 
 
+def test_magic_looking_lines_inside_strings_and_brackets_are_python() -> None:
+    code = [
+        'doc = """\n',
+        "%matplotlib inline\n",
+        "!pip install x\n",
+        "files = !ls\n",
+        '"""\n',
+        "text = '''\n",
+        "?help\n",
+        "'''\n",
+        "total = (a\n",
+        "    %divisor())\n",
+        "rest = a \\\n",
+        "    %divisor()\n",
+        "s = 'one \\\n",
+        "%not a magic'\n",
+    ]
+    lines = _lines(_read(_nb([_code(code)])))
+
+    for text in code:
+        assert text.rstrip("\n") in lines
+    assert "pass" not in (line.strip() for line in lines)
+
+
+@pytest.mark.parametrize(
+    "magic",
+    ["%matplotlib inline", "!pip install x", "files = !ls", "out = %sx ls", "?load"],
+)
+def test_a_magic_that_starts_a_statement_still_becomes_pass(magic: str) -> None:
+    # It follows a string, a bracket and a backslash continuation that have
+    # all closed, and a comment holding a quote and a bracket.
+    code = [
+        'doc = """\n',
+        '!not a magic """\n',
+        "total = (a\n",
+        "    % b)\n",
+        "rest = a \\\n",
+        "    + b\n",
+        "x = 'a # (' # ( '\n",
+        f"{magic}\n",
+    ]
+    lines = _lines(_read(_nb([_code(code)])))
+
+    assert [line for line in lines if line.strip()][-1] == "pass"
+    assert '!not a magic """' in lines
+
+
 def test_magic_lines_become_pass_at_their_own_indent() -> None:
     notebook = _read(_nb([_code(["for f in files:\n", "    !cp {f} out/\n"])]))
 
@@ -132,3 +179,24 @@ def test_a_notebook_without_code_cells_is_an_empty_module() -> None:
     data = _nb([{"cell_type": "markdown", "metadata": {}, "source": "# only prose"}])
 
     assert _read(data) == NotebookSource(b"", ())
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b'{"cells": [], "metadata": {}}',
+        b'{"cells": [], "metadata": {}, "nbformat": 3}',
+        b'{"cells": [], "metadata": {}, "nbformat": "4"}',
+        b'{"cells": [], "metadata": {}, "nbformat": 4} trailing',
+        b'{"cells": [], "metadata": {}, "nbformat": 4}{"cells": []}',
+    ],
+    ids=["no-nbformat", "nbformat-3", "nbformat-string", "garbage", "two-objects"],
+)
+def test_only_one_nbformat_4_document_is_a_notebook(data: bytes) -> None:
+    assert read_notebook(data) == NotebookSkipped(cs.NotebookSkip.MALFORMED)
+
+
+def test_whitespace_after_the_document_is_allowed() -> None:
+    data = b'{"cells": [], "metadata": {}, "nbformat": 4}\r\n \t\n'
+
+    assert read_notebook(data) == NotebookSource(b"", ())

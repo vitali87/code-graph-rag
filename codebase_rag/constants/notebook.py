@@ -7,6 +7,7 @@ EXT_IPYNB = ".ipynb"
 # nbformat 4 keys the reader looks at. Everything else in the file, outputs
 # and attachments above all, is skipped without being decoded.
 NB_KEY_CELLS = "cells"
+NB_KEY_NBFORMAT = "nbformat"
 NB_KEY_CELL_TYPE = "cell_type"
 NB_KEY_SOURCE = "source"
 NB_KEY_METADATA = "metadata"
@@ -15,6 +16,8 @@ NB_KEY_KERNELSPEC = "kernelspec"
 NB_KEY_NAME = "name"
 NB_KEY_LANGUAGE = "language"
 NB_CELL_TYPE_CODE = "code"
+# The one nbformat major version the reader lays out, as its JSON text.
+NB_FORMAT_VERSION = b"4"
 
 # The kernel languages whose cells are Python. `language_info.name` is what
 # the kernel reported when it last ran; `kernelspec.language` is what the
@@ -24,12 +27,11 @@ NB_PYTHON_LANGUAGES: frozenset[str] = frozenset(
     {"python", "python2", "python3", "ipython", "ipython2", "ipython3"}
 )
 
-# A line IPython rewrites before Python sees it: a line magic (`%timeit f()`,
-# also a `%%cell` magic's own line), a shell escape (`!pip install x`,
-# `!!ls`), a help request (`?obj`), or the capturing forms `x = !ls` and
-# `x = %sx ls`. The magic name must follow `%` directly, as IPython requires,
-# so a formatter's `% value` continuation line (modulo) is left alone, and
-# `!=` is never a shell escape.
+# A line IPython rewrites before Python sees it, when the line starts a
+# statement: a line magic (`%timeit f()`, also a `%%cell` magic's own line),
+# a shell escape (`!pip install x`, `!!ls`), a help request (`?obj`), or the
+# capturing forms `x = !ls` and `x = %sx ls`. The magic name must follow `%`
+# directly, as IPython requires, and `!=` is never a shell escape.
 NB_MAGIC_LINE_PATTERN = (
     r"^\s*(?:%{1,2}[A-Za-z_]|!(?!=)|\?|[\w.\[\], ]+?=\s*(?:%[A-Za-z_]|!(?!=)))"
 )

@@ -309,6 +309,50 @@ class TestIPythonSyntax:
         assert f"{NB_QN}.kept" in functions
         assert f"{NB_QN}.elsewhere" not in functions
 
+    def test_magic_looking_lines_inside_a_string_are_kept(self, tmp_path: Path) -> None:
+        # A docstring is Python text whatever its lines start with; IPython
+        # leaves it alone, so the snippet must read exactly as written.
+        code = [
+            "def documented():\n",
+            '    """Usage:\n',
+            "    %timeit documented()\n",
+            "    !echo done\n",
+            "    ?documented\n",
+            '    """\n',
+            "    return 1\n",
+        ]
+        root = _repo(tmp_path, [_cell("code", code)])
+        props = _function_props(_index(root), f"{NB_QN}.documented")
+
+        snippet = extract_source_lines(
+            root / NOTEBOOK, props[cs.KEY_START_LINE], props[cs.KEY_END_LINE]
+        )
+        assert snippet == "".join(code).strip()
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            ["total = (10\n", "         %divisor())\n"],
+            ["total = 10 \\\n", "    %divisor()\n"],
+        ],
+        ids=["bracket", "backslash"],
+    )
+    def test_an_unspaced_modulo_continuation_keeps_its_call(
+        self, tmp_path: Path, code: list[str]
+    ) -> None:
+        cells = [
+            _cell("code", ["def divisor():\n", "    return 3\n"]),
+            _cell("code", code),
+        ]
+        root = _repo(tmp_path, cells)
+        graph = _index(root)
+
+        calls = _edges(graph, cs.RelationshipType.CALLS)
+        assert (NB_QN, f"{NB_QN}.divisor") in calls, sorted(calls)
+        first = _file_line(root / NOTEBOOK, code[0])
+        snippet = extract_source_lines(root / NOTEBOOK, first, first + 1)
+        assert snippet == "".join(code).strip()
+
 
 class TestNotebookLayouts:
     def test_a_cell_stored_as_one_string_still_indexes(self, tmp_path: Path) -> None:
@@ -460,6 +504,39 @@ class TestWhatStaysAFile:
         assert NB_QN not in _qns(graph, cs.NodeLabel.MODULE)
         assert LOAD_QN in _qns(graph, cs.NodeLabel.FUNCTION)
         assert _has_file(graph, NOTEBOOK)
+
+    @pytest.mark.parametrize(
+        ("nbformat", "trailer"),
+        [
+            (None, "\n"),
+            (3, "\n"),
+            (5, "\n"),
+            ("4", "\n"),
+            (4, "\n<<<<<<< HEAD\n"),
+            (4, "\n{}\n"),
+        ],
+        ids=["missing", "v3", "v5", "string", "merge-marker", "second-object"],
+    )
+    def test_a_notebook_that_is_not_one_nbformat_4_document_stays_a_file(
+        self, tmp_path: Path, nbformat: int | str | None, trailer: str
+    ) -> None:
+        document = json.loads(_notebook(ANALYSIS_CELLS))
+        if nbformat is None:
+            del document["nbformat"]
+        else:
+            document["nbformat"] = nbformat
+        text = json.dumps(document, indent=1, sort_keys=True) + trailer
+        graph = _index(_write(tmp_path / PROJECT, {**_PACKAGE, NOTEBOOK: text}))
+
+        assert NB_QN not in _qns(graph, cs.NodeLabel.MODULE)
+        assert SUMMARIZE_QN not in _qns(graph, cs.NodeLabel.FUNCTION)
+        assert _has_file(graph, NOTEBOOK)
+
+    def test_whitespace_after_the_notebook_is_fine(self, tmp_path: Path) -> None:
+        text = _notebook(ANALYSIS_CELLS) + " \r\n\t\n"
+        graph = _index(_write(tmp_path / PROJECT, {**_PACKAGE, NOTEBOOK: text}))
+
+        assert SUMMARIZE_QN in _qns(graph, cs.NodeLabel.FUNCTION)
 
     def test_jupyter_checkpoint_copies_are_not_indexed(self, tmp_path: Path) -> None:
         checkpoint = ".ipynb_checkpoints/analysis-checkpoint.ipynb"
