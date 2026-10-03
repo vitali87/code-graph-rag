@@ -2228,7 +2228,34 @@ def dead_code(
 def _similarity_text(group: DuplicateGroup) -> str:
     if group["kind"] == cs.KIND_EXACT:
         return cs.CLI_DUPLICATES_SIMILARITY_EXACT
-    return cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=group["similarity"] * 100)
+    low, high = group["similarity"] * 100, group["max_similarity"] * 100
+    single = cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=low)
+    if single == cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=high):
+        return single
+    # A cluster's members are linked through each other (issue #2473), so
+    # one score would hide how far apart its weakest and strongest links are.
+    return cs.CLI_DUPLICATES_SIMILARITY_RANGE.format(low=low, high=high)
+
+
+def _exact_copy_numbers(group: DuplicateGroup) -> dict[str, str]:
+    """Qualified name -> number of the exact-copy set it belongs to.
+
+    Only a `similar` group nests exact copies; an `exact` group is one set
+    as a whole, so its rows stay unnumbered.
+    """
+    if group["kind"] == cs.KIND_EXACT:
+        return {}
+    return {
+        qualified_name: str(number)
+        for number, names in enumerate(group["exact_subgroups"], start=1)
+        for qualified_name in names
+    }
+
+
+def _exact_copy_cells(
+    numbers: dict[str, str], member: DuplicateMember, shown: bool
+) -> list[str]:
+    return [numbers.get(member["qualified_name"], "")] if shown else []
 
 
 def _duplicates_location_cell(
@@ -2301,6 +2328,12 @@ def _build_duplicates_table(
     table.add_column(
         cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW, overflow="fold"
     )
+    copy_numbers = [_exact_copy_numbers(group) for group in groups]
+    # Added only when a cluster holds exact copies, so every other report
+    # keeps the width it had.
+    show_copies = any(copy_numbers)
+    if show_copies:
+        table.add_column(cs.CLI_DUPLICATES_COL_EXACT, style=cs.Color.MAGENTA)
     # The title names the project, so each member drops that prefix: at pipe
     # width the column otherwise showed nothing else (issue #2397). Only the
     # dotted prefix goes, so `projx.mod` under `proj` keeps its name.
@@ -2313,6 +2346,7 @@ def _build_duplicates_table(
                 _similarity_text(group) if at == 0 else "",
                 member["qualified_name"].removeprefix(prefix),
                 _duplicates_location_cell(member, root_path),
+                *_exact_copy_cells(copy_numbers[number - 1], member, show_copies),
             )
         table.add_section()
     return table
@@ -2496,7 +2530,7 @@ def _open_duplicate_group(
 
 @app.command(
     name=ch.CLICommandName.DUPLICATES,
-    help=ch.CMD_DUPLICATES,
+    help=ch.DESC_DUPLICATES,
     short_help=ch.CMD_DUPLICATES,
     epilog=ch.EXAMPLES_DUPLICATES,
     rich_help_panel=ch.PANEL_GRAPH,

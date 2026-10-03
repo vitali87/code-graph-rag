@@ -198,6 +198,21 @@ EXAMPLES_DUPLICATES = (
     "  cgr duplicates --project-name my-project\n\n"
     "  cgr duplicates --threshold 0.9 --format json --fail-on-found"
 )
+# `cgr duplicates --help` spells out what a group is: its count drives
+# --fail-on-found and trend tracking, so overlap must not be guessed at
+# (issue #2473). The commands table keeps the one-line CMD_DUPLICATES.
+DESC_DUPLICATES = (
+    f"{CMD_DUPLICATES}.\n\n"
+    "Groups are disjoint: each function is reported in at most one group. "
+    "An 'exact' group holds functions with the same structure, renamed copies "
+    "included. A 'similar' group holds near-copies, each linked to another "
+    "member by a pair whose branch overlap reaches --threshold, so two "
+    "members may be linked only through a third.\n\n"
+    "Similarity is a similar group's weakest to strongest link. 100% there "
+    "means every statement shape is shared but the bodies still differ. "
+    "Members of a similar group that are exact copies of each other share a "
+    "number in the Exact column (exact_subgroups in JSON)."
+)
 EXAMPLES_DELETE_PROJECT = "EXAMPLE\n\n  cgr delete-project --name my-project"
 EXAMPLES_HELP = "EXAMPLES\n\n  cgr help start\n\n  cgr help daemon logs"
 

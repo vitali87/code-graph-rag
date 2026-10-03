@@ -105,9 +105,10 @@ DUPLICATES_PREFIX_EPSILON = 1e-9
 # boilerplate bodies makes the true pair set quadratic, so generation stops
 # here and the scan reports truncation instead of hanging.
 DUPLICATES_MAX_CANDIDATE_PAIRS = 1_000_000
-# Hard budget on materialized similar groups: a pathological threshold graph
-# (Moon-Moser shape) has exponentially many maximal cliques, so enumeration
-# stops here and the scan reports truncation instead of hanging.
+# Hard budget on reported similar groups. Clustering is linear in the links,
+# so this no longer guards against a hang; it bounds the report, keeping the
+# largest clusters and flagging truncation. A dropped cluster's exact copies
+# are still reported as exact groups.
 DUPLICATES_MAX_SIMILAR_GROUPS = 1000
 
 KIND_EXACT = "exact"
@@ -143,10 +144,16 @@ MSG_DUPLICATES_NONE = (
 )
 MSG_DUPLICATES_HEADER = (
     "Found {count} duplicate group(s) in project '{project}' "
-    "(largest first; 'exact' groups are certain copies, 'similar' carry a score):"
+    "(largest first; each function is in one group; 'exact' groups are "
+    "certain copies, 'similar' groups link near-copies and carry a score "
+    "range):"
 )
 MSG_DUPLICATES_GROUP = "{number}. {kind} ({similarity:.0%} similar):"
+MSG_DUPLICATES_GROUP_RANGE = (
+    "{number}. {kind} ({similarity:.0%}-{max_similarity:.0%} similar):"
+)
 MSG_DUPLICATES_MEMBER = "   - {qualified_name}  {path}:{start}-{end}"
+MSG_DUPLICATES_EXACT_SUBGROUP = "   exact copies: {names}"
 MSG_DUPLICATES_TRUNCATED = "... {count} more group(s); raise limit to see them."
 MSG_DUPLICATES_SKIPPED = (
     "{count} symbol(s) had no structural fingerprint and were not analyzed."
