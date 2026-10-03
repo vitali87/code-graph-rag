@@ -31,7 +31,7 @@ _MARKER = (
     re.escape(cs.DUP_QN_MARKER)
     + r"(\d+)(?:"
     + re.escape(cs.DUP_QN_COLUMN_MARKER)
-    + r"\d+)?"
+    + r"(\d+))?"
 )
 # Anchored to the END, because that is where a registration appends it.
 _MARKER_RE = re.compile(_MARKER + "$")
@@ -75,3 +75,17 @@ def marker_line(name: str) -> int | None:
     `@event@12` -> 12, and None when the name carries no marker."""
     match = _MARKER_RE.search(name)
     return int(match.group(1)) if match else None
+
+
+def marker_position(name: str) -> tuple[int, int] | None:
+    """The (line, column) a trailing marker names, None without one.
+
+    `Box@12` -> (12, -1) and `Box@12_5` -> (12, 5): a plain `@line` is the
+    first definition registered on its line, so it sorts before the
+    column-suffixed twins minted after it.
+    """
+    match = _MARKER_RE.search(name)
+    if match is None:
+        return None
+    column = match.group(2)
+    return int(match.group(1)), -1 if column is None else int(column)

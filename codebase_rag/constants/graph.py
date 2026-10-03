@@ -943,6 +943,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "OR n:Enum OR n:Type OR n:Union) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.name AS name, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
@@ -1098,6 +1099,33 @@ CYPHER_ALL_INHERITS = (
     "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
+)
+# Implementer -> interface/trait pairs for incremental runs (issue #2403):
+# parsing records them only for the files it reads, and the sole-implementer
+# dispatch and the override walk need every implementer.
+CYPHER_ALL_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn"
+)
+# OVERRIDES out of Rust methods: a trait impl for a type with no node (a
+# primitive, a foreign type) writes no IMPLEMENTS edge, so its methods'
+# OVERRIDES edges are the only record of the pair (issue #2403).
+CYPHER_ALL_RUST_OVERRIDES = (
+    "MATCH (method:Method)-[:OVERRIDES]->(base:Method) "
+    "WHERE method.qualified_name STARTS WITH $project_prefix "
+    "AND method.path ENDS WITH '.rs' "
+    "RETURN method.qualified_name AS from_qn, base.qualified_name AS to_qn"
+)
+# Rust traits that declare a method without a default body (no body, so no
+# fingerprint): every impl of one defines that method and leaves an OVERRIDES
+# edge. An impl of any other trait may define nothing and leave no trace.
+CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS = (
+    "MATCH (trait:Interface)-[:DEFINES_METHOD]->(method:Method) "
+    "WHERE trait.qualified_name STARTS WITH $project_prefix "
+    "AND trait.path ENDS WITH '.rs' AND method.ast_fingerprint IS NULL "
+    "RETURN DISTINCT trait.qualified_name AS qualified_name"
 )
 
 # C# type declaration locations for incremental runs: _join_csharp_partials

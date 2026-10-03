@@ -1208,6 +1208,7 @@ class _StatefulIngestor:
                     row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
+                        cs.KEY_NAME: _text(props.get(cs.KEY_NAME)),
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
@@ -1262,6 +1263,18 @@ class _StatefulIngestor:
                         prefix
                     )
                 ]
+            case cs.CYPHER_ALL_IMPLEMENTS:
+                return self._implements_rows(
+                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                )
+            case cs.CYPHER_ALL_RUST_OVERRIDES:
+                return self._rust_override_rows(
+                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                )
+            case cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS:
+                return self._rust_required_trait_rows(
+                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                )
             case cs.CYPHER_ALL_INHERITS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 inherits: list[tuple[str, int, ResultRow]] = []
@@ -1688,6 +1701,60 @@ class _StatefulIngestor:
                 )
             case _:
                 return None
+
+    def _matched_edges(self, rel_type: str) -> list[tuple[_NodeId, _NodeId]]:
+        # Both ends of every `rel_type` edge whose two nodes exist, in a
+        # stable order. This double keeps an edge written to a node it never
+        # saw; a MATCH in the real store does not.
+        edges = sorted((e for e in self.keyed_edges if e[2] == rel_type), key=repr)
+        return [
+            ((from_label, from_val), (to_label, to_val))
+            for from_label, from_val, _rel, to_label, to_val, _site in edges
+            if (from_label, from_val) in self.nodes and (to_label, to_val) in self.nodes
+        ]
+
+    def _qn_of(self, node_id: _NodeId) -> str:
+        return _str(self.nodes[node_id].get(cs.KEY_QUALIFIED_NAME))
+
+    def _implements_rows(self, prefix: str) -> list[ResultRow]:
+        rows: list[ResultRow] = []
+        for child, base in self._matched_edges(cs.RelationshipType.IMPLEMENTS.value):
+            child_qn, base_qn = self._qn_of(child), self._qn_of(base)
+            if child_qn.startswith(prefix) and child_qn and base_qn:
+                rows.append({cs.KEY_CHILD_QN: child_qn, cs.KEY_BASE_QN: base_qn})
+        return rows
+
+    def _rust_override_rows(self, prefix: str) -> list[ResultRow]:
+        method_label = cs.NodeLabel.METHOD.value
+        rows: list[ResultRow] = []
+        for method, base in self._matched_edges(cs.RelationshipType.OVERRIDES.value):
+            method_qn = self._qn_of(method)
+            if (
+                method[0] == method_label
+                and base[0] == method_label
+                and method_qn.startswith(prefix)
+                and _str(self.nodes[method].get(cs.KEY_PATH)).endswith(cs.EXT_RS)
+            ):
+                rows.append(
+                    {cs.KEY_FROM_QN: method_qn, cs.KEY_TO_QN: self._qn_of(base)}
+                )
+        return rows
+
+    def _rust_required_trait_rows(self, prefix: str) -> list[ResultRow]:
+        traits: set[str] = set()
+        for trait, method in self._matched_edges(
+            cs.RelationshipType.DEFINES_METHOD.value
+        ):
+            trait_qn = self._qn_of(trait)
+            if (
+                trait[0] == cs.NodeLabel.INTERFACE.value
+                and method[0] == cs.NodeLabel.METHOD.value
+                and trait_qn.startswith(prefix)
+                and _str(self.nodes[trait].get(cs.KEY_PATH)).endswith(cs.EXT_RS)
+                and cs.KEY_AST_FINGERPRINT not in self.nodes[method]
+            ):
+                traits.add(trait_qn)
+        return [{cs.KEY_QUALIFIED_NAME: qn} for qn in sorted(traits)]
 
     def _trace_edge_rows(self, paths: set[str], prefix: str) -> list[ResultRow]:
         touching: set[_EdgeKey] = set()

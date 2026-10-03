@@ -319,6 +319,8 @@ class ClassIngestMixin:
     class_field_element_types: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
+    rehydrated_interface_implementers: dict[str, set[str]]
+    rehydrated_definition_paths: dict[str, str]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
@@ -2334,13 +2336,37 @@ class ClassIngestMixin:
             self.function_registry,
             self.class_inheritance,
             self.ingestor,
-            self.interface_implementers,
+            self._override_walk_implementers(),
             self.csharp_methods,
             self.csharp_override_methods,
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
         )
         self._resolve_java_anon_overrides()
+
+    def _override_walk_implementers(self) -> dict[str, set[str]]:
+        # The walk visits a class's superclasses and interfaces together and
+        # stops at the first that declares the method. With only the parsed
+        # pairs, an unchanged class that extends one type and implements
+        # another walked its superclasses alone and took an edge its own
+        # parse never chose (issue #2403), so the pairs read back join them.
+        # A Rust impl's do not: its edge follows the impl block
+        # (rust_impl_method_traits, rust_inherent_impl_methods), which only
+        # parsing records, and walking the trait instead would link an
+        # inherent method sharing the trait method's name. An unchanged impl
+        # keeps the edges its own parse wrote.
+        merged = {qn: set(impls) for qn, impls in self.interface_implementers.items()}
+        for iface, implementers in self.rehydrated_interface_implementers.items():
+            if walked := {qn for qn in implementers if self._walks_read_back(qn)}:
+                merged.setdefault(iface, set()).update(walked)
+        return merged
+
+    def _walks_read_back(self, implementer_qn: str) -> bool:
+        # Read back from a file other than Rust. No recorded path means this
+        # run parsed the class (its parsed pairs already cover it) or it is a
+        # Rust impl target with no node of its own.
+        path = self.rehydrated_definition_paths.get(implementer_qn)
+        return path is not None and not path.endswith(cs.EXT_RS)
 
     def _resolve_java_anon_overrides(self) -> None:
         # Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion

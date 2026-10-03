@@ -14,6 +14,13 @@ from .types_defs import (
     SimpleNameLookup,
     TrieNode,
 )
+from .utils import qn_markers
+
+
+def _variant_position(qualified_name: QualifiedName) -> tuple[int, int]:
+    # Every bucket entry past the head carries a marker; the fallback only
+    # keeps the sort key total.
+    return qn_markers.marker_position(qualified_name) or (0, -1)
 
 
 class FunctionRegistryTrie:
@@ -103,6 +110,45 @@ class FunctionRegistryTrie:
         if variant not in bucket:
             bucket.append(variant)
         return variant
+
+    def restore_variant(self, qualified_name: QualifiedName) -> None:
+        """Rejoin a `@line` variant read back from the graph to its natural qn.
+
+        Parsing records the bucket as `register_unique_qn` mints the name, but
+        an incremental run reads the definitions of files it did not re-parse
+        back from the graph instead. Without the bucket `variants` answered
+        the natural qn alone there, so a re-parsed caller bound one target
+        where a clean index fans out to every same-named definition (issue
+        #2403). A name without a trailing marker is not a variant.
+        """
+        natural = qn_markers.natural_qn(qualified_name)
+        if natural == qualified_name:
+            return
+        bucket = self._duplicates.setdefault(natural, [natural])
+        if qualified_name in bucket:
+            return
+        bucket.append(qualified_name)
+        # Graph rows arrive in no fixed order. Parsing mints variants in
+        # document order and readers take the head as the natural qn, so keep
+        # it first and the rest by position: the list then reads the same
+        # whichever files this run happened to re-parse.
+        bucket[1:] = sorted(bucket[1:], key=_variant_position)
+
+    def index_declared_name(self, qualified_name: QualifiedName, name: str) -> None:
+        """List a definition read back from the graph under its declared name.
+
+        Parsing indexes every definition by the name it was written with as
+        well as by its last qn segment. The two differ for a `@line` variant
+        (`Limb@6` is written `Limb`) and a signatured method (`m(String)` is
+        written `m`), so an incremental run that only inserted the qn left a
+        bare-name lookup short of a clean index's candidates: a unique match
+        where the clean index saw two, and a result that depended on which
+        files were re-parsed (issue #2403).
+        """
+        if self._simple_name_lookup is None or not name:
+            return
+        self._simple_name_lookup[name].add(qualified_name)
+        self._invalidate_ending_with_cache(name)
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])

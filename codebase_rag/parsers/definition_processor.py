@@ -126,6 +126,10 @@ class DefinitionProcessor(
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
         self.interface_implementers: dict[str, set[str]] = {}
+        # The same pairs read back from the graph on an incremental run, which
+        # parses only the changed files (issue #2403). Kept apart and rebuilt
+        # on every rehydration so a pair the graph no longer holds leaves.
+        self.rehydrated_interface_implementers: dict[str, set[str]] = {}
         # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # member call `field_.method()` in a (possibly out-of-line, cross-file)
         # method resolves via the field's declared type. Populated at class
@@ -371,6 +375,19 @@ class DefinitionProcessor(
         self.rehydrated_definition_paths: dict[str, str] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
+
+    def reset_interface_implementers(self) -> None:
+        """Forget every implementer pair, parsed or read back from the graph.
+
+        A full build re-parses every file and so re-records each pair it
+        should hold, but a forced one skips the read-back that rebuilds the
+        graph's pairs. A reused updater then kept an earlier run's pairs, and
+        a deleted implementer still counted: the remaining one lost the
+        sole-implementer edge a fresh build emits.
+        """
+        # In place: the call resolver holds both maps by reference.
+        self.interface_implementers.clear()
+        self.rehydrated_interface_implementers.clear()
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
         # A TypeScript declaration file and its implementation strip to the
