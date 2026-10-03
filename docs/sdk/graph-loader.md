@@ -20,6 +20,8 @@ Or export one repository's graph while syncing it:
 cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
 
+![cgr export -o my_graph.json exporting the whole graph, then cgr start --update-graph -o my_graph.json syncing and exporting pallets/itsdangerous only](../assets/demos/graph-loader-export.gif)
+
 ## Load and Query
 
 ```python
@@ -59,6 +61,8 @@ for func in functions[:5]:
     print(f"Function {func.properties['name']} has {len(relationships)} relationships")
 ```
 
+![The Load and Query snippets above saved as one script and run against my_graph.json from pallets/itsdangerous](../assets/demos/graph-loader-load.gif)
+
 ## Query Memgraph Directly
 
 For live queries against a running Memgraph instance:
@@ -71,6 +75,8 @@ with MemgraphIngestor(host="localhost", port=7687) as db:
     for row in rows:
         print(row)
 ```
+
+![The MemgraphIngestor snippet run against the Memgraph on localhost:7687, printing ten function names](../assets/demos/graph-loader-memgraph.gif)
 
 ## Use Cases
 
