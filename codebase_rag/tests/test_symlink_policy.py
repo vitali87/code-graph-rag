@@ -254,6 +254,32 @@ def _function_qns(store: _StatefulIngestor) -> set[str]:
     }
 
 
+def _file_paths(store: _StatefulIngestor) -> set[str]:
+    return {
+        str(props[cs.KEY_PATH])
+        for (label, _uid), props in store.nodes.items()
+        if label == cs.NodeLabel.FILE.value
+    }
+
+
+def _remove_indexed_file(
+    tmp_path: Path, *, replace_with_link: bool
+) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+    """Index `core.py` and `old.py`, then delete `old.py` or replace it with
+    a link to `core.py`."""
+    repo = tmp_path / "repo"
+    _write(repo / "core.py", "def helper():\n    return 1\n")
+    _write(repo / "old.py", "def old_fn():\n    return 2\n")
+    store = _StatefulIngestor()
+    updater = _stateful_updater(repo, store)
+    updater.run(force=True)
+    assert _file_paths(store) == {"core.py", "old.py"}
+    (repo / "old.py").unlink()
+    if replace_with_link:
+        _link(repo / "old.py", "core.py")
+    return repo, store, updater
+
+
 class TestIncrementalSync:
     def test_a_link_in_an_unchanged_directory_is_dropped_by_the_next_sync(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -280,6 +306,23 @@ class TestIncrementalSync:
         assert "repo.sub.own.own" in _function_qns(store)
         cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
         assert "sub/linked.py" not in cache
+
+    def test_a_sync_after_a_file_became_a_link_keeps_the_targets_file(
+        self, tmp_path: Path
+    ) -> None:
+        # The replaced file's own File node goes; resolving the link named
+        # the target's, which the sync deleted instead (#2451 review).
+        repo, store, _updater = _remove_indexed_file(tmp_path, replace_with_link=True)
+        _stateful_updater(repo, store).run()
+        assert _file_paths(store) == {"core.py"}
+
+    def test_a_sync_after_a_file_was_deleted_keeps_the_others_file(
+        self, tmp_path: Path
+    ) -> None:
+        # Negative: a plain deletion still drops exactly its own File node.
+        repo, store, _updater = _remove_indexed_file(tmp_path, replace_with_link=False)
+        _stateful_updater(repo, store).run()
+        assert _file_paths(store) == {"core.py"}
 
     def test_a_repository_with_links_stays_in_sync(self, layout: Path) -> None:
         # Negative: the in-sync listing skips the links the walk skips, or
@@ -433,6 +476,23 @@ class TestWatcherReplacement:
         assert _function_qns(store) == {"repo.core.helper"}
         cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
         assert sorted(cache) == ["core.py"]
+
+    def test_reingesting_a_file_replaced_by_a_link_deletes_its_own_file(
+        self, tmp_path: Path
+    ) -> None:
+        # The deletion keys on the replaced entry, as the File was indexed,
+        # not on the link's target (#2451 review).
+        repo, store, updater = _remove_indexed_file(tmp_path, replace_with_link=True)
+        updater.reingest((), deleted=(repo / "old.py",))
+        assert _file_paths(store) == {"core.py"}
+
+    def test_reingesting_a_deleted_file_deletes_its_own_file(
+        self, tmp_path: Path
+    ) -> None:
+        # Negative: with no link in the way the same File node goes.
+        repo, store, updater = _remove_indexed_file(tmp_path, replace_with_link=False)
+        updater.reingest((), deleted=(repo / "old.py",))
+        assert _file_paths(store) == {"core.py"}
 
 
 class TestOtherWalks:

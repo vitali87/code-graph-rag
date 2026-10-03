@@ -6163,10 +6163,13 @@ class GraphUpdater:
                     self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
                     # Keyed on the absolute path: a sibling project's File
-                    # node can share the relative path (issue #897).
+                    # node can share the relative path (issue #897). The
+                    # entry's own identity, as the File was indexed: a file
+                    # replaced by a link resolves to the link's target, whose
+                    # File this deleted instead (#2451 review).
                     self.ingestor.execute_write(
                         cs.CYPHER_DELETE_FILE,
-                        {cs.KEY_PATH: deleted_path.resolve().as_posix()},
+                        {cs.KEY_PATH: cached_file_identity_posix(deleted_path)},
                     )
 
     def _log_process_counts(self, scan: _FileScan, changed_count: int) -> None:
@@ -7121,9 +7124,12 @@ class GraphUpdater:
             self._delete_module_entities(key)
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
-                # can share the relative path (issue #897).
+                # can share the relative path (issue #897). The entry's own
+                # identity, as the File was indexed: a file replaced by a
+                # link resolves to the link's target (#2451 review).
                 self.ingestor.execute_write(
-                    cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
+                    cs.CYPHER_DELETE_FILE,
+                    {cs.KEY_PATH: cached_file_identity_posix(path)},
                 )
 
     def _reingest_reparse(
