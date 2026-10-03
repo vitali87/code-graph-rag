@@ -17,7 +17,7 @@ from scripts.generate_readme import (
     PROJECT_ROOT,
     SECTION_PATTERN,
     TARGET_FILES,
-    replace_sections,
+    stale_sections,
 )
 
 REGENERATE = "uv run python scripts/generate_readme.py"
@@ -34,7 +34,20 @@ EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
     ),
     "docs/guide/mcp-server.md": frozenset({"mcp_tools"}),
     "docs/guide/interactive-querying.md": frozenset({"agentic_tools"}),
-    "docs/guide/cli-reference.md": frozenset({"cli_commands", "makefile_commands"}),
+    "docs/guide/cli-reference.md": frozenset(
+        {
+            "cli_commands",
+            "makefile_commands",
+            "cli_options_start",
+            "cli_options_index",
+            "cli_options_export",
+            "cli_options_optimize",
+            "cli_options_mcp_server",
+            "cli_options_stats",
+            "cli_options_dead_code",
+            "cli_options_duplicates",
+        }
+    ),
     "docs/getting-started/installation.md": frozenset({"dependencies"}),
 }
 
@@ -65,11 +78,7 @@ def test_the_committed_file_is_what_the_generator_writes(
     )
     assert expected <= sections.keys(), sorted(expected - sections.keys())
 
-    stale = sorted(
-        name
-        for name in expected
-        if replace_sections(committed, {name: sections[name]}) != committed
-    )
+    stale = stale_sections(committed, sections, expected)
     assert not stale, (
         f"{relative_path} is out of date in section(s) {stale}; run `{REGENERATE}`"
     )
