@@ -206,6 +206,15 @@ gh() {
   case "$url" in
     */releases/latest) printf 'v0.0.1\n' ;;
     */compare/*)
+      case " $* " in
+        *" .status "*)
+          printf '%s\n' "$url" >> status_calls
+          [ "$STATUS_FAILS" = true ] && return 1
+          tag="${url##*/compare/}"
+          cat "status/${tag%%...*}" 2> /dev/null || printf 'ahead\n'
+          return 0
+          ;;
+      esac
       printf '%s\n' "$*" > compare_call
       [ "$COMPARE_FAILS" = true ] && return 1
       printf '%b' "$RANGE"
@@ -262,6 +271,7 @@ def _decide_run(
             "PULLS_FAIL": "false",
             "TAG_LIST": "",
             "TAG_LIST_FAILS": "false",
+            "STATUS_FAILS": "false",
             **env,
         },
     )
@@ -417,4 +427,65 @@ def test_an_unlistable_tag_set_fails_instead_of_narrowing_the_scan(
     result, out = _decide_run(tmp_path, "", LS_REMOTE_EXIT="2", TAG_LIST_FAILS="true")
     assert result.returncode != 0
     assert "could not list release tags" in result.stdout
+    assert "release" not in out
+
+
+def test_an_untagged_version_skips_a_newer_tag_main_never_reached(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "chore: set version"})
+    (tmp_path / "status").mkdir()
+    (tmp_path / "status" / "v0.2.0").write_text("behind\n", encoding="utf-8")
+    (tmp_path / "status" / "v0.1.11").write_text("diverged\n", encoding="utf-8")
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.1.10\\n"
+        f"{OLDER}\\trefs/tags/v0.2.0\\n"
+        f"{OLDER}\\trefs/tags/v0.1.11\\n"
+    )
+    result, out = _decide_run(
+        tmp_path, f"{OLDER}\\n{SHA}\\n", LS_REMOTE_EXIT="2", TAG_LIST=tags
+    )
+    assert result.returncode == 0, result.stderr
+    checked = (tmp_path / "status_calls").read_text(encoding="utf-8").split()
+    assert [url.split("/compare/")[1].split("...")[0] for url in checked] == [
+        "v0.2.0",
+        "v0.1.11",
+        "v0.1.10",
+    ]
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.1.10...{SHA}" in call
+    assert out["security"] == "true"
+
+
+def test_an_untagged_version_with_no_tag_behind_it_scans_the_triggering_commit(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "fix: y [security]"})
+    (tmp_path / "status").mkdir()
+    (tmp_path / "status" / "v0.2.0").write_text("behind\n", encoding="utf-8")
+    result, out = _decide_run(
+        tmp_path,
+        "",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.2.0\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "compare_call").exists()
+    assert out["security"] == "true"
+
+
+def test_a_failed_ancestry_check_fails_instead_of_narrowing_the_scan(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{SHA}\\n",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.0\\n",
+        STATUS_FAILS="true",
+    )
+    assert result.returncode != 0
+    assert "could not compare v0.1.0" in result.stdout
+    assert not (tmp_path / "compare_call").exists()
     assert "release" not in out

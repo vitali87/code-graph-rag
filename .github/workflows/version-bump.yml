@@ -188,9 +188,9 @@ jobs:
           # `--exit-code` returns 2 only when the tag is absent; any other
           # failure (network, auth) must not be mistaken for a missing tag.
           # With no tag for the current version (a manual version change),
-          # the scan starts from the newest release tag instead, so earlier
-          # commits are still checked. Only a repository with no release tag
-          # at all scans the triggering commit alone.
+          # the scan starts from the newest release tag behind it instead, so
+          # earlier commits are still checked. Only a repository with no such
+          # tag at all scans the triggering commit alone.
           COMMITS="$GITHUB_SHA"
           BASE_TAG=""
           TAG_STATUS=0
@@ -206,8 +206,22 @@ jobs:
               echo "::error::could not list release tags; refusing to decide the release"
               exit 1
             fi
-            BASE_TAG=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
-              | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
+            # The newest one main's history holds: a higher tag cut on
+            # another branch has nothing in common with this range, and its
+            # compare would come back empty.
+            for TAG in $(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
+                | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -rV || true); do
+              if ! AHEAD=$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/compare/${TAG}...${GITHUB_SHA}?per_page=1" \
+                  --jq .status); then
+                echo "::error::could not compare ${TAG} with ${GITHUB_SHA}; refusing to decide the release"
+                exit 1
+              fi
+              if [ "$AHEAD" = ahead ]; then
+                BASE_TAG="$TAG"
+                break
+              fi
+            done
           fi
           if [ -n "$BASE_TAG" ]; then
             if ! RANGE=$(gh api --paginate \
