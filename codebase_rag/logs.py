@@ -336,6 +336,25 @@ TRUNCATED_SYMBOL_NAME = (
     "indexed under a truncated name and its callers will not resolve to it "
     "(issue #1810)"
 )
+# PEP 263 declarations the reader cannot honour (issue #2445). Each keeps the
+# file on its old UTF-8 reading, so the run goes on and says why a non-ASCII
+# name may come out damaged.
+PY_ENCODING_UNKNOWN = (
+    "{path}: the source declares the encoding {codec!r}, which Python does "
+    "not know; reading it as UTF-8"
+)
+PY_ENCODING_UNSUPPORTED = (
+    "{path}: the declared encoding {codec!r} is not an ASCII-compatible text "
+    "encoding, as PEP 263 requires; reading it as UTF-8"
+)
+PY_ENCODING_UNDECODABLE = (
+    "{path}: the source does not decode as its declared encoding {codec!r} "
+    "({error}); reading it as UTF-8"
+)
+PY_ENCODING_BOM_CONFLICT = (
+    "{path}: a UTF-8 byte-order mark overrides the declared encoding "
+    "{codec!r}; reading it as UTF-8"
+)
 REINGEST_UNREADABLE = (
     "Re-ingest could not read {path} after classifying it from disk "
     "({error}); it is not reported as re-parsed"
@@ -671,6 +690,13 @@ CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
+CALL_EXTERNAL_MODULE_RECEIVER = (
+    "Call on external module receiver, no first-party target: {call_name} "
+    "(module {target})"
+)
+CALL_AMBIGUOUS_UNTYPED_RECEIVER = (
+    "Untyped receiver with several same-named candidates, not guessed: {call_name}"
+)
 CALL_CHAINED = (
     "Resolved chained call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
 )
