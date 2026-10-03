@@ -395,39 +395,68 @@ def _site_sort_key(row: CallSiteRow) -> tuple[int, str, str, int, int]:
     )
 
 
+class _CallReads(TypedDict):
+    # The start's own read (`$qn`), the read of a whole later level (`$qns`),
+    # and that read's column naming the frontier node a row hangs off.
+    start: str
+    level: str
+    through: str
+
+
+_CALLERS_READS = _CallReads(
+    start=cq.CYPHER_GRAPH_CALLERS,
+    level=cq.CYPHER_GRAPH_CALLERS_OF,
+    through=cs.KEY_TO_QN,
+)
+_CALLEES_READS = _CallReads(
+    start=cq.CYPHER_GRAPH_CALLEES,
+    level=cq.CYPHER_GRAPH_CALLEES_OF,
+    through=cs.KEY_FROM_QN,
+)
+
+
 def _walk_sites(
-    fetch_all: QueryFn, project_name: str, query: str, start: str, depth: int
+    fetch_all: QueryFn, project_name: str, reads: _CallReads, start: str, depth: int
 ) -> list[CallSiteRow]:
-    # Breadth-first over endpoints, one query per frontier node; a node's
-    # sites appear at the depth it was first reached and never again, so a
-    # cycle terminates and the output stays a finite, ordered list.
+    # Breadth-first over endpoints, one query per LEVEL: one per frontier
+    # node was 886 round trips for a depth-2 walk on django (issue #2597).
+    # The start is read on its own, so depth 1, the default, is still the one
+    # single-node read. A node's sites appear at the depth it was first
+    # reached and never again, so a cycle terminates and the output stays a
+    # finite, ordered list.
     prefix = _prefix(project_name)
     owns = _owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
     for level in range(1, max(1, depth) + 1):
+        if level == 1:
+            rows = fetch_all(
+                reads["start"], {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: start}
+            )
+            hops = [(start, row) for row in rows]
+        else:
+            rows = fetch_all(
+                reads["level"],
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: sorted(frontier)},
+            )
+            hops = [(str(row.get(reads["through"], "")), row) for row in rows]
         next_frontier: list[str] = []
-        for qn in sorted(frontier):
-            rows = fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: qn})
-            for site in _owned_sites(rows, owns, level, qn):
-                out.append(site)
-                other = site["qualified_name"]
-                if other not in seen:
-                    seen.add(other)
-                    next_frontier.append(other)
+        for through, row in hops:
+            # A foreign row is neither reported nor a hop the walk continues
+            # through (issue #1982).
+            if not owns(_text_qn(row)):
+                continue
+            site = _site_row(row, level, through)
+            out.append(site)
+            other = site["qualified_name"]
+            if other not in seen:
+                seen.add(other)
+                next_frontier.append(other)
         frontier = next_frontier
         if not frontier:
             break
     return sorted(out, key=_site_sort_key)
-
-
-def _owned_sites(
-    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through: str
-) -> list[CallSiteRow]:
-    """The sites among `rows` whose other endpoint this project owns: a
-    foreign row is neither reported nor a hop the walk continues through."""
-    return [_site_row(row, level, through) for row in rows if owns(_text_qn(row))]
 
 
 def callers(
@@ -438,9 +467,7 @@ def callers(
     `depth` > 1 follows the callers' callers; `through` names the callee
     each row's site invokes, so a transitive row is still one exact site.
     """
-    return _walk_sites(
-        fetch_all, project_name, cq.CYPHER_GRAPH_CALLERS, qualified_name, depth
-    )
+    return _walk_sites(fetch_all, project_name, _CALLERS_READS, qualified_name, depth)
 
 
 def callees(
@@ -451,9 +478,7 @@ def callees(
     `path` is `through`'s file, where the site is, not the callee's: that
     one is `callee_path`, so a hop past depth 1 still reads as `path:line`.
     """
-    return _walk_sites(
-        fetch_all, project_name, cq.CYPHER_GRAPH_CALLEES, qualified_name, depth
-    )
+    return _walk_sites(fetch_all, project_name, _CALLEES_READS, qualified_name, depth)
 
 
 # --- implementors / overrides / importers ---------------------------------------
