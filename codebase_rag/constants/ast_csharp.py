@@ -351,6 +351,14 @@ TS_CSHARP_DECLARATION_EXPRESSION = "declaration_expression"
 # the pattern or the bound name looks clean inside the branch.
 TS_CSHARP_IS_PATTERN = "is_pattern_expression"
 TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
+# More binders of a value name (issue #2517): `catch (E ex)`, `from x in xs`,
+# `let y = ...`, and an `event` field's declarators.
+TS_CSHARP_CATCH_DECLARATION = "catch_declaration"
+TS_CSHARP_FROM_CLAUSE = "from_clause"
+TS_CSHARP_LET_CLAUSE = "let_clause"
+TS_CSHARP_EVENT_FIELD_DECLARATION = "event_field_declaration"
+# A top-level statement (C# 9); its locals are in scope across the file.
+TS_CSHARP_GLOBAL_STATEMENT = "global_statement"
 # An enum body and its members (issue #1807).
 TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
 TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"

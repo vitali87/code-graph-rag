@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -476,3 +478,158 @@ def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
     return synthesize_method_name(method_node), extract_parameter_type_names(
         method_node
     )
+
+
+# --- value names at a call site --------------------------------------------
+#
+# Whether a C# name at a call site can name a value (issue #2517).
+#
+# `Util.Ext(s, 1)` calls an extension method through its class and passes the
+# receiver as an argument; `Util.Ext(1, 2)` with a local `string Util` takes
+# the receiver from the left of the dot. Only the bindings around the call
+# tell the two apart, so the structural delta never counts the receiver
+# twice, or not at all, on a valid call.
+#
+# Read syntactically, and per scope once: the parameters, locals, pattern,
+# `foreach`, `catch`, lambda and query variables of the type member holding
+# the call, and the fields, properties and primary-constructor parameters of
+# every enclosing type. A binder in a sibling block counts as well; an
+# inherited member or one in another partial part does not, and the caller
+# reads that name as undecided rather than as a class.
+
+# Nodes whose `name` child binds a value.
+_NAME_BINDERS = frozenset(
+    {
+        cs.TS_CSHARP_VARIABLE_DECLARATOR,
+        cs.TS_CSHARP_PARAMETER,
+        cs.TS_CSHARP_DECLARATION_PATTERN,
+        cs.TS_CSHARP_DECLARATION_EXPRESSION,
+        cs.TS_CSHARP_CATCH_DECLARATION,
+        cs.TS_CSHARP_PROPERTY_DECLARATION,
+        cs.TS_CSHARP_FROM_CLAUSE,
+        cs.TS_CSHARP_TUPLE_PATTERN,
+    }
+)
+_TYPE_DECLARATIONS = frozenset(
+    {
+        cs.TS_CSHARP_CLASS_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+_FIELD_DECLARATIONS = frozenset(
+    {cs.TS_CSHARP_FIELD_DECLARATION, cs.TS_CSHARP_EVENT_FIELD_DECLARATION}
+)
+# The scans hold a few trees' nodes at most: one file is parsed at a time.
+_SCOPE_CACHE_SIZE = 64
+
+
+def _text(node: Node | None) -> str | None:
+    return safe_decode_text(node) if node is not None else None
+
+
+def _binding(node: Node) -> str | None:
+    """The name `node` binds as a value, if it is a binding position."""
+    if node.type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
+        return _text(node)
+    parent = node.parent
+    if node.type != cs.TS_CSHARP_IDENTIFIER or parent is None:
+        return None
+    if parent.type in _NAME_BINDERS:
+        return (
+            _text(node) if node == parent.child_by_field_name(cs.FIELD_NAME) else None
+        )
+    if parent.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+        return (
+            _text(node) if node == parent.child_by_field_name(cs.FIELD_LEFT) else None
+        )
+    if parent.type == cs.TS_CSHARP_LET_CLAUSE:
+        first = next(
+            (c for c in parent.named_children if c.type == cs.TS_CSHARP_IDENTIFIER),
+            None,
+        )
+        return _text(node) if node == first else None
+    return None
+
+
+@lru_cache(maxsize=_SCOPE_CACHE_SIZE)
+def _member_values(member: Node) -> frozenset[str]:
+    """Every value name bound inside one type member, nested types aside."""
+    names: set[str] = set()
+    stack = [member]
+    while stack:
+        node = stack.pop()
+        if (name := _binding(node)) is not None:
+            names.add(name)
+        stack.extend(
+            child
+            for child in node.named_children
+            if child.type not in _TYPE_DECLARATIONS
+        )
+    return frozenset(names)
+
+
+@lru_cache(maxsize=_SCOPE_CACHE_SIZE)
+def _type_values(type_node: Node) -> frozenset[str]:
+    """The fields, properties and primary-constructor parameters of a type."""
+    names: set[str] = set()
+    params = type_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        params = next(
+            (
+                c
+                for c in type_node.named_children
+                if c.type == cs.TS_CSHARP_PARAMETER_LIST
+            ),
+            None,
+        )
+    members = next(
+        (
+            c
+            for c in type_node.named_children
+            if c.type == cs.TS_CSHARP_DECLARATION_LIST
+        ),
+        None,
+    )
+    candidates = [
+        *(params.named_children if params is not None else ()),
+        *(members.named_children if members is not None else ()),
+    ]
+    for member in candidates:
+        if member.type in (cs.TS_CSHARP_PARAMETER, cs.TS_CSHARP_PROPERTY_DECLARATION):
+            if name := _text(member.child_by_field_name(cs.FIELD_NAME)):
+                names.add(name)
+        elif member.type in _FIELD_DECLARATIONS:
+            for declaration in member.named_children:
+                if declaration.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                for declarator in declaration.named_children:
+                    if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR and (
+                        name := _text(declarator.child_by_field_name(cs.FIELD_NAME))
+                    ):
+                        names.add(name)
+    return frozenset(names)
+
+
+def binds_value(site: Node, name: str) -> bool:
+    """Whether `name` at `site` may name a parameter, local or member value."""
+    child: Node = site
+    current = site.parent
+    top_level = False
+    while current is not None:
+        if current.type in _TYPE_DECLARATIONS:
+            if name in _type_values(current):
+                return True
+        elif (
+            current.type == cs.TS_CSHARP_DECLARATION_LIST
+            and child.type not in _TYPE_DECLARATIONS
+            and current.parent is not None
+            and current.parent.type in _TYPE_DECLARATIONS
+            and name in _member_values(child)
+        ):
+            return True
+        top_level = top_level or current.type == cs.TS_CSHARP_GLOBAL_STATEMENT
+        child, current = current, current.parent
+    # Top-level statements share their locals across the whole file.
+    return top_level and name in _member_values(child)

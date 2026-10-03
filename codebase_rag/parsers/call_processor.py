@@ -33,6 +33,7 @@ from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
+from .csharp import utils as csharp_utils
 from .dart import utils as dart_utils
 from .dispatch_registry import DispatchRegistryProcessor
 from .flow_access import FlowProcessor
@@ -979,18 +980,17 @@ def _call_qualifier(node: Node) -> str | None:
     """What a Rust or C# call is written through, for receiver counting.
 
     `S::m(s, 1)` passes the receiver that `s.m(1)` leaves implicit, and so
-    does C#'s `Util.Ext(s, 1)` against `s.Ext(1)` (issue #2517). A path or
-    a plain name records its last segment (`S`, `Self`, `Util`, `s`); a
-    Rust `.` call, whose left side is always a value, and a C# call through
-    any other expression record "". A bare call records nothing.
+    does C#'s `Util.Ext(s, 1)` against `s.Ext(1)` (issue #2517). A path, or
+    a C# name that binds no value at the call, records its last segment
+    (`S`, `Self`, `Util`); a value records "": every Rust `.` call, and a
+    C# call through a local, parameter, field or property, `this`, a
+    literal or `s?.Ext(1)`. A bare call records nothing.
     """
     function = node.child_by_field_name(cs.FIELD_FUNCTION)
     if function is None:
         return None
     if node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-        if function.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            return None
-        return _last_name(function.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION))
+        return _csharp_call_qualifier(node, function)
     if node.type != cs.TS_RS_CALL_EXPRESSION:
         return None
     if function.type == cs.TS_GENERIC_FUNCTION:
@@ -1010,13 +1010,45 @@ def _call_qualifier(node: Node) -> str | None:
     return None
 
 
+# A bare C# callee: `Ext(s, 1)` under `using static`, receiver as argument.
+_CSHARP_BARE_CALLEES = frozenset({cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME})
+
+
+def _csharp_call_qualifier(call: Node, function: Node) -> str | None:
+    if function.type in _CSHARP_BARE_CALLEES:
+        return None
+    if function.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        # `s?.Ext(1)` and every other non-member form take it from a value.
+        return ""
+    left = function.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+    head = left
+    while head is not None and head.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        head = head.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+    if head is None:
+        return ""
+    if head.type == cs.TS_CSHARP_IDENTIFIER:
+        # A string named `Util` makes `Util.Ext(1, 2)` an instance call
+        # even where an extension class `Util` exists (Greptile, #2832).
+        name = safe_decode_text(head)
+        if not name or csharp_utils.binds_value(call, name):
+            return ""
+    elif head.type != cs.TS_CSHARP_ALIAS_QUALIFIED_NAME:
+        # `this.Util`, `Make().Util`, a literal: a value.
+        return ""
+    return _last_name(left)
+
+
 def _last_name(node: Node | None) -> str:
     """The last segment of a plain or dotted name, "" for anything else."""
     if node is None:
         return ""
     if node.type == cs.TS_IDENTIFIER:
         return safe_decode_text(node) or ""
-    if node.type in (cs.TS_SCOPED_IDENTIFIER, cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION):
+    if node.type in (
+        cs.TS_SCOPED_IDENTIFIER,
+        cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_ALIAS_QUALIFIED_NAME,
+    ):
         return _last_name(node.child_by_field_name(cs.FIELD_NAME))
     # Rust `<S as Trait>` and other non-name paths still name a type.
     if node.type == cs.TS_RS_BRACKETED_TYPE:

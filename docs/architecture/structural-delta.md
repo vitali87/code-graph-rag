@@ -97,11 +97,15 @@ arguments (rest, variadic, C# `params`), and `self` (Rust) or `this s` (a C#
 extension method) is a receiver that a method call leaves implicit and a
 path call (`S::m(s, 1)`, `Util.Ext(s, 1)`) passes. The site's
 `call_qualifier` says which form it is written in, and the receiver counts
-among the arguments only where the call passes it; a site whose form cannot
-be read is judged both ways and keeps a verdict only when the two agree. A
-TypeScript `this:` parameter, Java's `C this` and Go's receiver field are
-never passed and are not listed. A change to the list is a signature
-change, and each site is judged by the number of arguments it passes:
+among the arguments only where the call passes it. A C# name counts as the
+extension's class only when it binds no local, parameter, field or property
+at the call, so `Util.Ext(1, 2)` on a string named `Util` stays an instance
+call. A site whose form cannot be read (a name that is neither, such as an
+inherited member) is judged both ways and keeps a verdict only when the two
+agree. A TypeScript `this:` parameter, Java's `C this` and Go's receiver
+field are never passed and are not listed. A change to the list is a
+signature change, and each site is judged by the number of arguments it
+passes:
 
 | Verdict            | When |
 |--------------------|------|

@@ -724,13 +724,17 @@ def _receiver_passed(site: CallSite, definition: Definition) -> bool | None:
 
     Rust passes it on a path call (`S::m(s, 1)`, `Self::m(self)`) and never
     on `s.m(1)`. A C# extension method takes it as the first argument when
-    called through its own class (`Util.Ext(s, 1)`) or bare under `using
-    static`, and from the left of the dot otherwise (`s.Ext(1)`); any other
-    name there is a value, since no other type can call it statically.
+    called bare under `using static` or through its own class
+    (`Util.Ext(s, 1)`), and from a value otherwise: ingestion records ""
+    for a local, parameter, field or property of that name. Another name
+    binds nothing visible at the call (an inherited member, an alias), so
+    the call form stays undecided.
     """
     qualifier = site.call_qualifier
     if _language(definition.path) == cs.SupportedLanguage.CSHARP:
-        return qualifier is None or qualifier == _declaring_type(definition)
+        if qualifier is None or qualifier == _declaring_type(definition):
+            return True
+        return False if qualifier == "" else None
     return bool(qualifier) if qualifier is not None else None
 
 

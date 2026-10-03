@@ -552,6 +552,114 @@ def test_a_csharp_extension_receiver_counts_where_the_call_passes_it(
     assert has_findings(delta) is (verdict == cs.DELTA_ARITY_TOO_FEW)
 
 
+@pytest.mark.parametrize(
+    ("view", "verdict"),
+    [
+        # Greptile on #2832: a string named like the extension's class is
+        # still a value, and `Util.Ext(1, 2)` an instance call that fits.
+        pytest.param(
+            "    public string Show(string Util) { return Util.Ext(1, 2); }\n",
+            cs.DELTA_ARITY_OK,
+            id="parameter-named-like-the-class",
+        ),
+        pytest.param(
+            '    string Util = "x";\n'
+            "    public string Show() { return Util.Ext(1, 2); }\n",
+            cs.DELTA_ARITY_OK,
+            id="field-named-like-the-class",
+        ),
+    ],
+)
+def test_a_csharp_value_receiver_is_never_counted_as_an_argument(
+    temp_repo: Path, view: str, verdict: str
+) -> None:
+    files = {"Util.cs": CS_EXT_UTIL, "View.cs": f"public class View {{\n{view}}}\n"}
+    delta = _delta(
+        temp_repo, files, {"Util.cs": CS_EXT_UTIL.replace("int b = 0", "int b")}
+    )
+
+    assert _verdicts(delta, ".Util.Ext(string, int, int)") == [verdict]
+    assert not has_findings(delta)
+
+
+@pytest.mark.parametrize(
+    ("source", "verdict"),
+    [
+        # Greptile on #2832: a local string named like the extension's class
+        # makes `Util.Ext(1, 2)` an instance call that fits.
+        pytest.param(
+            'void M() { var Util = "x"; Util.Ext(1, 2); }',
+            cs.DELTA_ARITY_OK,
+            id="local-named-like-the-class",
+        ),
+        # CodeRabbit on #2832: `?.` takes the receiver from the value before it.
+        pytest.param(
+            "void M(string s) { s?.Ext(1, 2); }",
+            cs.DELTA_ARITY_OK,
+            id="conditional-access",
+        ),
+        pytest.param(
+            "void M(string s) { s?.Ext(1); }",
+            cs.DELTA_ARITY_TOO_FEW,
+            id="conditional-access-short",
+        ),
+        # Under `using static` a bare call passes the receiver as an argument.
+        pytest.param(
+            "void M(string s) { Ext(s, 1); }", cs.DELTA_ARITY_TOO_FEW, id="bare-short"
+        ),
+        pytest.param(
+            "void M(string s) { Ext(s, 1, 2); }", cs.DELTA_ARITY_OK, id="bare-full"
+        ),
+        pytest.param(
+            "void M(string s) { Util.Ext(s, 1); }",
+            cs.DELTA_ARITY_TOO_FEW,
+            id="through-the-class",
+        ),
+    ],
+)
+def test_a_csharp_site_counts_its_receiver_as_written(
+    source: str, verdict: str
+) -> None:
+    """The recorded site against `Ext(this string s, int a, int b)`.
+
+    The resolver binds none of the first four on main, so the site is built
+    from the call as ingestion records it rather than read from a graph.
+    """
+    call = _first(
+        _call_tree(cs.SupportedLanguage.CSHARP, f"class V {{ {source} }}"),
+        frozenset({"invocation_expression"}),
+    )
+    props = call_site_properties(call)
+    arg_count, qualifier = props[cs.KEY_ARG_COUNT], props.get(cs.KEY_CALL_QUALIFIER)
+    assert isinstance(arg_count, int)
+    site = _receiver_site(arg_count, None)._replace(
+        caller_path="View.cs",
+        call_qualifier=qualifier if isinstance(qualifier, str) else None,
+    )
+    definition = _receiver_definition()._replace(
+        qualified_name="p.Util.Util.Ext(string, int, int)",
+        path="Util.cs",
+        positional_params=("this s", "a", "b"),
+    )
+
+    assert _declared_arity_verdict(site, definition)[1] == verdict
+
+
+def test_a_bare_csharp_extension_call_that_fits_stays_ok(temp_repo: Path) -> None:
+    """Through the graph: `using static Util;` and `Ext(s, 1, 2)`."""
+    view = (
+        "using static Util;\n\npublic class View {\n"
+        "    public string Show(string s) { return Ext(s, 1, 2); }\n}\n"
+    )
+    delta = _delta(
+        temp_repo,
+        {"Util.cs": CS_EXT_UTIL, "View.cs": view},
+        {"Util.cs": CS_EXT_UTIL.replace("int b = 0", "int b")},
+    )
+
+    assert _verdicts(delta, ".Util.Ext(string, int, int)") == [cs.DELTA_ARITY_OK]
+
+
 def _receiver_site(arg_count: int, qualifier: str | None) -> CallSite:
     return CallSite(
         caller="p.lib.run",
@@ -602,6 +710,23 @@ def test_an_unreadable_call_form_keeps_only_a_verdict_both_forms_share(
     site = _receiver_site(arg_count, None)
 
     assert _declared_arity_verdict(site, _receiver_definition())[1] == verdict
+
+
+def test_an_undecided_csharp_name_keeps_only_a_verdict_both_forms_share() -> None:
+    """`Other.Ext(1)` binds no visible value and names another type: an
+    inherited member or an alias, so neither form is assumed."""
+    site = _receiver_site(1, "Other")._replace(caller_path="View.cs")
+    definition = _receiver_definition()._replace(
+        qualified_name="p.Util.Util.Ext(string, int)",
+        path="Util.cs",
+        positional_params=("this s", "a"),
+    )
+
+    assert _declared_arity_verdict(site, definition)[1] == cs.DELTA_ARITY_UNKNOWN
+    explicit = site._replace(call_qualifier="Util")
+    implicit = site._replace(call_qualifier="")
+    assert _declared_arity_verdict(explicit, definition)[1] == cs.DELTA_ARITY_TOO_FEW
+    assert _declared_arity_verdict(implicit, definition)[1] == cs.DELTA_ARITY_OK
 
 
 def test_a_python_signature_change_is_reported_as_before(temp_repo: Path) -> None:
@@ -979,6 +1104,72 @@ def _call_tree(language: cs.SupportedLanguage, source: str) -> Node:
             'class V { void M() { Ext("x", 1); } }',
             None,
             id="cs-bare",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { var Util = "x"; Util.Ext(1); } }',
+            "",
+            id="cs-local-named-like-a-class",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(string Util) { Util.Ext(1); } }",
+            "",
+            id="cs-parameter",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { string Util; void M() { Util.Ext(1); } }",
+            "",
+            id="cs-field",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { string Util { get; } void M() { Util.Ext(1); } }",
+            "",
+            id="cs-property",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V(string Util) { void M() { Util.Ext(1); } }",
+            "",
+            id="cs-primary-constructor",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { foreach (var Util in xs) { Util.Ext(1); } } }",
+            "",
+            id="cs-foreach",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(string s) { s?.Ext(1); } }",
+            "",
+            id="cs-conditional-access",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { this.Util.Ext(1); } }",
+            "",
+            id="cs-this-member",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { global::Util.Ext("x"); } }',
+            "Util",
+            id="cs-global-alias",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { Ext<int>("x"); } }',
+            None,
+            id="cs-generic-bare",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class W { string Util; } class V { void M() { Util.Ext(1); } }",
+            "Util",
+            id="cs-another-types-field",
         ),
         pytest.param(
             cs.SupportedLanguage.CPP, "int r() { return s.f(1); }", None, id="cpp"
