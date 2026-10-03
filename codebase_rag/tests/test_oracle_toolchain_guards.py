@@ -15,6 +15,7 @@ the case the guards were written for.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,7 +25,7 @@ import typer
 from loguru import logger
 
 from evals import constants as ec
-from evals.oracles import _common
+from evals.oracles import _common, csharp_oracle
 from evals.oracles._common import (
     _REQUIRE_OK,
     NodeOracleUnavailable,
@@ -478,6 +479,153 @@ class TestSkipReasons:
     def test_a_working_toolchain_has_no_reason(self, tmp_path: Path) -> None:
         """None is the signal the call sites branch on, so it must be exact."""
         assert node_oracle_skip_reason(None) is None
+
+
+# What a child forked by `subprocess.run` writes to its stderr BEFORE it execs,
+# when the forking process holds a live gRPC client (the Milvus Lite tests leave
+# one in their xdist worker) and runs on macOS: gRPC's fork handlers log these
+# absl lines. Copied from the macOS CI failure on PR #2550, plus the
+# `fork_posix` line the same run printed.
+_GRPC_FORK_NOISE = "\n".join(
+    [
+        "I1003 10:37:31.852548   12858 fork_posix.cc:71] Other threads are "
+        "currently calling into gRPC, skipping fork() handlers",
+        *(
+            f"I1003 10:37:31.86664{i}   75998 ev_poll_posix.cc:587] FD from fork "
+            f"parent still in poll list: fd({33 + i}, generation: 1)"
+            for i in range(4)
+        ),
+    ]
+)
+
+
+class TestInheritedLogNoise:
+    """The reason must quote the CHILD's error, not its parent's gRPC logging.
+
+    `test_a_node_reason_carries_the_require_error` failed on both macOS jobs of
+    PR #2550 with a reason made only of `ev_poll_posix.cc:587] FD from fork
+    parent still in poll list` lines: they filled the stderr budget before
+    node's `ERR_REQUIRE_ESM` was reached. The same happens to anyone running
+    the evals in a process that has initialised gRPC, so the guard filters
+    them, not the test.
+    """
+
+    @staticmethod
+    def _node_reason(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stderr: str
+    ) -> str:
+        binaries = tmp_path / "bin"
+        binaries.mkdir()
+        _stub(
+            binaries,
+            "node",
+            stderr=stderr,
+            code=1,
+            fail_when_arg_contains="require",
+        )
+        _stub(binaries, "npm")
+        monkeypatch.setenv("PATH", str(binaries))
+        oracle = tmp_path / "oracle"
+        (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        (oracle / ec.NODE_DEPS_MARKER).write_text("ok", encoding="utf-8")
+        (oracle / "oracle_ast.js").write_text(
+            'const p = require("@ruby/prism");\n', encoding="utf-8"
+        )
+        reason = node_oracle_skip_reason(oracle)
+        assert reason is not None
+        return reason
+
+    def test_the_noise_is_long_enough_to_hide_the_error(self) -> None:
+        # Without this the tests below could pass against an unfiltered guard
+        # simply because the noise fits inside the budget.
+        assert len(_GRPC_FORK_NOISE) > ec.SKIP_REASON_STDERR_CHARS
+
+    def test_inherited_grpc_lines_do_not_crowd_out_the_require_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The macOS CI failure, made deterministic on every platform."""
+        reason = self._node_reason(
+            tmp_path,
+            monkeypatch,
+            f"{_GRPC_FORK_NOISE}\nError [ERR_REQUIRE_ESM]: nope",
+        )
+        assert "ERR_REQUIRE_ESM" in reason
+        assert "ev_poll_posix" not in reason
+        assert "fork_posix" not in reason
+
+    def test_a_failed_npm_install_reason_drops_them_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`ensure_node_deps` cuts npm's stderr to the same budget."""
+        binaries = tmp_path / "bin"
+        binaries.mkdir()
+        _stub(
+            binaries,
+            "npm",
+            stderr=f"{_GRPC_FORK_NOISE}\nnpm ERR! code E404",
+            code=1,
+        )
+        monkeypatch.setenv("PATH", str(binaries))
+        oracle = tmp_path / "oracle"
+        oracle.mkdir()
+        with pytest.raises(NodeOracleUnavailable) as raised:
+            _common.ensure_node_deps(oracle)
+        assert "npm ERR! code E404" in str(raised.value)
+        assert "ev_poll_posix" not in str(raised.value)
+
+    def test_a_failed_dotnet_build_reason_drops_them_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The C# guard cuts the build's stderr to the same budget.
+
+        The build itself is replaced: a real one writes into the repo's
+        oracle directory, and only the stderr handling is under test.
+        """
+        _stub(tmp_path, "dotnet", stdout="10.0.400 [/usr/share/dotnet/sdk]")
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        def _failed_build(dotnet: str) -> bool:
+            raise subprocess.CalledProcessError(
+                1,
+                [dotnet, "build"],
+                output="",
+                stderr=f"{_GRPC_FORK_NOISE}\nerror NETSDK1045: too old",
+            )
+
+        monkeypatch.setattr(csharp_oracle, "_ensure_built", _failed_build)
+        reason = csharp_oracle_skip_reason()
+        assert reason is not None
+        assert "NETSDK1045" in reason
+        assert "ev_poll_posix" not in reason
+
+    def test_a_stderr_of_only_log_lines_is_kept_rather_than_emptied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Noise is still better than a reason that ends in a bare colon."""
+        reason = self._node_reason(tmp_path, monkeypatch, _GRPC_FORK_NOISE)
+        assert "fork_posix.cc:71]" in reason
+        assert not reason.rstrip().endswith(":")
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            # A node stack frame: indented, and full of `file:line` pairs.
+            "    at Module._compile (node:internal/modules/cjs/loader:1101:14)",
+            # Starts with a severity letter, and nothing else of the format.
+            "Invalid package config /oracle/node_modules/@ruby/prism/package.json.",
+            "Error: Cannot find module '@ruby/prism'",
+            # The format minus the thread id is not the format.
+            "W1003 10:37:31.866642 ev_poll_posix.cc:587] no thread id",
+        ],
+    )
+    def test_lines_that_merely_resemble_a_log_line_are_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str
+    ) -> None:
+        reason = self._node_reason(
+            tmp_path, monkeypatch, f"Error [ERR_REQUIRE_ESM]: nope\n{line}"
+        )
+        assert "ERR_REQUIRE_ESM" in reason
+        assert line in reason
 
 
 class TestPostInstallRecheck:
