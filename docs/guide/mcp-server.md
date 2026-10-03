@@ -19,6 +19,8 @@ claude mcp add --transport stdio code-graph-rag \
   -- code-graph-rag mcp-server
 ```
 
+![claude mcp add registering code-graph-rag for pallets/itsdangerous, then claude mcp list reporting it Connected](../assets/demos/mcp-server-setup.gif)
+
 **If installed from source:**
 
 ```bash
@@ -91,9 +93,13 @@ cgr daemon up
 | `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyse the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
 | `flow_verdict` | Answer a source-to-sink data-flow reachability question with one of three verdicts: FOUND (a FLOWS_TO path exists, returned as qualified names), NO_FLOW (no path, and every module of the project was inside flow-analysis coverage), or UNKNOWN (no path found, but part of the project sits outside coverage; the uncovered files are named). An absent path must never be read as a verified absence when coverage gaps exist. The path may cross a service boundary: a NETWORK resource that resolves to another project's endpoint continues into that handler, `remote_hops` lists the (from, to) pairs where it does, and the coverage of every project entered counts towards the verdict. |
-| `explain_traceback` | Correlate a Python traceback with the code graph: each frame is resolved to its Function/Method/Module node and returned with its graph neighbourhood (callers, callees, and FLOWS_TO sources feeding it). Frames outside the repository or unknown to the graph carry an unresolved reason instead. Use this to ground a failure report in the indexed code before deciding where to look. |
-| `rank_root_causes` | Rank the sites that can explain a Python traceback's failure, best first. The anchor (failing) is the innermost frame the graph resolves; anchor_is_crash_site is false when the actual crash line sits deeper (a library frame, or a frame the graph cannot match), so the ranking reads as relative to the deepest resolvable frame. Candidates score by three additive signals: being a FLOWS_TO source into the failing frame (a possible producer of the failing value), sitting on the crashing stack itself, and reaching the failing frame through CALLS edges (closer callers score higher). Each candidate carries its file, definition line, reasons, and the call path to the failure. When the project has no FLOWS_TO edges the ranking degrades to a CALLS-only walk and flow_used is false; flow_gaps always names the files outside flow-analysis coverage. |
+| `explain_traceback` | Correlate a Python traceback with the code graph: each frame is resolved to its Function/Method/Module node and returned with its graph neighbourhood (callers, callees, and FLOWS_TO sources feeding it). Frames outside the repository or unknown to the graph carry an unresolved reason instead. A traceback from another checkout (a CI runner, a container, a teammate's machine, Windows) is matched by the checkout root its frames share, reported as inferred_checkout_root; pass path_prefix_map when that root cannot be inferred. When nothing resolves, note says why. Use this to ground a failure report in the indexed code before deciding where to look. |
+| `rank_root_causes` | Rank the sites that can explain a Python traceback's failure, best first. The anchor (failing) is the innermost frame the graph resolves; anchor_is_crash_site is false when the actual crash line sits deeper (a library frame, or a frame the graph cannot match), so the ranking reads as relative to the deepest resolvable frame. Candidates score by three additive signals: being a FLOWS_TO source into the failing frame (a possible producer of the failing value), sitting on the crashing stack itself, and reaching the failing frame through CALLS edges (closer callers score higher). Each candidate carries its file, definition line, reasons, and the call path to the failure. When the project has no FLOWS_TO edges the ranking degrades to a CALLS-only walk and flow_used is false; flow_gaps always names the files outside flow-analysis coverage. Frames from another checkout resolve as in explain_traceback, and resolution plus note say why a ranking is empty. |
 <!-- /SECTION:mcp_tools -->
+
+![A Python MCP client over stdio listing the server's tools and calling list_projects, resolve, callers, get_code_snippet and find_duplicate_code on pallets/itsdangerous](../assets/demos/mcp-server-tools.gif)
+
+*`call_tools.py` is a small client built on the `mcp` Python SDK; none of these tools calls an LLM.*
 
 ## Example Usage
 
@@ -104,6 +110,8 @@ cgr daemon up
 ```
 
 ## LLM Provider Options
+
+Only `query_code_graph` needs the Cypher model (and `ask_agent` the orchestrator model). The server starts without one: indexing and the deterministic tools run fixed graph queries and work with no LLM configured or reachable. The Cypher model is set up on the first `query_code_graph` call; until its provider answers, that call returns an `error` naming the problem, and a provider started later is picked up without restarting the server. A hosted provider configured without its API key is still reported at start-up.
 
 === "OpenAI"
 
@@ -148,6 +156,8 @@ claude mcp add --transport stdio code-graph-rag-frontend \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
+![Two named instances, code-graph-rag-backend and code-graph-rag-frontend, added with claude mcp add and both reported Connected by claude mcp list](../assets/demos/mcp-server-multi-repo.gif)
+
 !!! note
     Each MCP instance indexes and updates the project for its own `TARGET_REPO_PATH`. `index_repository` rebuilds that project from scratch (its nodes and embeddings), and `update_repository` syncs it incrementally. Other projects in the shared graph are not touched, so several instances, one per repository, can share one Memgraph, and cross-service links between their projects keep working (see [multi-project](multi-project.md)). Only `wipe_database` removes every project.
 
@@ -161,6 +171,8 @@ claude mcp add --transport stdio code-graph-rag-workspace \
   --env TARGET_REPO_PATH=/path/to/one/of/its/repos \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
+
+![A workspace server for the backend workspace added and connected, then list_projects showing only the workspace's two projects and resolve refusing a project outside it](../assets/demos/mcp-server-workspace.gif)
 
 A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace.
 
@@ -178,3 +190,5 @@ A workspace server lists the workspace's indexed projects, refuses a `project` a
 ```bash
 claude mcp remove code-graph-rag
 ```
+
+![claude mcp remove code-graph-rag, then claude mcp list showing no servers configured](../assets/demos/mcp-server-remove.gif)

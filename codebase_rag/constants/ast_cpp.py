@@ -158,6 +158,8 @@ CPP_TYPE_PARAMETER_DECL_TYPES = frozenset(
 TS_CPP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
+# The body of a namespace or an `extern "C++" { }` block.
+TS_CPP_DECLARATION_LIST = "declaration_list"
 TS_CPP_CALL_EXPRESSION = "call_expression"
 TS_CPP_FIELD_EXPRESSION = "field_expression"
 TS_CPP_SUBSCRIPT_EXPRESSION = "subscript_expression"
@@ -245,6 +247,53 @@ CPP_PREPROC_CONDITIONAL_PATTERN = (
 CPP_PREPROC_OPEN_DIRECTIVES = frozenset({b"if", b"ifdef", b"ifndef"})
 CPP_PREPROC_SPLIT_DIRECTIVES = frozenset({b"elif", b"elifdef", b"elifndef", b"else"})
 
+# Annotation macros written after a declarator (`bool Check() const
+# LOCKS_REQUIRED(mu) {`, `int count_ GUARDED_BY(mu);`, issue #2552). Only a
+# macro can stand there in valid C++, but tree-sitter cannot see the
+# #define and splits the declaration around it. The recovery pass blanks an
+# ALL_CAPS word, with its balanced argument list if it has one, when it
+# sits between a declarator and the token that ends the declaration. The
+# case rule keeps `int ATTR(x) name(void)` (a macro BEFORE the name) from
+# losing its real name.
+CPP_IDENTIFIER_PATTERN = rb"[A-Za-z_][A-Za-z0-9_]*"
+CPP_ANNOTATION_MACRO_PATTERN = rb"_*[A-Z][A-Z0-9_]*"
+# Whitespace and comments between the declarator and the macro (gmock puts
+# the annotation on its own line, sometimes after a `//` note).
+CPP_TRIVIA_PATTERN = rb"(?:\s+|//[^\n]*|/\*.*?\*/)*"
+# A string or character literal: a paren inside one does not count when
+# matching an argument list's closing paren.
+CPP_LITERAL_PATTERN = rb"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"
+CPP_ARGUMENT_TOKEN_PATTERN = CPP_LITERAL_PATTERN + rb"|[()]"
+# Two words in a row (`int a`, `const T& x`) declare a parameter; a macro's
+# arguments are expressions.
+CPP_DECLARED_NAME_PATTERN = rb"\b[A-Za-z_]\w*\s+[A-Za-z_]\w*\b"
+CPP_OPEN_PAREN = b"("
+CPP_CLOSE_PAREN = b")"
+CPP_BLANK_BYTE = ord(" ")
+CPP_LINE_BREAK_BYTES = frozenset(b"\r\n")
+# Declarator suffixes the grammar knows; an annotation may sit on either side
+# of them (`f() LOCKS_REQUIRED(mu) override`), so the scan steps over them
+# without blanking them.
+CPP_DECLARATOR_SUFFIX_KEYWORDS = frozenset(
+    {
+        b"const",
+        b"volatile",
+        b"override",
+        b"final",
+        b"noexcept",
+        b"throw",
+        b"__attribute__",
+        b"__attribute",
+    }
+)
+# What may follow the last annotation: a body, the end of the declaration,
+# `= 0`/`= default`/an initializer, the next declarator, a ctor-initializer.
+CPP_DECLARATOR_END_BYTES = frozenset(b"{;=,:")
+CPP_DECLARATOR_END_KEYWORDS = frozenset({b"try", b"requires"})
+# An annotation's argument list is short; an unbalanced `(` must not send
+# the scan across the rest of the file.
+CPP_ANNOTATION_MAX_ARGUMENT_BYTES = 1024
+
 # Reserved keywords that error recovery can leave in declarator position
 # (nlohmann: a macro access-label followed by `const decltype(MACRO_)`
 # members parses as a function declaration NAMED decltype). None can ever
@@ -279,3 +328,30 @@ TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
 # A C or C++ enum body and its enumerators (issue #1807).
 TS_ENUMERATOR_LIST = "enumerator_list"
 TS_ENUMERATOR = "enumerator"
+
+# Where C names a function as a VALUE rather than calling it (issue #2529): an
+# initializer-list entry (positional, or `.field = f` in an initializer_pair),
+# a declarator's initial value, an assignment's right side, a call argument.
+TS_CPP_INITIALIZER_PAIR = "initializer_pair"
+TS_CPP_ASSIGNMENT_EXPRESSION = "assignment_expression"
+TS_CPP_ARGUMENT_LIST = "argument_list"
+# Wrappers a function designator keeps its identity through: `&f`, `(f)`,
+# `(handler_t)f` and either branch of `c ? f : g`.
+TS_CPP_POINTER_EXPRESSION = "pointer_expression"
+TS_CPP_CAST_EXPRESSION = "cast_expression"
+TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
+CPP_OP_ADDRESS_OF = "&"
+# Nodes that hold file-scope declarations without opening a scope of their
+# own: preprocessor conditionals and an `extern "C" { ... }` block.
+C_FILE_SCOPE_CONTAINER_TYPES = frozenset(
+    {
+        "translation_unit",
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_else",
+        "preproc_elif",
+        "preproc_elifdef",
+        "linkage_specification",
+        "declaration_list",
+    }
+)

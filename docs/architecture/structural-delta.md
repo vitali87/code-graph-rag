@@ -83,15 +83,25 @@ a method's `self` counts for CPython but is not caller-supplied. Only
 Python definitions carry `positional_params`, so sites of other languages
 read `unknown`. The stored parameter list ends at `*args`; the definition
 header is read back so a variadic callee is never reported as receiving
-too many arguments. `possibly_missing` means fewer arguments than
-parameters: the graph does not record defaults, so this is a hint, not a
-finding, and does not trip `--fail-on-found`.
+too many arguments. A `**opts` unpacking at the site supplies keywords
+only and adds no positional, so `send(req, **opts)` passes one positional
+to `def send(request, **kwargs)`. A `*rest` unpacking adds an unknown
+number: the positionals written beside it are a floor, so `too_many` still
+holds when they alone exceed the parameters (`one(a, b, *rest)` against
+`def one(a)`), and the site reads `unknown` otherwise. `possibly_missing`
+means fewer arguments than parameters: the graph does not record
+defaults, so this is a hint, not a finding, and does not trip
+`--fail-on-found`.
 
 ## `cgr check`
 
 ```bash
 cgr check --base origin/main --fail-on-found
 ```
+
+![cgr check --base origin/main --fail-on-found exiting 1 after helper was renamed by hand, reporting the rename and the dangling caller in pkg/app.py](../assets/demos/structural-delta.gif)
+
+*`helper` was renamed by hand in `pkg/util.py` only; the report is written to a file and read with `jq`.*
 
 The graph is assumed to reflect `--base` (index there, then edit). Files
 that differ between the base and the working tree, untracked files
