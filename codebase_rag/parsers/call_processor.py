@@ -4699,29 +4699,38 @@ class CallProcessor:
     def _js_param_declaration(
         self, ctx: _CallScanContext, callable_node: Node, name: str
     ) -> _ReceiverDeclaration | None:
-        for field in (cs.FIELD_PARAMETERS, cs.FIELD_PARAMETER):
-            params = callable_node.child_by_field_name(field)
-            if params is None:
-                continue
-            candidates = (
-                [params]
-                if params.type == cs.TS_IDENTIFIER
-                else list(params.named_children)
-            )
-            for param in candidates:
-                if param.type in (
-                    cs.TS_REQUIRED_PARAMETER,
-                    cs.TS_OPTIONAL_PARAMETER,
-                ) and self._js_param_binds_name(param, name):
-                    annotation = param.child_by_field_name(cs.FIELD_TYPE)
-                    if annotation is not None:
-                        return self._ts_annotation_declaration(
-                            annotation, ctx.module_qn
-                        )
+        annotation = self._js_param_annotation(callable_node, name)
+        if annotation is not None:
+            return self._ts_annotation_declaration(annotation, ctx.module_qn)
         jsdoc_type = self._jsdoc_param_type(callable_node, name, ctx.language)
         if jsdoc_type is None:
             return None
         return self._jsdoc_type_declaration(jsdoc_type, callable_node, ctx.module_qn)
+
+    def _js_param_annotation(self, callable_node: Node, name: str) -> Node | None:
+        for param in self._js_callable_params(callable_node):
+            if (
+                param.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER)
+                and self._js_param_binds_name(param, name)
+                and (annotation := param.child_by_field_name(cs.FIELD_TYPE)) is not None
+            ):
+                return annotation
+        return None
+
+    @staticmethod
+    def _js_callable_params(callable_node: Node) -> list[Node]:
+        # `(a, b) => ...` lists them under `parameters`; a bare `a => ...`
+        # holds its one identifier under `parameter`.
+        params: list[Node] = []
+        for field in (cs.FIELD_PARAMETERS, cs.FIELD_PARAMETER):
+            node = callable_node.child_by_field_name(field)
+            if node is None:
+                continue
+            if node.type == cs.TS_IDENTIFIER:
+                params.append(node)
+            else:
+                params.extend(node.named_children)
+        return params
 
     @staticmethod
     def _js_param_binds_name(param: Node, name: str) -> bool:
@@ -4786,24 +4795,42 @@ class CallProcessor:
             class_node = class_node.parent
         if class_node is None:
             return None
-        values: list[Node] = []
-        for declared in declared_fields(class_node, ctx.language):
+        annotation, values = self._js_declared_field_parts(
+            class_node, field, ctx.language
+        )
+        if annotation is not None:
+            return self._ts_annotation_declaration(annotation, ctx.module_qn)
+        writes = self._js_this_field_writes(class_node, field)
+        if writes is None:
+            return None
+        return self._js_agreed_class(values + writes, ctx.module_qn)
+
+    @staticmethod
+    def _js_declared_field_parts(
+        class_node: Node, field: str, language: cs.SupportedLanguage
+    ) -> tuple[Node | None, list[Node]]:
+        # The instance field's type annotation, which is declared truth and
+        # ends the search, else the initialisers its declarations give it.
+        initials: list[Node] = []
+        for declared in declared_fields(class_node, language):
             if declared.name != field or declared.is_static:
                 continue
             annotation = declared.node.child_by_field_name(cs.FIELD_TYPE)
             if annotation is not None:
-                return self._ts_annotation_declaration(annotation, ctx.module_qn)
+                return annotation, initials
             if (
                 initial := declared.node.child_by_field_name(cs.FIELD_VALUE)
             ) is not None:
-                values.append(initial)
-        writes = self._js_this_field_writes(class_node, field)
-        if writes is None:
-            return None
-        values.extend(writes)
+                initials.append(initial)
+        return None, initials
+
+    def _js_agreed_class(
+        self, values: list[Node], module_qn: str
+    ) -> _ReceiverDeclaration | None:
+        # The one class every value constructs; none, or any disagreement or
+        # untypable value, proves nothing.
         class_qns = {
-            self._js_value_type_class_qn(value, ctx.module_qn, depth=0)
-            for value in values
+            self._js_value_type_class_qn(value, module_qn, depth=0) for value in values
         }
         if len(class_qns) != 1 or (class_qn := class_qns.pop()) is None:
             return None
@@ -4822,21 +4849,31 @@ class CallProcessor:
             if node.type in _JS_TS_ANY_CLASS_NODES:
                 continue
             if node.type in _JS_FIELD_WRITE_TYPES:
-                target = node.child_by_field_name(
-                    cs.TS_JS_FIELD_ARGUMENT
-                    if node.type == cs.TS_JS_UPDATE_EXPRESSION
-                    else cs.FIELD_LEFT
-                )
-                writes = self._js_writes_this_field(target, field)
-                if writes is None:
+                written = self._js_field_write_values(node, field)
+                if written is None:
                     return None
-                if writes:
-                    value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-                    if node.type != cs.TS_JS_ASSIGNMENT_EXPRESSION or value is None:
-                        return None
-                    values.append(value)
+                values.extend(written)
             stack.extend(node.children)
         return values
+
+    def _js_field_write_values(self, node: Node, field: str) -> list[Node] | None:
+        # What one write expression assigns to `this.f`: nothing when it
+        # writes elsewhere, its right-hand side for a plain `=`, and None
+        # when it may write `f` with no value to type (see the caller).
+        target = node.child_by_field_name(
+            cs.TS_JS_FIELD_ARGUMENT
+            if node.type == cs.TS_JS_UPDATE_EXPRESSION
+            else cs.FIELD_LEFT
+        )
+        writes = self._js_writes_this_field(target, field)
+        if writes is None:
+            return None
+        if not writes:
+            return []
+        value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if node.type != cs.TS_JS_ASSIGNMENT_EXPRESSION or value is None:
+            return None
+        return [value]
 
     def _js_writes_this_field(self, target: Node | None, field: str) -> bool | None:
         # Whether an assignment target writes the instance field `field`:
