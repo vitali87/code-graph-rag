@@ -2643,7 +2643,9 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.RESOLVE,
             project,
-            lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
+            lambda name: graph_query.resolve_or_refuse(
+                self.ingestor.fetch_all, name, target
+            ),
         )
 
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:

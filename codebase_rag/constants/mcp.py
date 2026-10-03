@@ -173,6 +173,27 @@ REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"
 GRAPH_QUERY_MAX_DEPTH = 5
+# A `path:line` target whose file the project does not hold (issue #2611).
+# Answered with `[]`, it read as "no definition spans that line", and an
+# agent holding an absolute path concluded nothing was defined there. A file
+# is held when the project has a Module at its path (source or document);
+# File nodes are shared by projects indexed from one root, so they cannot
+# say whose a file is.
+GRAPH_LOCATION_UNKNOWN_FILE = (
+    "No source file {path!r} in project {project!r}. A path:line target takes "
+    "the file's path relative to the root the project was indexed from, or an "
+    "absolute path inside that root."
+)
+# `x:a:b` when the project holds both `x` and `x:a`: either reading may be
+# the one meant, so neither is answered.
+GRAPH_LOCATION_AMBIGUOUS = (
+    "{target!r} is line {line} of {path!r} or line {other_line} of "
+    "{other_path!r}, and project {project!r} holds both files. Write "
+    "'{path}:{line}' for the first or '{other_path}:{other_line}:1' for the second."
+)
+# `cgr graph`'s exit status for those refusals: above click's 1 (error) and
+# 2 (usage), so a script can tell them from a crash or a mistyped command line.
+GRAPH_EXIT_UNKNOWN_FILE = 4
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
