@@ -108,7 +108,7 @@ def _process_export_module(
         (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
     )
 
-    logger.info(logs.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
+    logger.debug(logs.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
 
 
 def _process_module_implementation(
@@ -151,7 +151,7 @@ def _process_module_implementation(
     interface_qn = f"{project_name}.{module_name}"
     deferred_impls.append((impl_qn, interface_qn))
 
-    logger.info(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
+    logger.debug(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
 
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:

@@ -31,6 +31,7 @@ from .resolution import (
     FrameResolver,
     JsFrameResolver,
     JvmFrameResolver,
+    PathRebase,
     PhpFrameResolver,
     ResolutionStats,
 )
@@ -107,29 +108,29 @@ def load_callables(fetch_all: QueryFn, project_prefix: str) -> list[CallableNode
     rows: list[ResultRow] = fetch_all(
         CYPHER_TRACE_CALLABLES, {cs.KEY_PREFIX: project_prefix}
     )
-    nodes: list[CallableNode] = []
-    for row in rows:
-        label = row.get(cs.KEY_LABEL)
-        qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
-        path = row.get(cs.KEY_PATH)
-        start_line = row.get(cs.KEY_START_LINE)
-        end_line = row.get(cs.KEY_END_LINE)
-        if (
-            not isinstance(label, str)
-            or not isinstance(qualified_name, str)
-            or not isinstance(path, str)
-        ):
-            continue
-        nodes.append(
-            CallableNode(
-                label=label,
-                qualified_name=qualified_name,
-                path=path,
-                start_line=start_line if isinstance(start_line, int) else None,
-                end_line=end_line if isinstance(end_line, int) else None,
-            )
-        )
-    return nodes
+    return [node for row in rows if (node := callable_node(row)) is not None]
+
+
+def callable_node(row: ResultRow) -> CallableNode | None:
+    """One CYPHER_TRACE_CALLABLES-shaped row as a node, or None when malformed."""
+    label = row.get(cs.KEY_LABEL)
+    qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
+    path = row.get(cs.KEY_PATH)
+    start_line = row.get(cs.KEY_START_LINE)
+    end_line = row.get(cs.KEY_END_LINE)
+    if (
+        not isinstance(label, str)
+        or not isinstance(qualified_name, str)
+        or not isinstance(path, str)
+    ):
+        return None
+    return CallableNode(
+        label=label,
+        qualified_name=qualified_name,
+        path=path,
+        start_line=start_line if isinstance(start_line, int) else None,
+        end_line=end_line if isinstance(end_line, int) else None,
+    )
 
 
 def _load_existing_calls(
@@ -147,9 +148,7 @@ def _load_existing_calls(
     return pairs
 
 
-def _edge_properties(
-    stats: _EdgeStats, static_missed: bool, sampled: bool
-) -> dict[str, PropertyValue]:
+def _edge_properties(stats: _EdgeStats, sampled: bool) -> dict[str, PropertyValue]:
     workloads = sorted(stats.workloads)[: cs.TRACE_MAX_WORKLOADS_PER_EDGE]
     receivers = sorted(stats.receiver_types)[: cs.TRACE_MAX_RECEIVER_TYPES_PER_EDGE]
     return {
@@ -158,8 +157,11 @@ def _edge_properties(
         cs.TRACE_PROP_WORKLOAD_COUNT: len(stats.workloads),
         cs.TRACE_PROP_WORKLOADS: workloads,
         cs.TRACE_PROP_RECEIVER_TYPES: receivers,
-        cs.TRACE_PROP_STATIC_MISSED: static_missed,
         cs.TRACE_PROP_SAMPLED: sampled,
+        # Written, not omitted: the edge this merges onto may carry a True
+        # from a sync that graded it after an edit (issue #2429), and a new
+        # observation of the current code is what makes it current again.
+        cs.TRACE_PROP_STALE: False,
     }
 
 
@@ -178,15 +180,18 @@ def ingest_trace(
     callables_by_qn = {node.qualified_name: node for node in nodes}
     existing = _load_existing_calls(ingestor, project_prefix)
     resolver = _resolver_for(header, repo_root, nodes)
+    # A trace recorded in CI or a container names files under THAT machine's
+    # checkout, which its header records; they are this checkout's files.
+    rebase = PathRebase.from_recorded_root(repo_root, header.repo_root)
 
     summary = TraceIngestSummary()
     resolved_frames: dict[tuple[ResolvedFrame, ResolvedFrame], _EdgeStats] = {}
     for record in records:
         summary.records += 1
-        caller = resolver.resolve(record.caller, summary.resolution)
+        caller = resolver.resolve(rebase.apply(record.caller), summary.resolution)
         if caller is None:
             continue
-        callee = resolver.resolve(record.callee, summary.resolution)
+        callee = resolver.resolve(rebase.apply(record.callee), summary.resolution)
         if callee is None:
             continue
         edge = resolved_frames.setdefault((caller, callee), _EdgeStats())
@@ -195,26 +200,20 @@ def ingest_trace(
         edge.receiver_types.update(record.receiver_types)
 
     for (caller, callee), stats in resolved_frames.items():
-        pair = (caller.qualified_name, callee.qualified_name)
-        static_missed = pair not in existing
-        properties = _edge_properties(stats, static_missed, header.sampled)
+        static_missed = (caller.qualified_name, callee.qualified_name) not in existing
         if static_missed:
             summary.static_missed += 1
-            _mark_dynamic(
-                properties,
-                repo_root,
-                callables_by_qn.get(caller.qualified_name),
-                callee,
-            )
         else:
             summary.confirmed_static += 1
-            _confirm_static(ingestor, caller, callee, properties)
         summary.edges += 1
-        ingestor.ensure_relationship_batch(
-            (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
-            cs.RelationshipType.CALLS,
-            (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
-            properties=properties,
+        write_trace_edge(
+            ingestor,
+            caller,
+            callee,
+            _edge_properties(stats, header.sampled),
+            static_missed,
+            repo_root,
+            callables_by_qn.get(caller.qualified_name),
         )
     ingestor.flush_all()
     logger.info(
@@ -227,6 +226,36 @@ def ingest_trace(
         )
     )
     return summary
+
+
+def write_trace_edge(
+    ingestor: TraceGraphProtocol,
+    caller: ResolvedFrame,
+    callee: ResolvedFrame,
+    properties: PropertyDict,
+    static_missed: bool,
+    repo_root: Path,
+    caller_node: CallableNode | None,
+) -> None:
+    """Write one observed pair as it lands against the current static graph.
+
+    Shared with the re-parse carry (issue #2429), which re-applies a
+    captured observation exactly as ingesting it now would: upgrading the
+    pair's static edge(s) when the re-parse produced one, and otherwise a
+    runtime-only edge whose dispatch literal is looked up in the caller's
+    current body.
+    """
+    properties[cs.TRACE_PROP_STATIC_MISSED] = static_missed
+    if static_missed:
+        _mark_dynamic(properties, repo_root, caller_node, callee)
+    else:
+        _confirm_static(ingestor, caller, callee, properties)
+    ingestor.ensure_relationship_batch(
+        (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
+        cs.RelationshipType.CALLS,
+        (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
+        properties=properties,
+    )
 
 
 def _mark_dynamic(
