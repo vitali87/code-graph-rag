@@ -279,3 +279,20 @@ TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
 # A C or C++ enum body and its enumerators (issue #1807).
 TS_ENUMERATOR_LIST = "enumerator_list"
 TS_ENUMERATOR = "enumerator"
+
+# A conditional directive inside a comma-separated list (a constructor's
+# member-initialiser list, snappy's `#if !defined(NDEBUG) begin_(iov),
+# #endif`, issue #2614) sits where the grammar allows none. tree-sitter
+# opens a preproc conditional that never closes and the enclosing class
+# swallows the rest of the file. A directive is in list context when the
+# code line before it leaves a list open (`,`, `(`, or the `:` that starts a
+# member-initialiser list) or the code line after it continues one
+# (a leading `,` or `:`). A `\` at the end of a preprocessor line continues
+# it onto the next.
+CPP_PREPROC_LINE_PATTERN = rb"^\s*#"
+CPP_PREPROC_CONTINUATION = b"\\"
+CPP_BLOCK_COMMENT_PATTERN = rb"/\*.*?\*/"
+CPP_LIST_OPEN_SUFFIXES = (b",", b"(")
+CPP_CTOR_INIT_COLON_PATTERN = rb"(?:^|\)|\bnoexcept)\s*:$"
+CPP_LIST_ITEM_PREFIXES = (b",", b":")
+CPP_SCOPE_RESOLUTION_PREFIX = b"::"

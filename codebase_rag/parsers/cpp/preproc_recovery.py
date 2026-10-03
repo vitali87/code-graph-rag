@@ -172,6 +172,201 @@ def _retry_without_macro_markers(
     return tree, source_bytes
 
 
+_PREPROC_LINE = re.compile(cs.CPP_PREPROC_LINE_PATTERN)
+_BLOCK_COMMENT = re.compile(cs.CPP_BLOCK_COMMENT_PATTERN)
+_CTOR_INIT_COLON = re.compile(cs.CPP_CTOR_INIT_COLON_PATTERN)
+
+# One conditional group: the line ranges of its directives (a directive
+# continued with a trailing backslash spans several lines) and of its
+# branches, both in source order.
+_Conditional = tuple[list[tuple[int, int]], list[tuple[int, int]]]
+
+
+def _directive_end(lines: list[bytes], index: int) -> int:
+    while index + 1 < len(lines) and lines[index].rstrip().endswith(
+        cs.CPP_PREPROC_CONTINUATION
+    ):
+        index += 1
+    return index
+
+
+def _preproc_line_flags(lines: list[bytes]) -> list[bool]:
+    # every line of every directive, continuations included: the last line
+    # of `#define LIST a, b,` must not read as a list left open
+    flags: list[bool] = []
+    index = 0
+    while index < len(lines):
+        if _PREPROC_LINE.match(lines[index]) is None:
+            flags.append(False)
+            index += 1
+            continue
+        end = _directive_end(lines, index)
+        flags.extend([True] * (end - index + 1))
+        index = end + 1
+    return flags
+
+
+def _conditional_groups(lines: list[bytes]) -> list[_Conditional]:
+    groups: list[_Conditional] = []
+    stack: list[_Conditional] = []
+    index = 0
+    while index < len(lines):
+        match = _DIRECTIVE.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+        end = _directive_end(lines, index)
+        keyword = match.group(1)
+        if keyword in cs.CPP_PREPROC_OPEN_DIRECTIVES:
+            stack.append(([(index, end)], []))
+        elif stack:
+            directives, branches = stack[-1]
+            branches.append((directives[-1][1] + 1, index - 1))
+            directives.append((index, end))
+            if keyword not in cs.CPP_PREPROC_SPLIT_DIRECTIVES:
+                groups.append(stack.pop())
+        index = end + 1
+    return groups
+
+
+def _code_text(line: bytes) -> bytes:
+    return _BLOCK_COMMENT.sub(b"", line).split(_LINE_COMMENT, 1)[0].strip()
+
+
+def _neighbour_code(
+    lines: list[bytes], preproc: list[bool], index: int, step: int
+) -> bytes:
+    index += step
+    while 0 <= index < len(lines):
+        if not preproc[index]:
+            code = _code_text(lines[index])
+            if code:
+                return code
+        index += step
+    return b""
+
+
+def _in_list_context(before: bytes, after: bytes) -> bool:
+    return (
+        before.endswith(cs.CPP_LIST_OPEN_SUFFIXES)
+        or _CTOR_INIT_COLON.search(before) is not None
+        or (
+            after.startswith(cs.CPP_LIST_ITEM_PREFIXES)
+            and not after.startswith(cs.CPP_SCOPE_RESOLUTION_PREFIX)
+        )
+    )
+
+
+def _list_context_conditionals(lines: list[bytes]) -> list[_Conditional]:
+    preproc = _preproc_line_flags(lines)
+    return [
+        group
+        for group in _conditional_groups(lines)
+        if any(
+            _in_list_context(
+                _neighbour_code(lines, preproc, start, -1),
+                _neighbour_code(lines, preproc, end, 1),
+            )
+            for start, end in group[0]
+        )
+    ]
+
+
+def _directive_misparsed(root: Node, start: int, line: bytes) -> bool:
+    # A directive the grammar accepted where it stands (an `#if` between
+    # enumerators, an `#ifdef` under an access label) parses into an
+    # error-free preproc node; only one tree-sitter choked on is a target.
+    hash_byte = start + len(line) - len(line.lstrip())
+    node = root.descendant_for_byte_range(hash_byte, hash_byte + 1)
+    if node is None:
+        return False
+    return node.has_error or (node.parent is not None and node.parent.has_error)
+
+
+def _syntax_faults(root: Node) -> list[tuple[int, int]]:
+    # the row span of every ERROR and MISSING node: the count ranks retries,
+    # the rows tie a leftover fault to the conditional that caused it
+    faults: list[tuple[int, int]] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_ERROR or node.is_missing:
+            faults.append((node.start_point[0], node.end_point[0]))
+        if node.has_error:
+            stack.extend(node.children)
+    return faults
+
+
+def _touches(group: _Conditional, faults: list[tuple[int, int]]) -> bool:
+    # A fault starting or ending within one line of the group's span; a
+    # whole-file ERROR enclosing it from afar implicates every group alike
+    # and so singles out none.
+    first = group[0][0][0] - 1
+    last = group[0][-1][1] + 1
+    return any(first <= start <= last or first <= end <= last for start, end in faults)
+
+
+def _retry_without_list_directives(
+    parser: Parser, tree: Tree, source_bytes: bytes
+) -> tuple[Tree, bytes]:
+    # A conditional inside a comma-separated list (snappy's member
+    # initialiser `#if !defined(NDEBUG) begin_(iov), #endif`, issue #2614)
+    # stands where the grammar admits no directive. tree-sitter opens a
+    # preproc_if inside the class body that never meets its `#endif`, and
+    # the class swallows the rest of the file: later classes nest in it,
+    # free functions become its methods, the constructor is lost and the
+    # enclosing namespace turns into an ERROR. Blanking the directive lines
+    # (offsets preserved) splices the branch back into the list. Keeping
+    # every branch loses nothing, so that is tried first, for every target
+    # at once. Branches without their own separator (`#ifdef A x_(1) #else
+    # x_(2) #endif {`) still misparse that way, so a conditional that a
+    # leftover fault touches then keeps only its FIRST branch, as a compiler
+    # with the condition set would. That choice is per conditional: a
+    # neighbour whose branches spliced in cleanly keeps its `#else` calls.
+    # Each step must strictly reduce the ERROR and MISSING nodes, and the
+    # result must have fewer than the original parse.
+    if not tree.root_node.has_error:
+        return tree, source_bytes
+    lines = source_bytes.split(_CHAR_NEWLINE)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line) + 1)
+    groups = [
+        group
+        for group in _list_context_conditionals(lines)
+        if any(
+            _directive_misparsed(tree.root_node, offsets[start], lines[start])
+            for start, _ in group[0]
+        )
+    ]
+    if not groups:
+        return tree, source_bytes
+    ranges = [span for group_directives, _ in groups for span in group_directives]
+    source = _blank(lines, ranges)
+    retry = parser.parse(source)
+    faults = _syntax_faults(retry.root_node)
+    for group in groups:
+        alternatives = group[1][1:]
+        if not faults:
+            break
+        if not alternatives or not _touches(group, faults):
+            continue
+        trial_ranges = ranges + alternatives
+        trial_source = _blank(lines, trial_ranges)
+        trial = parser.parse(trial_source)
+        trial_faults = _syntax_faults(trial.root_node)
+        if len(trial_faults) < len(faults):
+            ranges, source, retry, faults = (
+                trial_ranges,
+                trial_source,
+                trial,
+                trial_faults,
+            )
+    if len(faults) < len(_syntax_faults(tree.root_node)):
+        return retry, source
+    return tree, source_bytes
+
+
 def _track_csharp_directive(stripped: bytes, skip_stack: list[bool]) -> bool:
     # Mutates skip_stack for the directive on this line; True means the
     # line IS a directive (always blanked). `#elif`/`#else` flip the
@@ -232,6 +427,7 @@ def parse_with_preproc_recovery(
         return tree
     if language not in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
         return tree
+    tree, source_bytes = _retry_without_list_directives(parser, tree, source_bytes)
     tree, source_bytes = _retry_without_macro_markers(parser, tree, source_bytes)
     worst = _max_error_span(tree.root_node)
     total_lines = source_bytes.count(_CHAR_NEWLINE) + 1
