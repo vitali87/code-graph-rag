@@ -4500,6 +4500,15 @@ class CallResolver:
         )
         return method_calls >= 1 and len(parts) >= 2
 
+    def _qualify_chained_object_type(self, object_type: str, module_qn: str) -> str:
+        full_object_type = object_type
+        if cs.SEPARATOR_DOT not in object_type:
+            # Honor imports (Rust `use` targets are raw `::`-paths) so an
+            # imported chained type (`Get::new(k).into_frame()`) resolves.
+            if resolved_class := self._chain_class_qn(object_type, module_qn):
+                full_object_type = resolved_class
+        return full_object_type
+
     def _resolve_chained_call(
         self,
         call_name: str,
@@ -4533,12 +4542,7 @@ class CallResolver:
             )
         )
         if object_type:
-            full_object_type = object_type
-            if cs.SEPARATOR_DOT not in object_type:
-                # Honor imports (Rust `use` targets are raw `::`-paths) so an
-                # imported chained type (`Get::new(k).into_frame()`) resolves.
-                if resolved_class := self._chain_class_qn(object_type, module_qn):
-                    full_object_type = resolved_class
+            full_object_type = self._qualify_chained_object_type(object_type, module_qn)
 
             method_qn = f"{full_object_type}.{final_method}"
 

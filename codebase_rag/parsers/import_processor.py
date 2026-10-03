@@ -5144,31 +5144,11 @@ class ImportProcessor:
                 # PREFIX is a key too (issue #2033). Both keys are kept: the
                 # file-derived one still serves an unprefixed import of the
                 # same file elsewhere in the module.
-                # An alias must not clobber a key another import already
-                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
-                # would otherwise drop the first import entirely, since the
-                # file-derived key and the alias collide. The prefix is the
-                # name the source uses for THIS import, so it is only added
-                # where it is free.
                 prefix = dart_import_prefix(import_node)
                 if prefix:
-                    # An explicit `as` prefix is the name the SOURCE uses for
-                    # this import, so it owns that name outright. Recorded in
-                    # its own map rather than overwriting import_mapping,
-                    # whose values carry the IMPORTS edges: writing it there
-                    # dropped the colliding unprefixed import entirely.
-                    # Several imports may SHARE a prefix (`import 'a.dart' as
-                    # p; import 'b.dart' as p;`), so every library is kept and
-                    # the fold picks the one defining the name (CodeRabbit,
-                    # PR #2040).
-                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
-                        prefix, []
-                    ).append(full_name)
-                    if prefix not in self.import_mapping[module_qn]:
-                        self.import_mapping[module_qn][prefix] = full_name
-                        # Its IMPORTS edge carries a span and alias like every
-                        # other binding (Copilot, PR #2040).
-                        self._record_import_site(module_qn, prefix, import_node, uri)
+                    self._bind_dart_import_prefix(
+                        module_qn, prefix, full_name, import_node, uri
+                    )
                     prefixes.add(prefix)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
@@ -5179,6 +5159,38 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _bind_dart_import_prefix(
+        self,
+        module_qn: str,
+        prefix: str,
+        full_name: str,
+        import_node: Node,
+        uri: str,
+    ) -> None:
+        # An explicit `as` prefix is the name the SOURCE uses for
+        # this import, so it owns that name outright. Recorded in
+        # its own map rather than overwriting import_mapping,
+        # whose values carry the IMPORTS edges: writing it there
+        # dropped the colliding unprefixed import entirely.
+        # Several imports may SHARE a prefix (`import 'a.dart' as
+        # p; import 'b.dart' as p;`), so every library is kept and
+        # the fold picks the one defining the name (CodeRabbit,
+        # PR #2040).
+        self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+            prefix, []
+        ).append(full_name)
+        # An alias must not clobber a key another import already
+        # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+        # would otherwise drop the first import entirely, since the
+        # file-derived key and the alias collide. The prefix is the
+        # name the source uses for THIS import, so it is only added
+        # where it is free.
+        if prefix not in self.import_mapping[module_qn]:
+            self.import_mapping[module_qn][prefix] = full_name
+            # Its IMPORTS edge carries a span and alias like every
+            # other binding (Copilot, PR #2040).
+            self._record_import_site(module_qn, prefix, import_node, uri)
 
     def _record_lua_require(
         self,
