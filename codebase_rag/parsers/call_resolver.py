@@ -3089,6 +3089,55 @@ class CallResolver:
             caller in family and candidate in family for family in cs.LANGUAGE_FAMILIES
         )
 
+    def sql_routine_targets(self, call_name: str) -> list[str]:
+        """The SQL routines a PostgreSQL invocation of `call_name` can run.
+
+        `call_name` is already normalized (`normalize_sql_reference`). SQL has
+        no imports, so every routine indexed from a .sql file is in scope and
+        nothing written in another language is: the database cannot run it. A
+        schema-qualified name (`billing.fee`) reaches only the routine defined
+        under that schema; an unqualified one reaches each schema's routine of
+        that name, because the runtime search_path picks among them. The
+        string-call side applies the same rule to `callSp('billing.fee')`.
+        Overloads come back as their duplicate variants (`tax`, `tax@2`):
+        the call site does not spell the argument types that pick one.
+        """
+        qualified = cs.SEPARATOR_DOT in call_name
+        registry = self.function_registry
+        # dict as an ordered set: the simple-name index already holds a
+        # variant that the dotted-suffix scan cannot see (`fee@2` does not
+        # end in `.billing.fee`), so both routes feed one deduplicated list.
+        targets: dict[str, None] = {}
+        for qn in registry.find_ending_with(call_name):
+            for variant in registry.variants(qn):
+                if variant in targets or registry.get(variant) != NodeType.FUNCTION:
+                    continue
+                module_qn = self._sql_module_of(variant)
+                if module_qn is None:
+                    continue
+                # The suffix match also accepts a qualifier that is really the
+                # FILE name (`fee` defined in billing.sql), which is no schema.
+                own_name = qn_markers.natural_qn(variant)[len(module_qn) + 1 :]
+                if qualified and own_name != call_name:
+                    continue
+                targets[variant] = None
+        return list(targets)
+
+    def _sql_module_of(self, qualified_name: str) -> str | None:
+        # The longest prefix naming an indexed module is the file the routine
+        # was defined in; what follows it is the routine's own (possibly
+        # schema-qualified) name. Incremental runs seed this map from the
+        # graph, so an unchanged file's module is found too.
+        modules = self.type_inference.module_qn_to_file_path
+        probe = qualified_name
+        while cs.SEPARATOR_DOT in probe:
+            probe = self._parent_qn(probe)
+            if (path := modules.get(probe)) is not None:
+                if get_language_for_extension(path.suffix) == cs.SupportedLanguage.SQL:
+                    return probe
+                return None
+        return None
+
     def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:
         # The language of the module a qn lives in, found by walking off its
         # trailing segments until one names an ingested module (a caller's own
