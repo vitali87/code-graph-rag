@@ -414,8 +414,10 @@ MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
+MG_DELIBERATE_EXIT = (
+    "Command ended with {kind} inside the graph connection; closing it normally"
+)
 MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
-MG_COMMAND_EXIT = "Command exited. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
@@ -667,6 +669,13 @@ CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
 CALL_RUST_OWNER_UNRESOLVED = (
     "No method of the type a Rust call names matches: {call_name}"
+)
+CALL_EXTERNAL_MODULE_RECEIVER = (
+    "Call on external module receiver, no first-party target: {call_name} "
+    "(module {target})"
+)
+CALL_AMBIGUOUS_UNTYPED_RECEIVER = (
+    "Untyped receiver with several same-named candidates, not guessed: {call_name}"
 )
 CALL_CHAINED = (
     "Resolved chained call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
