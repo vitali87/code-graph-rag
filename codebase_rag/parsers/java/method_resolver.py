@@ -16,6 +16,7 @@ from .utils import (
     extract_class_info,
     extract_method_call_info,
     extract_method_info,
+    extract_package_name,
     get_class_context_from_qn,
 )
 
@@ -213,6 +214,27 @@ def _java_factory_return_type(method_call: str) -> str | None:
     if cs.JAVA_ORDER_PATTERN in method_name_lower:
         return cs.JAVA_HEURISTIC_ORDER
     return None
+
+
+def _java_body_members(type_node: ASTNode) -> list[ASTNode]:
+    # A type declaration's members; an enum keeps them after its constants,
+    # inside enum_body_declarations.
+    if (body := type_node.child_by_field_name(cs.FIELD_BODY)) is None:
+        return []
+    members: list[ASTNode] = []
+    for child in body.children:
+        if child.type == cs.TS_JAVA_ENUM_BODY_DECLARATIONS:
+            members.extend(child.children)
+        else:
+            members.append(child)
+    return members
+
+
+def _java_member_signature(method_name: str, parameters: list[str]) -> str:
+    # A method's registry member name, spelled as ingestion spells it.
+    if not parameters:
+        return f"{method_name}{cs.EMPTY_PARENS}"
+    return f"{method_name}({cs.CHAR_COMMA.join(parameters)})"
 
 
 class JavaMethodResolverMixin:
@@ -616,19 +638,147 @@ class JavaMethodResolverMixin:
         arg_count: int,
         arg_types: tuple[str | None, ...],
     ) -> tuple[str, str] | None:
-        # Static members are inherited, so a class's superclass chain counts;
-        # its interfaces do not (an interface's static method is not
-        # inherited), which is why this skips _resolve_instance_method.
+        # Every static method of that name the imports bring in is a
+        # candidate, and overload resolution picks among all of them
+        # (JLS 15.12.2), so an inherited foo(int) still beats the imported
+        # class's own foo(String) for foo(5). An instance method is not
+        # imported at all, so it never competes.
+        matches: list[tuple[str, str]] = []
         for class_path in class_paths:
-            if not (class_qn := self._static_import_class_qn(class_path, module_qn)):
+            if class_qn := self._static_import_class_qn(class_path, module_qn):
+                matches.extend(
+                    self._static_methods_in_hierarchy(class_qn, method_name, module_qn)
+                )
+        return _pick_overload(matches, arg_count, arg_types)
+
+    def _static_methods_in_hierarchy(
+        self, class_qn: str, method_name: str, module_qn: str
+    ) -> list[tuple[str, str]]:
+        # Static members are inherited, so the superclass chain counts; the
+        # interfaces do not (an interface's static method is not inherited).
+        # The class's own come first so a tie keeps them, and a superclass
+        # method whose signature a subclass redeclares is hidden by it.
+        found: list[tuple[str, str]] = []
+        declared: set[str] = set()
+        visited: set[str] = set()
+        next_qn: str | None = class_qn
+        while (
+            next_qn
+            and (owner := self._registered_owner_qn(next_qn, method_name, module_qn))
+            not in visited
+        ):
+            visited.add(owner)
+            static = self._static_method_signatures(owner, method_name)
+            prefix = f"{owner}{cs.SEPARATOR_DOT}"
+            for qn, method_type in self._find_registry_entries_under(owner):
+                signature = qn.removeprefix(prefix)
+                if signature == qn or not self._is_matching_method(
+                    signature, method_name
+                ):
+                    continue
+                if signature not in declared and (
+                    static is None or signature in static
+                ):
+                    found.append((method_type, qn))
+                declared.add(signature)
+            next_qn = self._get_superclass_name(owner)
+        return found
+
+    def _registered_owner_qn(
+        self, class_qn: str, method_name: str, module_qn: str
+    ) -> str:
+        # A superclass named outside the repo prefix (another build module)
+        # is found the way inherited-method lookup finds it: the repo class
+        # of that name whose module ranks first and declares the method.
+        if class_qn.startswith(self.project_name) or not (
+            found := self._search_method_in_alternate_modules(
+                class_qn, method_name, module_qn
+            )
+        ):
+            return class_qn
+        return found[1].split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
+
+    def _static_method_signatures(
+        self, class_qn: str, method_name: str
+    ) -> set[str] | None:
+        # The member signatures of the class's STATIC methods of that name;
+        # None when its declaration cannot be read, which leaves every
+        # same-named method a candidate as before.
+        if (type_node := self._java_type_node(class_qn)) is None:
+            return None
+        signatures: set[str] = set()
+        for member in _java_body_members(type_node):
+            if member.type != cs.TS_METHOD_DECLARATION:
                 continue
-            if result := self._search_method_in_class(
-                class_qn, method_name, arg_count, arg_types
-            ) or self._find_inherited_method(
-                class_qn, method_name, module_qn, arg_count, arg_types
+            info = extract_method_info(member)
+            if (
+                info[cs.KEY_NAME] == method_name
+                and cs.JAVA_MODIFIER_STATIC in info[cs.KEY_MODIFIERS]
             ):
-                return result
-        return None
+                signatures.add(
+                    _java_member_signature(method_name, info[cs.KEY_PARAMETERS])
+                )
+        return signatures
+
+    def _java_type_node(self, class_qn: str) -> ASTNode | None:
+        # A registered class's declaration: its file is the longest module
+        # prefix of the qn, the rest the chain of (nested) type names.
+        parts = class_qn.split(cs.SEPARATOR_DOT)
+        end = next(
+            (
+                end
+                for end in range(len(parts) - 1, 0, -1)
+                if cs.SEPARATOR_DOT.join(parts[:end]) in self.module_qn_to_file_path
+            ),
+            None,
+        )
+        if end is None or not (
+            root := self._module_root(cs.SEPARATOR_DOT.join(parts[:end]))
+        ):
+            return None
+        members = list(root.children)
+        type_node: ASTNode | None = None
+        for name in parts[end:]:
+            type_node = next(
+                (
+                    member
+                    for member in members
+                    if member.type in cs.JAVA_CLASS_NODE_TYPES
+                    and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
+                    == name
+                ),
+                None,
+            )
+            if type_node is None:
+                return None
+            members = _java_body_members(type_node)
+        return type_node
+
+    def _declared_java_fqn(self, module_qn: str) -> str | None:
+        # The fully qualified name a file's own top-level type has, from its
+        # package declaration. The layout-inferred one is None in a flat
+        # layout, where an indexed suffix (foo.Foo of com/foo/Foo.java) is
+        # no evidence of the package at all.
+        if (root := self._module_root(module_qn)) is None:
+            return self._module_qn_to_java_fqn(module_qn)
+        file_name = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        package = next(
+            (
+                extract_package_name(child)
+                for child in root.children
+                if child.type == cs.TS_PACKAGE_DECLARATION
+            ),
+            None,
+        )
+        return f"{package}{cs.SEPARATOR_DOT}{file_name}" if package else file_name
+
+    def _module_root(self, module_qn: str) -> ASTNode | None:
+        # A repo file's parsed tree; the cache re-parses one it evicted.
+        if (path := self.module_qn_to_file_path.get(module_qn)) is None or not (
+            entry := self.ast_cache.load(path)
+        ):
+            return None
+        return entry[0]
 
     def _static_import_class_qn(self, class_path: str, module_qn: str) -> str | None:
         # The registered class a static import names. A local import arrives
@@ -636,7 +786,7 @@ class JavaMethodResolverMixin:
         # (repo...acme.Util -> repo...acme.Util.Util, repo...acme.Outer.Inner
         # -> repo...acme.Outer.Outer.Inner). One the source-root probe did not
         # see as local (a multi-module build) still matches a repo file whose
-        # package path IS the import's. The suffix-tolerant lookup that
+        # declared package IS the import's. The suffix-tolerant lookup that
         # qualified calls use is not applied: it would bind
         # `import static java.lang.Math.max` to a first-party class that is
         # merely also named Math.
@@ -647,14 +797,14 @@ class JavaMethodResolverMixin:
                 owners = [file_qn]
             else:
                 # The map also files a module under each dotted suffix of its
-                # package path; only a module whose package path is the whole
-                # import (when its layout shows one) is the imported file.
+                # path; only a module whose declared package is the whole
+                # import is the imported file.
                 owners = [
                     owner
                     for owner in self._rank_module_candidates(
                         self._fqn_to_module_qn.get(file_qn, []), file_qn, module_qn
                     )
-                    if self._module_qn_to_java_fqn(owner) in (None, file_qn)
+                    if self._declared_java_fqn(owner) == file_qn
                 ]
             type_path = cs.SEPARATOR_DOT.join(parts[end - 1 :])
             for owner in owners:
