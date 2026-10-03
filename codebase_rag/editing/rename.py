@@ -529,8 +529,9 @@ class Renamer:
     ) -> None:
         """Record a graph-known occurrence that cannot be rewritten.
 
-        Both refusal paths in `_add_site` -- a row with no usable position,
-        and a file the patcher cannot read -- append the same pair. Sharing
+        Every refusal path of a site -- a row with no usable position, a
+        file the patcher cannot read, a position that file does not have, a
+        class run through a parameter -- appends the same pair. Sharing
         them keeps `_add_site` under the cognitive complexity limit (S3776)
         by removing a whole branch body rather than straight-line setup,
         which is the part that actually counts.
@@ -611,6 +612,64 @@ class Renamer:
             site_resolution=_SITELESS,
         )
 
+    @staticmethod
+    def _site_end(
+        row: ResultRow | graph_query.CallSiteRow, line: int, col: int, old_name: str
+    ) -> tuple[int, int]:
+        """Where a site ends: its recorded end, else `old_name` written at its start."""
+        end_line, end_col = row.get("end_line"), row.get("end_col")
+        return (
+            end_line if isinstance(end_line, int) else line,
+            end_col if isinstance(end_col, int) else col + len(old_name),
+        )
+
+    @classmethod
+    def _site_source(
+        cls,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        patcher: Patcher,
+        *,
+        owner: str,
+        path: str,
+        span: tuple[int, int, int, int],
+    ) -> bytes | None:
+        """The file holding a site's `span`, else None once recorded unlocatable."""
+        line, col = span[0], span[1]
+        try:
+            source = patcher.source(path)
+        except PatcherError:
+            # The graph knows this occurrence but its file cannot be read:
+            # renaming around it would leave it under the old name.
+            cls._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="missing file",
+                site_resolution=_SITELESS,
+            )
+            return None
+        if not cls._span_in_file(source, *span):
+            # A position the file does not have: an index older than the
+            # file, or a site recorded against another file (issue #2459).
+            # It cannot be rewritten, so it refuses instead of escaping as a
+            # PatcherError.
+            cls._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution=cs.RENAME_RESOLUTION_BAD_POSITION,
+                site_resolution=_SITELESS,
+            )
+            return None
+        return source
+
     def _add_site(
         self,
         sites: list[RenameSite],
@@ -626,7 +685,6 @@ class Renamer:
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
-        end_line, end_col = row.get("end_line"), row.get("end_col")
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -648,52 +706,14 @@ class Renamer:
                 site_resolution=resolution_text or _SITELESS,
             )
             return
-        try:
-            source = patcher.source(path)
-        except PatcherError:
-            # The graph knows this occurrence but its file cannot be read:
-            # renaming around it would leave it under the old name.
-            self._record_unlocatable(
-                sites,
-                unlocatable,
-                owner=owner,
-                path=path,
-                line=line,
-                col=col,
-                resolution="missing file",
-                site_resolution=_SITELESS,
-            )
-            return
-        if not self._span_in_file(
-            source,
-            line,
-            col,
-            end_line if isinstance(end_line, int) else line,
-            end_col if isinstance(end_col, int) else col + len(old_name),
-        ):
-            # A position the file does not have: an index older than the
-            # file, or a site recorded against another file (issue #2459).
-            # It cannot be rewritten, so it refuses instead of escaping as a
-            # PatcherError.
-            self._record_unlocatable(
-                sites,
-                unlocatable,
-                owner=owner,
-                path=path,
-                line=line,
-                col=col,
-                resolution=cs.RENAME_RESOLUTION_BAD_POSITION,
-                site_resolution=_SITELESS,
-            )
+        span = (line, col, *self._site_end(row, line, col, old_name))
+        source = self._site_source(
+            sites, unlocatable, patcher, owner=owner, path=path, span=span
+        )
+        if source is None:
             return
         token = _last_identifier(
-            source,
-            line,
-            col,
-            end_line if isinstance(end_line, int) else line,
-            end_col if isinstance(end_col, int) else col + len(old_name),
-            old_name,
-            get_language_for_extension(Path(path).suffix),
+            source, *span, old_name, get_language_for_extension(Path(path).suffix)
         )
         if token is None:
             # The site spells the symbol under an alias (`h(1, 2)` for

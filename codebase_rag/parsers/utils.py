@@ -578,20 +578,31 @@ def _scan_invoked_parameters(
     while stack:
         node = stack.pop()
         for child in node.children:
-            name = _bare_call_name(child, config)
-            if name is not None and name in candidates:
-                invoked.add(name)
-                if sites is not None:
-                    sites.setdefault(name, []).append(child)
+            _record_invocation(child, candidates, invoked, config, sites)
             if child.type in config.closure_types:
                 inner = candidates - bound_names(child)
                 _scan_invoked_parameters(
                     child, inner, invoked, config, bound_names, sites
                 )
-                continue
-            if child.type in config.opaque_types:
-                continue
-            stack.append(child)
+            elif child.type not in config.opaque_types:
+                stack.append(child)
+
+
+def _record_invocation(
+    node: Node,
+    candidates: set[str],
+    invoked: set[str],
+    config: _CallableScanConfig,
+    sites: dict[str, list[Node]] | None,
+) -> None:
+    # When `node` calls a candidate by bare name (`cb()`), mark that candidate
+    # invoked and, if `sites` collects them, keep `node` as one of its sites.
+    name = _bare_call_name(node, config)
+    if name is None or name not in candidates:
+        return
+    invoked.add(name)
+    if sites is not None:
+        sites.setdefault(name, []).append(node)
 
 
 def _bare_call_name(node: Node, config: _CallableScanConfig) -> str | None:

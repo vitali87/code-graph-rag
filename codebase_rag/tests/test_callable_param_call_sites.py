@@ -530,10 +530,10 @@ def test_renaming_a_class_a_factory_builds_through_its_parameter_still_refuses(
         "def main():\n    return build(Model)\n"
     )
     files = {"pkg/__init__.py": "", "pkg/util.py": util, "pkg/main.py": main}
-    store = _store(temp_repo, files)
+    query = _query(_store(temp_repo, files))
 
     with pytest.raises(RenameRefused) as refused:
-        rename(temp_repo, _query(store), PROJECT, f"{PROJECT}.pkg.main.Model", "Entity")
+        rename(temp_repo, query, PROJECT, f"{PROJECT}.pkg.main.Model", "Entity")
 
     assert refused.value.unlocatable == [
         cs.RENAME_UNLOCATABLE_SITE.format(
