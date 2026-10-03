@@ -772,6 +772,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             (name) @name) @call
         (object_creation_expression
             (qualified_name) @name) @call
+        (object_creation_expression
+            (relative_name) @name) @call
         """,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
