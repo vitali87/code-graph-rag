@@ -1895,9 +1895,24 @@ class CallResolver:
                 for imp in imported
             )
         ]
+        # A declaration that never runs (an interface or abstract member, issue
+        # #2524) must not make its sole implementation ambiguous: the two share
+        # the name by design. It is chosen only when nothing implements it.
+        visible = [
+            qn for qn in visible if not self._is_bodiless_declaration(qn)
+        ] or visible
         if len(visible) == 1:
             return self.function_registry[visible[0]], visible[0]
         return None
+
+    def _is_bodiless_declaration(self, qn: str) -> bool:
+        # Interface ownership is read from the owner's label, which an
+        # incremental run rehydrates for unchanged files; the abstract mark
+        # exists only for members this run parsed.
+        if self.function_registry.is_abstract(qn):
+            return True
+        owner_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        return self.function_registry.get(owner_qn) == NodeType.INTERFACE
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # True when the dotted call's object segment is imported from a target

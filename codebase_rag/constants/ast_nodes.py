@@ -317,3 +317,18 @@ TS_BINARY_EXPRESSION = "binary_expression"
 TS_ATTRIBUTE = "attribute"
 
 TS_FUNCTION_SIGNATURE = "function_signature"
+# Bodiless TS members (issue #2524): an interface's `find(id: string): T;` and a
+# class's `abstract area(): number;`. The same `method_signature` node also
+# spells a class overload signature (the bodied implementation below it is the
+# member) and an object-type member inside an annotation (`x: { run(): void }`,
+# which declares a value's shape, not a member of anything), so a signature
+# counts as a member only as a direct child of these bodies.
+TS_METHOD_SIGNATURE = "method_signature"
+TS_ABSTRACT_METHOD_SIGNATURE = "abstract_method_signature"
+TS_INTERFACE_BODY = "interface_body"
+TS_BODILESS_METHOD_TYPES = frozenset(
+    {TS_METHOD_SIGNATURE, TS_ABSTRACT_METHOD_SIGNATURE}
+)
+# The keyword an `abstract_method_signature` keeps in its stored modifiers, which
+# is how an incremental run tells the member apart without its tree.
+TS_ABSTRACT_MODIFIER = "abstract"

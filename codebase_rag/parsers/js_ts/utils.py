@@ -54,6 +54,67 @@ def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node |
     return None
 
 
+def repeats_member_signature(member_node: Node, seen_names: set[str]) -> bool:
+    # An overloaded interface or abstract member is one signature per overload,
+    # but a single member: only the first names it, so a later one registering
+    # would mint an `@line` duplicate no call can bind and dead code reports.
+    # `seen_names` is the caller's per-body record of names already declared.
+    if member_node.type not in cs.TS_BODILESS_METHOD_TYPES:
+        return False
+    name = safe_decode_text(member_node.child_by_field_name(cs.FIELD_NAME))
+    if name is None:
+        return False
+    if name in seen_names:
+        return True
+    seen_names.add(name)
+    return False
+
+
+_ANNOTATED_PARAMETER_TYPES = frozenset(
+    {cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER}
+)
+
+
+def annotated_parameter_types(function_node: Node) -> list[tuple[str, str]]:
+    """(name, written type name) for each plainly named, annotated parameter.
+
+    The type name is the one a member call can dispatch on: `Repo`, the head of
+    `Repo<T>`, or the one non-nullish member of `Repo | undefined`. A
+    destructured parameter, or any other type shape, is left out.
+    """
+    parameters = function_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if parameters is None:
+        return []
+    found: list[tuple[str, str]] = []
+    for parameter in parameters.named_children:
+        if parameter.type not in _ANNOTATED_PARAMETER_TYPES:
+            continue
+        pattern = parameter.child_by_field_name(cs.TS_FIELD_PATTERN)
+        annotation = parameter.child_by_field_name(cs.FIELD_TYPE)
+        if pattern is None or pattern.type != cs.TS_IDENTIFIER or annotation is None:
+            continue
+        name = safe_decode_text(pattern)
+        type_name = _dispatch_type_name(next(iter(annotation.named_children), None))
+        if name and type_name:
+            found.append((name, type_name))
+    return found
+
+
+def _dispatch_type_name(type_node: Node | None) -> str | None:
+    if type_node is not None and type_node.type == cs.TS_UNION_TYPE:
+        members = [
+            member
+            for member in type_node.named_children
+            if (safe_decode_text(member) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        type_node = members[0] if len(members) == 1 else None
+    if type_node is not None and type_node.type == cs.TS_GENERIC_TYPE:
+        type_node = type_node.child_by_field_name(cs.FIELD_NAME)
+    if type_node is None or type_node.type != cs.TS_TYPE_IDENTIFIER:
+        return None
+    return safe_decode_text(type_node)
+
+
 _CLASS_BODY_CACHE: dict[str, Node | None] = {}
 # The OWNER is a strong reference, never a bare id(): a freed tree's heap
 # address gets recycled, so an integer owner could masquerade as current and
