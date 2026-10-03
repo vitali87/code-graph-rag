@@ -4668,26 +4668,31 @@ class CallResolver:
                     return None
                 sequences.append(list(base_order))
             sequences.append(bases)
-            order = [cls]
-            while sequences := [seq for seq in sequences if seq]:
-                head = next(
-                    (
-                        seq[0]
-                        for seq in sequences
-                        if not any(seq[0] in other[1:] for other in sequences)
-                    ),
-                    None,
-                )
-                if head is None:
-                    return None
-                order.append(head)
-                sequences = [seq[1:] if seq[0] == head else seq for seq in sequences]
-            memo[cls] = order
+            if (order := self._c3_merge(cls, sequences)) is not None:
+                memo[cls] = order
             return order
 
         return linearise(class_qn, frozenset()) or [
             self._follow_reexports(qn) for qn in self._mro(class_qn)
         ]
+
+    @staticmethod
+    def _c3_merge(class_qn: str, sequences: list[list[str]]) -> list[str] | None:
+        order = [class_qn]
+        while sequences := [seq for seq in sequences if seq]:
+            head = next(
+                (
+                    seq[0]
+                    for seq in sequences
+                    if not any(seq[0] in other[1:] for other in sequences)
+                ),
+                None,
+            )
+            if head is None:
+                return None
+            order.append(head)
+            sequences = [seq[1:] if seq[0] == head else seq for seq in sequences]
+        return order
 
     def _resolve_inherited_method(
         self, class_qn: str, method_name: str, own_members: bool = True
@@ -4710,16 +4715,25 @@ class CallResolver:
         # order: `class C(A, B)` reaches a `run` that A inherits before B's
         # `run = None`.
         if (order := self._value_aware_mro(class_qn, method_name)) is not None:
-            for owner in order[1:]:
-                if alias := self._member_alias(owner, method_name):
-                    return alias
-                owner_method_qn = f"{owner}{cs.SEPARATOR_DOT}{method_name}"
-                if owner_method_qn in self.function_registry:
-                    return self.function_registry[owner_method_qn], owner_method_qn
-                if self.function_registry.binds_non_method(owner, method_name):
-                    return None
-            return None
+            return self._resolve_inherited_along_mro(order, method_name)
+        return self._resolve_inherited_breadth_first(class_qn, method_name)
 
+    def _resolve_inherited_along_mro(
+        self, order: list[str], method_name: str
+    ) -> tuple[str, str] | None:
+        for owner in order[1:]:
+            if alias := self._member_alias(owner, method_name):
+                return alias
+            owner_method_qn = f"{owner}{cs.SEPARATOR_DOT}{method_name}"
+            if owner_method_qn in self.function_registry:
+                return self.function_registry[owner_method_qn], owner_method_qn
+            if self.function_registry.binds_non_method(owner, method_name):
+                return None
+        return None
+
+    def _resolve_inherited_breadth_first(
+        self, class_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
         bfs_queue = deque(self.class_inheritance.get(class_qn, []))
         visited = set(bfs_queue)
 

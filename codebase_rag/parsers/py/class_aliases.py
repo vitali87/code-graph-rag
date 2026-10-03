@@ -89,6 +89,27 @@ def _result_operands(value: Node) -> list[Node]:
     return sorted(operands, key=lambda operand: operand.start_byte)
 
 
+def _assignment_targets(node: Node) -> tuple[list[str], list[str], Node | None]:
+    # `a = b = _impl` nests the second assignment as the first's value.
+    names: list[str] = []
+    unpacked: list[str] = []
+    value: Node | None = node
+    while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
+        left = value.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None and left.type == cs.TS_PY_IDENTIFIER:
+            if name := safe_decode_text(left):
+                names.append(name)
+        elif left is not None and left.type in _TARGET_PATTERNS:
+            unpacked.extend(
+                name
+                for child in left.named_children
+                if child.type == cs.TS_PY_IDENTIFIER
+                and (name := safe_decode_text(child))
+            )
+        value = value.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return names, unpacked, value
+
+
 class _ClassBodyScan:
     def __init__(self) -> None:
         # What each name in the class namespace may hold: the methods it
@@ -153,36 +174,24 @@ class _ClassBodyScan:
             self._bind(name, methods, conditional, is_alias=False, is_value=is_value)
 
     def _assignment(self, node: Node, conditional: bool) -> None:
-        # `a = b = _impl` nests the second assignment as the first's value.
-        names: list[str] = []
-        unpacked: list[str] = []
-        value: Node | None = node
-        while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
-            left = value.child_by_field_name(cs.TS_FIELD_LEFT)
-            if left is not None and left.type == cs.TS_PY_IDENTIFIER:
-                if name := safe_decode_text(left):
-                    names.append(name)
-            elif left is not None and left.type in _TARGET_PATTERNS:
-                unpacked.extend(
-                    name
-                    for child in left.named_children
-                    if child.type == cs.TS_PY_IDENTIFIER
-                    and (name := safe_decode_text(child))
-                )
-            value = value.child_by_field_name(cs.TS_FIELD_RIGHT)
+        names, unpacked, value = _assignment_targets(node)
         if value is None:
             # An annotation alone (`x: int`) binds nothing.
             return
+        methods = self._methods_named_by(value)
+        for name in names:
+            self._bind(name, methods, conditional, is_alias=bool(methods))
+        for name in unpacked:
+            self._bind(name, (), conditional, is_alias=False)
+
+    def _methods_named_by(self, value: Node) -> tuple[Node, ...]:
         methods: list[Node] = []
         for operand in _result_operands(value):
             for method in self._bound.get(safe_decode_text(operand) or "", ()):
                 self.references.append(AliasReference(operand, method))
                 if method not in methods:
                     methods.append(method)
-        for name in names:
-            self._bind(name, tuple(methods), conditional, is_alias=bool(methods))
-        for name in unpacked:
-            self._bind(name, (), conditional, is_alias=False)
+        return tuple(methods)
 
     def _bind(
         self,
