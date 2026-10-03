@@ -29,7 +29,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr optimize` | Run a language-focused code optimisation session |
 | `cgr mcp-server` | Serve cgr tools over stdio or HTTP |
 | `cgr index` | Write an offline protobuf index for a repository |
-| `cgr export` | Export the shared graph database to JSON |
+| `cgr export` | Export the shared graph, or chosen projects, to JSON |
 | `cgr graph-loader` | Summarise an exported graph JSON file |
 | `cgr stats` | Show graph node and relationship counts |
 | `cgr dead-code` | Report code that appears unreachable from known entry points |
@@ -64,21 +64,32 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--repo-path` | Path to repository (defaults to current directory) |
-| `--update-graph` | Parse and ingest the repository into the knowledge graph |
+| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts). Cannot be combined with `-a`/`--ask-agent`, `--no-sync` or `--projects`. |
 | `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
 | `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
 | `--batch-size` | Override Memgraph flush batch size |
 | `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
 | `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
-| `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
+| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there and the nodes they reach. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
 
 ### `cgr export`
 
-Export the knowledge graph to JSON.
+Export the knowledge graph to JSON. Without options the file holds every
+project in the shared graph.
 
 ```bash
-cgr export -o my_graph.json
+cgr export -o OUTPUT [OPTIONS]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `-o`, `--output` | File to write. Checked before the graph is read: a directory, or a path that cannot be written, is a one-line error. |
+| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, and the nodes they reach. Repeatable. |
+| `--workspace` | Export only the projects of workspace NAME. |
+
+A name that is not indexed is an error that lists the projects that are. A
+scoped file records its projects under `metadata.projects`. `--batch-size` and
+`--json` are deprecated and ignored with a warning; `--no-json` is an error.
 
 ### `cgr optimize`
 
@@ -96,6 +107,23 @@ cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 | `--reference-document` | Path to reference documentation for guided optimisation |
 
 Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
+
+### `cgr stats`
+
+Count the nodes and relationships in the shared graph, by label and type.
+Without options the totals cover every indexed project, followed by one line
+per project when there is more than one.
+
+```bash
+cgr stats [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--project-name`, `-n` | Count only this project: its containment tree, what it defines, and the relationships that start there. Repeatable. |
+| `--workspace` | Count only the projects of workspace NAME. |
+
+A name that is not indexed is an error that lists the projects that are.
 
 ### `cgr dead-code`
 
@@ -163,7 +191,7 @@ Check that the services, credentials and tools a session needs are in place.
 cgr doctor
 ```
 
-It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher model credentials, judged by the same rule `cgr start` applies (a local Ollama model needs no key); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
+It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher models: for a key-based provider, whether its credentials pass the rule `cgr start` applies (reported as "credentials present", with no network call); for a local Ollama model, whether Ollama answers at `OLLAMA_BASE_URL` and has the model pulled (reported as "ready", "not reachable" or "not pulled", with the `ollama pull` command to run); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
 
 ### `cgr language`
 
@@ -174,7 +202,10 @@ cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
 cgr language remove-language <language-name>
+cgr language cleanup-orphaned-modules
 ```
+
+`add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
 
 ## Makefile Commands
 

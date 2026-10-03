@@ -63,6 +63,7 @@ class CallSite(NamedTuple):
     col: int | None
     arg_count: int | None
     kwarg_names: tuple[str, ...]
+    star_args: bool
 
 
 class Snapshot(NamedTuple):
@@ -106,12 +107,26 @@ class ArityAtSite(TypedDict):
     verdict: str
 
 
+class RemoteCaller(TypedDict):
+    """A call site in another service reaching a changed handler's endpoint."""
+
+    qualified_name: str
+    label: str
+    path: str
+    url: str
+    endpoint: str
+
+
 class SignatureChange(TypedDict):
     qualified_name: str
     path: str
     before: list[str] | None
     after: list[str] | None
     sites: list[ArityAtSite]
+    # Call sites across the network that reach this definition's endpoint
+    # (issue #1603): a signature change on a handler is a contract change
+    # for them, and no CALLS edge would ever list them.
+    remote_callers: list[RemoteCaller]
 
 
 class DuplicateOriginal(TypedDict):
@@ -240,6 +255,7 @@ def _site(row: ResultRow) -> CallSite:
         col=_opt_int(row.get(cs.KEY_COL)),
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
+        star_args=row.get(cs.KEY_STAR_ARGS) is True,
     )
 
 
@@ -648,12 +664,18 @@ def _arity_verdict(
         is_method,
     )
     declared_count = verdict.declared_count - (1 if is_method else 0)
-    if verdict.confirmed:
-        return declared_count, cs.DELTA_ARITY_OK
     if positional + (1 if is_method else 0) > verdict.declared_count:
         if _is_variadic(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
+    # `*rest` adds positionals the graph cannot count, so the written ones
+    # are a floor: over the declared list they are too many whatever `rest`
+    # holds (above), but at or under it nothing says whether the call fits
+    # (issue #2635). `**opts` adds no positional and needs no such care.
+    if site.star_args:
+        return declared_count, cs.DELTA_ARITY_UNKNOWN
+    if verdict.confirmed:
+        return declared_count, cs.DELTA_ARITY_OK
     if passed > verdict.declared_count:
         return declared_count, cs.DELTA_ARITY_OK
     return declared_count, cs.DELTA_ARITY_POSSIBLY_MISSING
@@ -700,14 +722,71 @@ def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite
     return sorted(out, key=_site_order)
 
 
+def _remote_callers(
+    fetch_all: QueryFn, project_name: str, handlers: list[str]
+) -> dict[str, list[RemoteCaller]]:
+    """Per changed definition, the call sites in OTHER projects reaching an
+    endpoint it exposes; one read per shape, only when something changed."""
+    found: dict[str, list[RemoteCaller]] = {}
+    if not handlers:
+        return found
+    # Each query is DISTINCT within itself; a caller the two shapes both
+    # return is one caller (bot review on PR #1978).
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+    for query in (
+        cq.CYPHER_DELTA_REMOTE_CALLERS_OF,
+        cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
+    ):
+        for row in fetch_all(
+            query,
+            {cs.KEY_QNS: handlers, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
+        ):
+            handler = _text(row.get(cs.KEY_HANDLER))
+            caller = RemoteCaller(
+                qualified_name=_text(row.get(cs.KEY_QUALIFIED_NAME)),
+                label=_text(row.get(cs.KEY_LABEL)),
+                path=_text(row.get(cs.KEY_PATH)),
+                url=_text(row.get(cs.KEY_URL)),
+                endpoint=_text(row.get(cs.KEY_ENDPOINT)),
+            )
+            key = (
+                handler,
+                caller["qualified_name"],
+                caller["label"],
+                caller["path"],
+                caller["url"],
+                caller["endpoint"],
+            )
+            if handler and key not in seen:
+                seen.add(key)
+                found.setdefault(handler, []).append(caller)
+    for rows in found.values():
+        rows.sort(key=lambda r: (r["qualified_name"], r["url"], r["path"]))
+    return found
+
+
 def _signature_changes(
-    before: Snapshot, after: Snapshot, symbols: SymbolDelta, repo_root: Path | None
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    repo_root: Path | None,
+    fetch_all: QueryFn | None = None,
+    project_name: str = "",
 ) -> list[SignatureChange]:
     out: list[SignatureChange] = []
-    for qn in symbols["changed"]:
+    changed = [
+        qn
+        for qn in symbols["changed"]
+        if before.definitions[qn].positional_params
+        != after.definitions[qn].positional_params
+    ]
+    remote = (
+        _remote_callers(fetch_all, project_name, changed)
+        if fetch_all is not None
+        else {}
+    )
+    for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
-        if old.positional_params == new.positional_params:
-            continue
         sites = [
             _site_finding(site, new, repo_root)
             for site in after.sites
@@ -720,6 +799,7 @@ def _signature_changes(
                 before=list(old.positional_params) if old.positional_params else None,
                 after=list(new.positional_params) if new.positional_params else None,
                 sites=sorted(sites, key=_site_order),
+                remote_callers=remote.get(qn, []),
             )
         )
     return out
@@ -1050,9 +1130,7 @@ def _tests_reaching(
     for (_label, raw_qn), props in reach.nodes.items():
         qn = str(raw_qn)
         path = str(props.get(cs.KEY_PATH) or "")
-        if _is_test_symbol(
-            props, qn, path, cs.TEST_PATH_PATTERNS, rust_modules, rust_spans
-        ):
+        if _is_test_symbol(props, qn, path, rust_modules, rust_spans):
             out.append(
                 TestReach(
                     qualified_name=qn,
@@ -1115,7 +1193,9 @@ def structural_delta(
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
         dangling_callers=_dangling(before, after, symbols),
-        signature_changes=_signature_changes(before, after, symbols, repo_root),
+        signature_changes=_signature_changes(
+            before, after, symbols, repo_root, fetch_all, project_name
+        ),
         arity_findings=_arity_findings(after, repo_root),
         new_duplicates=_new_duplicates(fetch_all, project_name, fresh, longer_prefixes),
         new_import_cycles=_new_import_cycles(before, after),
@@ -1239,12 +1319,18 @@ def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
         delta["dangling_callers"]
+        # Only a definite verdict: the graph records no defaults, so a
+        # `possibly_missing` site (`send(msg)` becoming `send(msg,
+        # channel=None)`) is a hint the JSON keeps, not a finding (issue
+        # #2656, as structural-delta.md documents).
         or any(
-            site["verdict"] != cs.DELTA_ARITY_OK
-            and site["verdict"] != cs.DELTA_ARITY_UNKNOWN
+            site["verdict"] == cs.DELTA_ARITY_TOO_MANY
             for change in delta["signature_changes"]
             for site in change["sites"]
         )
+        # A changed handler reached from another service is a contract
+        # change no local CALLS edge shows (issue #1603).
+        or any(change["remote_callers"] for change in delta["signature_changes"])
         or delta["arity_findings"]
         or delta["new_duplicates"]
         or delta["new_import_cycles"]
