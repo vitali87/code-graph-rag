@@ -61,8 +61,19 @@ _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
 _TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
 # A name as written, qualified or not: `Cache`, `other.Cache`, `a::Parse`.
-# A Node.js module, which no script shares its top-level names with.
-_COMMONJS = re.compile(rb"\brequire\s*\(|\bmodule\.exports\b|\bexports\.\w")
+# The names a Node.js module uses (`require`, `module.exports`, `exports`):
+# only where the syntax tree shows them used do they make one.
+_COMMONJS_NAMES = re.compile(
+    rb"\b(?:%s)\b"
+    % b"|".join(
+        name.encode()
+        for name in (
+            cs.JS_REQUIRE_KEYWORD,
+            cs.JS_MODULE_KEYWORD,
+            cs.JS_EXPORTS_KEYWORD,
+        )
+    )
+)
 # Where a statement may import every name of a module: `import *`, `::*`.
 _WILDCARD_IMPORT = re.compile(rb"\bimport\s*\(?\s*\*|::\s*\*")
 _SPELLING = re.compile(rb"\w+(?:\s*(?:::|\.|\\)\s*\w+)*")
@@ -239,8 +250,9 @@ def _modules(repo_root: Path, target: Target) -> _Modules:
 
 def _script_global(repo_root: Path, target: Target) -> bool:
     """Whether the target is a top-level function of a classic script: a
-    JS/TS file with no import or export, whose top-level names every other
-    script on the page shares (`helper()` with no import)."""
+    JS/TS file with no import or export statement and no CommonJS code,
+    read from its syntax tree, whose top-level names every other script on
+    the page shares (`helper()` with no import)."""
     if (
         target.kind is not cs.RenameTargetKind.FUNCTION
         or target.language not in cs.JS_TS_LANGUAGES
@@ -252,10 +264,12 @@ def _script_global(repo_root: Path, target: Target) -> bool:
         source = (repo_root / target.path).read_bytes()
     except OSError:
         return False
-    if parser is None or _COMMONJS.search(source):
+    if parser is None:
         return False
     root = parser.parse(source).root_node
-    if any(child.type in cs.RENAME_JS_MODULE_STATEMENTS for child in root.children):
+    if any(
+        child.type in cs.RENAME_JS_MODULE_STATEMENTS for child in root.children
+    ) or _is_commonjs(root, source):
         return False
     pattern = re.compile(_WORD % re.escape(target.name.encode(cs.ENCODING_UTF8)))
     return any(
@@ -264,6 +278,44 @@ def _script_global(repo_root: Path, target: Target) -> bool:
         and _scope_around(token) is None
         for match in pattern.finditer(source)
     )
+
+
+def _is_commonjs(root: Node, source: bytes) -> bool:
+    """Whether a JS/TS file is a Node module by its code: a call of
+    `require`, or `module.exports` or `exports` read or assigned. A comment,
+    a string or a template literal that says so is prose, and has no
+    identifier to find."""
+    return any(
+        (token := _identifier_at(root, match.start(), match.end())) is not None
+        and _commonjs_use(token)
+        for match in _COMMONJS_NAMES.finditer(source)
+    )
+
+
+def _commonjs_use(token: Node) -> bool:
+    parent = token.parent
+    if parent is None:
+        return False
+    field = _field(parent, token)
+    match _text(token):
+        case cs.JS_REQUIRE_KEYWORD:
+            return parent.type == cs.TS_CALL_EXPRESSION and field == cs.FIELD_FUNCTION
+        case cs.JS_MODULE_KEYWORD:
+            exported = parent.child_by_field_name(cs.FIELD_PROPERTY)
+            return (
+                parent.type == cs.TS_MEMBER_EXPRESSION
+                and field == cs.FIELD_OBJECT
+                and exported is not None
+                and _text(exported) == cs.JS_EXPORTS_KEYWORD
+            )
+        case _:
+            # `exports.f = ...`, `exports = ...`; not the `.exports` of
+            # `module.exports`, which is a property, not this identifier.
+            return (
+                parent.type == cs.TS_MEMBER_EXPRESSION and field == cs.FIELD_OBJECT
+            ) or (
+                parent.type == cs.TS_JS_ASSIGNMENT_EXPRESSION and field == cs.FIELD_LEFT
+            )
 
 
 class _Unbound:

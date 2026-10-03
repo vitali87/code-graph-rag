@@ -82,8 +82,10 @@ family are read (the indexer's own walk, under `.cgrignore` and
   `from pkg.util import *`): a `sorted(xs)` that imports no project `sorted`
   is the builtin. After a star import from another module it may still be
   the function, and is held to the plan as uncertain, as is a bare use of a
-  top-level function of a classic JavaScript script (a file with no import
-  or export), which every script on the page shares. In Go, Java, C# and the
+  top-level function of a classic JavaScript script (a file whose code has
+  no import or export and no `require()`, `module.exports` or `exports`; a
+  comment or a string saying so does not count), which every script on the
+  page shares. In Go, Java, C# and the
   like a same-package call needs no import, and every bare use counts;
 - for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),
   through its own object in the body of its class or of one whose header

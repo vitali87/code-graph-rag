@@ -1995,3 +1995,70 @@ def test_a_classic_scripts_global_function_is_held_in_every_script(
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
     ] == [("call", "web/page.js", 2, 9, "receiver_unknown")]
     assert _tree(root) == before
+
+
+# What a classic script may say about modules without being one: prose and
+# data, never code.
+CLASSIC_MENTIONS = {
+    "comment-require": "// usage: require('x')\n",
+    "string-module-exports": 'const note = "module.exports";\n',
+    "template-exports": "const note = `exports.f and require('y')`;\n",
+}
+
+
+@pytest.mark.parametrize("mention", sorted(CLASSIC_MENTIONS))
+def test_a_module_marker_in_prose_leaves_the_script_classic(
+    tmp_path: Path, mention: str
+) -> None:
+    # Review of PR #2797: `require(` in a comment or `module.exports` in a
+    # string does not make the defining file a CommonJS module, so its
+    # `helper` is still a global another script calls bare.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {**CLASSIC, "web/lib.js": CLASSIC_MENTIONS[mention] + CLASSIC["web/lib.js"]}
+    store, _updater = _indexed(root, files)
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "web/page.js"),
+            PROJECT,
+            f"{PROJECT}.web.lib.helper",
+            "assist",
+            allow_heuristic=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "web/page.js", 2, 9, "receiver_unknown")]
+    assert _tree(root) == before
+
+
+COMMONJS_CODE = {
+    "require-call": "const fs = require('fs');\n",
+    "module-exports": "module.exports.version = 1;\n",
+    "exports-member": "exports.version = 1;\n",
+}
+
+
+@pytest.mark.parametrize("code", sorted(COMMONJS_CODE))
+def test_commonjs_code_makes_the_file_a_module(tmp_path: Path, code: str) -> None:
+    # A real `require()`, `module.exports` or `exports.x` makes it a Node
+    # module, whose `helper` no other file reaches by its bare name.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {**CLASSIC, "web/lib.js": COMMONJS_CODE[code] + CLASSIC["web/lib.js"]}
+    store, _updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _missing(store, "web/page.js"),
+        PROJECT,
+        f"{PROJECT}.web.lib.helper",
+        "assist",
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "web/page.js").read_text() == CLASSIC["web/page.js"]
