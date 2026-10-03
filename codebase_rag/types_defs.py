@@ -1372,8 +1372,10 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
+    # A Python enum is a Class (an `enum.Enum` subclass), so its members hang
+    # off that Class (issue #2583); every other language's owner is an Enum.
     RelationshipSchema(
-        (NodeLabel.ENUM,),
+        (NodeLabel.ENUM, NodeLabel.CLASS),
         RelationshipType.HAS_VARIANT,
         (NodeLabel.ENUM_VARIANT,),
     ),

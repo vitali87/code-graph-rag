@@ -35,7 +35,7 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
-from ..enum_variants import emit_declared_variants
+from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
@@ -1292,17 +1292,6 @@ class ClassIngestMixin:
             language,
             class_props,
         )
-        if node_type == NodeType.ENUM:
-            # The variants ride with their enum the way fields ride with
-            # their owner (issue #1807).
-            emit_declared_variants(
-                self.ingestor,
-                cs.NodeLabel.ENUM,
-                class_qn,
-                member_node,
-                language,
-                class_props,
-            )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
@@ -1332,6 +1321,22 @@ class ClassIngestMixin:
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
         )
+        # The variants ride with their enum the way fields ride with their
+        # owner (issue #1807). After the relationships, because a Python enum
+        # is a Class that only its resolved bases identify (issue #2583).
+        if node_type == NodeType.ENUM or (
+            language == cs.SupportedLanguage.PYTHON
+            and is_python_enum(self.class_inheritance.get(class_qn, ()))
+        ):
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel(node_type.value),
+                class_qn,
+                member_node,
+                language,
+                class_props,
+                self.import_processor.import_mapping.get(module_qn),
+            )
         if language == cs.SupportedLanguage.DART and (
             type_args := pe.extract_dart_extends_type_args(
                 member_node, module_qn, partial(self._resolve_to_qn, language=language)
