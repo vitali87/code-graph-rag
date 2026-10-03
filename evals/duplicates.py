@@ -19,6 +19,8 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.duplicates import (
     collect_duplicates_with_coverage,
     default_duplicates_config,
+    expanded_links,
+    reported_groups,
 )
 from codebase_rag.types_defs import (
     DuplicateGroup,
@@ -121,9 +123,10 @@ def duplicate_pairs(groups: list[DuplicateGroup]) -> set[tuple[str, str]]:
             continue
         for copies in group["exact_subgroups"]:
             pairs.update(combinations(sorted(set(copies)), 2))
+        links, _ = expanded_links(group)
         pairs.update(
             (min(link["first"], link["second"]), max(link["first"], link["second"]))
-            for link in group["links"]
+            for link in links
         )
     return pairs
 
@@ -196,10 +199,13 @@ def main(
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    groups, links_truncated = reported_groups(
+        report.groups, cs.DUPLICATES_MAX_GROUP_LINKS
+    )
     payload = {
-        cs.KEY_DUPLICATE_GROUPS: report.groups,
+        cs.KEY_DUPLICATE_GROUPS: groups,
         cs.KEY_SKIPPED_SYMBOLS: report.skipped_symbols,
-        cs.KEY_TRUNCATED: report.truncated,
+        cs.KEY_TRUNCATED: report.truncated or links_truncated,
     }
     report_path = out_dir / ec.DUPLICATES_REPORT_FILENAME
     report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -618,7 +618,10 @@ class DuplicateGroup(TypedDict):
     exact_subgroups: list[list[str]]
     # The qualifying pairs between different fingerprints, strongest first:
     # with the exact copies, the only member pairs that are duplicates. Empty
-    # for an `exact` group, where every pair is one.
+    # for an `exact` group, where every pair is one. Collected groups hold one
+    # link per fingerprint pair, named by its best member pair, since two
+    # clone classes would otherwise cost their cross product; the JSON report
+    # expands each over both sides' exact copies (duplicates.expanded_links).
     links: list[DuplicateLink]
 
 

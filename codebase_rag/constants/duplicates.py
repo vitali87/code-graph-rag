@@ -110,6 +110,10 @@ DUPLICATES_MAX_CANDIDATE_PAIRS = 1_000_000
 # largest clusters and flagging truncation. A dropped cluster's exact copies
 # are still reported as exact groups.
 DUPLICATES_MAX_SIMILAR_GROUPS = 1000
+# Member pairs a JSON report lists per similar group. A link between two
+# clone classes stands for their whole cross product (1,000 copies a side is
+# a million pairs), so the report keeps the strongest and flags truncation.
+DUPLICATES_MAX_GROUP_LINKS = 10_000
 
 KIND_EXACT = "exact"
 KIND_SIMILAR = "similar"

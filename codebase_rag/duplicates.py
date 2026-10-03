@@ -12,7 +12,9 @@
 # linked to none is reported on its own as an `exact` group.
 from __future__ import annotations
 
+import heapq
 import re
+from collections.abc import Iterator
 from fnmatch import fnmatch
 from math import ceil
 from typing import NamedTuple
@@ -422,26 +424,49 @@ def _similar_clusters(
     return clusters[:cap], pairs_truncated or capped
 
 
-def _member_links(
-    cluster: _Cluster, order: list[_Entry]
-) -> list[tuple[float, DuplicateMember, DuplicateMember]]:
-    """Every qualifying member pair across the cluster's linked entries.
+def _cross_pairs(
+    left: list[DuplicateMember], right: list[DuplicateMember]
+) -> Iterator[tuple[DuplicateMember, DuplicateMember]]:
+    """Path-ordered duplicate pairs across two linked fingerprints.
 
-    A linked entry pair shares one score across all its cross members, but a
-    cross pair that nests one definition in the other is no duplicate (issue
-    #1398), so it is left out even when a sibling pair keeps the link.
-    Strongest first, so the group can lead with a pair that qualifies.
+    Every cross pair shares the fingerprints' score, but one that nests a
+    definition in the other is no duplicate (issue #1398), even when a
+    sibling pair keeps the fingerprint link. A generator, because two large
+    clone classes have a cross product far bigger than either class.
     """
-    pairs: list[tuple[float, DuplicateMember, DuplicateMember]] = []
-    for left, right, score in cluster.links:
-        for a in order[left].members:
-            for b in order[right].members:
-                if _member_nested_in(a, b) or _member_nested_in(b, a):
-                    continue
+    for a in left:
+        for b in right:
+            if not (_member_nested_in(a, b) or _member_nested_in(b, a)):
                 first, second = sorted((a, b), key=_member_key)
-                pairs.append((score, first, second))
-    pairs.sort(key=lambda pair: (-pair[0], _member_key(pair[1]), _member_key(pair[2])))
-    return pairs
+                yield first, second
+
+
+def _pair_rank(
+    pair: tuple[float, DuplicateMember, DuplicateMember],
+) -> tuple[float, tuple[str, int], tuple[str, int]]:
+    return -pair[0], _member_key(pair[1]), _member_key(pair[2])
+
+
+def _best_cross_pair(
+    left: list[DuplicateMember], right: list[DuplicateMember]
+) -> tuple[DuplicateMember, DuplicateMember]:
+    """The path-first duplicate pair across two linked fingerprints.
+
+    The path-first member of either side leads it whenever that member has
+    a partner it does not nest with, which is the norm, so the cross product
+    is walked only when nesting rules all of that member's partners out.
+    """
+    ordered_left, ordered_right = _sorted_members(left), _sorted_members(right)
+    if _member_key(ordered_right[0]) < _member_key(ordered_left[0]):
+        ordered_left, ordered_right = ordered_right, ordered_left
+    lead = ordered_left[0]
+    for partner in ordered_right:
+        if not (_member_nested_in(lead, partner) or _member_nested_in(partner, lead)):
+            return lead, partner
+    return min(
+        _cross_pairs(left, right),
+        key=lambda pair: (_member_key(pair[0]), _member_key(pair[1])),
+    )
 
 
 def _cluster_group(cluster: _Cluster, order: list[_Entry]) -> DuplicateGroup:
@@ -453,11 +478,20 @@ def _cluster_group(cluster: _Cluster, order: list[_Entry]) -> DuplicateGroup:
     scores = [score for _, _, score in cluster.links]
     # Two exact copies inside the cluster are its strongest possible link.
     strongest = 1.0 if copies else max(scores)
-    pairs = _member_links(cluster, order)
+    # One link per fingerprint pair, named by its best member pair: two
+    # clone classes of N copies are one link here, not N * N member pairs
+    # (expanded_links generates those for the reports that print them).
+    links = sorted(
+        (
+            (score, *_best_cross_pair(order[left].members, order[right].members))
+            for left, right, score in cluster.links
+        ),
+        key=_pair_rank,
+    )
     # The table link and --open preview a group's first two members; in a
     # cluster those two may not be similar to each other at all, so the
     # strongest qualifying pair leads and the rest follow in path order.
-    _, lead, partner = pairs[0]
+    _, lead, partner = links[0]
     rest = [
         member
         for member in _sorted_members([m for entry in entries for m in entry.members])
@@ -478,6 +512,71 @@ def _cluster_group(cluster: _Cluster, order: list[_Entry]) -> DuplicateGroup:
                 second=second["qualified_name"],
                 similarity=round(score, 3),
             )
-            for score, first, second in pairs
+            for score, first, second in links
         ],
     )
+
+
+def expanded_links(
+    group: DuplicateGroup, limit: int | None = None
+) -> tuple[list[DuplicateLink], bool]:
+    """A group's member-level duplicate pairs, strongest first.
+
+    Each fingerprint link stands for every pair across the exact copies of
+    its two members. Returns at most `limit` pairs (all when None) and
+    whether more existed; only the strongest are ever held, so a pair of
+    large clone classes costs memory in the limit, not in its cross product.
+    An `exact` group has no links: every pair of its members is a duplicate.
+    """
+    if group["kind"] != cs.KIND_SIMILAR:
+        return [], False
+    by_name = {member["qualified_name"]: member for member in group["members"]}
+    copies = {name: names for names in group["exact_subgroups"] for name in names}
+
+    def side(name: str) -> list[DuplicateMember]:
+        return [by_name[copy] for copy in copies.get(name, [name])]
+
+    pairs = (
+        (link["similarity"], first, second)
+        for link in group["links"]
+        for first, second in _cross_pairs(side(link["first"]), side(link["second"]))
+    )
+    if limit is None:
+        kept, truncated = sorted(pairs, key=_pair_rank), False
+    else:
+        kept = heapq.nsmallest(limit + 1, pairs, key=_pair_rank)
+        truncated = len(kept) > limit
+        kept = kept[:limit]
+    return [
+        DuplicateLink(
+            first=first["qualified_name"],
+            second=second["qualified_name"],
+            similarity=score,
+        )
+        for score, first, second in kept
+    ], truncated
+
+
+def reported_groups(
+    groups: list[DuplicateGroup], limit: int
+) -> tuple[list[DuplicateGroup], bool]:
+    """Groups as a JSON report writes them, and whether a link list was cut.
+
+    The collector keeps fingerprint links; a report that prints links lists
+    member pairs, at most `limit` per group. Other groups pass through as
+    they are.
+    """
+    reported: list[DuplicateGroup] = []
+    truncated = False
+    for group in groups:
+        if group["kind"] != cs.KIND_SIMILAR:
+            reported.append(group)
+            continue
+        links, cut = expanded_links(group, limit)
+        expanded = group.copy()
+        expanded["links"] = links
+        reported.append(expanded)
+        truncated = truncated or cut
+    if truncated:
+        logger.warning(ls.DUPLICATES_LINKS_TRUNCATED.format(cap=limit))
+    return reported, truncated

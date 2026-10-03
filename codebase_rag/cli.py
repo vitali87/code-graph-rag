@@ -2358,14 +2358,18 @@ def _emit_duplicates_json(
     skipped_symbols: int,
     truncated: bool,
 ) -> None:
+    from .duplicates import reported_groups
+
+    # Only this report prints links, so only it expands them to member pairs.
+    reported, links_truncated = reported_groups(groups, cs.DUPLICATES_MAX_GROUP_LINKS)
     # Envelope, not a bare list: scan-completeness metadata must reach
     # JSON consumers too, or a CI artifact reads as a complete scan when
     # symbols went unanalyzed or group enumeration hit its cap.
     payload = json.dumps(
         {
-            cs.KEY_DUPLICATE_GROUPS: groups,
+            cs.KEY_DUPLICATE_GROUPS: reported,
             cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
-            cs.KEY_TRUNCATED: truncated,
+            cs.KEY_TRUNCATED: truncated or links_truncated,
         },
         indent=2,
     )

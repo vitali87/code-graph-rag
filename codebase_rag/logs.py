@@ -617,6 +617,10 @@ DUPLICATES_GROUPS_TRUNCATED = (
     "Similar-group enumeration stopped at the cap of {cap} groups; the report "
     "is truncated. Raise --threshold or --min-size to narrow the scan."
 )
+DUPLICATES_LINKS_TRUNCATED = (
+    "A duplicate group has more than {cap} linked member pairs; the report "
+    "lists the strongest {cap} of each such group."
+)
 DUPLICATES_PAIRS_TRUNCATED = (
     "Candidate-pair generation stopped at the budget of {cap} pairs; the "
     "report is truncated. Raise --threshold or --min-size to narrow the scan."

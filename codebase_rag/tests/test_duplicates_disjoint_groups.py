@@ -457,3 +457,130 @@ class TestQualifyingPairs:
             ("proj.m.factory", "proj.o.copy"),
             ("proj.m.factory.inner", "proj.o.copy"),
         }
+
+
+# Review of the links field: two clone classes of N copies each that are
+# similar to each other are one fingerprint link but N * N member pairs. The
+# collector must keep the link, not the cross product, or a large class pair
+# exhausts memory before any report is printed.
+def _clone_classes(copies: int) -> list[ResultRow]:
+    return [
+        _row(f"proj.{side}{i}.f", f"fp_{side}", [*_SHARED, f"x_{side}"])
+        for side in ("a", "b")
+        for i in range(copies)
+    ]
+
+
+def _json_groups(
+    rows: list[ResultRow], *args: str
+) -> tuple[list[DuplicateGroup], bool]:
+    with patch("codebase_rag.cli.connect_memgraph", return_value=_cli_ingestor(rows)):
+        result = CliRunner().invoke(cli.app, ["duplicates", "--format", "json", *args])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    return payload[cs.KEY_DUPLICATE_GROUPS], payload[cs.KEY_TRUNCATED]
+
+
+class TestLinkStorage:
+    def test_collected_group_grows_linearly_with_copies(self) -> None:
+        def stored(copies: int) -> int:
+            rows = _clone_classes(copies)
+            groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+            return len(json.dumps(groups))
+
+        assert stored(40) < 2.5 * stored(20)
+
+    def test_one_link_per_linked_fingerprint_pair(self) -> None:
+        groups = collect_duplicates(FakeIngestor(_clone_classes(30)), "proj", _CONFIG)
+
+        assert len(groups[0]["links"]) == 1
+
+    def test_json_report_caps_links_per_group(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cs, "DUPLICATES_MAX_GROUP_LINKS", 10)
+
+        groups, truncated = _json_groups(_clone_classes(5))
+
+        assert len(groups[0]["links"]) == 10
+        assert truncated is True
+
+    def test_json_report_under_the_cap_lists_every_pair(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cs, "DUPLICATES_MAX_GROUP_LINKS", 25)
+
+        groups, truncated = _json_groups(_clone_classes(5))
+
+        assert len(groups[0]["links"]) == 25
+        assert {(link["first"], link["second"]) for link in groups[0]["links"]} == {
+            (f"proj.a{i}.f", f"proj.b{j}.f") for i in range(5) for j in range(5)
+        }
+        assert truncated is False
+
+    def test_json_report_lists_the_same_links_as_before(self) -> None:
+        # Recorded from the eager expansion this replaces (a6dee6582).
+        groups, truncated = _json_groups(_gson_shape())
+
+        pairs = [
+            (link["first"].rsplit(".", 1)[1], link["second"].rsplit(".", 1)[1])
+            for link in groups[0]["links"]
+        ]
+        assert pairs == [
+            ("testEmptyArray", "testNulls"),
+            ("testEmptyArray", "testClose"),
+            ("testEmptyObject", "testNulls"),
+            ("testEmptyObject", "testClose"),
+            ("testNulls", "testClose"),
+            ("testClose", "testDeep"),
+        ]
+        assert {link["similarity"] for link in groups[0]["links"]} == {0.818}
+        assert truncated is False
+
+    def test_json_report_of_a_chain_is_unchanged(self) -> None:
+        groups, _ = _json_groups(_chain_rows(), "--threshold", "0.5")
+
+        assert groups[0]["links"] == [
+            {"first": _A, "second": _C, "similarity": round(4 / 6, 3)},
+            {"first": _B, "second": _C, "similarity": 0.5},
+        ]
+
+    def test_table_rows_are_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+
+        out = _render_table(monkeypatch, groups)
+
+        rows = [
+            [cell.strip() for cell in line.split("│")[1:-1]]
+            for line in out.splitlines()
+            if line.startswith("│")
+        ]
+        assert rows == [
+            [
+                "1",
+                "similar",
+                "82-100%",
+                "w.T.testEmptyArray",
+                "proj/w/T.java:10-19",
+                "1",
+            ],
+            ["", "", "", "w.T.testNulls", "proj/w/T.java:30-39", ""],
+            ["", "", "", "w.T.testEmptyObject", "proj/w/T.java:20-29", "1"],
+            ["", "", "", "w.T.testClose", "proj/w/T.java:40-49", ""],
+            ["", "", "", "w.T.testDeep", "proj/w/T.java:50-59", ""],
+        ]
+
+    def test_agent_report_is_unchanged(self) -> None:
+        tool = create_find_duplicates_tool(FakeIngestor(_gson_shape()))
+
+        response = asyncio.run(tool.function(project="proj"))
+
+        assert response.splitlines()[1:] == [
+            "1. similar (82%-100% similar):",
+            "   - proj.w.T.testEmptyArray  proj/w/T.java:10-19",
+            "   - proj.w.T.testNulls  proj/w/T.java:30-39",
+            "   - proj.w.T.testEmptyObject  proj/w/T.java:20-29",
+            "   - proj.w.T.testClose  proj/w/T.java:40-49",
+            "   - proj.w.T.testDeep  proj/w/T.java:50-59",
+            "   exact copies: proj.w.T.testEmptyArray, proj.w.T.testEmptyObject",
+        ]

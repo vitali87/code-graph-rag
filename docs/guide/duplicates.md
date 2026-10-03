@@ -597,14 +597,17 @@ fingerprints, strongest first, as `{"first", "second", "similarity"}` objects
 naming two members by qualified name. Together with `exact_subgroups` they
 are the group's duplicate pairs: two members not paired by either are in the
 group only because a third links them. It is empty for an `exact` group,
-where every pair is a duplicate.
+where every pair is a duplicate. Two similar clone classes link every copy of
+one to every copy of the other, so a group lists at most 10,000 links, the
+strongest; when it has more, `truncated` is `true`.
 
 `skipped_symbols` counts functions and methods with no structural
 fingerprint: pattern-tier languages and bodiless declarations. `truncated`
 is `true` when similar-group enumeration stopped at its internal cap —
 qualifying groups may be missing, and narrowing the scan with a higher
-`--threshold` or `--min-size` brings the report back under the cap. The
-table output prints the same facts as notices after the report.
+`--threshold` or `--min-size` brings the report back under the cap — or
+when a group's `links` were cut to their cap, which only the JSON report
+lists. The table output prints the other facts as notices after the report.
 
 ## Use in CI
 
