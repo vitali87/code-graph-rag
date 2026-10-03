@@ -743,6 +743,30 @@ IMP_PY_SOURCE_ROOT = "Python source root: {name} -> {path}"
 STRUCT_IDENTIFIED_PACKAGE = "  Identified Package: {package_qn}"
 STRUCT_IDENTIFIED_FOLDER = "  Identified Folder: '{relative_root}'"
 
+# ast-grep tier and finding analyzer logs. Without the extra the tier speaks
+# up only once it has met a file it would have parsed (issue #2634): a line
+# at construction named no file and printed for every repository.
+AST_GREP_TIER_UNAVAILABLE = (
+    "ast-grep-py is not installed; the ast-grep language tier is disabled"
+)
+AST_GREP_TIER_FILES_UNPARSED = (
+    "{count} file(s) ({languages}) were indexed as plain File nodes, with no "
+    "modules, functions, classes or imports: the ast-grep tier parses these "
+    "languages and needs the ast-grep extra. Install it, e.g. "
+    'uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic]" or '
+    'pip install "code-graph-rag[ast-grep]", then sync again.'
+)
+AST_GREP_TIER_LANGUAGE_COUNT = "{language}: {count}"
+AST_GREP_TIER_DISABLED = "ast-grep language tier disabled: {error}"
+AST_GREP_PARSE_FAILED = "ast-grep failed to parse {path}: {error}"
+AST_GREP_BAD_RULE = "bad ast-grep rule {rule} for {path}: {error}"
+AST_GREP_FINDINGS_UNAVAILABLE = (
+    "The findings capture group needs the ast-grep extra, which is not "
+    "installed; no Pattern, CodeSmell or SecurityIssue nodes are written. "
+    'Install it with: pip install "code-graph-rag[ast-grep]"'
+)
+AST_GREP_FINDINGS_DISABLED = "ast-grep finding analyzer disabled: {error}"
+
 # Class ingest logs
 CLASS_CPP_MODULE_INTERFACE = "  Found C++ Module Interface: {qn}"
 CLASS_CPP_MODULE_IMPL = "  Found C++ Module Implementation: {qn}"

@@ -288,6 +288,7 @@ def _frontend_settings() -> list[str]:
     # hybrid edges and one without does not, so the two must not share a
     # fingerprint (dotnet for C#, libclang for C++, issue #1177). Imported lazily to
     # keep this module free of the parsers package at import time.
+    from .parsers.ast_grep_tier import ast_grep_importable
     from .parsers.cpp_frontend import resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
     from .parsers.go_frontend import resolve_go_frontend
@@ -302,6 +303,10 @@ def _frontend_settings() -> list[str]:
         f"PYTHON_FRONTEND={resolve_python_frontend().value}",
         f"JAVA_FRONTEND={resolve_java_frontend().value}",
         f"LOMBOK={current_lombok_version() or 'absent'}",
+        # Same reasoning for the ast-grep tier: without its extra, its
+        # languages get only File nodes, and an unchanged repository synced
+        # after installing it must re-parse them (issue #2634).
+        f"AST_GREP_TIER={ast_grep_importable()}",
     ]
 
 
