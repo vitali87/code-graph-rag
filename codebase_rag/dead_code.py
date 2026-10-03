@@ -83,7 +83,6 @@ def default_dead_code_config(
         include_classes=include_classes,
         root_decorators=frozenset(d.lower() for d in cs.DEFAULT_ROOT_DECORATORS),
         entry_points=(),
-        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         exclude_patterns=exclude_patterns,
     )
 
@@ -269,7 +268,6 @@ def _is_test_symbol(
     props: PropertyDict,
     qn: str,
     path: str,
-    test_patterns: tuple[str, ...],
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
 ) -> bool:
@@ -277,7 +275,7 @@ def _is_test_symbol(
     # when tests are off must be the same symbol rooted when they are on,
     # or the two modes silently diverge.
     return (
-        matches_test_path(path, test_patterns)
+        matches_test_path(path)
         or _is_rust_test_symbol(props, qn, path, rust_test_modules)
         or _within_rust_test_span(props, rust_test_spans)
     )
@@ -631,6 +629,11 @@ def _is_root(
         # never by a first-party call, so it is a root.
         lambda: props.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
         lambda: qn in protocol_stubs,
+        # A `.pyi` definition declares an API whose body lives elsewhere,
+        # usually in a compiled extension that is not source; no first-party
+        # call is needed for it to be used, and deleting it from the stub
+        # would not delete the code (issue #2445).
+        lambda: path.endswith(cs.EXT_PYI),
         lambda: is_method and _is_dunder(leaf) and path.endswith(cs.EXT_PY),
         # Python Enum protocol hooks (_generate_next_value_, _missing_) are
         # invoked by the enum machinery by NAME, like dunders: roots, not
@@ -697,7 +700,7 @@ def _is_rooted_test_symbol(
     rust_test_spans: dict[str, list[tuple[int, int]]],
 ) -> bool:
     return config.include_tests and _is_test_symbol(
-        props, qn, path, config.test_patterns, rust_test_modules, rust_test_spans
+        props, qn, path, rust_test_modules, rust_test_spans
     )
 
 
@@ -773,7 +776,6 @@ def _scan_candidates(
             props,
             qn,
             str(props.get(cs.KEY_PATH) or ""),
-            config.test_patterns,
             rust_test_modules,
             rust_test_spans,
         ):
@@ -830,7 +832,7 @@ def _module_roots(
         if target_qn not in scan.candidates:
             continue
         path = scan.module_path.get(str(from_val), "")
-        if config.include_tests or not matches_test_path(path, config.test_patterns):
+        if config.include_tests or not matches_test_path(path):
             roots.add(target_qn)
     return roots
 
