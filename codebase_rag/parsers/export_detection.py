@@ -126,21 +126,28 @@ def _php_exported(node: Node) -> bool:
     # function declared outside any callable body are global once their file
     # loads, so code outside the repo can call them (issue #2472). A member
     # is API unless it is `private`; `protected` is the inheritance surface,
-    # as for Java and TS. A closure, a function declared inside another
-    # callable's body and an anonymous class (with its members) cannot be
-    # named from outside: the graph's own edges decide whether they are live.
+    # as for Java and TS. A closure, an anonymous class (with its members),
+    # and a function or named type declared inside a callable's body cannot
+    # be named from outside until that body runs: the graph's own edges
+    # decide whether they are live.
     if node.type == cs.TS_PHP_METHOD_DECLARATION:
         return _php_member_exported(node)
     if node.type == cs.TS_PHP_FUNCTION_DEFINITION:
         return not _php_inside_callable(node)
-    return node.type in _PHP_NAMED_TYPE_DECLARATIONS
+    return _php_global_type(node)
+
+
+def _php_global_type(node: Node) -> bool:
+    # An `if (!class_exists(...))` block at file level is no callable, so a
+    # polyfill class declared in it stays global.
+    return node.type in _PHP_NAMED_TYPE_DECLARATIONS and not _php_inside_callable(node)
 
 
 def _php_member_exported(node: Node) -> bool:
     owner = node.parent
     while owner is not None and owner.type not in _PHP_TYPE_DECLARATIONS:
         owner = owner.parent
-    if owner is None or owner.type not in _PHP_NAMED_TYPE_DECLARATIONS:
+    if owner is None or not _php_global_type(owner):
         return False
     # Keywords are case-insensitive in PHP: `PRIVATE function` is private too.
     return not any(

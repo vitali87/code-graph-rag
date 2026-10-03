@@ -960,8 +960,38 @@ def _is_php_test_path(path: str) -> bool:
     )
 
 
-def _is_php_test_case_name(qn: str) -> bool:
-    return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].endswith(cs.PHP_TEST_CASE_SUFFIX)
+def _qn_leaf(qn: str) -> str:
+    return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+
+def _is_php_framework_test_base(qn: str) -> bool:
+    leaf = _qn_leaf(qn)
+    return leaf in cs.PHP_TEST_BASE_NAMES or (
+        leaf.endswith(cs.PHP_TEST_CASE_SUFFIX)
+        and qn.startswith(cs.PHP_TEST_FRAMEWORK_NAMESPACES)
+    )
+
+
+def _php_project_class_named(
+    external_qn: str, by_leaf: dict[str, list[str]], php_paths: dict[str, str]
+) -> str | None:
+    # The PHP inheritance pass leaves a base imported from another file's
+    # namespace as an external name (`App.AdapterTestUtilities.X`). It is the
+    # project class of that name when exactly one sits in a directory named
+    # like the namespace's last segment, as PSR-4 lays classes out; a bare
+    # name carries no namespace to check and is left to the framework rule.
+    namespace, sep, leaf = external_qn.rpartition(cs.SEPARATOR_DOT)
+    if not sep:
+        return None
+    wanted = namespace.rpartition(cs.SEPARATOR_DOT)[2].lower()
+    matches = [qn for qn in by_leaf.get(leaf, ()) if _dir_name(php_paths[qn]) == wanted]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _dir_name(path: str) -> str:
+    return (
+        path.rpartition(cs.SEPARATOR_SLASH)[0].rpartition(cs.SEPARATOR_SLASH)[2].lower()
+    )
 
 
 def _php_test_classes(
@@ -971,23 +1001,43 @@ def _php_test_classes(
     # providers) only on a class extending its TestCase, so that ancestry,
     # not the directory, makes a PHP class test code: flysystem keeps
     # `src/**/XxxTest.php` beside its adapters, extending the abstract
-    # `src/AdapterTestUtilities/FilesystemAdapterTestCase.php`. A base outside
-    # the repo is known by name only (`PHPUnit.Framework.TestCase`, Symfony's
-    # `KernelTestCase`), so the name suffix seeds the walk, which then follows
-    # first-party subclasses down any depth.
-    php_classes = {
-        str(uid)
+    # `src/AdapterTestUtilities/FilesystemAdapterTestCase.php`. The walk is
+    # seeded by a test framework's base, or by a project `*TestCase` that
+    # sits in a test path, and follows first-party subclasses down any
+    # depth. A `*TestCase` name alone proves nothing: a test-management app
+    # has a `TestCase` entity, and its subclasses are production code.
+    php_paths = {
+        str(uid): str(props.get(cs.KEY_PATH, ""))
         for (label, uid), props in nodes.items()
         if label == _CLASS
         and str(props.get(cs.KEY_PATH, "")).endswith(cs.PHP_EXTENSIONS)
     }
-    seeds = {qn for qn in php_classes if _is_php_test_case_name(qn)}
+    by_leaf: dict[str, list[str]] = defaultdict(list)
+    for qn in php_paths:
+        by_leaf[_qn_leaf(qn)].append(qn)
+    seeds = {
+        qn
+        for qn, path in php_paths.items()
+        if _qn_leaf(qn).endswith(cs.PHP_TEST_CASE_SUFFIX)
+        and (matches_test_path(path) or _is_php_test_path(path))
+    }
+    children: dict[str, set[str]] = defaultdict(set)
     for base, subclasses in inherits_subclasses.items():
-        if _is_php_test_case_name(base):
-            seeds |= subclasses & php_classes
+        php_subclasses = subclasses & php_paths.keys()
+        if not php_subclasses:
+            continue
+        parent = (
+            base
+            if base in php_paths
+            else _php_project_class_named(base, by_leaf, php_paths)
+        )
+        if parent is not None:
+            children[parent] |= php_subclasses
+        elif _is_php_framework_test_base(base):
+            seeds |= php_subclasses
     found = set(seeds)
-    _walk(seeds, inherits_subclasses, found)
-    return found & php_classes
+    _walk(seeds, children, found)
+    return found
 
 
 def _within_php_test_class(qn: str, php_test_classes: set[str]) -> bool:

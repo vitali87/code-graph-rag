@@ -364,3 +364,19 @@ JS_WELL_KNOWN_SYMBOLS: frozenset[str] = frozenset(
 PHP_TEST_FILE_SUFFIX = "Test.php"
 PHP_TEST_DIR_SEGMENT = "/Tests/"
 PHP_TEST_CASE_SUFFIX = "TestCase"
+# The external bases that make a PHP class a test, as the graph holds them:
+# by class name alone (spelled fully qualified or never imported), or
+# namespace-qualified through a `use` import. A name ending in
+# PHP_TEST_CASE_SUFFIX counts only from one of these test-framework
+# namespaces, so a vendor's `Acme\Qa\ScenarioTestCase` is not a test base.
+PHP_TEST_BASE_NAMES: frozenset[str] = frozenset(
+    {"TestCase", "KernelTestCase", "WebTestCase", "ApiTestCase", "PantherTestCase"}
+)
+PHP_TEST_FRAMEWORK_NAMESPACES: tuple[str, ...] = (
+    "PHPUnit.",
+    "Symfony.Bundle.FrameworkBundle.Test.",
+    "Symfony.Component.Panther.",
+    "Illuminate.Foundation.Testing.",
+    "Orchestra.Testbench.",
+    "Mockery.Adapter.Phpunit.",
+)

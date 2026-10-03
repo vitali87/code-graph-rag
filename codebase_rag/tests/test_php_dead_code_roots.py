@@ -252,6 +252,73 @@ $o = new class {};
         assert f"{qn}.{name}" not in dead, (name, sorted(dead))
 
 
+_NESTED = r"""<?php
+namespace App;
+
+class Host
+{
+    private function build(): object
+    {
+        class Inner { public function m(): int { return 1; } }
+        return new Inner();
+    }
+}
+"""
+
+
+def test_class_declared_inside_a_callable_is_not_an_api_root(tmp_path: Path) -> None:
+    # PHP declares a class written inside a function body only when that
+    # body runs, so nothing outside can name it before then: an uncalled
+    # builder leaves the class and its methods dead.
+    ingestor = _index(tmp_path, {"src/nested.php": _NESTED})
+    qn = f"{_PROJECT}.src.nested"
+    inner_qn = f"{qn}.Host.Inner"
+    inner = next(
+        props
+        for (label, uid), props in ingestor.nodes.items()
+        if label == cs.NodeLabel.CLASS.value and str(uid) == inner_qn
+    )
+
+    assert inner.get(cs.KEY_IS_EXPORTED) is not True
+    assert not _exported(ingestor, f"{inner_qn}.m")
+    dead = _dead(ingestor, include_tests=True, include_classes=True)
+    assert {f"{qn}.Host.build", inner_qn, f"{inner_qn}.m"} <= dead, sorted(dead)
+
+
+def test_class_built_by_a_live_callable_is_revived_through_it(tmp_path: Path) -> None:
+    # Not a root of its own, but a class its live builder declares escapes
+    # it (the factory-class rule), so its methods stay live.
+    source = _NESTED.replace(
+        "    private function build",
+        "    public function run(): object { return $this->build(); }\n\n"
+        "    private function build",
+    )
+    ingestor = _index(tmp_path, {"src/nested.php": source})
+    qn = f"{_PROJECT}.src.nested"
+    inner_qn = f"{qn}.Host.Inner"
+    dead = _dead(ingestor, include_tests=True, include_classes=True)
+
+    assert not {f"{qn}.Host.build", inner_qn, f"{inner_qn}.m"} & dead, sorted(dead)
+
+
+def test_conditionally_declared_top_level_class_is_still_an_api_root(
+    tmp_path: Path,
+) -> None:
+    source = r"""<?php
+namespace App;
+
+if (!class_exists('App\Shim')) {
+    class Shim { public function s(): int { return 1; } }
+}
+"""
+    ingestor = _index(tmp_path, {"src/shim.php": source})
+    qn = f"{_PROJECT}.src.shim"
+    dead = _dead(ingestor, include_tests=True, include_classes=True)
+
+    assert _exported(ingestor, f"{qn}.Shim.s")
+    assert not {f"{qn}.Shim", f"{qn}.Shim.s"} & dead, sorted(dead)
+
+
 # --- 2. PHPUnit tests are recognised wherever they live --------------------
 
 _TEST_CLASS_QN = f"{_PROJECT}.src.LibTest.LibTest"
@@ -385,16 +452,32 @@ class LocalAdapterChecks extends FilesystemAdapterTestCase
     assert not adapter_members & dead, sorted(adapter_members & dead)
 
 
+@pytest.mark.parametrize("imported", [True, False])
 @pytest.mark.parametrize(
-    "base", ["Symfony\\Bundle\\FrameworkBundle\\Test\\KernelTestCase", "TestCase"]
+    "base",
+    [
+        "Symfony\\Bundle\\FrameworkBundle\\Test\\KernelTestCase",
+        "Symfony\\Bundle\\FrameworkBundle\\Test\\WebTestCase",
+        "PHPUnit\\Framework\\TestCase",
+        "TestCase",
+    ],
 )
-def test_framework_test_case_base_is_recognised(tmp_path: Path, base: str) -> None:
-    # Symfony's KernelTestCase/WebTestCase and an unimported `TestCase` are
-    # external bases the graph holds by name only.
+def test_framework_test_case_base_is_recognised(
+    tmp_path: Path, base: str, imported: bool
+) -> None:
+    # Framework bases live outside the repo, so the graph holds them by
+    # name: namespaced through a `use` import, bare when spelled fully
+    # qualified or not imported at all.
+    leaf = base.rsplit("\\", 1)[-1]
+    head = (
+        f"use {base};\n\nclass BootChecks extends {leaf}"
+        if imported
+        else f"class BootChecks extends \\{base}"
+    )
     source = rf"""<?php
 namespace App\Kernel;
 
-class BootChecks extends \{base}
+{head}
 {{
     public function testBoots(): void {{}}
 
@@ -492,6 +575,96 @@ class TestHelper
 
     assert f"{qn}.Connection.testConnection" in dead, sorted(dead)
     assert f"{qn}.TestHelper.unusedHelper" in dead, sorted(dead)
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+def test_production_class_named_like_a_test_case_is_not_test_code(
+    tmp_path: Path, include_tests: bool
+) -> None:
+    # A test-management domain has a `TestCase` entity; an importer may be
+    # an `ImportTestCase`; a vendor base may end in `TestCase` without being
+    # a test framework's. None has PHPUnit ancestry, so neither they nor
+    # their subclasses are test code, and their unused methods are reported.
+    source = r"""<?php
+namespace App\Domain;
+
+use Acme\Qa\ScenarioTestCase;
+use Illuminate\Database\Eloquent\Model;
+
+class TestCase extends Model { private function unusedBase(): void {} }
+
+class RegressionTestCase extends TestCase { private function unusedSub(): void {} }
+
+class ImportTestCase { private function unusedImport(): void {} }
+
+class CsvImport extends ImportTestCase { private function unusedCsv(): void {} }
+
+class Scenario extends ScenarioTestCase { private function unusedScenario(): void {} }
+"""
+    # The same entity imported from another namespace reaches the graph as
+    # an external `App.Domain.TestCase`, not as the project class.
+    smoke = r"""<?php
+namespace App\Domain\Regression;
+
+use App\Domain\TestCase;
+
+class Smoke extends TestCase { private function unusedSmoke(): void {} }
+"""
+    ingestor = _index(
+        tmp_path,
+        {"src/Domain/Cases.php": source, "src/Domain/Regression/Smoke.php": smoke},
+    )
+    qn = f"{_PROJECT}.src.Domain.Cases"
+    dead = _dead(ingestor, include_tests)
+
+    smoke_qn = f"{_PROJECT}.src.Domain.Regression.Smoke.Smoke.unusedSmoke"
+    assert smoke_qn in dead, sorted(dead)
+
+    for member in (
+        "TestCase.unusedBase",
+        "RegressionTestCase.unusedSub",
+        "ImportTestCase.unusedImport",
+        "CsvImport.unusedCsv",
+        "Scenario.unusedScenario",
+    ):
+        assert f"{qn}.{member}" in dead, (member, sorted(dead))
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+def test_first_party_base_under_tests_is_followed_to_subclasses_elsewhere(
+    tmp_path: Path, include_tests: bool
+) -> None:
+    # The project's own base in `tests/` extends PHPUnit; a test class kept
+    # in `src/` under another namespace extends it through a `use` import,
+    # which the graph records as an external name.
+    base = r"""<?php
+namespace Tests;
+
+abstract class BaseTestCase extends \PHPUnit\Framework\TestCase
+{
+    private function unusedBaseHelper(): void {}
+}
+"""
+    checks = r"""<?php
+namespace App\Feature;
+
+use Tests\BaseTestCase;
+
+class FeatureChecks extends BaseTestCase
+{
+    public function testFeature(): void {}
+
+    private function leftoverFixture(): void {}
+}
+"""
+    ingestor = _index(
+        tmp_path,
+        {"tests/BaseTestCase.php": base, "src/Feature/FeatureChecks.php": checks},
+    )
+    members = _defined(ingestor, f"{_PROJECT}.src.Feature.FeatureChecks.FeatureChecks.")
+    dead = _dead(ingestor, include_tests)
+
+    assert not members & dead, sorted(members & dead)
 
 
 @pytest.mark.parametrize("include_tests", [True, False])
