@@ -123,8 +123,9 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
-   decorated handlers, dunder/lifecycle methods, plus any `--entry-point` and
-   `--decorator-root` you add.
+   decorated handlers, dunder/lifecycle methods, program entry points (`main`
+   in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
+   plus any `--entry-point` and `--decorator-root` you add.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class
