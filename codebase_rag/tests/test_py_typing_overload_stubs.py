@@ -940,6 +940,200 @@ def test_a_case_pattern_rebinds_only_what_it_captures(pattern: str, stubs: int) 
     assert len(folded_overload_stubs(root)) == stubs
 
 
+# Stubs inside a function body: `outer`'s own, and those of a class that a
+# method body defines. A def's body runs when it is called, so a decorator in
+# it reads `overload` as the enclosing scopes bind it THEN; a module rebinding
+# anywhere, after the def too, may be the one in force.
+NESTED_STUBS_MODULE = """from typing import overload
+
+
+def outer():
+{local}
+    @overload
+    def command(name: str) -> int: ...
+
+    @overload
+    def command(name: None) -> int: ...
+
+    def command(name=None):
+        return name
+
+    return command("x")
+
+
+class Holder:
+    def method(self):
+        class Box:
+            @overload
+            def get(self, key: int) -> int: ...
+
+            @overload
+            def get(self, key: str) -> str: ...
+
+            def get(self, key):
+                return key
+
+        return Box().get(1)
+{after}"""
+
+# (outer's body prefix, module tail, `command` nodes, `Box.get` nodes)
+NESTED_STUBS = [
+    pytest.param("", "", 1, 1, id="only-typing"),
+    pytest.param(
+        "", "\n\ndef overload(fn):\n    return fn\n", 3, 3, id="def-after-the-defs"
+    ),
+    pytest.param("", "\n\noverload = identity\n", 3, 3, id="assigned-after-the-defs"),
+    pytest.param(
+        "", "\n\noverload, other = identity, 1\n", 3, 3, id="unpacked-after-the-defs"
+    ),
+    pytest.param(
+        "",
+        "\n\nif ready:\n    overload = identity\n",
+        3,
+        3,
+        id="rebound-in-an-if-after-the-defs",
+    ),
+    pytest.param(
+        "",
+        "\n\ndef setup():\n    global overload\n    overload = identity\n",
+        3,
+        3,
+        id="rebound-through-global",
+    ),
+    pytest.param(
+        "    from typing import overload\n",
+        "\n\noverload = identity\n",
+        1,
+        3,
+        id="a-local-import-shadows-the-module",
+    ),
+    pytest.param(
+        "",
+        "\n\nfrom typing import overload\n",
+        1,
+        1,
+        id="reimported-from-typing-after-the-defs",
+    ),
+    pytest.param(
+        "",
+        "\n\ndef helper():\n    overload = identity\n    return overload\n",
+        1,
+        1,
+        id="rebound-in-another-function",
+    ),
+]
+
+
+@pytest.mark.parametrize(("local", "after", "commands", "gets"), NESTED_STUBS)
+def test_stubs_in_a_function_body_see_every_module_binding(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    local: str,
+    after: str,
+    commands: int,
+    gets: int,
+) -> None:
+    text = NESTED_STUBS_MODULE.format(local=local, after=after)
+    root = _write(temp_repo / "nest", text)
+    create_and_run_updater(root, mock_ingestor)
+
+    command = _named(
+        _defs(mock_ingestor, cs.NodeLabel.FUNCTION), "nest.deco.outer.command"
+    )
+    get = _named(
+        _defs(mock_ingestor, cs.NodeLabel.METHOD), "nest.deco.Holder.method.Box.get"
+    )
+    assert len(command) == commands, sorted(command)
+    assert len(get) == gets, sorted(get)
+    assert "nest.deco.outer.command" in command
+
+
+@pytest.mark.parametrize(("local", "after", "commands", "gets"), NESTED_STUBS)
+def test_nested_stubs_fold_and_rename_alike(
+    local: str, after: str, commands: int, gets: int
+) -> None:
+    # Indexing and rename read the nested stubs through the same binding.
+    text = NESTED_STUBS_MODULE.format(local=local, after=after)
+    root = _parse(text)
+    # One node left means its two stubs folded; three, that none did.
+    command_stubs = 2 if commands == 1 else 0
+    get_stubs = 2 if gets == 1 else 0
+    assert len(folded_overload_stubs(root)) == command_stubs + get_stubs
+    line = _line_of(text, "    def command(name=None):") - 1
+    token = root.descendant_for_point_range((line, 8), (line, 8))
+    assert token is not None
+    assert token.parent is not None
+    assert len(overload_stub_names(token.parent, root)) == command_stubs
+
+
+RENAME_NESTED_UTIL = """import typing as t
+
+
+def make():
+    @t.overload
+    def command(name: str) -> int: ...
+
+    @t.overload
+    def command(name: None) -> int: ...
+
+    def command(name=None):
+        return 1 if name is None else 2
+
+    return command() + command("x")
+"""
+
+
+@pytest.mark.parametrize(
+    "util",
+    [
+        pytest.param(
+            RENAME_NESTED_UTIL + "\n\nt = None\n", id="alias-reassigned-after"
+        ),
+        pytest.param(
+            RENAME_NESTED_UTIL
+            + "\n\nfor _item in (None,):\n    t, _other = _item, 1\n",
+            id="alias-unpacked-in-a-loop-after",
+        ),
+    ],
+)
+def test_rename_of_a_nested_duplicate_rebound_later_still_refuses(
+    temp_repo: Path, util: str
+) -> None:
+    # `make`'s decorators run when it is called, after `t` is rebound, so
+    # its three `command` defs are real rebinds: the rename must refuse
+    # rather than rewrite two of them as stubs.
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, _updater = _real_project(root, {"pkg/__init__.py": "", "pkg/util.py": util})
+    with pytest.raises(RenameRefused):
+        rename(
+            root, store.fetch_all, PROJECT, f"{PROJECT}.pkg.util.make.command", "cmd"
+        )
+    assert (root / "pkg" / "util.py").read_text(encoding="utf-8") == util
+
+
+def test_rename_of_a_nested_overloaded_function_rewrites_its_stubs(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root, {"pkg/__init__.py": "", "pkg/util.py": RENAME_NESTED_UTIL}
+    )
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.make.command",
+        "cmd",
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    util = (root / "pkg" / "util.py").read_text(encoding="utf-8")
+    assert util.count("def cmd(") == 3, util
+    assert "def command(" not in util
+
+
 def test_overload_stubs_without_an_implementation_keep_their_nodes(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

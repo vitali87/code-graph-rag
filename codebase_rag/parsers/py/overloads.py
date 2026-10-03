@@ -22,7 +22,12 @@ alias, a `del`, or an import of it from anywhere else. The bodies of an `if`,
 they bind is the enclosing scope's; which branch runs, and whether a loop
 body runs again, is unknown, so a name such a statement binds anywhere in it
 is typing's within and after it only when every binding of it there gives
-typing's too. A stub whose decorator is not surely typing's is never folded.
+typing's too. A class body runs where it is defined, but a def's body runs
+only when the def is called, by which time any binding its enclosing scopes
+make anywhere (after the def too) may be in force: it starts from all of them
+merged by that same rule, and its own bindings shadow them as it runs. A name
+a `global` or `nonlocal` declares can be rebound by any call, so it never
+spells a stub. A stub whose decorator is not surely typing's is never folded.
 Where nothing binds the name before the stub, the module's imports as a
 whole decide.
 
@@ -76,6 +81,13 @@ _OWN_SCOPES = frozenset(
     }
 )
 _SAME_SCOPE_COMPOUNDS = cs.PY_STATEMENT_CONTAINERS - _OWN_SCOPES - {cs.TS_PY_BLOCK}
+_SHARED_DECLARATIONS = frozenset(
+    {cs.TS_PY_GLOBAL_STATEMENT, cs.TS_PY_NONLOCAL_STATEMENT}
+)
+
+# Root-name bindings, as (name, spelling), that the enclosing scopes make
+# anywhere: what a def's body may see when it is finally called.
+type _Late = tuple[tuple[str, str], ...]
 
 
 def folded_overload_stubs(root: Node) -> frozenset[int]:
@@ -137,20 +149,32 @@ def _overload_stubs(root: Node) -> frozenset[int]:
         return frozenset()
     roots = {spelling.partition(cs.SEPARATOR_DOT)[0] for spelling in spellings}
     hits = _root_words(root, roots)
+    shared = _declared_shared(root, roots, hits)
+    spellings = frozenset(
+        spelling
+        for spelling in spellings
+        if spelling.partition(cs.SEPARATOR_DOT)[0] not in shared
+    )
     stubs: set[int] = set()
-    pending: list[tuple[Node, dict[str, str]]] = [(root, {})]
+    pending: list[tuple[Node, dict[str, str], _Late]] = [
+        (root, {}, _scope_late(root, roots, hits))
+    ]
     while pending:
-        block, bound = pending.pop()
+        block, bound, late = pending.pop()
         for statement in block.named_children:
             if _is_stub(statement, spellings, bound):
                 stubs.add(statement.start_byte)
-            pending.extend(_step(statement, bound, roots, hits))
+            pending.extend(_step(statement, bound, late, roots, hits))
     return frozenset(stubs)
 
 
 def _step(
-    statement: Node, bound: dict[str, str], roots: set[str], hits: list[int]
-) -> list[tuple[Node, dict[str, str]]]:
+    statement: Node,
+    bound: dict[str, str],
+    late: _Late,
+    roots: set[str],
+    hits: list[int],
+) -> list[tuple[Node, dict[str, str], _Late]]:
     # Move `bound` past `statement`, and return the blocks under it, each with
     # the bindings in force where it starts.
     if statement.type in _SAME_SCOPE_COMPOUNDS:
@@ -159,13 +183,59 @@ def _step(
         # any binding made anywhere in it (a `for` target included).
         _merge(bound, _scope_bindings(statement, hits), roots)
     inner = (
-        [(block, dict(bound)) for block in _blocks_in(statement)]
+        [
+            _block_start(block, statement, bound, late, roots, hits)
+            for block in _blocks_in(statement)
+        ]
         if statement.type in cs.PY_STATEMENT_CONTAINERS
         else []
     )
     if statement.type not in _SAME_SCOPE_COMPOUNDS:
         _rebind(bound, _bindings(statement, hits), roots)
     return inner
+
+
+def _block_start(
+    block: Node,
+    statement: Node,
+    bound: dict[str, str],
+    late: _Late,
+    roots: set[str],
+    hits: list[int],
+) -> tuple[Node, dict[str, str], _Late]:
+    # `block` under `statement`, with the bindings it starts from and the late
+    # ones a def inside it may see.
+    start = dict(bound)
+    if _function_of(statement) is None:
+        # The same scope, or a class body: either runs right here.
+        return block, start, late
+    # A def's body runs when it is called, so any binding the enclosing
+    # scopes make anywhere, after the def too, may be the one it reads.
+    _merge(start, late, roots)
+    return block, start, late + _scope_late(block, roots, hits)
+
+
+def _scope_late(block: Node, roots: set[str], hits: list[int]) -> _Late:
+    # Every root-name binding the scope whose body is `block` makes anywhere.
+    return tuple(
+        (name, spelling)
+        for statement in block.named_children
+        for name, spelling in _scope_bindings(statement, hits)
+        if name is not None and name in roots
+    )
+
+
+def _declared_shared(root: Node, roots: set[str], hits: list[int]) -> set[str]:
+    # Root names a `global` or `nonlocal` declares anywhere: the function
+    # declaring one can rebind it whenever it is called.
+    return {
+        name
+        for block in _blocks(root)
+        for statement in block.named_children
+        if statement.type in _SHARED_DECLARATIONS and _spans_word(statement, hits)
+        for name in map(safe_decode_text, statement.named_children)
+        if name in roots
+    }
 
 
 def _rebind(
