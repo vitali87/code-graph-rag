@@ -377,9 +377,12 @@ def test_fallback_blanks_only_the_conditional_that_needs_it() -> None:
     tree, recovered = _retry_without_list_directives(cpp, cpp.parse(source), source)
 
     assert not tree.root_node.has_error
-    assert b"b_(MakeFast())" in recovered and b"b_(MakeSlow())" in recovered
-    assert b"begin_(iov)" in recovered and b"begin_(0)" not in recovered
-    assert b"#ifdef" not in recovered and b"#else" not in recovered
+    assert b"b_(MakeFast())" in recovered
+    assert b"b_(MakeSlow())" in recovered
+    assert b"begin_(iov)" in recovered
+    assert b"begin_(0)" not in recovered
+    assert b"#ifdef" not in recovered
+    assert b"#else" not in recovered
 
 
 # --- what the recovery must leave alone ---
@@ -443,10 +446,12 @@ def test_well_parsed_list_conditional_keeps_every_branch() -> None:
 
     assert tree is not original
     assert not tree.root_node.has_error
-    assert b"kFast" in recovered and b"kSlow" in recovered
+    assert b"kFast" in recovered
+    assert b"kSlow" in recovered
     assert b"#ifdef FAST" in recovered
     # the broken initialiser's directives and alternative branch are blanked
-    assert b"begin_(0)" not in recovered and b"#ifdef FOO" not in recovered
+    assert b"begin_(0)" not in recovered
+    assert b"#ifdef FOO" not in recovered
     # offsets and line numbers survive the blanking
     assert len(recovered) == len(source)
     assert recovered.count(b"\n") == source.count(b"\n")
