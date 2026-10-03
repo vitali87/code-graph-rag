@@ -34,6 +34,10 @@ Source Code → Tree-sitter Parser → AST Analysis → Memgraph Knowledge Graph
 User Query → AI Model (Cypher Gen) → Cypher Query → Graph Results → Response
 ```
 
+![cgr start --update-graph running the parser passes over pallets/jinja into Memgraph, then cgr stats counting the stored nodes and relationships](../assets/demos/overview-data-flow.gif)
+
+*The ingestion half of the flow; the query half needs an LLM provider.*
+
 ## Key Dependencies
 
 | Dependency | Purpose |

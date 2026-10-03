@@ -1282,6 +1282,20 @@ class ImportProcessor:
         self.dart_import_aliases.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
+    def displaced_include_targets(self) -> dict[str, frozenset[str]]:
+        """The headers each file includes under a local name a later include
+        took over (#1758), by including module.
+
+        The mapping holds one binding per local name, so these are the rest
+        of what a file includes: `a/util.h` and `b/util.h` both bind `util`,
+        and both are compiled into the file (Greptile, PR #2593).
+        """
+        displaced: dict[str, set[str]] = {}
+        for module_qn, target in self._cpp_shadowed_include_targets:
+            if (module_qn, target) not in self._cpp_declaration_mappings:
+                displaced.setdefault(module_qn, set()).add(target)
+        return {module: frozenset(targets) for module, targets in displaced.items()}
+
     def _defer_module_import_edges(
         self, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
