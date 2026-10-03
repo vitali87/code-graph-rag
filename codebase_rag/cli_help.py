@@ -208,7 +208,8 @@ EPILOG_TRACE = "Run 'cgr help trace COMMAND' for command-specific help."
 
 HELP_TRACE_REPO_PATH = (
     "Repository the trace was recorded against. Used to derive the project "
-    "name and re-anchor traced file paths."
+    "name and re-anchor traced file paths, including paths recorded under the "
+    "checkout root the trace header names (a CI runner's or container's)."
 )
 HELP_TRACE_PROJECT_NAME = (
     "Project name to ingest into. Defaults to the name derived from --repo-path."
