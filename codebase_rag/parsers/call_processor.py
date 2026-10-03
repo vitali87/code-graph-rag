@@ -35,6 +35,7 @@ from .cpp.function_values import (
     CFileScope,
     c_file_scope,
     c_function_value_identifiers,
+    local_enumerator_names,
 )
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
@@ -1524,6 +1525,7 @@ class CallProcessor:
         "js_symbol_member_types",
         "_js_proto_evidence_cache",
         "_c_file_scopes",
+        "_c_include_closures",
     )
 
     def __init__(
@@ -1593,6 +1595,9 @@ class CallProcessor:
         # What each C/C++ source declares at file scope, read when a bare
         # function name in C resolves outside its own file (issue #2529).
         self._c_file_scopes: dict[str, CFileScope] = {}
+        # The repo headers each C/C++ file includes, directly or through
+        # another header (#2593 review).
+        self._c_include_closures: dict[str, frozenset[str]] = {}
 
         # The import processor owns the record (#1568); every pass notes
         # through it so the empty-name guard lives in one place.
@@ -2119,6 +2124,7 @@ class CallProcessor:
         self._package_index_size = -1
         self._path_to_module_qn = None
         self._c_file_scopes = {}
+        self._c_include_closures = {}
 
     def process_calls_in_file(
         self,
@@ -6152,9 +6158,12 @@ class CallProcessor:
             if not name:
                 continue
             targets, resolution = self._c_function_value_targets(name, module_qn)
-            # A parameter or local of that name hides the function.
-            if not targets or name in cpp_utils.cpp_enclosing_function_value_names(
-                ident
+            # A parameter, local or local enumeration constant of that name
+            # hides the function.
+            if (
+                not targets
+                or name in cpp_utils.cpp_enclosing_function_value_names(ident)
+                or name in local_enumerator_names(ident)
             ):
                 continue
             self._site_node = ident
@@ -6179,7 +6188,12 @@ class CallProcessor:
                 if len(variants) > 1
                 else cs.EdgeResolution.EXACT
             )
-        if name in self._c_file_scope(module_qn).objects:
+        # A variable or enumeration constant this file or a header it
+        # includes declares is what the name denotes (#2593 review).
+        if any(
+            name in self._c_file_scope(visible).objects
+            for visible in (module_qn, *self._c_include_closure(module_qn))
+        ):
             return [], cs.EdgeResolution.EXACT
         # Otherwise it is an extern declaration the linker binds by name to a
         # definition with external linkage, which no file's `static` has.
@@ -6187,12 +6201,12 @@ class CallProcessor:
             variant
             for qn in registry.find_ending_with(name)
             if registry.get(qn) == NodeType.FUNCTION
-            and self._c_links_externally(qn, name)
+            and self._c_links_externally(qn, name, module_qn)
             for variant in registry.variants(qn)
         ]
         return targets, cs.EdgeResolution.HEURISTIC
 
-    def _c_links_externally(self, qn: str, name: str) -> bool:
+    def _c_links_externally(self, qn: str, name: str, referrer_qn: str) -> bool:
         module_qn = qn[: -len(name) - 1]
         file_path = self.module_qn_to_file_path.get(module_qn)
         # A namespace or class member, or a definition in another language.
@@ -6200,10 +6214,30 @@ class CallProcessor:
             cs.C_EXTENSIONS + cs.CPP_EXTENSIONS
         ):
             return False
-        # A header's `static inline` is compiled into every file including it.
-        if not file_path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
-            return True
-        return name not in self._c_file_scope(module_qn).tu_local_functions
+        internal = name in self._c_file_scope(module_qn).tu_local_functions
+        if file_path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
+            return not internal
+        # A header's `static inline` is compiled into the files including it
+        # and no other (#2593 review); a plain definition there links
+        # externally like a source file's.
+        return not internal or module_qn in self._c_include_closure(referrer_qn)
+
+    def _c_include_closure(self, module_qn: str) -> frozenset[str]:
+        if (cached := self._c_include_closures.get(module_qn)) is not None:
+            return cached
+        import_mapping = self._resolver.import_processor.import_mapping
+        reached: set[str] = set()
+        pending = [module_qn]
+        while pending:
+            current = pending.pop()
+            for target in (import_mapping.get(current) or {}).values():
+                if target not in reached and target in self.module_qn_to_file_path:
+                    reached.add(target)
+                    pending.append(target)
+        reached.discard(module_qn)
+        closure = frozenset(reached)
+        self._c_include_closures[module_qn] = closure
+        return closure
 
     def _c_file_scope(self, module_qn: str) -> CFileScope:
         if (cached := self._c_file_scopes.get(module_qn)) is not None:

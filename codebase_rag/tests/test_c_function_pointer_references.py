@@ -449,3 +449,207 @@ class TestNotAFunctionReference:
         )
         refs = _edges(mock_ingestor, REFERENCES)
         assert refs == set(), refs
+
+
+# --- #2593 review ---
+
+RETURNS_C = (
+    "typedef void (*handler_t)(int);\n"
+    "static void handler(int sig) { (void)sig; }\n"
+    "static void on_a(int sig) { (void)sig; }\n"
+    "static void on_b(int sig) { (void)sig; }\n"
+    "static void on_c(int sig) { (void)sig; }\n"
+    "static handler_t pick(void) { return handler; }\n"
+    "static handler_t pick_addr(void) { return &on_a; }\n"
+    "static handler_t pick_either(int f) { return f ? on_b : (handler_t)on_c; }\n"
+    "int main(void) {\n"
+    "    pick()(1);\n"
+    "    pick_addr()(2);\n"
+    "    pick_either(0)(3);\n"
+    "    return 0;\n"
+    "}\n"
+)
+
+
+class TestReturnedFunctionValues:
+    def test_returned_callback_is_referenced(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(temp_repo, mock_ingestor, {"ret.c": RETURNS_C})
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert (_qn("ret", "pick"), _qn("ret", "handler")) in refs, refs
+        assert (_qn("ret", "pick_addr"), _qn("ret", "on_a")) in refs, refs
+        assert (_qn("ret", "pick_either"), _qn("ret", "on_b")) in refs, refs
+        assert (_qn("ret", "pick_either"), _qn("ret", "on_c")) in refs, refs
+
+    def test_returned_callback_is_not_dead(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(temp_repo, mock_ingestor, {"ret.c": RETURNS_C})
+        dead = _dead_functions(mock_ingestor)
+        for name in ("handler", "on_a", "on_b", "on_c"):
+            assert _qn("ret", name) not in dead, (name, sorted(dead))
+
+    def test_returned_call_result_or_local_is_no_reference(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `return make(x);` returns a call's result (a CALLS edge),
+        # and a local named like a function hides it.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "plain.c": (
+                    "static int make(int x) { return x; }\n"
+                    "static int shadow(int x) { return x; }\n"
+                    "static int value(int x) { return make(x); }\n"
+                    "static int local(int x) { int shadow = x; return shadow; }\n"
+                    "int main(void) { return value(1) + local(2); }\n"
+                )
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("plain", "make")) == set(), refs
+        assert _into(refs, _qn("plain", "shadow")) == set(), refs
+        assert (_qn("plain", "value"), _qn("plain", "make")) in _edges(
+            mock_ingestor, CALLS
+        )
+
+
+class TestEnumeratorsAreNotFunctions:
+    def test_file_scope_enumerator_is_not_another_files_function(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "state.c": (
+                    "enum state { READY, DONE };\n"
+                    "typedef enum { IDLE } mode_t;\n"
+                    "static int initial[] = { READY, IDLE };\n"
+                    "int current(void) { int s = DONE; return s; }\n"
+                ),
+                "other.c": (
+                    "int READY(void) { return 0; }\n"
+                    "int DONE(void) { return 1; }\n"
+                    "int IDLE(void) { return 2; }\n"
+                ),
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        for name in ("READY", "DONE", "IDLE"):
+            assert _into(refs, _qn("other", name)) == set(), (name, refs)
+
+    def test_enumerator_of_an_included_header_is_not_a_function(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "state.h": "enum state { READY };\n",
+                "use.c": '#include "state.h"\nstatic int initial[] = { READY };\n',
+                "other.c": "int READY(void) { return 0; }\n",
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("other", "READY")) == set(), refs
+
+    def test_local_enumerator_is_not_another_files_function(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # An enum written in a function body declares its constants there;
+        # after it, in the same body, the name is that constant.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "state.c": (
+                    "int current(void) {\n"
+                    "    enum { READY, DONE };\n"
+                    "    int order[] = { READY, DONE };\n"
+                    "    return order[0];\n"
+                    "}\n"
+                ),
+                "other.c": (
+                    "int READY(void) { return 0; }\nint DONE(void) { return 1; }\n"
+                ),
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("other", "READY")) == set(), refs
+        assert _into(refs, _qn("other", "DONE")) == set(), refs
+
+    def test_an_extern_function_still_resolves_beside_an_enum(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: a name that is no enumerator still reaches the other
+        # file's function.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "state.c": (
+                    "enum state { READY };\n"
+                    "int run(void);\n"
+                    "typedef struct { int (*fn)(void); } slot_t;\n"
+                    "static slot_t slot = { run };\n"
+                    "static int initial[] = { READY };\n"
+                ),
+                "other.c": "int run(void) { return 0; }\n",
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("other", "run")) == {f"{PROJECT}.state"}, refs
+
+
+class TestHeaderInlineNeedsInclude:
+    def test_static_inline_in_a_header_the_file_does_not_include(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "store.c": (
+                    "extern int helper(int);\n"
+                    "typedef struct { int (*fn)(int); } slot_t;\n"
+                    "static slot_t slot = { helper };\n"
+                ),
+                "real.c": "int helper(int x) { return x; }\n",
+                "unrelated.h": "static inline int helper(int x) { return -x; }\n",
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("real", "helper")) == {f"{PROJECT}.store"}, refs
+        assert _into(refs, _qn("unrelated", "helper")) == set(), refs
+
+    def test_static_inline_in_an_included_header_is_referenced(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: a header the file includes, directly or through another
+        # header, compiles its `static inline` into this file.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "inline.h": "static inline int twice(int x) { return 2 * x; }\n",
+                "outer.h": '#include "inline.h"\n',
+                "direct.c": (
+                    '#include "inline.h"\n'
+                    "typedef struct { int (*fn)(int); } slot_t;\n"
+                    "static slot_t slot = { twice };\n"
+                ),
+                "chained.c": (
+                    '#include "outer.h"\n'
+                    "typedef struct { int (*fn)(int); } slot_t;\n"
+                    "static slot_t slot = { twice };\n"
+                ),
+            },
+        )
+        refs = _edges(mock_ingestor, REFERENCES)
+        assert _into(refs, _qn("inline", "twice")) == {
+            f"{PROJECT}.direct",
+            f"{PROJECT}.chained",
+        }, refs

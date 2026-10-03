@@ -23,8 +23,9 @@ class CFileScope(NamedTuple):
 
     # `static` functions: internal linkage, so no other file can name them.
     tu_local_functions: frozenset[str]
-    # Variables, function pointers included: in this file the bare name
-    # denotes the variable, never a function defined in another file.
+    # Variables, function pointers included, and enumeration constants: in
+    # this file the bare name denotes that object, never a function defined
+    # in another file.
     objects: frozenset[str]
 
 
@@ -53,6 +54,10 @@ def _value_slots(node: Node) -> list[Node]:
             field = cs.FIELD_VALUE
         case cs.TS_CPP_ASSIGNMENT_EXPRESSION:
             field = cs.FIELD_RIGHT
+        case cs.TS_RETURN_STATEMENT:
+            # `return handler;` hands the function to the caller, which may
+            # call it through the returned pointer (#2593 review).
+            return node.named_children[:1]
         case _:
             return []
     value = node.child_by_field_name(field)
@@ -92,13 +97,53 @@ def c_file_scope(root: Node) -> CFileScope:
     stack = [root]
     while stack:
         node = stack.pop()
+        if node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES:
+            stack.extend(node.named_children)
+            continue
         if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
             _record_function_definition(node, tu_local)
         elif node.type == cs.CppNodeType.DECLARATION:
             _record_declaration(node, tu_local, objects)
-        elif node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES:
-            stack.extend(node.named_children)
+        # An enum written anywhere outside a function body (alone, in a
+        # typedef, a declaration, or even a struct member) declares its
+        # constants at file scope in C (#2593 review).
+        objects.update(enumerator_names(node))
     return CFileScope(frozenset(tu_local), frozenset(objects))
+
+
+def enumerator_names(node: Node) -> set[str]:
+    """The enumeration constants declared in `node`, not counting those of a
+    function body inside it, which are local to that body."""
+    names: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.CppNodeType.COMPOUND_STATEMENT:
+            continue
+        if current.type == cs.TS_ENUMERATOR:
+            name_node = current.child_by_field_name(cs.FIELD_NAME)
+            if name_node is not None and (name := safe_decode_text(name_node)):
+                names.add(name)
+            continue
+        stack.extend(current.named_children)
+    return names
+
+
+def local_enumerator_names(node: Node) -> set[str]:
+    """Enumeration constants a function body declares before `node`, in the
+    blocks around it: there they name a constant, never a function."""
+    names: set[str] = set()
+    current = node.parent
+    while current is not None:
+        if current.type == cs.CppNodeType.FUNCTION_DEFINITION:
+            return names
+        for sibling in current.named_children:
+            if sibling.start_byte >= node.start_byte:
+                break
+            names |= enumerator_names(sibling)
+        current = current.parent
+    # At file scope: c_file_scope already holds every file-scope constant.
+    return set()
 
 
 def _record_function_definition(node: Node, tu_local: set[str]) -> None:
