@@ -172,6 +172,8 @@ def test_mcp_failed_contract_serializes_rollback_status(
     registry = MCPToolsRegistry.__new__(MCPToolsRegistry)
     registry.ingestor = store
     registry.project_root = str(root)
+    # `_run_rename` asks whether the rename hydrates a cold updater (#2801).
+    registry._live_updater = None
     with patch.object(
         registry,
         "_guarded_rename_reingest",

@@ -168,6 +168,16 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     return tool.function
 
 
+def _recording(
+    callback: Callable[[list[str]], ReingestReport], calls: list[list[str]]
+) -> Callable[[list[str]], ReingestReport]:
+    def recorded(paths: list[str]) -> ReingestReport:
+        calls.append(paths)
+        return callback(paths)
+
+    return recorded
+
+
 class MCPToolsRegistry:
     # Class-level default so the read guard cannot raise AttributeError on a
     # registry built through `__new__`. Tests construct it that way in a
@@ -2976,6 +2986,17 @@ class MCPToolsRegistry:
             ),
         )
 
+    def _retained_updater_for(self, project_name: str) -> GraphUpdater | None:
+        """The warm updater a rename re-ingests through, if this project has one.
+
+        Without one the rename hydrates a cold updater, which marks the
+        project before it builds (`_hydrate_reingest_updater`).
+        """
+        retained = self._live_updater
+        if retained is None or retained.project_name != project_name:
+            return None
+        return retained
+
     def _rename_reingest_updater(self, project_name: str) -> GraphUpdater:
         """The updater the rename re-ingests through, refusing a partial graph.
 
@@ -3001,8 +3022,8 @@ class MCPToolsRegistry:
         cognitive-complexity limit; choosing the updater and refusing over a
         partial graph is one decision, and wrapping the call is another.
         """
-        retained = self._live_updater
-        if retained is None or retained.project_name != project_name:
+        retained = self._retained_updater_for(project_name)
+        if retained is None:
             return self._hydrate_reingest_updater(project_name)
         # Recovery FIRST, then the latch: reading the latch before
         # `_persisted_incomplete` can clear a stranded recoverable marker left
@@ -3109,6 +3130,16 @@ class MCPToolsRegistry:
             return {
                 cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
             }
+        # Hydrating a cold updater puts this run's marker down before the
+        # rename knows whether it will re-ingest at all, and only the
+        # re-ingest callback clears it. A preview or a refusal never calls
+        # it, so the marker outlived the call and every graph tool refused
+        # the project as incomplete, for good (issue #2801). Hydration stays
+        # up front: it is what refuses a rename over a partial graph, or one
+        # whose marker cannot be written, before any file changes.
+        hydrates = self._retained_updater_for(project_name) is None
+        guarded: Callable[[list[str]], ReingestReport] | None = None
+        reingested: list[list[str]] = []
         try:
             # The applied rename is held to its postcondition contract through
             # the scoped re-ingest (issue #1531); a project that is not indexed
@@ -3117,7 +3148,8 @@ class MCPToolsRegistry:
             # root above, and the guarded callback rejects a cached updater
             # built for a different project, so the delta is measured under
             # the same name the re-ingest writes.
-            reingest = self._guarded_rename_reingest(project_name)
+            guarded = self._guarded_rename_reingest(project_name)
+            reingest = None if guarded is None else _recording(guarded, reingested)
             report = rename(
                 root,
                 self.ingestor.fetch_all,
@@ -3134,6 +3166,14 @@ class MCPToolsRegistry:
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
             }
+        finally:
+            # The callback, once called, settles the marker itself (cleared,
+            # or kept over a graph it may have written). Uncalled, nothing
+            # touched the graph after hydration, so the run is complete. A
+            # failed clear raises the in-process flag and logs, the same
+            # record a failed clear leaves everywhere else.
+            if hydrates and guarded is not None and not reingested:
+                self._require_marker_cleared(project_name)
         payload_marker_error: str | None = None
         if getattr(report, "graph_incomplete", False):
             # The rollback's re-ingest failed: the same invalidation the
