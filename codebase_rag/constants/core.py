@@ -3,8 +3,27 @@
 from enum import StrEnum
 
 INIT_PY = "__init__.py"
+INIT_PYI = "__init__.pyi"
+# The files that name their PACKAGE rather than themselves: a stub-only
+# package ships `__init__.pyi` in place of `__init__.py` (issue #2445).
+PY_PACKAGE_INIT_FILES: tuple[str, ...] = (INIT_PY, INIT_PYI)
 
 ENCODING_UTF8 = "utf-8"
+ENCODING_UTF8_SIG = "utf-8-sig"
+ENCODING_ASCII = "ascii"
+# Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
+# already reads as they are, so a source declaring one needs no transcoding.
+UTF8_CODEC_NAMES: frozenset[str] = frozenset({ENCODING_UTF8, ENCODING_UTF8_SIG})
+# PEP 263's declaration pattern, over bytes: the declaration is ASCII by
+# definition, and matching bytes lets a line that is not valid UTF-8 still be
+# searched. Only line 1, or line 2 under a blank or comment-only line 1, is
+# read, which is where CPython's tokenizer looks.
+PY_CODING_COOKIE_PATTERN = rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)"
+PY_CODING_BLANK_LINE_PATTERN = rb"^[ \t\f]*(?:[#\r\n]|$)"
+# Every 7-bit byte. PEP 263 admits only encodings that read these as ASCII: a
+# declaration is itself ASCII, so an encoding that reads it differently (UTF-16,
+# EBCDIC) cannot have been what the author meant, and CPython rejects the file.
+ASCII_BYTES = bytes(range(128))
 # Longest UTF-8 sequence, so a window this size either side of a name spans
 # any single character that could legitimately sit next to it.
 UTF8_MAX_SEQUENCE_BYTES = 4
@@ -138,6 +157,7 @@ TMP_EXTENSION = ".tmp"
 # manifest rather than the directory, so they are deliberately absent.
 DIRECTORY_MODULE_STEM_BY_EXT: dict[str, str] = {
     ".py": "__init__",
+    ".pyi": "__init__",
     ".rs": "mod",
     ".js": "index",
     ".jsx": "index",
@@ -287,6 +307,9 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     # the old identities with no staleness warning, and `utils/` is in neither
     # of the directory globs above (issue #1720 review).
     "utils/path_utils.py",
+    # Decides which bytes the grammar reads for a Python source, so every name
+    # in a declared-encoding file depends on it (issue #2445).
+    "utils/source_encoding.py",
 )
 PY_SOURCE_GLOB = "*.py"
 # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
