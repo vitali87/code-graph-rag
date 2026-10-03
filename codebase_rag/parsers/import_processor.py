@@ -1173,10 +1173,11 @@ class ImportProcessor:
             # top-level names, so a bare top-level import resolves externally.
             if repo_is_package:
                 return module_name == project_name
-            return (
-                (repo_path / module_name).is_dir()
-                or (repo_path / f"{module_name}{cs.EXT_PY}").is_file()
-                or (repo_path / module_name / cs.INIT_PY).is_file()
+            # A top-level stub with no `.py` is a local module too: it is what
+            # a compiled extension's definitions are indexed from (#2445).
+            return (repo_path / module_name).is_dir() or any(
+                (repo_path / f"{module_name}{ext}").is_file()
+                for ext in cs.PY_EXTENSIONS
             )
 
         # Discovered annotation-processor roots (issue #1140): mutated via
@@ -3632,7 +3633,10 @@ class ImportProcessor:
         if not module_qn.startswith(prefix):
             return False
         rel = module_qn[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
-        return (self.repo_path / rel / cs.INIT_PY).is_file()
+        # A stub-only package's `__init__.pyi` names the package too (#2445).
+        return any(
+            (self.repo_path / rel / init).is_file() for init in cs.PY_PACKAGE_INIT_FILES
+        )
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         # Relative imports are always internal; resolve to the full project-prefixed
