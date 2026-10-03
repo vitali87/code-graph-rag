@@ -18,6 +18,11 @@
 # construction of the class itself, an untyped callable, other classes'
 # same-named members, `super()` and the call-argument form the indexer
 # already handled.
+#
+# Lookup stops at the first class whose body binds the name: a subclass's
+# `run = None` hides the base's `run` (alias or def), a conditional `def run`
+# beside `run = _impl` leaves both as candidates, and a method that rebinds
+# `self` calls through the type it assigned, not its class's alias.
 from __future__ import annotations
 
 from pathlib import Path
@@ -674,3 +679,417 @@ class TestNeighboursUnchanged:
 
         assert calls.get(f"{CLS}._get") == cs.EdgeResolution.HEURISTIC, calls
         assert calls.get(f"{CLS}._set") == cs.EdgeResolution.HEURISTIC, calls
+
+
+# ---------------------------------------------------------------------------
+# A subclass that binds the name to a value hides what it inherits
+# ---------------------------------------------------------------------------
+
+# Attribute lookup stops at the first class in the MRO whose body binds the
+# name, whatever it binds it to: `run = None` in a subclass hides the base's
+# `run`, so `Sub().run()` runs nothing of the base's.
+_SHADOW_BASE = (
+    "FLAG = True\n"
+    "\n"
+    "class Base:\n"
+    "    def _plain(self):\n"
+    "        return 1\n"
+    "    run = _plain\n"
+    "\n"
+)
+BASE = f"{MODULE}.Base"
+SUB = f"{MODULE}.Sub"
+
+
+class TestSubclassBindingHidesInheritedMember:
+    def test_subclass_value_hides_an_inherited_alias(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _SHADOW_BASE + "class Sub(Base):\n"
+            "    run = None\n"
+            "\n"
+            "def use_sub():\n"
+            "    return Sub().run()\n"
+            "\n"
+            "def use_base():\n"
+            "    return Base().run()\n",
+        )
+
+        calls = _edges(mock_ingestor, _CALLS)
+
+        assert f"{BASE}._plain" not in _targets(calls, f"{MODULE}.use_sub"), calls
+        assert f"{BASE}._plain" in _targets(calls, f"{MODULE}.use_base"), calls
+
+    def test_self_call_in_a_shadowing_subclass_binds_nothing(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _SHADOW_BASE + "class Sub(Base):\n"
+            "    run = None\n"
+            "    def go(self):\n"
+            "        return self.run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.go")
+
+        assert f"{BASE}._plain" not in calls, calls
+
+    def test_subclass_value_hides_an_inherited_def(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The same lookup rule for a base `def run`, which main already got
+        # wrong before any alias was involved.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            "class Base:\n"
+            "    def run(self):\n"
+            "        return 1\n"
+            "\n"
+            "class Sub(Base):\n"
+            "    run = None\n"
+            "    def go(self):\n"
+            "        return self.run()\n"
+            "\n"
+            "def use_sub():\n"
+            "    return Sub().run()\n"
+            "\n"
+            "def use_base():\n"
+            "    return Base().run()\n",
+        )
+
+        calls = _edges(mock_ingestor, _CALLS)
+
+        assert f"{BASE}.run" not in _targets(calls, f"{MODULE}.use_sub"), calls
+        assert f"{BASE}.run" not in _targets(calls, f"{SUB}.go"), calls
+        assert f"{BASE}.run" in _targets(calls, f"{MODULE}.use_base"), calls
+
+    def test_incremental_run_keeps_an_unchanged_subclass_value(
+        self, temp_repo: Path
+    ) -> None:
+        # Re-parsing only the caller leaves both classes to rehydration from
+        # the graph, so the subclass's binding has to survive the round trip.
+        parsers, queries = load_parsers()
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("python parser not available")
+        root = temp_repo / PROJECT
+        (root / "pkg").mkdir(parents=True)
+        (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        (root / "pkg" / "disp.py").write_text(
+            _SHADOW_BASE + "class Sub(Base):\n    run = None\n", encoding="utf-8"
+        )
+        app_source = (
+            "from pkg.disp import Base, Sub\n"
+            "\n"
+            "def use_sub():\n"
+            "    return Sub().run()\n"
+            "\n"
+            "def use_base():\n"
+            "    return Base().run()\n"
+        )
+        (root / "app.py").write_text(app_source, encoding="utf-8")
+
+        def calls_from(store: _StatefulIngestor, caller: str) -> set[str]:
+            return {
+                str(target)
+                for _, source, rel, _, target in store.edges
+                if rel == _CALLS and str(source) == f"{PROJECT}.app.{caller}"
+            }
+
+        store = _StatefulIngestor()
+        GraphUpdater(
+            ingestor=store, repo_path=root, parsers=parsers, queries=queries
+        ).run(force=True)
+        assert f"{BASE}._plain" not in calls_from(store, "use_sub")
+        assert f"{BASE}._plain" in calls_from(store, "use_base")
+
+        (root / "app.py").write_text(app_source + "# touched\n", encoding="utf-8")
+        GraphUpdater(
+            ingestor=store, repo_path=root, parsers=parsers, queries=queries
+        ).run(force=False)
+        assert f"{BASE}._plain" not in calls_from(store, "use_sub")
+        assert f"{BASE}._plain" in calls_from(store, "use_base")
+
+    def test_removing_a_class_drops_its_non_method_members(self) -> None:
+        registry = FunctionRegistryTrie()
+        registry[SUB] = NodeType.CLASS
+        registry.set_non_method_members(SUB, ("run",))
+        assert registry.binds_non_method(SUB, "run")
+
+        del registry[SUB]
+
+        assert not registry.binds_non_method(SUB, "run")
+
+    # Negative tests: everything that does not bind the name keeps inheriting.
+
+    def test_subclass_without_the_name_still_inherits_the_alias(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Other names, and an annotation alone (which binds nothing), leave
+        # `run` to the base.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _SHADOW_BASE + "class Sub(Base):\n"
+            "    other = None\n"
+            "    run: object\n"
+            "\n"
+            "def use_sub():\n"
+            "    return Sub().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.use_sub")
+
+        assert f"{BASE}._plain" in calls, calls
+
+    def test_subclass_alias_resolves_to_its_own_target(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _SHADOW_BASE + "class Sub(Base):\n"
+            "    def _own(self):\n"
+            "        return 2\n"
+            "    run = _own\n"
+            "\n"
+            "def use_sub():\n"
+            "    return Sub().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.use_sub")
+
+        assert calls.get(f"{SUB}._own") == cs.EdgeResolution.EXACT, calls
+        assert f"{BASE}._plain" not in calls, calls
+
+    def test_super_call_from_a_shadowing_subclass_reaches_the_base(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _SHADOW_BASE + "class Sub(Base):\n"
+            "    run = None\n"
+            "    def go(self):\n"
+            "        return super().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.go")
+
+        assert f"{BASE}._plain" in calls, calls
+
+    def test_conditional_value_keeps_the_inherited_alias(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # When FLAG is false Sub binds nothing, so the base's `run` may run.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _SHADOW_BASE + "class Sub(Base):\n"
+            "    if FLAG:\n"
+            "        run = None\n"
+            "\n"
+            "def use_sub():\n"
+            "    return Sub().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.use_sub")
+
+        assert f"{BASE}._plain" in calls, calls
+
+    def test_own_def_rewrapped_in_the_body_still_resolves(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `tidy = staticmethod(tidy)` rebinds the class's own def to a
+        # wrapper of itself; the def stays the call's target.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            "class Dispatcher:\n"
+            "    def tidy(value):\n"
+            "        return value\n"
+            "    tidy = staticmethod(tidy)\n"
+            "\n"
+            "def use():\n"
+            "    return Dispatcher().tidy(1)\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.use")
+
+        assert f"{CLS}.tidy" in calls, calls
+
+
+# ---------------------------------------------------------------------------
+# A def beside an alias of the same name
+# ---------------------------------------------------------------------------
+
+_CONDITIONAL_DEF_AFTER_ALIAS = (
+    "FLAG = True\n"
+    "\n"
+    "class Dispatcher:\n"
+    "    def _impl(self):\n"
+    "        return 1\n"
+    "    run = _impl\n"
+    "    if FLAG:\n"
+    "        def run(self):\n"
+    "            return 2\n"
+)
+_CONDITIONAL_ALIAS_AFTER_DEF = (
+    "FLAG = True\n"
+    "\n"
+    "class Dispatcher:\n"
+    "    def _impl(self):\n"
+    "        return 1\n"
+    "    def run(self):\n"
+    "        return 2\n"
+    "    if FLAG:\n"
+    "        run = _impl\n"
+)
+_CALLERS = (
+    "    def go(self):\n"
+    "        return self.run()\n"
+    "\n"
+    "def use():\n"
+    "    return Dispatcher().run()\n"
+)
+
+
+class TestDefinitionBesideAlias:
+    @pytest.mark.parametrize(
+        "body",
+        [_CONDITIONAL_DEF_AFTER_ALIAS, _CONDITIONAL_ALIAS_AFTER_DEF],
+        ids=["conditional-def-after-alias", "conditional-alias-after-def"],
+    )
+    def test_either_binding_may_run(
+        self, temp_repo: Path, mock_ingestor: MagicMock, body: str
+    ) -> None:
+        # Which of the two the class ends up with depends on FLAG, so a call
+        # through `run` may run either one.
+        _index(temp_repo, mock_ingestor, body + _CALLERS)
+
+        calls = _edges(mock_ingestor, _CALLS)
+
+        for caller in (f"{CLS}.go", f"{MODULE}.use"):
+            targets = _targets(calls, caller)
+            assert targets.get(f"{CLS}.run") == cs.EdgeResolution.OVERLOAD, targets
+            assert targets.get(f"{CLS}._impl") == cs.EdgeResolution.OVERLOAD, targets
+
+    def test_later_alias_replaces_the_def(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            "class Dispatcher:\n"
+            "    def run(self):\n"
+            "        return 2\n"
+            "    def _impl(self):\n"
+            "        return 1\n"
+            "    run = _impl\n" + _CALLERS,
+        )
+
+        calls = _edges(mock_ingestor, _CALLS)
+
+        for caller in (f"{CLS}.go", f"{MODULE}.use"):
+            targets = _targets(calls, caller)
+            assert targets.get(f"{CLS}._impl") == cs.EdgeResolution.EXACT, targets
+            assert f"{CLS}.run" not in targets, targets
+
+
+# ---------------------------------------------------------------------------
+# A typed receiver resolves through its type, not the enclosing class's alias
+# ---------------------------------------------------------------------------
+
+_HOST = (
+    "class Other:\n"
+    "    def run(self):\n"
+    "        return 3\n"
+    "\n"
+    "class Host:\n"
+    "    def _own(self):\n"
+    "        return 4\n"
+    "    run = _own\n"
+)
+HOST = f"{MODULE}.Host"
+OTHER = f"{MODULE}.Other"
+
+
+class TestTypedReceiverBeforeEnclosingAlias:
+    def test_rebound_self_resolves_through_its_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _HOST + "    def go(self):\n"
+            "        self = Other()\n"
+            "        return self.run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert f"{OTHER}.run" in calls, calls
+        assert f"{HOST}._own" not in calls, calls
+
+    def test_rebound_self_skips_the_enclosing_def(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The same rule for a plain `def run` on the enclosing class, whose
+        # self-dispatch edge main added beside the right one.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            "class Other:\n"
+            "    def run(self):\n"
+            "        return 3\n"
+            "\n"
+            "class Host:\n"
+            "    def run(self):\n"
+            "        return 4\n"
+            "    def go(self):\n"
+            "        self = Other()\n"
+            "        return self.run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert f"{OTHER}.run" in calls, calls
+        assert f"{HOST}.run" not in calls, calls
+
+    # Negative tests: an untouched `self` keeps the class's own alias, and any
+    # other typed local resolves through its own class.
+
+    def test_plain_self_keeps_the_own_alias(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _HOST + "    def go(self):\n        return self.run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert calls.get(f"{HOST}._own") == cs.EdgeResolution.EXACT, calls
+        assert f"{OTHER}.run" not in calls, calls
+
+    def test_typed_local_resolves_through_its_own_class(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _HOST + "    def go(self):\n"
+            "        o: Other = Other()\n"
+            "        return o.run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{HOST}.go")
+
+        assert f"{OTHER}.run" in calls, calls
+        assert f"{HOST}._own" not in calls, calls

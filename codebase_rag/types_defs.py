@@ -162,6 +162,12 @@ class FunctionRegistryTrieProtocol(Protocol):
         self, alias_qn: QualifiedName
     ) -> tuple[QualifiedName, ...]: ...
 
+    def set_non_method_members(
+        self, class_qn: QualifiedName, names: Iterable[str]
+    ) -> None: ...
+
+    def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool: ...
+
     def mark_property(self, qualified_name: QualifiedName) -> None: ...
 
     def is_property(self, qualified_name: QualifiedName) -> bool: ...
@@ -1058,7 +1064,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, non_method_members: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,

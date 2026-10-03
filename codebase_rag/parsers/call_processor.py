@@ -5092,6 +5092,12 @@ class CallProcessor:
                 call_name.startswith(cs.PY_SELF_PREFIX)
                 or call_name.startswith(cs.PY_CLS_PREFIX)
             )
+            # A method that rebinds its receiver (`self = Other()`) calls
+            # through that value's type, which the resolved edge follows.
+            and not (
+                ctx.local_var_types
+                and call_name.partition(cs.SEPARATOR_DOT)[0] in ctx.local_var_types
+            )
         ):
             # self.M()/cls.M() statically targets the enclosing class's own or
             # inherited M and dynamically dispatches to every concrete subclass

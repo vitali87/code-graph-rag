@@ -1182,6 +1182,11 @@ class _StatefulIngestor:
                             raw_aliases := props.get(cs.KEY_MEMBER_ALIASES), list
                         )
                         else None,
+                        cs.KEY_NON_METHOD_MEMBERS: [_text(n) for n in raw_values]
+                        if isinstance(
+                            raw_values := props.get(cs.KEY_NON_METHOD_MEMBERS), list
+                        )
+                        else None,
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),

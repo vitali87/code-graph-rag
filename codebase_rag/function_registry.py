@@ -4,7 +4,7 @@
 # callable params.
 
 import sys
-from collections.abc import Callable, ItemsView, KeysView
+from collections.abc import Callable, ItemsView, Iterable, KeysView
 
 from . import constants as cs
 from .types_defs import (
@@ -29,6 +29,7 @@ class FunctionRegistryTrie:
         "_property_names",
         "_member_aliases",
         "_aliases_by_target",
+        "_non_method_members",
         "_object_members",
         "_abstracts",
         "_callable_params",
@@ -52,6 +53,10 @@ class FunctionRegistryTrie:
         # #2620); the alias is no node, so it never enters the trie.
         self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
         self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
+        # Class -> the member names its body binds to something other than a
+        # method (`run = None`); attribute lookup stops there instead of
+        # reaching a base's `run`.
+        self._non_method_members: dict[QualifiedName, frozenset[str]] = {}
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
@@ -180,6 +185,7 @@ class FunctionRegistryTrie:
 
         self._invalidate_ending_with_cache(simple_name)
         self._drop_member_alias_target(qualified_name)
+        self._non_method_members.pop(qualified_name, None)
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -318,6 +324,17 @@ class FunctionRegistryTrie:
         self, alias_qn: QualifiedName
     ) -> tuple[QualifiedName, ...]:
         return tuple(self._member_aliases.get(alias_qn, ()))
+
+    def set_non_method_members(
+        self, class_qn: QualifiedName, names: Iterable[str]
+    ) -> None:
+        if members := frozenset(names):
+            self._non_method_members[class_qn] = members
+        else:
+            self._non_method_members.pop(class_qn, None)
+
+    def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool:
+        return member in self._non_method_members.get(class_qn, ())
 
     def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
         # A re-parsed file registers its aliases again with its methods, so a

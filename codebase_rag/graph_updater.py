@@ -3231,6 +3231,12 @@ class GraphUpdater:
                 self.function_registry.add_member_alias(
                     f"{owner_qn}{cs.SEPARATOR_DOT}{alias}", qn
                 )
+        # And the values an unchanged class body binds (`run = None`), or a
+        # re-parsed file's `Sub().run()` reaches the base's `run` they hide.
+        if isinstance(names := row.get(cs.KEY_NON_METHOD_MEMBERS), list):
+            self.function_registry.set_non_method_members(
+                qn, [name for name in names if isinstance(name, str)]
+            )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.

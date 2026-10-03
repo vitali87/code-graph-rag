@@ -288,6 +288,18 @@ def _python_member_aliases(
     return {method_id: tuple(aliases) for method_id, aliases in names.items()}
 
 
+def _python_non_method_members(
+    class_node: Node, language: cs.SupportedLanguage
+) -> list[str]:
+    # The names the class body binds to a value that is no method (`run =
+    # None`): they hide a base's `run` from attribute lookup (issue #2620).
+    if language != cs.SupportedLanguage.PYTHON:
+        return []
+    if (body := class_node.child_by_field_name(cs.FIELD_BODY)) is None:
+        return []
+    return sorted(scan_class_body_aliases(body).non_method)
+
+
 class _MethodScope(NamedTuple):
     # The per-class context every method of one class body is ingested under.
     class_node: Node
@@ -1258,8 +1270,13 @@ class ClassIngestMixin:
         class_props.update(anchor_hash_props(class_node, decorators))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
+        # Stored on the node so an incremental run that does not re-parse
+        # this file can register them again.
+        if non_method_members := _python_non_method_members(class_node, language):
+            class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        self.function_registry.set_non_method_members(class_qn, non_method_members)
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
 

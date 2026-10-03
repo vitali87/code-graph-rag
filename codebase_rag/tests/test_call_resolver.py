@@ -70,6 +70,9 @@ class MockFunctionRegistry:
     def member_alias_targets(self, qn: QualifiedName) -> tuple[QualifiedName, ...]:
         return ()
 
+    def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool:
+        return False
+
     def mark_property(self, qn: QualifiedName) -> None:
         self._properties.add(qn)
         self._property_names.add(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])

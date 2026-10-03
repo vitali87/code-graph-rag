@@ -9,7 +9,12 @@ The scan follows the class namespace in source order, the way Python builds
 it: a right-hand name binds the method only if the body has already defined
 it, and a later `def` or plain assignment of the alias name replaces the
 alias. A statement under `if`/`try`/`with`/`for`/`match` may or may not run,
-so it adds candidates to a name instead of replacing them.
+so it adds candidates to a name instead of replacing them: `run = _impl`
+followed by a conditional `def run` leaves both as candidates.
+
+The scan also reports the names the body binds, unconditionally, to a value
+that is no method (`run = None`). Attribute lookup stops at the first class
+whose body binds the name, so such a binding hides a base class's `run`.
 """
 
 from __future__ import annotations
@@ -35,15 +40,17 @@ class AliasReference(NamedTuple):
 
 class ClassBodyAliases(NamedTuple):
     # Alias name -> the `function_definition` nodes it may hold once the body
-    # has run; more than one when a conditional picks between methods.
+    # has run; more than one when a conditional picks between methods, and
+    # then the name's own `def` is one of them when it may survive.
     members: dict[str, tuple[Node, ...]]
     references: list[AliasReference]
+    non_method: frozenset[str]
 
 
 def scan_class_body_aliases(body: Node) -> ClassBodyAliases:
     scan = _ClassBodyScan()
     scan.block(body, conditional=False)
-    return ClassBodyAliases(scan.members(), scan.references)
+    return ClassBodyAliases(scan.members(), scan.references, frozenset(scan.values))
 
 
 def _definition_name(node: Node) -> str | None:
@@ -88,19 +95,19 @@ class _ClassBodyScan:
         # names, or nothing for a value that is not a method.
         self._bound: dict[str, tuple[Node, ...]] = {}
         self._aliases: set[str] = set()
+        # Names that certainly hold a value which is no method once the body
+        # has run; a conditional binding never makes a name certain.
+        self.values: set[str] = set()
         self.references: list[AliasReference] = []
 
     def members(self) -> dict[str, tuple[Node, ...]]:
         # A name whose only candidate is its own `def` is a method, not an
-        # alias; a conditional `def` beside an alias is left to that method.
+        # alias. Beside another method its `def` stays a candidate, so a call
+        # through the name reaches both.
         members: dict[str, tuple[Node, ...]] = {}
         for name in sorted(self._aliases):
-            methods = tuple(
-                method
-                for method in self._bound.get(name, ())
-                if _definition_name(method) != name
-            )
-            if methods:
+            methods = self._bound.get(name, ())
+            if any(_definition_name(method) != name for method in methods):
                 members[name] = methods
         return members
 
@@ -118,7 +125,9 @@ class _ClassBodyScan:
                 methods = (inner,) if inner.type == cs.TS_PY_FUNCTION_DEFINITION else ()
                 self._define(inner, methods, conditional)
             case cs.TS_PY_CLASS_DEFINITION:
-                self._define(node, (), conditional)
+                # A nested class is a node of its own, which lookup finds
+                # before any value, so it is recorded as neither.
+                self._define(node, (), conditional, is_value=False)
             case cs.TS_PY_EXPRESSION_STATEMENT:
                 for child in node.named_children:
                     if child.type == cs.TS_PY_ASSIGNMENT:
@@ -134,10 +143,14 @@ class _ClassBodyScan:
                 self._compound(child)
 
     def _define(
-        self, definition: Node, methods: tuple[Node, ...], conditional: bool
+        self,
+        definition: Node,
+        methods: tuple[Node, ...],
+        conditional: bool,
+        is_value: bool = True,
     ) -> None:
         if name := _definition_name(definition):
-            self._bind(name, methods, conditional, is_alias=False)
+            self._bind(name, methods, conditional, is_alias=False, is_value=is_value)
 
     def _assignment(self, node: Node, conditional: bool) -> None:
         # `a = b = _impl` nests the second assignment as the first's value.
@@ -172,16 +185,27 @@ class _ClassBodyScan:
             self._bind(name, (), conditional, is_alias=False)
 
     def _bind(
-        self, name: str, methods: tuple[Node, ...], conditional: bool, is_alias: bool
+        self,
+        name: str,
+        methods: tuple[Node, ...],
+        conditional: bool,
+        is_alias: bool,
+        is_value: bool = True,
     ) -> None:
         if conditional:
             held = self._bound.get(name, ())
             self._bound[name] = held + tuple(m for m in methods if m not in held)
             if is_alias:
                 self._aliases.add(name)
+            if methods:
+                self.values.discard(name)
             return
         self._bound[name] = methods
         if is_alias:
             self._aliases.add(name)
         else:
             self._aliases.discard(name)
+        if is_value and not methods:
+            self.values.add(name)
+        else:
+            self.values.discard(name)

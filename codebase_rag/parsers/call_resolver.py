@@ -435,6 +435,10 @@ class CallResolver:
     def _try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
     ) -> tuple[str, str] | None:
+        # A class-body alias of the name (issue #2620) lists every method
+        # the member may hold, its own `def` included when that survives.
+        if alias := self._member_alias(class_qn, method_name):
+            return alias
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
@@ -1471,16 +1475,12 @@ class CallResolver:
         # `self.run()` where a class body aliases `run` (issue #2620) is a
         # member of the enclosing class, which the module-keyed cache does
         # not know about.
-        if (
-            call.language == cs.SupportedLanguage.PYTHON
-            and call.class_context
-            and (
-                result := self._resolve_self_member_alias(
-                    call.call_name, call.class_context
-                )
+        if call.language == cs.SupportedLanguage.PYTHON and call.class_context:
+            handled, result = self._resolve_self_member_alias(
+                call.call_name, call.class_context, call.local_var_types
             )
-        ):
-            return True, result
+            if handled:
+                return True, result
 
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
@@ -4450,7 +4450,7 @@ class CallResolver:
             return None
 
         if result := self._resolve_inherited_method(
-            current_class_qn, method_name, own_alias=False
+            current_class_qn, method_name, own_members=False
         ):
             callee_type, parent_method_qn = result
             logger.debug(
@@ -4512,24 +4512,35 @@ class CallResolver:
         return None
 
     def _resolve_self_member_alias(
-        self, call_name: str, class_context: str
-    ) -> tuple[str, str] | None:
-        # The receiver is the enclosing class, so walk its MRO: a real def of
-        # the name met first leaves the call to the usual resolution.
+        self,
+        call_name: str,
+        class_context: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # The receiver is the enclosing class, so walk its MRO to the first
+        # class whose body binds the name. A real def there leaves the call to
+        # the usual resolution. A value (`run = None`) found first hides
+        # whatever a base binds, so the call reaches nothing of the base's.
         receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
         if (
             receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
             or not member
             or cs.SEPARATOR_DOT in member
+            # A method that rebinds the receiver (`self = Other()`) has typed
+            # it; the usual resolution follows that type.
+            or (local_var_types and receiver in local_var_types)
         ):
-            return None
+            return False, None
+        hidden = False
         for class_qn in self._mro(class_context):
             owner = self._follow_reexports(class_qn)
-            if f"{owner}{cs.SEPARATOR_DOT}{member}" in self.function_registry:
-                return None
             if alias := self._member_alias(owner, member):
-                return alias
-        return None
+                return True, None if hidden else alias
+            if f"{owner}{cs.SEPARATOR_DOT}{member}" in self.function_registry:
+                return hidden, None
+            if self.function_registry.binds_non_method(owner, member):
+                hidden = True
+        return False, None
 
     def member_alias_fanout(self, callee_qn: str, member: str) -> list[str]:
         """Every method a call written as `.member` may run, given `callee_qn`.
@@ -4537,10 +4548,12 @@ class CallResolver:
         A call resolved through a class-body alias lands on one method the
         alias names; a conditional alias (`__call__ = _a if X else _b`)
         names several and picks one at class creation, so each is a
-        candidate. Any other callee is returned alone.
+        candidate. A call that bound to the member's own `def` gets the
+        alias's methods instead when a later alias replaced that `def`. Any
+        other callee is returned alone.
         """
         owner, _, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        if not owner or leaf == member:
+        if not owner:
             return [callee_qn]
         targets = [
             qn
@@ -4549,7 +4562,9 @@ class CallResolver:
             )
             if qn in self.function_registry
         ]
-        return targets if callee_qn in targets else [callee_qn]
+        if callee_qn in targets or (targets and leaf == member):
+            return targets
+        return [callee_qn]
 
     def instance_call_targets(
         self,
@@ -4620,14 +4635,19 @@ class CallResolver:
         return found
 
     def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_alias: bool = True
+        self, class_qn: str, method_name: str, own_members: bool = True
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
-        # itself; a class-body alias there (`run = _plain`, issue #2620) is
-        # still the class's own member and comes before any base. `super()`
-        # starts above the class, so it skips that alias.
-        if own_alias and (alias := self._member_alias(class_qn, method_name)):
-            return alias
+        # itself. A class-body alias there (`run = _plain`, issue #2620) is
+        # still the class's own member, and a value there (`run = None`) hides
+        # every base's `run`, the way attribute lookup stops at the first
+        # class that binds the name. `super()` starts above the class, so it
+        # skips both.
+        if own_members:
+            if alias := self._member_alias(class_qn, method_name):
+                return alias
+            if self.function_registry.binds_non_method(class_qn, method_name):
+                return None
         if class_qn not in self.class_inheritance:
             return None
 
@@ -4642,13 +4662,15 @@ class CallResolver:
             parent_class_qn = self._follow_reexports(bfs_queue.popleft())
             parent_method_qn = f"{parent_class_qn}.{method_name}"
 
+            if alias := self._member_alias(parent_class_qn, method_name):
+                return alias
             if parent_method_qn in self.function_registry:
                 return (
                     self.function_registry[parent_method_qn],
                     parent_method_qn,
                 )
-            if alias := self._member_alias(parent_class_qn, method_name):
-                return alias
+            if self.function_registry.binds_non_method(parent_class_qn, method_name):
+                return None
 
             if parent_class_qn in self.class_inheritance:
                 for grandparent_qn in self.class_inheritance[parent_class_qn]:
