@@ -133,7 +133,11 @@ A graph built before this rule loses the links' modules, and the `Package`
 nodes of linked directories, on its next sync. A link to a plain directory was
 merged into its target's `Folder` node, so that `Folder` keeps one extra
 containing folder until the project is rebuilt (`cgr delete-project`, then
-sync again).
+sync again). The `Package` of a link out of the repository whose target sits
+at the link's own relative path under another root (`pkg -> ../other/pkg`)
+stays as well: it is shaped like the node another checkout indexed under the
+same project name holds for its own directory, and the sync cannot tell the
+two apart.
 
 Shared sources that a repository reaches through a link are not indexed. Index
 them as a project of their own (see [Multi-Project](../guide/multi-project.md)),
