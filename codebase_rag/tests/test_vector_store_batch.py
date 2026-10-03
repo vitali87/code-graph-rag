@@ -433,12 +433,13 @@ class TestVerifyStoredIds:
 
         mock_client = MagicMock()
         mock_client.retrieve.side_effect = Exception("fail")
+        ids = {1: _fn("p.a"), 2: _fn("p.b")}
 
         with (
             patch(_PATCH_CLIENT, return_value=mock_client),
             pytest.raises(Exception, match="fail"),
         ):
-            verify_stored_ids("p", {1: _fn("p.a"), 2: _fn("p.b")})
+            verify_stored_ids("p", ids)
 
     def test_batches_large_id_sets(self) -> None:
         from codebase_rag.vector_store import _RETRIEVE_BATCH_SIZE, verify_stored_ids

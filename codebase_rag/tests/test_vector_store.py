@@ -806,12 +806,13 @@ def test_storing_vectors_of_the_wrong_size_names_the_setting_to_change(
 
     store = MagicMock()
     store.backend = backend
+    batch = [(1, [0.1, 0.2, 0.3], _fn("pkg.a"))]
     with (
         patch.object(vs.settings, setting, 4),
         patch.object(vs, "_get_vector_store", return_value=store),
     ):
         with pytest.raises(ValueError, match=f"3-dimensional.*{setting}"):
-            vs.store_embedding_batch("pkg", [(1, [0.1, 0.2, 0.3], _fn("pkg.a"))])
+            vs.store_embedding_batch("pkg", batch)
 
     store.store_embedding_batch.assert_not_called()
 
