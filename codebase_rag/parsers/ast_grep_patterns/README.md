@@ -7,9 +7,9 @@ tree-sitter traversal. The `AstGrepTier` (`../ast_grep_tier.py`) loads every
 `Module`, `Function`, and `Class` nodes plus `DEFINES` and `IMPORTS`
 relationships, using [ast-grep](https://ast-grep.github.io/) patterns.
 
-This is a **basic** tier: names are flat (no nested-namespace qualification) and
-there is no call-graph (`CALLS`) resolution. Languages that need that get a full
-tree-sitter `LanguageSpec`. The tier is active only when the `ast-grep` extra is
+This is a **basic** tier: there is no call-graph (`CALLS`) resolution, and names
+are flat (`<module>.<name>`) unless a config sets `scoped_names` (see below).
+Languages that need calls get a full tree-sitter `LanguageSpec`. The tier is active only when the `ast-grep` extra is
 installed (`pip install code-graph-rag[ast-grep]`); otherwise it is a no-op.
 
 ## Config format
@@ -31,6 +31,39 @@ imports:                # patterns whose match becomes an IMPORTS edge
 ```
 
 `extensions` and `ast_grep_id` are required; the rule lists are optional.
+
+## Scoped names
+
+With flat names every definition is `<module>.<name>`, so two definitions of
+one name in a file are one node. That is right where a repeated name is one
+function (an Elixir multi-clause `def`, a Haskell multi-equation function) and
+wrong where it is two (overloads, same-named methods of different types).
+`scoped_names: true` names each definition the way the tree-sitter tier names
+the same shape, so a language keeps its qualified names if it later moves to
+that tier:
+
+| Shape | Qualified name | Defined by |
+|---|---|---|
+| function in a type | `<module>.<Type>.<name>` (a `Method`) | the type, `DEFINES_METHOD` |
+| function or type in a function | `<module>.<function>.<name>` | the function, `DEFINES` |
+| type in a type | `<module>.<Outer>.<Inner>` | the module, `DEFINES` |
+| second definition of a qualified name | `<qn>@<line>` (`<qn>@<line>_<col>` for a same-line twin) | as above |
+
+Two keys attach members to a type declared elsewhere, the way a Rust
+`impl T` block or a Go receiver method does. Both need `scoped_names`:
+
+```yaml
+type_extensions:        # declarations that add members to the type they name
+  - kind: class_declaration
+    has_child: extension           # swift `extension T { }`
+functions:
+  - kind: function_declaration
+    receiver_child: receiver_type  # kotlin `fun T.f()`
+```
+
+An extension emits no node of its own. Its members are `<module>.<T>.<name>`,
+defined by T's `Class` when the file declares T and by the module otherwise.
+Generic arguments and `?` are dropped from the type (`List<T>` -> `List`).
 
 ## Rule forms
 
@@ -60,6 +93,7 @@ first identifier-like child. Three optional keys handle the rest:
 | `name_child` | `kind` | take the name from this child kind instead of the default lookup |
 | `has_child` | `kind` | skip matches with no child of this kind |
 | `name_head` | `pattern` | keep only the leading identifier of the capture |
+| `receiver_child` | `kind` | name the declaration under the type this child names (needs `scoped_names`) |
 
 `has_child` disambiguates a node type that covers several concepts. A Nix
 `binding` is a function only when its value is a `function_expression`;

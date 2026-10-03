@@ -64,13 +64,13 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--repo-path` | Path to repository (defaults to current directory) |
-| `--update-graph` | Parse and ingest the repository into the knowledge graph |
+| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts). Cannot be combined with `-a`/`--ask-agent`, `--no-sync` or `--projects`. |
 | `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
 | `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
 | `--batch-size` | Override Memgraph flush batch size |
 | `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
 | `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
-| `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
+| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there and the nodes they reach. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
 
 ### `cgr export`
 
@@ -203,9 +203,12 @@ cgr language add-grammar --grammar-url <url>
 cgr language list-languages
 cgr language list-languages --verbose
 cgr language remove-language <language-name>
+cgr language cleanup-orphaned-modules
 ```
 
 `list-languages` prints one row per language across all three parsing tiers: its name, file extensions, tier (`tree-sitter`, `ast-grep` or `document`), level of support (`full`, `in development`, `structural` or `headings`) and whether this install can parse it. A language marked `no` needs its extra, which the command names below the table. A second table shows the optional semantic frontends (libclang, go/types, Roslyn, javac, Jedi): whether each toolchain is found, the setting that selects it, and whether indexing will use it. The language name and extensions are never truncated, including in piped output. `--verbose` adds the tree-sitter node types each language maps to functions, classes, modules and calls.
+
+`add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
 
 ## Makefile Commands
 

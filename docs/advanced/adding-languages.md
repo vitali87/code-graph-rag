@@ -4,26 +4,33 @@ description: "Add support for new programming languages to Code-Graph-RAG using 
 
 # Adding Languages
 
-Code-Graph-RAG makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
+Code-Graph-RAG can add support for any language that has a Tree-sitter grammar. Adding one is a change to Code-Graph-RAG itself: a grammar submodule under `grammars/` and an entry in `codebase_rag/language_spec.py`. The `cgr language add-grammar` command automates that change inside a clone of this repository.
 
-!!! warning
-    While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration. [Submit a language request](https://github.com/vitali87/code-graph-rag/issues) if you need a specific language supported.
+!!! warning "Contributor tool: it needs a source checkout"
+    `add-grammar`, `remove-language` and `cleanup-orphaned-modules` edit the code-graph-rag **source checkout** that the running `cgr` was imported from, whatever your current directory is. They never touch the repository you happen to be in.
+
+    If you installed `cgr` from PyPI, with `pipx`, or with `uv tool install`, there is no checkout to edit. These commands then refuse with an error, exit non-zero, and change nothing. Clone the repository and run them there, or [submit a language request](https://github.com/vitali87/code-graph-rag/issues).
+
+!!! note
+    While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration.
 
 ## Quick Start
 
-Use the built-in language management tool:
+Clone the repository and run the tool from the clone:
 
 ```bash
-cgr language add-grammar <language-name>
+git clone https://github.com/vitali87/code-graph-rag.git
+cd code-graph-rag
+uv run cgr language add-grammar <language-name>
 ```
 
 Examples:
 
 ```bash
-cgr language add-grammar c-sharp
-cgr language add-grammar php
-cgr language add-grammar ruby
-cgr language add-grammar kotlin
+uv run cgr language add-grammar c-sharp
+uv run cgr language add-grammar php
+uv run cgr language add-grammar ruby
+uv run cgr language add-grammar kotlin
 ```
 
 ## Custom Grammar Repositories
@@ -31,18 +38,20 @@ cgr language add-grammar kotlin
 For languages hosted outside the standard tree-sitter organisation:
 
 ```bash
-cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+uv run cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
 
 ## What Happens Automatically
 
 When you add a language, the tool automatically:
 
-1. **Downloads the Grammar**: Clones the tree-sitter grammar repository as a git submodule
+1. **Downloads the Grammar**: Clones the tree-sitter grammar repository as a git submodule of the checkout, under `grammars/`
 2. **Detects Configuration**: Auto-extracts language metadata from `tree-sitter.json`
 3. **Analyses Node Types**: Automatically identifies AST node types for functions/methods, classes/structs, modules/files, and function calls from `node-types.json`
 4. **Updates Configuration**: Adds the language to `codebase_rag/language_spec.py`
 5. **Enables Parsing**: Makes the language available for codebase analysis (the grammar itself is compiled on first use by the parser loader)
+
+If any step fails, for example the grammar cannot be cloned or `language_spec.py` cannot be updated, the command removes the submodule it added, leaves the checkout as it found it, and exits non-zero. A grammar that was already a submodule before the run is left in place.
 
 ## What does NOT happen automatically
 
@@ -101,7 +110,7 @@ backbone, see [Adding a Language Frontend](../architecture/language-frontends.md
 ## Example: Adding C# Support
 
 ```bash
-$ cgr language add-grammar c-sharp
+$ uv run cgr language add-grammar c-sharp
 Search: Using default tree-sitter URL: https://github.com/tree-sitter/tree-sitter-c-sharp
 OK Submodule added at: grammars/tree-sitter-c-sharp
 Auto-detected extensions: ['.cs']
@@ -110,7 +119,7 @@ Classes: ['struct_declaration', 'enum_declaration', 'interface_declaration', 'cl
 Modules: ['compilation_unit', 'file_scoped_namespace_declaration', 'namespace_declaration']
 Calls: ['invocation_expression']
 OK Language 'c-sharp' added
-Note: Updated codebase_rag/language_spec.py
+Note: Updated /path/to/code-graph-rag/codebase_rag/language_spec.py
 ```
 
 ## Managing Languages
@@ -119,10 +128,10 @@ Note: Updated codebase_rag/language_spec.py
 cgr language list-languages
 cgr language list-languages --verbose
 
-cgr language remove-language <language-name>
+uv run cgr language remove-language <language-name>
 ```
 
-`list-languages` shows every language by tier and whether its grammar is installed; `--verbose` adds the node types each tree-sitter language maps, so you can check what `add-grammar` detected.
+`list-languages` only reads, so it works from any install. It shows every language by tier and whether its grammar is installed; `--verbose` adds the node types each tree-sitter language maps, so you can check what `add-grammar` detected. `remove-language` edits the source checkout, like `add-grammar`, and exits non-zero when the language was not removed.
 
 ## Language Configuration
 
@@ -144,8 +153,10 @@ Each language is defined in the `LANGUAGE_SPECS` dict in `codebase_rag/language_
 **Grammar not found**: Use a custom URL if the automatic URL doesn't work:
 
 ```bash
-cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+uv run cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
+
+**"modifies a code-graph-rag source checkout"**: the `cgr` you ran is an installed copy, so there is no checkout to edit. Clone the repository and run `uv run cgr language ...` inside the clone, or request the language.
 
 **Version incompatibility**: If you get "Incompatible Language version" errors:
 
