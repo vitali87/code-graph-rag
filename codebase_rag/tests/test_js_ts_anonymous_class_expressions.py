@@ -577,3 +577,165 @@ class TestUnexportedMembers:
         graph = _index(tmp_path, {"base.js": BASE_JS, "shapes.js": SHAPES_JS})
         assert not graph.exported("shapes.anonymous_1_9")
         assert not graph.exported("shapes.anonymous_1_9.run")
+
+
+# --- CommonJS export shapes the assignment-chain walk missed (PR #2628
+# review): the chain behind parentheses, the chain as a declarator's value,
+# the assignment inside a module-level block, and a string-keyed export as the
+# file's only module construct. Each left a published class reported dead, or
+# left the file a classic script whose unrelated declarations were rooted.
+
+DEP_JS = "module.exports = {};\n"
+
+
+class TestCommonJsExportShapes:
+    @pytest.mark.parametrize(
+        ("src", "cls"),
+        [
+            pytest.param(
+                "module.exports = (exports.Rule = class { run() {} });\n",
+                "m.anonymous_0_33",
+                id="parenthesized-chain",
+            ),
+            pytest.param(
+                "const Rule = module.exports = class { run() {} };\n",
+                "m.anonymous_0_30",
+                id="declarator-chain",
+            ),
+            pytest.param(
+                "if (typeof module === 'object') {\n"
+                "  module.exports = class { run() {} };\n"
+                "}\n",
+                "m.anonymous_1_19",
+                id="module-level-block",
+            ),
+        ],
+    )
+    def test_published_class_and_method_are_exported_and_live(
+        self, tmp_path: Path, src: str, cls: str
+    ) -> None:
+        graph = _index(tmp_path, {"m.js": src})
+        assert graph.label(cls) == cs.NodeLabel.CLASS.value
+        assert graph.exported(cls)
+        assert graph.exported(f"{cls}.run")
+        dead = _dead(graph)
+        assert cls not in dead
+        assert f"{cls}.run" not in dead
+
+    @pytest.mark.parametrize(
+        "export",
+        [
+            pytest.param('exports["Rule"] = class { run() {} };\n', id="string-key"),
+            pytest.param(
+                "const Rule = exports.Rule = class { run() {} };\n",
+                id="declarator-chain",
+            ),
+            pytest.param(
+                "if (typeof exports === 'object') {\n"
+                "  exports['Rule'] = class { run() {} };\n"
+                "}\n",
+                id="module-level-block",
+            ),
+        ],
+    )
+    def test_commonjs_export_makes_the_file_a_module(
+        self, tmp_path: Path, export: str
+    ) -> None:
+        # With no `require`, the export assignment is the file's only module
+        # construct. Missing it left the file a classic script, so the
+        # unrelated `Unused` was rooted as a page global.
+        graph = _index(tmp_path, {"m.js": export + "class Unused { idle() {} }\n"})
+        assert not graph.exported("m.Unused")
+        assert not graph.exported("m.Unused.idle")
+        dead = _dead(graph)
+        assert "m.Unused" in dead
+        assert "m.Unused.idle" in dead
+
+
+class TestCommonJsExportShapeBoundaries:
+    def test_non_export_assignment_chains_stay_unexported(self, tmp_path: Path) -> None:
+        src = (
+            "const dep = require('./dep');\n"
+            "let a, b;\n"
+            "a = (b = class { w() {} });\n"
+            "const R = b = class { v() {} };\n"
+        )
+        graph = _index(tmp_path, {"dep.js": DEP_JS, "m.js": src})
+        dead = _dead(graph)
+        for qn in (
+            "m.anonymous_2_9",
+            "m.anonymous_2_9.w",
+            "m.anonymous_3_14",
+            "m.anonymous_3_14.v",
+        ):
+            assert not graph.exported(qn), qn
+            assert qn in dead, qn
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param(
+                "  if (flag) {\n    module.exports = class { m() {} };\n  }\n",
+                id="block-in-function",
+            ),
+            pytest.param(
+                "  if (flag) {\n    exports['Rule'] = class { m() {} };\n  }\n",
+                id="string-key-in-function",
+            ),
+            pytest.param(
+                "  const Rule = exports.Rule = class { m() {} };\n",
+                id="declarator-in-function",
+            ),
+        ],
+    )
+    def test_assignment_inside_a_function_exports_nothing(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        src = (
+            "const dep = require('./dep');\n"
+            "function setup(flag) {\n" + body + "}\n"
+            "setup(true);\n"
+        )
+        graph = _index(tmp_path, {"dep.js": DEP_JS, "m.js": src})
+        (cls,) = {q for q in graph.qns(cs.NodeLabel.CLASS) if q.startswith("m.setup.")}
+        assert not graph.exported(cls)
+        assert not graph.exported(f"{cls}.m")
+
+    @pytest.mark.parametrize("target", ["exports.Rule", "exports['Rule']"])
+    def test_export_inside_a_function_keeps_a_script_a_script(
+        self, tmp_path: Path, target: str
+    ) -> None:
+        # Only a module-level export makes the file a CommonJS module, as
+        # before for `exports.Rule`; one inside a function runs only when it
+        # is called, so the file's top-level declarations stay page globals.
+        src = (
+            "function setup() {\n"
+            f"  {target} = class {{ m() {{}} }};\n"
+            "}\n"
+            "class Page { draw() {} }\n"
+        )
+        graph = _index(tmp_path, {"m.js": src})
+        assert graph.exported("m.Page")
+        assert graph.exported("m.Page.draw")
+        (cls,) = {q for q in graph.qns(cs.NodeLabel.CLASS) if q.startswith("m.setup.")}
+        assert not graph.exported(cls)
+
+    def test_script_without_a_module_construct_keeps_its_globals(
+        self, tmp_path: Path
+    ) -> None:
+        # Mentions of `exports` that are not a CommonJS export (a string, a
+        # property of another object) do not make a classic script a module.
+        src = (
+            "var label = 'exports';\n"
+            "window.exports = { label: label };\n"
+            "if (window.ready) {\n"
+            "  window.exports.page = label;\n"
+            "}\n"
+            "class Page { draw() { return label; } }\n"
+            "function helper() { return 1; }\n"
+        )
+        graph = _index(tmp_path, {"m.js": src})
+        dead = _dead(graph)
+        for qn in ("m.Page", "m.Page.draw", "m.helper"):
+            assert graph.exported(qn), qn
+            assert qn not in dead, qn
