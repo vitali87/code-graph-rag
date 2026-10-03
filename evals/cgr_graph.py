@@ -451,6 +451,7 @@ class _StatefulIngestor:
                     cs.KEY_COL: _result(props.get(cs.KEY_COL)),
                     cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
                     cs.KEY_KWARG_NAMES: _result(props.get(cs.KEY_KWARG_NAMES)),
+                    cs.KEY_STAR_ARGS: _result(props.get(cs.KEY_STAR_ARGS)),
                 }
             )
         return rows
@@ -681,6 +682,33 @@ class _StatefulIngestor:
         row[cs.KEY_CALLEE_PATH] = _result(callee.get(cs.KEY_PATH))
         return row
 
+    def _graph_level_call_rows(
+        self, query: str, params: PropertyDict
+    ) -> list[ResultRow]:
+        """One level of the callers / callees walk past its start: the CALLS
+        sites of every frontier node in `$qns`, each row naming the node it
+        hangs off. The frontier is matched under the definition labels alone,
+        as production looks it up through their indexes (issue #2597)."""
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        qns = params.get(cs.KEY_QNS)
+        callers = query == cq.CYPHER_GRAPH_CALLERS_OF
+        through_key = cs.KEY_TO_QN if callers else cs.KEY_FROM_QN
+        calls = cs.RelationshipType.CALLS.value
+        rows: list[ResultRow] = []
+        for qn in qns if isinstance(qns, list) else []:
+            for node in self._graph_node_ids(_str(qn)):
+                if node[0] not in self._GRAPH_RESOLVE_LABELS:
+                    continue
+                edges = self._in.get(node, ()) if callers else self._out.get(node, ())
+                for edge in edges:
+                    other = (edge[0], edge[1]) if callers else (edge[3], edge[4])
+                    if edge[2] != calls or not self._in_project(other, prefix):
+                        continue
+                    row = self._graph_call_row(edge, other)
+                    row[through_key] = _result(node[1])
+                    rows.append(row)
+        return rows
+
     def _project_root_rows(self, params: PropertyDict) -> list[ResultRow]:
         """The Project node's stored root, as `source_root_for` reads it."""
         name = _str(params.get(cs.KEY_PROJECT_NAME))
@@ -754,6 +782,8 @@ class _StatefulIngestor:
         targets = self._graph_node_ids(qn)
         if query in (cq.CYPHER_GRAPH_RESOLVE_NAME, cq.CYPHER_GRAPH_RESOLVE_LOCATION):
             return self._graph_resolve_rows(query, params)
+        if query in (cq.CYPHER_GRAPH_CALLERS_OF, cq.CYPHER_GRAPH_CALLEES_OF):
+            return self._graph_level_call_rows(query, params)
         if query == cq.CYPHER_GRAPH_CALLEES:
             rows: list[ResultRow] = []
             for source in targets:
@@ -1032,6 +1062,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_RESOLVE_NAME
                 | cq.CYPHER_GRAPH_RESOLVE_LOCATION
                 | cq.CYPHER_GRAPH_CALLEES
+                | cq.CYPHER_GRAPH_CALLERS_OF
+                | cq.CYPHER_GRAPH_CALLEES_OF
             ):
                 return self._graph_rows(query, params or {})
             case (

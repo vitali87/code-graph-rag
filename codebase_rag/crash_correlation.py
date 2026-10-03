@@ -10,13 +10,22 @@ from __future__ import annotations
 import re
 from collections import deque
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from . import constants as cs
 from .flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES, QueryFn
 from .language_spec import get_language_for_extension
 from .trace.records import FramePoint
-from .trace.resolution import CallableNode, FrameResolver, ResolutionStats
+from .trace.resolution import (
+    CallableNode,
+    FrameResolver,
+    PathRebase,
+    ResolutionStats,
+    is_absolute_on_any_os,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 # All CALLS pairs of one project, static and runtime-discovered alike: an edge
 # a previous trace ingestion created is a real observed call path, exactly the
@@ -128,6 +137,11 @@ class TracebackReport(NamedTuple):
     resolution: FrameResolutionRate
     # None when the crash is not an arity TypeError, which is most crashes.
     arity: ArityFinding | None = None
+    # The other checkout's root the frames were matched under, when it was
+    # inferred from their paths rather than given or local (issue #2587).
+    inferred_root: str | None = None
+    # Why nothing resolved, when nothing did.
+    note: str | None = None
 
 
 class ArityError(NamedTuple):
@@ -325,6 +339,12 @@ class RootCauseReport(NamedTuple):
     candidates: tuple[RootCause, ...]
     flow_used: bool
     flow_gaps: tuple[str, ...]
+    # The same measurements `TracebackReport` carries: without them an empty
+    # ranking cannot say whether the graph lacked the code or the paths
+    # simply did not line up (issue #2587).
+    resolution: FrameResolutionRate = FrameResolutionRate(total=0, resolved=0)
+    inferred_root: str | None = None
+    note: str | None = None
 
 
 def parse_python_traceback(text: str) -> ParsedTraceback:
@@ -370,9 +390,11 @@ def _anchored(frame: FramePoint, repo_root: Path) -> FramePoint:
 
     Tracebacks from a process started inside the repository carry paths
     relative to it; absolute paths and synthetic files (``<stdin>``) pass
-    through and resolve (or fail containment) as they are.
+    through and resolve (or fail containment) as they are. Absolute means
+    absolute on ANY OS: a Windows traceback read on Linux is not relative to
+    this checkout, and joining it on buried its real root mid-path.
     """
-    if Path(frame.path).is_absolute() or frame.path.startswith("<"):
+    if is_absolute_on_any_os(frame.path) or frame.path.startswith("<"):
         return frame
     return FramePoint(
         path=(repo_root / frame.path).as_posix(),
@@ -435,21 +457,86 @@ class _CrashGraph:
         )
 
 
+class _ResolvedStack(NamedTuple):
+    # Each frame with (resolved qn, label, unresolved reason).
+    frames: list[tuple[FramePoint, str | None, str | None, str | None]]
+    inferred_root: str | None
+
+
+def _rebase_for(
+    frames: list[FramePoint],
+    resolver: FrameResolver,
+    repo_root: Path,
+    path_prefix_map: Mapping[str, str] | None,
+) -> tuple[PathRebase, str | None]:
+    """How frames from another checkout reach this one, and the inferred root.
+
+    A root the caller names beats one guessed from the paths, so inference
+    runs only when no given prefix anchors any frame.
+    """
+    given = PathRebase.from_prefix_map(repo_root, path_prefix_map or {})
+    if any(given.matches(frame) for frame in frames):
+        return given, None
+    inferred = resolver.infer_recorded_root(frames)
+    if inferred is None:
+        return given, None
+    return PathRebase.from_prefix_map(
+        repo_root, {inferred: cs.PATH_CURRENT_DIR}
+    ), inferred
+
+
 def _resolve_stack(
-    parsed: ParsedTraceback, graph: _CrashGraph, repo_root: Path
-) -> list[tuple[FramePoint, str | None, str | None, str | None]]:
-    """Each frame with (resolved qn, label, unresolved reason)."""
+    parsed: ParsedTraceback,
+    graph: _CrashGraph,
+    repo_root: Path,
+    path_prefix_map: Mapping[str, str] | None = None,
+) -> _ResolvedStack:
     resolver = FrameResolver(repo_root, graph.nodes)
+    anchored = [_anchored(frame, repo_root) for frame in parsed.frames]
+    rebase, inferred_root = _rebase_for(anchored, resolver, repo_root, path_prefix_map)
     resolved: list[tuple[FramePoint, str | None, str | None, str | None]] = []
-    for frame in parsed.frames:
+    for frame, anchored_frame in zip(parsed.frames, anchored, strict=True):
         stats = ResolutionStats()
-        match = resolver.resolve(_anchored(frame, repo_root), stats)
+        match = resolver.resolve(rebase.apply(anchored_frame), stats)
         if match is not None:
             resolved.append((frame, match.qualified_name, match.label, None))
         else:
             reason = next(iter(stats.unresolved), None)
             resolved.append((frame, None, None, reason))
-    return resolved
+    return _ResolvedStack(frames=resolved, inferred_root=inferred_root)
+
+
+def _resolution_rate(stack: _ResolvedStack) -> FrameResolutionRate:
+    # Keyed on the qualified name, NOT on `reason is None`: see the predicate
+    # comment in `explain_traceback`.
+    return FrameResolutionRate(
+        total=len(stack.frames),
+        resolved=sum(1 for _frame, qn, _label, _reason in stack.frames if qn),
+    )
+
+
+def _nothing_resolved_note(stack: _ResolvedStack, repo_root: Path) -> str | None:
+    """The explanation an all-unresolved stack owes its reader, or None.
+
+    Only when some frame lies outside the checkout: a stack whose frames are
+    all under it but unknown to the graph has a different cause (a stale or
+    partial index), and a note about paths would point the wrong way.
+    """
+    if any(qn for _frame, qn, _label, _reason in stack.frames):
+        return None
+    outside = sum(
+        1
+        for _frame, _qn, _label, reason in stack.frames
+        if reason == cs.TraceUnresolvedReason.OUTSIDE_REPO
+    )
+    if not outside:
+        return None
+    return cs.TRACEBACK_NOTE_NOTHING_RESOLVED.format(
+        total=len(stack.frames),
+        outside=outside,
+        root=repo_root.resolve().as_posix(),
+        param=cs.MCPParamName.PATH_PREFIX_MAP,
+    )
 
 
 def _resolve_callee(
@@ -511,10 +598,17 @@ def explain_traceback(
     project_name: str,
     repo_root: Path,
     traceback_text: str,
+    path_prefix_map: Mapping[str, str] | None = None,
 ) -> TracebackReport:
-    """Resolve each traceback frame and attach its graph neighbourhood."""
+    """Resolve each traceback frame and attach its graph neighbourhood.
+
+    ``path_prefix_map`` maps the checkout root the traceback was recorded
+    under (``/app``) to a directory of this repository (``.``); without it a
+    root shared by the frames is inferred when they are not under this one.
+    """
     parsed = parse_python_traceback(traceback_text)
     graph = _CrashGraph(fetch_all, project_name)
+    stack = _resolve_stack(parsed, graph, repo_root, path_prefix_map)
     contexts = [
         FrameContext(
             path=frame.path,
@@ -527,7 +621,7 @@ def explain_traceback(
             callees=tuple(sorted(graph.callees.get(qn, ()))) if qn else (),
             flow_sources=tuple(sorted(graph.flow_sources.get(qn, ()))) if qn else (),
         )
-        for frame, qn, label, reason in _resolve_stack(parsed, graph, repo_root)
+        for frame, qn, label, reason in stack.frames
     ]
     return TracebackReport(
         exception_type=parsed.exception_type,
@@ -556,6 +650,8 @@ def explain_traceback(
                 if frame.qualified_name is not None
             ),
         ),
+        inferred_root=stack.inferred_root,
+        note=_nothing_resolved_note(stack, repo_root),
     )
 
 
@@ -592,6 +688,7 @@ def rank_root_causes(
     project_name: str,
     repo_root: Path,
     traceback_text: str,
+    path_prefix_map: Mapping[str, str] | None = None,
 ) -> RootCauseReport:
     """Rank the sites that can explain the failure, best first.
 
@@ -603,10 +700,12 @@ def rank_root_causes(
     """
     parsed = parse_python_traceback(traceback_text)
     graph = _CrashGraph(fetch_all, project_name)
-    stack = _resolve_stack(parsed, graph, repo_root)
+    resolved_stack = _resolve_stack(parsed, graph, repo_root, path_prefix_map)
+    stack = resolved_stack.frames
     stack_qns = [qn for _frame, qn, _label, _reason in stack if qn]
     failing = stack_qns[-1] if stack_qns else None
     anchor_is_crash_site = bool(stack) and stack[-1][1] is not None
+    resolution = _resolution_rate(resolved_stack)
     if failing is None:
         return RootCauseReport(
             exception_type=parsed.exception_type,
@@ -616,6 +715,9 @@ def rank_root_causes(
             candidates=(),
             flow_used=bool(graph.flow_sources),
             flow_gaps=graph.flow_gaps,
+            resolution=resolution,
+            inferred_root=resolved_stack.inferred_root,
+            note=_nothing_resolved_note(resolved_stack, repo_root),
         )
 
     reached = _reverse_reachable(graph, failing)
@@ -656,4 +758,6 @@ def rank_root_causes(
         candidates=candidates,
         flow_used=bool(graph.flow_sources),
         flow_gaps=graph.flow_gaps,
+        resolution=resolution,
+        inferred_root=resolved_stack.inferred_root,
     )

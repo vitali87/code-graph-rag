@@ -83,9 +83,15 @@ a method's `self` counts for CPython but is not caller-supplied. That is
 Python's rule; the languages whose signatures declare optionality follow
 [their own](#signatures-outside-python). The stored Python list ends at `*args`; the definition
 header is read back so a variadic callee is never reported as receiving
-too many arguments. `possibly_missing` means fewer arguments than
-parameters: the graph does not record defaults, so this is a hint, not a
-finding, and does not trip `--fail-on-found`.
+too many arguments. A `**opts` unpacking at the site supplies keywords
+only and adds no positional, so `send(req, **opts)` passes one positional
+to `def send(request, **kwargs)`. A `*rest` unpacking adds an unknown
+number: the positionals written beside it are a floor, so `too_many` still
+holds when they alone exceed the parameters (`one(a, b, *rest)` against
+`def one(a)`), and the site reads `unknown` otherwise. `possibly_missing`
+means fewer arguments than parameters: the graph does not record
+defaults, so this is a hint, not a finding, and does not trip
+`--fail-on-found`.
 
 ### Signatures outside Python
 

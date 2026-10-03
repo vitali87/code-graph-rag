@@ -1015,18 +1015,43 @@ RETURN {_GLOSS_ROW}"""
 # A call site sits in its caller's body, so both reads take `path` from the
 # caller: that is the file `line`/`col` index into, whichever endpoint the
 # row names. The callee's own file is `callee_path` (issue #2460).
-CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
-WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
-RETURN labels(caller)[0] AS label, caller.qualified_name AS qualified_name,
-       caller.path AS path, callee.path AS callee_path, r.line AS line, r.col AS col,
-       r.end_line AS end_line, r.end_col AS end_col, r.arg_count AS arg_count,
-       r.kwarg_names AS kwarg_names, r.resolution AS resolution"""
-CYPHER_GRAPH_CALLEES = """MATCH (caller)-[r:CALLS]->(callee)
-WHERE caller.qualified_name = $qn AND callee.qualified_name STARTS WITH $project_prefix
-RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
-       caller.path AS path, callee.path AS callee_path, r.line AS line, r.col AS col,
-       r.end_line AS end_line, r.end_col AS end_col, r.arg_count AS arg_count,
-       r.kwarg_names AS kwarg_names, r.resolution AS resolution"""
+# The named node is found in a MATCH of its own, under every definition label,
+# so Memgraph starts from the label + qualified_name indexes. Looked up without
+# a label it was a scan of the whole shared graph, once per node a `--depth`
+# walk reached: 154 s for one depth-2 walk on django (issue #2597).
+_CALL_SITE_FIELDS = """caller.path AS path, callee.path AS callee_path,
+       r.line AS line, r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
+       r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
+       r.resolution AS resolution"""
+_CALLER_ROW = (
+    "labels(caller)[0] AS label, caller.qualified_name AS qualified_name,\n       "
+    + _CALL_SITE_FIELDS
+)
+_CALLEE_ROW = (
+    "labels(callee)[0] AS label, callee.qualified_name AS qualified_name,\n       "
+    + _CALL_SITE_FIELDS
+)
+CYPHER_GRAPH_CALLERS = f"""MATCH (callee:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $qn}})
+MATCH (caller)-[r:CALLS]->(callee)
+WHERE caller.qualified_name STARTS WITH $project_prefix
+RETURN {_CALLER_ROW}"""
+CYPHER_GRAPH_CALLEES = f"""MATCH (caller:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $qn}})
+MATCH (caller)-[r:CALLS]->(callee)
+WHERE callee.qualified_name STARTS WITH $project_prefix
+RETURN {_CALLEE_ROW}"""
+# The same reads for a whole level of the walk past its start: `$qns` is the
+# frontier, and `to_qn` / `from_qn` names the frontier node a row hangs off,
+# so a level is one round trip instead of one per node.
+CYPHER_GRAPH_CALLERS_OF = f"""UNWIND $qns AS qn
+MATCH (callee:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+MATCH (caller)-[r:CALLS]->(callee)
+WHERE caller.qualified_name STARTS WITH $project_prefix
+RETURN callee.qualified_name AS to_qn, {_CALLER_ROW}"""
+CYPHER_GRAPH_CALLEES_OF = f"""UNWIND $qns AS qn
+MATCH (caller:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+MATCH (caller)-[r:CALLS]->(callee)
+WHERE callee.qualified_name STARTS WITH $project_prefix
+RETURN caller.qualified_name AS from_qn, {_CALLEE_ROW}"""
 # Cross-service edges as reads (issue #1603). The writers (`EXPOSES` from a
 # handler to its ENDPOINT/RPC/DISPATCH resource, `RESOLVES_TO` from a client
 # NETWORK resource to the endpoint, `READS_FROM`/`WRITES_TO` from a call site
@@ -1138,7 +1163,8 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.resolution AS resolution, r.spread_args AS spread_args,
        r.call_qualifier AS call_qualifier,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
-       r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
+       r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
+       r.star_args AS star_args"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
 # The blast radius of a signature change crosses services (issue #1603): a
