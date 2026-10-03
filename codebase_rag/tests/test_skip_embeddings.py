@@ -102,7 +102,6 @@ class TestCliNoEmbeddingsFlag:
             patch("codebase_rag.graph_updater.GraphUpdater") as mock_updater_cls,
             patch("codebase_rag.cli.connect_memgraph") as mock_connect,
             patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
-            patch("codebase_rag.cli.cgr_state"),
             patch("codebase_rag.cli._update_and_validate_models"),
         ):
             mock_connect.return_value.__enter__ = MagicMock(return_value=MagicMock())

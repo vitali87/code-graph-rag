@@ -7,6 +7,7 @@ ahead of `last_sync`, and a later MCP process hydrated from it as if whole.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Generator
 from pathlib import Path
@@ -16,12 +17,13 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from codebase_rag import cgr_state
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.cli import _projects_with_incomplete_runs, _run_graph_sync, app
+from codebase_rag.cli import _project_syncs, _run_graph_sync, app
 from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
+from codebase_rag.types_defs import ProjectSync
+from codebase_rag.utils.process_owner import process_host
 
 runner = CliRunner()
 
@@ -45,7 +47,7 @@ def ingestor(events: list[str]) -> MagicMock:
     store = MagicMock()
 
     def write(query: str, params: dict | None = None) -> None:
-        if query == cq.CYPHER_MARK_PROJECT_INCOMPLETE:
+        if query == cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE:
             events.append("mark")
         elif query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
             events.append("clear")
@@ -71,17 +73,11 @@ def sync_env(
     connection = MagicMock()
     connection.__enter__.return_value = ingestor
     connection.__exit__.return_value = False
-    real_record = cgr_state.record_sync
-
-    def record(project_name: str) -> None:
-        events.append("record")
-        real_record(project_name)
 
     with (
         patch("codebase_rag.cli.connect_memgraph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater) as cls,
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
-        patch("codebase_rag.cli.cgr_state.record_sync", side_effect=record),
         patch("codebase_rag.cli.clear_all_embeddings"),
         patch("codebase_rag.cli._confirm_destructive_clean"),
     ):
@@ -108,17 +104,23 @@ def _marker_writes(ingestor: MagicMock, query: str) -> list[dict]:
     ]
 
 
-def test_a_sync_marks_before_writing_and_clears_after_recording(
+def test_a_sync_marks_before_writing_and_clears_after_running(
     tmp_path: Path, sync_env: MagicMock, ingestor: MagicMock, events: list[str]
 ) -> None:
     _sync(tmp_path)
 
-    assert events == ["mark", "constraints", "run", "record", "clear"], events
-    (mark,) = _marker_writes(ingestor, cq.CYPHER_MARK_PROJECT_INCOMPLETE)
+    assert events == ["mark", "constraints", "run", "clear"], events
+    (mark,) = _marker_writes(ingestor, cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE)
+    token = mark.pop(cs.KEY_OWNER_TOKEN)
+    assert isinstance(token, str)
+    assert token
+    # The owner, so a delete can tell whether this sync still runs (#2532).
     assert mark == {
         cs.KEY_PROJECT_NAME: "proj",
         cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID,
         cs.KEY_WRITING: True,
+        cs.KEY_OWNER_HOST: process_host(),
+        cs.KEY_OWNER_PID: os.getpid(),
     }
     (clear,) = _marker_writes(ingestor, cq.CYPHER_CLEAR_PROJECT_INCOMPLETE)
     assert clear == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
@@ -136,7 +138,6 @@ def test_a_failed_sync_keeps_its_marker(
         _sync(tmp_path)
 
     assert events == ["mark", "constraints", "run"], events
-    assert cgr_state.read_sync_timestamps() == {}
 
 
 def test_a_clean_sync_marks_after_the_wipe(
@@ -164,7 +165,6 @@ def test_a_marker_that_cannot_be_written_aborts_before_any_change(
     assert raised.value.exit_code == 1
     assert events == [], events
     updater.run.assert_not_called()
-    assert cgr_state.read_sync_timestamps() == {}
 
 
 def test_a_marker_that_cannot_be_cleared_does_not_fail_the_sync(
@@ -179,8 +179,7 @@ def test_a_marker_that_cannot_be_cleared_does_not_fail_the_sync(
 
     _sync(tmp_path)
 
-    assert events == ["mark", "constraints", "run", "record"], events
-    assert "proj" in cgr_state.read_sync_timestamps()
+    assert events == ["mark", "constraints", "run"], events
 
 
 def _status(reachable: bool) -> StackStatus:
@@ -194,27 +193,48 @@ def _status(reachable: bool) -> StackStatus:
     )
 
 
-def _invoke_status(reachable: bool, incomplete: set[str]) -> tuple[str, MagicMock]:
+def _graph(
+    projects: dict[str, str | None], incomplete: set[str]
+) -> tuple[MagicMock, MagicMock]:
+    store = MagicMock()
+
+    def fetch_all(query: str, params: dict | None = None) -> list[dict]:
+        if query == cq.CYPHER_PROJECT_SYNC_TIMES:
+            return [
+                {cs.KEY_NAME: name, cs.KEY_LAST_SYNCED_AT: synced_at}
+                for name, synced_at in sorted(projects.items())
+            ]
+        if query == cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS:
+            return [{"project": project} for project in sorted(incomplete)]
+        raise AssertionError(query)
+
+    store.fetch_all.side_effect = fetch_all
+    connection = MagicMock()
+    connection.__enter__.return_value = store
+    connection.__exit__.return_value = False
+    return connection, store
+
+
+def _invoke_status(
+    reachable: bool, projects: dict[str, str | None], incomplete: set[str]
+) -> tuple[str, MagicMock]:
+    connection, _ = _graph(projects, incomplete)
     with (
         patch("codebase_rag.cli.StackManager") as manager,
-        patch(
-            "codebase_rag.cli._projects_with_incomplete_runs",
-            return_value=incomplete,
-        ) as read,
+        patch("codebase_rag.cli.connect_memgraph", return_value=connection) as connect,
     ):
         manager.return_value.status.return_value = _status(reachable)
         result = runner.invoke(app, ["status"])
     assert result.exit_code == 0, result.output
     # Rich colours and wraps the lines; compare the words alone.
     plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-    return " ".join(plain.split()), read
+    return " ".join(plain.split()), connect
 
 
 def test_status_flags_a_project_whose_sync_did_not_finish() -> None:
-    cgr_state.record_sync("alpha")
-    cgr_state.record_sync("beta")
+    synced = {"alpha": "2026-09-29T10:00:00+00:00", "beta": "2026-09-29T11:00:00+00:00"}
 
-    output, _ = _invoke_status(True, {"alpha"})
+    output, _ = _invoke_status(True, synced, {"alpha"})
 
     alpha, beta = output.split("- alpha:")[1].split("- beta:")
     assert cs.CLI_STATUS_SYNC_INCOMPLETE in alpha, output
@@ -222,35 +242,43 @@ def test_status_flags_a_project_whose_sync_did_not_finish() -> None:
 
 
 def test_status_lists_an_interrupted_first_sync() -> None:
-    # A first sync that never finished has no `last_sync` at all; the marker
-    # is the only trace of it.
-    output, _ = _invoke_status(True, {"fresh"})
+    # A first sync that never finished may not have its Project node yet;
+    # the marker is the only trace of it.
+    output, _ = _invoke_status(True, {}, {"fresh"})
 
-    assert "no projects synced" not in output
+    assert "no projects" not in output
     assert "fresh" in output
     assert cs.CLI_STATUS_SYNC_INCOMPLETE in output
 
 
 def test_status_does_not_query_an_unreachable_graph() -> None:
-    output, read = _invoke_status(False, {"alpha"})
+    output, connect = _invoke_status(False, {"alpha": None}, {"alpha"})
 
-    read.assert_not_called()
-    assert "no projects synced" in output
+    connect.assert_not_called()
+    assert "alpha" not in output
 
 
-def test_reading_markers_is_best_effort() -> None:
+def test_reading_the_graph_is_best_effort() -> None:
     connection = MagicMock()
     connection.__enter__.side_effect = ConnectionError("memgraph is down")
     with patch("codebase_rag.cli.connect_memgraph", return_value=connection):
-        assert _projects_with_incomplete_runs() == set()
+        assert _project_syncs() is None
 
 
-def test_reading_markers_collects_distinct_projects() -> None:
-    store = MagicMock()
-    store.fetch_all.return_value = [{"project": "a"}, {"project": "b"}, {}]
-    connection = MagicMock()
-    connection.__enter__.return_value = store
-    connection.__exit__.return_value = False
+def test_reading_the_graph_joins_projects_and_markers() -> None:
+    connection, store = _graph(
+        {"a": "2026-09-29T10:00:00+00:00", "b": None}, {"b", "c"}
+    )
     with patch("codebase_rag.cli.connect_memgraph", return_value=connection):
-        assert _projects_with_incomplete_runs() == {"a", "b"}
-    store.fetch_all.assert_called_once_with(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+        syncs = _project_syncs()
+
+    assert syncs == [
+        ProjectSync("a", "2026-09-29T10:00:00+00:00", interrupted=False),
+        ProjectSync("b", None, interrupted=True),
+        ProjectSync("c", None, interrupted=True),
+    ]
+    queried = [call.args[0] for call in store.fetch_all.call_args_list]
+    assert queried == [
+        cq.CYPHER_PROJECT_SYNC_TIMES,
+        cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS,
+    ]

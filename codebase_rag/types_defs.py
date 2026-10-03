@@ -578,6 +578,16 @@ class DeadCodeConfig(NamedTuple):
     endpoint_roots: bool = True
 
 
+class ProjectSync(NamedTuple):
+    """One project in `cgr status`, as the connected graph records it (#2444)."""
+
+    name: str
+    # None for a project synced before the time was kept in the graph, or
+    # one whose first sync never finished.
+    last_synced_at: str | None
+    interrupted: bool
+
+
 class AstFingerprintResult(NamedTuple):
     """Structural fingerprints of one function body's skeleton."""
 
@@ -1043,7 +1053,10 @@ _GLOSS_NODE_PROPS = (
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string, root_path: string?}"),
+    NodeSchema(
+        NodeLabel.PROJECT,
+        "{name: string, root_path: string?, last_synced_at: string?}",
+    ),
     NodeSchema(
         NodeLabel.PACKAGE,
         "{qualified_name: string, name: string, path: string, absolute_path: string}",

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
-from codebase_rag import cgr_state
+from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 
 runner = CliRunner()
@@ -19,30 +20,6 @@ def _temp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "cgr-home"
     monkeypatch.setattr(settings, "CGR_HOME", home)
     return home
-
-
-class TestRecordSync:
-    def test_record_sync_creates_file(self, _temp_home: Path) -> None:
-        cgr_state.record_sync("alpha")
-        assert cgr_state.state_path().exists()
-        ts = cgr_state.read_sync_timestamps()
-        assert "alpha" in ts
-
-    def test_record_sync_updates_existing(self, _temp_home: Path) -> None:
-        cgr_state.record_sync("alpha")
-        first = cgr_state.read_sync_timestamps()["alpha"]
-        cgr_state.record_sync("alpha")
-        second = cgr_state.read_sync_timestamps()["alpha"]
-        assert second >= first
-
-    def test_record_sync_multiple_projects(self, _temp_home: Path) -> None:
-        cgr_state.record_sync("a")
-        cgr_state.record_sync("b")
-        ts = cgr_state.read_sync_timestamps()
-        assert set(ts.keys()) == {"a", "b"}
-
-    def test_read_when_no_state_returns_empty(self, _temp_home: Path) -> None:
-        assert cgr_state.read_sync_timestamps() == {}
 
 
 class TestStatusCommand:
@@ -63,14 +40,24 @@ class TestStatusCommand:
             result = runner.invoke(app, ["status"])
         assert result.exit_code == 0, result.output
         assert "stopped" in result.output
-        assert "no projects synced" in result.output
+        assert "sync times are kept in the graph" in " ".join(result.output.split())
 
-    def test_status_lists_recorded_projects(self, _temp_home: Path) -> None:
+    def test_status_lists_the_graphs_projects(self, _temp_home: Path) -> None:
         from codebase_rag.stack.constants import StackState
         from codebase_rag.stack.manager import StackStatus
 
-        cgr_state.record_sync("alpha")
-        cgr_state.record_sync("beta")
+        store = MagicMock()
+        store.fetch_all.side_effect = lambda query, params=None: (
+            [
+                {cs.KEY_NAME: "alpha", cs.KEY_LAST_SYNCED_AT: "2026-09-29T10:00:00"},
+                {cs.KEY_NAME: "beta", cs.KEY_LAST_SYNCED_AT: None},
+            ]
+            if query == cq.CYPHER_PROJECT_SYNC_TIMES
+            else []
+        )
+        connection = MagicMock()
+        connection.__enter__.return_value = store
+        connection.__exit__.return_value = False
         fake = StackStatus(
             state=StackState.RUNNING,
             memgraph_reachable=True,
@@ -79,7 +66,10 @@ class TestStatusCommand:
             memgraph_endpoint="localhost:7687",
             qdrant_endpoint="localhost:6333",
         )
-        with patch("codebase_rag.cli.StackManager") as mock_mgr:
+        with (
+            patch("codebase_rag.cli.StackManager") as mock_mgr,
+            patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        ):
             mock_mgr.return_value.status.return_value = fake
             result = runner.invoke(app, ["status"])
         assert result.exit_code == 0, result.output

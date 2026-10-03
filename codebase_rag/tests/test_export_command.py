@@ -347,7 +347,6 @@ def test_a_failed_export_after_a_sync_exits_outside_the_connection(
         patch("codebase_rag.cli.connect_memgraph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater"),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
-        patch("codebase_rag.cli.cgr_state.record_sync"),
         patch("codebase_rag.cli.export_graph_to_file", return_value=False),
         pytest.raises(typer.Exit),
     ):
