@@ -87,6 +87,24 @@ CLI_ERR_INDEXING = "An error occurred during indexing: {error}"
 CLI_ERR_EXPORT_FAILED = "Failed to export graph: {error}"
 CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
 CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
+# `start --update-graph` syncs and exits before the assistant starts, so an
+# option only the assistant reads was accepted and dropped (issue #2478).
+CLI_ERR_UPDATE_GRAPH_CONFLICT = (
+    "Error: {option} cannot be combined with --update-graph, which syncs the "
+    "graph and exits without starting the assistant. {remedy}"
+)
+CLI_REMEDY_DROP_UPDATE_GRAPH = (
+    "Drop --update-graph: cgr start syncs the graph before the assistant "
+    "starts unless --no-sync is given."
+)
+CLI_REMEDY_SYNC_OR_NO_SYNC = (
+    "Pass one of them: --update-graph to only sync, or --no-sync to start the "
+    "assistant without syncing."
+)
+CLI_OPT_ASK_AGENT = "--ask-agent"
+CLI_OPT_OUTPUT_FORMAT_JSON = "--output-format json"
+CLI_OPT_NO_SYNC = "--no-sync"
+CLI_OPT_PROJECTS = "--projects"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
@@ -257,6 +275,7 @@ CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS = (
 CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
 CLI_DEADCODE_COL_KIND = "Kind"
 CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
+CLI_DEADCODE_COL_PATH = "Path"
 CLI_DEADCODE_COL_LINES = "Lines"
 CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
@@ -333,6 +352,9 @@ EDITOR_DIFF_COMMANDS: dict[str, str] = {
     "windsurf": "windsurf --diff {left} {right}",
 }
 ENV_TERM_PROGRAM = "TERM_PROGRAM"
+# Rich's width override. The one width a user sets on purpose, so a report
+# table written to a file or pipe still honours it (issue #2561).
+ENV_COLUMNS = "COLUMNS"
 TERM_PROGRAM_VSCODE = "vscode"
 ENV_CF_BUNDLE_ID = "__CFBundleIdentifier"
 # Substring of the hosting app's macOS bundle identifier -> editor name.

@@ -89,7 +89,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 
-`REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
+`REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict, a Java method reference such as `Acc::add`). `INSTANTIATES` records a class being constructed; a Java constructor reference (`Acc::new`) instantiates its class and references each declared constructor. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
 
 ### Edge-site properties
 

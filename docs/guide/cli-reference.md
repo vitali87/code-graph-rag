@@ -65,7 +65,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--repo-path` | Repository to open. Defaults to the current directory. |
-| `--update-graph` | Parse the repository and sync its graph before continuing. |
+| `--update-graph` | Parse the repository, sync its graph, then exit without starting the assistant (cgr start already syncs before it starts). Cannot be combined with --ask-agent, --no-sync or --projects. |
 | `--clean` | DESTRUCTIVE: Delete every project from the shared graph and clear the selected repository's sync cache. With --update-graph, rebuild after deletion. Asks for confirmation when other projects would be destroyed; use --yes to skip the prompt. |
 | `--yes`, `-y` | Answer yes to destructive confirmations, such as the one --clean asks before deleting other projects from the shared graph. |
 | `--output`, `-o` | Write this repository's project graph to PATH as JSON. Requires --update-graph. Use cgr export for the whole shared graph. |
@@ -74,7 +74,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--no-confirm` | Skip edit confirmation prompts. |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
-| `--project-name` | Project name to store in the graph. Defaults to the repo directory name. |
+| `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the names already stored. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
 | `--capture` | Capture GROUP (structure, calls, types, imports, io, findings, glosses, parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. A GROUP is added to the defaults (structure, calls, types, imports); use none first to capture only what follows (none,structure) and -GROUP to drop one. Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
