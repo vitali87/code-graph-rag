@@ -1377,6 +1377,10 @@ def mcp_server(
             style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
         )
         _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+    except GraphUnavailableError:
+        # The app's group prints it and exits 1: a server that never
+        # started must not look like a clean exit to its launcher.
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)

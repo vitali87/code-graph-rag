@@ -11,9 +11,11 @@ renders it once for every command.
 
 from __future__ import annotations
 
+import contextlib
 import socket
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
 import mgclient
@@ -148,3 +150,82 @@ def test_a_failure_after_connecting_is_not_reported_as_unreachable(
         with pytest.raises(RuntimeError, match="query broke"):
             with MemgraphIngestor(host="127.0.0.1", port=nothing_listening):
                 raise broke
+
+
+def _mcp_server(ingestor: MemgraphIngestor) -> tuple[MagicMock, MagicMock]:
+    server = MagicMock()
+    server.run = AsyncMock()
+    return server, patch(
+        "codebase_rag.mcp.server.create_server", return_value=(server, ingestor)
+    )
+
+
+@pytest.fixture
+def mcp_http_port(monkeypatch: pytest.MonkeyPatch) -> int:
+    port = _unused_port()
+    monkeypatch.setattr(settings, "MCP_HTTP_PORT", port)
+    return port
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_an_mcp_server_that_cannot_reach_the_graph_exits_1(
+    nothing_listening: int, mcp_http_port: int, transport: str
+) -> None:
+    # Greptile review of PR 2504: `mcp-server` caught the connection error
+    # itself (stdio), or uvicorn swallowed it in the app's lifespan (http),
+    # so a server that never started exited 0 and a launcher saw success.
+    ingestor = MemgraphIngestor(host="127.0.0.1", port=nothing_listening)
+    _, server = _mcp_server(ingestor)
+    with server:
+        result = runner.invoke(app, ["mcp-server", "--transport", transport])
+
+    output = " ".join(click.unstyle(result.output).split())
+    assert result.exit_code == 1, output
+    assert output.count(f"127.0.0.1:{nothing_listening}") == 1, output
+    assert "cgr daemon up" in output
+    assert "Traceback" not in output
+
+
+class _Connection:
+    autocommit = False
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def graph_answers() -> Iterator[None]:
+    with patch.object(
+        MemgraphIngestor, "_create_connection", return_value=_Connection()
+    ):
+        yield
+
+
+def test_a_healthy_stdio_mcp_server_still_starts(
+    graph_answers: None, nothing_listening: int
+) -> None:
+    # Negative.
+    @contextlib.asynccontextmanager
+    async def streams() -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+        yield (MagicMock(), MagicMock())
+
+    server, created = _mcp_server(
+        MemgraphIngestor(host="127.0.0.1", port=nothing_listening)
+    )
+    with created, patch("codebase_rag.mcp.server.stdio_server", streams):
+        result = runner.invoke(app, ["mcp-server", "--transport", "stdio"])
+
+    assert result.exit_code == 0, result.output
+    server.run.assert_awaited_once()
+
+
+def test_a_healthy_http_mcp_server_still_starts(
+    graph_answers: None, nothing_listening: int, mcp_http_port: int
+) -> None:
+    # Negative.
+    _, created = _mcp_server(MemgraphIngestor(host="127.0.0.1", port=nothing_listening))
+    with created, patch("uvicorn.Server.serve", new_callable=AsyncMock) as serve:
+        result = runner.invoke(app, ["mcp-server", "--transport", "http"])
+
+    assert result.exit_code == 0, result.output
+    serve.assert_awaited_once()
