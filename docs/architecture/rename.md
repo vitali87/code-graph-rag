@@ -81,7 +81,9 @@ family are read (the indexer's own walk, under `.cgrignore` and
   only where an import of it reaches it (`from pkg.util import sorted`, or
   `from pkg.util import *`): a `sorted(xs)` that imports no project `sorted`
   is the builtin. After a star import from another module it may still be
-  the function, and is held to the plan as uncertain. In Go, Java, C# and the
+  the function, and is held to the plan as uncertain, as is a bare use of a
+  top-level function of a classic JavaScript script (a file with no import
+  or export), which every script on the page shares. In Go, Java, C# and the
   like a same-package call needs no import, and every bare use counts;
 - for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),
   through its own object in the body of its class or of one whose header
@@ -99,7 +101,9 @@ family are read (the indexer's own walk, under `.cgrignore` and
   Python import from a source root spells the module from its top-level
   package down (`pkg.cache` once `pkg/__init__.py` exists). Where two
   source roots hold the spelled module (`pkg/cache.py` and
-  `src/pkg/cache.py`), it is the one under the importing file's own root. When another
+  `src/pkg/cache.py`), Python's import path decides which one loads, and
+  the source does not say: a call through it is uncertain, held to the plan
+  and never rewritten. When another
   symbol of the project shares the name, `other.Cache()`,
   `from pkg.other import Cache` and `class Sub(other.Cache)` are that one;
   an import through a package above the class (`use crate::Parse`,

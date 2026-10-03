@@ -14,11 +14,11 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.editing.import_paths import (
     ImportReader,
-    closest_match,
     module_key,
     resolves_above,
     resolves_to,
     spelled_length,
+    unique_match,
 )
 
 
@@ -284,34 +284,29 @@ def test_the_names_an_import_binds(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("importer", "statement", "verdict"),
+    ("statement", "twin", "verdict"),
     [
-        # `pkg.cache` is the target's `pkg/cache.py` from the repository's
-        # root, and the rival `src/pkg/cache.py` from under `src/`.
-        ("app/use.py", "from pkg.cache import Cache", True),
-        ("src/app/use.py", "from pkg.cache import Cache", False),
-        # A module of another name is the rival wherever it is imported.
-        ("app/use.py", "from pkg2.cache import Cache", False),
-        ("app/use.py", "from vendor.cache import Cache", None),
+        # Only the target's `pkg/cache.py` is spelled `pkg.cache`.
+        ("from pkg.cache import Cache", False, True),
+        # `src/pkg/cache.py` is too, and Python's import path decides.
+        ("from pkg.cache import Cache", True, False),
+        # A relative import names one module whatever the roots.
+        ("from .cache import Cache", True, True),
+        # A module of another name is the rival's, and an unknown one none.
+        ("from pkg2.cache import Cache", False, False),
+        ("from vendor.cache import Cache", False, None),
     ],
 )
-def test_one_import_names_one_module_by_the_importers_source_root(
-    tmp_path: Path, importer: str, statement: str, verdict: bool | None
+def test_an_import_is_the_target_only_when_it_names_no_other_module(
+    tmp_path: Path, statement: str, twin: bool, verdict: bool | None
 ) -> None:
-    _write(
-        tmp_path,
-        "pkg/__init__.py",
-        "src/pkg/__init__.py",
-        "pkg2/__init__.py",
-    )
+    _write(tmp_path, "pkg/__init__.py", "src/pkg/__init__.py", "pkg2/__init__.py")
+    rivals = ("pkg2/cache.py", "src/pkg/cache.py") if twin else ("pkg2/cache.py",)
     modules = (
         (module_key("pkg/cache.py"), spelled_length(tmp_path, "pkg/cache.py"), True),
-        *(
-            (module_key(path), spelled_length(tmp_path, path), False)
-            for path in ("src/pkg/cache.py", "pkg2/cache.py")
-        ),
+        *((module_key(path), spelled_length(tmp_path, path), False) for path in rivals),
     )
-    reader = ImportReader(tmp_path, importer, cs.SupportedLanguage.PYTHON)
+    reader = ImportReader(tmp_path, "pkg/use.py", cs.SupportedLanguage.PYTHON)
     paths = reader.read(statement).bindings["Cache"]
 
-    assert closest_match(paths, modules, reader.directory) is verdict
+    assert unique_match(paths, modules) is verdict

@@ -1881,24 +1881,22 @@ _ROOT_USER = (
 
 
 @pytest.mark.parametrize(
-    ("target", "user", "resolution"),
+    ("target", "user"),
     [
-        # The import resolves at the importer's own source root.
-        (f"{PROJECT}.pkg.cache.Cache.get", "app/use.py", "unplanned"),
-        (f"{PROJECT}.src.pkg.cache.Cache.get", "src/app/use.py", "unplanned"),
-        # The other root's `pkg.cache` is another module.
-        (f"{PROJECT}.src.pkg.cache.Cache.get", "app/use.py", "receiver_unknown"),
-        (f"{PROJECT}.pkg.cache.Cache.get", "src/app/use.py", "receiver_unknown"),
+        (f"{PROJECT}.pkg.cache.Cache.get", "app/use.py"),
+        (f"{PROJECT}.src.pkg.cache.Cache.get", "src/app/use.py"),
+        (f"{PROJECT}.src.pkg.cache.Cache.get", "app/use.py"),
+        (f"{PROJECT}.pkg.cache.Cache.get", "src/app/use.py"),
     ],
     ids=["root-target", "src-target", "root-import-of-src", "src-import-of-root"],
 )
-def test_an_import_resolves_at_the_importers_own_source_root(
-    tmp_path: Path, target: str, user: str, resolution: str
+def test_an_import_two_source_roots_satisfy_is_never_rewritten(
+    tmp_path: Path, target: str, user: str
 ) -> None:
     # Review of PR #2797: `pkg/cache.py` and `src/pkg/cache.py` are both
-    # spelled `pkg.cache`; which one an import means depends on the source
-    # root the importing file sits under, and the target's own module must
-    # not count as its rival.
+    # spelled `pkg.cache`, and which one Python loads depends on the order
+    # of its import path, which the source does not say. The call may be
+    # either class's, so it is held to the plan and never rewritten.
     root = tmp_path / PROJECT
     root.mkdir()
     store, _updater = _indexed(root, {**TWO_ROOTS, user: _ROOT_USER})
@@ -1918,5 +1916,82 @@ def test_an_import_resolves_at_the_importers_own_source_root(
         unplanned = refused.unplanned
 
     assert [(s.kind, s.path, s.line, s.col, s.resolution) for s in unplanned] == [
-        ("call", user, 6, 13, resolution)
+        ("call", user, 6, 13, "receiver_unknown")
     ]
+
+
+@pytest.mark.parametrize(
+    ("files", "user", "text"),
+    [
+        # Only the repository's root holds `pkg/cache.py`.
+        (
+            {"pkg/__init__.py": "", "pkg/cache.py": _CACHE_CLASS, "src/x.py": ""},
+            "app/use.py",
+            _ROOT_USER,
+        ),
+        # A relative import names one module whatever the roots.
+        (
+            TWO_ROOTS,
+            "pkg/use.py",
+            _ROOT_USER.replace("from pkg.cache", "from .cache"),
+        ),
+    ],
+    ids=["one-root", "relative"],
+)
+def test_an_import_one_module_satisfies_is_still_rewritten(
+    tmp_path: Path, files: dict[str, str], user: str, text: str
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {**files, user: text})
+
+    report = rename(
+        root,
+        _missing(store, user),
+        PROJECT,
+        f"{PROJECT}.pkg.cache.Cache.get",
+        "fetch",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col, s.resolution) for s in report.unplanned] == [
+        (user, 6, 13, "unplanned")
+    ]
+    assert "return c.fetch(key)" in (root / user).read_text()
+
+
+CLASSIC = {
+    "web/lib.js": "function helper(a) {\n  return a;\n}\n",
+    "web/page.js": "function run() {\n  return helper(1);\n}\n",
+}
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+def test_a_classic_scripts_global_function_is_held_in_every_script(
+    tmp_path: Path, allow_heuristic: bool
+) -> None:
+    # Review of PR #2797: a classic script (no import or export) puts its
+    # top-level `helper` on the page's global object, and another script
+    # calls it by its bare name. It may be the function, so it is held to
+    # the plan and never rewritten on a guess.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, CLASSIC)
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "web/page.js"),
+            PROJECT,
+            f"{PROJECT}.web.lib.helper",
+            "assist",
+            allow_heuristic=allow_heuristic,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "web/page.js", 2, 9, "receiver_unknown")]
+    assert _tree(root) == before

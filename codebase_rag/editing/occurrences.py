@@ -47,11 +47,11 @@ from .import_paths import (
     ImportRead,
     ImportReader,
     ModulePath,
-    closest_match,
     module_key,
     resolves_above,
     resolves_to,
     spelled_length,
+    unique_match,
 )
 from .patcher import _identifier_at
 
@@ -61,6 +61,8 @@ _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
 _TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
 # A name as written, qualified or not: `Cache`, `other.Cache`, `a::Parse`.
+# A Node.js module, which no script shares its top-level names with.
+_COMMONJS = re.compile(rb"\brequire\s*\(|\bmodule\.exports\b|\bexports\.\w")
 # Where a statement may import every name of a module: `import *`, `::*`.
 _WILDCARD_IMPORT = re.compile(rb"\bimport\s*\(?\s*\*|::\s*\*")
 _SPELLING = re.compile(rb"\w+(?:\s*(?:::|\.|\\)\s*\w+)*")
@@ -214,6 +216,9 @@ class _Modules(NamedTuple):
     packages: dict[tuple[str, ...], int]
     # The modules of the other project symbols named like those classes.
     rivals: dict[tuple[str, ...], int]
+    # Whether the function is a top-level one of a classic JS/TS script,
+    # which any script reaches by its bare name with no import.
+    script_global: bool = False
 
 
 def _modules(repo_root: Path, target: Target) -> _Modules:
@@ -229,7 +234,36 @@ def _modules(repo_root: Path, target: Target) -> _Modules:
         module_key(path): spelled_length(repo_root, path)
         for _name, path in target.rivals
     }
-    return _Modules(home, packages, rivals)
+    return _Modules(home, packages, rivals, _script_global(repo_root, target))
+
+
+def _script_global(repo_root: Path, target: Target) -> bool:
+    """Whether the target is a top-level function of a classic script: a
+    JS/TS file with no import or export, whose top-level names every other
+    script on the page shares (`helper()` with no import)."""
+    if (
+        target.kind is not cs.RenameTargetKind.FUNCTION
+        or target.language not in cs.JS_TS_LANGUAGES
+    ):
+        return False
+    parsers, _queries = load_parsers()
+    parser = parsers.get(target.language)
+    try:
+        source = (repo_root / target.path).read_bytes()
+    except OSError:
+        return False
+    if parser is None or _COMMONJS.search(source):
+        return False
+    root = parser.parse(source).root_node
+    if any(child.type in cs.RENAME_JS_MODULE_STATEMENTS for child in root.children):
+        return False
+    pattern = re.compile(_WORD % re.escape(target.name.encode(cs.ENCODING_UTF8)))
+    return any(
+        (token := _identifier_at(root, match.start(), match.end())) is not None
+        and _binds(token)
+        and _scope_around(token) is None
+        for match in pattern.finditer(source)
+    )
 
 
 class _Unbound:
@@ -400,12 +434,11 @@ class _File:
 
     def _is_home(self, name: str, paths: tuple[ModulePath, ...]) -> bool:
         """Whether `paths` lead to the class `name` of the target rather than
-        to another of the name: to its module and not another's, the one the
-        importing file's source root holds where the same path names both
-        (`pkg.cache` under the repository and under `src/`), or, when no
+        to another of the name: to its module and to no other's (`pkg.cache`
+        under both the repository and `src/` may be either), or, when no
         other symbol of the project shares the name, to a package above it
         that may re-export it (`use crate::Parse`, `from pkg import Cache`)."""
-        verdict = closest_match(paths, self._candidates, self.imports.directory)
+        verdict = unique_match(paths, self._candidates)
         if verdict is not None:
             return verdict
         return not self._contested(name) and any(
@@ -449,7 +482,8 @@ class _File:
         JS/TS, Rust), it does so outside the function's own file only through
         an import of it: `sorted(xs)` that imports no project `sorted` is the
         builtin. A star import may bring it in, so one from elsewhere keeps
-        the use as refusal-only evidence (False)."""
+        the use as refusal-only evidence (False), and so does a classic
+        script's global function, which any script calls with no import."""
         if (
             self.path == self.target.path
             or self.language not in cs.RENAME_IMPORT_REQUIRED_LANGUAGES
@@ -466,7 +500,9 @@ class _File:
         if not isinstance(bound, _Unbound):
             return True if self._is_home(name, bound) else None
         if not self.wildcards:
-            return None
+            # A builtin (`sorted`), unless the function is a classic script's
+            # global, which any script may call by its bare name.
+            return False if self.modules.script_global else None
         return all(self._is_home(name, paths) for paths in self.wildcards)
 
     @cached_property

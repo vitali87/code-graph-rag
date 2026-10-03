@@ -259,6 +259,9 @@ RENAME_IMPORT_ALL = "*"
 # builtin. Go, Java, C#, Scala and their like see a same-package function
 # with no import, Dart imports a library whole, and a Lua global is shared
 # by every file, so there a bare name is held to the plan as before.
+# What makes a JS/TS file a module: without either it is a classic script,
+# and its top-level names are globals every other script reaches bare.
+RENAME_JS_MODULE_STATEMENTS = frozenset({"import_statement", "export_statement"})
 RENAME_IMPORT_REQUIRED_LANGUAGES = frozenset(
     {SupportedLanguage.PYTHON, SupportedLanguage.RUST, *JS_TS_LANGUAGES}
 )

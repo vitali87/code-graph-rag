@@ -120,45 +120,30 @@ def _suffix_roots(
     )
 
 
-def closest_match(
+def unique_match(
     paths: tuple[ModulePath, ...],
     modules: tuple[tuple[tuple[str, ...], int, bool], ...],
-    directory: tuple[str, ...],
 ) -> bool | None:
-    """Which of `modules` (each a module, how much of it an import must
-    spell, and a verdict) the importing file in `directory` means by
-    `paths`, as its verdict; None when they name none of them.
+    """The verdict on the module `paths` name among `modules` (each a
+    module, how much of it an import must spell, and a verdict); None when
+    they name none of them.
 
-    `pkg.cache` may name `pkg/cache.py` and `src/pkg/cache.py` alike.
-    Python finds it under the source root on its path, which the importing
-    file's own is: the deepest root that holds the importer, else the
-    shallowest. A path resolved from the importer (a relative one) is
-    exact, and on a tie the first verdict that is true wins."""
-    ranked = [
-        (_root_rank(root, directory), verdict)
+    A path resolved from the importing file (a relative one) names one
+    module. One spelled from a source root may name several: `pkg.cache` is
+    `pkg/cache.py` and `src/pkg/cache.py` alike, and which one Python loads
+    depends on the order of its import path, which the source does not say.
+    So the verdict is true only when every module named is a true one; one
+    false among them makes the whole false, and the use is never rewritten
+    on a guess between them."""
+    matched = [
+        (path.kind is PathKind.EXACT, verdict)
         for path, (key, length, verdict) in product(paths, modules)
-        for root in _match_roots(path, key, length)
+        if resolves_to(path, key, length)
     ]
-    return max(ranked)[1] if ranked else None
-
-
-def _match_roots(
-    path: ModulePath, key: tuple[str, ...], length: int
-) -> tuple[tuple[str, ...] | None, ...]:
-    # None stands for a path resolved from the importer: it has no root.
-    if path.kind is PathKind.SUFFIX:
-        return _suffix_roots(path.segments, key, length)
-    return (None,) if resolves_to(path, key, length) else ()
-
-
-def _root_rank(
-    root: tuple[str, ...] | None, directory: tuple[str, ...]
-) -> tuple[int, int]:
-    if root is None:
-        return (2, 0)
-    if directory[: len(root)] == root:
-        return (1, len(root))
-    return (0, -len(root))
+    if not matched:
+        return None
+    exact = [verdict for is_exact, verdict in matched if is_exact]
+    return all(exact or [verdict for _exact, verdict in matched])
 
 
 def resolves_above(path: ModulePath, key: tuple[str, ...], length: int) -> bool:
