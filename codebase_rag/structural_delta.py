@@ -673,6 +673,11 @@ def _dangling(
 class _SourceNames(NamedTuple):
     own: frozenset[str]
     imported: frozenset[str]
+    # What `from module import *` takes: the strings of its `__all__`, or
+    # None for a module without one (every name not starting with `_`) or
+    # with one built at run time, which `star_unknown` tells apart.
+    star: frozenset[str] | None = None
+    star_unknown: bool = False
 
 
 # The statement lists of a compound statement, walked as the module's own
@@ -681,10 +686,77 @@ _PY_BLOCK_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"
 
 
 def _stored_names(node: ast.AST) -> Iterator[str]:
-    """The names an expression or assignment target writes."""
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-            yield child.id
+    """The names an expression or target writes in the scope it runs in.
+
+    A lambda's body and a comprehension's own variables are scopes of their
+    own in Python 3, so `[helper for helper in items]` binds no module-level
+    `helper` (Greptile, PR #2574); `:=` inside a comprehension still binds
+    in the enclosing scope (PEP 572), and so does a `case` capture.
+    """
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Store):
+            yield current.id
+        elif captured := _pattern_capture(current):
+            yield captured
+        if not isinstance(current, ast.Lambda):
+            pending.extend(_same_scope_children(current))
+
+
+def _pattern_capture(node: ast.AST) -> str | None:
+    if isinstance(node, ast.MatchAs | ast.MatchStar):
+        return node.name
+    return node.rest if isinstance(node, ast.MatchMapping) else None
+
+
+def _same_scope_children(node: ast.AST) -> Iterator[ast.AST]:
+    for field, value in ast.iter_fields(node):
+        if isinstance(node, ast.comprehension) and field == "target":
+            continue
+        for part in value if isinstance(value, list) else [value]:
+            if isinstance(part, ast.AST):
+                yield part
+
+
+def _literal_strings(node: ast.AST | None) -> frozenset[str] | None:
+    """The strings of a list or tuple display of string literals, else None."""
+    if not isinstance(node, ast.List | ast.Tuple):
+        return None
+    strings = [
+        e.value
+        for e in node.elts
+        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    ]
+    return frozenset(strings) if len(strings) == len(node.elts) else None
+
+
+def _dunder_all_write(node: ast.AST) -> tuple[bool, frozenset[str] | None]:
+    """Whether a statement writes `__all__`, and the names if they are literal.
+
+    Assignment, `+=`, `.extend([...])` and `.append("...")` are read; anything
+    else that writes it is a run-time value.
+    """
+    match node:
+        case ast.Assign(targets=targets, value=value) if any(
+            isinstance(t, ast.Name) and t.id == cs.PY_DUNDER_ALL for t in targets
+        ):
+            return True, _literal_strings(value)
+        case (
+            ast.AnnAssign(target=ast.Name(id=cs.PY_DUNDER_ALL), value=value)
+            | ast.AugAssign(target=ast.Name(id=cs.PY_DUNDER_ALL), value=value)
+        ):
+            return True, _literal_strings(value)
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(value=ast.Name(id=cs.PY_DUNDER_ALL), attr=method),
+                args=[argument],
+            )
+        ) if method in (cs.PY_LIST_EXTEND, cs.PY_LIST_APPEND):
+            if method == cs.PY_LIST_EXTEND:
+                return True, _literal_strings(argument)
+            return True, _literal_strings(ast.List(elts=[argument]))
+    return False, None
 
 
 def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
@@ -717,14 +789,42 @@ def _python_top_level_names(text: str) -> _SourceNames | None:
         return None
     own: set[str] = set()
     imported: set[str] = set()
+    # Every literal write is taken together, whatever its order: a name one
+    # of them lists may be in the final `__all__`, and only a name none of
+    # them lists is surely out.
+    star: set[str] | None = None
+    star_unknown = False
     pending: list[ast.AST] = list(tree.body)
     while pending:
         node = pending.pop()
+        writes_all, listed = _dunder_all_write(node)
+        if writes_all:
+            star = (star or set()) | (listed or set())
+            star_unknown |= listed is None
         if isinstance(node, ast.ImportFrom):
             imported.update(alias.asname or alias.name for alias in node.names)
         else:
             own.update(_names_bound_by(node, pending))
-    return _SourceNames(own=frozenset(own), imported=frozenset(imported))
+    return _SourceNames(
+        own=frozenset(own),
+        imported=frozenset(imported),
+        star=None if star is None else frozenset(star),
+        star_unknown=star_unknown,
+    )
+
+
+def _star_takes(names: _SourceNames | None, name: str) -> bool:
+    """Whether `from module import *` binds `name`, by the module's source.
+
+    Its `__all__` when it has one, else every name not starting with `_`
+    (Greptile, PR #2574). A module that is not Python, cannot be read or
+    builds `__all__` at run time sets no limit that can be checked.
+    """
+    if names is None or names.star_unknown:
+        return True
+    if names.star is None:
+        return not name.startswith(cs.PY_PRIVATE_PREFIX)
+    return name in names.star
 
 
 # A module the edit left alone is read on demand: the definitions the graph
@@ -835,7 +935,9 @@ class _AfterBindings:
         self, binding: ImportBinding, name: str, seen: frozenset[tuple[str, str]]
     ) -> bool:
         if binding.imported_name == cs.IMPORTED_NAME_WILDCARD:
-            return self.binds(binding.module, binding.module_path, name, seen)
+            return _star_takes(
+                self._source_names(binding.module_path), name
+            ) and self.binds(binding.module, binding.module_path, name, seen)
         return binding.bound == name and (
             _imports_the_module_itself(binding, self._gone)
             or self.binds(

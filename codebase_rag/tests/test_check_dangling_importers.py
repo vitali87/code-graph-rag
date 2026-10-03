@@ -404,6 +404,73 @@ def test_name_in_a_comment_inside_all_is_not_an_export(
     assert not has_findings(delta)
 
 
+def test_comprehension_variable_named_like_the_removed_symbol_binds_nothing(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A comprehension's variable is local to it in Python 3: the module still
+    # has no `helper` (Greptile, PR #2574).
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\nvalues = [helper for helper in range(3)]\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_wildcard_of_a_module_whose_all_leaves_the_name_out_is_a_finding(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # `import *` takes only the names in `__all__` (Greptile, PR #2574).
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root,
+        store,
+        updater,
+        "app/util.py",
+        "def helper():\n    return 1\n\n\ndef other():\n    return 2\n\n\n"
+        '__all__ = ["other"]\n',
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert not _imports_cleanly(root)
+    assert delta["dangling_importers"] == [
+        _import_entry("app.core.helper"),
+        _all_entry("app.core.helper"),
+    ]
+
+
+def test_wildcard_skips_an_underscore_name_of_a_module_without_all(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # With no `__all__`, `import *` takes the names that do not start with
+    # an underscore (Greptile, PR #2574).
+    root, store, updater = indexed
+    _write(root, "app/core.py", CORE.replace("def helper():", "def _helper():"))
+    _write(root, "app/__init__.py", "from app.core import _helper, keep\n")
+    _observe(root, store, updater, ["app/core.py", "app/__init__.py"])
+    _add_unchanged_module(
+        root, store, updater, "app/util.py", "def _helper():\n    return 1\n"
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert delta["symbols"]["removed"] == [_qn("app.core._helper")]
+    assert [(e["kind"], e["name"]) for e in delta["dangling_importers"]] == [
+        ("import", "_helper")
+    ]
+
+
 # --- what must not change -----------------------------------------------------
 
 
@@ -645,6 +712,62 @@ def test_all_entry_with_a_trailing_comment_is_still_an_export(
 
     entries = [e for e in delta["dangling_importers"] if e["kind"] == "__all__"]
     assert [(e["line"], e["col"], e["name"]) for e in entries] == [(4, 5, "helper")]
+
+
+def test_walrus_in_a_comprehension_binds_the_module_name(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The one comprehension target that binds in the enclosing scope.
+    root, store, updater = indexed
+    _write(
+        root,
+        "app/core.py",
+        CORE_WITHOUT_HELPER + "\n\nvalues = [(helper := n) for n in range(3)]\n",
+    )
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_wildcard_of_a_module_whose_all_lists_the_name_passes(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root,
+        store,
+        updater,
+        "app/util.py",
+        'def helper():\n    return 1\n\n\n__all__ = ["helper"]\n',
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
+
+
+def test_wildcard_of_a_module_whose_all_is_computed_is_taken_at_its_word(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # An `__all__` built at run time cannot be read without running it.
+    root, store, updater = indexed
+    _add_unchanged_module(
+        root,
+        store,
+        updater,
+        "app/util.py",
+        'def helper():\n    return 1\n\n\n__all__ = [n for n in ("helper",)]\n',
+    )
+    _write(root, "app/core.py", "from app.util import *\n\n\n" + CORE_WITHOUT_HELPER)
+
+    delta = _observe(root, store, updater, ["app/core.py"])
+
+    assert _imports_cleanly(root)
+    assert delta["dangling_importers"] == []
 
 
 def _run_cli_check(root: Path, store: _StatefulIngestor) -> Result:
