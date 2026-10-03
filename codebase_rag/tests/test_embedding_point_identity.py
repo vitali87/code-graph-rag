@@ -15,7 +15,7 @@ back under new node ids, a deleted function does not come back at all.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -50,6 +50,26 @@ _SPANS = {"keep_me": (1, 2), "delete_me": (4, 5)}
 _KEEP = f"{_PROJECT}.m.keep_me"
 _DELETE = f"{_PROJECT}.m.delete_me"
 
+# One qualified name, two nodes. C++ code declares `Clock` as a struct in one
+# `#if` branch and as a namespace in the other, so `<module>.Clock.now` is
+# both a Method and a Function. The graph keeps them apart because its
+# identity constraints are per label, and C++ methods skip the registry's
+# `@line` renaming that would otherwise tell them apart by name.
+_CLOCK_FILE = "clock.cpp"
+_CLOCK_SOURCE = (
+    "#if defined(_WIN32)\n"
+    "struct Clock {\n"
+    "  static long now() { return 1; }\n"
+    "};\n"
+    "#else\n"
+    "namespace Clock {\n"
+    "long now() { return 2; }\n"
+    "}\n"
+    "#endif\n"
+)
+_CLOCK_LINES = {cs.NodeLabel.METHOD: 3, cs.NodeLabel.FUNCTION: 7}
+_NOW = f"{_PROJECT}.clock.Clock.now"
+
 
 def _vector(text: str) -> list[float]:
     # Deterministic and content-dependent, so an edit changes the vector.
@@ -66,9 +86,22 @@ def _row(node_id: int, qualified_name: str) -> ResultRow:
     return {
         cs.KEY_NODE_ID: node_id,
         cs.KEY_QUALIFIED_NAME: qualified_name,
+        cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         cs.KEY_START_LINE: start,
         cs.KEY_END_LINE: end,
         cs.KEY_PATH: _MODULE,
+    }
+
+
+def _clock_row(node_id: int, label: cs.NodeLabel) -> ResultRow:
+    line = _CLOCK_LINES[label]
+    return {
+        cs.KEY_NODE_ID: node_id,
+        cs.KEY_QUALIFIED_NAME: _NOW,
+        cs.KEY_LABEL: label,
+        cs.KEY_START_LINE: line,
+        cs.KEY_END_LINE: line,
+        cs.KEY_PATH: _CLOCK_FILE,
     }
 
 
@@ -112,7 +145,7 @@ def _updater(
 def _sync(
     repo: Path,
     ingestor: MagicMock,
-    graph: Mapping[int, str],
+    graph: Mapping[int, str] | Sequence[ResultRow],
     project: str = _PROJECT,
     source: str | None = None,
     projects: tuple[str, ...] = (),
@@ -122,13 +155,18 @@ def _sync(
     """The embedding pass of one sync, with the graph holding `graph`.
 
     `graph` is what the project-prefixed embeddings query answers, which
-    includes the functions of a registered project nested under this one;
+    includes the functions of a registered project nested under this one:
+    functions of `m.py` by node id, or the query's rows themselves.
     `projects` are the registered project names, and `registry_error` is
     raised by the read of them instead.
     """
     if source is not None:
         (repo / _MODULE).write_text(source)
-    rows = [_row(n, qn) for n, qn in graph.items()]
+    rows = (
+        [_row(n, qn) for n, qn in graph.items()]
+        if isinstance(graph, Mapping)
+        else list(graph)
+    )
     registered: list[ResultRow] = [{cs.KEY_NAME: name} for name in projects]
 
     def _answer(query: str, params: object = None) -> list[ResultRow]:
@@ -337,6 +375,73 @@ class TestDeleteProject:
         assert _points() == [(f"{_OTHER}.m.keep_me", 7), (f"{_PROJECT}2.m.keep_me", 8)]
 
 
+@pytest.fixture
+def clock_repo(repo: Path) -> Path:
+    (repo / _CLOCK_FILE).write_text(_CLOCK_SOURCE)
+    return repo
+
+
+def _clock(function_id: int, method_id: int) -> list[ResultRow]:
+    return [
+        _clock_row(function_id, cs.NodeLabel.FUNCTION),
+        _clock_row(method_id, cs.NodeLabel.METHOD),
+    ]
+
+
+def _searched_node_ids() -> set[int]:
+    return {node_id for node_id, _ in vs.search_embeddings(_vector(_NOW), top_k=10)}
+
+
+@pytest.mark.usefixtures("small_vectors")
+class TestAFunctionAndAMethodSharingAName:
+    """Both are live nodes, so each keeps a point of its own (bot review)."""
+
+    def test_both_keep_a_point_and_answer_searches(
+        self, clock_repo: Path, ingestor: MagicMock
+    ) -> None:
+        _sync(clock_repo, ingestor, _clock(1, 2))
+
+        assert _points() == [(_NOW, 1), (_NOW, 2)]
+        assert _searched_node_ids() == {1, 2}
+
+    def test_an_edit_keeps_both_points_under_the_same_keys(
+        self, clock_repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Negative: editing the file re-creates both nodes under new ids, and
+        # each symbol's point is replaced in place rather than added beside.
+        _sync(clock_repo, ingestor, _clock(1, 2))
+        before = _point_ids()
+        edited = _CLOCK_SOURCE.replace("return 2", "return 3")
+        (clock_repo / _CLOCK_FILE).write_text(edited)
+
+        _sync(clock_repo, ingestor, _clock(3, 4))
+
+        assert _point_ids() == before
+        assert _points() == [(_NOW, 3), (_NOW, 4)]
+        assert _searched_node_ids() == {3, 4}
+
+    def test_the_one_removed_takes_only_its_own_point(
+        self, clock_repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Negative: dropping the struct branch prunes the Method's point and
+        # leaves the Function's, though both carry one qualified name.
+        _sync(clock_repo, ingestor, _clock(1, 2))
+
+        _sync(clock_repo, ingestor, [_clock_row(1, cs.NodeLabel.FUNCTION)])
+
+        assert _points() == [(_NOW, 1)]
+        assert _searched_node_ids() == {1}
+
+    def test_delete_project_removes_both(
+        self, clock_repo: Path, ingestor: MagicMock
+    ) -> None:
+        _sync(clock_repo, ingestor, _clock(1, 2))
+
+        vs.delete_project_embeddings(_PROJECT, [])
+
+        assert _points() == []
+
+
 @pytest.mark.usefixtures("small_vectors")
 class TestUpgradeFromNodeIdKeys:
     """A collection written before the fix holds points keyed by node id."""
@@ -532,6 +637,17 @@ class TestMilvus:
         vs.delete_project_embeddings(_PROJECT, [1, 30], [f"{_PROJECT}.v2"])
 
         assert self._rows() == [(nested, 30)]
+
+    def test_a_function_and_a_method_sharing_a_name_keep_a_row_each(
+        self, clock_repo: Path, ingestor: MagicMock
+    ) -> None:
+        # Milvus keys rows by node id, so the two nodes never shared a key;
+        # pruning keeps both and drops only the one the graph lost.
+        _sync(clock_repo, ingestor, _clock(1, 2))
+        assert self._rows() == [(_NOW, 1), (_NOW, 2)]
+
+        _sync(clock_repo, ingestor, [_clock_row(1, cs.NodeLabel.FUNCTION)])
+        assert self._rows() == [(_NOW, 1)]
 
     def test_a_name_that_only_matches_as_a_pattern_is_not_this_project(
         self, repo: Path, ingestor: MagicMock

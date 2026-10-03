@@ -105,7 +105,9 @@ from .services.resource_cleanup import prune_unanchored_resources
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
+    EmbeddingPoint,
     EmbeddingQueryResult,
+    EmbeddingSymbol,
     FunctionLocation,
     FunctionLocations,
     JsonValue,
@@ -210,11 +212,11 @@ _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 
 def _flush_embedding_batch(
-    pending: list[tuple[int, str, str]],
-    expected: dict[int, str],
+    pending: list[tuple[int, EmbeddingSymbol, str]],
+    expected: dict[int, EmbeddingSymbol],
     stored_ids: set[int],
     embed_code_batch: Callable[[list[str]], list[list[float]]],
-    store_embedding_batch: Callable[[list[tuple[int, list[float], str]]], int],
+    store_embedding_batch: Callable[[list[EmbeddingPoint]], int],
 ) -> int:
     # Embeds and stores the pending batch, then empties it in place so the
     # caller keeps appending to the same list. `stored_ids` gains the nodes
@@ -233,16 +235,26 @@ def _flush_embedding_batch(
         )
         pending.clear()
         return 0
-    points: list[tuple[int, list[float], str]] = [
-        (node_id, emb, qname) for (node_id, qname, _), emb in zip(pending, embeddings)
+    points: list[EmbeddingPoint] = [
+        (node_id, emb, symbol) for (node_id, symbol, _), emb in zip(pending, embeddings)
     ]
-    for node_id, qname, _src in pending:
-        expected[node_id] = qname
+    for node_id, symbol, _src in pending:
+        expected[node_id] = symbol
     stored = store_embedding_batch(points)
     if stored:
-        stored_ids.update(node_id for node_id, _emb, _qname in points)
+        stored_ids.update(node_id for node_id, _emb, _symbol in points)
     pending.clear()
     return stored
+
+
+def _embedded_label(label: ResultValue | None) -> cs.NodeLabel | None:
+    if isinstance(label, str) and label in cs.EMBEDDED_NODE_LABELS:
+        return cs.NodeLabel(label)
+    return None
+
+
+def _embedding_symbol(parsed: EmbeddingQueryResult) -> EmbeddingSymbol:
+    return EmbeddingSymbol(parsed[cs.KEY_LABEL], parsed[cs.KEY_QUALIFIED_NAME])
 
 
 def _under_any_project(qualified_name: object, projects: Sequence[str]) -> bool:
@@ -7914,9 +7926,11 @@ class GraphUpdater:
             return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
         return False
 
-    def _embedding_candidate(self, row: ResultRow) -> tuple[int, str, str] | None:
-        # (node id, qualified name, source) for one query row; None when the
-        # row does not parse or its source cannot be read back from disk.
+    def _embedding_candidate(
+        self, row: ResultRow
+    ) -> tuple[int, EmbeddingSymbol, str] | None:
+        # (node id, symbol, source) for one query row; None when the row does
+        # not parse or its source cannot be read back from disk.
         parsed = self._parse_embedding_result(row)
         if parsed is None:
             return None
@@ -7934,7 +7948,7 @@ class GraphUpdater:
         if not source_code:
             logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
             return None
-        return parsed[cs.KEY_NODE_ID], qualified_name, source_code
+        return parsed[cs.KEY_NODE_ID], _embedding_symbol(parsed), source_code
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:
@@ -7986,12 +8000,12 @@ class GraphUpdater:
             logger.info(ls.GENERATING_EMBEDDINGS, count=len(results))
 
             embedded_count = 0
-            expected: dict[int, str] = {}
-            pending: list[tuple[int, str, str]] = []
+            expected: dict[int, EmbeddingSymbol] = {}
+            pending: list[tuple[int, EmbeddingSymbol, str]] = []
             flush_at = settings.QDRANT_BATCH_SIZE
             project_name = self.project_name
 
-            def store(points: list[tuple[int, list[float], str]]) -> int:
+            def store(points: list[EmbeddingPoint]) -> int:
                 return store_embedding_batch(project_name, points)
 
             def flush() -> int:
@@ -8024,22 +8038,22 @@ class GraphUpdater:
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
 
-    def _current_symbols(self, rows: list[ResultRow]) -> dict[int, str]:
+    def _current_symbols(self, rows: list[ResultRow]) -> dict[int, EmbeddingSymbol]:
         """Every function and method the graph holds for the project now,
         by node id, whether or not its source can be read to embed it."""
-        current: dict[int, str] = {}
+        current: dict[int, EmbeddingSymbol] = {}
         for row in rows:
             parsed = self._parse_embedding_result(row)
             if parsed is not None:
-                current[parsed[cs.KEY_NODE_ID]] = parsed[cs.KEY_QUALIFIED_NAME]
+                current[parsed[cs.KEY_NODE_ID]] = _embedding_symbol(parsed)
         return current
 
     def _delete_stale_embeddings(
         self,
-        current: Mapping[int, str],
+        current: Mapping[int, EmbeddingSymbol],
         stored_ids: Collection[int],
         delete_fn: Callable[
-            [str, Mapping[int, str], Collection[int], Sequence[str]], int
+            [str, Mapping[int, EmbeddingSymbol], Collection[int], Sequence[str]], int
         ],
     ) -> None:
         """Drop the project's vectors of symbols `current` no longer holds.
@@ -8090,8 +8104,8 @@ class GraphUpdater:
 
     def _reconcile_embeddings(
         self,
-        expected: Mapping[int, str],
-        verify_fn: Callable[[str, Mapping[int, str]], set[int]],
+        expected: Mapping[int, EmbeddingSymbol],
+        verify_fn: Callable[[str, Mapping[int, EmbeddingSymbol]], set[int]],
     ) -> None:
         if not expected:
             return
@@ -8146,8 +8160,15 @@ class GraphUpdater:
     def _parse_embedding_result(self, row: ResultRow) -> EmbeddingQueryResult | None:
         node_id = row.get(cs.KEY_NODE_ID)
         qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
+        # Part of the symbol's identity: a Function and a Method may share a
+        # qualified name, so a row without its label cannot be keyed.
+        label = _embedded_label(row.get(cs.KEY_LABEL))
 
-        if not isinstance(node_id, int) or not isinstance(qualified_name, str):
+        if (
+            not isinstance(node_id, int)
+            or not isinstance(qualified_name, str)
+            or label is None
+        ):
             return None
 
         start_line = row.get(cs.KEY_START_LINE)
@@ -8157,6 +8178,7 @@ class GraphUpdater:
         return EmbeddingQueryResult(
             node_id=node_id,
             qualified_name=qualified_name,
+            label=label,
             start_line=start_line if isinstance(start_line, int) else None,
             end_line=end_line if isinstance(end_line, int) else None,
             path=file_path if isinstance(file_path, str) else None,

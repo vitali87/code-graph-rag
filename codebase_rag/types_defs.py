@@ -318,9 +318,26 @@ class QueryJsonOutput(TypedDict):
 class EmbeddingQueryResult(TypedDict):
     node_id: int
     qualified_name: str
+    label: NodeLabel
     start_line: int | None
     end_line: int | None
     path: str | None
+
+
+class EmbeddingSymbol(NamedTuple):
+    """The function or method an embedding belongs to, by what a re-parse keeps.
+
+    The label is part of it because the graph's identity constraints are per
+    label: a Function and a Method may share a qualified name and still be
+    two nodes, each with an embedding of its own.
+    """
+
+    label: NodeLabel
+    qualified_name: str
+
+
+# One embedding to store: the node it answers for, its vector, its symbol.
+type EmbeddingPoint = tuple[int, list[float], EmbeddingSymbol]
 
 
 class SemanticSearchResult(TypedDict):

@@ -8,7 +8,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.types_defs import ResultRow
+from codebase_rag.types_defs import EmbeddingSymbol, ResultRow
 
 MOCK_EMBEDDING = [0.1] * 768
 
@@ -69,7 +69,14 @@ class TestCypherQueryEmbeddingsStructure:
 
     def test_returns_required_columns(self) -> None:
         query = cs.CYPHER_QUERY_EMBEDDINGS.upper()
-        for col in ["NODE_ID", "QUALIFIED_NAME", "START_LINE", "END_LINE", "PATH"]:
+        for col in [
+            "NODE_ID",
+            "QUALIFIED_NAME",
+            "LABEL",
+            "START_LINE",
+            "END_LINE",
+            "PATH",
+        ]:
             assert col in query
 
     def test_dot_concatenation_is_parenthesized(self) -> None:
@@ -181,6 +188,7 @@ class TestGenerateSemanticEmbeddings:
         row: ResultRow = {
             cs.KEY_NODE_ID: 1,
             cs.KEY_QUALIFIED_NAME: "myproject.module.hello",
+            cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
             cs.KEY_START_LINE: 1,
             cs.KEY_END_LINE: 2,
             cs.KEY_PATH: "module.py",
@@ -196,7 +204,11 @@ class TestGenerateSemanticEmbeddings:
         mock_store_batch.assert_called_once()
         batch_arg = mock_store_batch.call_args[0][1]
         assert len(batch_arg) == 1
-        assert batch_arg[0] == (1, MOCK_EMBEDDING, "myproject.module.hello")
+        assert batch_arg[0] == (
+            1,
+            MOCK_EMBEDDING,
+            EmbeddingSymbol(cs.NodeLabel.FUNCTION, "myproject.module.hello"),
+        )
 
     @_PATCH_DEPS
     @_PATCH_EMBED_BATCH
@@ -214,6 +226,7 @@ class TestGenerateSemanticEmbeddings:
         row: ResultRow = {
             cs.KEY_NODE_ID: 1,
             cs.KEY_QUALIFIED_NAME: "myproject.module.hello",
+            cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
         query_ingestor.fetch_all.return_value = [row]
 
@@ -243,6 +256,7 @@ class TestGenerateSemanticEmbeddings:
         row: ResultRow = {
             cs.KEY_NODE_ID: 1,
             cs.KEY_QUALIFIED_NAME: "myproject.module.hello",
+            cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
             cs.KEY_START_LINE: 1,
             cs.KEY_END_LINE: 2,
             cs.KEY_PATH: "module.py",
@@ -269,6 +283,7 @@ class TestGenerateSemanticEmbeddings:
         bad_row: ResultRow = {
             cs.KEY_NODE_ID: "not_an_int",
             cs.KEY_QUALIFIED_NAME: "pkg.func",
+            cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
         query_ingestor.fetch_all.return_value = [bad_row]
 
@@ -276,6 +291,82 @@ class TestGenerateSemanticEmbeddings:
 
         mock_embed_batch.assert_not_called()
         mock_store_batch.assert_not_called()
+
+    @_PATCH_DEPS
+    @_PATCH_EMBED_BATCH
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
+    def test_skips_a_row_without_its_label(
+        self,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
+        mock_embed_batch: MagicMock,
+        _mock_deps: MagicMock,
+        updater_with_query: GraphUpdater,
+        query_ingestor: MagicMock,
+        temp_repo: Path,
+    ) -> None:
+        # The label is part of the symbol's key, so a row lacking it cannot
+        # be stored without risking another node's point.
+        (temp_repo / "module.py").write_text("def hello():\n    return 42\n")
+        row: ResultRow = {
+            cs.KEY_NODE_ID: 1,
+            cs.KEY_QUALIFIED_NAME: "myproject.module.hello",
+            cs.KEY_START_LINE: 1,
+            cs.KEY_END_LINE: 2,
+            cs.KEY_PATH: "module.py",
+        }
+        query_ingestor.fetch_all.return_value = [row]
+
+        updater_with_query._generate_semantic_embeddings()
+
+        mock_embed_batch.assert_not_called()
+        mock_store_batch.assert_not_called()
+
+    @_PATCH_DEPS
+    @_PATCH_EMBED_BATCH
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
+    def test_a_function_and_a_method_sharing_a_name_are_two_symbols(
+        self,
+        mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
+        _mock_embed_batch: MagicMock,
+        _mock_deps: MagicMock,
+        updater_with_query: GraphUpdater,
+        query_ingestor: MagicMock,
+        temp_repo: Path,
+    ) -> None:
+        (temp_repo / "clock.cpp").write_text(
+            "struct Clock { static long now() { return 1; } };\n"
+            "namespace Clock { long now() { return 2; } }\n"
+        )
+        rows: list[ResultRow] = [
+            {
+                cs.KEY_NODE_ID: node_id,
+                cs.KEY_QUALIFIED_NAME: "proj.clock.Clock.now",
+                cs.KEY_LABEL: label,
+                cs.KEY_START_LINE: line,
+                cs.KEY_END_LINE: line,
+                cs.KEY_PATH: "clock.cpp",
+            }
+            for node_id, label, line in (
+                (1, cs.NodeLabel.METHOD, 1),
+                (2, cs.NodeLabel.FUNCTION, 2),
+            )
+        ]
+        query_ingestor.fetch_all.return_value = rows
+
+        updater_with_query._generate_semantic_embeddings()
+
+        method = EmbeddingSymbol(cs.NodeLabel.METHOD, "proj.clock.Clock.now")
+        function = EmbeddingSymbol(cs.NodeLabel.FUNCTION, "proj.clock.Clock.now")
+        batch_arg = mock_store_batch.call_args[0][1]
+        assert [(node_id, symbol) for node_id, _emb, symbol in batch_arg] == [
+            (1, method),
+            (2, function),
+        ]
+        assert mock_reconcile.call_args[0][1] == {1: method, 2: function}
 
     @_PATCH_DEPS
     @_PATCH_EMBED_BATCH
@@ -297,6 +388,7 @@ class TestGenerateSemanticEmbeddings:
             {
                 cs.KEY_NODE_ID: 1,
                 cs.KEY_QUALIFIED_NAME: "proj.a.f1",
+                cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
                 cs.KEY_START_LINE: 1,
                 cs.KEY_END_LINE: 2,
                 cs.KEY_PATH: "a.py",
@@ -304,6 +396,7 @@ class TestGenerateSemanticEmbeddings:
             {
                 cs.KEY_NODE_ID: 2,
                 cs.KEY_QUALIFIED_NAME: "proj.b.f2",
+                cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
                 cs.KEY_START_LINE: 1,
                 cs.KEY_END_LINE: 2,
                 cs.KEY_PATH: "b.py",
@@ -343,6 +436,7 @@ class TestBatchedEmbeddingDispatch:
             {
                 cs.KEY_NODE_ID: i + 1,
                 cs.KEY_QUALIFIED_NAME: f"proj.{name}.f{i + 1}",
+                cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
                 cs.KEY_START_LINE: 1,
                 cs.KEY_END_LINE: 2,
                 cs.KEY_PATH: f"{name}.py",

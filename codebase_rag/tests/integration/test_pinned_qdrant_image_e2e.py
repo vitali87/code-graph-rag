@@ -16,8 +16,9 @@ import yaml
 
 from codebase_rag import vector_store as vs
 from codebase_rag.config import settings
-from codebase_rag.constants import VectorStoreBackend
+from codebase_rag.constants import NodeLabel, VectorStoreBackend
 from codebase_rag.stack import constants as stack_cs
+from codebase_rag.types_defs import EmbeddingSymbol
 
 pytestmark = [pytest.mark.integration]
 
@@ -69,7 +70,10 @@ def test_the_pinned_qdrant_serves_cgrs_vector_store(pinned_qdrant_url: str) -> N
         patch.object(settings, "QDRANT_API_KEY", None),
     ):
         vs.close_vector_store_client()
-        symbols = {1: "proj.mod.a", 2: "proj.mod.b"}
+        symbols = {
+            1: EmbeddingSymbol(NodeLabel.FUNCTION, "proj.mod.a"),
+            2: EmbeddingSymbol(NodeLabel.METHOD, "proj.mod.b"),
+        }
         try:
             stored = vs.store_embedding_batch(
                 "proj", [(1, first, symbols[1]), (2, second, symbols[2])]
