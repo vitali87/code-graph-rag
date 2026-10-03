@@ -19,6 +19,7 @@ import threading
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -42,17 +43,27 @@ runner = CliRunner()
 # Takes the lock through the public API in a separate interpreter, as a
 # second terminal would, and holds it until its stdin closes.
 _HOLDER = """
+import os
 import sys
 from pathlib import Path
 from codebase_rag.sync_lock import repo_sync_lock
 with repo_sync_lock(Path(sys.argv[1]), sys.argv[2]):
-    print("held", flush=True)
+    print("held", os.getpid(), flush=True)
     sys.stdin.readline()
 """
 
 
+@dataclass
+class _Holder:
+    process: subprocess.Popen[str]
+    # The interpreter's own pid, which the lock file records. On Windows a
+    # venv's python.exe is a launcher that runs the interpreter as its
+    # child, so `process.pid` is the launcher's and never in the refusal.
+    pid: int
+
+
 @contextmanager
-def _held_elsewhere(repo: Path, project: str) -> Iterator[subprocess.Popen[str]]:
+def _held_elsewhere(repo: Path, project: str) -> Iterator[_Holder]:
     holder = subprocess.Popen(
         [sys.executable, "-c", _HOLDER, str(repo), project],
         stdin=subprocess.PIPE,
@@ -64,12 +75,12 @@ def _held_elsewhere(repo: Path, project: str) -> Iterator[subprocess.Popen[str]]
     assert holder.stdout is not None
     assert holder.stdin is not None
     try:
-        started = holder.stdout.readline().strip()
+        started, _, pid = holder.stdout.readline().strip().partition(" ")
         if started != "held":
             holder.kill()
             _, err = holder.communicate(timeout=10)
             pytest.fail(f"lock holder did not start: {err}")
-        yield holder
+        yield _Holder(holder, int(pid))
     finally:
         if holder.poll() is None:
             holder.stdin.close()
@@ -246,13 +257,13 @@ def test_a_scoped_reingest_waits_for_the_running_sync(
             time.sleep(0.5)
             assert started_at == []
             assert worker.is_alive()
-            assert holder.stdin is not None
+            assert holder.process.stdin is not None
             # Taken before the release is asked for, not after the holder
             # exits: it drops the lock on leaving its `with` block, so the
             # reingest may start before the holder's process has ended.
             release_asked_at = time.monotonic()
-            holder.stdin.close()
-            holder.wait(timeout=10)
+            holder.process.stdin.close()
+            holder.process.wait(timeout=10)
         worker.join(10)
 
     assert not worker.is_alive()
@@ -278,8 +289,8 @@ def test_a_killed_sync_leaves_no_stale_lock(
 ) -> None:
     # Negative: the kernel releases the lock however its holder dies.
     with _held_elsewhere(repo, "click") as holder:
-        holder.kill()
-        holder.wait(timeout=10)
+        holder.process.kill()
+        holder.process.wait(timeout=10)
         _updater(repo, mock_ingestor).run()
 
     mock_ingestor.ensure_node_batch.assert_called()
@@ -344,10 +355,11 @@ def test_the_lock_file_is_not_indexed_and_keeps_the_sync_in_sync(
 def test_a_waiting_lock_is_taken_once_the_holder_finishes(repo: Path) -> None:
     # Negative for `wait=True`: it waits, it does not refuse.
     with _held_elsewhere(repo, "click") as holder:
-        timer = threading.Timer(0.3, lambda: holder.stdin and holder.stdin.close())
+        stdin = holder.process.stdin
+        timer = threading.Timer(0.3, lambda: stdin and stdin.close())
         timer.start()
         with repo_sync_lock(repo, "watcher", wait=True):
-            assert holder.wait(timeout=10) == 0
+            assert holder.process.wait(timeout=10) == 0
         timer.join()
 
     assert os.path.exists(repo / cs.SYNC_LOCK_FILENAME)
@@ -378,9 +390,9 @@ def test_the_watcher_starts_after_the_running_sync_finishes(
         # Waiting, not refused: a refusal would have ended the thread.
         assert worker.is_alive()
         mock_ingestor.ensure_node_batch.assert_not_called()
-        assert holder.stdin is not None
-        holder.stdin.close()
-        holder.wait(timeout=10)
+        assert holder.process.stdin is not None
+        holder.process.stdin.close()
+        holder.process.wait(timeout=10)
     worker.join(30)
 
     assert not worker.is_alive()
