@@ -184,6 +184,8 @@ def test_an_mcp_server_that_cannot_reach_the_graph_exits_1(
     assert output.count(f"127.0.0.1:{nothing_listening}") == 1, output
     assert "cgr daemon up" in output
     assert "Traceback" not in output
+    # On stderr: stdout is the stdio transport's protocol stream (#2518).
+    assert result.stdout == "", result.stdout
 
 
 class _Connection:
