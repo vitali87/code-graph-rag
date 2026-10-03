@@ -78,6 +78,122 @@ def test_exact_and_heuristic_calls_are_tagged(
     assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
 
 
+def test_python_property_reads_require_the_receiver_class_and_skip_writes(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Remote:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "remote"\n\n'
+        "class Local:\n"
+        "    name: str\n\n"
+        "    def label(self):\n"
+        "        return self.name.upper()\n\n"
+        "    def update(self, name):\n"
+        "        self.name = name\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    edges = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    local_label = [
+        (dst, props) for src, dst, props in edges if src.endswith(".models.Local.label")
+    ]
+    local_update = [
+        (dst, props)
+        for src, dst, props in edges
+        if src.endswith(".models.Local.update")
+    ]
+    assert not any(dst.endswith(".models.Remote.name") for dst, _ in local_label)
+    assert not local_update
+
+
+@pytest.mark.parametrize(
+    ("assignment", "expect_getter"),
+    [
+        ("self.name = value", False),
+        ("self.name += value", True),
+        ("self.name, value = value, value", False),
+    ],
+)
+def test_python_property_write_does_not_call_getter(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    assignment: str,
+    expect_getter: bool,
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n'
+        "    def update(self, value):\n"
+        f"        {assignment}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    resolutions = _resolutions(mock_ingestor, ".models.Local.update")
+    if expect_getter:
+        assert resolutions["name"] == {cs.EdgeResolution.EXACT}
+    else:
+        assert not resolutions
+
+
+@pytest.mark.parametrize(
+    "assignment", ["self.prop.field = value", "self.prop[0] = value"]
+)
+def test_python_property_receiver_is_read_for_nested_assignment_targets(
+    temp_repo: Path, mock_ingestor: MagicMock, assignment: str
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def prop(self):\n"
+        '        return "local"\n\n'
+        "    def update(self, value):\n"
+        f"        {assignment}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    resolutions = _resolutions(mock_ingestor, ".models.Local.update")
+    assert resolutions["prop"] == {cs.EdgeResolution.EXACT}
+
+
+def test_inherited_python_property_read_is_exact(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Base:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "base"\n\n'
+        "class Child(Base):\n"
+        "    def label(self):\n"
+        "        return self.name.upper()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.Child.label")
+    assert by_callee["name"] == {cs.EdgeResolution.EXACT}
+
+
+def test_python_property_read_preserves_heuristic_resolution(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Remote:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "remote"\n\n'
+        "def read(value):\n"
+        "    return value.name.upper()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.read")
+    assert by_callee["name"] == {cs.EdgeResolution.HEURISTIC}
+
+
 def test_an_engine_bound_call_does_not_inherit_the_previous_label(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
