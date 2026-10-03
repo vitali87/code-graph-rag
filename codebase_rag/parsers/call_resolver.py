@@ -16,6 +16,7 @@ from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .import_processor import ImportProcessor
 from .lua import utils as lua_utils
+from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
 from .py import resolve_class_name
@@ -207,6 +208,8 @@ class CallResolver:
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
+        "_php_class_namespaces",
+        "_php_cased_method_index",
     )
 
     def __init__(
@@ -274,6 +277,10 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
+        # {PHP module qn: {class qn: folded namespace it is declared in}},
+        # read off each file's declarations on first use (issue #2466).
+        self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
+        self._php_cased_method_index: dict[tuple[str, str], str] | None = None
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -447,6 +454,9 @@ class CallResolver:
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
+        # A re-parsed PHP file may have moved a class between namespaces.
+        self._php_class_namespaces.clear()
+        self._php_cased_method_index = None
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the
@@ -2309,28 +2319,34 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         """The class a fully qualified PHP class path names (issue #2466).
 
-        A namespaced path binds through the module declaring its namespace,
-        as a `use function` import does, so the answer is exact or none: a
-        namespace spelled out is never rebound by bare name to a class living
-        in another one. A global path binds to a class in a module declaring
-        no namespace, the caller's own exactly and any other by name only.
+        A class is a candidate only where PHP declares it in the namespace the
+        path spells. A file with one statement-form namespace records it per
+        module, which also matches a class written in another case; a class
+        in a braced block is registered under that block (`mod.Vendor.Box`)
+        and the file records nothing, so its declaration says where it lives.
+        A namespaced path binds exactly or not at all. A global path binds
+        the caller's own class exactly and another file's by name only.
         """
         *namespace, symbol = path
-        if namespace:
-            class_qn = self._php_target_for_namespace_import(
+        if namespace and (
+            class_qn := self._php_target_for_namespace_import(
                 cs.SEPARATOR_DOT.join(path), kind=NodeType.CLASS
             )
-            if class_qn is None:
-                return None
+        ):
             return self.function_registry[class_qn], class_qn
-        namespaced_modules = self.import_processor.php_module_namespaces
+        wanted = tuple(_php_fold(part) for part in namespace)
         candidates = [
             qn
             for qn in self.function_registry.find_ending_with(symbol)
             if self.function_registry[qn] == NodeType.CLASS
-            and self._parent_qn(qn) not in namespaced_modules
-            and self._module_language(qn) == cs.SupportedLanguage.PHP
+            and self._php_declared_namespace(qn) == wanted
         ]
+        if namespace:
+            # Several files declaring one namespaced class is a conditional
+            # declaration this site cannot choose between.
+            if len(candidates) != 1:
+                return None
+            return self.function_registry[candidates[0]], candidates[0]
         own = f"{module_qn}{cs.SEPARATOR_DOT}{symbol}"
         if own in candidates:
             return self.function_registry[own], own
@@ -2340,18 +2356,99 @@ class CallResolver:
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best], best
 
+    def _php_declared_namespace(self, class_qn: str) -> PhpClassPath | None:
+        # The ASCII-folded namespace PHP declares `class_qn` in; None when its
+        # file is not PHP or its declaration cannot be read this run, which
+        # never passes for the global namespace.
+        if self._module_language(class_qn) != cs.SupportedLanguage.PHP:
+            return None
+        module_qn = self._php_module_of(class_qn)
+        if module_qn is None:
+            return None
+        declared = self._php_class_namespaces.get(module_qn)
+        if declared is None:
+            root = self._cached_module_root(module_qn)
+            declared = (
+                {
+                    qn: tuple(_php_fold(part) for part in namespace)
+                    for qn, namespace in php_class_names.declared_class_namespaces(
+                        root, module_qn
+                    ).items()
+                }
+                if root is not None
+                else {}
+            )
+            self._php_class_namespaces[module_qn] = declared
+        return declared.get(class_qn)
+
+    def _php_module_of(self, qualified_name: str) -> str | None:
+        modules = self.type_inference.module_qn_to_file_path
+        probe = qualified_name
+        while cs.SEPARATOR_DOT in probe:
+            probe = self._parent_qn(probe)
+            if probe in modules:
+                return probe
+        return None
+
     def resolve_php_method_on_class_path(
         self, path: PhpClassPath, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """`method_name` on the class `path` names, declared or inherited."""
         if (owner := self.resolve_php_class_path(path, module_qn)) is None:
             return None
-        return self._try_resolve_method(owner[1], method_name)
+        return self._php_method(owner[1], method_name)
 
     def php_constructor(self, class_qn: str) -> tuple[str, str] | None:
         """The `__construct` a `new` of `class_qn` runs: the class's own, else
         the nearest one it inherits, which PHP runs in its place."""
-        return self._try_resolve_method(class_qn, cs.PHP_METHOD_CONSTRUCT)
+        return self._php_method(class_qn, cs.PHP_METHOD_CONSTRUCT)
+
+    def _php_method(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
+        # PHP method names are ASCII case-insensitive, so a child's
+        # `__CONSTRUCT` overrides its parent's `__construct`: each class is
+        # searched in any casing before its ancestors are, and the edge names
+        # the method as declared.
+        wanted = _php_fold(method_name)
+        queue = deque([class_qn])
+        seen = {class_qn}
+        while queue:
+            owner = self._follow_reexports(queue.popleft())
+            if (
+                method_qn := self._php_declared_method(owner, method_name, wanted)
+            ) is not None:
+                return self.function_registry[method_qn], method_qn
+            for parent in self.class_inheritance.get(owner, []):
+                if parent not in seen:
+                    seen.add(parent)
+                    queue.append(parent)
+        return None
+
+    def _php_declared_method(
+        self, owner_qn: str, method_name: str, folded: str
+    ) -> str | None:
+        for spelling in (method_name, folded):
+            method_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{spelling}"
+            if self.function_registry.get(method_qn) == NodeType.METHOD:
+                return method_qn
+        return self._php_cased_methods().get((owner_qn, folded))
+
+    def _php_cased_methods(self) -> dict[tuple[str, str], str]:
+        # PHP methods declared with an upper-case letter, keyed by (owner qn,
+        # folded name): the lookups above miss `__CONSTRUCT` for
+        # `__construct`, and the registry's prefix walk cannot list it, since
+        # the trie skips every `__`-prefixed key as one of its own markers.
+        if self._php_cased_method_index is None:
+            index: dict[tuple[str, str], str] = {}
+            for qn, kind in self.function_registry.items():
+                if kind != NodeType.METHOD:
+                    continue
+                owner_qn, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+                if (folded := _php_fold(leaf)) == leaf:
+                    continue
+                if self._module_language(owner_qn) == cs.SupportedLanguage.PHP:
+                    index.setdefault((owner_qn, folded), qn)
+            self._php_cased_method_index = index
+        return self._php_cased_method_index
 
     def _php_import_key(self, call_name: str, import_map: dict[str, str]) -> str | None:
         """The import-map key matching `call_name` under PHP case folding.

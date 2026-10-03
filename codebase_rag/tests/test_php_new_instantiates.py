@@ -311,3 +311,152 @@ def test_receiver_not_provably_one_class_keeps_the_name_fallback(
         assert bumps and set(bumps.values()) == {"heuristic"}, (fn, calls)
     calls = _targets(edges, f"{PROJECT}.src.r.missing", _CALLS)
     assert calls.get(f"{PROJECT}.src.Other.Other.only") == "heuristic", calls
+
+
+# --- braced namespaces: each declaration's own namespace decides ----------------
+
+BRACED = """<?php
+namespace Vendor {
+    class Box { public function __construct() {} }
+}
+namespace {
+    function make() { return new Box(); }
+    function vendor() { return new Vendor\\Box(); }
+}
+"""
+
+
+def test_global_new_never_binds_a_class_declared_in_a_braced_namespace(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A file of braced blocks records no module-level namespace, so its
+    # `Vendor\Box` once passed for a global class: a global `new Box()`
+    # bound it, in the same file and from another one.
+    widget = "<?php\nnamespace Vendor {\n    class Widget {}\n}\n"
+    other = "<?php\nfunction build() { return new Widget(); }\n"
+    edges = _graph(
+        temp_repo,
+        mock_ingestor,
+        {"src/braced.php": BRACED, "lib/Widget.php": widget, "app/b.php": other},
+    )
+    make = f"{PROJECT}.src.braced.make"
+    assert _targets(edges, make, _INST) == {}
+    assert _targets(edges, make, _CALLS) == {}
+    assert _targets(edges, f"{PROJECT}.app.b.build", _INST) == {}
+
+
+def test_namespaced_new_binds_a_class_declared_in_a_braced_namespace(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    caller = "<?php\nnamespace App;\nfunction far() { return new \\Vendor\\Box(); }\n"
+    edges = _graph(
+        temp_repo, mock_ingestor, {"src/braced.php": BRACED, "src/far.php": caller}
+    )
+    # A braced block names its classes: `Vendor\Box` registers as
+    # `braced.Vendor.Box`.
+    box = f"{PROJECT}.src.braced.Vendor.Box"
+    for fn in (f"{PROJECT}.src.braced.vendor", f"{PROJECT}.src.far.far"):
+        assert _targets(edges, fn, _INST) == {box: "exact"}, fn
+        assert _targets(edges, fn, _CALLS) == {f"{box}.__construct": "exact"}, fn
+
+
+def test_global_braced_block_class_still_binds_in_its_own_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    source = (
+        "<?php\nnamespace Vendor {\n    class Other {}\n}\n"
+        "namespace {\n    class Box {}\n"
+        "    function make() { return new Box(); }\n}\n"
+    )
+    edges = _graph(temp_repo, mock_ingestor, {"src/mixed.php": source})
+    assert _targets(edges, f"{PROJECT}.src.mixed.make", _INST) == {
+        f"{PROJECT}.src.mixed.Box": "exact"
+    }
+
+
+def test_statement_and_single_braced_namespaces_still_bind_exactly(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    stated = "<?php\nnamespace App;\nclass Stated {}\n"
+    braced = "<?php\nnamespace App {\n    class Braced {}\n}\n"
+    caller = (
+        "<?php\nnamespace App;\n"
+        "function both() { new Stated(); return new Braced(); }\n"
+    )
+    edges = _graph(
+        temp_repo,
+        mock_ingestor,
+        {"src/Stated.php": stated, "src/Braced.php": braced, "src/c.php": caller},
+    )
+    assert _targets(edges, f"{PROJECT}.src.c.both", _INST) == {
+        f"{PROJECT}.src.Stated.Stated": "exact",
+        f"{PROJECT}.src.Braced.App.Braced": "exact",
+    }
+
+
+# --- PHP method names are case-insensitive ---------------------------------------
+
+LINEAGE = """<?php
+namespace App;
+class Base {
+    public function __construct() {}
+    public function bump(): int { return 1; }
+}
+class Child extends Base {
+    public function __CONSTRUCT() {}
+    public function BUMP(): int { return 2; }
+}
+class Solo { public function __Construct() {} }
+"""
+
+
+def test_constructor_declared_in_another_casing_is_the_one_called(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    caller = (
+        "<?php\nnamespace App;\n"
+        "function child() { return new Child(); }\n"
+        "function solo() { return new Solo(); }\n"
+    )
+    edges = _graph(
+        temp_repo, mock_ingestor, {"src/L.php": LINEAGE, "src/c.php": caller}
+    )
+    lineage = f"{PROJECT}.src.L"
+    assert _targets(edges, f"{PROJECT}.src.c.child", _CALLS) == {
+        f"{lineage}.Child.__CONSTRUCT": "exact"
+    }
+    assert _targets(edges, f"{PROJECT}.src.c.solo", _CALLS) == {
+        f"{lineage}.Solo.__Construct": "exact"
+    }
+
+
+def test_typed_receiver_method_in_another_casing_is_the_one_called(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    caller = (
+        "<?php\nnamespace App;\n"
+        "function child() { $c = new Child(); return $c->bump(); }\n"
+    )
+    edges = _graph(
+        temp_repo, mock_ingestor, {"src/L.php": LINEAGE, "src/c.php": caller}
+    )
+    calls = _targets(edges, f"{PROJECT}.src.c.child", _CALLS)
+    assert calls.get(f"{PROJECT}.src.L.Child.BUMP") == "exact", calls
+    assert f"{PROJECT}.src.L.Base.bump" not in calls, calls
+
+
+def test_child_without_constructor_reaches_the_parents_in_any_casing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    source = (
+        "<?php\nnamespace App;\n"
+        "class Root { public function __CONSTRUCT() {} }\n"
+        "class Leaf extends Root {}\n"
+        "function make() { return new Leaf(); }\n"
+    )
+    edges = _graph(temp_repo, mock_ingestor, {"src/R.php": source})
+    caller = f"{PROJECT}.src.R.make"
+    assert _targets(edges, caller, _INST) == {f"{PROJECT}.src.R.Leaf": "exact"}
+    assert _targets(edges, caller, _CALLS) == {
+        f"{PROJECT}.src.R.Root.__CONSTRUCT": "exact"
+    }

@@ -12,6 +12,8 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...language_spec import LANGUAGE_FQN_SPECS
+from ...utils.fqn_resolver import scoped_name_parts
 from ..utils import safe_decode_text
 
 ClassPath = tuple[str, ...]
@@ -70,6 +72,28 @@ def new_expression_class_path(creation: Node) -> ClassPath | None:
     if (imported := _class_imports(uses).get(ascii_fold(segments[0]))) is not None:
         return (*imported, *segments[1:])
     return (*namespace, *segments)
+
+
+def declared_class_namespaces(root: Node, module_qn: str) -> dict[str, ClassPath]:
+    """Each named class the file declares, keyed by the qn the definition pass
+    registers it under, mapped to the namespace PHP declares it in.
+
+    A file of braced blocks records no module-level namespace, and a class
+    in one is registered under its block's name (`mod.Vendor.Box`), so only
+    the declaration itself says which namespace a class belongs to.
+    """
+    spec = LANGUAGE_FQN_SPECS[cs.SupportedLanguage.PHP]
+    declared: dict[str, ClassPath] = {}
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_CLASS_DECLARATION and (
+            parts := scoped_name_parts(node, spec, module_qn, None)
+        ):
+            qn = cs.SEPARATOR_DOT.join([module_qn, *parts])
+            declared[qn] = _namespace_scope(node)[0]
+        stack.extend(node.named_children)
+    return declared
 
 
 def receiver_class_path(call: Node, scope_cache: ScopeCache) -> ClassPath | None:
