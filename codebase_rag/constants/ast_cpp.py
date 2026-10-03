@@ -63,6 +63,45 @@ CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
 CPP_FIELD_DEFAULT_VALUE = "default_value"
 # `f(void)` declares no parameter: the same overload as `f()`.
 CPP_VOID_PARAMETER = "void"
+# Names no typedef can stand behind: the built-in type keywords and the cv
+# words written with them. Two parameter types spelled only with these, and
+# differently, are two types; one written with any other name may be an
+# alias of the other.
+CPP_BUILTIN_TYPE_WORDS = frozenset(
+    {
+        "void",
+        "bool",
+        "char",
+        "wchar_t",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "signed",
+        "unsigned",
+        "const",
+        "volatile",
+    }
+)
+# Standard library types treated the same way, bare or as `std::name`: each
+# is one fixed type, never a project's alias for another.
+CPP_STD_FIXED_TYPE_NAMES = frozenset(
+    {
+        "size_t",
+        "ptrdiff_t",
+        "nullptr_t",
+        "string",
+        "wstring",
+        "u16string",
+        "u32string",
+        "string_view",
+    }
+)
+CPP_STD_NAMESPACE = "std"
 
 # C++ module declaration prefixes
 CPP_EXPORT_MODULE_PREFIX = "export module "

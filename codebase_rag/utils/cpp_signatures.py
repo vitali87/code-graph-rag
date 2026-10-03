@@ -13,25 +13,27 @@ so everything here works from the text alone.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
-from ..constants import core as cs
+from .. import constants as cs
 from ..types_defs import OverloadSignature
 
 # A qualified name (`std::string`, `a::T`) is ONE token, so a qualifier is
 # compared as part of the name it qualifies; every other character stands
 # alone.
 _TOKEN_RE = re.compile(r"[^\W\d]\w*(?:::[^\W\d]\w*)*|\S")
+_NAME_RE = re.compile(r"[^\W\d]\w*(?:::[^\W\d]\w*)*")
 _OPENERS = frozenset("(<[")
 _CLOSERS = frozenset(")>]")
 
 
-def signature_arity(text: str) -> int:
-    """The parameter count of a signature: `(map<int,int>,int) const` -> 2."""
+def _split_signature(text: str) -> tuple[list[str], str]:
+    """`(map<int,int>,int) const` -> (["map<int,int>", "int"], "const")."""
     depth = 0
-    count = 0
-    seen_parameter = False
-    for char in text:
+    parameters: list[str] = []
+    current: list[str] = []
+    end = len(text)
+    for index, char in enumerate(text):
         if char in _OPENERS:
             depth += 1
             if depth == 1:
@@ -39,12 +41,21 @@ def signature_arity(text: str) -> int:
         elif char in _CLOSERS:
             depth -= 1
             if depth == 0:
+                end = index
                 break
         if depth == 1 and char == cs.CHAR_COMMA:
-            count += 1
+            parameters.append("".join(current))
+            current = []
         elif depth >= 1:
-            seen_parameter = True
-    return count + 1 if seen_parameter else 0
+            current.append(char)
+    if current or parameters:
+        parameters.append("".join(current))
+    return parameters, text[end + 1 :].strip()
+
+
+def signature_arity(text: str) -> int:
+    """The parameter count of a signature: `(map<int,int>,int) const` -> 2."""
+    return len(_split_signature(text)[0])
 
 
 def overload_signature_from_text(text: str) -> OverloadSignature:
@@ -68,6 +79,49 @@ def spellings_agree(left: str, right: str) -> bool:
     right_tokens = _TOKEN_RE.findall(right)
     return len(left_tokens) == len(right_tokens) and all(
         _names_agree(a, b) for a, b in zip(left_tokens, right_tokens, strict=True)
+    )
+
+
+def _is_fixed_type_name(name: str) -> bool:
+    parts = name.split(cs.SEPARATOR_DOUBLE_COLON)
+    if len(parts) == 1:
+        return name in cs.CPP_BUILTIN_TYPE_WORDS or name in cs.CPP_STD_FIXED_TYPE_NAMES
+    return (
+        len(parts) == 2
+        and parts[0] == cs.CPP_STD_NAMESPACE
+        and parts[1] in cs.CPP_STD_FIXED_TYPE_NAMES
+    )
+
+
+def _may_name_an_alias(type_text: str, is_known_class: Callable[[str], bool]) -> bool:
+    return any(
+        not _is_fixed_type_name(name) and not is_known_class(name)
+        for name in _NAME_RE.findall(type_text)
+    )
+
+
+def parameter_types_may_match(
+    left: str, right: str, is_known_class: Callable[[str], bool]
+) -> bool:
+    """Whether two signatures could be one function once typedefs are seen.
+
+    Every parameter must agree verbatim or up to qualification, or else one
+    side must be written with a name that could be an alias: not a built-in
+    type word, not a fixed standard type, not a class the graph holds. So
+    `(Alias)` may be `(int)`, but `(double)` and `(const char*)` are not, and
+    neither are two classes. The cv/ref qualifiers after the list must be the
+    same: a `const` member is never the non-`const` one.
+    """
+    left_types, left_qualifiers = _split_signature(left)
+    right_types, right_qualifiers = _split_signature(right)
+    if left_qualifiers != right_qualifiers or len(left_types) != len(right_types):
+        return False
+    return all(
+        a == b
+        or spellings_agree(a, b)
+        or _may_name_an_alias(a, is_known_class)
+        or _may_name_an_alias(b, is_known_class)
+        for a, b in zip(left_types, right_types, strict=True)
     )
 
 

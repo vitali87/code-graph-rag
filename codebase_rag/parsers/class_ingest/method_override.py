@@ -10,7 +10,7 @@ from ... import constants as cs
 from ... import logs
 from ...types_defs import NodeType, OverloadSignature
 from ...utils import qn_markers
-from ...utils.cpp_signatures import pick_overload
+from ...utils.cpp_signatures import parameter_types_may_match, pick_overload
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -346,6 +346,44 @@ def _signed_base_overloads(
     return overloads or None
 
 
+def _overridden_overload(
+    signature: OverloadSignature,
+    overloads: list[tuple[str, OverloadSignature]],
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str | None:
+    """The base overload `signature` overrides, if the types allow it at all.
+
+    `pick_overload` settles a respelling by arity when nothing closer
+    matches, which pairs a definition with its declaration because C++ makes
+    a definition define a declared member. A derived member has no such
+    duty: `f(double)` beside a lone base `f(int)` hides it. So a pick that is
+    not verbatim stands only when the types could be one through a typedef.
+    """
+    picked = pick_overload(signature, overloads)
+    if picked is None:
+        return None
+    known = dict(overloads)[picked]
+    if known.text == signature.text or parameter_types_may_match(
+        known.text,
+        signature.text,
+        lambda name: _is_known_class(name, function_registry),
+    ):
+        return picked
+    return None
+
+
+def _is_known_class(name: str, function_registry: FunctionRegistryTrieProtocol) -> bool:
+    # A class the graph holds is no typedef; a name it does not hold, or one
+    # it also holds as a Type alias, might be one.
+    simple = name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+    matches = [
+        function_registry.get(qn)
+        for qn in function_registry.find_ending_with(simple)
+        if qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == simple
+    ]
+    return bool(matches) and all(kind == NodeType.CLASS for kind in matches)
+
+
 def _parent_method_qn(
     parent_class: str,
     method_name: str,
@@ -360,7 +398,7 @@ def _parent_method_qn(
     ):
         # No settled match is no edge: the plain-named overload is not a
         # default, it is whichever one happened to be seen first.
-        return pick_overload(signature, overloads)
+        return _overridden_overload(signature, overloads, function_registry)
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
         # Fall back to name+arity so a generic type-var rename in the override

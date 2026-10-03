@@ -28,7 +28,10 @@ from codebase_rag.tests.conftest import (
     run_updater,
 )
 from codebase_rag.types_defs import NodeType, OverloadSignature
-from codebase_rag.utils.cpp_signatures import signature_arity
+from codebase_rag.utils.cpp_signatures import (
+    parameter_types_may_match,
+    signature_arity,
+)
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "ovl"
@@ -398,6 +401,60 @@ def test_an_override_of_another_arity_is_not_given_the_lone_base_overload(
     assert not {
         edge for edge in _overrides(ingestor) if edge[0] == f"{PROJECT}.hide.D1.f"
     }
+
+
+HIDE_TYPES_CPP = """class Foo {};
+class Bar {};
+class HB {
+public:
+  virtual int f(int a) { return a; }
+  virtual int g(Foo x) { return 0; }
+};
+class HD : public HB {
+public:
+  int f(double a) { return 0; }
+  int g(Bar x) { return 1; }
+};
+class HC : public HB {
+public:
+  int f(const char* s) { return 0; }
+};
+"""
+
+
+def test_a_member_of_other_parameter_types_hides_the_lone_base_overload(
+    temp_repo: Path,
+) -> None:
+    # Same arity, but `double`, `int` and `const char*` are built-in types and
+    # `Foo` and `Bar` are two classes the graph holds: no typedef can make
+    # one the other, so these members hide the base's, they do not override.
+    root = _write(temp_repo / PROJECT, {"hide.cpp": HIDE_TYPES_CPP})
+    ingestor = _index(root)
+
+    derived = {f"{PROJECT}.hide.HD.f", f"{PROJECT}.hide.HD.g", f"{PROJECT}.hide.HC.f"}
+    assert {edge for edge in _overrides(ingestor) if edge[0] in derived} == set()
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "may_match"),
+    [
+        ("(int)", "(Alias)", True),
+        ("(const std::string&)", "(const string&)", True),
+        ("(int,Count)", "(int,int)", True),
+        ("(int)", "(double)", False),
+        ("(int)", "(const char*)", False),
+        ("(std::size_t)", "(double)", False),
+        ("(Foo)", "(Bar)", False),
+        ("(int) const", "(int)", False),
+    ],
+)
+def test_parameter_types_may_match_only_through_a_possible_alias(
+    left: str, right: str, may_match: bool
+) -> None:
+    def known_class(name: str) -> bool:
+        return name in {"Foo", "Bar"}
+
+    assert parameter_types_may_match(left, right, known_class) is may_match
 
 
 def test_a_definition_of_another_arity_is_not_paired_with_the_lone_declaration() -> (
