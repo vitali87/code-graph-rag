@@ -30,6 +30,7 @@ second user would otherwise sync beside the first (review of PR 2512).
 
 from __future__ import annotations
 
+import errno
 import functools
 import os
 import sys
@@ -49,8 +50,16 @@ from . import logs as ls
 
 if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
     import msvcrt
+
+    # What the non-blocking lock call raises while another holder has the
+    # lock: the CRT's `_locking` maps LK_NBLCK's lock violation to EACCES.
+    # (EDEADLOCK is its error for the blocking modes, never used here.)
+    _CONTENDED = frozenset({errno.EACCES})
 else:
     import fcntl
+
+    # flock(2) with LOCK_NB: EWOULDBLOCK, which is EAGAIN on Linux.
+    _CONTENDED = frozenset({errno.EAGAIN, errno.EWOULDBLOCK})
 
 
 class SyncLockError(RuntimeError):
@@ -97,6 +106,13 @@ _BINARY = getattr(os, "O_BINARY", 0)
 
 
 def _try_lock(fd: int) -> bool:
+    """Lock `fd` without blocking; False only while another holder has it.
+
+    Any other failure raises: a lock call that cannot work (ENOLCK, a
+    filesystem without locks) read as contention refused a sync nobody
+    was running, and a waiting reingest polled for it forever (review of
+    PR 2512).
+    """
     try:
         if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
             # A Windows byte-range lock also stops other processes READING
@@ -107,8 +123,10 @@ def _try_lock(fd: int) -> bool:
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         else:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return False
+    except OSError as exc:
+        if exc.errno in _CONTENDED:
+            return False
+        raise
     return True
 
 
@@ -151,6 +169,12 @@ def _refuse_link(lock_path: Path) -> UnsafeSyncLockError:
     return UnsafeSyncLockError(ex.SYNC_LOCK_IS_LINK.format(path=lock_path))
 
 
+def _unavailable(lock_path: Path, error: OSError) -> SyncLockUnavailableError:
+    return SyncLockUnavailableError(
+        ex.SYNC_LOCK_UNAVAILABLE.format(path=lock_path, error=error)
+    )
+
+
 def _try_acquire(key: str, lock_path: Path, project_name: str) -> bool:
     with _HELD_GUARD:
         if key in _HELD:
@@ -168,10 +192,15 @@ def _try_acquire(key: str, lock_path: Path, project_name: str) -> bool:
                 raise _refuse_link(lock_path) from exc
             # Refused too: without the lock this run cannot tell whether
             # another one is syncing the checkout.
-            raise SyncLockUnavailableError(
-                ex.SYNC_LOCK_UNAVAILABLE.format(path=lock_path, error=exc)
-            ) from exc
-        if not _try_lock(fd):
+            raise _unavailable(lock_path, exc) from exc
+        try:
+            locked = _try_lock(fd)
+        except OSError as exc:
+            # The lock call itself failed; no holder refused it, so neither
+            # "another sync is running" nor waiting for one would be true.
+            os.close(fd)
+            raise _unavailable(lock_path, exc) from exc
+        if not locked:
             os.close(fd)
             return False
         _record_holder(fd, project_name)
@@ -214,7 +243,7 @@ def repo_sync_lock(
 
     Raises `UnsafeSyncLockError`, waiting or not, when the lock path is a
     symbolic link, and `SyncLockUnavailableError` when the lock file cannot
-    be opened.
+    be opened or the lock call fails for any reason but another holder.
     """
     key = str(repo_path.resolve())
     if not _reenter(key):

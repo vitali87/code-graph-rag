@@ -36,6 +36,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync_lock import (
     SyncInProgressError,
     SyncLockError,
+    SyncLockUnavailableError,
     UnsafeSyncLockError,
     repo_sync_lock,
 )
@@ -386,6 +387,76 @@ def test_a_lock_path_that_is_not_a_file_refuses_the_sync(
     with pytest.raises(SyncLockError):
         _updater(repo, mock_ingestor).run()
 
+    mock_ingestor.ensure_node_batch.assert_not_called()
+
+
+@dataclass
+class _FailedLockCall:
+    tried: list[int]
+    closed: list[int]
+
+
+@contextmanager
+def _lock_call_fails(code: int) -> Iterator[_FailedLockCall]:
+    # The module's own lock call for this platform fails with `code`, as
+    # flock(2) does with ENOLCK when the kernel is out of lock records.
+    calls = _FailedLockCall([], [])
+    real_close = os.close
+
+    def lock(fd: int, *_: int) -> None:
+        calls.tried.append(fd)
+        raise OSError(code, os.strerror(code))
+
+    def close(fd: int) -> None:
+        calls.closed.append(fd)
+        real_close(fd)
+
+    lock_call = (
+        "codebase_rag.sync_lock.msvcrt.locking"
+        if sys.platform == cs.PLATFORM_WINDOWS
+        else "codebase_rag.sync_lock.fcntl.flock"
+    )
+    with (
+        patch(lock_call, side_effect=lock),
+        patch("codebase_rag.sync_lock.os.close", side_effect=close),
+    ):
+        yield calls
+
+
+def test_a_failed_lock_call_is_not_taken_for_another_sync(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # CodeRabbit review of PR 2512: every error from the lock call read as
+    # contention, so a sync nobody was running refused this one.
+    with _lock_call_fails(errno.ENOLCK) as calls:
+        with pytest.raises(SyncLockUnavailableError) as refused:
+            _updater(repo, mock_ingestor).run()
+
+    message = str(refused.value)
+    assert str(repo / cs.SYNC_LOCK_FILENAME) in message
+    assert os.strerror(errno.ENOLCK) in message
+    assert calls.tried, "fixture guard: the lock call was never made"
+    assert set(calls.tried) <= set(calls.closed), "the lock file was left open"
+    mock_ingestor.ensure_node_batch.assert_not_called()
+    mock_ingestor.execute_write.assert_not_called()
+
+
+def test_a_waiting_reingest_does_not_wait_on_a_failed_lock_call(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The same failure under `wait=True` would poll forever: no holder
+    # will ever release a lock the call cannot take.
+    updater = _updater(repo, mock_ingestor)
+    with (
+        _lock_call_fails(errno.ENOLCK) as calls,
+        patch("codebase_rag.sync_lock.time") as clock,
+    ):
+        clock.sleep.side_effect = AssertionError("waited for a sync nobody runs")
+        with pytest.raises(SyncLockUnavailableError):
+            updater.reingest([repo / "core.py"])
+
+    clock.sleep.assert_not_called()
+    assert set(calls.tried) <= set(calls.closed), "the lock file was left open"
     mock_ingestor.ensure_node_batch.assert_not_called()
 
 
