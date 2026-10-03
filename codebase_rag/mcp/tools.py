@@ -25,7 +25,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
 from codebase_rag.services.provenance import head_commit
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -222,7 +222,7 @@ class MCPToolsRegistry:
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
-        cypher_gen: CypherGenerator,
+        cypher_gen: CypherQueryGenerator,
         workspace: WorkspaceConfig | None = None,
     ) -> None:
         self.project_root = project_root
@@ -835,7 +835,14 @@ class MCPToolsRegistry:
                 cs.MCPParamName.TRACEBACK_TEXT: MCPInputSchemaProperty(
                     type=cs.MCPSchemaType.STRING,
                     description=td.MCP_PARAM_TRACEBACK_TEXT,
-                )
+                ),
+                cs.MCPParamName.PATH_PREFIX_MAP: MCPInputSchemaProperty(
+                    type=cs.MCPSchemaType.OBJECT,
+                    description=td.MCP_PARAM_PATH_PREFIX_MAP,
+                    additionalProperties={
+                        cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING
+                    },
+                ),
             },
             required=[cs.MCPParamName.TRACEBACK_TEXT],
         )
@@ -1091,7 +1098,9 @@ class MCPToolsRegistry:
             "remote_hops": [list(hop) for hop in result.remote_hops],
         }
 
-    async def explain_traceback(self, traceback_text: str) -> dict:
+    async def explain_traceback(
+        self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
+    ) -> dict:
         from codebase_rag.crash_correlation import explain_traceback
 
         project, workspace_refusal = self._fixed_root_project()
@@ -1108,6 +1117,7 @@ class MCPToolsRegistry:
                 project,
                 Path(self.project_root),
                 traceback_text,
+                path_prefix_map,
             )
         return {
             "exception_type": report.exception_type,
@@ -1121,9 +1131,13 @@ class MCPToolsRegistry:
                 "resolved": report.resolution.resolved,
                 "rate": report.resolution.rate,
             },
+            "inferred_checkout_root": report.inferred_root,
+            "note": report.note,
         }
 
-    async def rank_root_causes(self, traceback_text: str) -> dict:
+    async def rank_root_causes(
+        self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
+    ) -> dict:
         from codebase_rag.crash_correlation import rank_root_causes
 
         project, workspace_refusal = self._fixed_root_project()
@@ -1140,6 +1154,7 @@ class MCPToolsRegistry:
                 project,
                 Path(self.project_root),
                 traceback_text,
+                path_prefix_map,
             )
         return {
             "exception_type": report.exception_type,
@@ -1149,6 +1164,13 @@ class MCPToolsRegistry:
             "candidates": [candidate._asdict() for candidate in report.candidates],
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),
+            "resolution": {
+                "total": report.resolution.total,
+                "resolved": report.resolution.resolved,
+                "rate": report.resolution.rate,
+            },
+            "inferred_checkout_root": report.inferred_root,
+            "note": report.note,
         }
 
     async def list_projects(self) -> ListProjectsResult:
@@ -3361,7 +3383,7 @@ class MCPToolsRegistry:
 def create_mcp_tools_registry(
     project_root: str,
     ingestor: MemgraphIngestor,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     workspace: WorkspaceConfig | None = None,
 ) -> MCPToolsRegistry:
     return MCPToolsRegistry(

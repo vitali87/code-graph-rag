@@ -75,9 +75,9 @@ RUST_TEST_ATTRIBUTE_SUFFIX = "::test"
 
 # The `#[cfg(test)] mod tests` convention: a real MODULE node named
 # `tests` or `test` in a .rs file marks inline test code (issue #1008).
-# This is deliberately WIDER than TEST_PATH_PATTERNS (whose /tests/ and
-# /test/ entries match directory segments only, never a src/test.rs file
-# or an inline mod): the name is a proxy for the `#[cfg(test)]` gate the
+# This is deliberately WIDER than the test-path rules (TEST_NAME_WORDS),
+# which see files and directories, never an inline mod declared inside
+# src/lib.rs: the name is a proxy for the `#[cfg(test)]` gate the
 # graph does not yet record. Measured across a 972-crate corpus, 4155
 # such modules are cfg-gated test code and 41 are ungated, of which two
 # ship as production API (aws-lc-rs `pub mod test`, alacritty's terminal
@@ -229,24 +229,33 @@ CSHARP_NULLABLE_MARKER = "?"
 # ponytail: direct bases only; transitive Protocol subclassing is not chased.
 PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
 
-# Substrings in a node's file path that mark it as test code. Covers Python
-# (test_, _test, conftest, /tests/), the JS/TS filename convention
-# (foo.test.ts, foo.spec.tsx), the Jest __tests__/ directory, and the
-# Node.js/mocha singular /test/ dir (express: 34 of 49 dead-code reports
-# were test/ helpers). Matching is segment-anchored via the leading-slash
-# normalization, so contest/ and latest/ do not match. Singular /spec/
-# stays excluded: it collides with product code (a domain "spec" module),
-# which would misclassify live code as test.
-TEST_PATH_PATTERNS: tuple[str, ...] = (
-    "test_",
-    "_test",
-    "conftest",
-    "/tests/",
-    "/test/",
-    ".test.",
-    ".spec.",
-    "__tests__",
+# What marks a repo-relative path as test code (path_filters.matches_test_path).
+# Judged on whole words of path segments, never raw substrings: `test_` as a
+# substring made shortest_paths/ and latest_prices.py tests (issue #2618).
+#
+# A snake/kebab word of any directory or file stem, case-insensitive: tests/,
+# Tests/ (SwiftPM), __tests__/ (Jest), test_x.py, x_test.go, conftest.py,
+# snappy_unittest.cc (googletest), e2e-tests/.
+TEST_NAME_WORDS: frozenset[str] = frozenset(
+    {"test", "tests", "unittest", "unittests", "conftest"}
 )
+# CamelCase words, case-sensitive so Latest and Contest stay production:
+# FooTests.cs, AppTests/ (Xcode), androidTest/ and integrationTest/ (Gradle
+# source sets), testFixtures/. A leading `Test` is not a marker: FluentValidation
+# ships its TestHelper namespace to users as production API.
+TEST_NAME_CAMEL_SUFFIXES: tuple[str, ...] = ("Test", "Tests")
+TEST_NAME_CAMEL_PREFIX = "test"
+# A dotted qualifier after the first name part: foo.test.ts, foo.spec.tsx,
+# and .NET test projects (Foo.Tests/, Foo.Specs/). `_spec` and a CamelCase
+# Spec stay production (TensorFlow's type_spec.py, PodSpec.java).
+TEST_NAME_QUALIFIERS: frozenset[str] = frozenset({"test", "tests", "spec", "specs"})
+# Whole directory names, underscores stripped: numpy/testing/, pandas/_testing/.
+TEST_DIR_NAMES: frozenset[str] = frozenset({"testing"})
+# Only at the repo root (RSpec, Jasmine): a nested spec/ is as often a domain
+# package (the JDK's java/security/spec/, swagger-ui's plugins/spec/).
+TEST_ROOT_DIR_NAMES: frozenset[str] = frozenset({"spec", "specs"})
+# Distinct paths matches_test_path remembers; a large monorepo's file count.
+TEST_PATH_CACHE_SIZE = 65536
 
 # NestJS component decorators that mark a CLASS as instantiated and driven by
 # the DI container / framework, never by a first-party `new` the graph can see:

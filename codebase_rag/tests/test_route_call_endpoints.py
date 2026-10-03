@@ -890,6 +890,16 @@ class TestTestModulesEmitNoEndpoints:
         edges = _run(tmp_path, {"api.py": self._PY_SOURCE}, "python")
         assert _endpoint(edges, "api.list_cases", "GET /cases"), edges
 
+    def test_module_whose_name_contains_test_registers(self, tmp_path: Path) -> None:
+        # Issue #2618: `test_` inside latest_ is not a test marker.
+        edges = _run(tmp_path, {"latest_prices.py": self._PY_SOURCE}, "python")
+        assert _endpoint(edges, "latest_prices.list_cases", "GET /cases"), edges
+
+    def test_capitalised_tests_dir_registers_nothing(self, tmp_path: Path) -> None:
+        # Issue #2618: SwiftPM-style Tests/ is a test directory in any case.
+        edges = _run(tmp_path, {"Tests/api.py": self._PY_SOURCE}, "python")
+        assert not edges, edges
+
     def test_rehydrated_test_module_handler_stays_excluded(
         self, tmp_path: Path
     ) -> None:
