@@ -43,10 +43,20 @@ from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyParams, ResultRow
-from ..utils.path_utils import base_module_qn, python_stub_implementations
+from ..utils.path_utils import (
+    base_module_qn,
+    declaration_implementations,
+    python_stub_implementations,
+)
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
-from .occurrences import Occurrence, Target, binding_scope, find_occurrences
+from .occurrences import (
+    Occurrence,
+    Target,
+    binding_scope,
+    declares_target,
+    find_occurrences,
+)
 from .patcher import Patcher, PatcherError, line_col_to_byte
 from .transaction import (
     EditTransaction,
@@ -152,6 +162,10 @@ class RenameReport(NamedTuple):
     # Occurrences of the old name the graph has no site for, rewritten as
     # guessed sites under `allow_heuristic` (issue #2564).
     unplanned: tuple[RenameSite, ...] = ()
+    # The graph's own symbols for the target's declaration in a `.d.ts`
+    # beside its module (`proj.src.util.d.ts.helper`), renamed with it
+    # through `unplanned`.
+    companions: tuple[str, ...] = ()
 
 
 # --- site collection -----------------------------------------------------------
@@ -742,7 +756,7 @@ class Renamer:
             for member in hierarchy
             for site, module in self._import_sites(member, old_name)
         ]
-        unplanned = self._unplanned(
+        unplanned, companions = self._unplanned(
             sites, [site for site, _module in imports], hierarchy, old_name, label
         )
         unknown = [s for s in unplanned if s.resolution == _RECEIVER_UNKNOWN]
@@ -796,6 +810,7 @@ class Renamer:
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
             unplanned=tuple(unplanned),
+            companions=companions,
         )
 
     def _unplanned(
@@ -805,8 +820,10 @@ class Renamer:
         hierarchy: list[str],
         old_name: str,
         label: str | None,
-    ) -> list[RenameSite]:
-        """Occurrences of `old_name` in code that the plan does not cover.
+    ) -> tuple[list[RenameSite], tuple[str, ...]]:
+        """Occurrences of `old_name` in code that the plan does not cover,
+        and the graph's symbols for the target's declarations among them
+        (see `RenameReport.companions`).
 
         The graph's sites are the plan, so an occurrence none of them covers
         is one the index never saw: renaming around it leaves it under the
@@ -818,7 +835,7 @@ class Renamer:
         definition = definitions[0].path
         language = get_language_for_extension(Path(definition).suffix)
         if language is None:
-            return []
+            return [], ()
         kind = _target_kind(label)
         owners = _owners(hierarchy)
         owner_paths = frozenset(s.path for s in definitions)
@@ -843,10 +860,10 @@ class Renamer:
             and not _inside(occurrence, statements)
         ]
         if not leftover:
-            return []
+            return [], ()
         foreign = self._foreign_paths(hierarchy)
-        namesakes = self._namesakes(old_name, hierarchy)
-        return [
+        namesakes = self._namesakes(old_name, hierarchy, target)
+        unplanned = [
             RenameSite(
                 "call" if occurrence.called else "reference",
                 occurrence.path,
@@ -862,6 +879,13 @@ class Renamer:
             and not _inside(occurrence, namesakes.statements)
             and not (occurrence.bare and _inside(occurrence, namesakes.bound))
         ]
+        positions = {(s.path, s.line, s.col) for s in unplanned}
+        companions = tuple(
+            other
+            for other, position in namesakes.companions.items()
+            if position in positions
+        )
+        return unplanned, companions
 
     def _rivals(
         self, hierarchy: list[str], owner_paths: frozenset[str]
@@ -878,6 +902,7 @@ class Renamer:
                     path is not None
                     and path not in owner_paths
                     and symbol["qualified_name"] not in classes
+                    and not _declares_one_of(path, owner_paths)
                 ):
                     rivals.add((name, path))
         return frozenset(rivals)
@@ -906,12 +931,15 @@ class Renamer:
                 )
         return paths
 
-    def _namesakes(self, old_name: str, hierarchy: list[str]) -> _Namesakes:
+    def _namesakes(
+        self, old_name: str, hierarchy: list[str], target: Target
+    ) -> _Namesakes:
         """Where the graph writes `old_name` for a symbol outside `hierarchy`:
         each same-named definition's own name, every site the graph gives it
         and the import statements binding it, as a rename of that symbol
-        would collect them."""
-        namesakes = _Namesakes(set(), [], [])
+        would collect them. A symbol that is the target's declaration in a
+        `.d.ts` beside its module is the target's, not another one."""
+        namesakes = _Namesakes(set(), [], [], {})
         for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
             other = symbol["qualified_name"]
             if other in hierarchy:
@@ -924,6 +952,16 @@ class Renamer:
                 # tree: what it would cover stays unplanned, since refusing
                 # over a namesake's stale graph is safer than crediting it
                 # with an occurrence that may be ours.
+                continue
+            declared = next((s for s in other_sites if s.kind == "definition"), None)
+            if declared is not None and declares_target(
+                self.repo_root, target, declared.path, declared.line, declared.col
+            ):
+                namesakes.companions[other] = (
+                    declared.path,
+                    declared.line,
+                    declared.col,
+                )
                 continue
             namesakes.positions.update((s.path, s.line, s.col) for s in other_sites)
             for site, _module in other_imports:
@@ -1320,7 +1358,7 @@ class Renamer:
                 member,
                 member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
             )
-            for member in report.hierarchy
+            for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
         longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
@@ -1458,6 +1496,18 @@ class _Namesakes(NamedTuple):
     statements: list[_Span]
     # Where an import binds the bare name to the other symbol.
     bound: list[_Span]
+    # The symbols that are the target's own declaration in a `.d.ts`, each
+    # with where it is declared.
+    companions: dict[str, tuple[str, int, int]]
+
+
+def _declares_one_of(path: str, implementations: frozenset[str]) -> bool:
+    """Whether `path` is the declaration file (`.pyi`, `.d.ts`) of one of
+    `implementations`."""
+    return any(
+        candidate.as_posix() in implementations
+        for candidate in declaration_implementations(PurePosixPath(path))
+    )
 
 
 def _stubs_of(repo_root: Path, path: str) -> set[str]:

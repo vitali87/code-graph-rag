@@ -2991,3 +2991,172 @@ def test_a_module_imported_under_the_targets_name_is_not_the_target(
     )
 
     assert report.unplanned == ()
+
+
+# --- review of PR #2797: a `.d.ts` beside its module ------------------------
+
+TS_UTIL = "export function helper(): number {\n  return 1;\n}\n\nexport class Widget {\n  spin(): number {\n    return 1;\n  }\n}\n"
+TS_DECLARATIONS = (
+    "export declare function helper(): number;\n"
+    "export declare class Widget {\n"
+    "  spin(): number;\n"
+    "}\n"
+    "export declare const make: typeof helper;\n"
+)
+# Each target, its new name, and where the `.d.ts` spells it.
+DECLARED_TARGETS = {
+    "function": (f"{PROJECT}.src.util.helper", "assist", [(1, 24), (5, 34)]),
+    "class": (f"{PROJECT}.src.util.Widget", "Gadget", [(2, 21)]),
+    "method": (f"{PROJECT}.src.util.Widget.spin", "turn", [(3, 2)]),
+}
+# The module the `.d.ts` declares, in each language it may be written in.
+DECLARED_MODULES = {
+    "ts": "src/util.ts",
+    "js": "src/util.js",
+}
+
+
+def _declared_module(language: str) -> dict[str, str]:
+    path = DECLARED_MODULES[language]
+    text = TS_UTIL if language == "ts" else TS_UTIL.replace("(): number", "()")
+    return {path: text, "src/util.d.ts": TS_DECLARATIONS}
+
+
+@pytest.mark.parametrize("language", sorted(DECLARED_MODULES))
+@pytest.mark.parametrize("kind", sorted(DECLARED_TARGETS))
+def test_a_declaration_file_beside_the_module_refuses_by_default(
+    tmp_path: Path, kind: str, language: str
+) -> None:
+    # Review of PR #2797: the graph indexes `util.d.ts` beside `util.ts` as
+    # a module of its own, so its `helper` was credited to that symbol and
+    # the rename left the declaration under the old name.
+    qn, new_name, positions = DECLARED_TARGETS[kind]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, _declared_module(language))
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(root, _query(store), PROJECT, qn, new_name, dry_run=True)
+
+    assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
+        ("src/util.d.ts", line, col, "unplanned") for line, col in positions
+    ]
+
+
+@pytest.mark.parametrize("language", sorted(DECLARED_MODULES))
+@pytest.mark.parametrize("kind", sorted(DECLARED_TARGETS))
+def test_allow_heuristic_renames_the_declaration_file_with_its_module(
+    tmp_path: Path, kind: str, language: str
+) -> None:
+    qn, new_name, positions = DECLARED_TARGETS[kind]
+    old_name = qn.rsplit(".", 1)[-1]
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = _declared_module(language)
+    store, updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        qn,
+        new_name,
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col) for s in report.unplanned] == [
+        ("src/util.d.ts", line, col) for line, col in positions
+    ]
+    lines = files["src/util.d.ts"].splitlines(keepends=True)
+    for line, col in positions:
+        text = lines[line - 1]
+        lines[line - 1] = text[:col] + new_name + text[col + len(old_name) :]
+    assert (root / "src/util.d.ts").read_text() == "".join(lines)
+
+
+# Declaration files that are not the target's: another module's, beside its
+# own `.ts` or alone, and the target's module declared only by a `.d.ts`.
+OTHER_DECLARATIONS = {
+    "other-module": {
+        "src/util.ts": TS_UTIL,
+        "src/other.ts": TS_UTIL,
+        "src/other.d.ts": TS_DECLARATIONS,
+    },
+    "other-declaration-only": {
+        "src/util.ts": TS_UTIL,
+        "src/other.d.ts": TS_DECLARATIONS,
+    },
+}
+
+
+@pytest.mark.parametrize("allow_heuristic", [False, True], ids=["plain", "heuristic"])
+@pytest.mark.parametrize("case", sorted(OTHER_DECLARATIONS))
+def test_another_modules_declaration_file_is_neither_refused_nor_rewritten(
+    tmp_path: Path, case: str, allow_heuristic: bool
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, OTHER_DECLARATIONS[case])
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.src.util.helper",
+        "assist",
+        allow_heuristic=allow_heuristic,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "src/other.d.ts").read_text() == TS_DECLARATIONS
+
+
+def test_a_declaration_file_alone_is_its_own_module(tmp_path: Path) -> None:
+    # With no `.ts` beside it the `.d.ts` is the module: its own `typeof
+    # helper` is a use the graph has no site for, as before.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {"src/util.d.ts": TS_DECLARATIONS})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _query(store),
+            PROJECT,
+            f"{PROJECT}.src.util.helper",
+            "assist",
+            dry_run=True,
+        )
+
+    assert [(s.path, s.line, s.col) for s in refused.value.unplanned] == [
+        ("src/util.d.ts", 5, 34)
+    ]
+
+
+def test_a_same_named_declaration_nested_elsewhere_is_not_the_targets(
+    tmp_path: Path,
+) -> None:
+    # `NS.helper` in the `.d.ts` is not the module's own `helper`.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    nested = "export declare namespace NS {\n  function helper(): number;\n}\n"
+    files = {"src/util.ts": TS_UTIL, "src/util.d.ts": nested}
+    store, updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.src.util.helper",
+        "assist",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "src/util.d.ts").read_text() == nested

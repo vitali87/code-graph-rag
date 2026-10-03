@@ -43,8 +43,8 @@ from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension, language_family
 from ..parser_loader import load_parsers
 from ..utils.path_utils import (
+    declaration_implementations,
     module_stem,
-    python_stub_implementations,
     walk_eligible_files,
 )
 from .import_paths import (
@@ -67,6 +67,8 @@ _CALL_OPEN = re.compile(rb"\s*" + re.escape(cs.CHAR_PAREN_OPEN.encode()))
 _SCOPE = cs.SEPARATOR_DOUBLE_COLON.encode()
 _MEMBER = tuple(token.encode() for token in cs.RENAME_MEMBER_ACCESS)
 _ARROW = cs.RENAME_ARROW_ACCESS.encode()
+# The languages with declaration files beside a module: `.pyi`, `.d.ts`.
+_DECLARATION_LANGUAGES = frozenset({cs.SupportedLanguage.PYTHON, *cs.JS_TS_LANGUAGES})
 _TYPE_ARGUMENTS = re.compile(rb"<[^<>]*>|\[[^\[\]]*\]")
 # A name as written, qualified or not: `Cache`, `other.Cache`, `a::Parse`.
 # The names a Node.js module uses (`require`, `module.exports`, `exports`):
@@ -190,10 +192,11 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
       reaches the class's module: `other.Cache()` is another Cache;
     - a type: every occurrence.
 
-    A `.pyi` stub of a defining file is read as that file: the indexer
-    skips it (#2445), so the graph has no site there, and its module-level
-    `class Widget:` is the symbol's own declaration, not another class
-    hiding it. That declaration counts too.
+    A declaration file of a defining file (a `.pyi` stub, a `.d.ts`) is
+    read as that file: its module-level `class Widget:` is the symbol's own
+    declaration, not another class hiding it, and that declaration counts
+    too. The indexer skips such a stub (#2445), so the graph has no site
+    there; a `.d.ts` it indexes as a module of its own.
     """
     family = language_family(target.language)
     modules = _modules(repo_root, target)
@@ -290,15 +293,55 @@ def _modules(repo_root: Path, target: Target) -> _Modules:
     )
 
 
+def declared_files(target: Target, path: str) -> frozenset[str]:
+    """The target's definition files that `path` is the declaration file
+    of: `pkg/widget.py` for `pkg/widget.pyi`, `src/util.ts` for
+    `src/util.d.ts`. Empty for any other file."""
+    return frozenset(
+        implementation.as_posix()
+        for implementation in declaration_implementations(PurePosixPath(path))
+    ) & (target.owner_paths or frozenset({target.path}))
+
+
+def declares_target(
+    repo_root: Path, target: Target, path: str, line: int, col: int
+) -> bool:
+    """Whether the definition whose name starts at `path`:`line`:`col` is
+    a declaration file's declaration of the target: in a `.pyi` or `.d.ts`
+    of a definition's file, under the same names around it. The graph
+    indexes a `.d.ts` beside its `.ts` as a module of its own, so its
+    `helper` is a symbol of its own there, and this says it is the target's."""
+    implementations = declared_files(target, path)
+    language = get_language_for_extension(Path(path).suffix)
+    parsers, _queries = load_parsers()
+    if not implementations or language is None or language not in parsers:
+        return False
+    try:
+        source = (repo_root / path).read_bytes()
+        start = line_col_to_byte(source, line, col)
+    except (OSError, PatcherError):
+        return False
+    width = len(target.name.encode(cs.ENCODING_UTF8))
+    token = _identifier_at(
+        parsers[language].parse(source).root_node, start, start + width
+    )
+    names = None if token is None else _nesting(token)
+    declared = _declared(repo_root, target)
+    return names is not None and any(
+        (implementation, names) in declared for implementation in implementations
+    )
+
+
 def _declared(
     repo_root: Path, target: Target
 ) -> frozenset[tuple[str, tuple[str, ...]]]:
     """Where each definition sits in its file, by the names around it:
-    what a `.pyi` stub of the file declares it as (`class Widget:` with
-    `def spin` in it). Only Python has such stubs."""
+    what a declaration file of the file declares it as (`class Widget:` with
+    `def spin` in it). Python (`.pyi`) and TypeScript (`.d.ts`) have such
+    files."""
     parsers, _queries = load_parsers()
     parser = parsers.get(target.language)
-    if target.language is not cs.SupportedLanguage.PYTHON or parser is None:
+    if target.language not in _DECLARATION_LANGUAGES or parser is None:
         return frozenset()
     width = len(target.name.encode(cs.ENCODING_UTF8))
     found: set[tuple[str, tuple[str, ...]]] = set()
@@ -467,14 +510,13 @@ class _File:
         self.imports = ImportReader(
             repo_root, path, language, modules.crates, modules.scripts
         )
-        # The target's files this one is a `.pyi` stub of: it declares their
-        # module's interface, so it names their symbols as they do (#2445).
-        self.stub_of = frozenset(
-            implementation.as_posix()
-            for implementation in python_stub_implementations(PurePosixPath(path))
-        ) & (target.owner_paths or frozenset({target.path}))
+        # The target's files this one is the declaration file of (a `.pyi`
+        # stub, a `.d.ts`): it declares their module's interface, so it names
+        # their symbols as they do (#2445).
+        self.stub_of = declared_files(target, path)
         # Whether the file is the target's own module: its definition's file
-        # or a stub of it, where a module-level binding is the symbol itself.
+        # or a declaration file of it, where a module-level binding is the
+        # symbol itself.
         self.own_module = path == target.path or target.path in self.stub_of
         self._typed: dict[tuple[int, int, bytes], bool | None] = {}
         self._reads: dict[tuple[int, int], ImportRead] = {}
@@ -1021,25 +1063,29 @@ def _scope_around(binding: Node) -> Node | None:
 
 
 def _nesting(token: Node) -> tuple[str, ...] | None:
-    """The names of the definition a token names and of the definitions
+    """The names of the definition a token names and of everything named
     around it, outermost first: `("Widget", "spin")` for `def spin` in
-    `class Widget:`. None where the token names no definition, or one in a
-    scope with no name (a lambda)."""
+    `class Widget:` or `spin(): number` in `declare class Widget`, and
+    `("NS", "helper")` in `declare namespace NS`. None where the token names
+    no definition, or one in a scope with no name (a lambda)."""
     definition = token.parent
     if (
         definition is None
-        or not _is_scope(definition)
         or _field(definition, token) != cs.FIELD_NAME
+        or not (
+            _is_scope(definition)
+            or definition.type.endswith(cs.RENAME_DEFINITION_SUFFIXES)
+        )
     ):
         return None
     names = [_text(token)]
     scope = definition.parent
-    while scope is not None:
-        if _is_scope(scope):
-            name = scope.child_by_field_name(cs.FIELD_NAME)
-            if name is None:
-                return None
+    while scope is not None and scope.parent is not None:
+        name = scope.child_by_field_name(cs.FIELD_NAME)
+        if name is not None:
             names.append(_text(name))
+        elif _is_scope(scope) and _field(scope.parent, scope) != cs.FIELD_BODY:
+            return None
         scope = scope.parent
     return tuple(reversed(names))
 

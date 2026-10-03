@@ -144,7 +144,14 @@ declaration of the symbol (`class Widget:`, `def spin` inside it) counts,
 and its own module-level `class Widget` does not hide its uses
 (`peer: Widget`, `-> Widget`) the way another module's would. The rename
 refuses over them, and `--allow-heuristic` rewrites them with the stub's
-`__all__`. A `->` reaches a member only in C, C++, PHP and C#; elsewhere it
+`__all__`. A TypeScript declaration file beside its module (`util.d.ts`
+beside `util.ts` or `util.js`, as the indexer pairs them) is read the same
+way. The graph does index it, as a module of its own, so its `helper` is a
+symbol of its own (`proj.src.util.d.ts.helper`): a symbol declared there
+under the target's own names is taken for the target, not for another one
+that keeps its name, and the contract expects it renamed too. Another
+module's declaration file, and one with no module beside it, are read as
+before. A `->` reaches a member only in C, C++, PHP and C#; elsewhere it
 is a return type or a lambda's arrow, so `-> Widget` in another module's
 stub is that module's own `Widget`.
 

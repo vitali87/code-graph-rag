@@ -434,6 +434,20 @@ def python_stub_has_implementation(
     )
 
 
+def declaration_implementations[P: PurePath](path: P) -> tuple[P, ...]:
+    """The files that may implement the module a declaration file declares,
+    by path alone, as the indexer pairs them: a `.pyi` stub's (see
+    `python_stub_implementations`), and for a TypeScript declaration
+    (`x.d.ts`, `x.d.mts`, `x.d.cts`) every same-stem implementation module
+    (`x.ts`, `x.js`, ...), as `has_implementation_sibling` asks. Nothing for
+    any other file.
+    """
+    if declaration_extension(path.name) is None:
+        return python_stub_implementations(path)
+    stem = module_stem(path.name)
+    return tuple(path.with_name(f"{stem}{ext}") for ext in _IMPLEMENTATION_EXTS)
+
+
 def python_stub_implementations[P: PurePath](path: P) -> tuple[P, ...]:
     """The files that may implement the module a `.pyi` stub declares, by
     path alone: `x.py` or the package `x/__init__.py` for `x.pyi`, and the
