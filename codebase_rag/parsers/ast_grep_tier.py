@@ -143,12 +143,16 @@ class _LangConfig:
     imports: tuple[_Rule, ...]
 
 
+def _pattern_config_paths() -> list[Path]:
+    return sorted(_PATTERNS_DIR.glob("*.yaml"))
+
+
 def load_pattern_configs() -> dict[str, _LangConfig]:
     """Load every ast_grep_patterns/*.yaml, keyed by file extension."""
     import yaml
 
     configs: dict[str, _LangConfig] = {}
-    for path in sorted(_PATTERNS_DIR.glob("*.yaml")):
+    for path in _pattern_config_paths():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         extensions = data.get("extensions")
         ast_grep_id = data.get("ast_grep_id")
@@ -197,6 +201,17 @@ def structural_tier_languages() -> dict[str, tuple[str, ...]]:
     for extension, config in load_pattern_configs().items():
         languages.setdefault(config.language, []).append(extension)
     return {name: tuple(extensions) for name, extensions in languages.items()}
+
+
+def structural_tier_config_names() -> tuple[str, ...]:
+    """Each configured language's name, read from the config file names.
+
+    Needs no YAML parser: PyYAML comes with the [ast-grep] extra, and a
+    listing must still name the languages that extra adds when it is missing
+    (Greptile review of PR 2508). The file stem is also the name
+    `load_pattern_configs` falls back to.
+    """
+    return tuple(path.stem for path in _pattern_config_paths())
 
 
 def _leading_identifier(text: str) -> str | None:

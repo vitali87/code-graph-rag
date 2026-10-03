@@ -25,42 +25,51 @@ def _submodule_bindings_path(lang_name: str) -> Path:
 
 
 def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
-    submodule_path = _submodule_path(lang_name)
-    python_bindings_path = _submodule_bindings_path(lang_name)
-
-    if not python_bindings_path.exists():
+    if not _submodule_bindings_path(lang_name).exists():
         return None
+    try:
+        if not _build_submodule(lang_name):
+            return None
+    except Exception as e:
+        logger.debug(ls.SUBMODULE_LOAD_FAILED, lang=lang_name, error=e)
+        return None
+    return _import_submodule(lang_name)
 
-    python_bindings_str = str(python_bindings_path)
+
+def _build_submodule(lang_name: str) -> bool:
+    """Build the submodule's binding in place; False when the build fails."""
+    submodule_path = _submodule_path(lang_name)
+    if not (submodule_path / cs.SETUP_PY).exists():
+        return True
+    logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
+    result = subprocess.run(
+        [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
+        check=False,
+        cwd=str(submodule_path),
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+    )
+    if result.returncode != 0:
+        logger.debug(
+            ls.BUILD_FAILED,
+            lang=lang_name,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        return False
+    logger.debug(ls.BUILD_SUCCESS, lang=lang_name)
+    return True
+
+
+def _import_submodule(lang_name: str) -> LanguageLoader:
+    """The language loader the submodule's built binding exports, or None."""
+    python_bindings_str = str(_submodule_bindings_path(lang_name))
     try:
         if python_bindings_str not in sys.path:
             sys.path.insert(0, python_bindings_str)
-
         try:
             module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
-
-            setup_py_path = submodule_path / cs.SETUP_PY
-            if setup_py_path.exists():
-                logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
-                result = subprocess.run(
-                    [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
-                    check=False,
-                    cwd=str(submodule_path),
-                    capture_output=True,
-                    text=True,
-                    encoding=cs.ENCODING_UTF8,
-                )
-
-                if result.returncode != 0:
-                    logger.debug(
-                        ls.BUILD_FAILED,
-                        lang=lang_name,
-                        stdout=result.stdout,
-                        stderr=result.stderr,
-                    )
-                    return None
-                logger.debug(ls.BUILD_SUCCESS, lang=lang_name)
-
             logger.debug(ls.IMPORTING_MODULE, module=module_name)
             module = importlib.import_module(module_name)
 
@@ -219,18 +228,27 @@ _loader_cache: dict[cs.SupportedLanguage, LanguageLoader] = {}
 
 
 def grammar_installed(lang_name: str) -> bool:
-    """Whether a grammar for `lang_name` is present, without loading it.
+    """Whether the loader gets a parser for `lang_name`, without building one.
 
-    Checks the same two sources as `_get_language_library`, but stops at the
-    submodule's bindings directory: the loader compiles a submodule grammar on
-    first use, and a listing must not start a build to answer a yes/no.
+    Asks the same two sources as `_get_language_library`. For a submodule
+    grammar it imports the built binding exactly as the loader does, but
+    skips the build the loader runs on first use: a listing must not start a
+    compile to answer a yes/no. A bindings directory alone is not enough, as
+    a checkout whose build fails has one and gives no parser (Greptile review
+    of PR 2508).
     """
     lang_import = _IMPORT_SPECS.get(lang_name)
     if lang_import is None:
-        return _submodule_bindings_path(lang_name).exists()
+        return _submodule_grammar_loads(lang_name)
     if _import_pip_grammar(lang_import.module_path, lang_import.attr_name) is not None:
         return True
-    return _submodule_bindings_path(lang_import.submodule_name).exists()
+    return _submodule_grammar_loads(lang_import.submodule_name)
+
+
+def _submodule_grammar_loads(lang_name: str) -> bool:
+    if not _submodule_bindings_path(lang_name).exists():
+        return False
+    return _import_submodule(lang_name) is not None
 
 
 def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:

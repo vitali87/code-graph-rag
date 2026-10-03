@@ -33,7 +33,10 @@ from ..parsers import (
     java_frontend,
     py_frontend,
 )
-from ..parsers.ast_grep_tier import structural_tier_languages
+from ..parsers.ast_grep_tier import (
+    structural_tier_config_names,
+    structural_tier_languages,
+)
 from ..parsers.document_tier import DOCUMENT_EXTENSIONS, document_tier_available
 from ..utils.dependencies import has_ast_grep
 
@@ -94,9 +97,31 @@ def tree_sitter_languages() -> list[LanguageEntry]:
     ]
 
 
+def _ast_grep_entry(
+    name: str, extensions: tuple[str, ...], installed: bool
+) -> LanguageEntry:
+    return LanguageEntry(
+        # configs spell the name in lower case (`language: ruby`)
+        name=name[:1].upper() + name[1:],
+        extensions=extensions,
+        tier=cs.LanguageTier.AST_GREP,
+        support=cs.LanguageSupport.STRUCTURAL,
+        installed=installed,
+    )
+
+
 def ast_grep_languages() -> list[LanguageEntry]:
     try:
         languages = structural_tier_languages()
+    except ImportError:
+        # No PyYAML, which the [ast-grep] extra installs: the tier cannot run,
+        # but its languages are still listed, unavailable, so the install
+        # hint names the extra that adds them (Greptile review of PR 2508).
+        # Their extensions are in the configs this cannot read.
+        return [
+            _ast_grep_entry(name, (), installed=False)
+            for name in structural_tier_config_names()
+        ]
     except Exception as exc:  # noqa: BLE001
         # AstGrepTier disables itself on the same failure, so leaving these
         # out is accurate; the other tiers must still be listed.
@@ -104,14 +129,7 @@ def ast_grep_languages() -> list[LanguageEntry]:
         return []
     installed = has_ast_grep()
     return [
-        LanguageEntry(
-            # configs spell the name in lower case (`language: ruby`)
-            name=name[:1].upper() + name[1:],
-            extensions=extensions,
-            tier=cs.LanguageTier.AST_GREP,
-            support=cs.LanguageSupport.STRUCTURAL,
-            installed=installed,
-        )
+        _ast_grep_entry(name, extensions, installed)
         for name, extensions in languages.items()
     ]
 

@@ -8,6 +8,7 @@ read the rendered table back cell by cell, the way a user reads it.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +18,7 @@ from click.testing import CliRunner, Result
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.language_spec import LANGUAGE_SPECS, LanguageSpec
-from codebase_rag.parser_loader import grammar_installed
+from codebase_rag.parser_loader import _get_language_library, grammar_installed
 from codebase_rag.parsers.ast_grep_tier import load_pattern_configs
 from codebase_rag.parsers.document_tier import DOCUMENT_EXTENSIONS
 from codebase_rag.tools.language import list_languages
@@ -300,6 +301,21 @@ def test_no_install_hint_when_everything_is_installed() -> None:
     assert "pip install" not in output
 
 
+def test_ast_grep_languages_without_yaml_are_listed_as_not_installed() -> None:
+    # Greptile review of PR 2508: PyYAML comes with the [ast-grep] extra, so
+    # without it the configs could not be read, and the tier's languages and
+    # the hint that installs them left the listing. ast-grep-py itself is
+    # left as found: the tier cannot run without its configs either way.
+    with patch.dict(sys.modules, {"yaml": None}):
+        result = _invoke()
+    rows = _by_name(_table(result.output, _LANGUAGE_HEADERS), "Language")
+
+    for name in ("Ruby", "Swift"):
+        assert rows[name]["Tier"] == "ast-grep"
+        assert rows[name]["Installed"] == "no"
+    assert "code-graph-rag[ast-grep]" in result.output
+
+
 def test_unreadable_ast_grep_configs_leave_the_other_tiers_listed() -> None:
     with patch(
         "codebase_rag.tools.language_catalog.structural_tier_languages",
@@ -399,23 +415,51 @@ def test_grammar_installed_reports_a_missing_grammar(
         assert grammar_installed(cs.SupportedLanguage.RUST) is False
 
 
+def _submodule_grammar(root: Path, name: str, *, built: bool) -> Path:
+    # A grammar checkout the way the loader finds one: bindings/python, a
+    # setup.py that fails (no compiler, a broken grammar), and, when an
+    # earlier build succeeded, the importable binding it left behind. The
+    # name is cgr's own, so no installed grammar package answers instead.
+    submodule = root / "grammars" / f"tree-sitter-{name}"
+    bindings = submodule / "bindings" / "python"
+    bindings.mkdir(parents=True)
+    (submodule / "setup.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    if built:
+        package = bindings / f"tree_sitter_{name}"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            "def language():\n    return 0\n", encoding="utf-8"
+        )
+    return submodule
+
+
 def test_grammar_installed_never_builds_a_submodule(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The loader runs the submodule's setup.py on first use; answering
     # "installed?" must not start that build.
     monkeypatch.chdir(tmp_path)
-    submodule = tmp_path / "grammars" / "tree-sitter-rust"
-    (submodule / "bindings" / "python").mkdir(parents=True)
-    (submodule / "setup.py").write_text("", encoding="utf-8")
-    # an empty loader cache, so a route through the real loader would build
-    with (
-        patch.dict("codebase_rag.parser_loader._loader_cache", clear=True),
-        patch("codebase_rag.parser_loader._import_pip_grammar", return_value=None),
-        patch("codebase_rag.parser_loader.subprocess.run") as run,
-    ):
-        assert grammar_installed(cs.SupportedLanguage.RUST) is True
+    monkeypatch.delitem(sys.modules, "tree_sitter_cgrbuilt", raising=False)
+    _submodule_grammar(tmp_path, "cgrbuilt", built=True)
+    with patch("codebase_rag.parser_loader.subprocess.run") as run:
+        assert grammar_installed("cgrbuilt") is True
     run.assert_not_called()
+    monkeypatch.delitem(sys.modules, "tree_sitter_cgrbuilt", raising=False)
+
+
+def test_a_submodule_grammar_that_does_not_load_is_not_claimed_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Greptile review of PR 2508: a bindings/python directory whose build
+    # fails gives the loader no parser, yet the listing said "yes".
+    monkeypatch.chdir(tmp_path)
+    _submodule_grammar(tmp_path, "cgrbroken", built=False)
+    with patch("codebase_rag.parser_loader.subprocess.run") as run:
+        assert grammar_installed("cgrbroken") is False
+    run.assert_not_called()
+    # The loader, which does run the failing build, agrees.
+    with patch.dict("codebase_rag.parser_loader._loader_cache", clear=True):
+        assert _get_language_library("cgrbroken") is None
 
 
 def _invoke_on_console(monkeypatch: pytest.MonkeyPatch, *, legacy_windows: bool) -> str:
