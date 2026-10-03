@@ -434,8 +434,175 @@ REBOUND_OVERLOAD = [
     ),
 ]
 
+# Rebound inside the body of an `if`, `for`, `while`, `with`, `try` or `match`
+# before the stubs. Those bodies are no scope of their own: the assignment
+# binds the module's name, so past that statement the decorator may be the
+# rebinding's (on one branch or one iteration is enough), and folding a
+# definition that may be real would drop it from the graph.
+COMPOUND_BODY_REBINDINGS = [
+    pytest.param(
+        "from typing import overload\n\n"
+        "for item in items:\n    if item:\n        overload = item\n",
+        "@overload",
+        id="if-in-a-for-body",
+    ),
+    pytest.param(
+        "from typing import overload\n\nfor item in items:\n    overload = item\n",
+        "@overload",
+        id="for-body",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "while pending:\n    if ready:\n        overload = identity\n",
+        "@overload",
+        id="if-in-a-while-body",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "with registry:\n    if ready:\n        overload = identity\n",
+        "@overload",
+        id="if-in-a-with-body",
+    ),
+    pytest.param(
+        "from typing import overload\n\ntry:\n    pass\n"
+        "except LookupError:\n    if ready:\n        overload = identity\n",
+        "@overload",
+        id="if-in-an-except-body",
+    ),
+    pytest.param(
+        "try:\n    from typing import overload\nexcept ImportError:\n"
+        "    def overload(fn):\n        return fn\n",
+        "@overload",
+        id="local-fallback-in-an-except-body",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "if ready:\n    pass\nelif pending:\n    pass\n"
+        "else:\n    overload = identity\n",
+        "@overload",
+        id="else-branch",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "match mode:\n    case 1:\n        overload = identity\n",
+        "@overload",
+        id="case-body",
+    ),
+    pytest.param(
+        "import typing as t\n\n"
+        "for item in items:\n    while item:\n        with registry:\n"
+        "            try:\n                t = item\n            finally:\n"
+        "                pass\n",
+        "@t.overload",
+        id="alias-four-blocks-deep",
+    ),
+]
 
-@pytest.mark.parametrize(("imports", "deco"), [*NOT_TYPING_OVERLOAD, *REBOUND_OVERLOAD])
+# Rebound by a binding form other than `name = ...`: every name an unpacking
+# target, chained or augmented assignment, walrus, `with`/`except ... as`,
+# match capture, `type` alias or `del` names is rebound in its scope.
+TARGET_REBINDINGS = [
+    pytest.param(
+        "from typing import overload\n\noverload, other = identity, 1\n",
+        "@overload",
+        id="tuple-unpacking",
+    ),
+    pytest.param(
+        "from typing import overload\n\n[overload] = [identity]\n",
+        "@overload",
+        id="list-unpacking",
+    ),
+    pytest.param(
+        "from typing import overload\n\n(overload,) = (identity,)\n",
+        "@overload",
+        id="parenthesized-unpacking",
+    ),
+    pytest.param(
+        "from typing import overload\n\n*rest, overload = registry\n",
+        "@overload",
+        id="starred-unpacking",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "(first, (second, [*rest, overload])) = registry\n",
+        "@overload",
+        id="nested-unpacking",
+    ),
+    pytest.param(
+        "import typing as t\n\nt, other = registry\n",
+        "@t.overload",
+        id="alias-unpacking",
+    ),
+    pytest.param(
+        "from typing import overload\n\nalias = overload = identity\n",
+        "@overload",
+        id="chained-assignment",
+    ),
+    pytest.param(
+        "from typing import overload\n\noverload |= registry\n",
+        "@overload",
+        id="augmented-assignment",
+    ),
+    pytest.param(
+        "from typing import overload\n\nif (overload := identity):\n    pass\n",
+        "@overload",
+        id="walrus-in-a-condition",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "hooks = [overload := hook for hook in registry]\n",
+        "@overload",
+        id="walrus-in-a-comprehension",
+    ),
+    pytest.param(
+        "from typing import overload\n\nwith registry as overload:\n    pass\n",
+        "@overload",
+        id="with-as",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "with registry as (first, overload):\n    pass\n",
+        "@overload",
+        id="with-as-tuple",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "try:\n    pass\nexcept LookupError as overload:\n    pass\n",
+        "@overload",
+        id="except-as",
+    ),
+    pytest.param(
+        "from typing import overload\nfrom mylib import hook as overload\n",
+        "@overload",
+        id="imported-as-overload",
+    ),
+    pytest.param(
+        "from typing import overload\nimport overload.helpers\n",
+        "@overload",
+        id="dotted-import-binds-its-package",
+    ),
+    pytest.param(
+        "from typing import overload\n\n"
+        "match registry:\n    case [first, *overload]:\n        pass\n",
+        "@overload",
+        id="match-capture",
+    ),
+    pytest.param(
+        "from typing import overload\n\ntype overload = Callable\n",
+        "@overload",
+        id="type-alias",
+    ),
+    pytest.param(
+        "from typing import overload\n\ndel overload\n",
+        "@overload",
+        id="del",
+    ),
+]
+
+EVERY_REBINDING = [*REBOUND_OVERLOAD, *COMPOUND_BODY_REBINDINGS, *TARGET_REBINDINGS]
+
+
+@pytest.mark.parametrize(("imports", "deco"), [*NOT_TYPING_OVERLOAD, *EVERY_REBINDING])
 def test_a_decorator_that_is_not_typing_overload_keeps_every_definition(
     temp_repo: Path, mock_ingestor: MagicMock, imports: str, deco: str
 ) -> None:
@@ -538,6 +705,73 @@ LIVE_AT_THE_STUBS = [
         ),
         id="loops-binding-other-names",
     ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\ndef helper():\n"
+                "    for item in items:\n        if item:\n"
+                "            overload, other = item, 1\n"
+                "    with registry as (first, overload):\n        pass\n"
+                "    return [overload := hook for hook in registry]"
+            ),
+            deco="@overload",
+        ),
+        id="compound-and-unpacking-rebinds-in-a-function",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\n\nclass Holder:\n"
+                "    if ready:\n        overload = identity\n"
+                "    [overload] = [identity]"
+            ),
+            deco="@overload",
+        ),
+        id="compound-and-unpacking-rebinds-in-a-class-body",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\nfor item in items:\n"
+                "    if item:\n        first, *rest = item\n"
+                "        holder.overload = item\n        table[overload] = item\n"
+                "    with registry as (first, holder.overload):\n        pass"
+            ),
+            deco="@overload",
+        ),
+        id="compound-bodies-binding-other-names",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "try:\n    from typing import overload\n"
+                "except ImportError:\n    from typing_extensions import overload"
+            ),
+            deco="@overload",
+        ),
+        id="typing-on-every-branch",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n    from typing import overload"
+            ),
+            deco="@overload",
+        ),
+        id="imported-under-type-checking",
+    ),
+    pytest.param(
+        FUNCTION_MODULE.format(
+            imports=(
+                "from typing import overload\n\nfor item in items:\n"
+                "    if item:\n        overload, other = item, 1\n\n"
+                "from typing import overload"
+            ),
+            deco="@overload",
+        ),
+        id="reimported-after-a-compound-rebinding",
+    ),
 ]
 
 
@@ -572,7 +806,7 @@ def _parse(text: str) -> Node:
                 0,
                 id=f"rebound-{p.id}",
             )
-            for p in REBOUND_OVERLOAD
+            for p in EVERY_REBINDING
         ),
         *(pytest.param(p.values[0], 2, id=f"live-{p.id}") for p in LIVE_AT_THE_STUBS),
     ],
@@ -618,6 +852,91 @@ def test_a_loop_body_sees_its_own_target(target: str, stubs: int) -> None:
     # The target is bound before the body runs, so a decorator in the body
     # reads the loop's value, not typing's.
     root = _parse(LOOP_BODY_STUBS.format(target=target))
+    assert len(folded_overload_stubs(root)) == stubs
+
+
+LOOP_BODY_REBOUND = """from typing import overload
+
+for item in items:
+{before}
+    @overload
+    def command(name: str) -> int: ...
+
+    @overload
+    def command(name: None) -> int: ...
+
+    def command(name=None):
+        return name
+{after}"""
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "stubs"),
+    [
+        pytest.param(
+            "    if item:\n        overload = item\n",
+            "",
+            0,
+            id="rebound-in-an-if-before-the-stubs",
+        ),
+        pytest.param(
+            "    with registry as (first, overload):\n        pass\n",
+            "",
+            0,
+            id="rebound-by-a-with-target-before-the-stubs",
+        ),
+        pytest.param(
+            "",
+            "    if item:\n        overload, other = item, 1\n",
+            0,
+            id="rebound-after-the-stubs-for-the-next-iteration",
+        ),
+        pytest.param(
+            "    if item:\n        other, *rest = item\n",
+            "    holder.overload = item\n",
+            2,
+            id="other-names-rebound-around-the-stubs",
+        ),
+    ],
+)
+def test_a_rebinding_anywhere_in_a_loop_reaches_its_stubs(
+    before: str, after: str, stubs: int
+) -> None:
+    # The body runs again after its last statement, so a rebinding anywhere
+    # in it (in a nested `if` too) is live at every stub in it.
+    text = LOOP_BODY_REBOUND.format(before=before, after=after)
+    root = _parse(text)
+    assert len(folded_overload_stubs(root)) == stubs
+    line = _line_of(text, "    def command(name=None):") - 1
+    token = root.descendant_for_point_range((line, 8), (line, 8))
+    assert token is not None
+    assert token.parent is not None
+    assert len(overload_stub_names(token.parent, root)) == stubs
+
+
+@pytest.mark.parametrize(
+    ("pattern", "stubs"),
+    [
+        pytest.param("overload", 0, id="bare-capture"),
+        pytest.param("(overload)", 0, id="parenthesized-capture"),
+        pytest.param("[first, *overload]", 0, id="star-capture"),
+        pytest.param("{'k': overload}", 0, id="mapping-value-capture"),
+        pytest.param("{**overload}", 0, id="mapping-rest-capture"),
+        pytest.param("Hook(k=overload)", 0, id="keyword-capture"),
+        pytest.param("Hook() as overload", 0, id="as-capture"),
+        pytest.param("overload.KIND", 2, id="dotted-value-pattern"),
+        pytest.param("Hook(overload=1)", 2, id="keyword-name"),
+        pytest.param("Hook(first, *rest)", 2, id="other-captures"),
+    ],
+)
+def test_a_case_pattern_rebinds_only_what_it_captures(pattern: str, stubs: int) -> None:
+    # A `case` binds its captures in the enclosing scope; a dotted value
+    # pattern and a class pattern's keyword names bind nothing.
+    imports = (
+        "from typing import overload\n\n"
+        f"match registry:\n    case {pattern}:\n        pass"
+    )
+    root = _parse(FUNCTION_MODULE.format(imports=imports, deco="@overload"))
     assert len(folded_overload_stubs(root)) == stubs
 
 
@@ -769,6 +1088,20 @@ def test_a_pyi_stub_beside_the_module_changes_nothing(
                 "import typing as t\n\nfor t in (None,):\n    pass",
             ),
             id="alias-rebound-by-a-loop",
+        ),
+        pytest.param(
+            RENAME_UTIL.replace(
+                "import typing as t",
+                "import typing as t\n\nfor _item in (None,):\n"
+                "    if _item is None:\n        t = None",
+            ),
+            id="alias-rebound-in-a-loop-body-if",
+        ),
+        pytest.param(
+            RENAME_UTIL.replace(
+                "import typing as t", "import typing as t\n\nt, _other = None, 1"
+            ),
+            id="alias-rebound-by-unpacking",
         ),
     ],
 )

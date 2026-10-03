@@ -11,13 +11,19 @@ definition (issue #893); stubs with no implementation (a Protocol's) are all
 there is to point at and keep their nodes.
 
 A decorator is typing's `overload` only while the typing import that gave its
-spelling is still the binding of its root name (`overload`, an alias, or the
-`t` of `t.overload`) where the stub is defined. Each block is read in
-statement order: a `def` or `class` of that name, an assignment to it, a `for`
-loop target naming it (in the loop's body too), or an import of it from
-anywhere else, made earlier in the stub's block or in a block enclosing it,
-rebinds it from that statement on, until typing is imported again. Where no
-enclosing block binds the name before the stub, the module's imports as a
+spelling is surely still the binding of its root name (`overload`, an alias,
+or the `t` of `t.overload`) where the stub is defined. Each scope is read in
+statement order, and anything that binds the name rebinds it from that
+statement on, until typing is imported again: a `def` or `class` of that
+name, an assignment to it (unpacked, chained or augmented too), a walrus, a
+`for`, `with ... as`, `except ... as` or `case` target naming it, a `type`
+alias, a `del`, or an import of it from anywhere else. The bodies of an `if`,
+`for`, `while`, `with`, `try` or `match` are no scope of their own, so what
+they bind is the enclosing scope's; which branch runs, and whether a loop
+body runs again, is unknown, so a name such a statement binds anywhere in it
+is typing's within and after it only when every binding of it there gives
+typing's too. A stub whose decorator is not surely typing's is never folded.
+Where nothing binds the name before the stub, the module's imports as a
 whole decide.
 
 The ingest pass and `rename` both read the stubs off the syntax tree with the
@@ -27,15 +33,49 @@ folded.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import re
+from bisect import bisect_left
+from collections.abc import Iterable, Iterator
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
 
-# The unpacking forms a loop target can take: `a, b`, `(a, b)`, `[a, b]`, `*a`.
-_TARGET_PATTERNS = cs.PY_UNPACKING_TARGET_TYPES | {cs.TS_PY_LIST_SPLAT_PATTERN}
+# The shapes a target unpacks through to the names it binds: `a, b`, `(a, b)`,
+# `[a, b]`, `*a`, and the `tuple` / `list` / parenthesized EXPRESSIONS
+# tree-sitter parses a `with ... as` target as, and `del a, b`'s list.
+_TARGET_PATTERNS = cs.PY_UNPACKING_TARGET_TYPES | {
+    cs.TS_PY_LIST_SPLAT_PATTERN,
+    cs.TS_PY_TUPLE,
+    cs.TS_PY_LIST,
+    cs.TS_PY_PARENTHESIZED_EXPRESSION,
+    cs.TS_PY_LIST_SPLAT,
+    cs.TS_PY_EXPRESSION_LIST,
+}
+# Nodes whose `left` field is the target they bind.
+_LEFT_BINDERS = frozenset(
+    {cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT}
+)
+# Nodes whose `name` field is the one name they bind: a walrus, a def, a class.
+_NAME_BINDERS = frozenset(
+    {cs.TS_PY_NAMED_EXPRESSION, cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION}
+)
+# Nodes every named child of which is a target: `as x`, `del x, y`.
+_LIST_BINDERS = frozenset({cs.TS_PY_AS_PATTERN_TARGET, cs.TS_PY_DELETE_STATEMENT})
+# A bare name under these is a `case` capture, not a value pattern.
+_CAPTURE_PARENTS = frozenset({cs.TS_PY_CASE_PATTERN, cs.TS_PY_KEYWORD_PATTERN})
+_IMPORTS = frozenset({cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT})
+# A def's or class's body is a scope of its own; every other statement that
+# holds blocks binds in the scope it sits in.
+_OWN_SCOPES = frozenset(
+    {
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+        cs.TS_PY_DECORATED_DEFINITION,
+    }
+)
+_SAME_SCOPE_COMPOUNDS = cs.PY_STATEMENT_CONTAINERS - _OWN_SCOPES - {cs.TS_PY_BLOCK}
 
 
 def folded_overload_stubs(root: Node) -> frozenset[int]:
@@ -83,7 +123,7 @@ def overload_spellings(root: Node) -> frozenset[str]:
         spelling
         for block in _blocks(root)
         for statement in block.named_children
-        for _bound, spelling in _bindings(statement)
+        for _bound, spelling in _import_bindings(statement)
         if spelling
     )
 
@@ -91,63 +131,143 @@ def overload_spellings(root: Node) -> frozenset[str]:
 def _overload_stubs(root: Node) -> frozenset[int]:
     # Start bytes of the statements typing's `overload` decorates. Every block
     # is read in statement order from the bindings in force where it starts,
-    # {root name: the spelling it gives, "" once rebound to anything else};
-    # only statements are walked, never expressions.
+    # {root name: the spelling it gives, "" once it may be anything else}.
     spellings = overload_spellings(root)
+    if not spellings:
+        return frozenset()
     roots = {spelling.partition(cs.SEPARATOR_DOT)[0] for spelling in spellings}
+    hits = _root_words(root, roots)
     stubs: set[int] = set()
-    pending: list[tuple[Node, dict[str, str]]] = [(root, {})] if spellings else []
+    pending: list[tuple[Node, dict[str, str]]] = [(root, {})]
     while pending:
         block, bound = pending.pop()
         for statement in block.named_children:
             if _is_stub(statement, spellings, bound):
                 stubs.add(statement.start_byte)
-            if statement.type == cs.TS_PY_FOR_STATEMENT:
-                # The loop target is bound before the body runs.
-                _rebind(statement, roots, bound)
-            if statement.type in cs.PY_STATEMENT_CONTAINERS:
-                pending.extend((inner, dict(bound)) for inner in _blocks_in(statement))
-            _rebind(statement, roots, bound)
+            pending.extend(_step(statement, bound, roots, hits))
     return frozenset(stubs)
 
 
-def _rebind(statement: Node, roots: set[str], bound: dict[str, str]) -> None:
-    # Record what each overload-relevant root name means after `statement`.
-    for name, spelling in _bindings(statement):
+def _step(
+    statement: Node, bound: dict[str, str], roots: set[str], hits: list[int]
+) -> list[tuple[Node, dict[str, str]]]:
+    # Move `bound` past `statement`, and return the blocks under it, each with
+    # the bindings in force where it starts.
+    if statement.type in _SAME_SCOPE_COMPOUNDS:
+        # Any of its clauses may run, and a loop body runs again after its
+        # end, so each of its blocks, and every statement after it, may see
+        # any binding made anywhere in it (a `for` target included).
+        _merge(bound, _scope_bindings(statement, hits), roots)
+    inner = (
+        [(block, dict(bound)) for block in _blocks_in(statement)]
+        if statement.type in cs.PY_STATEMENT_CONTAINERS
+        else []
+    )
+    if statement.type not in _SAME_SCOPE_COMPOUNDS:
+        _rebind(bound, _bindings(statement, hits), roots)
+    return inner
+
+
+def _rebind(
+    bound: dict[str, str],
+    bindings: Iterable[tuple[str | None, str]],
+    roots: set[str],
+) -> None:
+    # A statement that surely runs: each root name it binds means, from here
+    # on, what its last binding there gives.
+    for name, spelling in bindings:
         if name is not None and name in roots:
             bound[name] = spelling
 
 
-def _bindings(statement: Node) -> Iterator[tuple[str | None, str]]:
-    # The names `statement` binds in its block, each with the spelling of
-    # typing's `overload` it now gives ("" for none).
-    match statement.type:
-        case cs.TS_PY_IMPORT_STATEMENT:
-            yield from _module_import_bindings(statement)
-        case cs.TS_PY_IMPORT_FROM_STATEMENT:
-            yield from _from_import_bindings(statement)
-        case (
-            cs.TS_PY_DECORATED_DEFINITION
-            | cs.TS_PY_FUNCTION_DEFINITION
-            | cs.TS_PY_CLASS_DEFINITION
-        ):
-            definition = statement.child_by_field_name(cs.FIELD_DEFINITION)
-            yield _name(definition or statement), ""
-        case cs.TS_PY_FOR_STATEMENT:
-            # `for name in ...` / `for a, (b, *name) in ...`.
-            for name in _target_names(statement.child_by_field_name(cs.FIELD_LEFT)):
-                yield name, ""
-        case cs.TS_PY_EXPRESSION_STATEMENT:
-            # `name = ...` / `name: T = ...`; the value is never read.
-            assignment = statement.named_child(0)
-            if assignment is not None and assignment.type == cs.TS_PY_ASSIGNMENT:
-                target = assignment.child_by_field_name(cs.FIELD_LEFT)
-                if target is not None and target.type == cs.TS_PY_IDENTIFIER:
-                    yield safe_decode_text(target), ""
+def _merge(
+    bound: dict[str, str],
+    bindings: Iterable[tuple[str | None, str]],
+    roots: set[str],
+) -> None:
+    # A statement whose bindings each may or may not run: a root name it binds
+    # keeps a spelling only when the binding before it (if any) and every
+    # binding of it there agree on that spelling; otherwise it is "", since
+    # an uncertain `overload` must never fold a definition.
+    meanings: dict[str, set[str]] = {}
+    for name, spelling in bindings:
+        if name is not None and name in roots:
+            prior = {bound[name]} if name in bound else set()
+            meanings.setdefault(name, prior).add(spelling)
+    for name, spellings in meanings.items():
+        bound[name] = spellings.pop() if len(spellings) == 1 else ""
+
+
+def _scope_bindings(
+    statement: Node, hits: list[int]
+) -> Iterator[tuple[str | None, str]]:
+    # Every binding `statement` makes in its scope: its own syntax's, and that
+    # of every statement in its clauses' blocks, at any depth, except inside
+    # a def's or class's body (another scope; its name and header still
+    # count). A statement with no root-named word in it binds no root name;
+    # an import is read anyway, since `from typing import *` names none.
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        yield from _bindings(node, hits)
+        if node.type in _SAME_SCOPE_COMPOUNDS:
+            stack.extend(
+                inner
+                for block in _blocks_in(node)
+                for inner in block.named_children
+                if inner.type in _IMPORTS or _spans_word(inner, hits)
+            )
+
+
+def _bindings(statement: Node, hits: list[int]) -> Iterator[tuple[str | None, str]]:
+    # The names `statement` binds in its scope, read off its own syntax (not
+    # the blocks under it), each with the spelling of typing's `overload` it
+    # now gives ("" for none). Only an import can bind a root name without
+    # spelling it (`from typing import *`).
+    if statement.type in _IMPORTS:
+        yield from _import_bindings(statement)
+    elif _spans_word(statement, hits):
+        for name in _names_bound(statement, hits):
+            yield name, ""
+
+
+def _names_bound(statement: Node, hits: list[int]) -> Iterator[str | None]:
+    # Every name `statement`'s own syntax binds where it runs: its targets,
+    # walruses (a comprehension's bind in the enclosing scope too; a
+    # lambda's are read as well, which only ever keeps definitions apart), a
+    # def's or class's name, `case` captures. The blocks under it are
+    # statements of their own or another scope, so they are skipped; so is
+    # any node with no root-named word in it, so this costs the root words,
+    # not the node count.
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        yield from _bound_here(node)
+        stack.extend(
+            child
+            for child in node.named_children
+            if child.type != cs.TS_PY_BLOCK and _spans_word(child, hits)
+        )
+
+
+def _bound_here(node: Node) -> Iterator[str | None]:
+    # The names `node` itself binds, by its own kind.
+    if node.type in _LEFT_BINDERS:
+        yield from _target_names(node.child_by_field_name(cs.FIELD_LEFT))
+    elif node.type in _NAME_BINDERS:
+        yield _name(node)
+    elif node.type in _LIST_BINDERS:
+        for target in node.named_children:
+            yield from _target_names(target)
+    elif node.type == cs.TS_PY_TYPE_ALIAS_STATEMENT:
+        yield _type_alias_name(node)
+    else:
+        yield from _captures(node)
 
 
 def _target_names(target: Node | None) -> Iterator[str | None]:
-    # The names a loop target binds; `x.y` and `x[i]` bind none.
+    # The names a target binds, unpacked to any depth; `x.y` and `x[i]` bind
+    # none.
     if target is None:
         return
     if target.type == cs.TS_PY_IDENTIFIER:
@@ -157,10 +277,67 @@ def _target_names(target: Node | None) -> Iterator[str | None]:
             yield from _target_names(child)
 
 
+def _captures(node: Node) -> Iterator[str | None]:
+    # A `case` pattern's captures: a bare name (`case x`, `[x]`, `Foo(k=x)`),
+    # a `*x` / `**x`, a `... as x`. A dotted `Color.RED` is a value pattern
+    # and `Foo` in `Foo()` a class, so neither binds.
+    if node.type == cs.TS_PY_DOTTED_NAME:
+        parent = node.parent
+        if (
+            node.named_child_count == 1
+            and parent is not None
+            and parent.type in _CAPTURE_PARENTS
+        ):
+            yield safe_decode_text(node)
+    elif node.type in (cs.TS_PY_SPLAT_PATTERN, cs.TS_PY_AS_PATTERN):
+        # `as_pattern`'s first child is what it matches (or, in `with` and
+        # `except`, the context or exception), never a name it binds.
+        start = 1 if node.type == cs.TS_PY_AS_PATTERN else 0
+        for child in node.named_children[start:]:
+            if child.type == cs.TS_PY_IDENTIFIER:
+                yield safe_decode_text(child)
+
+
+def _type_alias_name(statement: Node) -> str | None:
+    # `type X = ...` / `type X[T] = ...` binds `X`.
+    node = statement.child_by_field_name(cs.FIELD_LEFT)
+    while node is not None and node.type != cs.TS_PY_IDENTIFIER:
+        node = node.named_child(0)
+    return safe_decode_text(node)
+
+
+def _root_words(root: Node, roots: set[str]) -> list[int]:
+    # Sorted start bytes of every whole word in the module spelled as a root
+    # name: only syntax spanning one can bind a root name. (A tree that kept
+    # no source spells no typing import either, so it never gets here.)
+    source = root.text or b""
+    words = b"|".join(re.escape(name.encode()) for name in sorted(roots))
+    pattern = re.compile(rb"(?<!\w)(?:" + words + rb")(?!\w)")
+    return [root.start_byte + match.start() for match in pattern.finditer(source)]
+
+
+def _spans_word(node: Node, hits: list[int]) -> bool:
+    index = bisect_left(hits, node.start_byte)
+    return index < len(hits) and hits[index] < node.end_byte
+
+
+def _import_bindings(statement: Node) -> Iterator[tuple[str | None, str]]:
+    # The names an import binds, each with the spelling of typing's
+    # `overload` it now gives ("" for none); nothing for other statements.
+    match statement.type:
+        case cs.TS_PY_IMPORT_STATEMENT:
+            yield from _module_import_bindings(statement)
+        case cs.TS_PY_IMPORT_FROM_STATEMENT:
+            yield from _from_import_bindings(statement)
+
+
 def _module_import_bindings(statement: Node) -> Iterator[tuple[str | None, str]]:
     # `import typing` / `import typing as t` -> `typing.overload` / `t.overload`.
+    # `import a.b` binds the package `a`; `import a.b as c` binds `c` to `a.b`.
     for imported in statement.children_by_field_name(cs.FIELD_NAME):
         module, alias = _imported(imported)
+        if alias is None and module is not None:
+            module = module.partition(cs.SEPARATOR_DOT)[0]
         name = alias or module
         if module in cs.PY_OVERLOAD_MODULES:
             yield name, f"{name}{cs.SEPARATOR_DOT}{cs.PY_OVERLOAD}"
