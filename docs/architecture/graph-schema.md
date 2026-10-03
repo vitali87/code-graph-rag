@@ -250,6 +250,8 @@ right one.
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
 
+A C++ class, struct, union or enum written in a function body is also named under that function: `struct Checker` in `parse()` is `<module>.parse.Checker`, so two functions' local `Checker`s stay apart. An unnamed one that has member functions (a functor such as `struct { void operator()(int); } enter_state;`) is named by its position, `<module>.parse.anonymous_<row>_<col>` (0-based), and an unnamed one without member functions gets no node. A local type in an out-of-line method (`int Widget::run() { ... }`) is named from what the file writes, `<module>.<namespaces>.Widget.run.<Name>`, and is still defined by the `Widget.run` method node. Its member functions are `Method` nodes that own their calls. A call on an object of a C++ class type, local or not (`enter_state(n)`, `Cmp{}(a, b)`, or `Cmp{}` handed to `std::sort` the way a function pointer is), links to that type's `operator_call` method.
+
 Methods of classes defined inside function bodies are captured only when `CGR_CAPTURE_LOCAL_DEFINITIONS` is enabled, which is the default (see [Configuration](../getting-started/configuration.md)); function-local *classes* are always captured, and setting the flag to `false` skips their methods.
 
 ## Qualified Name Uniqueness
