@@ -2101,12 +2101,22 @@ class GraphUpdater:
         re-parsed file reaches is never opened, and a module whose imports
         this updater already holds is not parsed again.
         """
-        import_processor = self.factory.import_processor
-        mapping = import_processor.import_mapping
+        mapping = self.factory.import_processor.import_mapping
         module_paths = self.factory.definition_processor.module_qn_to_file_path
         if all(module_qn in mapping for module_qn in module_paths):
             # A full build or a reused updater: every map is already held.
             return
+        restored = self._restore_import_closure(module_paths)
+        if restored:
+            logger.info(ls.IMPORT_STATE_RESTORED, count=restored)
+
+    def _restore_import_closure(self, module_paths: Mapping[str, Path]) -> int:
+        """Walk out from every held map, restoring each unheld module reached.
+
+        Returns how many modules had their imports restored.
+        """
+        import_processor = self.factory.import_processor
+        mapping = import_processor.import_mapping
         # Read once: each restored map is re-pointed before the walk reads it.
         siblings = import_processor.stem_sibling_modules(module_paths)
         # The walk is a closure, so the order scopes are taken in is moot.
@@ -2115,7 +2125,12 @@ class GraphUpdater:
         restored = 0
         while pending:
             scope = pending.pop()
-            for target in list(mapping.get(scope, {}).values()):
+            # A copy, not a live view: restoring a Rust module commits its
+            # inline-`mod` uses under their scope keys until its parse is
+            # retracted, and `mod b {}` in `a.rs` keys on the same qn as a
+            # cfg-twin `a/b.rs`, so `scope`'s own dict can change mid-loop.
+            targets = list(mapping.get(scope, {}).values())
+            for target in targets:
                 holder = _module_holding(target, module_paths)
                 if holder is None or holder in walked:
                     continue
@@ -2134,8 +2149,7 @@ class GraphUpdater:
                         holder, module_paths, siblings
                     )
                 pending.append(holder)
-        if restored:
-            logger.info(ls.IMPORT_STATE_RESTORED, count=restored)
+        return restored
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
         """Parse one unchanged module's imports; False when Pass 2 would not."""
