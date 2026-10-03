@@ -19,6 +19,8 @@ claude mcp add --transport stdio code-graph-rag \
   -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
+![claude mcp add run from the pallets/itsdangerous checkout with TARGET_REPO_PATH="$(pwd)", then claude mcp list reporting the server Connected](assets/demos/claude-code-setup.gif)
+
 **Replace**:
 - `/absolute/path/to/code-graph-rag` - Where you cloned this repo
 - `your-google-api-key` - Your Google AI API key
@@ -139,3 +141,5 @@ claude mcp add --transport stdio code-graph-rag-frontend \
 ```bash
 claude mcp remove code-graph-rag
 ```
+
+![claude mcp remove code-graph-rag, then claude mcp list showing no servers configured](assets/demos/claude-code-setup-remove.gif)

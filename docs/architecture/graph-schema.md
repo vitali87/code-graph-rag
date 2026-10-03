@@ -180,6 +180,12 @@ CGR_CAPTURE=none,structure cgr start --repo-path . --update-graph
 cgr start --repo-path . --update-graph --capture -OVERRIDES
 ```
 
+![cgr start --update-graph --capture parameters --capture fields on pallets/itsdangerous, then cgr stats listing the new Parameter and Field nodes and HAS_PARAMETER, HAS_FIELD and OF_TYPE relationships](../assets/demos/graph-schema-capture.gif)
+
+![CGR_CAPTURE=none,structure cgr start --update-graph on pallets/itsdangerous, then cgr stats showing only the containment tree and DEFINES relationships](../assets/demos/graph-schema-capture-structure.gif)
+
+*Recorded on pallets/itsdangerous.*
+
 The selection is part of the parser fingerprint, so enabling a group on an indexed project needs no `--clean`: the next `--update-graph` re-parses the project once and writes the group's nodes and relationships (see [Document Support](language-support.md#document-support-document-tier)).
 
 ## Resource Kinds
