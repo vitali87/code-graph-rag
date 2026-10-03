@@ -404,8 +404,15 @@ def test_same_named_module_and_type_elsewhere_is_not_the_target(
 
 @pytest.mark.parametrize(
     "inner_use",
-    ["use crate::aaa::Get;", "use crate::aaa::*;"],
-    ids=["named", "glob"],
+    [
+        "use crate::aaa::Get;",
+        "use crate::aaa::*;",
+        # `pub(self)` and `pub(in self)` are the private visibility spelled
+        # out (#2599 review).
+        "pub(self) use crate::aaa::Get;",
+        "pub(in self) use crate::aaa::Get;",
+    ],
+    ids=["named", "glob", "pub-self", "pub-in-self"],
 )
 def test_private_use_is_not_carried_by_a_glob_reexport(
     temp_repo: Path, mock_ingestor: MagicMock, inner_use: str
@@ -503,3 +510,108 @@ def test_glob_below_the_base_still_sees_its_private_uses(
     _assert_bound(calls, f"{base}.client", f"{base}.inner.Get")
     edge = (f"{base}.lib.tests.in_tests", f"{base}.inner.Get.into_frame")
     assert calls.get(edge) == cs.EdgeResolution.EXACT, (edge, calls)
+
+
+# --- #2599 review: restricted visibility and the crate boundary ------------
+
+_ZZZ_LIB = (
+    "pub mod aaa;\npub mod client;\npub mod outer;\npub mod real;\npub mod zzz;\n"
+)
+
+
+def test_pub_super_use_is_not_carried_by_a_glob_outside_its_parent(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # outer::inner's `pub(super) use` is visible inside `outer` only, so a
+    # glob of inner written in client.rs gets nothing for `Get`; the
+    # `real::*` glob beside it supplies it.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_reexp_super",
+        {
+            "src/lib.rs": _ZZZ_LIB,
+            "src/outer.rs": "pub mod inner;\n",
+            "src/outer/inner.rs": "pub(super) use crate::zzz::Get;\n",
+            "src/real.rs": _GET_RS,
+            "src/zzz.rs": _GET_RS,
+            "src/aaa.rs": _GET_RS,
+            "src/client.rs": _consumer(
+                "use crate::outer::inner::*;\nuse crate::real::*;"
+            ),
+        },
+    )
+    _assert_bound(_calls(mock_ingestor), f"{base}.client", f"{base}.real.Get")
+
+
+def test_pub_super_use_is_carried_by_a_glob_in_its_parent(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: inside `outer`, the parent `pub(super)` names, the glob of
+    # inner does carry it.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_reexp_super_in",
+        {
+            "src/lib.rs": _ZZZ_LIB,
+            "src/outer.rs": _consumer("pub mod inner;\nuse self::inner::*;"),
+            "src/outer/inner.rs": "pub(super) use crate::zzz::Get;\n",
+            "src/real.rs": _GET_RS,
+            "src/zzz.rs": _GET_RS,
+            "src/aaa.rs": _GET_RS,
+            "src/client.rs": "",
+        },
+    )
+    _assert_bound(_calls(mock_ingestor), f"{base}.outer", f"{base}.zzz.Get")
+
+
+def test_pub_crate_use_is_carried_by_a_glob_in_the_crate(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `pub(crate)` reaches every module of the crate.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_reexp_crate_vis",
+        {
+            "src/lib.rs": _ZZZ_LIB,
+            "src/outer.rs": "pub(crate) use crate::zzz::Get;\n",
+            "src/real.rs": _GET_RS,
+            "src/zzz.rs": _GET_RS,
+            "src/aaa.rs": _GET_RS,
+            "src/client.rs": _consumer("use crate::outer::*;"),
+        },
+    )
+    _assert_bound(_calls(mock_ingestor), f"{base}.client", f"{base}.zzz.Get")
+
+
+def test_binary_glob_of_the_library_does_not_see_its_private_uses(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/main.rs and src/bin/tool.rs are crates of their own beside the
+    # library. `use rs_reexp_bin::*;` there carries lib.rs's PUBLIC names
+    # only: its private `use aaa::Get;` stays in the library, and the
+    # `real::*` glob beside it is what supplies `Get`.
+    binary = (
+        _consumer("use rs_reexp_bin::*;\nuse rs_reexp_bin::real::*;")
+        + "\nfn main() {}\n"
+    )
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_reexp_bin",
+        {
+            "src/lib.rs": (
+                "pub mod aaa;\npub mod real;\nuse aaa::Get;\n\n"
+                'pub fn make() -> Get {\n    Get::new("k")\n}\n'
+            ),
+            "src/real.rs": _GET_RS,
+            "src/aaa.rs": _GET_RS,
+            "src/main.rs": binary,
+            "src/bin/tool.rs": binary,
+        },
+    )
+    calls = _calls(mock_ingestor)
+    _assert_bound(calls, f"{base}.main", f"{base}.real.Get")
+    _assert_bound(calls, f"{base}.bin.tool", f"{base}.real.Get")

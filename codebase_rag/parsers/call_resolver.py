@@ -2987,25 +2987,35 @@ class CallResolver:
     def _rust_names_hidden_from_glob(
         self, owner: str, via_glob_from: str | None
     ) -> Collection[str]:
-        # The names `owner` binds by a private `use`, when a glob from a
-        # module that cannot see them is what reached `owner`.
-        if via_glob_from is None or self._rust_module_sees_private(
-            via_glob_from, owner
-        ):
+        # The names `owner` binds by a `use` whose visibility does not reach
+        # the module whose glob reached `owner`.
+        if via_glob_from is None:
             return frozenset()
-        return self.import_processor.rust_private_use_names.get(owner, frozenset())
-
-    def _rust_module_sees_private(self, module_qn: str, owner: str) -> bool:
-        # A module's private items are visible to itself and every module
-        # below it. A crate entry file (lib.rs, main.rs) is the parent of the
-        # modules beside it, which its own qn does not prefix, so its
-        # directory stands in for it there.
-        if module_qn == owner or module_qn.startswith(f"{owner}{cs.SEPARATOR_DOT}"):
-            return True
-        parent, _, stem = owner.rpartition(cs.SEPARATOR_DOT)
-        return stem in cs.RS_ENTRY_STEMS and module_qn.startswith(
-            f"{parent}{cs.SEPARATOR_DOT}"
+        restricted = self.import_processor.rust_restricted_use_names.get(owner)
+        if not restricted:
+            return frozenset()
+        return frozenset(
+            name
+            for name, root in restricted.items()
+            if not self._rust_module_sees(via_glob_from, root)
         )
+
+    def _rust_module_sees(self, module_qn: str, root: str) -> bool:
+        # An item visible within `root` is visible to it and every module
+        # below it. A crate entry file (lib.rs, main.rs) is the parent of
+        # the modules beside it, which its own qn does not prefix, so its
+        # directory stands in for it there; but another crate's entry beside
+        # it (main.rs beside lib.rs) and a binary under src/bin/ are crates
+        # of their own, which see none of it (#2599 review).
+        if module_qn == root or module_qn.startswith(f"{root}{cs.SEPARATOR_DOT}"):
+            return True
+        parent, _, stem = root.rpartition(cs.SEPARATOR_DOT)
+        if stem not in cs.RS_ENTRY_STEMS or not module_qn.startswith(
+            f"{parent}{cs.SEPARATOR_DOT}"
+        ):
+            return False
+        head = module_qn[len(parent) + 1 :].split(cs.SEPARATOR_DOT, 1)[0]
+        return head not in cs.RS_ENTRY_STEMS and head != cs.RS_BIN_DIR
 
     def _expand_rust_glob_hops(
         self,

@@ -845,8 +845,8 @@ class ImportProcessor:
         "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
-        "rust_private_use_names",
-        "_rust_private_use_keys",
+        "rust_restricted_use_names",
+        "_rust_restricted_use_keys",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
@@ -1042,13 +1042,15 @@ class ImportProcessor:
         # holds one slot for both namespaces, so a qualified `name::item`
         # reads here and a bare call reads there (issue #1054).
         self.rust_self_module_imports: dict[str, dict[str, str]] = {}
-        # Names a module-level `use` binds WITHOUT a visibility modifier, per
-        # scope qn. They are visible to that module and the modules below it
-        # only, so a glob re-export (`pub use inner::*;`) written anywhere
-        # else does not carry them (issue #2542). Keys are tracked per
-        # declaring file so a re-parse drops exactly what it wrote.
-        self.rust_private_use_names: dict[str, set[str]] = {}
-        self._rust_private_use_keys: dict[str, set[str]] = {}
+        # Names a module-level `use` binds with less than `pub` visibility,
+        # per scope qn, each with the module whose subtree alone sees it: the
+        # scope itself for a private (or `pub(self)`) one, the module a
+        # `pub(crate)`/`pub(super)`/`pub(in path)` names. A glob re-export
+        # (`pub use inner::*;`) written outside that subtree does not carry
+        # them (issue #2542, #2599 review). Keys are tracked per declaring
+        # file so a re-parse drops exactly what it wrote.
+        self.rust_restricted_use_names: dict[str, dict[str, str]] = {}
+        self._rust_restricted_use_keys: dict[str, set[str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
         # parsed: whether the key collides with an indexer-registered
         # module is only knowable then (finalise_rust_mod_scope_uses).
@@ -4320,8 +4322,8 @@ class ImportProcessor:
         for _start, _end, items in self.rust_block_items.pop(module_qn, ()):
             self.rust_block_item_qns.difference_update(items.values())
         self.rust_self_module_imports.pop(module_qn, None)
-        for key in self._rust_private_use_keys.pop(module_qn, ()):
-            self.rust_private_use_names.pop(key, None)
+        for key in self._rust_restricted_use_keys.pop(module_qn, ()):
+            self.rust_restricted_use_names.pop(key, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
@@ -4422,14 +4424,33 @@ class ImportProcessor:
     ) -> None:
         # The map has one slot per name and the last `use` writing it wins,
         # so the slot's visibility follows the same writer.
-        if rs_utils.has_visibility_modifier(use_node):
-            if names := self.rust_private_use_names.get(effective_qn):
-                names.difference_update(resolved_imports)
+        root = self._rust_use_visibility_root(use_node, effective_qn)
+        if root is None:
+            if names := self.rust_restricted_use_names.get(effective_qn):
+                for name in resolved_imports:
+                    names.pop(name, None)
             return
-        self.rust_private_use_names.setdefault(effective_qn, set()).update(
-            resolved_imports
+        self.rust_restricted_use_names.setdefault(effective_qn, {}).update(
+            dict.fromkeys(resolved_imports, root)
         )
-        self._rust_private_use_keys.setdefault(module_qn, set()).add(effective_qn)
+        self._rust_restricted_use_keys.setdefault(module_qn, set()).add(effective_qn)
+
+    def _rust_use_visibility_root(
+        self, use_node: Node, effective_qn: str
+    ) -> str | None:
+        # The module whose subtree alone sees what a `use` binds; None for a
+        # plain `pub`, and for a restriction path that leaves the project,
+        # which no glob of it can be outside of.
+        path = rs_utils.use_visibility_path(use_node)
+        if path is None:
+            return None
+        if path == cs.KEYWORD_SELF:
+            return effective_qn
+        root = self._rewrite_rust_local_use_path(path, effective_qn)
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if root == self.project_name or root.startswith(project_prefix):
+            return root
+        return None
 
     def _record_rust_body_scope_use(
         self, scope_node: Node, module_qn: str, resolved_imports: dict[str, str]
