@@ -107,6 +107,10 @@ KEY_KWARG_NAMES = "kwarg_names"
 # Call-site rows: where the invoked symbol is defined. `path` on those rows is
 # the file holding the site, which is the caller's (issue #2460).
 KEY_CALLEE_PATH = "callee_path"
+# CALLS from a function to a callback it receives (issue #2459): the
+# parameter the function invokes it through. The site is that invocation,
+# where the name written is the parameter's, never the callee's.
+KEY_VIA_PARAM = "via_param"
 # IMPORTS only: the name the statement binds in the importing scope (the
 # `as` name when renamed, else the imported/module name) and, for
 # symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
