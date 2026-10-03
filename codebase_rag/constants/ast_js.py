@@ -289,6 +289,12 @@ TS_FIELD_INDEX = "index"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 TS_GENERATOR_FUNCTION = "generator_function"
+# The values that make an object-literal `pair` a function definition
+# (`arrowProp: () => 1`, `fnProp: function () {}`): its `key` is then the
+# function's name token, which `rename` must rewrite (issue #2768).
+JS_PAIR_FUNCTION_VALUE_TYPES = frozenset(
+    {TS_ARROW_FUNCTION, TS_FUNCTION_EXPRESSION, TS_GENERATOR_FUNCTION}
+)
 
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"

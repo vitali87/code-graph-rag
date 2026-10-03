@@ -163,6 +163,50 @@ def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str
     return tuple(sorted(names))
 
 
+def _nodes_in_span(root: Node, start_line: int, end_line: int) -> Iterator[Node]:
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
+            continue
+        yield node
+        stack.extend(node.children)
+
+
+def _spelling(node: Node | None, name: str, start_line: int) -> Node | None:
+    """`node` when it spells `name` and starts inside the span, else None."""
+    if (
+        node is not None
+        and node.text is not None
+        and node.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+        and node.start_point[0] + 1 >= start_line
+    ):
+        return node
+    return None
+
+
+def _declared_name(node: Node) -> Node | None:
+    """The name token of a definition that has no `name` field (issue #2768).
+
+    C and C++ name a function as the `declarator` of its `function_declarator`
+    (under any pointer or reference wrapper), a Lua `function M.f` names it as
+    the last `field` of an index expression whose whole text is `M.f`, and a
+    JS/TS object literal names a function value with the pair's `key`.
+    """
+    match node.type:
+        case cs.TS_CPP_FUNCTION_DECLARATOR:
+            return node.child_by_field_name(cs.FIELD_DECLARATOR)
+        case cs.TS_PAIR:
+            value = node.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None and value.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES:
+                return node.child_by_field_name(cs.FIELD_KEY)
+            return None
+    named = node.child_by_field_name(cs.FIELD_NAME)
+    if named is not None and named.type == cs.TS_DOT_INDEX_EXPRESSION:
+        return named.child_by_field_name(cs.FIELD_FIELD)
+    return None
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -176,21 +220,24 @@ def _name_token(
         parsers, _queries = load_parsers()
         parser = parsers.get(language)
     if parser is not None:
-        root = parser.parse(source).root_node
-        stack: list[Node] = [root]
-        while stack:
-            node = stack.pop()
-            if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
-                continue
-            named = node.child_by_field_name(cs.FIELD_NAME)
-            if (
-                named is not None
-                and named.text is not None
-                and named.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-                and named.start_point[0] + 1 >= start_line
-            ):
+        in_span = list(
+            _nodes_in_span(parser.parse(source).root_node, start_line, end_line)
+        )
+        for node in in_span:
+            named = _spelling(node.child_by_field_name(cs.FIELD_NAME), name, start_line)
+            if named is not None:
                 return named.start_point[0] + 1, named.start_point[1]
-            stack.extend(node.children)
+        # Only when no `name` field spells it, so every shape located before
+        # is located exactly as before. Earliest in the source, because the
+        # header comes before anything in the body that could spell it too.
+        declared = [
+            token
+            for node in in_span
+            if (token := _spelling(_declared_name(node), name, start_line)) is not None
+        ]
+        if declared:
+            first = min(declared, key=lambda token: token.start_byte)
+            return first.start_point[0] + 1, first.start_point[1]
         return None
     # No grammar: the first whole-word occurrence inside the span.
     text = source.decode(cs.ENCODING_UTF8, errors="replace")

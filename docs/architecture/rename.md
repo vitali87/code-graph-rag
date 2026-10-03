@@ -27,7 +27,7 @@ Sites come from the graph, never from text search:
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
-| `definition` | The `name` field of the definition node, and of every override in both directions (`OVERRIDES` edges), so a method rename keeps the hierarchy consistent. |
+| `definition` | The `name` field of the definition node, and of every override in both directions (`OVERRIDES` edges), so a method rename keeps the hierarchy consistent. Where no `name` field spells the name, the token is the C/C++ `function_declarator`'s `declarator` (through any pointer or reference wrapper), the last `field` of a Lua `function M.f`, or the `key` of a JS/TS object-literal pair whose value is a function. |
 | `call`       | `CALLS` edges into the definition, using the per-site `line`/`col` recorded at ingest (see [graph schema](graph-schema.md#edge-site-properties)). |
 | `reference`  | `REFERENCES` and `INSTANTIATES` edges, the same way.            |
 | `import`     | `IMPORTS` edges whose `imported_name` is the symbol; the statement is retargeted by the [import rewriter](patchers.md#import-rewriting-for-rename-and-move), and an alias (`import helper as h`) is kept, so aliased call sites need no edit. |
