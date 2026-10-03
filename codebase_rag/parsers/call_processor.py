@@ -33,6 +33,7 @@ from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
+from .csharp import utils as csharp_utils
 from .dart import utils as dart_utils
 from .dispatch_registry import DispatchRegistryProcessor
 from .flow_access import FlowProcessor
@@ -942,7 +943,136 @@ def call_site_properties(node: Node) -> PropertyDict:
                 written += 1
         props[cs.KEY_ARG_COUNT] = written + len(keyword)
         props[cs.KEY_KWARG_NAMES] = list(keyword)
+        if _count_unknown(args_node, positional):
+            props[cs.KEY_SPREAD_ARGS] = True
+        if (qualifier := _call_qualifier(node)) is not None:
+            props[cs.KEY_CALL_QUALIFIER] = qualifier
     return props
+
+
+def _count_unknown(args_node: Node, positional: list[Node]) -> bool:
+    """Whether the call passes a number of values its arguments do not show.
+
+    Counted as one argument, `f(...args)` would read as too few for
+    `f(a, b)` on a call that type-checks (issue #2517). A tagged template
+    passes its strings array and one value per substitution, not the
+    fragments its node holds.
+    """
+    if args_node.type == cs.TS_TEMPLATE_STRING:
+        return True
+    return any(
+        argument.type in _SPREAD_ARGUMENTS for argument in positional
+    ) or _passes_every_result(args_node, positional)
+
+
+def _passes_every_result(args_node: Node, positional: list[Node]) -> bool:
+    """Go's `f(pair())`: a lone call argument passes all of `pair`'s results.
+
+    Go is the one grammar with an `argument_list` under a `source_file` root
+    (Rust's list is `arguments`, C's root a `translation_unit`), and only
+    this shape is walked up to its root.
+    """
+    if (
+        args_node.type != cs.TS_ARGUMENT_LIST
+        or len(positional) != 1
+        or positional[0].type != cs.TS_GO_CALL_EXPRESSION
+    ):
+        return False
+    root = args_node
+    while root.parent is not None:
+        root = root.parent
+    return root.type == cs.TS_GO_SOURCE_FILE
+
+
+# Arguments passing an unknown number of values. PHP's `argument` wrapper is
+# unwrapped with C#'s, which shares its node type, so the unpacking is seen.
+_SPREAD_ARGUMENTS = frozenset(
+    {
+        cs.TS_SPREAD_ELEMENT,
+        cs.TS_GO_VARIADIC_ARGUMENT,
+        cs.TS_PHP_VARIADIC_UNPACKING,
+    }
+)
+
+
+def _call_qualifier(node: Node) -> str | None:
+    """What a Rust or C# call is written through, for receiver counting.
+
+    `S::m(s, 1)` passes the receiver that `s.m(1)` leaves implicit, and so
+    does C#'s `Util.Ext(s, 1)` against `s.Ext(1)` (issue #2517). A path, or
+    a C# name that binds no value at the call, records its last segment
+    (`S`, `Self`, `Util`); a value records "": every Rust `.` call, and a
+    C# call through a local, parameter, field or property, `this`, a
+    literal or `s?.Ext(1)`. A bare call records nothing.
+    """
+    function = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None:
+        return None
+    if node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+        return _csharp_call_qualifier(node, function)
+    if node.type != cs.TS_RS_CALL_EXPRESSION:
+        return None
+    if function.type == cs.TS_GENERIC_FUNCTION:
+        # `S::m::<u8>(s)`: the turbofish wraps the path.
+        function = function.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None:
+        return None
+    if function.type == cs.TS_SCOPED_IDENTIFIER:
+        path = function.child_by_field_name(cs.TS_RS_FIELD_PATH)
+        return (_last_name(path) or None) if path is not None else None
+    # C++ shares the node type; only Rust's carries a `value` field.
+    if (
+        function.type == cs.TS_RS_FIELD_EXPRESSION
+        and function.child_by_field_name(cs.FIELD_VALUE) is not None
+    ):
+        return ""
+    return None
+
+
+# A bare C# callee: `Ext(s, 1)` under `using static`, receiver as argument.
+_CSHARP_BARE_CALLEES = frozenset({cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME})
+
+
+def _csharp_call_qualifier(call: Node, function: Node) -> str | None:
+    if function.type in _CSHARP_BARE_CALLEES:
+        return None
+    if function.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        # `s?.Ext(1)` and every other non-member form take it from a value.
+        return ""
+    left = function.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+    head = left
+    while head is not None and head.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        head = head.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+    if head is None:
+        return ""
+    if head.type == cs.TS_CSHARP_IDENTIFIER:
+        # A string named `Util` makes `Util.Ext(1, 2)` an instance call
+        # even where an extension class `Util` exists (Greptile, #2832).
+        name = safe_decode_text(head)
+        if not name or csharp_utils.binds_value(call, name):
+            return ""
+    elif head.type != cs.TS_CSHARP_ALIAS_QUALIFIED_NAME:
+        # `this.Util`, `Make().Util`, a literal: a value.
+        return ""
+    return _last_name(left)
+
+
+def _last_name(node: Node | None) -> str:
+    """The last segment of a plain or dotted name, "" for anything else."""
+    if node is None:
+        return ""
+    if node.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(node) or ""
+    if node.type in (
+        cs.TS_SCOPED_IDENTIFIER,
+        cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_ALIAS_QUALIFIED_NAME,
+    ):
+        return _last_name(node.child_by_field_name(cs.FIELD_NAME))
+    # Rust `<S as Trait>` and other non-name paths still name a type.
+    if node.type == cs.TS_RS_BRACKETED_TYPE:
+        return " ".join((safe_decode_text(node) or "").split())
+    return ""
 
 
 _RESOLVED_RELS = frozenset(

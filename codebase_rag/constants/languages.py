@@ -276,6 +276,27 @@ class SupportedLanguage(StrEnum):
 # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
 C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
 
+# Languages whose definitions store `positional_params` with the optionality
+# the signature declares (issue #2517); Python stores CPython's positional
+# names instead. A call into one is judged by the count it passes.
+DECLARED_ARITY_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.GO,
+        SupportedLanguage.RUST,
+        SupportedLanguage.PHP,
+        SupportedLanguage.JAVA,
+        SupportedLanguage.CSHARP,
+    }
+)
+# Where a call passing fewer arguments than the required parameters fails to
+# compile or raises (PHP's ArgumentCountError). JavaScript passes `undefined`.
+ARITY_REJECTS_MISSING = DECLARED_ARITY_LANGUAGES - {SupportedLanguage.JS}
+# Where a surplus argument fails too. PHP and JavaScript drop it at run time.
+ARITY_REJECTS_SURPLUS = ARITY_REJECTS_MISSING - {SupportedLanguage.PHP}
+
 
 class LanguageStatus(StrEnum):
     FULL = "Fully Supported"
