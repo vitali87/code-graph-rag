@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 
 COMPOSE_PROJECT_NAME = "cgr"
@@ -15,6 +16,19 @@ DEFAULT_STATUS_TIMEOUT_S = 10.0
 SERVICE_MEMGRAPH = "memgraph"
 SERVICE_QDRANT = "qdrant"
 SERVICE_LAB = "lab"
+SERVICE_DISPLAY_NAMES = {
+    SERVICE_MEMGRAPH: "Memgraph",
+    SERVICE_QDRANT: "Qdrant",
+    SERVICE_LAB: "Memgraph Lab",
+}
+# The compose file's host-port variables, per service.
+SERVICE_PORT_VARIABLES = {
+    SERVICE_MEMGRAPH: ("MEMGRAPH_PORT", "MEMGRAPH_HTTP_PORT"),
+    SERVICE_QDRANT: ("QDRANT_HTTP_PORT", "QDRANT_GRPC_PORT"),
+    SERVICE_LAB: ("LAB_PORT",),
+}
+# The services the app needs; Lab is only a UI.
+CORE_SERVICES = (SERVICE_MEMGRAPH, SERVICE_QDRANT)
 
 LOOPBACK_HOST = "127.0.0.1"
 
@@ -42,6 +56,31 @@ ERR_DOCKER_DAEMON_DOWN = (
 )
 ERR_COMPOSE_NOT_AVAILABLE = "`docker compose` plugin not available. Install Docker Desktop v2+ or the compose plugin."
 ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
+# What a failed `docker compose up` printed, in full: its progress lines
+# ("Container cgr-lab-1 Started", "<layer> Extracting 1B") buried the cause
+# in the error, so they are kept for DEBUG and the error names the cause
+# (issue #2407).
+MSG_COMPOSE_UP_OUTPUT = "docker compose up output:\n{output}"
+COMPOSE_ERROR_LINE = re.compile(r"\berror\b", re.IGNORECASE)
+# The failing container, named by the daemon's error ("endpoint cgr-lab-1")
+# or by Compose's own state line ("Container cgr-lab-1 Error"); the progress
+# lines name every container and must not count. `{project}` is the stack's
+# Compose project name, escaped: containers are named after it.
+COMPOSE_FAILED_SERVICE = (
+    r"endpoint {project}[-_](?P<endpoint>[a-z]+)[-_]\d+"
+    r"|Container {project}[-_](?P<container>[a-z]+)[-_]\d+ Error"
+)
+COMPOSE_PORT_IN_USE = re.compile(
+    r"failed to bind host port (?P<address>\S+?)/(?:tcp|udp): address already in use"
+)
+ERR_PORT_IN_USE = "{address} is already in use (set {variables} to move it)"
+ERR_SERVICE_NOT_STARTED = "{service} could not start: {detail}"
+# Lab is an optional UI: with Memgraph and Qdrant up the stack is usable, and
+# `cgr daemon status` already says "running" (issue #2407).
+WARN_LAB_NOT_STARTED = (
+    "Memgraph Lab could not start: {detail}. Memgraph and Qdrant are up; "
+    "Lab is an optional UI."
+)
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
 COMPOSE_STOP_COMMAND = "stop"
 WARN_START_LEFT_STACK_OPEN = (
@@ -83,6 +122,15 @@ MSG_STACK_STOPPED = "Stack stopped."
 MSG_RESTARTING_STACK = "Restarting cgr stack..."
 MSG_RENDERING_COMPOSE = "Rendering compose file to {path}"
 MSG_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
+MSG_MEMGRAPH_PROBE_OUTPUT = "mgclient output while probing Memgraph: {output}"
+# The descriptor C code writes stderr to, whatever sys.stderr is bound to.
+NATIVE_STDERR_FD = 2
+# pymgclient's Windows wheels are MinGW builds, linked against this C runtime
+# rather than the UCRT that CPython and its os module use.
+MGCLIENT_WINDOWS_C_RUNTIME = "msvcrt"
+ERR_C_RUNTIME_CALL_FAILED = (
+    "The C runtime mgclient prints through could not move its stderr."
+)
 
 PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 
@@ -120,6 +168,18 @@ HTTP_METHOD_POST = "POST"
 HTTP_CONTENT_TYPE_HEADER = "Content-Type"
 JSON_CONTENT_TYPE = "application/json"
 QDRANT_READY_PATH = "/readyz"
+# Qdrant names itself on its root: {"title": "qdrant - vector search engine",
+# "version": ...}. Any other service can answer 200 elsewhere, so this is what
+# identifies a Qdrant. The body is a few dozen bytes; the cap keeps a service
+# that streams without end from holding the check.
+QDRANT_ROOT_PATH = "/"
+QDRANT_ROOT_TITLE_KEY = "title"
+QDRANT_ROOT_VERSION_KEY = "version"
+QDRANT_ROOT_TITLE_MARKER = "qdrant"
+QDRANT_ROOT_MAX_BYTES = 65536
+# A stopped stack refuses the connection at once; a running one answers well
+# inside this, so the check costs nothing noticeable when the vector store opens.
+BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "
@@ -134,6 +194,11 @@ COMPOSE_CONFIG_ATTEMPTS = (("config", "--format", "json"), ("config",))
 ERR_AUTH_NOT_VERIFIED = (
     "'docker compose config' failed, so it cannot be checked which "
     "credentials the stack would start with: {detail}. Not starting the stack."
+)
+ERR_COMPOSE_CONFIG_FAILED = "'docker compose config' failed: {detail}"
+ERR_COMPOSE_PS_FAILED = "'docker compose ps' could not list the stack's containers"
+ERR_QDRANT_NOT_PUBLISHED = (
+    "the qdrant service in {path} publishes no host port for container port {target}"
 )
 ERR_QDRANT_REJECTS_KEY = (
     "The running Qdrant rejects the configured QDRANT_API_KEY for writes: it "
@@ -170,9 +235,21 @@ ERR_STACK_ACCEPTS_ANONYMOUS = (
 # The substitution that pins published ports to a host address. Its absence
 # marks a compose file rendered before the loopback default (issue #1012).
 COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
+# The compose file publishes Qdrant's HTTP API on ${QDRANT_HTTP_PORT:-6333}.
+COMPOSE_QDRANT_HTTP_PORT_VAR = "QDRANT_HTTP_PORT"
 # Compose reads unset interpolation variables from this file beside the
 # compose file.
 COMPOSE_DOTENV_FILENAME = ".env"
+# An image pinned by digest; the packaged compose file pins every service.
+IMAGE_DIGEST_MARKER = "@sha256:"
+WARN_COMPOSE_IMAGES_FLOATING = (
+    "The compose file at {path} runs images without a pinned digest, so each "
+    "resolves to whatever is newest when it is pulled. The packaged stack "
+    "pins them: {pins}. To take the pins, run 'cgr daemon down', replace "
+    "those image lines (or delete the file to re-render it), then run "
+    "'cgr daemon up'."
+)
+IMAGE_PIN_PAIR = "{service} {floating} -> {pinned}"
 WARN_COMPOSE_PORTS_PUBLIC = (
     "The compose file at {path} publishes these ports on ALL interfaces, so "
     "any host on your network can read the code graph from these "

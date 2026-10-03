@@ -83,19 +83,41 @@ def default_dead_code_config(
         include_classes=include_classes,
         root_decorators=frozenset(d.lower() for d in cs.DEFAULT_ROOT_DECORATORS),
         entry_points=(),
-        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         exclude_patterns=exclude_patterns,
     )
 
 
-def _norm_decorator(decorator: str) -> str:
-    # Drop '@' and any surrounding attribute brackets, take the text before
-    # '(', then the last dotted segment, lowercased -> `@app.route(...)` and a
-    # C# `[Route("x")]` both become `route`. Bracket-stripping keeps the
-    # normalization robust to whatever a highlight query captures.
+def normalize_decorator_root(decorator: str) -> str:
+    """A decorator's dotted head, lowercased: `@app.route(...)` becomes
+    `app.route`. Drops '@', any surrounding attribute brackets and the
+    arguments, so a C# `[Route("x")]` becomes `route`. The same reading
+    applies to a stored decorator and to a user's `--decorator-root`, which
+    may be written `@registry.register` or `registry.register()`."""
     cleaned = decorator.replace(cs.DECORATOR_AT, "").strip("[] ")
-    head = cleaned.split(cs.CHAR_PAREN_OPEN)[0]
-    return head.split(cs.SEPARATOR_DOT)[-1].strip("[]").lower()
+    return cleaned.split(cs.CHAR_PAREN_OPEN)[0].strip("[] ").lower()
+
+
+def _norm_decorator(decorator: str) -> str:
+    # The last dotted segment of the head: `@app.route(...)` -> `route`, the
+    # form the built-in roots are written in.
+    return normalize_decorator_root(decorator).split(cs.SEPARATOR_DOT)[-1]
+
+
+def _is_root_decorator(decorator: str, root_decorators: frozenset[str]) -> bool:
+    """A bare root names the decorator's last segment, so `register` matches
+    any `@x.register`. A dotted root names the head's trailing whole
+    segments: `registry.register` matches `@registry.register(...)` and
+    `@app.registry.register`, not `@other.register` or
+    `@myregistry.register`. Comparing only the last segment made a dotted
+    root, the documented form, match nothing at all (issue #2640)."""
+    if _norm_decorator(decorator) in root_decorators:
+        return True
+    head = normalize_decorator_root(decorator)
+    return any(
+        cs.SEPARATOR_DOT in root
+        and (head == root or head.endswith(cs.SEPARATOR_DOT + root))
+        for root in root_decorators
+    )
 
 
 def _is_dunder(name: str) -> bool:
@@ -246,7 +268,6 @@ def _is_test_symbol(
     props: PropertyDict,
     qn: str,
     path: str,
-    test_patterns: tuple[str, ...],
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
 ) -> bool:
@@ -254,7 +275,7 @@ def _is_test_symbol(
     # when tests are off must be the same symbol rooted when they are on,
     # or the two modes silently diverge.
     return (
-        matches_test_path(path, test_patterns)
+        matches_test_path(path)
         or _is_rust_test_symbol(props, qn, path, rust_test_modules)
         or _within_rust_test_span(props, rust_test_spans)
     )
@@ -423,7 +444,7 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
         return False
-    return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
+    return any(_is_root_decorator(str(d), root_decorators) for d in decorators)
 
 
 def _has_non_route_root_decorator(
@@ -441,7 +462,7 @@ def _has_non_route_root_decorator(
     if not isinstance(decorators, list):
         return False
     return any(
-        _norm_decorator(str(d)) in root_decorators
+        _is_root_decorator(str(d), root_decorators)
         and _norm_decorator(str(d)) not in DISPATCH_REGISTRARS
         and not parse_route_decorator(str(d))
         for d in decorators
@@ -580,28 +601,39 @@ def _is_root(
     path = str(props.get(cs.KEY_PATH, ""))
     is_method = qn in method_qns
     bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
-    rules: tuple[Callable[[], bool], ...] = (
-        # With endpoint roots off, a handler that EXPOSES an endpoint is not
-        # rooted by its route decorator; it is live only if an indexed call
-        # site reaches the endpoint (issue #1603). Other decorators (a
-        # fixture, a CLI command) keep rooting as before, on the same
-        # definition too.
-        lambda: (
-            _has_root_decorator(props, config.root_decorators)
-            and (
-                config.endpoint_roots
-                or endpoint_links is None
-                or qn not in endpoint_links
-                or endpoint_links[qn] > 0
-                or _has_non_route_root_decorator(props, config.root_decorators)
+    # With endpoint roots off, a handler that EXPOSES an endpoint is live only
+    # if an indexed call site reaches the endpoint (issue #1603). That verdict
+    # must come before the rules below: every framework registers a handler
+    # by exporting it, so "exported symbols are roots" kept every public
+    # handler alive and only `_private` ones were ever reported (issue
+    # #2664). A second root decorator (a fixture, a CLI command), a named
+    # entry point and test code still root it, on the same definition too.
+    if (
+        not config.endpoint_roots
+        and endpoint_links is not None
+        and qn in endpoint_links
+    ):
+        return (
+            endpoint_links[qn] > 0
+            or _has_non_route_root_decorator(props, config.root_decorators)
+            or _is_named_entry_point(qn, config)
+            or _is_rooted_test_symbol(
+                props, qn, path, config, rust_test_modules, rust_test_spans
             )
-        ),
+        )
+    rules: tuple[Callable[[], bool], ...] = (
+        lambda: _has_root_decorator(props, config.root_decorators),
         lambda: props.get(cs.KEY_IS_EXPORTED) is True,
         # A method overriding an EXTERNAL stdlib base's method (click's
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
         # never by a first-party call, so it is a root.
         lambda: props.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
         lambda: qn in protocol_stubs,
+        # A `.pyi` definition declares an API whose body lives elsewhere,
+        # usually in a compiled extension that is not source; no first-party
+        # call is needed for it to be used, and deleting it from the stub
+        # would not delete the code (issue #2445).
+        lambda: path.endswith(cs.EXT_PYI),
         lambda: is_method and _is_dunder(leaf) and path.endswith(cs.EXT_PY),
         # Python Enum protocol hooks (_generate_next_value_, _missing_) are
         # invoked by the enum machinery by NAME, like dunders: roots, not
@@ -647,20 +679,29 @@ def _is_root(
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
         ),
-        lambda: any(qn.endswith(entry) for entry in config.entry_points),
-        lambda: (
-            config.include_tests
-            and _is_test_symbol(
-                props,
-                qn,
-                path,
-                config.test_patterns,
-                rust_test_modules,
-                rust_test_spans,
-            )
+        lambda: _is_named_entry_point(qn, config),
+        lambda: _is_rooted_test_symbol(
+            props, qn, path, config, rust_test_modules, rust_test_spans
         ),
     )
     return any(rule() for rule in rules)
+
+
+def _is_named_entry_point(qn: str, config: DeadCodeConfig) -> bool:
+    return any(qn.endswith(entry) for entry in config.entry_points)
+
+
+def _is_rooted_test_symbol(
+    props: PropertyDict,
+    qn: str,
+    path: str,
+    config: DeadCodeConfig,
+    rust_test_modules: set[str],
+    rust_test_spans: dict[str, list[tuple[int, int]]],
+) -> bool:
+    return config.include_tests and _is_test_symbol(
+        props, qn, path, rust_test_modules, rust_test_spans
+    )
 
 
 @dataclass
@@ -735,7 +776,6 @@ def _scan_candidates(
             props,
             qn,
             str(props.get(cs.KEY_PATH) or ""),
-            config.test_patterns,
             rust_test_modules,
             rust_test_spans,
         ):
@@ -792,7 +832,7 @@ def _module_roots(
         if target_qn not in scan.candidates:
             continue
         path = scan.module_path.get(str(from_val), "")
-        if config.include_tests or not matches_test_path(path, config.test_patterns):
+        if config.include_tests or not matches_test_path(path):
             roots.add(target_qn)
     return roots
 

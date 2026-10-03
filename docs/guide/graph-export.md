@@ -4,27 +4,39 @@ description: "Export the Code-Graph-RAG knowledge graph to JSON for programmatic
 
 # Graph Export
 
-Export the entire knowledge graph to JSON for programmatic access and integration with other tools.
+Export the knowledge graph, or chosen projects in it, to JSON for programmatic access and integration with other tools.
 
 ## Export Commands
 
-**Export during graph update:**
+**Export one repository's graph while syncing it:**
 
 ```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
 
-**Export existing graph without updating:**
+The file holds only that repository's project, scoped the way
+`cgr export --project-name` scopes it (below), even when the shared graph
+holds other projects.
+
+**Export the whole shared graph (every indexed project):**
 
 ```bash
 cgr export -o my_graph.json
 ```
 
-**Adjust Memgraph batching during export:**
+**Export one project, several, or a workspace:**
 
 ```bash
-cgr export -o my_graph.json --batch-size 5000
+cgr export -o my_project.json --project-name my-project
+cgr export -o two.json -n api -n web
+cgr export -o shop.json --workspace shop
 ```
+
+A project's export holds what the project owns (its folders, files, modules
+and definitions), the relationships that start there, and the nodes those
+relationships reach, such as a shared external module, so every relationship
+in the file has both ends in it. The file lists its projects under
+`metadata.projects`.
 
 ## Working with Exported Data
 
