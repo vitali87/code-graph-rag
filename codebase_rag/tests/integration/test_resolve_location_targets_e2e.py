@@ -135,7 +135,8 @@ def test_a_file_only_another_project_indexed_from_one_root_is_refused(
     _index(memgraph_ingestor, repo, BETA)
     fetch = memgraph_ingestor.fetch_all
     shared = fetch(_REACHES_FILE, {"project_name": ALPHA, "path": "pkg/later.py"})
-    assert shared and shared[0]["reached"], "precondition: the Folder is shared"
+    assert shared, "precondition: the Folder is shared"
+    assert shared[0]["reached"], "precondition: the Folder is shared"
 
     refused = graph_query.resolve_or_refuse(fetch, ALPHA, "pkg/later.py:1")
     assert isinstance(refused, dict), refused

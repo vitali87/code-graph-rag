@@ -535,7 +535,8 @@ def test_a_column_reading_never_switches_to_another_held_file(
     assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE, result.output
     assert result.stdout == ""
     one = gloss.resolve_one(graph.fetch_all, P, target)
-    assert isinstance(one, dict) and cs.DICT_KEY_ERROR in one, one
+    assert isinstance(one, dict), one
+    assert cs.DICT_KEY_ERROR in one, one
 
 
 def test_the_ambiguous_files_can_each_still_be_named() -> None:
