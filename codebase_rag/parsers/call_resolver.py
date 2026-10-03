@@ -520,6 +520,42 @@ class CallResolver:
             language,
         )
 
+    def _resolve_python_self_method(self, call: _CallSite) -> tuple[str, str] | None:
+        """`self.m()` / `cls.m()` on the method the enclosing class defines or
+        inherits: the static target, `exact` as `this.m()` is in Java or C#.
+
+        Without it the call fell to the bare-name trie and was labelled
+        `heuristic` unless the class had a subclass, so `rename` refused
+        nearly every Python method (issue #2475). Answered from the class,
+        ahead of the module-keyed cache a sibling class would share. An
+        abstract stub never runs, so it is left to the dispatch path, which
+        prefers the concrete implementation; a name the class does not have
+        (a sibling mixin's) keeps the paths below.
+        """
+        if (
+            not call.class_context
+            or call.constructing
+            or not self._is_python_call(call)
+        ):
+            return None
+        receiver, _, method_name = call.call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            receiver not in _PY_SELF_RECEIVERS
+            or not method_name
+            or cs.SEPARATOR_DOT in method_name
+        ):
+            return None
+        own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
+        target = (
+            (self.function_registry[own_qn], own_qn)
+            if own_qn in self.function_registry
+            else self._resolve_inherited_method(call.class_context, method_name)
+        )
+        if target is None or self.function_registry.is_abstract(target[1]):
+            return None
+        self.last_resolution = cs.EdgeResolution.EXACT
+        return target
+
     def _is_python_local_name(self, call: _CallSite) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
             return False
@@ -1359,6 +1395,8 @@ class CallResolver:
         # answers are caller-independent.
         if self._is_python_local_name(call):
             return None
+        if (result := self._resolve_python_self_method(call)) is not None:
+            return result
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
