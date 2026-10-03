@@ -359,6 +359,16 @@ TS_CSHARP_LET_CLAUSE = "let_clause"
 TS_CSHARP_EVENT_FIELD_DECLARATION = "event_field_declaration"
 # A top-level statement (C# 9); its locals are in scope across the file.
 TS_CSHARP_GLOBAL_STATEMENT = "global_statement"
+# Nodes that bound the scope of the value names declared inside them.
+TS_CSHARP_FOR_STATEMENT = "for_statement"
+TS_CSHARP_USING_STATEMENT = "using_statement"
+TS_CSHARP_CATCH_CLAUSE = "catch_clause"
+TS_CSHARP_WHILE_STATEMENT = "while_statement"
+TS_CSHARP_DO_STATEMENT = "do_statement"
+TS_CSHARP_FIXED_STATEMENT = "fixed_statement"
+TS_CSHARP_SWITCH_BODY = "switch_body"
+TS_CSHARP_SWITCH_EXPRESSION_ARM = "switch_expression_arm"
+TS_CSHARP_QUERY_EXPRESSION = "query_expression"
 # An enum body and its members (issue #1807).
 TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
 TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"

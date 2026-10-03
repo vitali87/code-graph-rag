@@ -583,6 +583,49 @@ def test_a_csharp_value_receiver_is_never_counted_as_an_argument(
 
 
 @pytest.mark.parametrize(
+    ("param", "body", "verdict"),
+    [
+        # Greptile on #2832: a local in a sibling block is out of scope, so
+        # `Util` names the class and `s` fills the receiver, leaving `b` out.
+        pytest.param(
+            "s",
+            '{ var Util = "x"; } return Util.Ext(s, 1);',
+            cs.DELTA_ARITY_TOO_FEW,
+            id="sibling-block-local",
+        ),
+        pytest.param(
+            "s",
+            'if (s == "") { var Util = "x"; } return Util.Ext(s, 1);',
+            cs.DELTA_ARITY_TOO_FEW,
+            id="branch-local",
+        ),
+        # The parameter's scope encloses the nested block: an instance call.
+        pytest.param(
+            "Util",
+            "{ return Util.Ext(1, 2); }",
+            cs.DELTA_ARITY_OK,
+            id="parameter-around-a-nested-block",
+        ),
+    ],
+)
+def test_a_csharp_local_names_a_value_only_inside_its_scope(
+    temp_repo: Path, param: str, body: str, verdict: str
+) -> None:
+    view = (
+        "public class View {\n"
+        f"    public string Show(string {param}) {{ {body} }}\n}}\n"
+    )
+    delta = _delta(
+        temp_repo,
+        {"Util.cs": CS_EXT_UTIL, "View.cs": view},
+        {"Util.cs": CS_EXT_UTIL.replace("int b = 0", "int b")},
+    )
+
+    assert _verdicts(delta, ".Util.Ext(string, int, int)") == [verdict]
+    assert has_findings(delta) is (verdict == cs.DELTA_ARITY_TOO_FEW)
+
+
+@pytest.mark.parametrize(
     ("source", "verdict"),
     [
         # Greptile on #2832: a local string named like the extension's class
@@ -614,6 +657,12 @@ def test_a_csharp_value_receiver_is_never_counted_as_an_argument(
             "void M(string s) { Util.Ext(s, 1); }",
             cs.DELTA_ARITY_TOO_FEW,
             id="through-the-class",
+        ),
+        # Greptile on #2832: the sibling block's `Util` is out of scope here.
+        pytest.param(
+            'void M(string s) { { var Util = "x"; } Util.Ext(s, 1); }',
+            cs.DELTA_ARITY_TOO_FEW,
+            id="through-the-class-past-a-sibling-block-local",
         ),
     ],
 )
@@ -1170,6 +1219,88 @@ def _call_tree(language: cs.SupportedLanguage, source: str) -> Node:
             "class W { string Util; } class V { void M() { Util.Ext(1); } }",
             "Util",
             id="cs-another-types-field",
+        ),
+        # Greptile on #2832: a binder whose scope does not hold the call.
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { { var Util = "x"; } Util.Ext("x"); } }',
+            "Util",
+            id="cs-sibling-block-local",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { foreach (var Util in xs) {} Util.Ext(1); } }",
+            "Util",
+            id="cs-foreach-after-the-loop",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { try {} catch (E Util) {} Util.Ext(1); } }",
+            "Util",
+            id="cs-catch-after-the-clause",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { Func<int, int> f = Util => 1; Util.Ext(1); } }",
+            "Util",
+            id="cs-lambda-parameter-outside-the-lambda",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { void F(string Util) {} Util.Ext(1); } }",
+            "Util",
+            id="cs-local-function-parameter-outside-it",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { while (o is string Util) {} Util.Ext(1); } }",
+            "Util",
+            id="cs-while-pattern-after-the-loop",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            '{ var Util = "x"; }\nUtil.Ext("x");\n',
+            "Util",
+            id="cs-top-level-sibling-block-local",
+        ),
+        # A binder whose scope holds the call is still a value.
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { var Util = "x"; { Util.Ext(1); } } }',
+            "",
+            id="cs-enclosing-block-local",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(object o) { if (o is not string Util) return; "
+            "Util.Ext(1); } }",
+            "",
+            id="cs-if-pattern-in-the-enclosing-block",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { Func<string, string> f = Util => Util.Ext(1); } }",
+            "",
+            id="cs-lambda-parameter",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { try {} catch (E Util) { Util.Ext(1); } } }",
+            "",
+            id="cs-catch",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M(int n) { switch (n) { case 1: var Util = "
+            '"x"; break; default: Util = "y"; Util.Ext(1); break; } } }',
+            "",
+            id="cs-switch-section-local",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'var Util = "x";\n{ Util.Ext(1); }\n',
+            "",
+            id="cs-top-level-local",
         ),
         pytest.param(
             cs.SupportedLanguage.CPP, "int r() { return s.f(1); }", None, id="cpp"

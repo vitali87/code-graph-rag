@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import lru_cache
+from types import MappingProxyType
 
 from tree_sitter import Node
 
@@ -493,9 +495,10 @@ def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
 # Read syntactically, and per scope once: the parameters, locals, pattern,
 # `foreach`, `catch`, lambda and query variables of the type member holding
 # the call, and the fields, properties and primary-constructor parameters of
-# every enclosing type. A binder in a sibling block counts as well; an
-# inherited member or one in another partial part does not, and the caller
-# reads that name as undecided rather than as a class.
+# every enclosing type. A binder counts only at a call its scope holds, so a
+# local in a sibling block leaves `Util` naming the class. An inherited
+# member or one in another partial part does not count either, and the
+# caller reads that name as undecided rather than as a class.
 
 # Nodes whose `name` child binds a value.
 _NAME_BINDERS = frozenset(
@@ -520,6 +523,26 @@ _TYPE_DECLARATIONS = frozenset(
 )
 _FIELD_DECLARATIONS = frozenset(
     {cs.TS_CSHARP_FIELD_DECLARATION, cs.TS_CSHARP_EVENT_FIELD_DECLARATION}
+)
+# Nodes that bound the scope of the names bound inside them; a binder under
+# none is in scope across its member. An `if` is not one: `if (o is not
+# string s) return;` keeps `s` in scope in the enclosing block. Switch
+# sections share their switch body's scope.
+_VALUE_SCOPES = frozenset(
+    {
+        cs.TS_CSHARP_BLOCK,
+        cs.TS_CSHARP_FOR_STATEMENT,
+        cs.TS_CSHARP_FOREACH_STATEMENT,
+        cs.TS_CSHARP_USING_STATEMENT,
+        cs.TS_CSHARP_CATCH_CLAUSE,
+        cs.TS_CSHARP_WHILE_STATEMENT,
+        cs.TS_CSHARP_DO_STATEMENT,
+        cs.TS_CSHARP_FIXED_STATEMENT,
+        cs.TS_CSHARP_SWITCH_BODY,
+        cs.TS_CSHARP_SWITCH_EXPRESSION_ARM,
+        cs.TS_CSHARP_QUERY_EXPRESSION,
+        *cs.TS_CSHARP_NESTED_SCOPE_TYPES,
+    }
 )
 # The scans hold a few trees' nodes at most: one file is parsed at a time.
 _SCOPE_CACHE_SIZE = 64
@@ -554,20 +577,30 @@ def _binding(node: Node) -> str | None:
 
 
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
-def _member_values(member: Node) -> frozenset[str]:
-    """Every value name bound inside one type member, nested types aside."""
-    names: set[str] = set()
-    stack = [member]
+def _member_values(member: Node) -> Mapping[str, tuple[Node, ...]]:
+    """Every value name bound inside one type member, nested types aside,
+    with the nodes it is in scope over: the scope nearest each binder."""
+    scopes: dict[str, list[Node]] = {}
+    stack = [(member, member)]
     while stack:
-        node = stack.pop()
+        node, scope = stack.pop()
         if (name := _binding(node)) is not None:
-            names.add(name)
+            scopes.setdefault(name, []).append(scope)
+        inner = node if node.type in _VALUE_SCOPES else scope
         stack.extend(
-            child
+            (child, inner)
             for child in node.named_children
             if child.type not in _TYPE_DECLARATIONS
         )
-    return frozenset(names)
+    return MappingProxyType({name: tuple(nodes) for name, nodes in scopes.items()})
+
+
+def _member_binds(member: Node, name: str, site: Node) -> bool:
+    """Whether a binder of `name` in `member` is in scope at `site`."""
+    return any(
+        scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
+        for scope in _member_values(member).get(name, ())
+    )
 
 
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
@@ -626,10 +659,10 @@ def binds_value(site: Node, name: str) -> bool:
             and child.type not in _TYPE_DECLARATIONS
             and current.parent is not None
             and current.parent.type in _TYPE_DECLARATIONS
-            and name in _member_values(child)
+            and _member_binds(child, name, site)
         ):
             return True
         top_level = top_level or current.type == cs.TS_CSHARP_GLOBAL_STATEMENT
         child, current = current, current.parent
-    # Top-level statements share their locals across the whole file.
-    return top_level and name in _member_values(child)
+    # Top-level statements share their outermost locals across the file.
+    return top_level and _member_binds(child, name, site)
