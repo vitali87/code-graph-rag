@@ -47,6 +47,10 @@ cgr start --repo-path /path/to/your/repo --update-graph --clean
 cgr dead-code
 ```
 
+![cgr dead-code listing the one unreachable method in the requests repository](../assets/demos/dead-code.gif)
+
+*Recorded on psf/requests.*
+
 If a single project is indexed it is used automatically. When several are
 indexed, name one:
 
@@ -72,6 +76,10 @@ cgr dead-code -e main -e cli.run -e handlers.webhook
 cgr dead-code --decorator-root plugins.register --decorator-root signal_handler
 ```
 
+![cgr dead-code run before and after -e main -e cli.run -e handlers.webhook on a small C plugin, the second run no longer reporting run, webhook and their callees](../assets/demos/dead-code-entry-points.gif)
+
+*Recorded on a small C plugin whose host resolves `run` and `webhook` with `dlsym()`, so no call site reaches them.*
+
 ## Excluding Generated Code
 
 Generated or vendored code (API clients, protobuf stubs) is full of callbacks a
@@ -80,6 +88,8 @@ library invokes and reports noisily. Exclude it by file-path glob:
 ```bash
 cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
 ```
+
+![cgr dead-code with --exclude '*client/core*' --exclude '*.gen.*' dropping the generated client and protobuf files from the report](../assets/demos/dead-code-exclude.gif)
 
 Two rules keep a pattern from silently excluding nothing:
 
@@ -119,6 +129,8 @@ job artifacts:
 cgr dead-code --format json --output dead-code.json --fail-on-found \
   --exclude '*_generated*'
 ```
+
+![cgr dead-code writing a JSON report with --fail-on-found, exiting 1, and jq listing each candidate's path and start line](../assets/demos/dead-code-ci.gif)
 
 Each JSON row carries `label`, `name`, `qualified_name`, `path`, `start_line`
 and `end_line`. `path` is the repo-relative file (the same path `--exclude`

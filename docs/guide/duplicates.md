@@ -408,6 +408,10 @@ always pair it with `--update-graph`.
 cgr duplicates
 ```
 
+![cgr duplicates reporting the renamed total_price and sum_weights copies as an exact group, a copied test as another, and an edited validation function as an 89% similar pair](../assets/demos/duplicates.gif)
+
+*Recorded on a small repository that contains this page's `billing/cart.py` and `shipping/load.py` example.*
+
 If a single project is indexed it is used automatically. When several are
 indexed, name one:
 
@@ -455,6 +459,8 @@ cgr duplicates --threshold 0.9
 cgr duplicates --exact-only
 ```
 
+![cgr duplicates --threshold 0.9 and --exact-only both dropping the 89% similar pair and keeping the exact groups](../assets/demos/duplicates-threshold.gif)
+
 ## Skipping Trivial Functions
 
 One-line getters, `__repr__` bodies, and trivial delegating wrappers all look
@@ -466,6 +472,8 @@ to focus on substantial duplication:
 cgr duplicates --min-size 25
 ```
 
+![cgr duplicates --min-size 25 dropping the small total_price and sum_weights group](../assets/demos/duplicates-min-size.gif)
+
 ## Excluding Paths
 
 Generated code (protobuf stubs, API clients) is duplication by design, and
@@ -475,6 +483,8 @@ rather than raising the threshold:
 ```bash
 cgr duplicates --exact-only --exclude 'tests/*' --exclude '*_generated*'
 ```
+
+![cgr duplicates --exact-only run without and then with --exclude 'tests/*', which removes the copied test group](../assets/demos/duplicates-exclude.gif)
 
 Two rules keep a pattern from silently excluding nothing:
 
@@ -587,6 +597,8 @@ artifacts:
 cgr duplicates --format json --output duplicates.json --fail-on-found \
   --exclude '*_generated*'
 ```
+
+![cgr duplicates writing a JSON report with --fail-on-found, exiting 1, and jq printing each group and the coverage fields](../assets/demos/duplicates-ci.gif)
 
 The exclude globs follow the same rules as everywhere else: quoted, and
 covering the whole repo-relative path.
