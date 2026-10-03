@@ -12,7 +12,9 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from evals.cgr_graph import _capture
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _capture, _StatefulIngestor
 
 _PROJECT = "proj"
 _IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
@@ -533,4 +535,108 @@ def test_explicit_re_export_outranks_a_star_source(tmp_path: Path) -> None:
     )
     assert {e for e in edges if e[1] == "user.Missing"} == {
         (_CLASS, "user.Missing", _IMPLEMENTS, _INTERFACE, "b.Router")
+    }, sorted(edges)
+
+
+# `export *` re-exports only what the source module exports (Greptile review
+# of #2560): a private `Router` in one star source is not a second candidate,
+# so it must not make the exported one ambiguous, nor stand in for it alone.
+PRIVATE_ROUTER_TS = """\
+interface Router<T> { add(path: string, handler: T): void }
+class Base { go(): void {} }
+export interface Other { run(): void }
+"""
+
+EXPORTED_ROUTER_TS = """\
+export interface Router<T> { add(path: string, handler: T): void }
+class Base { go(): void {} }
+export { Base }
+"""
+
+PRIVATE_STAR_USER_TS = """\
+import * as r from './index'
+export class Impl<T> implements r.Router<T> { add(p: string, h: T): void {} }
+export class Sub extends r.Base { go(): void {} }
+"""
+
+TWO_STARS_INDEX_TS = "export * from './a'\nexport * from './b'\n"
+
+
+def _private_star_files() -> dict[str, str]:
+    return {
+        "a.ts": PRIVATE_ROUTER_TS,
+        "b.ts": EXPORTED_ROUTER_TS,
+        "index.ts": TWO_STARS_INDEX_TS,
+        "user.ts": PRIVATE_STAR_USER_TS,
+    }
+
+
+def _user_heritage(edges: set[tuple[str, str, str, str, str]]) -> set[tuple[str, ...]]:
+    return {(f, r, tl, to) for _fl, f, r, tl, to in edges if f.startswith("user.")}
+
+
+_EXPORTED_SOURCE_EDGES = {
+    ("user.Impl", _IMPLEMENTS, _INTERFACE, "b.Router"),
+    ("user.Sub", _INHERITS, _CLASS, "b.Base"),
+}
+
+
+def test_a_private_declaration_in_one_star_source_is_not_exported(
+    tmp_path: Path,
+) -> None:
+    # `a` declares `Router` and `Base` without exporting them; `b` exports
+    # both (`export interface`, and `export { Base }` after the declaration).
+    edges = _heritage(_write(tmp_path, _private_star_files()))
+    assert _user_heritage(edges) == _EXPORTED_SOURCE_EDGES, sorted(edges)
+
+
+def test_a_private_declaration_stays_private_on_an_incremental_run(
+    tmp_path: Path,
+) -> None:
+    # The barrel and its user change, so `a` and `b` come back from the
+    # store; their export flags must come back with them or `a.Router` turns
+    # ambiguous. (An unchanged barrel's own import map is not rebuilt on an
+    # incremental run, so the barrel is touched too.)
+    root = _write(tmp_path, _private_star_files())
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+
+    def run(force: bool) -> None:
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name=_PROJECT,
+        ).run(force=force)
+
+    run(True)
+    (root / "index.ts").write_text(f"{TWO_STARS_INDEX_TS}// touched\n")
+    (root / "user.ts").write_text(f"{PRIVATE_STAR_USER_TS}// touched\n")
+    run(False)
+    prefix = f"{_PROJECT}{cs.SEPARATOR_DOT}"
+    edges = {
+        (fl, str(f).removeprefix(prefix), r, tl, str(t).removeprefix(prefix))
+        for fl, f, r, tl, t in store.edges
+        if r in (_IMPLEMENTS, _INHERITS)
+    }
+    assert _user_heritage(edges) == _EXPORTED_SOURCE_EDGES, sorted(edges)
+
+
+def test_a_star_source_declaring_the_name_privately_exposes_nothing(
+    tmp_path: Path,
+) -> None:
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "a.ts": PRIVATE_ROUTER_TS,
+                "index.ts": "export * from './a'\n",
+                "user.ts": PRIVATE_STAR_USER_TS,
+            },
+        )
+    )
+    assert _user_heritage(edges) == {
+        ("user.Impl", _IMPLEMENTS, _EXTERNAL, "r.Router"),
+        ("user.Sub", _INHERITS, _EXTERNAL, "r.Base"),
     }, sorted(edges)

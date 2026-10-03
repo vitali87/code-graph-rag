@@ -93,7 +93,7 @@ from .parsers.java_lombok import (
 )
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import sorted_captures
+from .parsers.utils import mark_js_ts_module_private, sorted_captures
 from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
@@ -3239,6 +3239,17 @@ class GraphUpdater:
     ) -> None:
         """Restore the path-keyed state of a rehydrated definition."""
         self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+        # A private declaration in an unchanged star source must stay private,
+        # or it counts as re-exported and makes the exported one a barrel
+        # names ambiguous.
+        mark_js_ts_module_private(
+            self.function_registry,
+            qn,
+            # A row written before the flag existed reads as exported: the
+            # star lookup then counts it, as it did before.
+            row.get(cs.KEY_IS_EXPORTED) is not False,
+            get_language_for_extension(Path(path).suffix),
+        )
         # The C# declared-form index (issue #1629) is filled only by
         # parsing; an unchanged type must stay reachable by `N.Widget`
         # from a re-parsed base list or receiver (bot review).

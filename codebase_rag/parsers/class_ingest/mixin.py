@@ -48,6 +48,7 @@ from ..utils import (
     follow_reexports,
     function_span_key,
     ingest_method,
+    mark_js_ts_module_private,
     module_qn_for_entity,
     record_cpp_definition_span,
     safe_decode_text,
@@ -1279,6 +1280,9 @@ class ClassIngestMixin:
             self._record_csharp_namespace(class_node, class_qn, class_props)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        mark_js_ts_module_private(
+            self.function_registry, class_qn, is_exported, language
+        )
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
 

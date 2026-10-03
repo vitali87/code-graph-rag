@@ -91,10 +91,12 @@ def _star_reexport_target(
 ) -> str | None:
     # A star re-export (`export * from './router'`, `from .mod import *`)
     # binds no name of its own, so a barrel's member is whichever star source
-    # declares it, possibly through further stars. Only a source that reaches
-    # a registered definition counts; two that reach different ones are
-    # ambiguous (TypeScript exports neither), so nothing is guessed. `seen` is
-    # shared so a cycle of stars ends.
+    # exports it, possibly through further stars. Only a source that reaches
+    # a registered definition its module exports counts: a private one is
+    # never re-exported, so it neither stands in for the name nor makes an
+    # exported one ambiguous. Two exported ones are ambiguous (TypeScript
+    # exports neither), so nothing is guessed. `seen` is shared so a cycle of
+    # stars ends.
     reached = {
         target
         for key, source in import_mapping.get(module_qn, {}).items()
@@ -108,8 +110,22 @@ def _star_reexport_target(
             )
         )
         in function_registry
+        and not function_registry.is_module_private(target)
     }
     return reached.pop() if len(reached) == 1 else None
+
+
+def mark_js_ts_module_private(
+    function_registry: FunctionRegistryTrieProtocol,
+    qualified_name: str,
+    is_exported: bool,
+    language: cs.SupportedLanguage | None,
+) -> None:
+    # `export * from` passes on only what a module exports, so the star lookup
+    # in follow_reexports must tell a private declaration from an exported
+    # one; the flag the node already carries is recorded where it can ask.
+    if language in cs.JS_TS_LANGUAGES and not is_exported:
+        function_registry.mark_module_private(qualified_name)
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:

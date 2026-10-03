@@ -191,3 +191,25 @@ class TestFollowReexportsThroughStars:
         mapping = {"p.index": {_star("p.a"): "p.a"}}
         registry = _registry("p.index.Router", "p.a.Router")
         assert follow_reexports("p.index.Router", mapping, registry) == "p.index.Router"
+
+
+class TestStarSourcesExposeOnlyExports:
+    def test_a_private_candidate_does_not_count(self) -> None:
+        mapping = {"p.index": {_star("p.a"): "p.a", _star("p.b"): "p.b"}}
+        registry = _registry("p.a.Router", "p.b.Router")
+        registry.mark_module_private("p.a.Router")
+        assert follow_reexports("p.index.Router", mapping, registry) == "p.b.Router"
+
+    def test_a_private_candidate_alone_is_not_followed(self) -> None:
+        mapping = {"p.index": {_star("p.a"): "p.a"}}
+        registry = _registry("p.a.Router")
+        registry.mark_module_private("p.a.Router")
+        assert follow_reexports("p.index.Router", mapping, registry) == "p.index.Router"
+
+    def test_an_explicit_binding_to_a_private_name_is_still_followed(self) -> None:
+        # `export { Router } from './a'` names it outright; only a star source
+        # is limited to what its module exports.
+        mapping = {"p.index": {"Router": "p.a.Router"}}
+        registry = _registry("p.a.Router")
+        registry.mark_module_private("p.a.Router")
+        assert follow_reexports("p.index.Router", mapping, registry) == "p.a.Router"
