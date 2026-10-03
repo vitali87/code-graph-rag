@@ -1997,6 +1997,35 @@ class CallResolver:
         return owner in owners or (
             owner not in self.function_registry
             and owner.rpartition(cs.SEPARATOR_DOT)[2] in names
+            # With no first-party owner the names are external or primitive
+            # types, and the impl block must be on that type, not on the
+            # crate's own type of the same name.
+            and (bool(owners) or self._rust_impl_on_external_type(owner))
+        )
+
+    def _rust_impl_on_external_type(self, owner: str) -> bool:
+        """Whether an impl block registered under `owner` is on a type the
+        crate does not define.
+
+        An impl block registers under `<its module>.<Type>`, a qn nothing
+        else holds, both for a type outside the crate (`impl From<Foo> for
+        u8`) and for the crate's own type written away from its definition
+        (`impl String { fn new() }` beside a `use crate::shadow::String`).
+        Where the impl's module names the type, that binding decides. Where
+        nothing there names it, the target was written as a path or is the
+        prelude's: Rust allows an impl on a foreign type only for a trait, so
+        a crate that defines a type of that name is taken to mean its own
+        (#2595 review: the prelude `String::new()` bound the crate
+        `String`'s `new`, impl'd in another module).
+        """
+        impl_module, _sep, name = owner.rpartition(cs.SEPARATOR_DOT)
+        if self._rust_head_binding(name, impl_module, None) is not None:
+            return self._rust_head_is_external(name, impl_module, None)
+        return not any(
+            qn.rpartition(cs.SEPARATOR_DOT)[2] == name
+            and self.function_registry.get(qn) in cs.RS_TYPE_SCOPE_LABELS
+            and self._module_language(qn) == cs.SupportedLanguage.RUST
+            for qn in self.function_registry.find_ending_with(name)
         )
 
     def _rust_head_is_external(

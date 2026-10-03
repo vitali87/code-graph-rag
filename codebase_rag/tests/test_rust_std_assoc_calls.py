@@ -471,3 +471,89 @@ def test_literal_receiver_types(receiver: str, expected: frozenset[str]) -> None
 def test_non_literal_receiver_has_no_literal_type(receiver: str) -> None:
     # A raw identifier (`r#type`) is a variable, not a raw string.
     assert literal_receiver_types(receiver) is None
+
+
+# --- #2595 review: an impl block elsewhere of the crate's own `String` -------
+
+_SPLIT_STRING = {
+    "src/lib.rs": "pub mod shadow;\npub mod impls;\npub mod paths;\npub mod app;\npub mod user;\n",
+    "src/shadow.rs": "pub struct String { n: usize }\n",
+    "src/impls.rs": (
+        "use crate::shadow::String;\n\n"
+        "impl String {\n"
+        "    pub fn new() -> String { String { n: 1 } }\n"
+        "}\n"
+    ),
+    "src/paths.rs": (
+        "impl crate::shadow::String {\n"
+        "    pub fn with_capacity(n: usize) -> crate::shadow::String {\n"
+        "        crate::shadow::String { n }\n"
+        "    }\n"
+        "}\n"
+    ),
+    "src/app.rs": (
+        "pub fn build() -> usize {\n"
+        "    String::new().len() + String::with_capacity(4).len()\n"
+        "}\n"
+    ),
+    "src/user.rs": (
+        "use crate::shadow::String;\n\n"
+        "pub fn make() -> String {\n"
+        "    String::new()\n"
+        "}\n"
+    ),
+}
+
+
+def test_prelude_call_does_not_bind_an_impl_elsewhere_of_the_crates_own_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # app.rs imports no `String`: its `String::new()` is the prelude's, not
+    # the crate's `String` whose inherent impl sits in impls.rs (a `use`) or
+    # paths.rs (a path).
+    edges = _index(temp_repo, mock_ingestor, "rs_split_string", _SPLIT_STRING)
+    callees = _callees(edges, "rs_split_string.src.app.build")
+    assert "rs_split_string.src.impls.String.new" not in callees, edges
+    assert "rs_split_string.src.paths.String.with_capacity" not in callees, edges
+
+
+def test_imported_own_type_still_reaches_its_impl_elsewhere(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: where the crate's `String` IS in scope, the impl in another
+    # module is still its method.
+    edges = _index(temp_repo, mock_ingestor, "rs_split_string", _SPLIT_STRING)
+    callees = _callees(edges, "rs_split_string.src.user.make")
+    assert "rs_split_string.src.impls.String.new" in callees, edges
+
+
+def test_trait_impl_on_the_prelude_type_still_binds(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: with no crate `String` at all, a trait impl for the
+    # prelude's `String` in another module is what `String::describe()`
+    # reaches.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_trait_on_std",
+        {
+            "src/lib.rs": "pub mod describe;\npub mod app;\n",
+            "src/describe.rs": (
+                "pub trait Describe {\n"
+                "    fn describe() -> usize;\n"
+                "}\n\n"
+                "impl Describe for String {\n"
+                "    fn describe() -> usize { 6 }\n"
+                "}\n"
+            ),
+            "src/app.rs": (
+                "use crate::describe::Describe;\n\n"
+                "pub fn build() -> usize {\n"
+                "    String::describe()\n"
+                "}\n"
+            ),
+        },
+    )
+    callees = _callees(edges, "rs_trait_on_std.src.app.build")
+    assert "rs_trait_on_std.src.describe.String.describe" in callees, edges
