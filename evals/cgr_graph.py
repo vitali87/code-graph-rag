@@ -113,6 +113,9 @@ _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_FIELD.value,
     cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
+    cs.RelationshipType.IMPLEMENTS_PATTERN.value,
+    cs.RelationshipType.HAS_SMELL.value,
+    cs.RelationshipType.HAS_VULNERABILITY.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(

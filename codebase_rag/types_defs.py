@@ -1099,9 +1099,13 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
     ),
+    # `project` is set on ENDPOINT resources only: an endpoint is scoped to the
+    # project that serves it, and the endpoint linker reads the property back
+    # to match a URL's host to that project. The other kinds are shared
+    # across projects and carry none, hence optional (issue #2536).
     NodeSchema(
         NodeLabel.RESOURCE,
-        "{qualified_name: string, name: string, kind: string}",
+        "{qualified_name: string, name: string, kind: string, project: string?}",
     ),
     NodeSchema(
         NodeLabel.SECTION,
@@ -1258,6 +1262,22 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
             NodeLabel.ENUM,
             NodeLabel.EXTERNAL_MODULE,
         ),
+    ),
+    # TypeScript heritage onto a `type` alias of an object type:
+    # `interface InvalidType extends IssueBase` and `class LazyPath implements
+    # ParseInput` (zod's ZodError.ts and types.ts). The parent resolves to the
+    # alias's Type node. Listed as two exact triples rather than adding Type
+    # to the target lists above, which would also document a class that
+    # `extends` an alias and an enum that `implements` one (issue #2536).
+    RelationshipSchema(
+        (NodeLabel.INTERFACE,),
+        RelationshipType.INHERITS,
+        (NodeLabel.TYPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLASS,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.TYPE,),
     ),
     RelationshipSchema(
         # A method-body anonymous-class override is a Function node, so it

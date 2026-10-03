@@ -1227,8 +1227,8 @@ RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
 # relation list must be kept in step with that query's, or the re-ingest
 # deletes nodes the capture never saw and the restore cannot put them back
 # (HAS_FIELD was added to the delete by #1899 and missed here: CodeRabbit;
-# HAS_VARIANT likewise by #1807, and a test now pins the two lists equal),
-# plus
+# HAS_VARIANT likewise by #1807, and a test now pins the two lists equal;
+# the finding edges joined both with #2536), plus
 # the File nodes at those paths and the containers above them (a package
 # indicator appearing or vanishing flips the directory's node kind).
 _CHECK_SCOPE = f"""MATCH (n)
@@ -1237,7 +1237,7 @@ WHERE (n:{NodeLabel.MODULE.value} AND n.path IN $paths
             OR n.qualified_name STARTS WITH $project_prefix))
    OR ((n:{NodeLabel.FILE.value} OR n:{NodeLabel.FOLDER.value}
         OR n:{NodeLabel.PACKAGE.value}) AND n.absolute_path IN $absolute_paths)
-MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*0..]->(c)
+MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*0..]->(c)
 WITH DISTINCT c"""
 CYPHER_CHECK_SCOPE_NODES = f"""{_CHECK_SCOPE}
 RETURN labels(c)[0] AS label, properties(c) AS props"""
@@ -1246,10 +1246,10 @@ RETURN labels(c)[0] AS label, properties(c) AS props"""
 # a node on (the label decides which one applies). The far end's properties
 # come along only for the labels the check can prune, re-grade or rewrite:
 # an ExternalModule a new import created, a Resource an endpoint anchored, a
-# Gloss whose anchor the re-parse re-graded, and a finding whose qualified
-# name (file, line, column, rule) survives the re-parse while its snippet
-# and span move with the edited source -- that node is not deleted by the
-# cleanup, so only its captured properties can put it back (#1718).
+# Gloss whose anchor the re-parse re-graded, and a finding (#1718). Since
+# #2536 a finding is also inside the walk, because the module delete takes
+# it with its module, so the scope capture already holds the same property
+# set and restores the same node.
 CYPHER_CHECK_SCOPE_EDGES = f"""{_CHECK_SCOPE}
 MATCH (c)-[r]-(x)
 RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
