@@ -9,6 +9,7 @@ from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..language_spec import has_other_language_sibling, own_extension_module_qn
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import (
     ASTNode,
@@ -31,12 +32,13 @@ from ..utils.path_utils import (
     declaration_extension,
     has_implementation_sibling,
 )
+from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
 from .definition_docstring import extract_definition_docstring
-from .dependency_parser import parse_dependencies
+from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
@@ -335,6 +337,9 @@ class DefinitionProcessor(
         # interface's node write is still in the ingestor's buffer, so it is
         # absent from the rows rehydration fetches.
         self.cpp_interfaces_parsed_this_run: set[str] = set()
+        # {manifest path: why its content could not be parsed}, for the one
+        # WARNING the updater logs per run in place of a line per file.
+        self.unparsable_manifests: dict[Path, str] = {}
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
@@ -386,7 +391,25 @@ class DefinitionProcessor(
         # yielded name is itself a qn like any other and can collide with a
         # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
         # to go through the check below rather than skip it.
-        if (declaration := declaration_extension(file_path.name)) and (
+        #
+        # A stem shared ACROSS language families (`util.py` beside `util.js`)
+        # has no bare name: every file on it takes its extension (issue
+        # #2586). Awarding it by walk order handed it to whichever file sorts
+        # first, so adding `util.js` beside an indexed `util.py` re-pointed
+        # `proj.util.helper`, and everything stored against it, at the JS
+        # function. Names stay a function of the tree (#1569), so one of the
+        # two must lose the name it had alone; retiring it for both is the one
+        # rule under which an addition never hands a name to another file.
+        # Importers still write the bare name and land on their own family's
+        # file (ImportProcessor.point_imports_at_own_language_siblings).
+        if has_other_language_sibling(
+            file_path,
+            self.repo_path,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        ):
+            module_qn = own_extension_module_qn(module_qn, file_path.name)
+        elif (declaration := declaration_extension(file_path.name)) and (
             has_implementation_sibling(
                 file_path,
                 self.repo_path,
@@ -457,7 +480,7 @@ class DefinitionProcessor(
             file_path = Path(file_path)
         relative_path = cached_relative_path(file_path, self.repo_path)
         relative_path_str = relative_path.as_posix()
-        logger.info(
+        logger.debug(
             ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
         )
 
@@ -584,7 +607,9 @@ class DefinitionProcessor(
             if parser is None:
                 logger.warning(ls.DEF_NO_PARSER.format(language=language))
                 return None
-            tree = parse_with_preproc_recovery(parser, source_bytes, language)
+            tree = parse_with_preproc_recovery(
+                parser, grammar_bytes(source_bytes, language, file_path), language
+            )
             root_node = tree.root_node
             pre_combined_captures = None
         return root_node, pre_combined_captures
@@ -738,10 +763,12 @@ class DefinitionProcessor(
         self._pending_direct_module_exports = []
 
     def process_dependencies(self, filepath: Path) -> None:
-        logger.info(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
+        logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
 
-        dependencies = parse_dependencies(filepath)
-        for dep in dependencies:
+        manifest = read_manifest(filepath)
+        if manifest.unparsable is not None:
+            self.unparsable_manifests[filepath] = manifest.unparsable
+        for dep in manifest.dependencies:
             self._add_dependency(dep.name, dep.spec, dep.properties)
 
     def _add_dependency(
@@ -750,7 +777,7 @@ class DefinitionProcessor(
         if not dep_name or dep_name.lower() in cs.EXCLUDED_DEPENDENCY_NAMES:
             return
 
-        logger.info(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
+        logger.debug(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
         )
