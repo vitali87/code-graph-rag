@@ -444,3 +444,31 @@ def test_an_unchanged_module_keeps_its_findings(tmp_path: Path) -> None:
 
     assert _findings(store) == first
     assert _attached_findings(store) == first
+
+
+def test_the_same_finding_in_two_modules_is_two_nodes_and_outlives_either(
+    tmp_path: Path,
+) -> None:
+    # The module delete takes a finding with its module, which is safe only
+    # because no finding is shared: its qn is the module's own qn plus line,
+    # column and rule id, and only that module links to it (Greptile, PR
+    # #2572). Two files with the same source hold the same findings at the
+    # same spots; they are separate nodes, so deleting one file must leave
+    # the other's findings in place and attached.
+    _write(tmp_path, {"app.py": FINDINGS_PY, "twin.py": FINDINGS_PY})
+    store = _StatefulIngestor()
+    _sync(store, tmp_path, _WITH_FINDINGS)
+    holders: dict[str, set[str]] = {}
+    for _sl, source, rel, target_label, target in store.edges:
+        if target_label in _FINDING_LABELS and rel in _FINDING_RELS:
+            holders.setdefault(str(target), set()).add(str(source))
+    twin = f"{tmp_path.name}.twin"
+    twin_findings = {qn for qn, modules in holders.items() if modules == {twin}}
+    assert twin_findings, "fixture guard: twin.py produced no findings"
+    assert all(len(modules) == 1 for modules in holders.values()), holders
+
+    (tmp_path / "app.py").unlink()
+    _sync(store, tmp_path, _WITH_FINDINGS)
+
+    assert _findings(store) == twin_findings
+    assert _attached_findings(store) == twin_findings
