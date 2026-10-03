@@ -1,4 +1,5 @@
 import importlib
+import importlib.machinery
 import subprocess
 import sys
 import threading
@@ -225,30 +226,45 @@ _IMPORT_SPECS: dict[cs.SupportedLanguage, LanguageImport] = {
 }
 
 _loader_cache: dict[cs.SupportedLanguage, LanguageLoader] = {}
+_EXTENSION_SUFFIXES = tuple(importlib.machinery.EXTENSION_SUFFIXES)
 
 
 def grammar_installed(lang_name: str) -> bool:
-    """Whether the loader gets a parser for `lang_name`, without building one.
+    """Whether a grammar for `lang_name` is present, without running any of it.
 
-    Asks the same two sources as `_get_language_library`. For a submodule
-    grammar it imports the built binding exactly as the loader does, but
-    skips the build the loader runs on first use: a listing must not start a
-    compile to answer a yes/no. A bindings directory alone is not enough, as
-    a checkout whose build fails has one and gives no parser (Greptile review
-    of PR 2508).
+    Asks the same two sources as `_get_language_library`. A submodule grammar
+    counts only once its binding is BUILT: a bindings directory alone is not
+    enough, as a checkout whose build fails has one and gives no parser. It
+    is never imported or built here: importing runs the checkout's
+    `__init__.py`, and a listing must not execute checkout code or start a
+    compile to answer a yes/no (Greptile reviews of PR 2508). So a binding
+    built once that no longer loads still reads as installed.
     """
     lang_import = _IMPORT_SPECS.get(lang_name)
     if lang_import is None:
-        return _submodule_grammar_loads(lang_name)
+        return _submodule_binding_built(lang_name)
     if _import_pip_grammar(lang_import.module_path, lang_import.attr_name) is not None:
         return True
-    return _submodule_grammar_loads(lang_import.submodule_name)
+    return _submodule_binding_built(lang_import.submodule_name)
 
 
-def _submodule_grammar_loads(lang_name: str) -> bool:
-    if not _submodule_bindings_path(lang_name).exists():
-        return False
-    return _import_submodule(lang_name) is not None
+def _submodule_binding_built(lang_name: str) -> bool:
+    # The compiled extension `setup.py build_ext --inplace` leaves in the
+    # module the loader imports: inside its package (tree-sitter grammars
+    # build `_binding.abi3.so` there) or as the module itself. Only the
+    # suffixes this interpreter can load count.
+    bindings = _submodule_bindings_path(lang_name)
+    module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
+    if any(
+        (bindings / f"{module_name}{suffix}").is_file()
+        for suffix in _EXTENSION_SUFFIXES
+    ):
+        return True
+    package = bindings / module_name
+    return package.is_dir() and any(
+        path.is_file() and path.name.endswith(_EXTENSION_SUFFIXES)
+        for path in package.iterdir()
+    )
 
 
 def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:

@@ -8,6 +8,7 @@ read the rendered table back cell by cell, the way a user reads it.
 
 from __future__ import annotations
 
+import importlib.machinery
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -415,51 +416,86 @@ def test_grammar_installed_reports_a_missing_grammar(
         assert grammar_installed(cs.SupportedLanguage.RUST) is False
 
 
-def _submodule_grammar(root: Path, name: str, *, built: bool) -> Path:
+def _submodule_grammar(
+    root: Path, name: str, *, built: bool, marker: Path | None = None
+) -> Path:
     # A grammar checkout the way the loader finds one: bindings/python, a
     # setup.py that fails (no compiler, a broken grammar), and, when an
-    # earlier build succeeded, the importable binding it left behind. The
-    # name is cgr's own, so no installed grammar package answers instead.
+    # earlier build succeeded, the compiled extension it left behind. The
+    # package's __init__.py writes `marker` if anything imports it. The name
+    # is cgr's own, so no installed grammar package answers instead.
     submodule = root / "grammars" / f"tree-sitter-{name}"
-    bindings = submodule / "bindings" / "python"
-    bindings.mkdir(parents=True)
+    package = (
+        submodule / "bindings" / "python" / f"tree_sitter_{name.replace('-', '_')}"
+    )
+    package.mkdir(parents=True)
     (submodule / "setup.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    init = "def language():\n    return 0\n"
+    if marker is not None:
+        init = f"open({str(marker)!r}, 'w').close()\n{init}"
+    (package / "__init__.py").write_text(init, encoding="utf-8")
     if built:
-        package = bindings / f"tree_sitter_{name}"
-        package.mkdir()
-        (package / "__init__.py").write_text(
-            "def language():\n    return 0\n", encoding="utf-8"
-        )
+        suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+        (package / f"_binding{suffix}").write_bytes(b"")
     return submodule
 
 
-def test_grammar_installed_never_builds_a_submodule(
+def test_grammar_installed_never_builds_or_imports_a_submodule(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The loader runs the submodule's setup.py on first use; answering
-    # "installed?" must not start that build.
+    # The loader runs the submodule's setup.py on first use, and importing
+    # the binding runs the checkout's __init__.py; answering "installed?"
+    # must do neither (Greptile security review of PR 2508).
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delitem(sys.modules, "tree_sitter_cgrbuilt", raising=False)
-    _submodule_grammar(tmp_path, "cgrbuilt", built=True)
-    with patch("codebase_rag.parser_loader.subprocess.run") as run:
+    marker = tmp_path / "imported"
+    _submodule_grammar(tmp_path, "cgrbuilt", built=True, marker=marker)
+    with (
+        patch.dict(sys.modules),
+        patch("codebase_rag.parser_loader.subprocess.run") as run,
+    ):
         assert grammar_installed("cgrbuilt") is True
     run.assert_not_called()
-    monkeypatch.delitem(sys.modules, "tree_sitter_cgrbuilt", raising=False)
+    assert not marker.exists()
 
 
-def test_a_submodule_grammar_that_does_not_load_is_not_claimed_installed(
+def test_a_submodule_grammar_that_was_never_built_is_not_claimed_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Greptile review of PR 2508: a bindings/python directory whose build
     # fails gives the loader no parser, yet the listing said "yes".
     monkeypatch.chdir(tmp_path)
-    _submodule_grammar(tmp_path, "cgrbroken", built=False)
-    with patch("codebase_rag.parser_loader.subprocess.run") as run:
+    marker = tmp_path / "imported"
+    _submodule_grammar(tmp_path, "cgrbroken", built=False, marker=marker)
+    with (
+        patch.dict(sys.modules),
+        patch("codebase_rag.parser_loader.subprocess.run") as run,
+    ):
         assert grammar_installed("cgrbroken") is False
     run.assert_not_called()
+    assert not marker.exists()
     # The loader, which does run the failing build, agrees.
     with patch.dict("codebase_rag.parser_loader._loader_cache", clear=True):
         assert _get_language_library("cgrbroken") is None
+
+
+def test_listing_languages_runs_no_checkout_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Greptile security review of PR 2508, end to end: with no Rust wheel,
+    # the listing reads a built Rust checkout from disk and never imports it.
+    monkeypatch.chdir(tmp_path)
+    marker = tmp_path / "imported"
+    _submodule_grammar(tmp_path, "rust", built=True, marker=marker)
+    with (
+        patch.dict(sys.modules),
+        patch("codebase_rag.parser_loader._import_pip_grammar", return_value=None),
+    ):
+        # as in a fresh process, where nothing has imported the wheel yet
+        sys.modules.pop("tree_sitter_rust", None)
+        rows = _by_name(_table(_invoke().output, _LANGUAGE_HEADERS), "Language")
+
+    assert rows["Rust"]["Installed"] == "yes"
+    assert not marker.exists()
 
 
 def _invoke_on_console(monkeypatch: pytest.MonkeyPatch, *, legacy_windows: bool) -> str:
