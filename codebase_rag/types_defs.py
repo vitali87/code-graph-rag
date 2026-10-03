@@ -13,6 +13,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     NamedTuple,
@@ -357,13 +358,22 @@ class JavaSupertypes(NamedTuple):
     found, by simple name, to its distance up the hierarchy; `unreachable`
     holds the candidates' parameter types it provably cannot reach, because
     the whole hierarchy is visible or a JDK type cannot extend a project one.
-    Any other parameter type stays possible."""
+    Any other parameter type stays possible. `refs` keeps each supertype as
+    the walk resolved it, at its distance, `project` the ones that are
+    project types, and `complete` whether the walk saw every supertype: a
+    parameter sharing a simple name with one counts it only when it names
+    that very type."""
 
     depths: Mapping[str, int]
     unreachable: frozenset[str]
-    # The argument's type as the caller's file resolves it, when a candidate
-    # parameter shares its simple name and that name may denote another type.
+    # The argument's type as the caller's file resolves it, and as written,
+    # when a candidate parameter shares its simple name and that name may
+    # denote another type.
     qualified: str | None = None
+    written: str | None = None
+    refs: Mapping[str, int] = MappingProxyType({})
+    project: frozenset[str] = frozenset()
+    complete: bool = False
 
 
 class JavaCandidateLookups(NamedTuple):

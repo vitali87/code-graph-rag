@@ -217,11 +217,95 @@ class _CandidateDeclaration:
     def parameter_types(self) -> tuple[str | None, ...]:
         return self._lookups.parameter_types(self._qn) if self._lookups else ()
 
-    def names_another_type(self, index: int, qualified: str) -> bool:
-        # Parameter `index` as the declaring file resolves it denotes a type
-        # other than `qualified`. One it cannot resolve proves nothing.
-        declared = self.parameter_types
-        return index < len(declared) and declared[index] not in (None, qualified)
+    @cached_property
+    def written_types(self) -> tuple[str, ...]:
+        return tuple(
+            _element_type_text(text) for text in _java_param_type_texts(self._qn)
+        )
+
+    def parameter_identity(self, index: int) -> tuple[str | None, str | None]:
+        # Parameter `index` as the declaring file resolves it (None where
+        # unsure) and as written.
+        declared, written = self.parameter_types, self.written_types
+        return (
+            declared[index] if index < len(declared) else None,
+            written[index] if index < len(written) else None,
+        )
+
+    def takes_argument_type(self, index: int, known: JavaSupertypes) -> bool:
+        # Parameter `index`, sharing the argument's simple name, names the
+        # argument's very type.
+        return (
+            _same_type(known.qualified, known.written, *self.parameter_identity(index))
+            is True
+        )
+
+    def supertypes_for(
+        self, index: int, param_type: str, known: JavaSupertypes
+    ) -> JavaSupertypes:
+        # `known` as it bears on parameter `index`: a supertype the walk
+        # reached under the parameter's simple name counts only as far as it
+        # is the type the parameter names.
+        name = _element_type_text(param_type)
+        reached = [
+            (ref, depth)
+            for ref, depth in known.refs.items()
+            if _simple_type_name(ref) == name
+        ]
+        if not reached:
+            return known
+        declared, written = self.parameter_identity(index)
+        verdicts = [
+            (
+                _same_type(_certain_ref(ref, known.project), ref, declared, written),
+                depth,
+            )
+            for ref, depth in reached
+        ]
+        return _narrowed(known, name, verdicts)
+
+
+def _certain_ref(ref: str, project: frozenset[str]) -> str | None:
+    # A walked supertype whose identity is settled: a project type, or a JDK
+    # type named in full.
+    if ref in project or ref.startswith(cs.JAVA_STDLIB_PREFIXES):
+        return ref
+    return None
+
+
+def _same_type(
+    qualified: str | None,
+    written: str | None,
+    declared: str | None,
+    declared_written: str | None,
+) -> bool | None:
+    # Whether two types sharing a simple name are one: each as resolved
+    # (None where unsure) and as written. A project type is the other only
+    # when both resolve to it; a JDK one keeps the benefit of the doubt a
+    # wildcard or java.lang import gives it. None when nothing settles it.
+    if qualified and declared:
+        return qualified == declared
+    settled = qualified or declared
+    if settled and not settled.startswith(cs.JAVA_STDLIB_PREFIXES):
+        return None
+    if settled or (written is not None and written == declared_written):
+        return True
+    return None
+
+
+def _narrowed(
+    known: JavaSupertypes, name: str, verdicts: list[tuple[bool | None, int]]
+) -> JavaSupertypes:
+    # `known` with `name` reached at the nearest supertype that is the
+    # parameter's type. When none may be, the parameter is out of reach of a
+    # complete walk; when some may, it stays unproven.
+    depths = {key: depth for key, depth in known.depths.items() if key != name}
+    unreachable = known.unreachable - {name}
+    if proven := [depth for same, depth in verdicts if same]:
+        depths[name] = min(proven)
+    elif known.complete and all(same is False for same, _ in verdicts):
+        unreachable |= {name}
+    return known._replace(depths=depths, unreachable=unreachable)
 
 
 def _candidate_argument_rank(
@@ -233,12 +317,13 @@ def _candidate_argument_rank(
 ) -> tuple[int, int] | None:
     # One known argument against its parameter, or None when it provably
     # cannot reach it (see `_overload_rank`).
+    known = declaration.supertypes_for(index, param_type, known)
     if (rank := _argument_rank(arg_type, param_type, known)) is None:
         return _type_variable_rank(arg_type, param_type, declaration.type_variables)
     if (
         rank[0] == cs.JAVA_RANK_EXACT
-        and known.qualified
-        and declaration.names_another_type(index, known.qualified)
+        and (known.qualified or known.written)
+        and not declaration.takes_argument_type(index, known)
     ):
         return cs.JAVA_RANK_UNPROVEN, 0
     return rank
@@ -1096,10 +1181,13 @@ class JavaMethodResolverMixin:
                 supertypes.append(_NO_SUPERTYPES)
                 continue
             at_index = [p[index] for p in params if len(p) == len(arg_types)]
-            qualified = (
-                self._qualified_type(arg_type, module_qn)
+            qualified, written = (
+                (
+                    self._qualified_type(arg_type, module_qn),
+                    _element_type_text(arg_type),
+                )
                 if simple in at_index
-                else None
+                else (None, None)
             )
             others = frozenset(
                 _element_type_text(p)
@@ -1111,7 +1199,7 @@ class JavaMethodResolverMixin:
                 if others
                 else _NO_SUPERTYPES
             )
-            supertypes.append(walked._replace(qualified=qualified))
+            supertypes.append(walked._replace(qualified=qualified, written=written))
         return tuple(supertypes)
 
     @property
@@ -1135,14 +1223,10 @@ class JavaMethodResolverMixin:
 
     def _qualified_type(self, type_text: str, module_qn: str) -> str | None:
         # The type a name denotes, when that is certain: a registered project
-        # type, or a JDK type by its full name. A dotted name the lookups do
-        # not place (`Map.Entry`, a project type spelled out) stays unknown.
-        element = _element_type_text(type_text)
-        ref = (
-            element
-            if cs.SEPARATOR_DOT in element
-            else self._java_type_ref(element, module_qn)
-        )
+        # type, or a JDK type by its full name. A scoped name resolves through
+        # its enclosing type (`Outer.Inner`, `Map.Entry` with `Map` imported);
+        # a dotted name the lookups do not place stays unknown.
+        ref = self._java_member_type_ref(_element_type_text(type_text), module_qn)
         if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES or ref.startswith(
             cs.JAVA_STDLIB_PREFIXES
         ):
@@ -1161,6 +1245,7 @@ class JavaMethodResolverMixin:
         # JDK type can extend. Otherwise it stays unproven.
         root = self._java_type_ref(type_name, module_qn)
         depths: dict[str, int] = {}
+        refs: dict[str, int] = {}
         frontier = [root]
         seen = set(frontier)
         complete = True
@@ -1175,17 +1260,29 @@ class JavaMethodResolverMixin:
             frontier = []
             for parent in parents:
                 depths.setdefault(_simple_type_name(parent), depth)
+                refs.setdefault(parent, depth)
                 if parent not in seen:
                     seen.add(parent)
                     frontier.append(parent)
         missed = parameters - depths.keys()
+        walked = JavaSupertypes(
+            depths,
+            frozenset(),
+            refs=refs,
+            project=frozenset(
+                ref
+                for ref in refs
+                if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES
+            ),
+            complete=complete,
+        )
         if complete:
-            return JavaSupertypes(depths, missed)
+            return walked._replace(unreachable=missed)
         if self._is_jdk_type(root):
-            return JavaSupertypes(
-                depths, frozenset(p for p in missed if self._names_project_type(p))
+            return walked._replace(
+                unreachable=frozenset(p for p in missed if self._names_project_type(p))
             )
-        return JavaSupertypes(depths, frozenset())
+        return walked
 
     def _is_jdk_type(self, type_ref: str) -> bool:
         # Named in full in a JDK package, and no project type carries the
@@ -1238,7 +1335,9 @@ class JavaMethodResolverMixin:
         if not dot or self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES:
             return ref
         nested = f"{self._java_type_ref(outer, module_qn)}{cs.SEPARATOR_DOT}{member}"
-        if self.function_registry.get(nested) in _JAVA_TYPE_NODE_TYPES:
+        if self.function_registry.get(
+            nested
+        ) in _JAVA_TYPE_NODE_TYPES or nested.startswith(cs.JAVA_STDLIB_PREFIXES):
             return nested
         return ref
 

@@ -16,6 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.java.method_resolver import (
     _java_param_type_names,
     _overload_rank,
+    _same_type,
 )
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import (
@@ -427,11 +428,24 @@ public class Outer {
   public interface Port {}
   public static class Frame {}
 }
+
+class Rival {
+  public interface Port {}
+}
+"""
+
+# Greptile on #2800: another type's nested `Port`, in its own file.
+ELSEWHERE = """package com.acme;
+
+public class Elsewhere {
+  public interface Port {}
+}
 """
 
 SCOPED = """package com.acme;
 
 import java.util.Map;
+import org.vendor.Vendor;
 
 interface Unplugged {}
 interface Socket {}
@@ -444,6 +458,7 @@ class Both implements Socket, Holder<String> {}
 class Plate {}
 class Marked implements @Mark Socket {}
 class MarkedPlate extends @Mark Plate {}
+class VendorPortImpl implements Vendor.Port {}
 
 public class Scoped {
   static String plug(Unplugged u) { return "unplugged"; }
@@ -477,6 +492,24 @@ public class Scoped {
   static String rest(Plate p) { return "plate"; }
   static String rest(Object o) { return "object"; }
   static String viaMarkedPlate(MarkedPlate p) { return rest(p); }
+
+  static String pick(Rival.Port p) { return "rival"; }
+  static String pick(Object o) { return "object"; }
+  static String viaRival(PortImpl p) { return pick(p); }
+
+  static String aim(Elsewhere.Port p) { return "elsewhere"; }
+  static String aim(Object o) { return "object"; }
+  static String viaElsewhere(PortImpl p) { return aim(p); }
+  static String viaPortToElsewhere(Outer.Port p) { return aim(p); }
+
+  static String bet(Vendor.Port p) { return "vendor"; }
+  static String bet(Object o) { return "object"; }
+  static String viaVendor(PortImpl p) { return bet(p); }
+  static String viaPortToVendor(Outer.Port p) { return bet(p); }
+
+  static String viaVendorImpl(VendorPortImpl v) { return wear(v); }
+  static String viaVendorPort(Vendor.Port p) { return wear(p); }
+  static String viaPortToWear(Outer.Port p) { return wear(p); }
 }
 """
 
@@ -508,6 +541,7 @@ FILES = {
     "Plugins.java": PLUGINS,
     "GenericArrays.java": GENERIC_ARRAYS,
     "Outer.java": OUTER,
+    "Elsewhere.java": ELSEWHERE,
     "Scoped.java": SCOPED,
 }
 
@@ -696,6 +730,73 @@ def test_a_supertype_the_walk_cannot_read_never_rules_its_overload_out(
     assert callees == {
         applicable: cs.EdgeResolution.OVERLOAD,
         f"{applicable.split('(', 1)[0]}(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("Scoped.Scoped.viaRival(PortImpl)", "Scoped.Scoped.pick(Object)"),
+        ("Scoped.Scoped.viaElsewhere(PortImpl)", "Scoped.Scoped.aim(Object)"),
+    ],
+    ids=["same-file", "other-file"],
+)
+def test_a_same_named_supertype_of_another_type_is_no_match(
+    calls: dict[str, dict[str, str]], caller: str, expected: str
+) -> None:
+    # PortImpl reaches Outer.Port, never Rival.Port or Elsewhere.Port; javac
+    # takes the Object overload (Greptile on #2800).
+    assert _callees(calls, caller) == {expected: cs.EdgeResolution.EXACT}
+
+
+@pytest.mark.parametrize(
+    ("caller", "contender"),
+    [
+        ("Scoped.Scoped.viaVendor(PortImpl)", "Scoped.Scoped.bet(Vendor.Port)"),
+        (
+            "Scoped.Scoped.viaPortToVendor(Outer.Port)",
+            "Scoped.Scoped.bet(Vendor.Port)",
+        ),
+        (
+            "Scoped.Scoped.viaPortToElsewhere(Outer.Port)",
+            "Scoped.Scoped.aim(Elsewhere.Port)",
+        ),
+        (
+            "Scoped.Scoped.viaVendorImpl(VendorPortImpl)",
+            "Scoped.Scoped.wear(Outer.Port)",
+        ),
+        (
+            "Scoped.Scoped.viaVendorPort(Vendor.Port)",
+            "Scoped.Scoped.wear(Outer.Port)",
+        ),
+    ],
+    ids=[
+        "unresolved-parameter",
+        "unresolved-parameter-same-name",
+        "other-type-same-name",
+        "unresolved-supertype",
+        "unresolved-argument-same-name",
+    ],
+)
+def test_a_same_named_type_nothing_identifies_is_never_exact(
+    calls: dict[str, dict[str, str]], caller: str, contender: str
+) -> None:
+    # One side of the `Port` pair resolves to a project type and the other
+    # does not, or to another one: the match is unproven, so both overloads
+    # stay contenders instead of an exact edge to a method that may not
+    # take the argument.
+    method = contender.split("(", 1)[0]
+    assert _callees(calls, caller) == {
+        contender: cs.EdgeResolution.OVERLOAD,
+        f"{method}(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_a_scoped_argument_of_the_parameter_type_stays_exact(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "Scoped.Scoped.viaPortToWear(Outer.Port)") == {
+        "Scoped.Scoped.wear(Outer.Port)": cs.EdgeResolution.EXACT
     }
 
 
@@ -1088,6 +1189,104 @@ def test_an_exact_match_stays_exact_unless_the_declaration_names_another_type(
     assert rank == JavaOverloadRank(
         unproven=0, conversions=cs.JAVA_RANK_EXACT, distance=0
     )
+
+
+def _walk_reaching(refs: dict[str, int], complete: bool) -> JavaSupertypes:
+    # An Impl whose walk reached `refs`, the `p.`-prefixed ones project types.
+    return JavaSupertypes(
+        {name.rsplit(".", 1)[-1]: depth for name, depth in refs.items()},
+        frozenset(),
+        refs=refs,
+        project=frozenset(ref for ref in refs if ref.startswith("p.")),
+        complete=complete,
+    )
+
+
+def _declaring(*types: str | None) -> JavaCandidateLookups:
+    return JavaCandidateLookups(lambda _qn: frozenset(), lambda _qn: types)
+
+
+@pytest.mark.parametrize(
+    ("refs", "complete", "declared", "expected"),
+    [
+        (
+            {"p.Outer.Port": 1},
+            True,
+            "p.Outer.Port",
+            JavaOverloadRank(0, cs.JAVA_RANK_SUPERTYPE, 1),
+        ),
+        (
+            {"p.Outer.Port": 1, "p.Other.Port": 3},
+            True,
+            "p.Other.Port",
+            JavaOverloadRank(0, cs.JAVA_RANK_SUPERTYPE, 3),
+        ),
+        ({"p.Outer.Port": 1}, True, "p.Other.Port", None),
+        ({"p.Outer.Port": 1}, False, "p.Other.Port", JavaOverloadRank(1, 0, 0)),
+        ({"p.Outer.Port": 1}, True, None, JavaOverloadRank(1, 0, 0)),
+        ({"Vendor.Port": 1}, False, "p.Outer.Port", JavaOverloadRank(1, 0, 0)),
+        (
+            {"Map": 2},
+            False,
+            "java.util.Map",
+            JavaOverloadRank(0, cs.JAVA_RANK_SUPERTYPE, 2),
+        ),
+        ({"Map": 2}, False, "p.Map", JavaOverloadRank(1, 0, 0)),
+    ],
+    ids=[
+        "the-parameter-type",
+        "the-farther-one-of-two",
+        "another-project-type-complete-walk",
+        "another-project-type-open-walk",
+        "unresolved-parameter",
+        "unresolved-supertype",
+        "jdk-name-jdk-parameter",
+        "jdk-name-project-parameter",
+    ],
+)
+def test_a_walked_supertype_counts_only_as_the_type_the_parameter_names(
+    refs: dict[str, int],
+    complete: bool,
+    declared: str | None,
+    expected: JavaOverloadRank | None,
+) -> None:
+    name = "Map" if "Map" in refs else "Port"
+    rank = _overload_rank(
+        f"C.m({name})",
+        ("Impl",),
+        (_walk_reaching(refs, complete),),
+        _declaring(declared),
+    )
+    assert rank == expected
+
+
+@pytest.mark.parametrize(
+    ("argument", "parameter", "expected"),
+    [
+        (("p.Outer.Port", "Outer.Port"), ("p.Outer.Port", "Outer.Port"), True),
+        (("p.Outer.Port", "Outer.Port"), ("p.Other.Port", "Other.Port"), False),
+        (("p.Outer.Port", "Outer.Port"), (None, "Vendor.Port"), None),
+        ((None, "Vendor.Port"), ("p.Outer.Port", "Outer.Port"), None),
+        (("java.util.List", "List"), (None, "List"), True),
+        ((None, "Iterable"), (None, "Iterable"), True),
+        ((None, "a.Port"), (None, "b.Port"), None),
+    ],
+    ids=[
+        "same-project-type",
+        "other-project-type",
+        "unresolved-parameter",
+        "unresolved-argument",
+        "jdk-type-unresolved-parameter",
+        "same-spelling-unresolved",
+        "other-spelling-unresolved",
+    ],
+)
+def test_same_named_types_are_one_only_when_something_says_so(
+    argument: tuple[str | None, str],
+    parameter: tuple[str | None, str],
+    expected: bool | None,
+) -> None:
+    assert _same_type(*argument, *parameter) is expected
 
 
 def test_generic_array_type_keeps_its_dimensions() -> None:
