@@ -1392,6 +1392,23 @@ def _record_method_overrides(
         )
 
 
+def _register_method_qn(
+    function_registry: FunctionRegistryTrieProtocol,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    start_line: int,
+    start_col: int,
+) -> str:
+    if language == cs.SupportedLanguage.CPP:
+        return method_qn
+    return function_registry.register_unique_qn(
+        method_qn,
+        start_line,
+        start_col,
+        kind=NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None,
+    )
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1428,11 +1445,13 @@ def ingest_method(
     # function and class sites are guarded at their own extraction points.
     warn_if_name_truncated(method_node, method_name, file_path)
 
-    method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
-        )
+    method_qn = _register_method_qn(
+        function_registry,
+        method_qualified_name or f"{container_qn}.{method_name}",
+        language,
+        method_start_line,
+        method_start_col,
+    )
 
     decorators = []
     modifiers = []

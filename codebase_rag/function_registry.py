@@ -15,6 +15,10 @@ from .types_defs import (
     TrieNode,
 )
 
+# The kinds that live only in TypeScript's type declaration space. A class or
+# an enum declares a type too, but it is also a value, so it is a value here.
+TYPE_SPACE_KINDS = frozenset({NodeType.TYPE, NodeType.INTERFACE})
+
 
 class FunctionRegistryTrie:
     __slots__ = (
@@ -25,6 +29,7 @@ class FunctionRegistryTrie:
         "_ending_with_tails",
         "_duplicates",
         "_variant_columns",
+        "_type_twins",
         "_properties",
         "_property_names",
         "_object_members",
@@ -44,6 +49,11 @@ class FunctionRegistryTrie:
         self._ending_with_tails: dict[str, set[str]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
         self._variant_columns: dict[QualifiedName, int] = {}
+        # The type-space declaration sharing its name with the value that
+        # holds `_entries` (issue #2520). Kept out of `_duplicates`, so no
+        # call fans out onto it, and out of `_entries`, so a call binds the
+        # value; only a type position asks for it, through `type_kind`.
+        self._type_twins: dict[QualifiedName, NodeType] = {}
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         self._object_members: set[QualifiedName] = set()
@@ -82,7 +92,11 @@ class FunctionRegistryTrie:
         return qualified_name in self._abstracts
 
     def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
+        self,
+        natural_qn: QualifiedName,
+        start_line: int,
+        start_col: int = 0,
+        kind: NodeType | None = None,
     ) -> QualifiedName:
         """A name for this definition that no other definition holds.
 
@@ -92,8 +106,15 @@ class FunctionRegistryTrie:
         claimed, which keeps every variant that was already unique spelled the
         way it always was, and keeps the call idempotent: two passes
         registering one definition must agree on its name, not mint a second.
+
+        `kind` is passed only by languages with separate type and value
+        declaration spaces (TypeScript): there a definition from the other
+        space keeps the natural name under its own label (see
+        `claim_other_space`). Without it every collision is a duplicate.
         """
         if natural_qn not in self._entries:
+            return natural_qn
+        if kind is not None and self.claim_other_space(natural_qn, kind):
             return natural_qn
         variant = f"{natural_qn}{cs.DUP_QN_MARKER}{start_line}"
         claimed_col = self._variant_columns.setdefault(variant, start_col)
@@ -104,11 +125,54 @@ class FunctionRegistryTrie:
             bucket.append(variant)
         return variant
 
+    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool:
+        """Let `kind` share `natural_qn` if its holder is in the other space.
+
+        TypeScript lets `type input<T>` and `function input` coexist, and Zod
+        v4 relies on it. They are two entities, not two definitions of one:
+        suffixing the second `@line` made every call fan out as `overload`
+        over a Type, and the fan-outs that do not check kinds sent CALLS rows
+        at it (issue #2520). The graph's uniqueness is per label, so both keep
+        the natural name. The value keeps the entry, since calls and
+        instantiations resolve through it; the type is held beside it. A
+        value arriving second takes the entry over, which is what lets
+        `class Box` keep its name after an earlier `interface Box`.
+
+        False, changing nothing, for a free name, a name both spaces already
+        hold, or a holder in the same space (a genuine duplicate).
+        """
+        held = self._entries.get(natural_qn)
+        if held is None or natural_qn in self._type_twins:
+            return False
+        incoming_is_type = kind in TYPE_SPACE_KINDS
+        if incoming_is_type == (held in TYPE_SPACE_KINDS):
+            return False
+        self._type_twins[natural_qn] = kind if incoming_is_type else held
+        return True
+
+    def type_kind(self, qualified_name: QualifiedName) -> NodeType | None:
+        """The kind a TYPE position binds `qualified_name` to.
+
+        The type-space twin when a value shares the name (issue #2520),
+        otherwise the registered kind, as `get` gives it.
+        """
+        twin = self._type_twins.get(qualified_name)
+        return twin if twin is not None else self._entries.get(qualified_name)
+
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])
 
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         qualified_name = sys.intern(qualified_name)
+        held = self._entries.get(qualified_name)
+        if (
+            held is not None
+            and held != func_type
+            and self._type_twins.get(qualified_name) == func_type
+        ):
+            # The type-space twin registering under the value's name: the
+            # value keeps the entry, and the trie already holds the name.
+            return
         self._entries[qualified_name] = func_type
 
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -149,6 +213,7 @@ class FunctionRegistryTrie:
 
         del self._entries[qualified_name]
         self._duplicates.pop(qualified_name, None)
+        self._type_twins.pop(qualified_name, None)
         # The line this variant claimed is free again, so the next definition
         # written there takes the plain `@line` rather than inheriting a column
         # from something the graph no longer holds. Without this the name a

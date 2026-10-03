@@ -36,6 +36,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
@@ -90,6 +91,11 @@ _ALL_ENTRY = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
 # defensive, not load-bearing -- do not read the suite's greenness as evidence
 # that it works.
 _MAX_IMPORT_LINES = 200
+
+# The labels of TypeScript's type-only declarations, which may share their
+# qualified name with a value (issue #2520).
+_TYPE_SPACE_LABELS = frozenset(str(kind) for kind in TYPE_SPACE_KINDS)
+_TS_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
 
 
 class RenameSite(NamedTuple):
@@ -426,6 +432,7 @@ class Renamer:
         params = {
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
+            cs.KEY_LABEL: definition["label"],
         }
         # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
         # rows too: a site in a project whose name extends this one must not
@@ -648,6 +655,75 @@ class Renamer:
                     pending.append(row["module"])
         return out
 
+    def _refuse_twin_bound_imports(self, report: RenameReport) -> None:
+        """Refuse when an import the rename rewrites also binds a type.
+
+        A TS `type input` and `function input` share one name (issue #2520),
+        and `import { input }` binds both. Rewriting it to the function's new
+        name leaves the file's `input<number>` annotation unbound, while
+        keeping the old name beside it would need an import the rewriter
+        does not write; the rename refuses instead.
+        """
+        bound = [
+            site
+            for member in report.hierarchy
+            for site in self._twin_bound_imports(member, report.old_name)
+        ]
+        if bound:
+            raise RenameRefused(
+                cs.RENAME_TWIN_BOUND_IMPORT.format(
+                    qn=report.qualified_name,
+                    name=report.old_name,
+                    paths=", ".join(sorted({site.path for site in bound})),
+                ),
+                bound,
+                list(report.unlocatable),
+            )
+
+    def _twin_bound_imports(self, qn: str, old_name: str) -> list[RenameSite]:
+        """The imports of `qn` in TS files that also use its type-space twin."""
+        typed = [
+            RenameSite(
+                "import",
+                site.path,
+                site.line,
+                site.col,
+                module,
+                cs.EdgeResolution.EXACT,
+            )
+            for site, module in self._import_sites(qn, old_name)
+            if get_language_for_extension(Path(site.path).suffix) in _TS_LANGUAGES
+        ]
+        if not typed:
+            return []
+        label = graph_query.definition(self.fetch_all, self.project, qn, None)["label"]
+        if label is None or label in _TYPE_SPACE_LABELS:
+            return []
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        paths: set[str] = set()
+        for twin_label in _TYPE_SPACE_LABELS:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: qn,
+                cs.KEY_LABEL: twin_label,
+            }
+            for query in (cq.CYPHER_GRAPH_TYPE_EDGES, cq.CYPHER_GRAPH_REFERENCES):
+                paths.update(
+                    path
+                    for row in self.fetch_all(query, params)
+                    if owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+                    and isinstance(path := row.get(cs.KEY_PATH), str)
+                )
+        # `implements X` names only the type side, and that edge is not one of
+        # the label-scoped reads above.
+        paths.update(
+            row["path"]
+            for row in graph_query.implementors(self.fetch_all, self.project, qn)
+            if row["relationship"] == cs.RelationshipType.IMPLEMENTS
+            and row["path"] is not None
+        )
+        return [site for site in typed if site.path in paths]
+
     def _doc_mentions(self, old_name: str) -> list[str]:
         pattern = re.compile(_IDENTIFIER_RE % re.escape(old_name))
         found: list[str] = []
@@ -777,6 +853,8 @@ class Renamer:
     ) -> tuple[EditTransaction, dict[str, object], list[str]]:
         """Patch every site into a transaction; nothing touches the tree."""
         old_name = report.old_name
+        # Beside the import rewrite it guards, before anything is patched.
+        self._refuse_twin_bound_imports(report)
         patcher = Patcher(self.repo_root)
         done: set[tuple[str, int, int]] = set()
         for site in report.sites:

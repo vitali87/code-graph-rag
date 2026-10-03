@@ -687,7 +687,7 @@ class ClassIngestMixin:
         # collected here or a registered interface's method is wrongly rooted.
         dart_implements: dict[str, list[str]] = {}
         for entry in deferred:
-            child_type = self.function_registry.get(entry.child_qn)
+            child_type = self._deferred_child_label(entry)
             if child_type is None:
                 continue
             scoped = self._resolve_csharp_scoped_base(entry)
@@ -711,12 +711,26 @@ class ClassIngestMixin:
                 scoped is None and entry.written_ref is not None and not resolved[1]
             )
             self._emit_resolved_inherit(
-                entry, str(child_type), resolved, is_dart, dart_implements, heuristic
+                entry, child_type, resolved, is_dart, dart_implements, heuristic
             )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
         self._flag_rust_external_trait_overrides()
         return emitted
+
+    def _deferred_child_label(self, entry: DeferredInherit) -> str | None:
+        held = self.function_registry.get(entry.child_qn)
+        if held is None:
+            return None
+        # Where a TS type shares its name with a value (issue #2520) the
+        # registry holds the value's kind for both, so the label the child was
+        # declared with decides which of the two nodes the edge leaves.
+        if (
+            entry.child_label is not None
+            and self.function_registry.type_kind(entry.child_qn) != held
+        ):
+            return entry.child_label
+        return str(held)
 
     def _flag_rust_external_trait_overrides(self) -> None:
         # A method in an `impl <ExternalTrait> for Type` block is only ever
@@ -1210,10 +1224,13 @@ class ClassIngestMixin:
 
         class_qn, class_name, is_exported = identity
         class_start_line, class_start_col = _class_start_point(class_node, language)
-        class_qn = self.function_registry.register_unique_qn(
-            class_qn, class_start_line, class_start_col
-        )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
+        class_qn = self.function_registry.register_unique_qn(
+            class_qn,
+            class_start_line,
+            class_start_col,
+            kind=node_type if language in cs.JS_TS_LANGUAGES else None,
+        )
 
         modifiers, decorators = extract_modifiers_and_decorators(
             class_node, lang_queries
@@ -1599,7 +1616,7 @@ class ClassIngestMixin:
         # true interface, Class/Enum for a Dart type); external stays
         # EXTERNAL_MODULE.
         interface_label = external_label or rel.get_node_type_for_inheritance(
-            parent_qn, self.function_registry
+            parent_qn, self.function_registry, type_position=True
         )
         rel.create_implements_relationship(
             child_type,
