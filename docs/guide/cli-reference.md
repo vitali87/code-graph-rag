@@ -202,7 +202,10 @@ cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
 cgr language remove-language <language-name>
+cgr language cleanup-orphaned-modules
 ```
+
+`add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
 
 ## Makefile Commands
 
