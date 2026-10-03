@@ -86,6 +86,7 @@ from .utils.path_utils import (
     resolve_repo_path,
     unwritable_output_reason,
 )
+from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
@@ -1351,6 +1352,15 @@ def optimize(
         )
 
 
+def _mcp_server_notice(message: str) -> None:
+    # On the stdio transport stdout IS the JSON-RPC stream: a diagnostic
+    # there reaches the client as a malformed message and hides the cause
+    # (issue #2518). stderr is where the server's logs already go. Hosts
+    # capture it to a log, not a terminal, so the message is not hard-wrapped
+    # there: a long repository path stays whole on one line.
+    terminal_aware_console(stderr=True).print(message)
+
+
 @app.command(
     name=ch.CLICommandName.MCP_SERVER,
     help=ch.CMD_MCP_SERVER,
@@ -1382,20 +1392,23 @@ def mcp_server(
 
             asyncio.run(serve_stdio(workspace=workspace))
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        _mcp_server_notice(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
-        )
-        _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
-    except GraphUnavailableError:
-        # The app's group prints it and exits 1: a server that never
-        # started must not look like a clean exit to its launcher.
-        raise
+        _mcp_server_notice(style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED))
+        if not settings.QUIET:
+            _mcp_server_notice(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        raise typer.Exit(1) from e
+    except GraphUnavailableError as e:
+        # Its message names the fix, so it is printed as is, as the app's
+        # group prints it for every other command (#2443); but to stderr,
+        # since stdout is the stdio transport's protocol stream (#2518).
+        _mcp_server_notice(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
     except Exception as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)
-        )
+        _mcp_server_notice(style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED))
+        # Non-zero, so a host or supervisor can tell a server that never
+        # came up from a clean shutdown (issue #2518).
+        raise typer.Exit(1) from e
 
 
 @app.command(
@@ -2044,9 +2057,35 @@ def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
         label=str(row.get(cs.KEY_LABEL, "")),
         name=str(row.get(cs.KEY_NAME, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
+        path=str(row.get(cs.KEY_PATH) or ""),
         start_line=int(start) if isinstance(start, int | float) else 0,
         end_line=int(end) if isinstance(end, int | float) else 0,
     )
+
+
+def _width_set_by_user() -> bool:
+    # Rich reads $COLUMNS only when it is a number, so only that counts.
+    return os.environ.get(cs.ENV_COLUMNS, "").isdigit()
+
+
+def _print_report_table(console: Console, table: Table) -> None:
+    """Print a report table at its content's width when no screen shows it.
+
+    A file or pipe has no width to fit, yet Rich lays the table out at
+    $COLUMNS or 80 columns there and cuts every long name with an ellipsis,
+    so a CI report's rows read alike and depended on who ran it (issue
+    #2561). A terminal keeps its own width, and a $COLUMNS the user set still
+    wins. The stream's own isatty decides, not Rich's is_terminal: a forced
+    terminal or FORCE_COLOR chooses styling, not whether a screen clips lines.
+    The table is sized in place.
+    """
+    if console.file.isatty() or _width_set_by_user():
+        console.print(table)
+        return
+    unbounded = console.options.update_width(sys.maxsize)
+    table.width = console.measure(table, options=unbounded).maximum
+    # Wider than the console on purpose, so it must not be cropped back to it.
+    console.print(table, crop=False)
 
 
 def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> Table:
@@ -2059,12 +2098,22 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
         header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
     )
     table.add_column(cs.CLI_DEADCODE_COL_KIND, style=cs.Color.MAGENTA)
-    table.add_column(cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN)
+    # Folded, not ellipsised: a qualified name has no space to wrap at, so a
+    # narrow terminal cut every row back to the same package prefix and never
+    # named the method (issue #2561).
+    table.add_column(
+        cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN, overflow="fold"
+    )
+    # Lines mean nothing without the file they are in (issue #2561).
+    table.add_column(cs.CLI_DEADCODE_COL_PATH, style=cs.Color.YELLOW, overflow="fold")
     table.add_column(cs.CLI_DEADCODE_COL_LINES, style=cs.Color.YELLOW, justify="right")
+    # A str cell is parsed as markup, and a route directory such as
+    # `app/[slug]/` reads as a tag in both the path and the qn derived from it.
     for row in candidates:
         table.add_row(
             row["label"],
-            row["qualified_name"],
+            Text(row["qualified_name"]),
+            Text(row["path"]),
             cs.CLI_DEADCODE_LINE_RANGE.format(
                 start=row["start_line"], end=row["end_line"]
             ),
@@ -2105,7 +2154,7 @@ def _emit_dead_code(
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
             file_console = Console(file=fh)
-            file_console.print(table)
+            _print_report_table(file_console, table)
             if notice:
                 file_console.print(notice)
         app_context.console.print(
@@ -2121,7 +2170,7 @@ def _emit_dead_code(
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
     else:
-        app_context.console.print(table)
+        _print_report_table(app_context.console, table)
         app_context.console.print(
             style(cs.CLI_DEADCODE_SUMMARY.format(count=len(candidates)), cs.Color.GREEN)
         )
@@ -2415,7 +2464,7 @@ def _write_duplicates_file(
 ) -> None:
     with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
         file_console = Console(file=fh)
-        file_console.print(table)
+        _print_report_table(file_console, table)
         for notice in notices:
             file_console.print(notice)
     _print_duplicates_written(group_count, output)
@@ -2455,7 +2504,7 @@ def _emit_duplicates(
         if not all_skipped:
             app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
     else:
-        app_context.console.print(table)
+        _print_report_table(app_context.console, table)
         members = sum(len(group["members"]) for group in groups)
         app_context.console.print(
             style(

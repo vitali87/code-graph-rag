@@ -105,6 +105,8 @@ cgr daemon up
 
 ## LLM Provider Options
 
+Only `query_code_graph` needs the Cypher model (and `ask_agent` the orchestrator model). The server starts without one: indexing and the deterministic tools run fixed graph queries and work with no LLM configured or reachable. The Cypher model is set up on the first `query_code_graph` call; until its provider answers, that call returns an `error` naming the problem, and a provider started later is picked up without restarting the server. A hosted provider configured without its API key is still reported at start-up.
+
 === "OpenAI"
 
     ```bash

@@ -257,6 +257,7 @@ CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS = (
 CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
 CLI_DEADCODE_COL_KIND = "Kind"
 CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
+CLI_DEADCODE_COL_PATH = "Path"
 CLI_DEADCODE_COL_LINES = "Lines"
 CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
@@ -333,6 +334,9 @@ EDITOR_DIFF_COMMANDS: dict[str, str] = {
     "windsurf": "windsurf --diff {left} {right}",
 }
 ENV_TERM_PROGRAM = "TERM_PROGRAM"
+# Rich's width override. The one width a user sets on purpose, so a report
+# table written to a file or pipe still honours it (issue #2561).
+ENV_COLUMNS = "COLUMNS"
 TERM_PROGRAM_VSCODE = "vscode"
 ENV_CF_BUNDLE_ID = "__CFBundleIdentifier"
 # Substring of the hosting app's macOS bundle identifier -> editor name.
