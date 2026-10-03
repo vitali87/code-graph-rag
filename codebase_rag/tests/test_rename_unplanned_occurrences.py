@@ -2225,3 +2225,82 @@ def test_free_commonjs_names_still_make_the_file_a_module(
 
     assert report.applied, report.message
     assert report.unplanned == ()
+
+
+# --- review of PR #2797, eighth round ---------------------------------------
+
+# A free `require('fs')` beside a `require` declared where it cannot reach.
+UNREACHING_REQUIRES = {
+    "sibling-block": (
+        "const fs = require('fs');\n\nif (fs) {\n  const require = null;\n}\n"
+    ),
+    "other-function": (
+        "const fs = require('fs');\n\n"
+        "function other() {\n  const require = null;\n  return require;\n}\n"
+    ),
+    "parameter-elsewhere": (
+        "function load(require) {\n  return require('x');\n}\n\n"
+        "const fs = require('fs');\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("code", sorted(UNREACHING_REQUIRES))
+def test_a_require_declared_elsewhere_leaves_the_free_call_commonjs(
+    tmp_path: Path, code: str
+) -> None:
+    # Review of PR #2797: `const require` in a block, or a function's own
+    # `require`, binds only there; the top-level `require('fs')` is Node's,
+    # so the file is a module and no other file reaches its `helper` bare.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    lib = UNREACHING_REQUIRES[code] + "\n" + CLASSIC["web/lib.js"]
+    store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
+
+    report = rename(
+        root,
+        _missing(store, "web/page.js"),
+        PROJECT,
+        f"{PROJECT}.web.lib.helper",
+        "assist",
+        allow_heuristic=True,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "web/page.js").read_text() == CLASSIC["web/page.js"]
+
+
+# A `require` every call of which a declaration around it shadows.
+SHADOWED_REQUIRES = {
+    "same-block": "if (true) {\n  const require = (x) => x;\n  require('x');\n}\n",
+    "top-level-const": "const require = (x) => x;\n\nrequire('x');\n",
+    "enclosing-function": (
+        "function load() {\n  const require = (x) => x;\n"
+        "  return () => require('x');\n}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("code", sorted(SHADOWED_REQUIRES))
+def test_a_require_shadowed_around_the_call_leaves_the_script_classic(
+    tmp_path: Path, code: str
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    lib = CLASSIC["web/lib.js"] + "\n" + SHADOWED_REQUIRES[code]
+    store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "web/page.js"),
+            PROJECT,
+            f"{PROJECT}.web.lib.helper",
+            "assist",
+            allow_heuristic=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "web/page.js", 2, 9, "receiver_unknown")]

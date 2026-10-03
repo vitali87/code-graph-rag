@@ -169,6 +169,20 @@ RENAME_REBINDING_MARKERS = ("assignment", "for", "declaration", "range")
 RENAME_REBINDING_FIELDS = frozenset({FIELD_LEFT, FIELD_PATTERN})
 # The assignment among them: a JS name it targets is not declared by it.
 RENAME_ASSIGNMENT_MARKER = "assignment"
+# Where a JS `const`, `let`, class, function name or catch binding holds:
+# the block around it. A `var` holds in its whole function.
+RENAME_JS_BLOCKS = frozenset(
+    {
+        "statement_block",
+        "program",
+        "for_statement",
+        "for_in_statement",
+        "catch_clause",
+        "switch_body",
+    }
+)
+RENAME_JS_FUNCTION_SCOPED = "variable_declaration"
+RENAME_JS_CLASS_BODY = "class_body"
 RENAME_PARAMETER_MARKER = "parameter"
 RENAME_AS_TARGET = "as_pattern_target"
 # A name that labels an argument or a key instead of naming a value.

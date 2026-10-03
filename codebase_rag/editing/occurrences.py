@@ -294,7 +294,8 @@ def _is_commonjs(root: Node, source: bytes) -> bool:
     declared = [
         (_text(token), span)
         for token in tokens
-        if _declares_name(token) and (span := _binding_span(token, len(source)))
+        if _declares_name(token)
+        and (span := _js_declaration_span(token, len(source))) is not None
     ]
     return any(
         _commonjs_use(token)
@@ -304,6 +305,28 @@ def _is_commonjs(root: Node, source: bytes) -> bool:
         )
         for token in tokens
     )
+
+
+def _js_declaration_span(token: Node, size: int) -> tuple[int, int] | None:
+    """The byte span a JS declaration binds its name in: a `var` or a
+    parameter in its function, a `const`, `let`, class or function name, or
+    a catch binding in the block around it (`if (x) { const require = 1 }`
+    reaches no call outside its braces). None for a class member, which a
+    bare name in a method never sees."""
+    child, node = token, token.parent
+    while node is not None:
+        if node.type == cs.RENAME_JS_CLASS_BODY:
+            return None
+        if node.type in cs.RENAME_JS_BLOCKS:
+            return node.start_byte, node.end_byte
+        if (
+            node.type == cs.RENAME_JS_FUNCTION_SCOPED
+            or cs.RENAME_PARAMETER_MARKER in node.type
+            or _field(node, child) == cs.FIELD_PARAMETER
+        ):
+            return _binding_span(token, size)
+        child, node = node, node.parent
+    return 0, size
 
 
 def _declares_name(token: Node) -> bool:
