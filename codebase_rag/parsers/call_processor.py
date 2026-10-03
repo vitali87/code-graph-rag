@@ -31,6 +31,12 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
+from .cpp.function_values import (
+    CFileScope,
+    c_file_scope,
+    c_function_value_identifiers,
+    local_enumerator_names,
+)
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
 from .dart import utils as dart_utils
@@ -908,6 +914,12 @@ def _split_call_arguments(args_node: Node) -> tuple[list[Node], dict[str, Node]]
     return positional, keyword
 
 
+_PY_UNPACKING_FLAGS = {
+    cs.TS_PY_LIST_SPLAT: cs.KEY_STAR_ARGS,
+    cs.TS_PY_DICTIONARY_SPLAT: cs.KEY_STAR_KWARGS,
+}
+
+
 def call_site_properties(node: Node) -> PropertyDict:
     """Edge-site properties for the expression that produced an edge (#1522).
 
@@ -916,12 +928,25 @@ def call_site_properties(node: Node) -> PropertyDict:
     it passes, so a consumer can check arity at the site without re-parsing.
     A reference site (a bare function value, an attribute read) has no
     argument list and carries the span alone.
+
+    A Python `*rest` or `**opts` passes an unknown number of arguments, so
+    it is flagged instead of counted. Counted as one positional, it made
+    `send(req, **opts)` pass two positionals to `def send(request,
+    **kwargs)`, a `too_many` that failed `cgr check` on code that runs
+    (issue #2635). The split itself keeps the unpacking in `positional`:
+    the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
     args_node = _find_call_arguments_node(node)
     if args_node is not None:
         positional, keyword = _split_call_arguments(args_node)
-        props[cs.KEY_ARG_COUNT] = len(positional) + len(keyword)
+        written = 0
+        for argument in positional:
+            if (flag := _PY_UNPACKING_FLAGS.get(argument.type)) is not None:
+                props[flag] = True
+            else:
+                written += 1
+        props[cs.KEY_ARG_COUNT] = written + len(keyword)
         props[cs.KEY_KWARG_NAMES] = list(keyword)
     return props
 
@@ -1518,6 +1543,8 @@ class CallProcessor:
         "_js_symbol_assignments",
         "js_symbol_member_types",
         "_js_proto_evidence_cache",
+        "_c_file_scopes",
+        "_c_include_closures",
     )
 
     def __init__(
@@ -1584,6 +1611,12 @@ class CallProcessor:
         self._js_symbol_assignments: list[tuple[str, str, str]] = []
         self.js_symbol_member_types: dict[str, set[str]] = {}
         self._js_proto_evidence_cache: dict[tuple[str, str | None], bool] = {}
+        # What each C/C++ source declares at file scope, read when a bare
+        # function name in C resolves outside its own file (issue #2529).
+        self._c_file_scopes: dict[str, CFileScope] = {}
+        # The repo headers each C/C++ file includes, directly or through
+        # another header (#2593 review).
+        self._c_include_closures: dict[str, frozenset[str]] = {}
 
         # The import processor owns the record (#1568); every pass notes
         # through it so the empty-name guard lives in one place.
@@ -1878,7 +1911,7 @@ class CallProcessor:
         if registered := self._path_to_module_qn.get(file_path):
             return registered
         file_name = file_path.name
-        if file_name in (cs.INIT_PY, cs.MOD_RS):
+        if file_name in (*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS):
             return cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.parent.parts)
             )
@@ -2109,6 +2142,8 @@ class CallProcessor:
         self._package_index = {}
         self._package_index_size = -1
         self._path_to_module_qn = None
+        self._c_file_scopes = {}
+        self._c_include_closures = {}
 
     def process_calls_in_file(
         self,
@@ -2297,6 +2332,16 @@ class CallProcessor:
             )
         if language == cs.SupportedLanguage.GO:
             self._ingest_go_module_references(root_node, module_qn, language, queries)
+        if language == cs.SupportedLanguage.C:
+            # A file-scope ops table or hook struct (`static hooks_t h = {
+            # my_alloc, my_free };`) is wired when the program loads, often in
+            # a file that makes no call at all.
+            self._ingest_c_function_value_references(
+                root_node,
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                module_qn,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
         if language in _JS_TS_LANGUAGES:
             # A module-scope JSX element (export default <App />) can sit
             # in a file with no call expressions; scan before the early
@@ -2654,19 +2699,8 @@ class CallProcessor:
         # The caller name a function node's body calls are attributed under;
         # None means the node gets no caller pass and is skipped.
         if language in _C_FAMILY_LANGUAGES:
-            # A macro-invocation artifact the ingest pass declined to
-            # register (no class bears its name) must not become a call
-            # target either; mirror ingest's decision via the recorded
-            # locations so the two passes never diverge.
-            if (
-                language == cs.SupportedLanguage.CPP
-                and cpp_utils.is_macro_invocation_artifact(func_node)
-                and self._recorded_caller(func_node, module_qn) is None
-            ):
-                return None
-            func_name = cpp_utils.extract_function_name(func_node)
-        else:
-            func_name = self._get_node_name(func_node)
+            return self._c_family_caller_func_name(func_node, language, module_qn)
+        func_name = self._get_node_name(func_node)
         if not func_name and language in _JS_TS_LANGUAGES:
             func_name = self._js_ts_arrow_binding_name(func_node)
         if (
@@ -2700,6 +2734,27 @@ class CallProcessor:
                 return None
             func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return func_name
+
+    def _c_family_caller_func_name(
+        self, func_node: Node, language: cs.SupportedLanguage, module_qn: str
+    ) -> str | None:
+        # A macro-invocation artifact the ingest pass declined to register
+        # (no class bears its name) must not become a call target either;
+        # mirror ingest's decision via the recorded locations so the two
+        # passes never diverge.
+        if (
+            language == cs.SupportedLanguage.CPP
+            and cpp_utils.is_macro_invocation_artifact(func_node)
+            and self._recorded_caller(func_node, module_qn) is None
+        ):
+            return None
+        func_name = cpp_utils.extract_function_name(func_node)
+        # The definition pass names a macro-split C definition from its
+        # `type` field (issue #2528); without the same name here its body is
+        # skipped and every call in it is lost.
+        if not func_name and language == cs.SupportedLanguage.C:
+            func_name = cpp_utils.c_macro_split_function_name(func_node)
+        return func_name or None
 
     @staticmethod
     def _lua_caller_func_name(func_node: Node) -> str | None:
@@ -4191,6 +4246,13 @@ class CallProcessor:
                 module_qn,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
+        if language == cs.SupportedLanguage.C and caller_type != cs.NodeLabel.MODULE:
+            self._ingest_c_function_value_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
         if language == cs.SupportedLanguage.CPP:
             self._ingest_cpp_braced_return_instantiations(
                 caller_node, caller_spec, caller_qn, module_qn
@@ -4297,6 +4359,9 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
+            self._ingest_java_method_reference(ctx, call_node)
+            return
         call_name = self._scan_call_name(ctx, call_node)
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
@@ -5122,7 +5187,10 @@ class CallProcessor:
                     )
 
     def _redirect_construction(
-        self, ctx: _CallScanContext, callee_qn: str
+        self,
+        ctx: _CallScanContext,
+        callee_qn: str,
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> tuple[str, str] | None:
         class_variants = self._resolver.function_registry.variants(callee_qn)
         self._resolution = (
@@ -5153,7 +5221,8 @@ class CallProcessor:
             # A Java/C#/C++/Dart constructor is a method named like its
             # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
             # runs one, so redirect a CALLS edge to every declared
-            # constructor (overload selection unneeded for reachability).
+            # constructor (overload selection unneeded for reachability);
+            # a Java `Foo::new` runs none yet and passes REFERENCES.
             # C#, C++, and Dart default constructors use the same
             # class-simple-name convention, so java_constructor_targets
             # selects them too (a Dart NAMED constructor is invoked by its
@@ -5161,7 +5230,7 @@ class CallProcessor:
             # redirects to the destructor: the object's `~X` runs at end of
             # lifetime with no call node of its own. sorted(): the target
             # label is a hash-randomized StrEnum, so sort for determinism.
-            self._emit_declared_ctor_calls(ctx, callee_qn, class_variants)
+            self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
@@ -5177,7 +5246,11 @@ class CallProcessor:
         return (cs.NodeLabel.METHOD, init_qn)
 
     def _emit_declared_ctor_calls(
-        self, ctx: _CallScanContext, callee_qn: str, class_variants: list[str]
+        self,
+        ctx: _CallScanContext,
+        callee_qn: str,
+        class_variants: list[str],
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
         if ctx.language == cs.SupportedLanguage.CPP:
             self._emit_cpp_ctor_calls(ctx.caller_spec, callee_qn)
@@ -5208,8 +5281,79 @@ class CallProcessor:
         for ctor_type, variant in ctor_edges:
             ctx.ensure_rel(
                 ctx.caller_spec,
-                cs.RelationshipType.CALLS,
+                ctor_rel,
                 (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
+            )
+
+    def _ingest_java_method_reference(
+        self, ctx: _CallScanContext, ref_node: Node
+    ) -> None:
+        # `Type::m`, `expr::m`, `this::m`, `super::m` hand a method over as a
+        # value and nothing runs at this site, so the edge is REFERENCES: what
+        # a C# method group and a callback argument get in every other
+        # language, which keeps the method reachable without asserting a
+        # call the graph cannot see (issue #2546).
+        if (parts := java_utils.method_reference_parts(ref_node)) is None:
+            return
+        if parts.method_name is None:
+            self._ingest_java_constructor_reference(ctx, ref_node, parts.receiver)
+            return
+        engine = self._resolver.type_inference.java_type_inference
+        targets = engine.java_method_reference_targets(
+            parts.receiver, parts.method_name, ctx.local_var_types, ctx.module_qn
+        )
+        registry = self._resolver.function_registry
+        edges = [
+            (label, variant)
+            for target_type, target_qn in targets
+            for variant in registry.variants(target_qn)
+            if (label := registry.get(variant) or target_type)
+            in (NodeType.FUNCTION, NodeType.METHOD)
+        ]
+        if not edges:
+            # Java sees same-package definitions without an import, so the
+            # name is the only link to a file that may define it later.
+            self._note_unresolved(ctx.module_qn, parts.method_name)
+            return
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for label, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.REFERENCES,
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    def _ingest_java_constructor_reference(
+        self, ctx: _CallScanContext, ref_node: Node, receiver: Node
+    ) -> None:
+        # `Type::new` is a factory for Type: the type is resolved and
+        # INSTANTIATES'd exactly as `new Type(...)` is, and its constructors are
+        # referenced rather than called, since none runs here. The functional
+        # interface that would pick one is not visible to the parser, so each
+        # declared constructor is referenced, labelled `overload` when there
+        # are several. An array type (`int[]::new`) constructs no class.
+        if not (type_name := java_utils.method_reference_receiver_text(receiver)):
+            return
+        callee = ctx.resolve_func(
+            type_name,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            call_point=ref_node.start_byte,
+            constructing=True,
+        )
+        if callee is None:
+            self._note_unresolved(ctx.module_qn, written_simple_name(type_name))
+            return
+        if self._resolver.function_registry.get(callee[1]) == NodeType.CLASS:
+            self._redirect_construction(
+                ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
             )
 
     def _emit_resolved_callee_targets(
@@ -6106,6 +6250,124 @@ class CallProcessor:
                 scope.resolve_func,
                 scope.ensure_rel,
             )
+
+    @_site_scoped
+    def _ingest_c_function_value_references(
+        self,
+        scope_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        boundary_types: frozenset[str],
+    ) -> None:
+        # C's callbacks, vtables and ops tables store a function in a pointer
+        # and call it through the pointer, a call the graph never sees (issue
+        # #2529). The site that stores it references it instead, as Go's func
+        # maps and C#/Dart's passed method groups do, so the REFERENCES edge
+        # keeps it reachable for dead-code and the call graph.
+        for ident in c_function_value_identifiers(scope_node, boundary_types):
+            name = safe_decode_text(ident)
+            if not name:
+                continue
+            targets, resolution = self._c_function_value_targets(name, module_qn)
+            # A parameter, local or local enumeration constant of that name
+            # hides the function.
+            if (
+                not targets
+                or name in cpp_utils.cpp_enclosing_function_value_names(ident)
+                or name in local_enumerator_names(ident)
+            ):
+                continue
+            self._site_node = ident
+            self._resolution = resolution
+            for target_qn in targets:
+                self._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _c_function_value_targets(
+        self, name: str, module_qn: str
+    ) -> tuple[list[str], str]:
+        registry = self._resolver.function_registry
+        # The file's own definition is what the name denotes, static or not.
+        own_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        if registry.get(own_qn) == NodeType.FUNCTION:
+            variants = registry.variants(own_qn)
+            return variants, (
+                cs.EdgeResolution.OVERLOAD
+                if len(variants) > 1
+                else cs.EdgeResolution.EXACT
+            )
+        # A variable or enumeration constant this file or a header it
+        # includes declares is what the name denotes (#2593 review).
+        if any(
+            name in self._c_file_scope(visible).objects
+            for visible in (module_qn, *self._c_include_closure(module_qn))
+        ):
+            return [], cs.EdgeResolution.EXACT
+        # Otherwise it is an extern declaration the linker binds by name to a
+        # definition with external linkage, which no file's `static` has.
+        targets = [
+            variant
+            for qn in registry.find_ending_with(name)
+            if registry.get(qn) == NodeType.FUNCTION
+            and self._c_links_externally(qn, name, module_qn)
+            for variant in registry.variants(qn)
+        ]
+        return targets, cs.EdgeResolution.HEURISTIC
+
+    def _c_links_externally(self, qn: str, name: str, referrer_qn: str) -> bool:
+        module_qn = qn[: -len(name) - 1]
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        # A namespace or class member, or a definition in another language.
+        if file_path is None or not file_path.name.endswith(
+            cs.C_EXTENSIONS + cs.CPP_EXTENSIONS
+        ):
+            return False
+        internal = name in self._c_file_scope(module_qn).tu_local_functions
+        if file_path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
+            return not internal
+        # A header's `static inline` is compiled into the files including it
+        # and no other (#2593 review); a plain definition there links
+        # externally like a source file's.
+        return not internal or module_qn in self._c_include_closure(referrer_qn)
+
+    def _c_include_closure(self, module_qn: str) -> frozenset[str]:
+        if (cached := self._c_include_closures.get(module_qn)) is not None:
+            return cached
+        imports = self._resolver.import_processor
+        import_mapping = imports.import_mapping
+        # A header a later include displaced from its local name is still
+        # included, so its `static inline`s compile into this file too.
+        displaced = imports.displaced_include_targets()
+        reached: set[str] = set()
+        pending = [module_qn]
+        while pending:
+            current = pending.pop()
+            for target in (
+                *(import_mapping.get(current) or {}).values(),
+                *displaced.get(current, ()),
+            ):
+                if target not in reached and target in self.module_qn_to_file_path:
+                    reached.add(target)
+                    pending.append(target)
+        reached.discard(module_qn)
+        closure = frozenset(reached)
+        self._c_include_closures[module_qn] = closure
+        return closure
+
+    def _c_file_scope(self, module_qn: str) -> CFileScope:
+        if (cached := self._c_file_scopes.get(module_qn)) is not None:
+            return cached
+        scope = CFileScope(frozenset(), frozenset())
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is not None and (
+            entry := self._resolver.type_inference.ast_cache.load(file_path)
+        ):
+            scope = c_file_scope(entry[0])
+        self._c_file_scopes[module_qn] = scope
+        return scope
 
     @_site_scoped
     def _ingest_cpp_braced_return_instantiations(
