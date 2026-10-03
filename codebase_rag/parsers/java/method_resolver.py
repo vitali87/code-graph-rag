@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -9,7 +9,13 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_guard, recursion_guard
-from ...types_defs import ASTNode, JavaOverloadRank, JavaSupertypes, NodeType
+from ...types_defs import (
+    ASTNode,
+    JavaCandidateLookups,
+    JavaOverloadRank,
+    JavaSupertypes,
+    NodeType,
+)
 from ..utils import module_qn_for_entity, safe_decode_text
 from .utils import (
     extract_class_info,
@@ -37,10 +43,6 @@ _JAVA_FULLY_DECLARED_TYPES = frozenset(
     {cs.TS_CLASS_DECLARATION, cs.TS_INTERFACE_DECLARATION}
 )
 _NO_SUPERTYPES = JavaSupertypes({}, frozenset())
-
-# A candidate's type variables by its qualified name; read from its
-# declaration only when a parameter would otherwise rule the candidate out.
-type TypeVariablesOf = Callable[[str], frozenset[str]]
 
 
 def _java_signature_arity(qn_or_member: str) -> int | None:
@@ -160,7 +162,7 @@ def _overload_rank(
     qn: str,
     arg_types: tuple[str | None, ...],
     supertypes: Sequence[JavaSupertypes] = (),
-    type_variables_of: TypeVariablesOf | None = None,
+    lookups: JavaCandidateLookups | None = None,
 ) -> JavaOverloadRank | None:
     # How well a candidate fits the KNOWN argument types, or None when some
     # argument provably cannot reach its parameter. Unknown args (None) are
@@ -168,25 +170,37 @@ def _overload_rank(
     # overload win, so take(Integer) beats take(Object) for an int argument,
     # the way the language resolves it. `supertypes[i]` is what argument i
     # widens to. A parameter typed by one of the candidate's type variables
-    # takes any reference argument, and a primitive boxed, within a bound
-    # this does not read: it is unproven, never ruled out.
+    # takes what a reference type can stand for, within a bound this does not
+    # read: it is unproven, never ruled out. A parameter whose simple name
+    # matches the argument's but names another type (`java.awt.List` for a
+    # `java.util.List`) is no exact match; it may still be a supertype.
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
         return None
     type_variables: frozenset[str] | None = None
+    declared: tuple[str | None, ...] | None = None
     unproven = conversions = distance = 0
     for index, (at, pt) in enumerate(zip(arg_types, params, strict=True)):
         if at is None:
             continue
         known = supertypes[index] if index < len(supertypes) else _NO_SUPERTYPES
-        if (rank := _argument_rank(_simple_type_name(at), pt, known)) is None:
+        arg_type = _simple_type_name(at)
+        if (rank := _argument_rank(arg_type, pt, known)) is None:
             if type_variables is None:
-                type_variables = (
-                    type_variables_of(qn) if type_variables_of else frozenset()
-                )
-            if _element_type_text(pt) not in type_variables:
+                type_variables = lookups.type_variables(qn) if lookups else frozenset()
+            if _element_type_text(
+                pt
+            ) not in type_variables or not _type_variable_accepts(arg_type, pt):
                 return None
             rank = cs.JAVA_RANK_UNPROVEN, 0
+        elif rank[0] == cs.JAVA_RANK_EXACT and known.qualified and lookups:
+            if declared is None:
+                declared = lookups.parameter_types(qn)
+            if index < len(declared) and declared[index] not in (
+                None,
+                known.qualified,
+            ):
+                rank = cs.JAVA_RANK_UNPROVEN, 0
         conversion, depth = rank
         if conversion == cs.JAVA_RANK_UNPROVEN:
             unproven += 1
@@ -194,6 +208,28 @@ def _overload_rank(
             conversions += conversion
             distance += depth
     return JavaOverloadRank(unproven, conversions, distance)
+
+
+def _type_variable_accepts(arg_type: str, param_type: str) -> bool:
+    # A type variable stands for a reference type: `T` takes any argument, a
+    # primitive boxed; `T[]` takes a `String[]` or an `int[][]` (T = int[]),
+    # never an `int[]` or a `String`; `T...` also takes one element.
+    if param_type.endswith(cs.JAVA_VARARGS_SUFFIX):
+        element = param_type.removesuffix(cs.JAVA_VARARGS_SUFFIX)
+        return _type_variable_accepts(
+            arg_type, f"{element}{cs.JAVA_ARRAY_SUFFIX}"
+        ) or _type_variable_accepts(arg_type, element)
+    if not (param_dims := _array_dimensions(param_type)):
+        return True
+    arg_dims = _array_dimensions(arg_type)
+    if arg_dims != param_dims:
+        return arg_dims > param_dims
+    return _element_type_text(arg_type) not in cs.JAVA_BOXED_TYPES
+
+
+def _array_dimensions(type_text: str) -> int:
+    text = _erase_type_arguments(type_text)
+    return text.count(cs.JAVA_ARRAY_SUFFIX) + text.endswith(cs.JAVA_VARARGS_SUFFIX)
 
 
 def _argument_rank(
@@ -278,14 +314,14 @@ def _ranked(
     matches: Sequence[tuple[str, str]],
     arg_types: tuple[str | None, ...],
     supertypes: Sequence[JavaSupertypes] = (),
-    type_variables_of: TypeVariablesOf | None = None,
+    lookups: JavaCandidateLookups | None = None,
 ) -> list[tuple[JavaOverloadRank, tuple[str, str]]]:
     # The candidates that can take the argument types, with how well they
     # fit, in declaration order.
     return [
         (rank, match)
         for match in matches
-        if (rank := _overload_rank(match[1], arg_types, supertypes, type_variables_of))
+        if (rank := _overload_rank(match[1], arg_types, supertypes, lookups))
         is not None
     ]
 
@@ -294,11 +330,11 @@ def _ranked_best(
     matches: Sequence[tuple[str, str]],
     arg_types: tuple[str | None, ...],
     supertypes: Sequence[JavaSupertypes] = (),
-    type_variables_of: TypeVariablesOf | None = None,
+    lookups: JavaCandidateLookups | None = None,
 ) -> list[tuple[str, str]]:
     # The candidates the argument types rank best, in declaration order;
     # empty when no candidate can take them.
-    ranked = _ranked(matches, arg_types, supertypes, type_variables_of)
+    ranked = _ranked(matches, arg_types, supertypes, lookups)
     if not ranked:
         return []
     best = min(rank for rank, _ in ranked)
@@ -310,7 +346,7 @@ def _best_overloads(
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
     supertypes: Sequence[JavaSupertypes] = (),
-    type_variables_of: TypeVariablesOf | None = None,
+    lookups: JavaCandidateLookups | None = None,
 ) -> list[tuple[str, str]]:
     # The same-name candidates nothing tells apart from the best one, in
     # declaration order: prefer an argument-TYPE match (resolves same-arity
@@ -318,7 +354,7 @@ def _best_overloads(
     # then the first. A type match implies an arity match, so it is the most
     # specific. More than one left means declaration order alone would choose.
     if len(matches) > 1 and any(at is not None for at in arg_types):
-        if best := _ranked_best(matches, arg_types, supertypes, type_variables_of):
+        if best := _ranked_best(matches, arg_types, supertypes, lookups):
             return best
     if len(matches) > 1 and arg_count is not None:
         if same_arity := [
@@ -333,13 +369,13 @@ def _overload_contenders(
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
     supertypes: Sequence[JavaSupertypes] = (),
-    type_variables_of: TypeVariablesOf | None = None,
+    lookups: JavaCandidateLookups | None = None,
 ) -> list[tuple[str, str]]:
     # The best candidates plus every one an unproven conversion could make
     # javac prefer to them, in declaration order. More than one means the
     # pick rests on what the argument types cannot show.
     if len(matches) > 1 and any(at is not None for at in arg_types):
-        if ranked := _ranked(matches, arg_types, supertypes, type_variables_of):
+        if ranked := _ranked(matches, arg_types, supertypes, lookups):
             best = min(rank for rank, _ in ranked)
             return [
                 match
@@ -392,12 +428,10 @@ def _pick_overload(
     matches: Sequence[tuple[str, str]],
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
-    type_variables_of: TypeVariablesOf | None = None,
+    lookups: JavaCandidateLookups | None = None,
 ) -> tuple[str, str] | None:
     # Ties keep declaration order, so the choice stays deterministic.
-    best = _best_overloads(
-        matches, arg_count, arg_types, type_variables_of=type_variables_of
-    )
+    best = _best_overloads(matches, arg_count, arg_types, lookups=lookups)
     return best[0] if best else None
 
 
@@ -699,7 +733,7 @@ class JavaMethodResolverMixin:
             )
             and _callable_visible_to_caller(entity_type, qn, caller_qn)
         ]
-        return _pick_overload(matches, arg_count, arg_types, self._java_type_variables)
+        return _pick_overload(matches, arg_count, arg_types, self._candidate_lookups)
 
     def _resolve_unqualified_java_call(
         self,
@@ -750,8 +784,13 @@ class JavaMethodResolverMixin:
     ) -> tuple[str, str] | None:
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
+        # The family needs the receiver's registered class, which a
+        # package-private type in a sibling file only has through the package.
         if method_result := self._pick_from_overload_family(
-            resolved_type, method_name, module_qn, arg_types
+            self._java_type_ref(object_type, module_qn),
+            method_name,
+            module_qn,
+            arg_types,
         ):
             return method_result
 
@@ -801,7 +840,7 @@ class JavaMethodResolverMixin:
             self._methods_named(class_qn, method_name),
             arg_count,
             arg_types,
-            self._java_type_variables,
+            self._candidate_lookups,
         )
 
     def _methods_named(self, class_qn: str, method_name: str) -> list[tuple[str, str]]:
@@ -899,7 +938,7 @@ class JavaMethodResolverMixin:
             family,
             arg_types,
             self._argument_supertypes(family, arg_types, module_qn),
-            self._java_type_variables,
+            self._candidate_lookups,
         )
         if not best:
             return None
@@ -938,11 +977,17 @@ class JavaMethodResolverMixin:
             arg_count,
             arg_types,
             self._argument_supertypes(family, arg_types, module_qn),
-            self._java_type_variables,
+            self._candidate_lookups,
         )
-        if len(tied) < 2 or all(qn != method_qn for _, qn in tied):
-            return []
-        return tied
+        if all(qn != method_qn for _, qn in tied):
+            if _java_signature_arity(method_qn) != arg_count or all(
+                at is None for at in arg_types
+            ):
+                return []
+            # A lookup blind to some argument type bound an overload the types
+            # rank below another: neither is certain.
+            tied = [entry for entry in family if entry[1] == method_qn] + tied
+        return tied if len(tied) > 1 else []
 
     def _argument_supertypes(
         self,
@@ -962,23 +1007,65 @@ class JavaMethodResolverMixin:
                 continue
             simple = _simple_type_name(arg_type)
             element = _element_type_text(simple)
-            others = frozenset(
-                _element_type_text(p[index])
-                for p in params
-                if len(p) == len(arg_types)
-                and p[index] not in (simple, cs.JAVA_TYPE_OBJECT_NAME)
-            )
             if (
-                not others
-                or cs.JAVA_BOXED_TYPES.get(element, element)
+                cs.JAVA_BOXED_TYPES.get(element, element)
                 in cs.JAVA_REFERENCE_SUPERTYPES
             ):
                 supertypes.append(_NO_SUPERTYPES)
                 continue
-            supertypes.append(
-                self._java_supertypes(_element_type_text(arg_type), module_qn, others)
+            at_index = [p[index] for p in params if len(p) == len(arg_types)]
+            qualified = (
+                self._qualified_type(arg_type, module_qn)
+                if simple in at_index
+                else None
             )
+            others = frozenset(
+                _element_type_text(p)
+                for p in at_index
+                if p not in (simple, cs.JAVA_TYPE_OBJECT_NAME)
+            )
+            walked = (
+                self._java_supertypes(_element_type_text(arg_type), module_qn, others)
+                if others
+                else _NO_SUPERTYPES
+            )
+            supertypes.append(walked._replace(qualified=qualified))
         return tuple(supertypes)
+
+    @property
+    def _candidate_lookups(self) -> JavaCandidateLookups:
+        return JavaCandidateLookups(
+            self._java_type_variables, self._qualified_parameter_types
+        )
+
+    def _qualified_parameter_types(self, method_qn: str) -> tuple[str | None, ...]:
+        class_qn = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(
+            cs.SEPARATOR_DOT
+        )[0]
+        if not (
+            module_qn := module_qn_for_entity(class_qn, self.module_qn_to_file_path)
+        ):
+            return ()
+        return tuple(
+            self._qualified_type(text, module_qn)
+            for text in _java_param_type_texts(method_qn)
+        )
+
+    def _qualified_type(self, type_text: str, module_qn: str) -> str | None:
+        # The type a name denotes, when that is certain: a registered project
+        # type, or a JDK type by its full name. A dotted name the lookups do
+        # not place (`Map.Entry`, a project type spelled out) stays unknown.
+        element = _element_type_text(type_text)
+        ref = (
+            element
+            if cs.SEPARATOR_DOT in element
+            else self._java_type_ref(element, module_qn)
+        )
+        if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES or ref.startswith(
+            cs.JAVA_STDLIB_PREFIXES
+        ):
+            return ref
+        return None
 
     def _java_supertypes(
         self, type_name: str, module_qn: str, parameters: frozenset[str]
@@ -1019,11 +1106,11 @@ class JavaMethodResolverMixin:
         return JavaSupertypes(depths, frozenset())
 
     def _is_jdk_type(self, type_ref: str) -> bool:
-        # Resolved through an import or written qualified, and no project type
-        # carries the name: a bare name may be a type variable or a type of
-        # this package the lookup missed.
+        # Named in full in a JDK package, and no project type carries the
+        # name: a JDK class never extends a type this project declares, while
+        # another type from outside the index may (a plugin built against it).
         return (
-            cs.SEPARATOR_DOT in type_ref
+            type_ref.startswith(cs.JAVA_STDLIB_PREFIXES)
             and self.function_registry.get(type_ref) not in _JAVA_TYPE_NODE_TYPES
             and not self._names_project_type(_simple_type_name(type_ref))
         )

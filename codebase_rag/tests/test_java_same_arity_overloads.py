@@ -342,6 +342,78 @@ public class Varargs {
 }
 """
 
+# Greptile on #2800: the same pair written with imports, and a single
+# same-named overload beside Object, where javac takes Object.
+IMP_BASE = """package com.acme;
+
+import java.util.List;
+
+public class ImpBase {
+  public String m(List<String> l) { return "util"; }
+}
+"""
+
+IMP_CHILD = """package com.acme;
+
+import java.awt.List;
+
+public class ImpChild extends ImpBase {
+  public String m(List l) { return "awt"; }
+}
+"""
+
+IMP_USER = """package com.acme;
+
+import java.util.List;
+
+public class ImpUser {
+  String viaChild(ImpChild c, List<String> l) { return c.m(l); }
+}
+"""
+
+ONE_AWT = """package com.acme;
+
+public class OneAwt {
+  static String m(java.awt.List l) { return "awt"; }
+  static String m(Object o) { return "object"; }
+
+  static String viaUtil(java.util.List<String> l) { return m(l); }
+}
+"""
+
+# Greptile on #2800: a class outside the index (org.vendor) may implement
+# an interface the project declares, unlike a JDK class.
+PLUGIN = """package com.acme;
+
+public interface Plugin {}
+"""
+
+PLUGINS = """package com.acme;
+
+import org.vendor.VendorPlugin;
+
+public class Plugins {
+  static String handle(Plugin p) { return "plugin"; }
+  static String handle(Object o) { return "object"; }
+
+  static String viaVendor(VendorPlugin p) { return handle(p); }
+}
+"""
+
+# Greptile on #2800: a type variable stands for a reference type, so `T[]`
+# takes no `int[]`, while `int[][]` is a `T[]` with T = int[].
+GENERIC_ARRAYS = """package com.acme;
+
+public class GenericArrays {
+  static <T> String f(T[] a) { return "t"; }
+  static String f(Object o) { return "o"; }
+
+  static String viaInts(int[] xs) { return f(xs); }
+  static String viaIntegers(Integer[] xs) { return f(xs); }
+  static String viaIntGrid(int[][] xs) { return f(xs); }
+}
+"""
+
 FILES = {
     "Names.java": NAMES,
     "Ext.java": EXT,
@@ -362,6 +434,13 @@ FILES = {
     "ArrayCast.java": ARRAY_CAST,
     "ListBase.java": LIST_BASE,
     "ListChild.java": LIST_CHILD,
+    "ImpBase.java": IMP_BASE,
+    "ImpChild.java": IMP_CHILD,
+    "ImpUser.java": IMP_USER,
+    "OneAwt.java": ONE_AWT,
+    "Plugin.java": PLUGIN,
+    "Plugins.java": PLUGINS,
+    "GenericArrays.java": GENERIC_ARRAYS,
 }
 
 ACME = f"{PROJECT}.com.acme"
@@ -529,20 +608,15 @@ def test_array_argument_selects_the_varargs_overload(
     }
 
 
-def test_same_class_overloads_sharing_a_simple_name_both_stay_candidates(
+def test_same_class_overloads_sharing_a_simple_name_are_told_apart(
     calls: dict[str, dict[str, str]],
 ) -> None:
-    # Both parameters read `TypeVariable` once the package is dropped; neither
-    # overload overrides the other, so neither may be dropped from the choice.
+    # Both parameters read `TypeVariable` once the package is dropped; the
+    # package the argument's type names decides, as javac's does.
     assert _callees(
         calls, "Twins.Twins.viaReflect(java.lang.reflect.TypeVariable<?>)"
     ) == {
-        "Twins.Twins.of(javax.lang.model.type.TypeVariable,int)": (
-            cs.EdgeResolution.OVERLOAD
-        ),
-        "Twins.Twins.of(java.lang.reflect.TypeVariable<?>,int)": (
-            cs.EdgeResolution.OVERLOAD
-        ),
+        "Twins.Twins.of(java.lang.reflect.TypeVariable<?>,int)": cs.EdgeResolution.EXACT
     }
 
 
@@ -619,11 +693,64 @@ def test_generic_array_cast_keeps_its_array_type(
 def test_same_simple_name_parameter_in_a_subclass_is_no_override(
     calls: dict[str, dict[str, str]],
 ) -> None:
-    # java.awt.List is not java.util.List, so ListBase.m is inherited, not
-    # overridden; with simple names alone the two cannot be told apart.
+    # java.awt.List is not java.util.List: ListBase.m is inherited, not
+    # overridden, and it is the one a java.util.List argument fits.
     assert _callees(calls, "ListChild.ListChild.viaUtil(java.util.List<String>)") == {
-        "ListBase.ListBase.m(java.util.List<String>)": cs.EdgeResolution.OVERLOAD,
-        "ListChild.ListChild.m(java.awt.List)": cs.EdgeResolution.OVERLOAD,
+        "ListBase.ListBase.m(java.util.List<String>)": cs.EdgeResolution.EXACT
+    }
+
+
+def test_same_simple_name_parameter_through_imports_is_told_apart(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "ImpUser.ImpUser.viaChild(ImpChild,List<String>)") == {
+        "ImpBase.ImpBase.m(List<String>)": cs.EdgeResolution.EXACT
+    }
+
+
+def test_same_simple_name_of_another_type_is_no_exact_match(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # javac takes m(Object); a java.util.List is no java.awt.List, though
+    # nothing indexed proves it.
+    callees = _callees(calls, "OneAwt.OneAwt.viaUtil(java.util.List<String>)")
+    assert callees.get("OneAwt.OneAwt.m(Object)") is not None
+    assert cs.EdgeResolution.EXACT not in callees.values()
+
+
+def test_class_outside_the_index_may_implement_a_project_interface(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    # javac picks handle(Plugin): VendorPlugin implements it. Only a JDK
+    # class is known never to.
+    assert _callees(calls, "Plugins.Plugins.viaVendor(VendorPlugin)") == {
+        "Plugins.Plugins.handle(Plugin)": cs.EdgeResolution.OVERLOAD,
+        "Plugins.Plugins.handle(Object)": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+def test_primitive_array_never_fits_a_type_variable_array(
+    calls: dict[str, dict[str, str]],
+) -> None:
+    assert _callees(calls, "GenericArrays.GenericArrays.viaInts(int[])") == {
+        "GenericArrays.GenericArrays.f(Object)": cs.EdgeResolution.EXACT
+    }
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "GenericArrays.GenericArrays.viaIntegers(Integer[])",
+        "GenericArrays.GenericArrays.viaIntGrid(int[][])",
+    ],
+)
+def test_reference_array_still_fits_a_type_variable_array(
+    calls: dict[str, dict[str, str]], caller: str
+) -> None:
+    # javac picks f(T[]) for both: T is Integer, or int[].
+    assert _callees(calls, caller) == {
+        "GenericArrays.GenericArrays.f(T[])": cs.EdgeResolution.OVERLOAD,
+        "GenericArrays.GenericArrays.f(Object)": cs.EdgeResolution.OVERLOAD,
     }
 
 

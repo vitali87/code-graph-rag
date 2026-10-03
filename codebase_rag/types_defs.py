@@ -361,6 +361,18 @@ class JavaSupertypes(NamedTuple):
 
     depths: Mapping[str, int]
     unreachable: frozenset[str]
+    # The argument's type as the caller's file resolves it, when a candidate
+    # parameter shares its simple name and that name may denote another type.
+    qualified: str | None = None
+
+
+class JavaCandidateLookups(NamedTuple):
+    """What ranking reads from a Java overload's declaration, only when a
+    parameter calls for it: the type variables it may name, and the types its
+    parameters name as its own file resolves them (None where unsure)."""
+
+    type_variables: Callable[[str], frozenset[str]]
+    parameter_types: Callable[[str], tuple[str | None, ...]]
 
 
 class JavaMethodInfo(TypedDict):
