@@ -928,42 +928,49 @@ class JsTypeInferenceEngine:
         stack: list[ASTNode] = list(callable_node.children)
         while stack:
             node = stack.pop()
-            node_type = node.type
-            names: list[str] = []
-            span: tuple[int, int] | None = None
-            if node_type in _JS_HOISTED_DECLARATIONS:
-                if declared := self._js_declared_name(node):
-                    names = [declared]
-                    span = self._js_function_declaration_span(
-                        node, callable_node, strict
-                    )
-            elif node_type in _JS_BLOCK_SCOPED_DECLARATIONS:
-                if declared := self._js_declared_name(node):
-                    names = [declared]
-                    span = self._js_scope_span(node, callable_node)
-            elif node_type == cs.TS_VARIABLE_DECLARATOR:
-                if (target := node.child_by_field_name(cs.FIELD_NAME)) is not None:
-                    names = self._js_binding_names(target)
-                    span = self._js_declarator_span(node, callable_node)
-            elif node_type == cs.TS_JS_FOR_IN_STATEMENT:
-                if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
-                    names = self._js_binding_names(left)
-                    span = self._js_loop_span(node, callable_node)
-            elif node_type == cs.TS_JS_CATCH_CLAUSE:
-                param = node.child_by_field_name(cs.FIELD_PARAMETER)
-                if param is not None:
-                    names = self._js_binding_names(param)
-                    span = (node.start_byte, node.end_byte)
+            names, span = self._js_node_bindings(node, callable_node, strict)
             if span is not None:
                 for name in names:
                     index.setdefault(name, []).append(span)
             # Nested callables and classes own what they declare inside.
             if (
-                node_type not in _JS_NESTED_CALLABLE_TYPES
-                and node_type not in _JS_CLASS_NODE_TYPES
+                node.type not in _JS_NESTED_CALLABLE_TYPES
+                and node.type not in _JS_CLASS_NODE_TYPES
             ):
                 stack.extend(node.children)
         return index
+
+    def _js_node_bindings(
+        self, node: ASTNode, callable_node: ASTNode, strict: bool
+    ) -> tuple[list[str], tuple[int, int] | None]:
+        # The names one node declares and the byte span they are visible in;
+        # the node types tested below are disjoint.
+        node_type = node.type
+        if node_type in _JS_HOISTED_DECLARATIONS and (
+            declared := self._js_declared_name(node)
+        ):
+            return [declared], self._js_function_declaration_span(
+                node, callable_node, strict
+            )
+        if node_type in _JS_BLOCK_SCOPED_DECLARATIONS and (
+            declared := self._js_declared_name(node)
+        ):
+            return [declared], self._js_scope_span(node, callable_node)
+        if node_type == cs.TS_VARIABLE_DECLARATOR and (
+            (target := node.child_by_field_name(cs.FIELD_NAME)) is not None
+        ):
+            return self._js_binding_names(target), self._js_declarator_span(
+                node, callable_node
+            )
+        if node_type == cs.TS_JS_FOR_IN_STATEMENT and (
+            (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None
+        ):
+            return self._js_binding_names(left), self._js_loop_span(node, callable_node)
+        if node_type == cs.TS_JS_CATCH_CLAUSE and (
+            (param := node.child_by_field_name(cs.FIELD_PARAMETER)) is not None
+        ):
+            return self._js_binding_names(param), (node.start_byte, node.end_byte)
+        return [], None
 
     def _js_function_declaration_span(
         self, node: ASTNode, callable_node: ASTNode, strict: bool
