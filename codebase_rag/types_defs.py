@@ -742,6 +742,21 @@ class FunctionLocation(NamedTuple):
     is_named: bool = True
 
 
+class CppParameterType(NamedTuple):
+    """A C++ parameter's bare type name and its pointer/array depth."""
+
+    type_name: str | None
+    indirection: int
+
+
+class CppOperatorSignature(NamedTuple):
+    """What overload viability reads from a free C++ operator's declaration."""
+
+    module_qn: str
+    parameters: tuple[CppParameterType, ...]
+    template_params: frozenset[str]
+
+
 # The source `dict.update` reads as a mapping: anything with keys() and
 # indexing, which is wider than Mapping.
 class KeysAndGetItem[KT, VT](Protocol):
