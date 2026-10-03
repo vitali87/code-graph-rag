@@ -114,7 +114,8 @@ class TestUnparsedFilesAreNamed:
         assert message.startswith("3 file(s) ")
         assert "kotlin: 1" in message
         assert "ruby: 2" in message
-        assert "code-graph-rag[" in message and "ast-grep]" in message
+        assert "code-graph-rag[" in message
+        assert "ast-grep]" in message
 
     def test_repo_without_tier_files_gets_no_ast_grep_message(
         self,
@@ -143,7 +144,8 @@ class TestUnparsedFilesAreNamed:
 
         [message] = _ast_grep_mentions(warnings)
         assert message.startswith("2 file(s) ")
-        assert "ruby: 1" in message and "kotlin: 1" in message
+        assert "ruby: 1" in message
+        assert "kotlin: 1" in message
 
     def test_files_no_tier_would_parse_are_not_counted(
         self, tmp_path: Path, without_ast_grep: None, warnings: list[str]
@@ -276,10 +278,14 @@ class TestUnchangedBehaviour:
     def test_fingerprint_is_stable_while_ast_grep_availability_is(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        assert compute_parser_fingerprint() == compute_parser_fingerprint()
+        first = compute_parser_fingerprint()
+        second = compute_parser_fingerprint()
+        assert first == second
         with monkeypatch.context() as missing:
             missing.setitem(sys.modules, "ast_grep_py", None)
-            assert compute_parser_fingerprint() == compute_parser_fingerprint()
+            without_first = compute_parser_fingerprint()
+            without_second = compute_parser_fingerprint()
+            assert without_first == without_second
 
     def test_a_missing_extra_still_settles_into_the_in_sync_fast_path(
         self, tmp_path: Path, without_ast_grep: None
