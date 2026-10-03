@@ -423,3 +423,114 @@ def test_name_the_barrel_does_not_re_export_stays_external(tmp_path: Path) -> No
     assert {e for e in edges if e[1] == "user.Missing"} == {
         (_CLASS, "user.Missing", _IMPLEMENTS, _EXTERNAL, "r.Router")
     }, sorted(edges)
+
+
+# `export * from './router'` binds no name of its own (CodeRabbit review of
+# #2560): the member is whichever star source declares it, through any number
+# of star hops, and only when exactly one source does.
+STAR_INDEX_TS = """\
+export * from './router'
+"""
+
+STAR_USER_TS = """\
+import * as r from '../index'
+export class StarGeneric<T> implements r.Router<T> { add(p: string, h: T): void {} }
+export interface StarChild extends r.Plain { more(): void }
+export class StarBase extends r.Base { go(): void {} }
+"""
+
+
+@pytest.mark.parametrize(
+    ("index_files", "label"),
+    [
+        ({"src/index.ts": STAR_INDEX_TS}, "one-hop"),
+        (
+            {
+                "src/index.ts": "export * from './api'\n",
+                "src/api.ts": "export * from './router'\n",
+            },
+            "two-hop",
+        ),
+    ],
+    ids=["one-hop", "two-hop"],
+)
+def test_namespace_member_of_a_star_barrel_binds_its_declaration(
+    tmp_path: Path, index_files: dict[str, str], label: str
+) -> None:
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "src/router.ts": ROUTER_TS,
+                "src/impl/user.ts": STAR_USER_TS,
+                **index_files,
+            },
+        )
+    )
+    user = {(f, r, tl, to) for _fl, f, r, tl, to in edges if f.startswith("src.impl.")}
+    assert user == {
+        ("src.impl.user.StarGeneric", _IMPLEMENTS, _INTERFACE, "src.router.Router"),
+        ("src.impl.user.StarChild", _INHERITS, _INTERFACE, "src.router.Plain"),
+        ("src.impl.user.StarBase", _INHERITS, _CLASS, "src.router.Base"),
+    }, (label, sorted(edges))
+
+
+STAR_MISS_USER_TS = """\
+import * as r from './index'
+export class Missing<T> implements r.Router<T> { add(p: string, h: T): void {} }
+"""
+
+
+def test_name_no_star_source_declares_stays_external(tmp_path: Path) -> None:
+    # `index` star-exports `other`, which has no `Router`; `router.ts` does,
+    # but `index` never exports it, so nothing first-party is named.
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "router.ts": ROUTER_TS,
+                "other.ts": DECOY_TS,
+                "index.ts": "export * from './other'\n",
+                "user.ts": STAR_MISS_USER_TS,
+            },
+        )
+    )
+    assert {e for e in edges if e[1] == "user.Missing"} == {
+        (_CLASS, "user.Missing", _IMPLEMENTS, _EXTERNAL, "r.Router")
+    }, sorted(edges)
+
+
+def test_name_two_star_sources_declare_is_not_guessed(tmp_path: Path) -> None:
+    # Both star sources declare `Router` (TypeScript exports neither), so no
+    # first-party edge is chosen between them.
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "a.ts": ROUTER_TS,
+                "b.ts": ROUTER_TS,
+                "index.ts": "export * from './a'\nexport * from './b'\n",
+                "user.ts": STAR_MISS_USER_TS,
+            },
+        )
+    )
+    assert {e for e in edges if e[1] == "user.Missing"} == {
+        (_CLASS, "user.Missing", _IMPLEMENTS, _EXTERNAL, "r.Router")
+    }, sorted(edges)
+
+
+def test_explicit_re_export_outranks_a_star_source(tmp_path: Path) -> None:
+    edges = _heritage(
+        _write(
+            tmp_path,
+            {
+                "a.ts": ROUTER_TS,
+                "b.ts": ROUTER_TS,
+                "index.ts": "export * from './a'\nexport { Router } from './b'\n",
+                "user.ts": STAR_MISS_USER_TS,
+            },
+        )
+    )
+    assert {e for e in edges if e[1] == "user.Missing"} == {
+        (_CLASS, "user.Missing", _IMPLEMENTS, _INTERFACE, "b.Router")
+    }, sorted(edges)

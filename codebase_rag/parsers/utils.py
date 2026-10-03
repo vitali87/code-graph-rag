@@ -53,7 +53,15 @@ def follow_reexports(
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    seen: set[str] = set()
+    return _follow_reexports(qn, import_mapping, function_registry, set())
+
+
+def _follow_reexports(
+    qn: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    seen: set[str],
+) -> str:
     current = qn
     while (
         current
@@ -64,10 +72,44 @@ def follow_reexports(
         seen.add(current)
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
         following = import_mapping.get(module_qn, {}).get(name)
+        if not following:
+            following = _star_reexport_target(
+                module_qn, name, import_mapping, function_registry, seen
+            )
         if not following or following == current:
             break
         current = following
     return current
+
+
+def _star_reexport_target(
+    module_qn: str,
+    name: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    seen: set[str],
+) -> str | None:
+    # A star re-export (`export * from './router'`, `from .mod import *`)
+    # binds no name of its own, so a barrel's member is whichever star source
+    # declares it, possibly through further stars. Only a source that reaches
+    # a registered definition counts; two that reach different ones are
+    # ambiguous (TypeScript exports neither), so nothing is guessed. `seen` is
+    # shared so a cycle of stars ends.
+    reached = {
+        target
+        for key, source in import_mapping.get(module_qn, {}).items()
+        if key.startswith(cs.GLOB_ALL)
+        and (
+            target := _follow_reexports(
+                f"{source}{cs.SEPARATOR_DOT}{name}",
+                import_mapping,
+                function_registry,
+                seen,
+            )
+        )
+        in function_registry
+    }
+    return reached.pop() if len(reached) == 1 else None
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
