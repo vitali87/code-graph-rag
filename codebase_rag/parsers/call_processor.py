@@ -2654,19 +2654,8 @@ class CallProcessor:
         # The caller name a function node's body calls are attributed under;
         # None means the node gets no caller pass and is skipped.
         if language in _C_FAMILY_LANGUAGES:
-            # A macro-invocation artifact the ingest pass declined to
-            # register (no class bears its name) must not become a call
-            # target either; mirror ingest's decision via the recorded
-            # locations so the two passes never diverge.
-            if (
-                language == cs.SupportedLanguage.CPP
-                and cpp_utils.is_macro_invocation_artifact(func_node)
-                and self._recorded_caller(func_node, module_qn) is None
-            ):
-                return None
-            func_name = cpp_utils.extract_function_name(func_node)
-        else:
-            func_name = self._get_node_name(func_node)
+            return self._c_family_caller_func_name(func_node, language, module_qn)
+        func_name = self._get_node_name(func_node)
         if not func_name and language in _JS_TS_LANGUAGES:
             func_name = self._js_ts_arrow_binding_name(func_node)
         if (
@@ -2700,6 +2689,27 @@ class CallProcessor:
                 return None
             func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return func_name
+
+    def _c_family_caller_func_name(
+        self, func_node: Node, language: cs.SupportedLanguage, module_qn: str
+    ) -> str | None:
+        # A macro-invocation artifact the ingest pass declined to register
+        # (no class bears its name) must not become a call target either;
+        # mirror ingest's decision via the recorded locations so the two
+        # passes never diverge.
+        if (
+            language == cs.SupportedLanguage.CPP
+            and cpp_utils.is_macro_invocation_artifact(func_node)
+            and self._recorded_caller(func_node, module_qn) is None
+        ):
+            return None
+        func_name = cpp_utils.extract_function_name(func_node)
+        # The definition pass names a macro-split C definition from its
+        # `type` field (issue #2528); without the same name here its body is
+        # skipped and every call in it is lost.
+        if not func_name and language == cs.SupportedLanguage.C:
+            func_name = cpp_utils.c_macro_split_function_name(func_node)
+        return func_name or None
 
     @staticmethod
     def _lua_caller_func_name(func_node: Node) -> str | None:
