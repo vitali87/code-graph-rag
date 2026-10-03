@@ -205,6 +205,7 @@ def _binds_identifier(target: Node, name: str) -> bool:
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
+        "python_name_typed_params",
         "python_shadowed_imports",
         "python_local_names",
         "function_registry",
@@ -250,6 +251,9 @@ class CallResolver:
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
         self._py_rel_to_module: dict[str, str] = {}
+        # caller qn -> untyped parameters typed only by their name (#2608);
+        # filled alongside python_shadowed_imports.
+        self.python_name_typed_params: dict[str, frozenset[str]] = {}
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
@@ -500,7 +504,7 @@ class CallResolver:
         names a TYPE and the simple-name fallback must not offer a method or
         function that merely shares the name."""
         self.last_resolution = cs.EdgeResolution.EXACT
-        return self._reject_class_via_value_receiver(
+        result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
                     call_name,
@@ -518,6 +522,19 @@ class CallResolver:
             class_context,
             local_var_types,
             language,
+        )
+        if result is not None and self._receiver_typed_by_name(call_name, caller_qn):
+            # The receiver's class is only what its parameter's name spells
+            # (`payload` -> `Payload`): a guess, never an exact binding (#2608).
+            self.last_resolution = cs.EdgeResolution.HEURISTIC
+        return result
+
+    def _receiver_typed_by_name(self, call_name: str, caller_qn: str | None) -> bool:
+        if not caller_qn or cs.SEPARATOR_DOT not in call_name:
+            return False
+        guessed = self.python_name_typed_params.get(caller_qn)
+        return guessed is not None and (
+            call_name.split(cs.SEPARATOR_DOT, 1)[0] in guessed
         )
 
     def _is_python_local_name(self, call: _CallSite) -> bool:

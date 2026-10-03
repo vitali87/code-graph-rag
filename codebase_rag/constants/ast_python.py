@@ -268,9 +268,12 @@ PY_CLASS_REPOSITORY = "Repository"
 PY_MODELS_BASE_PATH = ".models.base."
 PY_METHOD_CREATE = "create"
 
-PY_SCORE_EXACT_MATCH = 100
-PY_SCORE_SUFFIX_MATCH = 90
-PY_SCORE_CONTAINS_BASE = 80
+# The bound receiver is the enclosing class, never what its name resembles:
+# `"self".endswith("f")` typed every `self` as an imported `F` (issue #2608).
+PY_RECEIVER_PARAM_NAMES: frozenset[str] = frozenset({PY_KEYWORD_SELF, PY_KEYWORD_CLS})
+# Shortest class name an untyped parameter's own name may type: `a` or `f` is
+# an ordinary variable far more often than an `A` or `F` (issue #2608).
+PY_PARAM_NAME_MIN_CLASS_LEN = 3
 
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
