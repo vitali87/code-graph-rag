@@ -31,6 +31,7 @@ from .resolution import (
     FrameResolver,
     JsFrameResolver,
     JvmFrameResolver,
+    PathRebase,
     PhpFrameResolver,
     ResolutionStats,
 )
@@ -179,15 +180,18 @@ def ingest_trace(
     callables_by_qn = {node.qualified_name: node for node in nodes}
     existing = _load_existing_calls(ingestor, project_prefix)
     resolver = _resolver_for(header, repo_root, nodes)
+    # A trace recorded in CI or a container names files under THAT machine's
+    # checkout, which its header records; they are this checkout's files.
+    rebase = PathRebase.from_recorded_root(repo_root, header.repo_root)
 
     summary = TraceIngestSummary()
     resolved_frames: dict[tuple[ResolvedFrame, ResolvedFrame], _EdgeStats] = {}
     for record in records:
         summary.records += 1
-        caller = resolver.resolve(record.caller, summary.resolution)
+        caller = resolver.resolve(rebase.apply(record.caller), summary.resolution)
         if caller is None:
             continue
-        callee = resolver.resolve(record.callee, summary.resolution)
+        callee = resolver.resolve(rebase.apply(record.callee), summary.resolution)
         if callee is None:
             continue
         edge = resolved_frames.setdefault((caller, callee), _EdgeStats())
