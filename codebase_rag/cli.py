@@ -833,6 +833,13 @@ def _delete_hash_cache(repo_path: Path) -> None:
     (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
 
 
+def _start_project_name(project_name: str | None, repo: Path) -> str:
+    # Stripped as `normalize_project_name` strips it, so the ownership check
+    # asks about the name the sync writes (review of PR 2499). A blank name
+    # falls back to the derived one, which carries a hash of the path.
+    return (project_name and project_name.strip()) or derive_project_name(repo)
+
+
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     resolved = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
     if not resolved.exists():
@@ -989,11 +996,7 @@ def start(
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
-    # Stripped as `GraphUpdater` strips it, so the ownership check asks about
-    # the name the sync writes (review of PR 2499).
-    resolved_project_name = (
-        project_name and project_name.strip()
-    ) or derive_project_name(resolved_repo)
+    resolved_project_name = _start_project_name(project_name, resolved_repo)
 
     if output and not update_graph:
         _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
