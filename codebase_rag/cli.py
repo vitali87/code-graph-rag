@@ -1411,7 +1411,10 @@ def mcp_server(
         _mcp_server_notice(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
         _mcp_server_notice(style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED))
-        if not settings.QUIET:
+        # Only a bad repository root is about TARGET_REPO_PATH. The HTTP bind
+        # refusal, an unknown workspace or a missing API key are ValueErrors
+        # too, and the hint sent the user to a variable that was set (#2881).
+        if isinstance(e, ex.RepoPathError) and not settings.QUIET:
             _mcp_server_notice(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
         raise typer.Exit(1) from e
     except Exception as e:

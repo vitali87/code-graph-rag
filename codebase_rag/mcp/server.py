@@ -14,6 +14,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
@@ -61,10 +62,10 @@ def get_project_root() -> Path:
     project_root = Path(repo_path).resolve()
 
     if not project_root.exists():
-        raise ValueError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
+        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
 
     if not project_root.is_dir():
-        raise ValueError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
 
     logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root

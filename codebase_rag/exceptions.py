@@ -181,6 +181,15 @@ class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
 
 
+class RepoPathError(ValueError):
+    """The repository root the MCP server was pointed at is missing or no directory.
+
+    A `ValueError` like every other configuration error, so existing handlers
+    still catch it. Its own type is what lets `cgr mcp-server` add the
+    `TARGET_REPO_PATH` hint to this error and no other (issue #2881).
+    """
+
+
 # Deriving from Exception would let every `except Exception` handler between
 # the embeddings pass and the top level swallow a Ctrl+C (python:S5709
 # accepted).
