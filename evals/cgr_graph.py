@@ -446,6 +446,7 @@ class _StatefulIngestor:
                     cs.KEY_TO_PATH: _result(to_path),
                     cs.KEY_RESOLUTION: _result(props.get(cs.KEY_RESOLUTION)),
                     cs.KEY_SPREAD_ARGS: _result(props.get(cs.KEY_SPREAD_ARGS)),
+                    cs.KEY_CALL_QUALIFIER: _result(props.get(cs.KEY_CALL_QUALIFIER)),
                     cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
                     cs.KEY_COL: _result(props.get(cs.KEY_COL)),
                     cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),

@@ -651,6 +651,11 @@ POSITIONAL_RECEIVER_THIS_PREFIX = "this "
 # or a tagged template. `arg_count` keeps what is written, so it proves no
 # fit or miss for such a site (issue #2517).
 KEY_SPREAD_ARGS = "spread_args"
+# Call-site name a Rust or C# call is written through, so a receiver can be
+# counted where the call passes it: `S` in `S::m(s, 1)`, `Util` in C#'s
+# `Util.Ext(s, 1)`, `s` in `s.Ext(1)`; "" through any other value (Rust's
+# `s.m(1)`, `"x".Ext(1)`); absent for a bare call (issue #2517).
+KEY_CALL_QUALIFIER = "call_qualifier"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
 # Rust file, stored on the DECLARING module's node (issue #1010). The
 # ungated counterpart lets a production target's declaration of the SAME

@@ -925,6 +925,8 @@ def call_site_properties(node: Node) -> PropertyDict:
         props[cs.KEY_KWARG_NAMES] = list(keyword)
         if _count_unknown(args_node, positional):
             props[cs.KEY_SPREAD_ARGS] = True
+        if (qualifier := _call_qualifier(node)) is not None:
+            props[cs.KEY_CALL_QUALIFIER] = qualifier
     return props
 
 
@@ -971,6 +973,55 @@ _SPREAD_ARGUMENTS = frozenset(
         cs.TS_PHP_VARIADIC_UNPACKING,
     }
 )
+
+
+def _call_qualifier(node: Node) -> str | None:
+    """What a Rust or C# call is written through, for receiver counting.
+
+    `S::m(s, 1)` passes the receiver that `s.m(1)` leaves implicit, and so
+    does C#'s `Util.Ext(s, 1)` against `s.Ext(1)` (issue #2517). A path or
+    a plain name records its last segment (`S`, `Self`, `Util`, `s`); a
+    Rust `.` call, whose left side is always a value, and a C# call through
+    any other expression record "". A bare call records nothing.
+    """
+    function = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None:
+        return None
+    if node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+        if function.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return None
+        return _last_name(function.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION))
+    if node.type != cs.TS_RS_CALL_EXPRESSION:
+        return None
+    if function.type == cs.TS_GENERIC_FUNCTION:
+        # `S::m::<u8>(s)`: the turbofish wraps the path.
+        function = function.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None:
+        return None
+    if function.type == cs.TS_SCOPED_IDENTIFIER:
+        path = function.child_by_field_name(cs.TS_RS_FIELD_PATH)
+        return (_last_name(path) or None) if path is not None else None
+    # C++ shares the node type; only Rust's carries a `value` field.
+    if (
+        function.type == cs.TS_RS_FIELD_EXPRESSION
+        and function.child_by_field_name(cs.FIELD_VALUE) is not None
+    ):
+        return ""
+    return None
+
+
+def _last_name(node: Node | None) -> str:
+    """The last segment of a plain or dotted name, "" for anything else."""
+    if node is None:
+        return ""
+    if node.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(node) or ""
+    if node.type in (cs.TS_SCOPED_IDENTIFIER, cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION):
+        return _last_name(node.child_by_field_name(cs.FIELD_NAME))
+    # Rust `<S as Trait>` and other non-name paths still name a type.
+    if node.type == cs.TS_RS_BRACKETED_TYPE:
+        return " ".join((safe_decode_text(node) or "").split())
+    return ""
 
 
 _RESOLVED_RELS = frozenset(

@@ -95,14 +95,17 @@ with the optionality the signature declares. `pad?` may be left out (a
 TypeScript `?`, any default value), `...rest` takes any number of trailing
 arguments (rest, variadic, C# `params`), and `self` (Rust) or `this s` (a C#
 extension method) is a receiver that a method call leaves implicit and a
-path call (`S::m(s, 1)`, `Util.Ext(s, 1)`) passes. A TypeScript `this:`
-parameter, Java's `C this` and Go's receiver field are never passed and are
-not listed. A change to the list is a signature change, and each site is
-judged by the number of arguments it passes:
+path call (`S::m(s, 1)`, `Util.Ext(s, 1)`) passes. The site's
+`call_qualifier` says which form it is written in, and the receiver counts
+among the arguments only where the call passes it; a site whose form cannot
+be read is judged both ways and keeps a verdict only when the two agree. A
+TypeScript `this:` parameter, Java's `C this` and Go's receiver field are
+never passed and are not listed. A change to the list is a signature
+change, and each site is judged by the number of arguments it passes:
 
 | Verdict            | When |
 |--------------------|------|
-| `ok`               | The count fits: every required parameter at least, every parameter (and the receiver) at most, any number past a rest parameter. A surplus is `ok` too where JavaScript is either end of the call or in PHP, both of which drop it at run time. |
+| `ok`               | The count fits: every required parameter at least, every parameter at most, any number past a rest parameter, the receiver counted where the call passes it. A surplus is `ok` too where JavaScript is either end of the call or in PHP, both of which drop it at run time. |
 | `too_few`          | Fewer arguments than the required parameters, where the language rejects the call: TypeScript, Go, Rust, PHP (`ArgumentCountError`), Java and C#. A finding: it trips `--fail-on-found` as `too_many` does. |
 | `too_many`         | More arguments than the parameters, where the language rejects the call: TypeScript, Go, Rust, Java and C#. A finding. |
 | `possibly_missing` | Fewer arguments than the required parameters where JavaScript is either end of the call: it passes `undefined`, and nothing type-checks a JavaScript caller. A hint. |

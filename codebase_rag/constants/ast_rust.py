@@ -89,6 +89,8 @@ TS_RS_MUTABLE_SPECIFIER = "mutable_specifier"
 # the C-variadic `...` a foreign declaration may end it with.
 TS_RS_PARAMETERS = "parameters"
 TS_RS_VARIADIC_PARAMETER = "variadic_parameter"
+# `<S as Trait>` in a qualified path call `<S as Trait>::m(&s)`.
+TS_RS_BRACKETED_TYPE = "bracketed_type"
 TS_RS_STRUCT_EXPRESSION = "struct_expression"
 TS_RS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_RS_FIELD_DECLARATION = "field_declaration"

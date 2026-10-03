@@ -34,7 +34,13 @@ from codebase_rag.parsers.call_processor import call_site_properties
 from codebase_rag.parsers.positional_params import declared_positional_params
 from codebase_rag.services.graph_diff import _SITE_PROPS
 from codebase_rag.structural_check import run_check
-from codebase_rag.structural_delta import StructuralDelta, has_findings
+from codebase_rag.structural_delta import (
+    CallSite,
+    Definition,
+    StructuralDelta,
+    _declared_arity_verdict,
+    has_findings,
+)
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "sigs"
@@ -477,6 +483,127 @@ def test_a_csharp_extension_call_does_not_pass_its_receiver(
     assert _verdicts(delta, ".Util.Ext(string, int)") == [cs.DELTA_ARITY_OK]
 
 
+RS_RECEIVER_LIB = (
+    "pub struct S;\n\nimpl S {\n"
+    "    pub fn m(&self, a: i32) -> i32 {\n        a\n    }\n}\n\n"
+    "pub fn run(s: &S) -> i32 {\n    {call}\n}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("call", "verdict"),
+    [
+        # Greptile's case on #2832: the receiver fills `self`, `1` fills `a`
+        # and nothing fills `b`; rustc rejects it.
+        pytest.param("S::m(s, 1)", cs.DELTA_ARITY_TOO_FEW, id="path-call-short"),
+        pytest.param("S::m(s, 1, 2)", cs.DELTA_ARITY_OK, id="path-call-full"),
+        pytest.param("s.m(1, 2)", cs.DELTA_ARITY_OK, id="method-call-full"),
+    ],
+)
+def test_a_rust_receiver_counts_where_the_call_passes_it(
+    temp_repo: Path, call: str, verdict: str
+) -> None:
+    """`m` gains a required `b`; each call form is judged by what it passes."""
+    lib = RS_RECEIVER_LIB.replace("{call}", call)
+    delta = _delta(
+        temp_repo,
+        {"Cargo.toml": RS_CARGO, "src/lib.rs": lib},
+        {"src/lib.rs": lib.replace("a: i32) -> i32", "a: i32, b: i32) -> i32")},
+    )
+
+    assert _verdicts(delta, ".S.m") == [verdict]
+    assert has_findings(delta) is (verdict == cs.DELTA_ARITY_TOO_FEW)
+
+
+CS_EXT_UTIL = (
+    "public static class Util {\n"
+    "    public static string Ext(this string s, int a, int b = 0) { return s; }\n"
+    "}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("call", "verdict"),
+    [
+        # Greptile's case on #2832: called through its class, the extension
+        # method takes the receiver as its first argument.
+        pytest.param("Util.Ext(s, 1)", cs.DELTA_ARITY_TOO_FEW, id="static-short"),
+        pytest.param("Util.Ext(s, 1, 2)", cs.DELTA_ARITY_OK, id="static-full"),
+        pytest.param("s.Ext(1, 2)", cs.DELTA_ARITY_OK, id="instance-full"),
+        # Through a literal the call binds by name alone: no definite claim.
+        pytest.param('"x".Ext(1)', cs.DELTA_ARITY_UNKNOWN, id="instance-heuristic"),
+    ],
+)
+def test_a_csharp_extension_receiver_counts_where_the_call_passes_it(
+    temp_repo: Path, call: str, verdict: str
+) -> None:
+    """Dropping `b`'s default keeps the qn `Ext(string, int, int)`."""
+    view = (
+        "public class View {\n"
+        f"    public string Show(string s) {{ return {call}; }}\n}}\n"
+    )
+    delta = _delta(
+        temp_repo,
+        {"Util.cs": CS_EXT_UTIL, "View.cs": view},
+        {"Util.cs": CS_EXT_UTIL.replace("int b = 0", "int b")},
+    )
+
+    assert _verdicts(delta, ".Util.Ext(string, int, int)") == [verdict]
+    assert has_findings(delta) is (verdict == cs.DELTA_ARITY_TOO_FEW)
+
+
+def _receiver_site(arg_count: int, qualifier: str | None) -> CallSite:
+    return CallSite(
+        caller="p.lib.run",
+        caller_path="src/lib.rs",
+        rel=cs.RelationshipType.CALLS.value,
+        resolution=cs.EdgeResolution.EXACT.value,
+        spread_args=False,
+        call_qualifier=qualifier,
+        callee="p.lib.S.m",
+        callee_path="src/lib.rs",
+        line=1,
+        col=0,
+        arg_count=arg_count,
+        kwarg_names=(),
+    )
+
+
+def _receiver_definition() -> Definition:
+    return Definition(
+        label=cs.NodeLabel.METHOD.value,
+        qualified_name="p.lib.S.m",
+        name="m",
+        path="src/lib.rs",
+        start_line=1,
+        end_line=2,
+        positional_params=("self", "a", "b"),
+        fingerprint="",
+        fingerprint_nodes=0,
+        branches=frozenset(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("arg_count", "verdict"),
+    [
+        # Two arguments fill `a, b` as a method call, `self, a` as a path
+        # call: the forms disagree, so nothing is claimed.
+        pytest.param(2, cs.DELTA_ARITY_UNKNOWN, id="forms-disagree"),
+        # Three overflow `a, b` and fill `self, a, b`: again no claim.
+        pytest.param(3, cs.DELTA_ARITY_UNKNOWN, id="forms-disagree-high"),
+        pytest.param(0, cs.DELTA_ARITY_TOO_FEW, id="short-either-way"),
+        pytest.param(4, cs.DELTA_ARITY_TOO_MANY, id="over-either-way"),
+    ],
+)
+def test_an_unreadable_call_form_keeps_only_a_verdict_both_forms_share(
+    arg_count: int, verdict: str
+) -> None:
+    site = _receiver_site(arg_count, None)
+
+    assert _declared_arity_verdict(site, _receiver_definition())[1] == verdict
+
+
 def test_a_python_signature_change_is_reported_as_before(temp_repo: Path) -> None:
     """Python keeps its rules: no defaults recorded, so fewer is a hint."""
     files = {
@@ -786,13 +913,99 @@ def _call_tree(language: cs.SupportedLanguage, source: str) -> Node:
     return parsers[language].parse(source.encode()).root_node
 
 
+@pytest.mark.parametrize(
+    ("language", "source", "qualifier"),
+    [
+        pytest.param(
+            cs.SupportedLanguage.RUST, "fn r() { S::m(s, 1); }", "S", id="rs-path"
+        ),
+        pytest.param(
+            cs.SupportedLanguage.RUST, "fn r() { Self::m(s); }", "Self", id="rs-self"
+        ),
+        pytest.param(
+            cs.SupportedLanguage.RUST,
+            "fn r() { crate::a::S::m(s); }",
+            "S",
+            id="rs-long-path",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.RUST,
+            "fn r() { S::m::<u8>(s); }",
+            "S",
+            id="rs-turbofish",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.RUST,
+            "fn r() { <S as T>::m(&s); }",
+            "<S as T>",
+            id="rs-qself",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.RUST, "fn r() { s.m(1); }", "", id="rs-method"
+        ),
+        pytest.param(cs.SupportedLanguage.RUST, "fn r() { f(1); }", None, id="rs-bare"),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { Util.Ext("x", 1); } }',
+            "Util",
+            id="cs-class",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { NS.Util.Ext("x"); } }',
+            "Util",
+            id="cs-qualified-class",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { s.Ext(1); } }",
+            "s",
+            id="cs-variable",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { "x".Ext(1); } }',
+            "",
+            id="cs-literal",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            "class V { void M() { this.Ext(1); } }",
+            "",
+            id="cs-this",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CSHARP,
+            'class V { void M() { Ext("x", 1); } }',
+            None,
+            id="cs-bare",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CPP, "int r() { return s.f(1); }", None, id="cpp"
+        ),
+        pytest.param(cs.SupportedLanguage.TS, "o.m(1);", None, id="ts"),
+    ],
+)
+def test_the_site_records_what_a_call_is_written_through(
+    language: cs.SupportedLanguage, source: str, qualifier: str | None
+) -> None:
+    node = _first(
+        _call_tree(language, source),
+        frozenset({"call_expression", "invocation_expression"}),
+    )
+
+    assert call_site_properties(node).get(cs.KEY_CALL_QUALIFIER) == qualifier
+
+
 def test_the_delta_reads_the_site_shape_back_from_the_graph() -> None:
     assert "r.spread_args AS spread_args" in cq.CYPHER_DELTA_SITES
+    assert "r.call_qualifier AS call_qualifier" in cq.CYPHER_DELTA_SITES
     assert "r.resolution AS resolution" in cq.CYPHER_DELTA_SITES
 
 
 def test_the_spread_flag_is_location_not_structure() -> None:
     assert cs.KEY_SPREAD_ARGS in _SITE_PROPS
+    assert cs.KEY_CALL_QUALIFIER in _SITE_PROPS
 
 
 def test_a_call_to_an_overloaded_ts_function_is_not_judged(

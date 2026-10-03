@@ -1136,6 +1136,7 @@ WHERE a.qualified_name STARTS WITH $project_prefix
   AND (a.path IN $paths OR b.path IN $paths)
 RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.resolution AS resolution, r.spread_args AS spread_args,
+       r.call_qualifier AS call_qualifier,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
 # One hop of the backward test-reach walk: the callers of a frontier of

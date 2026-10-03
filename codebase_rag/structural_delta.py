@@ -63,6 +63,9 @@ class CallSite(NamedTuple):
     # gets a definite arity verdict (issue #2517).
     resolution: str
     spread_args: bool
+    # What a Rust or C# call is written through (`S` in `S::m(s)`, "" for a
+    # value): decides whether a receiver sits in the argument list.
+    call_qualifier: str | None
     callee: str
     callee_path: str
     line: int | None
@@ -256,6 +259,9 @@ def _site(row: ResultRow) -> CallSite:
         rel=_text(row.get(cs.KEY_REL_TYPE)),
         resolution=_text(row.get(cs.KEY_RESOLUTION)),
         spread_args=row.get(cs.KEY_SPREAD_ARGS) is True,
+        call_qualifier=qualifier
+        if isinstance(qualifier := row.get(cs.KEY_CALL_QUALIFIER), str)
+        else None,
         callee=_text(row.get(cs.KEY_TO_QN)),
         callee_path=_text(row.get(cs.KEY_TO_PATH)),
         line=_opt_int(row.get(cs.KEY_LINE)),
@@ -673,12 +679,21 @@ def _is_receiver(entry: str) -> bool:
     )
 
 
-def _declared_bounds(declared: tuple[str, ...]) -> tuple[int, int, int | None]:
-    """(fixed parameters, fewest arguments a call passes, most or None).
+class _DeclaredBounds(NamedTuple):
+    """A declared list as counts: what a call must and may pass."""
 
-    A receiver one call form passes and another does not widens the most
-    by one; a default before a required parameter still has to be passed
-    to reach it, so the fewest runs to the last required one.
+    receiver: bool
+    fixed: int
+    fewest: int
+    most: int | None
+
+
+def _declared_bounds(declared: tuple[str, ...]) -> _DeclaredBounds:
+    """The counts of the parameters a call fills, the receiver left out.
+
+    A default before a required parameter still has to be passed to reach
+    it, so the fewest runs to the last required one; a rest parameter
+    lifts the most.
     """
     receiver = bool(declared) and _is_receiver(declared[0])
     params = declared[1:] if receiver else declared
@@ -691,9 +706,44 @@ def _declared_bounds(declared: tuple[str, ...]) -> tuple[int, int, int | None]:
         ),
         default=0,
     )
-    if len(fixed) < len(params):
-        return len(fixed), fewest, None
-    return len(fixed), fewest, len(fixed) + (1 if receiver else 0)
+    most = None if len(fixed) < len(params) else len(fixed)
+    return _DeclaredBounds(receiver, len(fixed), fewest, most)
+
+
+def _declaring_type(definition: Definition) -> str:
+    # `proj.Util.Util.Ext(string, int)`: a C# method's qn ends in its
+    # parameter types, which may hold dots of their own.
+    qualified = definition.qualified_name.partition(cs.CHAR_PAREN_OPEN)[0]
+    segments = qualified.split(cs.SEPARATOR_DOT)
+    return segments[-2] if len(segments) > 1 else ""
+
+
+def _receiver_passed(site: CallSite, definition: Definition) -> bool | None:
+    """Whether the call puts the receiver in its argument list; None if the
+    written call does not say.
+
+    Rust passes it on a path call (`S::m(s, 1)`, `Self::m(self)`) and never
+    on `s.m(1)`. A C# extension method takes it as the first argument when
+    called through its own class (`Util.Ext(s, 1)`) or bare under `using
+    static`, and from the left of the dot otherwise (`s.Ext(1)`); any other
+    name there is a value, since no other type can call it statically.
+    """
+    qualifier = site.call_qualifier
+    if _language(definition.path) == cs.SupportedLanguage.CSHARP:
+        return qualifier is None or qualifier == _declaring_type(definition)
+    return bool(qualifier) if qualifier is not None else None
+
+
+def _filled_counts(
+    passed: int, site: CallSite, definition: Definition, receiver: bool
+) -> tuple[int, ...]:
+    """The parameters the site fills, once per call form it may be."""
+    if not receiver:
+        return (passed,)
+    explicit = _receiver_passed(site, definition)
+    if explicit is None:
+        return (passed, passed - 1)
+    return (passed - 1,) if explicit else (passed,)
 
 
 def _rejected(
@@ -703,33 +753,46 @@ def _rejected(
     return _language(site.caller_path) in rule and _language(definition.path) in rule
 
 
+def _count_verdict(
+    filled: int, bounds: _DeclaredBounds, site: CallSite, definition: Definition
+) -> str:
+    if filled >= bounds.fewest and (bounds.most is None or filled <= bounds.most):
+        return cs.DELTA_ARITY_OK
+    # Bound by name alone, the edge may lead to a same-named function the
+    # call never runs, whose count proves nothing about this one.
+    if site.resolution not in _DEFINITE_RESOLUTIONS:
+        return cs.DELTA_ARITY_UNKNOWN
+    if filled < bounds.fewest:
+        if _rejected(cs.ARITY_REJECTS_MISSING, site, definition):
+            return cs.DELTA_ARITY_TOO_FEW
+        return cs.DELTA_ARITY_POSSIBLY_MISSING
+    if _rejected(cs.ARITY_REJECTS_SURPLUS, site, definition):
+        return cs.DELTA_ARITY_TOO_MANY
+    return cs.DELTA_ARITY_OK
+
+
 def _declared_arity_verdict(site: CallSite, definition: Definition) -> tuple[int, str]:
     """A site's verdict against a signature that declares its optionality.
 
     Unlike Python's, these lists say which parameters may be left out, so
     fewer arguments than the required ones is a finding where the language
-    rejects the call (issue #2517).
+    rejects the call (issue #2517). A call that may or may not pass the
+    receiver is judged both ways and keeps a verdict only if they agree.
     """
     declared = definition.positional_params
     if declared is None:
         return -1, cs.DELTA_ARITY_UNKNOWN
-    fixed, fewest, most = _declared_bounds(declared)
+    bounds = _declared_bounds(declared)
     passed = site.arg_count
     if passed is None or site.spread_args:
-        return fixed, cs.DELTA_ARITY_UNKNOWN
-    if passed >= fewest and (most is None or passed <= most):
-        return fixed, cs.DELTA_ARITY_OK
-    # Bound by name alone, the edge may lead to a same-named function the
-    # call never runs, whose count proves nothing about this one.
-    if site.resolution not in _DEFINITE_RESOLUTIONS:
-        return fixed, cs.DELTA_ARITY_UNKNOWN
-    if passed < fewest:
-        if _rejected(cs.ARITY_REJECTS_MISSING, site, definition):
-            return fixed, cs.DELTA_ARITY_TOO_FEW
-        return fixed, cs.DELTA_ARITY_POSSIBLY_MISSING
-    if _rejected(cs.ARITY_REJECTS_SURPLUS, site, definition):
-        return fixed, cs.DELTA_ARITY_TOO_MANY
-    return fixed, cs.DELTA_ARITY_OK
+        return bounds.fixed, cs.DELTA_ARITY_UNKNOWN
+    verdicts = {
+        _count_verdict(filled, bounds, site, definition)
+        for filled in _filled_counts(passed, site, definition, bounds.receiver)
+    }
+    return bounds.fixed, (
+        verdicts.pop() if len(verdicts) == 1 else cs.DELTA_ARITY_UNKNOWN
+    )
 
 
 def _arity_verdict(
