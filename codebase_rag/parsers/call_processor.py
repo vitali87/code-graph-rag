@@ -4804,17 +4804,11 @@ class CallProcessor:
         return None
 
     def _cpp_local_anchors(self, node: Node, module_qn: str) -> list[str]:
-        # The qns the types written in each function around `node` are
-        # named under, innermost first.
-        return [
-            anchor
-            for callable_node in cpp_local_types.enclosing_callables(node)
-            if (
-                anchor := cpp_local_types.callable_anchor_qn(
-                    callable_node, module_qn, self.function_locations
-                )
-            )
-        ]
+        # The qns the types written in each function and local type around
+        # `node` are named under, innermost first.
+        return cpp_local_types.scope_anchor_qns(
+            node, module_qn, self.function_locations
+        )
 
     def _cpp_local_type_under(self, anchors: list[str], type_name: str) -> str | None:
         registry = self._resolver.function_registry
@@ -4846,13 +4840,15 @@ class CallProcessor:
         source_spec: tuple[str, str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
-        rel_type: cs.RelationshipType,
         ensure_rel: Callable[..., None],
         language: cs.SupportedLanguage | None,
     ) -> bool:
-        # A functor handed over (`std::sort(b, e, Cmp{})`) is passed the way
-        # a function pointer is, and the callee runs its operator()
-        # (issue #2555). True when the argument was one and its edge is out.
+        # A functor handed over (`std::sort(b, e, Cmp{})`) keeps its
+        # operator() reachable (issue #2555). The object is passed as a
+        # value: whether the callee runs it or only stores it
+        # (`values.push_back(f)`) is not visible here, so the pass is a
+        # REFERENCES edge, never an invocation (#2631 review). True when the
+        # argument was one and its edge is out.
         if language != cs.SupportedLanguage.CPP:
             return False
         functor = self._cpp_functor_operator(arg_node, module_qn, local_var_types)
@@ -4863,7 +4859,7 @@ class CallProcessor:
             source_spec,
             functor[0],
             functor[1],
-            rel_type,
+            cs.RelationshipType.REFERENCES,
             ensure_rel,
             module_qn,
             language,
@@ -7450,13 +7446,7 @@ class CallProcessor:
             )
             return
         if self._emit_cpp_functor_callback(
-            arg_node,
-            source_spec,
-            module_qn,
-            local_var_types,
-            rel_type,
-            ensure_rel,
-            language,
+            arg_node, source_spec, module_qn, local_var_types, ensure_rel, language
         ):
             return
         # Only a name can hand a callable over. The whole source text of any

@@ -225,14 +225,15 @@ def test_functor_typed_local_call_binds_to_its_operator_call(
 def test_local_comparator_passed_to_an_algorithm_binds_its_operator_call(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # A comparator is handed over the way a function pointer is: main
-    # already links `std::sort(b, e, less_fn)` to less_fn, so a functor
-    # links to the operator() the algorithm invokes.
+    # A comparator handed to an algorithm (`Cmp{}`, and the `by_weight`
+    # local) references the operator() the algorithm runs, which keeps it
+    # reachable; the pass itself is no invocation by `sort_desc`.
     _index(temp_repo, mock_ingestor, sort=_SORT)
 
     assert _CMP in get_node_names(mock_ingestor, NodeLabel.CLASS)
+    references = _edges(mock_ingestor, RelationshipType.REFERENCES)
+    assert (f"{_SORT_M}.sort_desc", f"{_CMP}.operator_call") in references
     calls = _edges(mock_ingestor, RelationshipType.CALLS)
-    assert (f"{_SORT_M}.sort_desc", f"{_CMP}.operator_call") in calls
     assert (f"{_CMP}.operator_call", f"{_SORT_M}.weight") in calls
     assert (f"{_SORT_M}.sort_desc", f"{_SORT_M}.weight") not in calls
 
@@ -508,3 +509,131 @@ def test_function_arguments_and_plain_calls_resolve_as_before(
     run_calls = {dst for src, dst in calls if src == f"{module}.run"}
     assert run_calls == {f"{module}.less_fn", f"{module}.make", f"{module}.use"}
     assert not {dst for _src, dst in calls if dst.endswith(".operator_call")}
+
+
+# A type nested in a local type is in scope inside that type's members, and
+# there it hides a same-named namespace-level type, as C++ name lookup does
+# (#2631 review).
+_NESTED_HIDES = """\
+struct B { int ping() { return 1; } };
+
+int f() {
+  struct A {
+    struct B { int ping() { return 2; } } b;
+    int run() { return b.ping(); }
+    int fresh() { B other; return other.ping(); }
+  } a;
+  struct C {
+    struct B { int ping() { return 3; } };
+    B held;
+    int use() { return held.ping(); }
+  } c;
+  return a.run() + a.fresh() + c.use();
+}
+
+int top() {
+  B outside;
+  return outside.ping();
+}
+"""
+
+
+def test_nested_local_type_hides_a_same_named_module_type_in_its_members(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `struct B {...} b;`: the field is typed by the nested local `B`.
+    _index(temp_repo, mock_ingestor, hides=_NESTED_HIDES)
+
+    module = f"{_PROJECT}.hides"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.run", f"{module}.f.A.B.ping") in calls
+    assert (f"{module}.f.A.run", f"{module}.B.ping") not in calls
+
+
+def test_field_of_a_nested_local_type_binds_to_that_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `struct B {...}; B held;`: the field's type is looked up in `C` first.
+    _index(temp_repo, mock_ingestor, hides=_NESTED_HIDES)
+
+    module = f"{_PROJECT}.hides"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.C.use", f"{module}.f.C.B.ping") in calls
+    assert (f"{module}.f.C.use", f"{module}.B.ping") not in calls
+    assert (f"{module}.f.C.use", f"{module}.f.A.B.ping") not in calls
+
+
+def test_local_of_a_nested_local_type_binds_to_that_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(temp_repo, mock_ingestor, hides=_NESTED_HIDES)
+
+    module = f"{_PROJECT}.hides"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.fresh", f"{module}.f.A.B.ping") in calls
+    assert (f"{module}.f.A.fresh", f"{module}.B.ping") not in calls
+
+
+def test_module_type_outside_the_local_scope_still_binds_to_itself(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: the nested local `B` is visible only inside `A`; a function
+    # elsewhere still reaches the namespace-level `B`.
+    _index(temp_repo, mock_ingestor, hides=_NESTED_HIDES)
+
+    module = f"{_PROJECT}.hides"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.top", f"{module}.B.ping") in calls
+    assert (f"{module}.top", f"{module}.f.A.B.ping") not in calls
+    assert (f"{module}.top", f"{module}.f.C.B.ping") not in calls
+    assert (f"{module}.f", f"{module}.f.A.run") in calls
+    assert (f"{module}.f", f"{module}.f.C.use") in calls
+
+
+# A functor handed to a call is passed as a value: whether the callee runs it
+# (`std::sort`) or only keeps it (`push_back`) is not visible at the call
+# site, so the pass is a reference, never an invocation (#2631 review).
+_STORED = """\
+#include <functional>
+#include <vector>
+
+int weight(int x) { return x; }
+
+void keep(std::vector<std::function<void(int)>>& values) {
+  struct Fn { void operator()(int s) const { weight(s); } } functor;
+  values.push_back(functor);
+  values.push_back(Fn{});
+}
+
+void invoke(int n) {
+  struct Go { void operator()(int s) const { weight(s); } } go;
+  go(n);
+}
+"""
+
+
+def test_stored_functor_is_referenced_not_called(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(temp_repo, mock_ingestor, stored=_STORED)
+
+    module = f"{_PROJECT}.stored"
+    operator_call = f"{module}.keep.Fn.operator_call"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.keep", operator_call) not in calls
+    references = _edges(mock_ingestor, RelationshipType.REFERENCES)
+    assert (f"{module}.keep", operator_call) in references
+
+
+def test_invoked_functor_still_calls_its_operator(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: calling the functor object is an invocation, and stays CALLS.
+    _index(temp_repo, mock_ingestor, stored=_STORED)
+
+    module = f"{_PROJECT}.stored"
+    operator_call = f"{module}.invoke.Go.operator_call"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.invoke", operator_call) in calls
+    references = _edges(mock_ingestor, RelationshipType.REFERENCES)
+    assert (f"{module}.invoke", operator_call) not in references

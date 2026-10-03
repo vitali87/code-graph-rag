@@ -80,14 +80,36 @@ def _segment(type_node: Node) -> str:
     return _written_name(type_node) or positional_name(type_node)
 
 
-def enclosing_callables(node: Node) -> Iterator[Node]:
-    """The functions and lambdas whose bodies hold `node`, innermost first,
-    `node` itself included when it is one."""
+def _enclosing_scopes(node: Node) -> Iterator[Node]:
+    # The functions, lambdas and class-like types whose bodies hold `node`,
+    # innermost first, `node` itself included when it is one.
     current: Node | None = node
     while current is not None:
-        if _is_callable(current):
+        if _is_callable(current) or current.type in _LOCAL_TYPE_TYPES:
             yield current
         current = current.parent
+
+
+def scope_anchor_qns(
+    node: Node,
+    module_qn: str,
+    function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+) -> list[str]:
+    """The qns the local types visible at `node` are named under, innermost
+    first: each enclosing callable's, and each enclosing local type's. A type
+    nested in a local type hides a same-named outer type inside that type's
+    members, as C++ name lookup does (`f.A.B` over a namespace-level `B` in
+    `f.A.run`)."""
+    anchors: list[str] = []
+    for scope in _enclosing_scopes(node):
+        anchor = (
+            callable_anchor_qn(scope, module_qn, function_locations)
+            if _is_callable(scope)
+            else local_type_qn(scope, module_qn, function_locations)
+        )
+        if anchor is not None:
+            anchors.append(anchor)
+    return anchors
 
 
 def _local_scope(type_node: Node) -> tuple[Node, list[Node]] | None:
@@ -105,6 +127,11 @@ def _local_scope(type_node: Node) -> tuple[Node, list[Node]] | None:
             scopes.append(current)
         current = current.parent
     return None
+
+
+def is_local_type(type_node: Node) -> bool:
+    """True when `type_node` is written inside a function or lambda body."""
+    return _local_scope(type_node) is not None
 
 
 def callable_anchor_qn(

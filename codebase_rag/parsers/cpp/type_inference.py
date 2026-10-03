@@ -234,7 +234,10 @@ class CppTypeInferenceEngine:
 
     def _record_field(self, node: Node, field_types: dict[str, str]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
-        if type_node is None or not (type_name := self._bare_type_name(type_node)):
+        if type_node is None or not (
+            type_name := self._bare_type_name(type_node)
+            or self._local_defined_type_name(type_node)
+        ):
             return
         for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
             # A member function declaration (`void Lock();`) is also a
@@ -327,6 +330,16 @@ class CppTypeInferenceEngine:
         if name_node is not None:
             return safe_decode_text(name_node)
         return local_types.positional_name(type_node)
+
+    def _local_defined_type_name(self, type_node: Node) -> str | None:
+        # `struct B {...} b;` as a member of a type written in a function
+        # body: the field is typed by that nested local type, which the call
+        # pass binds through the enclosing local type's scope (#2631
+        # review). A member of a namespace-level class keeps its fields as
+        # they were.
+        if not local_types.is_local_type(type_node):
+            return None
+        return self._defined_type_name(type_node)
 
     def _rightmost_name(self, node: Node) -> str | None:
         name_node = node.child_by_field_name(cs.KEY_NAME)
