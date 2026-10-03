@@ -498,6 +498,9 @@ message GraphCodeIndex {
     bool is_exported = 7;
     // The namespace a C# type is declared in (issue #1629).
     string namespace = 8;
+    // How many type parameters a generic C# type declares; 0 when it is
+    // not generic (issue #2579).
+    int32 generic_arity = 9;
   }
 
   message Interface {
@@ -508,6 +511,9 @@ message GraphCodeIndex {
     string path = 3;
     string absolute_path = 4;
     string namespace = 5;
+    // How many type parameters a generic C# interface declares; 0 when it
+    // is not generic (issue #2579).
+    int32 generic_arity = 6;
   }
 
   message Enum {

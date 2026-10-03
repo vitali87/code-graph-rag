@@ -33,6 +33,7 @@ from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
 from .csharp import type_inference as csharp_ti
+from .csharp import utils as csharp_utils
 from .dart import utils as dart_utils
 from .dispatch_registry import DispatchRegistryProcessor
 from .flow_access import FlowProcessor
@@ -3658,6 +3659,12 @@ class CallProcessor:
         return None
 
     def _csharp_target_typed_new_name(self, creation_node: Node) -> str | None:
+        type_node = self._csharp_target_type_node(creation_node)
+        if type_node is None or type_node.text is None:
+            return None
+        return type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+
+    def _csharp_target_type_node(self, creation_node: Node) -> Node | None:
         # The target type of a bare `new()` is named by the enclosing
         # declaration: a local/field `T x = new()` (initializer hangs directly
         # off the variable_declarator), a property initializer
@@ -3694,7 +3701,7 @@ class CallProcessor:
             or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE
         ):
             return None
-        return type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        return type_node
 
     def _csharp_enclosing_return_type(self, node: Node) -> Node | None:
         # A return position is typed by the nearest enclosing callable:
@@ -4376,9 +4383,31 @@ class CallProcessor:
             call_name = ctx.call_name_cache[node_id]
         else:
             call_name = self._get_call_target_name(call_node, ctx.language)
+            if (
+                call_name is None
+                and ctx.is_csharp
+                and call_node.type == cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION
+            ):
+                call_name = self._csharp_argument_target_name(ctx, call_node)
             if ctx.call_name_cache is not None:
                 ctx.call_name_cache[node_id] = call_name
         return call_name
+
+    def _csharp_argument_target_name(
+        self, ctx: _CallScanContext, creation_node: Node
+    ) -> str | None:
+        # `Use(new(4))`: an argument's `new(...)` constructs the type of the
+        # parameter it binds, which only the resolved callee can say
+        # (issue #2579).
+        argument = creation_node.parent
+        while argument is not None and argument.type == cs.TS_PARENTHESIZED_EXPRESSION:
+            argument = argument.parent
+        if argument is None or argument.type != cs.TS_CSHARP_ARGUMENT:
+            return None
+        engine = self._resolver.type_inference.csharp_type_inference
+        return engine.argument_parameter_type(
+            argument, ctx.local_var_types, ctx.module_qn, ctx.caller_qn
+        )
 
     def _emit_string_call_edges(
         self, ctx: _CallScanContext, call_node: Node, call_name: str
@@ -4594,7 +4623,7 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
-        return ctx.resolve_func(
+        callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
             call_var_types,
@@ -4607,6 +4636,39 @@ class CallProcessor:
             in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
+        if ctx.is_csharp and call_node.type in _OBJECT_CREATION_NODE_TYPES:
+            return self._csharp_construction_by_arity(call_node, call_name, callee_info)
+        return callee_info
+
+    def _csharp_construction_by_arity(
+        self,
+        creation_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # The name lookup ignores type arguments, so `new PB<int>(...)` and
+        # `new PB(...)` land on one of the twins `PB` and `PB<TResult>`; the
+        # written arity moves it to the type C# constructs (issue #2579).
+        if callee_info is None or callee_info[0] != cs.NodeLabel.CLASS:
+            return callee_info
+        engine = self._resolver.type_inference.csharp_type_inference
+        if creation_node.type == cs.TS_OBJECT_CREATION_EXPRESSION:
+            type_node = creation_node.child_by_field_name(cs.FIELD_TYPE)
+        elif (type_node := self._csharp_target_type_node(creation_node)) is None:
+            # An argument's `new(...)`, typed by a parameter whose signature
+            # spells no arity: a name with a twin of another arity stays
+            # unresolved rather than guessed.
+            if engine.arity_index().has_twin(callee_info[1]):
+                return None
+            return callee_info
+        if type_node is None or not (written := safe_decode_text(type_node)):
+            return callee_info
+        # Only a written path the call name spells whole: `new Outer<int>.Inner()`
+        # is looked up as `Outer`, whose arity the text does not give.
+        if csharp_utils.normalize_csharp_type_name(type_node) != call_name:
+            return callee_info
+        arity = csharp_utils.generic_arity_of_type_text(written)
+        return callee_info[0], engine.arity_twin(callee_info[1], arity)
 
     def _resolve_java_callee(
         self, ctx: _CallScanContext, call_node: Node

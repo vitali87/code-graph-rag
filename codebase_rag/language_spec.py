@@ -11,7 +11,7 @@ from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
 from .utils.path_utils import module_extension, module_stem, should_skip_path
-from .utils.qn_markers import strip_dup_marker
+from .utils.qn_markers import strip_arity_marker, strip_dup_marker, with_leaf_arity
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -284,31 +284,39 @@ def csharp_namespaced_from_graph(
     index is rebuilt for the rest from what the node stores: its qn, path
     and declared namespace. The fold is undone by the same directory rule
     `_csharp_fold_scopes` applied, and a duplicate-qn marker (`Bench@24`)
-    is dropped as the parsed form never carries it (bot review on #1999).
+    is dropped as the parsed form never carries it (bot review on #1999),
+    as is a generic twin's arity (`PB`1`, issue #2579): the declared form
+    is the written name, which both twins share.
     A module qn that is neither of the two path spellings is not guessed.
     """
     split = _csharp_graph_scope(qn, path, project_name)
     if split is None:
         return None
     directory, suffix = split
-    scoped = [strip_dup_marker(part) for part in suffix.split(cs.SEPARATOR_DOT)]
+    scoped = [
+        strip_arity_marker(strip_dup_marker(part))
+        for part in suffix.split(cs.SEPARATOR_DOT)
+    ]
     if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
         scoped.insert(0, namespace)
     return cs.SEPARATOR_DOT.join(scoped)
 
 
-def csharp_partial_key_from_graph(qn: str, path: str, project_name: str) -> str | None:
+def csharp_partial_key_from_graph(
+    qn: str, path: str, project_name: str, arity: int
+) -> str | None:
     """The partial-group key parsing gives a C# type, for one read back from
     the graph: its declaring directory plus its declared name, marker
-    stripped. Whether the type was `partial` is not stored, so an unchanged
-    part must rejoin its siblings by this key or a declared name spanning
-    two unchanged parts reads as two projects (bot review on #1999).
+    stripped and generic arity spelled. Whether the type was `partial` is
+    not stored, so an unchanged part must rejoin its siblings by this key or
+    a declared name spanning two unchanged parts reads as two projects (bot
+    review on #1999).
     """
     split = _csharp_graph_scope(qn, path, project_name)
     if split is None:
         return None
     directory, suffix = split
-    return f"{directory}{cs.SEPARATOR_DOT}{strip_dup_marker(suffix)}"
+    return f"{directory}{cs.SEPARATOR_DOT}{with_leaf_arity(suffix, arity)}"
 
 
 def _csharp_graph_scope(
@@ -354,6 +362,13 @@ def _csharp_get_name(node: Node) -> str | None:
     # node is never a real definition, so drop it.
     if name in cs.CSHARP_RESERVED_KEYWORDS:
         return None
+    # `Foo<T>` beside a `Foo` is a different type (issue #2579); its segment
+    # is decided here so the graph, a nested type's scope walk and the
+    # source lookup by qualified name all spell it alike.
+    if name and node.type in cs.SPEC_CSHARP_CLASS_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
+        return csharp_utils.arity_qualified_name(node, name)
     return name
 
 

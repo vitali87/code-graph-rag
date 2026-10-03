@@ -698,6 +698,11 @@ KEY_MODIFIERS = "modifiers"
 # name because the qn leaves out a namespace the module's directory already
 # spells (issue #1629).
 KEY_NAMESPACE = "namespace"
+# How many type parameters a C# type declares, stored only when it is
+# generic. C# overloads a type name by arity (`PB`, `PB<T>`), so a reference
+# binds by it, and an incremental run reads it back for the types of files it
+# does not re-parse (issue #2579).
+KEY_GENERIC_ARITY = "generic_arity"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -946,7 +951,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.generic_arity AS generic_arity"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

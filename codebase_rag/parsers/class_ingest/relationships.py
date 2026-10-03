@@ -44,7 +44,8 @@ def create_class_relationships(
     class_inheritance[class_qn] = parent_classes
     # The C# bases as written ride along with the deferred edges, in the
     # same order and split as the qns above, so the deferred pass can look
-    # each one up by scope instead of by the parse-time guess alone.
+    # each one up by scope instead of by the parse-time guess alone, and bind
+    # it to the type of its written arity (issues #2534, #2579).
     inherited_refs, implemented_refs = (
         pe.split_csharp_base_refs(class_node, csharp_base_kinds)
         if language == cs.SupportedLanguage.CSHARP
