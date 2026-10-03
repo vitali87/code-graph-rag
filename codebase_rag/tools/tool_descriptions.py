@@ -220,7 +220,11 @@ MCP_OVERRIDES = (
 )
 MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
-    "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
+    "column, bound alias and imported symbol. Direct importers only, unless "
+    "`through_reexports` is true: then also the modules that reach it through "
+    "a re-export (a package `__init__.py`, a Rust `pub use`, an `index.ts` "
+    "barrel), each row with `via`, the import statements it came through, "
+    "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
     "The handler's qualified name, or the endpoint identity as `endpoints` "
@@ -310,6 +314,9 @@ MCP_PARAM_GLOSS_AUTHOR = (
     "Optional. Who is writing the note (an agent or session name); default `agent`."
 )
 MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
+MCP_PARAM_THROUGH_REEXPORTS = (
+    "Also list the modules that reach it through re-exports (default false)."
+)
 MCP_RENAME = (
     "Rename a function, method, class or other definition everywhere the graph "
     "knows it is referenced: the definition, every call, reference and "

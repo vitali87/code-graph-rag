@@ -1219,6 +1219,13 @@ WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_pref
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
        r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
        r.alias AS alias, r.imported_name AS imported_name"""
+# One hop of the re-export walk (issue #2573): the importers of a frontier
+# of modules at once, each row naming the module it imports as `to_qn`.
+CYPHER_GRAPH_IMPORTERS_OF = """MATCH (m:Module)-[r:IMPORTS]->(target:Module)
+WHERE target.qualified_name IN $qns AND m.qualified_name STARTS WITH $project_prefix
+RETURN target.qualified_name AS to_qn, m.qualified_name AS qualified_name,
+       m.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
+       r.end_col AS end_col, r.alias AS alias, r.imported_name AS imported_name"""
 
 # Isolated check (issue #1718): the subgraph a scoped re-ingest is about to
 # replace, read in full so it can be put back afterwards. The scope is the

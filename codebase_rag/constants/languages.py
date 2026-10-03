@@ -373,6 +373,11 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# A Rust library crate's root, where its `pub use` facade lives.
+INDEX_RS_LIB = "lib"
+# Stems of the files a package exposes its internals through (issue #2573):
+# an import of the whole module, or of `*`, reaches what it imports.
+REEXPORT_FACADE_STEMS = MODULE_INDEX_FILE_STEMS | {INDEX_RS_LIB}
 
 # Parser loader paths and args
 GRAMMARS_DIR = "grammars"

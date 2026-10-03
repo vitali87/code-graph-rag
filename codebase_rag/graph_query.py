@@ -16,7 +16,7 @@ the call; `callee_path` is where the invoked symbol is defined (issue #2460).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TypedDict
 
@@ -132,6 +132,20 @@ class ImporterRow(TypedDict):
     end_col: int | None
     alias: str | None
     imported_name: str | None
+
+
+class ReexportImporterRow(ImporterRow):
+    # The import statements the row reaches the module through, consumer
+    # side first; empty for a direct importer (issue #2573).
+    via: list[ImporterRow]
+
+
+class _ReexportEntry(TypedDict):
+    # One statement that reached the module, and the names its importer
+    # binds from it for the next hop; None is every name (a `*` import).
+    row: ImporterRow
+    via: list[ImporterRow]
+    names: frozenset[str] | None
 
 
 class TestReachRow(TypedDict):
@@ -497,43 +511,231 @@ def overrides(
     )
 
 
+def _importer_row(r: ResultRow) -> ImporterRow:
+    return ImporterRow(
+        module=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
+        path=_opt_str(r.get(cs.KEY_PATH)),
+        line=_opt_int(r.get(cs.KEY_LINE)),
+        col=_opt_int(r.get(cs.KEY_COL)),
+        end_line=_opt_int(r.get(cs.KEY_END_LINE)),
+        end_col=_opt_int(r.get(cs.KEY_END_COL)),
+        alias=_opt_str(r.get(cs.KEY_ALIAS)),
+        imported_name=_opt_str(r.get(cs.KEY_IMPORTED_NAME)),
+    )
+
+
+def _importer_key(r: ImporterRow) -> tuple[str, int, int, str, str]:
+    return (
+        r["module"],
+        r["line"] if r["line"] is not None else -1,
+        # `or -1` would fold a real column 0 -- the common case, an import
+        # at the start of a line -- into the same key as a missing column,
+        # leaving co-located rows in the arbitrary order the graph
+        # returned them.
+        r["col"] if r["col"] is not None else -1,
+        r["alias"] or "",
+        r["imported_name"] or "",
+    )
+
+
 def importers(
     fetch_all: QueryFn, project_name: str, module_qn: str
 ) -> list[ImporterRow]:
-    """Modules importing `module_qn`, with each import statement's location."""
+    """Modules importing `module_qn`, with each import statement's location.
+
+    Direct importers only: a module reaching `module_qn` through a package
+    facade is answered by `importers_through_reexports`.
+    """
     rows = fetch_all(
         cq.CYPHER_GRAPH_IMPORTERS,
         {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: module_qn},
     )
     owns = _owner_check(fetch_all, project_name)
-    rows = [r for r in rows if owns(_text_qn(r))]
-    out = [
-        ImporterRow(
-            module=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
-            path=_opt_str(r.get(cs.KEY_PATH)),
-            line=_opt_int(r.get(cs.KEY_LINE)),
-            col=_opt_int(r.get(cs.KEY_COL)),
-            end_line=_opt_int(r.get(cs.KEY_END_LINE)),
-            end_col=_opt_int(r.get(cs.KEY_END_COL)),
-            alias=_opt_str(r.get(cs.KEY_ALIAS)),
-            imported_name=_opt_str(r.get(cs.KEY_IMPORTED_NAME)),
-        )
-        for r in rows
-    ]
     return sorted(
-        out,
-        key=lambda r: (
-            r["module"],
-            r["line"] if r["line"] is not None else -1,
-            # `or -1` would fold a real column 0 -- the common case, an import
-            # at the start of a line -- into the same key as a missing column,
-            # leaving co-located rows in the arbitrary order the graph
-            # returned them.
-            r["col"] if r["col"] is not None else -1,
-            r["alias"] or "",
-            r["imported_name"] or "",
-        ),
+        (_importer_row(r) for r in rows if owns(_text_qn(r))), key=_importer_key
     )
+
+
+def _binds_whole(row: ImporterRow, imported_qn: str) -> bool:
+    """Whether `row` imports all of `imported_qn` rather than one name of it.
+
+    `import pkg` and `const m = require(...)` record no imported name,
+    `from pkg import *` and `import * as ns` record `*`, and Rust records
+    `use crate::m;` and `pub use crate::m::*;` under the module's own name,
+    as Python does `from pkg import m`. A JS/TS named import binds one
+    export whatever its name: `import { index } from './index'` is the
+    barrel's `index`, not the barrel (#2573 review).
+    """
+    name = row["imported_name"]
+    if name is None or name == cs.IMPORTED_NAME_WILDCARD:
+        return True
+    if (row["path"] or "").endswith(cs.JS_TS_ALL_EXTENSIONS):
+        return False
+    return name == imported_qn.rpartition(cs.SEPARATOR_DOT)[2]
+
+
+def _bound_names(
+    row: ImporterRow, imported_qn: str, forwarded: frozenset[str] | None
+) -> frozenset[str] | None:
+    """The names `row`'s module binds from `imported_qn`: its alias, or,
+    for a `*` import (no alias), every name `forwarded` to it."""
+    if row["alias"] is None and _binds_whole(row, imported_qn):
+        return forwarded
+    name = row["alias"] or row["imported_name"]
+    return frozenset({name}) if name else frozenset()
+
+
+def _is_facade(path: str | None) -> bool:
+    if not path:
+        return False
+    return Path(path).name.partition(cs.SEPARATOR_DOT)[0] in cs.REEXPORT_FACADE_STEMS
+
+
+def _reach(
+    row: ImporterRow, imported_qn: str, entries: list[_ReexportEntry]
+) -> tuple[_ReexportEntry, frozenset[str] | None] | None:
+    """The entry `row` reaches the target through, and the names it binds
+    for the next hop; None when it takes nothing the entries carry.
+
+    A name imported from a module proves the module exports it, whatever
+    the language. All of a module (`import pkg`, `*`) reaches what it
+    imports only when it is a facade: the graph does not record whether an
+    import is public (`pub use`, `export ... from`), and a plain module
+    that merely uses the target would otherwise pass it on to every module
+    importing it.
+    """
+    if _binds_whole(row, imported_qn):
+        matched = entries if _is_facade(entries[0]["row"]["path"]) else []
+    else:
+        name = row["imported_name"]
+        matched = [e for e in entries if e["names"] is None or name in e["names"]]
+    if not matched:
+        return None
+    # A `*` import passes on every name the statements it matched carry.
+    forwarded = _union_names(entry["names"] for entry in matched)
+    return matched[0], _bound_names(row, imported_qn, forwarded)
+
+
+def _union_names(
+    name_sets: Iterable[frozenset[str] | None],
+) -> frozenset[str] | None:
+    """Every name in `name_sets`; None (every name) when any of them is."""
+    union: frozenset[str] = frozenset()
+    for names in name_sets:
+        if names is None:
+            return None
+        union |= names
+    return union
+
+
+def _new_names(
+    names: frozenset[str] | None, walked: frozenset[str] | None
+) -> frozenset[str] | None:
+    """The part of `names` not already in `walked`; None is every name."""
+    if walked is None:
+        return frozenset()
+    if names is None:
+        return None
+    return names - walked
+
+
+def _reexport_hops(
+    fetch_all: QueryFn,
+    project_name: str,
+    qns: list[str],
+    owns: Callable[[str], bool],
+) -> list[tuple[str, ImporterRow]]:
+    """(imported module, importer row) for every importer of `qns`, in order.
+
+    A foreign importer is neither listed nor a hop (issue #1982).
+    """
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_IMPORTERS_OF,
+        {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QNS: qns},
+    )
+    return sorted(
+        (
+            (str(r.get(cs.KEY_TO_QN, "")), _importer_row(r))
+            for r in rows
+            if owns(_text_qn(r))
+        ),
+        key=lambda hop: (hop[0], _importer_key(hop[1])),
+    )
+
+
+def _reexport_step(
+    hops: list[tuple[str, ImporterRow]],
+    frontier: dict[str, list[_ReexportEntry]],
+    walked: dict[str, frozenset[str] | None],
+    out: list[ReexportImporterRow],
+) -> dict[str, list[_ReexportEntry]]:
+    """One breadth-first hop: the next frontier, listing new modules in `out`."""
+    found: dict[str, list[_ReexportEntry]] = {}
+    for imported_qn, row in hops:
+        entries = frontier.get(imported_qn)
+        reach = _reach(row, imported_qn, entries) if entries else None
+        if reach is None:
+            continue
+        through, names = reach
+        module = row["module"]
+        via = [through["row"], *through["via"]]
+        if module in walked:
+            # Listed at an earlier depth: walked on only with what this path
+            # brings it that the earlier one did not.
+            names = _new_names(names, walked[module])
+            if names is not None and not names:
+                continue
+        else:
+            out.append(ReexportImporterRow(**row, via=via))
+        found.setdefault(module, []).append(
+            _ReexportEntry(row=row, via=via, names=names)
+        )
+    return found
+
+
+def importers_through_reexports(
+    fetch_all: QueryFn, project_name: str, module_qn: str
+) -> list[ReexportImporterRow]:
+    """`importers`, plus the modules reaching `module_qn` through re-exports.
+
+    A facade (`pkg/__init__.py` with `from ._client import Client`, a Rust
+    `lib.rs` with `pub use frame::Frame;`, an `index.ts` barrel) is often
+    the only direct importer of what it exposes (issue #2573). A module is
+    reached through an importer X when it imports from X a name X bound by
+    importing it, or when it imports all of X and X is a facade; see
+    `_reach`. Each row keeps its own statement and lists in `via` the
+    statements it came through, consumer side first.
+
+    Breadth-first, one query per hop: a module is listed at the depth it is
+    first reached, with the statements that reach it there, and never again,
+    so a direct importer is listed once. A later path bringing it a name it
+    did not bind there is still walked on, for that name alone, so a module
+    importing the name from it is reached; a module is walked again only
+    for names new to it, so a cycle of re-exports ends.
+    """
+    direct = importers(fetch_all, project_name, module_qn)
+    out = [ReexportImporterRow(**row, via=[]) for row in direct]
+    frontier: dict[str, list[_ReexportEntry]] = {}
+    for row in direct:
+        names = _bound_names(row, module_qn, None)
+        frontier.setdefault(row["module"], []).append(
+            _ReexportEntry(row=row, via=[], names=names)
+        )
+    # The names each module has been walked on with; the target passes
+    # nothing back to itself.
+    walked: dict[str, frozenset[str] | None] = {module_qn: None}
+    for module, entries in frontier.items():
+        walked[module] = _union_names(entry["names"] for entry in entries)
+    owns = _owner_check(fetch_all, project_name)
+    while frontier:
+        hops = _reexport_hops(fetch_all, project_name, sorted(frontier), owns)
+        found = _reexport_step(hops, frontier, walked, out)
+        for module, entries in found.items():
+            walked[module] = _union_names(
+                [walked.get(module, frozenset()), *(e["names"] for e in entries)]
+            )
+        frontier = found
+    return sorted(out, key=lambda r: (len(r["via"]), *_importer_key(r)))
 
 
 # --- tests_reaching ------------------------------------------------------------
