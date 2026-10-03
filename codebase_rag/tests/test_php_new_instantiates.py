@@ -314,6 +314,53 @@ def test_receiver_not_provably_one_class_keeps_the_name_fallback(
     assert calls.get(f"{PROJECT}.src.Other.Other.only") == "heuristic", calls
 
 
+OTHER = (
+    "<?php\nnamespace App;\nclass Other { public function bump(): int { return 2; } }\n"
+)
+# `$alias =& $b` makes both names one variable, so a write through either
+# operand rebinds the other: neither keeps the class a `new` gave it.
+REFERENCE = """<?php
+namespace App;
+function aliased()  { $b = new Box(); $alias =& $b; $alias = new Other(); return $b->bump(); }
+function early()    { $alias =& $b; $b = new Box(); $alias = new Other(); return $b->bump(); }
+function spaced()   { $b = new Box(); $alias = &$b; $alias = new Other(); return $b->bump(); }
+function rebound()  { $b = new Box(); $b =& $alias; $alias = new Other(); return $b->bump(); }
+function plain()    { $b = new Box(); return $b->bump(); }
+function bystander(){ $b = new Box(); $alias =& $other; return $b->bump(); }
+function member()   { $b = new Box(); $alias =& $b->n; return $b->bump(); }
+"""
+
+
+def test_variable_aliased_by_reference_keeps_the_name_fallback(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    edges = _graph(
+        temp_repo,
+        mock_ingestor,
+        {"src/Box.php": BOX, "src/Other.php": OTHER, "src/ref.php": REFERENCE},
+    )
+    for fn in ("aliased", "early", "spaced", "rebound"):
+        calls = _targets(edges, f"{PROJECT}.src.ref.{fn}", _CALLS)
+        bumps = {qn: res for qn, res in calls.items() if qn.endswith(".bump")}
+        assert bumps, (fn, calls)
+        assert set(bumps.values()) == {"heuristic"}, (fn, calls)
+
+
+def test_reference_to_another_variable_or_a_property_keeps_the_binding(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Only the two operands of `=&` are aliased: a variable that is neither,
+    # or whose property is referenced, still holds the class `new` built.
+    edges = _graph(
+        temp_repo,
+        mock_ingestor,
+        {"src/Box.php": BOX, "src/Other.php": OTHER, "src/ref.php": REFERENCE},
+    )
+    for fn in ("plain", "bystander", "member"):
+        calls = _targets(edges, f"{PROJECT}.src.ref.{fn}", _CALLS)
+        assert calls.get(BUMP_QN) == "exact", (fn, calls)
+
+
 # --- braced namespaces: each declaration's own namespace decides ----------------
 
 BRACED = """<?php

@@ -94,6 +94,8 @@ PHP_RESERVED_CLASS_NAMES = frozenset({"self", "static", "parent"})
 PHP_METHOD_CONSTRUCT = "__construct"
 # Parents under which a `$var` is (re)bound by something other than
 # `$var = new C(...)`, so the variable no longer holds one known class.
+# `$a =& $b` aliases BOTH operands: a later write through either rebinds the
+# other, so the right-hand `$b` is a rebinding too, not a read.
 PHP_VARIABLE_REBINDING_PARENTS = frozenset(
     {
         "foreach_statement",
@@ -103,14 +105,11 @@ PHP_VARIABLE_REBINDING_PARENTS = frozenset(
         "static_variable_declaration",
         "catch_clause",
         "unset_statement",
+        TS_PHP_REFERENCE_ASSIGNMENT_EXPRESSION,
     }
 )
 PHP_ASSIGNMENT_TYPES = frozenset(
-    {
-        TS_PHP_ASSIGNMENT_EXPRESSION,
-        TS_PHP_REFERENCE_ASSIGNMENT_EXPRESSION,
-        TS_PHP_AUGMENTED_ASSIGNMENT_EXPRESSION,
-    }
+    {TS_PHP_ASSIGNMENT_EXPRESSION, TS_PHP_AUGMENTED_ASSIGNMENT_EXPRESSION}
 )
 PHP_MEMBER_CALL_TYPES = frozenset(
     {TS_PHP_MEMBER_CALL_EXPRESSION, TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION}
