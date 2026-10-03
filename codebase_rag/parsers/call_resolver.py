@@ -4189,16 +4189,25 @@ class CallResolver:
         )
 
     def _infer_js_construction_base_type(
-        self, base: str, module_qn: str, language: cs.SupportedLanguage | None
+        self,
+        base: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        call_point: int | None,
     ) -> str | None:
         # `new Box().bump()`, `(new Box()).bump()`: the base is neither a
         # local, an import nor a factory with a recorded return, so the chain
         # stayed untyped and the call bound nothing beside INSTANTIATES Box
         # (issue #2465). It types the way `const b = new Box()` types `b`, so
-        # both spellings of one construction reach the same class.
-        if language not in cs.JS_TS_LANGUAGES:
+        # both spellings of one construction reach the same class. The
+        # receiver starts where the call does; without that site in the
+        # file's tree, a `Box` the caller binds itself cannot be ruled out.
+        if language not in cs.JS_TS_LANGUAGES or call_point is None:
             return None
-        construction = js_ts_utils.construction_receiver(base, language)
+        root = self._cached_module_root(module_qn)
+        if root is None:
+            return None
+        construction = js_ts_utils.construction_at(root, call_point, base)
         if construction is None:
             return None
         var_type = (
@@ -4231,7 +4240,7 @@ class CallResolver:
         # resolve: it is the instance it builds.
         if (
             constructed := self._infer_js_construction_base_type(
-                base, module_qn, language
+                base, module_qn, language, call_point
             )
         ) is not None:
             return constructed

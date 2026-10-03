@@ -31,6 +31,21 @@ _JS_SCOPE_CONTAINER_TYPES = frozenset(
     }
 )
 
+# Bindings a callable's body can introduce besides declarators, loops and
+# catches: a function declaration is hoisted to the whole callable, a class
+# declaration is scoped like `let`, and a named function or class EXPRESSION
+# binds its name only inside itself.
+_JS_HOISTED_DECLARATIONS = frozenset(
+    {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
+)
+_JS_BLOCK_SCOPED_DECLARATIONS = frozenset(
+    {cs.TS_CLASS_DECLARATION, cs.TS_ABSTRACT_CLASS_DECLARATION}
+)
+_JS_SELF_NAMED_EXPRESSIONS = frozenset(
+    {cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION, cs.TS_CLASS_EXPRESSION}
+)
+_JS_CLASS_NODE_TYPES = frozenset(cs.JS_TS_CLASS_NODES) | _JS_BLOCK_SCOPED_DECLARATIONS
+
 # Declarations of a name: (scope start_byte, scope end_byte, `new` value node
 # when the declarator's own initialiser constructs, else None). Assignments:
 # (site byte, `new` value node).
@@ -392,6 +407,9 @@ class JsTypeInferenceEngine:
 
         if value_node.type == cs.TS_NEW_EXPRESSION:
             if class_name := ut.extract_constructor_name(value_node):
+                if self._js_bound_by_enclosing_callable(value_node, class_name):
+                    logger.debug(ls.JS_CTOR_LOCALLY_BOUND, class_name=class_name)
+                    return None
                 class_qn = self._resolve_js_class_name(class_name, module_qn)
                 return class_qn or class_name
 
@@ -807,6 +825,113 @@ class JsTypeInferenceEngine:
             ):
                 stack.extend(node.named_children)
         return names
+
+    def _js_bound_by_enclosing_callable(self, site: ASTNode, name: str) -> bool:
+        # `new Box()` constructs whatever `Box` is in scope at the site. A
+        # parameter, local, loop or catch binding, or a function or class
+        # declared inside an enclosing callable is a different value from
+        # the module's class, often a constructor the caller is handed, and
+        # typing the instance as the module class gave that class's methods
+        # callers that never reach them (#2465). Only the module's own
+        # binding, which the class lookup resolves, may type it.
+        current = site.parent
+        while current is not None:
+            if current.type in _JS_SELF_NAMED_EXPRESSIONS and (
+                self._js_declared_name(current) == name
+            ):
+                # A named function or class expression binds its own name
+                # inside itself only.
+                return True
+            if current.type in _JS_NESTED_CALLABLE_TYPES and (
+                self._js_callable_introduces(current, name, site.start_byte)
+            ):
+                return True
+            current = current.parent
+        return False
+
+    def _js_callable_introduces(
+        self, callable_node: ASTNode, name: str, pos: int
+    ) -> bool:
+        if name in self._js_parameter_names(callable_node):
+            return True
+        whole = (callable_node.start_byte, callable_node.end_byte)
+        stack: list[ASTNode] = list(callable_node.children)
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            span: tuple[int, int] | None = None
+            if node_type in _JS_HOISTED_DECLARATIONS:
+                # A nested function declaration is hoisted to the callable.
+                span = whole if self._js_declared_name(node) == name else None
+            elif node_type in _JS_BLOCK_SCOPED_DECLARATIONS:
+                if self._js_declared_name(node) == name:
+                    span = self._js_scope_span(node, callable_node)
+            elif node_type == cs.TS_VARIABLE_DECLARATOR:
+                span = self._js_declarator_span(node, callable_node, name)
+            elif node_type == cs.TS_JS_FOR_IN_STATEMENT:
+                span = self._js_loop_span(node, callable_node, name)
+            elif node_type == cs.TS_JS_CATCH_CLAUSE:
+                param = node.child_by_field_name(cs.FIELD_PARAMETER)
+                if param is not None and name in self._js_binding_names(param):
+                    span = (node.start_byte, node.end_byte)
+            if span is not None and span[0] <= pos < span[1]:
+                return True
+            # Nested callables and classes own what they declare inside.
+            if (
+                node_type not in _JS_NESTED_CALLABLE_TYPES
+                and node_type not in _JS_CLASS_NODE_TYPES
+            ):
+                stack.extend(node.children)
+        return False
+
+    def _js_parameter_names(self, callable_node: ASTNode) -> list[str]:
+        # A TS parameter wraps its pattern (`Box: T = d`); only the pattern
+        # binds, the default value is a read of the enclosing scope.
+        names: list[str] = []
+        for field in (cs.FIELD_PARAMETERS, cs.FIELD_PARAMETER):
+            params = callable_node.child_by_field_name(field)
+            if params is None:
+                continue
+            entries = (
+                params.named_children
+                if params.type == cs.TS_JS_FORMAL_PARAMETERS
+                else [params]
+            )
+            for entry in entries:
+                pattern: ASTNode | None = entry
+                if entry.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+                    pattern = entry.child_by_field_name(cs.TS_FIELD_PATTERN)
+                if pattern is not None:
+                    names.extend(self._js_binding_names(pattern))
+        return names
+
+    def _js_declarator_span(
+        self, node: ASTNode, callable_node: ASTNode, name: str
+    ) -> tuple[int, int] | None:
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        if target is None or name not in self._js_binding_names(target):
+            return None
+        if node.parent is not None and node.parent.type == cs.TS_LEXICAL_DECLARATION:
+            return self._js_scope_span(node, callable_node)
+        return (callable_node.start_byte, callable_node.end_byte)
+
+    def _js_loop_span(
+        self, node: ASTNode, callable_node: ASTNode, name: str
+    ) -> tuple[int, int] | None:
+        # Same rule as the ctor index: no kind assigns an existing binding,
+        # `var` hoists to the callable, `let`/`const` cover the loop.
+        kind = node.child_by_field_name(cs.FIELD_KIND)
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if kind is None or left is None or name not in self._js_binding_names(left):
+            return None
+        if kind.type == cs.TS_JS_VAR_KIND:
+            return (callable_node.start_byte, callable_node.end_byte)
+        return (node.start_byte, node.end_byte)
+
+    @staticmethod
+    def _js_declared_name(node: ASTNode) -> str | None:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        return safe_decode_text(name_node) if name_node is not None else None
 
     @staticmethod
     def _js_scope_span(node: ASTNode, method_node: ASTNode) -> tuple[int, int]:

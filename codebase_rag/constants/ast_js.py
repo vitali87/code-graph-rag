@@ -40,7 +40,7 @@ TS_LOCALS_PATTERN = """
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 # A chained call's receiver written as a construction (`new Box()`,
 # `(new Box())`): only text that reads `new` once these are stripped is
-# parsed back to see whether it IS a construction (issue #2465).
+# looked up in the file's tree to see whether it IS a construction (#2465).
 JS_NEW_KEYWORD = "new"
 JS_RECEIVER_LEADING_CHARS = "( \t\r\n"
 # `this.` receiver prefix of a call name; a prototype-assigned function

@@ -145,26 +145,20 @@ def extract_constructor_name(new_expr_node: Node) -> str | None:
     return None
 
 
-def construction_receiver(text: str, language: cs.SupportedLanguage) -> Node | None:
-    # A call name carries its receiver as text, so a chain rooted in
-    # `new Box()` or `(new Box())` is parsed back to learn whether the
-    # receiver IS that construction. An expression that only contains one
-    # (`(new Box() || other)`) can evaluate to something else: None.
+def construction_at(root: Node, start: int, text: str) -> Node | None:
+    # A call name carries a chain's receiver as text that starts where the
+    # call does. Finding that span in the file's own tree, rather than
+    # parsing the text alone, keeps the scopes around it, so `new Box()`
+    # reads the `Box` bound there. Only a receiver that IS the construction,
+    # under any parentheses, is returned: `(new Box() || other)` can
+    # evaluate to something else.
+    text = text.rstrip()
     if not text.lstrip(cs.JS_RECEIVER_LEADING_CHARS).startswith(cs.JS_NEW_KEYWORD):
         return None
-    # Local import: parser_loader pulls in the language grammars.
-    from ...parser_loader import load_parsers
-
-    parsers, _ = load_parsers()
-    if (parser := parsers.get(language)) is None:
+    end = start + len(text.encode(cs.ENCODING_UTF8))
+    node = root.named_descendant_for_byte_range(start, end)
+    if node is None or node.start_byte != start or node.end_byte != end:
         return None
-    root = parser.parse(text.encode(cs.ENCODING_UTF8)).root_node
-    if root.has_error or root.named_child_count != 1:
-        return None
-    statement = root.named_children[0]
-    if statement.type != cs.TS_EXPRESSION_STATEMENT or statement.named_child_count != 1:
-        return None
-    node = statement.named_children[0]
     while node.type == cs.TS_PARENTHESIZED_EXPRESSION and node.named_child_count == 1:
         node = node.named_children[0]
     return node if node.type == cs.TS_NEW_EXPRESSION else None
