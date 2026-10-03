@@ -9,10 +9,10 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs
-from ...types_defs import CSharpGenericShape, NodeType
+from ...types_defs import CSharpCallShape, CSharpGenericShape, NodeType
 from ...utils import qn_markers
 from ..csharp import utils as csharp_utils
-from ..csharp.overloads import bindings_for_base, substitute
+from ..csharp.overloads import bindings_for_base, substitute, unshadowed
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -31,6 +31,7 @@ def process_all_method_overrides(
     csharp_class_generic_arity: Mapping[str, int] | None = None,
     csharp_generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
     csharp_class_namespaced: Mapping[str, str] | None = None,
+    csharp_call_shapes: Mapping[str, CSharpCallShape] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
@@ -92,6 +93,7 @@ def process_all_method_overrides(
             csharp_override_methods,
             csharp_generic_shapes,
             csharp_class_generic_arity,
+            csharp_call_shapes,
         )
     _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
 
@@ -444,11 +446,14 @@ def _find_override_by_substitution(
     method_name: str,
     function_registry: FunctionRegistryTrieProtocol,
     bindings: Mapping[str, str],
+    call_shapes: Mapping[str, CSharpCallShape],
 ) -> str | None:
     # `Base<T>.Put(List<T>)` is `Put(List<int>)` on a `Derived : Base<int>`:
     # with the type arguments the subclass passes substituted, the base
     # overload it overrides spells its signature exactly, where erasing the
-    # arguments cannot tell `Put(List<T>)` from `Put(List<string>)`.
+    # arguments cannot tell `Put(List<T>)` from `Put(List<string>)`. A type
+    # parameter the base method declares itself (`M<T>(T)`) shadows the
+    # class's, so the subclass's binding never reaches it.
     base_name = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
     prefix = f"{parent_class}{cs.SEPARATOR_DOT}"
     matches: list[str] = []
@@ -456,9 +461,13 @@ def _find_override_by_substitution(
         if node_type != NodeType.METHOD or not qn.startswith(prefix):
             continue
         name, paren, params = qn[len(prefix) :].partition(cs.CHAR_PAREN_OPEN)
-        if name == base_name and (
-            f"{name}{paren}{substitute(params, bindings)}" == method_name
-        ):
+        if name != base_name:
+            continue
+        shape = call_shapes.get(qn)
+        visible = unshadowed(
+            bindings, shape.type_parameters if shape is not None else ()
+        )
+        if f"{name}{paren}{substitute(params, visible)}" == method_name:
             matches.append(qn)
     return matches[0] if len(matches) == 1 else None
 
@@ -481,11 +490,13 @@ def _parent_method_qn(
     function_registry: FunctionRegistryTrieProtocol,
     erase_generics: bool = False,
     bindings: Mapping[str, str] | None = None,
+    call_shapes: Mapping[str, CSharpCallShape] | None = None,
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target.
 
     `bindings` are the type arguments the overriding class passes
-    `parent_class`'s type parameters, for a C# override.
+    `parent_class`'s type parameters, for a C# override, and `call_shapes`
+    name the type parameters each C# method declares itself.
     """
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
@@ -493,7 +504,11 @@ def _parent_method_qn(
         # signature still matches the base method.
         substituted = (
             _find_override_by_substitution(
-                parent_class, method_name, function_registry, bindings
+                parent_class,
+                method_name,
+                function_registry,
+                bindings,
+                call_shapes or {},
             )
             if bindings
             else None
@@ -530,6 +545,7 @@ def check_method_overrides(
     csharp_override_methods: set[str] | None = None,
     csharp_generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
     csharp_class_generic_arity: Mapping[str, int] | None = None,
+    csharp_call_shapes: Mapping[str, CSharpCallShape] | None = None,
 ) -> None:
     implemented = implemented_interfaces or {}
     if class_qn not in class_inheritance and class_qn not in implemented:
@@ -560,6 +576,7 @@ def check_method_overrides(
                 function_registry,
                 is_csharp,
                 bindings_of.get(current_class),
+                csharp_call_shapes,
             )
             if current_class != class_qn
             else None

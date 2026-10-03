@@ -371,11 +371,13 @@ class JavaMethodCallInfo(TypedDict):
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
-    tail takes extra arguments, and whether it is static."""
+    tail takes extra arguments, whether it is static, and the type
+    parameters it declares itself (`M<T, U>` -> ("T", "U"))."""
 
     required: int
     variadic: bool
     is_static: bool
+    type_parameters: tuple[str, ...] = ()
 
 
 class CancelledResult(NamedTuple):

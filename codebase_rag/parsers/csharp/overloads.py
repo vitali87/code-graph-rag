@@ -80,6 +80,15 @@ def substitute(type_text: str, bindings: Mapping[str, str]) -> str:
     )
 
 
+def unshadowed(
+    bindings: Mapping[str, str], declared: Collection[str]
+) -> dict[str, str]:
+    """`bindings` less the type parameters a generic method `declared`
+    itself: in `Handler<T>.Handle<T>(T)` the method's own `T` hides the
+    class's, so a binding of the class's never reaches it."""
+    return {name: bound for name, bound in bindings.items() if name not in declared}
+
+
 def bindings_for_base(
     shapes: Mapping[str, CSharpGenericShape],
     generic_arity: Mapping[str, int],

@@ -2344,6 +2344,7 @@ class ClassIngestMixin:
             self.csharp_class_generic_arity,
             self.csharp_generic_shapes,
             self.csharp_class_namespaced,
+            self.csharp_call_shapes,
         )
         self._resolve_java_anon_overrides()
 

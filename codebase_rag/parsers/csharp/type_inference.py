@@ -26,12 +26,15 @@ from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
 from .overloads import (
     ArgumentType,
+    Fit,
+    Relation,
     best_candidates,
     bindings_for_base,
     fit,
     plain_type_name,
     substitute,
     type_arguments,
+    unshadowed,
 )
 from .utils import (
     _normalize_type_name,
@@ -1948,28 +1951,35 @@ class CSharpTypeInferenceEngine:
                     call.node, call.local_var_types, call.module_qn, call.caller_qn
                 )
             scored = [
-                (
-                    qn,
-                    [
-                        fit(
-                            substitute(parameter, bindings),
-                            argument,
-                            open_names
-                            | self._method_type_parameters(qn, call.module_qn),
-                            relation,
-                        )
-                        for parameter, argument in zip(
-                            self._call_parameters(qn, len(arguments)),
-                            arguments,
-                            strict=True,
-                        )
-                    ],
-                )
+                (qn, self._overload_fits(qn, arguments, bindings, open_names, relation))
                 for qn in qns
             ]
             if best := best_candidates(scored):
                 return best
         return []
+
+    def _overload_fits(
+        self,
+        method_qn: str,
+        arguments: list[ArgumentType | None],
+        bindings: Mapping[str, str],
+        open_names: frozenset[str],
+        relation: Relation,
+    ) -> list[Fit | None]:
+        # How each argument binds its parameter of `method_qn`. A type
+        # parameter the method declares itself shadows its class's of the
+        # same name (`Handler<T>.Handle<T>(T)`), so the binding the receiver
+        # gives the class's never reaches it; inference leaves it open.
+        own = self._method_type_parameters(method_qn)
+        visible = unshadowed(bindings, own)
+        return [
+            fit(substitute(parameter, visible), argument, open_names | own, relation)
+            for parameter, argument in zip(
+                self._call_parameters(method_qn, len(arguments)),
+                arguments,
+                strict=True,
+            )
+        ]
 
     def _call_parameters(self, method_qn: str, arg_count: int) -> list[str]:
         # The parameter each of `arg_count` arguments binds, one per argument,
@@ -2134,19 +2144,11 @@ class CSharpTypeInferenceEngine:
             or natural not in spelled
         ]
 
-    def _method_type_parameters(self, method_qn: str, module_qn: str) -> frozenset[str]:
-        # A generic method's own type parameters are not recorded, so a
-        # parameter type spelled as a bare name no registered or predefined
-        # type answers to is taken for one (`M<U>(U item)`).
-        if method_qn not in self.csharp_generic_methods:
-            return frozenset()
-        return frozenset(
-            parameter
-            for parameter in _param_types(method_qn)
-            if parameter.isidentifier()
-            and plain_type_name(parameter) not in cs.CSHARP_JUDGED_PARAM_TYPES
-            and self._type_name_to_qn(parameter, module_qn) is None
-        )
+    def _method_type_parameters(self, method_qn: str) -> frozenset[str]:
+        # The type parameters a generic method declares (`M<U>(U item)`),
+        # as its declaration spells them.
+        shape = self.csharp_call_shapes.get(method_qn)
+        return frozenset(shape.type_parameters) if shape is not None else frozenset()
 
     def _argument_types(
         self,

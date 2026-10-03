@@ -347,6 +347,108 @@ public class Use {
         }
 
 
+# `Handle<T>` and `Pack<T>` declare their own `T`, which shadows Handler's:
+# a `Handler<Person>` receiver closes the class's `T`, not theirs, so each
+# infers its `T` from the argument (`Circle`). `Process` and `Tag<U>` do not
+# redeclare `T`, so the receiver's Person still reaches theirs.
+SHADOW_CS = """\
+namespace S;
+public class Person { }
+public class Shape { }
+public class Circle : Shape { }
+public class Box<T> { }
+public class Handler<T> {
+    public int Handle<T>(T item) => 1;
+    public int Handle(Shape item) => 2;
+    public int Pack<T>(Box<T> box) => 3;
+    public int Pack(Box<Shape> box) => 4;
+    public int Process(T item) => 5;
+    public int Process(Shape item) => 6;
+    public int Tag<U>(T item, U label) => 7;
+    public int Tag(Shape item, string label) => 8;
+}
+public class Renamed<T> {
+    public int Handle<U>(U item) => 1;
+    public int Handle(Shape item) => 2;
+}
+public class PersonHandler : Handler<Person> { }
+public class Use {
+    public int Direct() { return new Handler<Person>().Handle(new Circle()); }
+    public int Local() { var h = new Handler<Person>(); return h.Handle(new Circle()); }
+    public int Declared(Handler<Person> h) { return h.Handle(new Circle()); }
+    public int Subclass() { var h = new PersonHandler(); return h.Handle(new Circle()); }
+    public int Nested() { var h = new Handler<Person>(); return h.Pack(new Box<Circle>()); }
+    public int ExactShape() { var h = new Handler<Person>(); return h.Handle(new Shape()); }
+    public int RenamedCall() { return new Renamed<Person>().Handle(new Circle()); }
+    public int ClassT() { var h = new Handler<Person>(); return h.Process(new Circle()); }
+    public int ClassTPerson() { var h = new Handler<Person>(); return h.Process(new Person()); }
+    public int MixedT() { var h = new Handler<Person>(); return h.Tag(new Circle(), "x"); }
+}
+"""
+SHADOW_HANDLER = f"{PROJECT}.Shadow.S.Handler"
+SHADOW_USE = f"{PROJECT}.Shadow.S.Use"
+
+
+@pytest.fixture
+def shadow_graph(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
+    _index(temp_repo, mock_ingestor, {"Shadow.cs": SHADOW_CS})
+    return mock_ingestor
+
+
+class TestAMethodsOwnTypeParameterShadowsTheReceivers:
+    @pytest.mark.parametrize(
+        "caller", ["Direct", "Local", "Declared(Handler<Person>)", "Subclass"]
+    )
+    def test_a_generic_method_infers_its_own_t_from_the_argument(
+        self, shadow_graph: MagicMock, caller: str
+    ) -> None:
+        # `Handle<Circle>(Circle)` is an identity, which beats the
+        # conversion `Handle(Shape)` needs.
+        calls = _calls_from(shadow_graph, f"{SHADOW_USE}.{caller}")
+        target = f"{SHADOW_HANDLER}.Handle(T)"
+        assert set(calls) == {target}, calls
+        assert _resolution(calls[target]) == cs.EdgeResolution.EXACT
+
+    def test_a_shadowing_t_nested_in_a_generic_parameter_stays_open(
+        self, shadow_graph: MagicMock
+    ) -> None:
+        # `Box<Circle>` binds `Pack<T>(Box<T>)` with `T := Circle`; generic
+        # invariance keeps it from converting to `Box<Shape>`.
+        calls = _calls_from(shadow_graph, f"{SHADOW_USE}.Nested")
+        assert set(calls) == {f"{SHADOW_HANDLER}.Pack(Box<T>)"}, calls
+
+    def test_an_exact_argument_still_binds_the_non_generic_overload(
+        self, shadow_graph: MagicMock
+    ) -> None:
+        # `Handle<Shape>(Shape)` and `Handle(Shape)` take a Shape equally
+        # well, and C# then prefers the non-generic method.
+        calls = _calls_from(shadow_graph, f"{SHADOW_USE}.ExactShape")
+        assert set(calls) == {f"{SHADOW_HANDLER}.Handle(Shape)"}, calls
+
+    def test_a_method_type_parameter_of_another_name_binds_as_before(
+        self, shadow_graph: MagicMock
+    ) -> None:
+        calls = _calls_from(shadow_graph, f"{SHADOW_USE}.RenamedCall")
+        assert set(calls) == {f"{PROJECT}.Shadow.S.Renamed.Handle(U)"}, calls
+
+    def test_a_method_that_does_not_redeclare_t_takes_the_receivers(
+        self, shadow_graph: MagicMock
+    ) -> None:
+        # Bound to Person, `Process(T)` cannot take a Circle but can a Person.
+        circle = _calls_from(shadow_graph, f"{SHADOW_USE}.ClassT")
+        person = _calls_from(shadow_graph, f"{SHADOW_USE}.ClassTPerson")
+        assert set(circle) == {f"{SHADOW_HANDLER}.Process(Shape)"}, circle
+        assert set(person) == {f"{SHADOW_HANDLER}.Process(T)"}, person
+
+    def test_a_generic_method_still_takes_the_receivers_t_it_does_not_declare(
+        self, shadow_graph: MagicMock
+    ) -> None:
+        # `Tag<U>` declares only `U`, so its `T` is the receiver's Person,
+        # which a Circle cannot bind.
+        calls = _calls_from(shadow_graph, f"{SHADOW_USE}.MixedT")
+        assert set(calls) == {f"{SHADOW_HANDLER}.Tag(Shape, string)"}, calls
+
+
 class TestACallThatLeavesADefaultedArgumentOut:
     # No overload has the call's arity, so the arity walk finds nothing and
     # the call used to be bound by name alone, to the explicit implementation.
@@ -613,6 +715,44 @@ public class Deep : Mid<int> {
             (f"{g}.Other.Put(List<string>)", f"{g}.Base.Put(List<string>)"),
             (f"{g}.Deep.Put(List<int>)", f"{g}.Base.Put(List<T>)"),
         } <= overrides, sorted(overrides)
+
+    def test_an_override_never_binds_a_generic_method_whose_own_t_shadows(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `M<T>` declares its own `T`, which `: Base<int>` does not close, so
+        # `M(int)` overrides the class's `M(T)`, never `M<T>`. Both spell
+        # `M(T)`; the one declared second carries a line marker.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "ShadowOv.cs": """\
+namespace Sh;
+public class Base<T> {
+    public virtual int M<T>(T x) => 1;
+    public virtual int M(T x) => 2;
+}
+public class Derived : Base<int> {
+    public override int M(int x) => 3;
+}
+public class Later<T> {
+    public virtual int M(T x) => 2;
+    public virtual int M<T>(T x) => 1;
+}
+public class After : Later<int> {
+    public override int M(int x) => 3;
+}
+"""
+            },
+        )
+        sh = f"{PROJECT}.ShadowOv.Sh"
+        overrides = _overrides(mock_ingestor)
+        assert (f"{sh}.Derived.M(int)", f"{sh}.Base.M(T)") not in overrides, sorted(
+            overrides
+        )
+        assert (f"{sh}.After.M(int)", f"{sh}.Later.M(T)") in overrides, sorted(
+            overrides
+        )
 
 
 class TestWhatStaysAsItWas:

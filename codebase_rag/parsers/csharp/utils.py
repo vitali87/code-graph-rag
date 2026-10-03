@@ -313,6 +313,18 @@ def _generic_base(node: Node) -> CSharpGenericBase | None:
     return CSharpGenericBase(name, arguments) if arguments else None
 
 
+def type_parameter_names(parameter_list: Node | None) -> tuple[str, ...]:
+    """The names a `type_parameter_list` declares: `<[A] T, out U>` ->
+    ("T", "U"); () for no list."""
+    if parameter_list is None:
+        return ()
+    return tuple(
+        name
+        for param in parameter_list.named_children
+        if (name := safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)))
+    )
+
+
 def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     """`class PersonValidator : Inline<Person>` -> no parameters and the
     base `Inline<Person>`; `class Inline<T> : Validator<T>` -> `T` and
@@ -322,11 +334,7 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     bases: list[CSharpGenericBase] = []
     for child in type_node.children:
         if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
-            parameters.extend(
-                name
-                for param in child.named_children
-                if (name := safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)))
-            )
+            parameters.extend(type_parameter_names(child))
         elif child.type == cs.TS_CSHARP_BASE_LIST:
             bases.extend(
                 base
