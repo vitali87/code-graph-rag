@@ -44,6 +44,9 @@ JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 JS_THIS_CALL_PREFIX = "this."
 
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
+# The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
+# spell it as an anonymous token, not Java's named `asterisk` node.
+TS_JS_STAR = "*"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"

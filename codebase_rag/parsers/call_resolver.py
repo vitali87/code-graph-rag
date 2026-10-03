@@ -2165,6 +2165,34 @@ class CallResolver:
             or call_name.startswith(f"{cs.KEYWORD_SUPER}()")
         )
 
+    def _try_resolve_js_reexport(
+        self,
+        call_name: str,
+        import_map: dict[str, str],
+        language: cs.SupportedLanguage | None,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        # `import { plus } from "./lib"` maps `plus` to `lib.plus`, where a
+        # barrel registers nothing: its `export { add as plus } from` names
+        # the definition, possibly through further barrels. Without this the
+        # call fell to the name-only fallback, which found no `plus` at all,
+        # or only guessed the right `add` (issue #2464).
+        if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
+            return None
+        imported_qn = import_map[call_name]
+        followed = self.import_processor.follow_js_reexports(
+            imported_qn,
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
+        )
+        if followed == imported_qn:
+            return None
+        # The chain's end resolves as a direct import of it would, so a
+        # CommonJS whole-module export there is still reached.
+        return self._try_resolve_direct_import(
+            call_name, {call_name: followed}, language, module_qn
+        )
+
     def _try_resolve_via_imports(
         self,
         call_name: str,
@@ -2185,6 +2213,11 @@ class CallResolver:
             import_map = {}
 
         if result := self._try_resolve_direct_import(
+            call_name, import_map, language, module_qn
+        ):
+            return result
+
+        if result := self._try_resolve_js_reexport(
             call_name, import_map, language, module_qn
         ):
             return result

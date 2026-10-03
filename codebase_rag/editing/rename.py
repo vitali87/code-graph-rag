@@ -443,7 +443,92 @@ class Renamer:
             old_name,
             patcher,
         )
+        sites = self._js_import_bound(qn, path, sites, old_name, patcher)
         return sites, unlocatable, old_name, definition["label"]
+
+    def _js_import_bound(
+        self,
+        qn: str,
+        path: str,
+        sites: list[RenameSite],
+        old_name: str,
+        patcher: Patcher,
+    ) -> list[RenameSite]:
+        """The sites, as the JS/TS imports binding each one let it be renamed.
+
+        The graph binds `mul(8, 9)` to `mul` through a default import, and
+        `add(1, 2)` through a barrel's `export *`: the token equals the
+        definition's name either way (issue #2464). A bare use in another
+        file follows the rename only when its file imports the name by the
+        definition's own name, so the import is rewritten with it. One whose
+        file binds a name of its own is left as it is, and one bound through
+        an import the rename cannot rewrite is a guess: rewriting the use
+        alone would leave the import naming what no longer exists.
+        """
+        bindings: tuple[set[str], set[str]] | None = None
+        kept: list[RenameSite] = []
+        for site in sites:
+            if (
+                site.kind not in ("call", "reference")
+                or site.path == path
+                or get_language_for_extension(Path(site.path).suffix)
+                not in cs.JS_TS_LANGUAGES
+                or self._is_member_token(patcher, site)
+            ):
+                kept.append(site)
+                continue
+            if bindings is None:
+                bindings = self._js_name_bindings(qn, old_name)
+            by_name, aliased = bindings
+            if site.path in by_name:
+                kept.append(site)
+            elif site.path not in aliased:
+                kept.append(site._replace(resolution=cs.EdgeResolution.HEURISTIC.value))
+        return kept
+
+    @staticmethod
+    def _is_member_token(patcher: Patcher, site: RenameSite) -> bool:
+        # `ns.helper(1)` names the member by its own name whatever binds
+        # `ns`; only a bare `helper(1)` is bound by an import of that name.
+        try:
+            source = patcher.source(site.path)
+            offset = line_col_to_byte(source, site.line, site.col)
+        except PatcherError:
+            return False
+        return source[:offset].rstrip().endswith(b".")
+
+    def _js_name_bindings(self, qn: str, name: str) -> tuple[set[str], set[str]]:
+        """(files importing `name` by the definition's own name, files whose
+        `name` is a binding of their own for the definition)."""
+        module_qn, _path = self._module_of(qn)
+        by_name = {
+            site.path
+            for site, _module in self._import_sites(qn, name)
+            if (site.alias or site.imported_name) == name
+        }
+        # `import mul from`, `const mul = require(...)` and a barrel's
+        # `export { default as mul } from` name the binding as the importer
+        # chose, and so does every module importing that `mul` from such a
+        # barrel: the definition's rename changes none of them.
+        aliased: set[str] = set()
+        pending = [(module_qn, False)]
+        seen = {module_qn}
+        while pending:
+            source, chosen = pending.pop()
+            for row in graph_query.importers(self.fetch_all, self.project, source):
+                # The definition's own name is rewritten with its import; a
+                # barrel's chosen name only passes on under that same name.
+                if (
+                    not row["path"]
+                    or row["alias"] != name
+                    or (row["imported_name"] == name) != chosen
+                ):
+                    continue
+                aliased.add(row["path"])
+                if row["module"] not in seen:
+                    seen.add(row["module"])
+                    pending.append((row["module"], True))
+        return by_name, aliased
 
     def _definition_site(
         self,

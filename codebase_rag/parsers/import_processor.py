@@ -51,6 +51,7 @@ from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
+from .js_ts.reexports import follow_js_reexports
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
@@ -391,6 +392,19 @@ def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
     local = safe_decode_text(value)
     if imported and local:
         return local, imported
+    return None
+
+
+def _js_default_export_local(statement: Node) -> str | None:
+    # The local name `export default` publishes: a named function or class
+    # declaration, or a bare identifier. An anonymous function or any other
+    # expression is known by no name a binding could hold.
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    if declaration is not None:
+        return safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+    value = statement.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(value)
     return None
 
 
@@ -818,6 +832,7 @@ class ImportProcessor:
         "_deferred_import_edges",
         "unresolved_specifiers",
         "unresolved_references",
+        "js_export_bindings",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -912,6 +927,13 @@ class ImportProcessor:
         # writes it onto the Module node after Pass 3, and matches an added
         # file against it to find the modules that waited (issue #1568).
         self.unresolved_references: dict[str, set[str]] = {}
+        # JS/TS module qn -> {exported name: local qn} for the module's own
+        # bindings it exports under another name (`export { trim as strip }`,
+        # `export default upper`). An importer's map holds `<module>.strip`,
+        # which names nothing registered; the call resolver follows it here
+        # to the definition (issue #2464). Re-exports with a `from` live in
+        # import_mapping instead.
+        self.js_export_bindings: dict[str, dict[str, str]] = {}
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -1262,6 +1284,8 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        # Re-derived from the export statements the re-parse finds.
+        self.js_export_bindings.pop(module_qn, None)
         # The Dart prefix maps share the same invariant. Both are written
         # only when the file HAS prefixed imports, so removing the last one
         # left the previous parse's entries in place: a stale alias kept
@@ -1927,6 +1951,11 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
+        if module_path == entry.module_qn and entry.language in cs.JS_TS_LANGUAGES:
+            # `export * from "./add"` in `math/index.ts` names `math.add`,
+            # which reads as the name `add` of the `math` barrel: the barrel
+            # itself. A module importing itself is no edge (issue #2464).
+            return 0
         self._emit_import_edge(entry, target_label, module_path)
         logger.debug(
             ls.IMP_CREATED_RELATIONSHIP,
@@ -3659,6 +3688,7 @@ class ImportProcessor:
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
+                self._record_js_export_bindings(import_node, module_qn)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
@@ -3964,7 +3994,7 @@ class ImportProcessor:
             return
 
         for child in export_node.children:
-            if child.type == cs.TS_ASTERISK:
+            if child.type == cs.TS_JS_STAR:
                 wildcard_key = f"*{source_module}"
                 self.import_mapping[current_module][wildcard_key] = source_module
                 self._record_import_site(
@@ -4008,6 +4038,54 @@ class ImportProcessor:
             module=source_module,
             original=original_name,
         )
+
+    def follow_js_reexports(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """Where a JS/TS import of `qn` leads through the barrels re-exporting
+        it; see `js_ts.reexports.follow_js_reexports`."""
+        return follow_js_reexports(
+            qn,
+            self.import_mapping,
+            self.js_export_bindings,
+            module_paths,
+            function_registry,
+        )
+
+    def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
+        """Record the local bindings a module exports under another name.
+
+        `export { trim as strip }` and `export default upper` publish a local
+        binding as `strip` and `default`, names no definition is registered
+        under, so a call through them reached nothing (issue #2464). A
+        statement with a `from` names another module's binding, which
+        `_parse_js_reexport` maps.
+        """
+        if statement.child_by_field_name(cs.FIELD_SOURCE) is not None:
+            return
+        exported: dict[str, str] = {}
+        if any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children):
+            if local := _js_default_export_local(statement):
+                exported[cs.TS_EXPORT_DEFAULT] = local
+        for clause in statement.named_children:
+            if clause.type != cs.TS_EXPORT_CLAUSE:
+                continue
+            for specifier in clause.named_children:
+                local = safe_decode_text(specifier.child_by_field_name(cs.FIELD_NAME))
+                alias = safe_decode_text(specifier.child_by_field_name(cs.FIELD_ALIAS))
+                # An unaliased `export { pad }` already resolves as `<module>.pad`.
+                if local and alias and alias != local:
+                    exported[alias] = local
+        if exported:
+            self.js_export_bindings.setdefault(module_qn, {}).update(
+                {
+                    name: f"{module_qn}{cs.SEPARATOR_DOT}{local}"
+                    for name, local in exported.items()
+                }
+            )
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
