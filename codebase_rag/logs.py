@@ -818,6 +818,10 @@ JS_VAR_INFERRED = "Inferred JS variable: {var_name} -> {var_type}"
 JS_VAR_INFER_FAILED = "Could not infer type for variable: {var_name}"
 JS_VAR_TYPE_MAP_BUILT = "Built JS variable type map with {count} variables (found {declarator_count} declarators total)"
 JS_INFER_VALUE_NODE = "Inferring type from value node type: {node_type}"
+JS_CTOR_LOCALLY_BOUND = (
+    "Construction of {class_name} reads a binding of the enclosing callable, "
+    "not the module class; left untyped"
+)
 JS_CALL_EXPR_FUNC_NODE = "Call expression func_node type: {func_type}"
 JS_EXTRACTED_METHOD_CALL = "Extracted method call: {method_call}"
 JS_TYPE_INFERRED = "JS type inference: {method_call}() returns {inferred_type}"
