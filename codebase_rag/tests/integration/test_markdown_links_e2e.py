@@ -191,7 +191,7 @@ def test_an_incremental_sync_ends_where_a_clean_index_does(
         (r["from_qn"], r["to_key"]) for r in links
     }
     assert {d["path"]: d["broken"] for d in documents}["README.md"] == ["pkg/core.py"]
-    assert (links, documents) == _clean_snapshot(memgraph_ingestor, repo)
+    assert _clean_snapshot(memgraph_ingestor, repo) == (links, documents)
 
 
 def test_the_context_slice_finds_a_document_linking_from_a_section(

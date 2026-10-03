@@ -292,6 +292,19 @@ def _block_list_key(line: str) -> str | None:
     return name if not rest or rest.startswith("#") else None
 
 
+def _is_block_item(stripped: str) -> bool:
+    """Whether a stripped line is a `- item` entry, or a bare `-`."""
+    return stripped == _BLOCK_ITEM_MARKER or stripped.startswith(_BLOCK_ITEM_PREFIX)
+
+
+def _ends_block(line: str) -> bool:
+    """Whether `line` is a top-level line that is neither an item nor a comment."""
+    stripped = line.strip()
+    if not stripped or line[:1] in _INDENT:
+        return False
+    return not (_is_block_item(stripped) or stripped.startswith("#"))
+
+
 def _block_list(lines: list[str], index: int) -> tuple[tuple[str, ...] | None, int]:
     """The `- item` list starting at `index`, and the index after its block.
 
@@ -302,19 +315,16 @@ def _block_list(lines: list[str], index: int) -> tuple[tuple[str, ...] | None, i
     """
     items: list[str] = []
     flat = True
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-        is_item = stripped == _BLOCK_ITEM_MARKER or stripped.startswith(
-            _BLOCK_ITEM_PREFIX
-        )
-        is_comment = stripped.startswith("#")
-        if stripped and not (is_item or is_comment) and line[:1] not in _INDENT:
-            break
+    while index < len(lines) and not _ends_block(lines[index]):
+        stripped = lines[index].strip()
         index += 1
-        if not stripped or is_comment:
+        if not stripped or stripped.startswith("#"):
             continue
-        item = _list_item(stripped[len(_BLOCK_ITEM_MARKER) :]) if is_item else None
+        item = (
+            _list_item(stripped[len(_BLOCK_ITEM_MARKER) :])
+            if _is_block_item(stripped)
+            else None
+        )
         if item is None:
             flat = False
         else:
