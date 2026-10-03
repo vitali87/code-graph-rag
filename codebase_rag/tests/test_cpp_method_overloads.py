@@ -14,12 +14,14 @@ from pathlib import Path
 
 import pytest
 
+import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import (
     _MockIngestor,
     get_nodes,
@@ -1230,6 +1232,53 @@ def test_incremental_definition_only_overload_matches_a_clean_index(
     }
     assert incremental[2] == clean[2]
     assert incremental[:2] == clean[:2]
+
+
+def test_the_overload_properties_survive_a_protobuf_export(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    # The incremental runs above read the signature and the in-class mark
+    # back from the graph, so an exported graph must carry them as well.
+    root = _write(
+        temp_repo / PROJECT,
+        {"sep.h": SEP_H, "sep.cpp": SEP_CPP, "vref.h": VREF_H, "v.cpp": VREF_CPP},
+    )
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    graph = {
+        str(value): (
+            props.get(cs.KEY_SIGNATURE, ""),
+            bool(props.get(cs.KEY_DECLARED_IN_CLASS)),
+        )
+        for (label, value), props in store.nodes.items()
+        if label == cs.NodeLabel.METHOD.value
+    }
+
+    out = tmp_path / "export"
+    out.mkdir()
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=ProtobufFileIngestor(str(out), split_index=False),
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / cs.PROTOBUF_INDEX_FILE).read_bytes())
+    exported = {
+        node.method.qualified_name: (
+            node.method.signature,
+            node.method.declared_in_class,
+        )
+        for node in index.nodes
+        if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) == "method"
+    }
+
+    assert exported == graph
+    assert all(signature for signature, _ in exported.values()), exported
+    # Both values of the mark cross the wire, not only the default.
+    assert {declared for _, declared in exported.values()} == {True, False}
 
 
 def test_warm_reingest_of_a_definition_file_keeps_each_overload(

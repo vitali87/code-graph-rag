@@ -484,6 +484,12 @@ message GraphCodeIndex {
     // Annotations as written (#1527); absent return_type is the empty string.
     string return_type = 10;
     repeated string param_types = 11;
+    // A C++ member's overload signature and whether its class body declares
+    // it (#2455). An incremental run reads both back to tell which overload
+    // a re-parsed out-of-class definition defines; absent signature is the
+    // empty string (not a C++ member).
+    string signature = 12;
+    bool declared_in_class = 13;
   }
 
   message Class {
