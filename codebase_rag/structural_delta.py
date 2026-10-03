@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import NamedTuple, TypedDict
 
@@ -1023,11 +1023,56 @@ class _Reach(NamedTuple):
     nodes: dict[_NodeId, PropertyDict]
 
 
+class _GoneCaller(NamedTuple):
+    """A caller still naming a symbol the edit renamed or removed."""
+
+    target: str
+    path: str
+
+
+def _gone_caller_rows(
+    fetch_all: QueryFn,
+    prefix: str,
+    gone_callers: Mapping[str, _GoneCaller],
+    longer_project_prefixes: tuple[str, ...],
+) -> list[ResultRow]:
+    """The first hop the re-ingested graph can no longer show (issue #2903).
+
+    A caller of a renamed or removed symbol lost its edge with the target, so
+    no `CALLS` row leads to it any more; it is a caller at depth 1 through
+    the old name all the same, and the tests behind it are the ones that now
+    fail. Its node is looked up for the test check, and one the definition
+    lookup does not return (a module-level call) keeps the caller's own path.
+    """
+    if not gone_callers:
+        return []
+    found = {
+        _text(row.get(cs.KEY_QUALIFIED_NAME)): row
+        for row in fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
+            {
+                cs.KEY_PROJECT_PREFIX: prefix,
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                cs.KEY_QNS: sorted(gone_callers),
+            },
+        )
+    }
+    return [
+        {
+            **found.get(qn, {cs.KEY_PATH: gone.path}),
+            cs.KEY_QUALIFIED_NAME: qn,
+            cs.KEY_TO_QN: gone.target,
+        }
+        for qn, gone in sorted(gone_callers.items())
+    ]
+
+
 def _walk_callers(
     fetch_all: QueryFn,
     prefix: str,
     targets: set[str],
     longer_project_prefixes: tuple[str, ...],
+    gone_callers: Mapping[str, _GoneCaller] | None = None,
 ) -> _Reach:
     """Multi-source backward BFS, one indexed query per hop.
 
@@ -1039,17 +1084,27 @@ def _walk_callers(
     through = {qn: qn for qn in targets}
     nodes: dict[_NodeId, PropertyDict] = {}
     frontier = sorted(targets)
+    first_hop_extra = _gone_caller_rows(
+        fetch_all, prefix, gone_callers or {}, longer_project_prefixes
+    )
     for hop in range(1, cs.DELTA_REACH_MAX_DEPTH + 1):
-        if not frontier:
+        rows = [
+            *(
+                fetch_all(
+                    cq.CYPHER_DELTA_CALLERS_OF,
+                    {
+                        cs.KEY_PROJECT_PREFIX: prefix,
+                        cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                        cs.KEY_QNS: frontier,
+                    },
+                )
+                if frontier
+                else []
+            ),
+            *(first_hop_extra if hop == 1 else []),
+        ]
+        if not rows:
             break
-        rows = fetch_all(
-            cq.CYPHER_DELTA_CALLERS_OF,
-            {
-                cs.KEY_PROJECT_PREFIX: prefix,
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
-                cs.KEY_QNS: frontier,
-            },
-        )
         next_frontier: list[str] = []
         for row in sorted(
             rows,
@@ -1115,6 +1170,7 @@ def _tests_reaching(
     project_name: str,
     targets: Iterable[str],
     longer_project_prefixes: tuple[str, ...] | None = None,
+    gone_callers: Mapping[str, _GoneCaller] | None = None,
 ) -> list[TestReach]:
     prefix = _prefix(project_name)
     longer_prefixes = (
@@ -1122,7 +1178,9 @@ def _tests_reaching(
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
-    reach = _walk_callers(fetch_all, prefix, set(targets), longer_prefixes)
+    reach = _walk_callers(
+        fetch_all, prefix, set(targets), longer_prefixes, gone_callers
+    )
     rust_modules, rust_spans = _rust_inputs(
         fetch_all, prefix, reach.nodes, longer_prefixes
     )
@@ -1186,13 +1244,17 @@ def structural_delta(
     touched = fresh | {
         qn for qn, d in after.definitions.items() if d.path in after.paths
     }
+    dangling = _dangling(before, after, symbols)
+    gone_callers = {
+        d["caller"]: _GoneCaller(target=d["target"], path=d["path"]) for d in dangling
+    }
     return StructuralDelta(
         paths=sorted(before.paths | after.paths),
         reparsed=list(report.reparsed) if report else [],
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols),
+        dangling_callers=dangling,
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
         ),
@@ -1201,9 +1263,9 @@ def structural_delta(
         new_import_cycles=_new_import_cycles(before, after),
         stale_importers=_stale_importers(after, symbols),
         tests_reaching=_tests_reaching(
-            fetch_all, project_name, touched, longer_prefixes
+            fetch_all, project_name, touched, longer_prefixes, gone_callers
         )
-        if touched
+        if touched or gone_callers
         else [],
         call_sites=SiteCounts(
             before=_inbound_calls(before), after=_inbound_calls(after)
