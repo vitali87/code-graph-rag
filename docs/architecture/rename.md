@@ -72,8 +72,9 @@ family are read (the indexer's own walk, under `.cgrignore` and
 
 - for a function, every bare use, called or not (`callback = helper`,
   `map(helper, xs)`, `return helper`), and a qualified one only through its
-  module (`util.helper`, `util::helper`, or `u.helper` after
-  `import pkg.util as u`): `d.get(key)` and `subprocess.run(...)` are other
+  module (`util.helper` after `from pkg import util`, `util::helper`, or
+  `u.helper` after `import pkg.util as u`; not `util.helper` after
+  `from vendor import util`): `d.get(key)` and `subprocess.run(...)` are other
   objects' methods, whatever the function is called;
 - for a method, a use through its class (`Greeter.greet`, `Greeter::greet`),
   through its own object in the body of its class or of one whose header
@@ -84,17 +85,24 @@ family are read (the indexer's own walk, under `.cgrignore` and
   reaches the class's own module: qualified through that module
   (`cache.Cache()`, `pc.Cache()` after `import pkg.cache as pc`,
   `crate::parse::Parse`), or bare in its own file, in its package, or after
-  an import that names its module. When another symbol of the project
-  shares the name, `other.Cache()`, `from pkg.other import Cache` and
-  `class Sub(other.Cache)` are that one; an import through a package above
-  the class (`use crate::Parse`, `from pkg import Cache`) counts only when
-  no other symbol shares it. A Java file is named after its class, so there
-  the import's package tells the two apart (`import a.Greeter`). A call
-  through any other object, or a bare call in a language with an implicit
-  `this` (Java, C#, C++, Scala, Dart) outside the class and without a static
-  import of the method, counts only in a file that may hold an object of
-  the class: one that names it, or imports from its module, where a factory
-  may build one (`cache = make_cache()` after
+  an import that names its module. A module is told by its path, not its
+  last name: `pkg.cache`, `vendor.cache` and `pkg2.cache` are three modules.
+  A relative import (`from .cache import x`, `'./cache.js'`) and a Rust path
+  from `crate`, `self` or `super` are resolved from the importing file; a
+  Python import from a source root spells the module from its top-level
+  package down (`pkg.cache` once `pkg/__init__.py` exists). When another
+  symbol of the project shares the name, `other.Cache()`,
+  `from pkg.other import Cache` and `class Sub(other.Cache)` are that one;
+  an import through a package above the class (`use crate::Parse`,
+  `from pkg import Cache`) counts only when no other symbol shares it. A
+  Java file is named after its class, so there the import's package tells
+  the two apart (`import a.Greeter`). A bare name means what the scope
+  around it binds: a parameter `Cache` hides the imported class in its own
+  function only. A call through any other object, or a bare call in a
+  language with an implicit `this` (Java, C#, C++, Scala, Dart) outside the
+  class and without a static import of the method, counts only in a file
+  that may hold an object of the class: one that names it, or imports from
+  its module, where a factory may build one (`cache = make_cache()` after
   `from pkg.cache import make_cache`). It is uncertain: `d.get(key)` may be
   a dict's. A read without a call counts only in Python, JavaScript and
   TypeScript, where a method is an attribute; in Rust, Java or C++

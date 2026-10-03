@@ -212,7 +212,48 @@ RENAME_IMPORT_STATEMENTS = (
 )
 # What a path into the project may start with in place of a package name:
 # `use crate::Parse`, `use super::Parse`.
-RENAME_PROJECT_ROOT_WORDS = frozenset({"crate", "self", "super"})
+RENAME_RUST_CRATE = "crate"
+RENAME_RUST_SELF = "self"
+RENAME_RUST_SUPER = "super"
+RENAME_PROJECT_ROOT_WORDS = frozenset(
+    {RENAME_RUST_CRATE, RENAME_RUST_SELF, RENAME_RUST_SUPER}
+)
+# The files that root a Rust crate: `crate::` starts in their directory.
+RENAME_RUST_CRATE_ROOTS = ("lib.rs", "main.rs")
+# `mod parse;` declares the child module `parse` of the file's own module.
+RENAME_RUST_MOD_ITEM = "mod_item"
+# A file that is its directory's module rather than one of its own:
+# `pkg/__init__.py` is `pkg`, `src/cmd/mod.rs` is `cmd`, `lib/index.js` is
+# `lib`, and `src/lib.rs` the crate root.
+RENAME_PACKAGE_FILES: dict[SupportedLanguage, frozenset[str]] = {
+    SupportedLanguage.PYTHON: frozenset({"__init__"}),
+    SupportedLanguage.RUST: frozenset({"mod", "lib", "main"}),
+    **dict.fromkeys(JS_TS_LANGUAGES, frozenset({"index"})),
+}
+# Words of an import statement that never name a module or a binding.
+RENAME_IMPORT_KEYWORDS = frozenset(
+    {
+        "import",
+        "from",
+        "use",
+        "as",
+        "static",
+        "pub",
+        "package",
+        "type",
+        "typeof",
+        "using",
+        "namespace",
+        "require",
+        "export",
+        "default",
+        "extern",
+        "in",
+        "*",
+    }
+)
+RENAME_IMPORT_ALIAS = "as"
+RENAME_IMPORT_ALL = "*"
 # How far above a binding its declaration's type and value may sit:
 # `Parse* p = ...` puts `p` three levels under the declaration.
 RENAME_DECLARATION_DEPTH = 3

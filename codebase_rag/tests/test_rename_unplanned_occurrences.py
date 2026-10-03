@@ -1446,3 +1446,235 @@ def test_a_java_class_is_told_from_its_namesake_by_its_package(
     assert [(s.kind, s.path, s.line, s.col, s.resolution) for s in unplanned] == [
         ("call", "src/main/java/c/Use.java", 8, 17, resolution)
     ]
+
+
+# --- review of PR #2797, fourth round ---------------------------------------
+
+VENDOR = {
+    "vendor/__init__.py": "",
+    "vendor/cache.py": "def thing():\n    return {}\n",
+}
+# Each imports from `vendor.cache`, a module that only shares its name with
+# the class's `pkg.cache`, and reads a dict.
+VENDOR_USERS = {
+    "from-import": (
+        "from vendor.cache import thing\n\n\ndef read(key):\n"
+        "    d = thing()\n    return d.get(key)\n"
+    ),
+    "module-alias": (
+        "import vendor.cache as vc\n\n\ndef read(key):\n"
+        "    d = vc.thing()\n    return d.get(key)\n"
+    ),
+    "module-import": (
+        "from vendor import cache\n\n\ndef read(key):\n"
+        "    d = cache.thing()\n    return d.get(key)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("user", sorted(VENDOR_USERS))
+def test_a_namesake_module_does_not_hold_the_file_to_the_method(
+    tmp_path: Path, user: str
+) -> None:
+    # Review of PR #2797: `vendor.cache` is not `pkg.cache`, so `d.get` is
+    # no call of Cache.get and must not block the rename.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {**FACTORY, **VENDOR, "pkg/use.py": VENDOR_USERS[user]}
+    store, _updater = _indexed(root, files)
+
+    report = rename(
+        root,
+        _missing(store, "pkg/use.py"),
+        PROJECT,
+        CACHE_GET,
+        "fetch",
+        allow_heuristic=True,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "pkg/use.py").read_text() == VENDOR_USERS[user]
+
+
+# Each imports from the class's own module; `get` is at (6, 17).
+OWN_MODULE_USERS = {
+    "relative": (
+        "from .cache import make_cache\n\n\ndef read(key):\n"
+        "    cache = make_cache()\n    return cache.get(key)\n"
+    ),
+    "module-import": (
+        "from pkg import cache as c\n\n\ndef read(key):\n"
+        "    cache = c.make_cache()\n    return cache.get(key)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("user", sorted(OWN_MODULE_USERS))
+def test_an_import_of_the_classs_own_module_still_holds_the_file(
+    tmp_path: Path, user: str
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    files = {**FACTORY, **VENDOR, "pkg/use.py": OWN_MODULE_USERS[user]}
+    store, _updater = _indexed(root, files)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/use.py"),
+            PROJECT,
+            CACHE_GET,
+            "fetch",
+            allow_heuristic=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/use.py", 6, 17, "receiver_unknown")]
+
+
+TWIN = {
+    "pkg1/__init__.py": "",
+    "pkg1/cache.py": "class Cache:\n    def get(self, key):\n        return key\n",
+    "pkg2/__init__.py": "",
+    "pkg2/cache.py": "class Cache:\n    def get(self, key):\n        return key\n",
+}
+TWIN_GET = f"{PROJECT}.pkg1.cache.Cache.get"
+# A Cache from `pkg2.cache`, whose module has the same name as the target's.
+TWIN_USERS = {
+    "imported": (
+        "from pkg2.cache import Cache\n\n\ndef read(key):\n"
+        "    o = Cache()\n    return o.get(key)\n"
+    ),
+    "module-qualified": (
+        "from pkg2 import cache\n\n\ndef read(key):\n"
+        "    o = cache.Cache()\n    return o.get(key)\n"
+    ),
+    "fully-qualified": (
+        "import pkg2.cache\n\n\ndef read(key):\n"
+        "    o = pkg2.cache.Cache()\n    return o.get(key)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("user", sorted(TWIN_USERS))
+def test_a_same_named_class_in_a_same_named_module_is_not_the_target(
+    tmp_path: Path, user: str
+) -> None:
+    # `pkg2/cache.py` and `pkg1/cache.py` share the module name `cache`, so
+    # the name alone cannot say which Cache an import brings in.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {**TWIN, "app/use.py": TWIN_USERS[user]})
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "app/use.py"),
+            PROJECT,
+            TWIN_GET,
+            "fetch",
+            allow_heuristic=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "app/use.py", 6, 13, "receiver_unknown")]
+    assert _tree(root) == before
+
+
+def test_the_twin_module_of_the_target_is_still_the_target(tmp_path: Path) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    user = (
+        "from pkg1.cache import Cache\n\n\ndef read(key):\n"
+        "    o = Cache()\n    return o.get(key)\n"
+    )
+    store, updater = _indexed(root, {**TWIN, "app/use.py": user})
+
+    report = rename(
+        root,
+        _missing(store, "app/use.py"),
+        PROJECT,
+        TWIN_GET,
+        "fetch",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col, s.resolution) for s in report.unplanned] == [
+        ("app/use.py", 6, 13, "unplanned")
+    ]
+    assert "return o.fetch(key)" in (root / "app/use.py").read_text()
+    assert (root / "pkg2/cache.py").read_text() == TWIN["pkg2/cache.py"]
+
+
+SHADOWED_ELSEWHERE = (
+    "from pkg.cache import Cache\n"
+    "\n"
+    "\n"
+    "def build(Cache):\n"
+    "    return Cache()\n"
+    "\n"
+    "\n"
+    "def read(key):\n"
+    "    c = Cache()\n"
+    "    return c.get(key)\n"
+)
+
+
+def test_a_parameter_named_like_the_class_shadows_it_only_in_its_function(
+    tmp_path: Path,
+) -> None:
+    # Review of PR #2797: `Cache` is a parameter in `build` only; in `read`
+    # it is the imported class, so the call is certain and rewritten.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {**CACHE, "pkg/use.py": SHADOWED_ELSEWHERE})
+
+    report = rename(
+        root,
+        _missing(store, "pkg/use.py"),
+        PROJECT,
+        CACHE_GET,
+        "fetch",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert [(s.path, s.line, s.col, s.resolution) for s in report.unplanned] == [
+        ("pkg/use.py", 10, 13, "unplanned")
+    ]
+    assert "return c.fetch(key)" in (root / "pkg/use.py").read_text()
+
+
+def test_a_parameter_named_like_the_class_shadows_it_in_its_own_function(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    shadowed = (
+        "from pkg.cache import Cache\n\n\ndef read(Cache, key):\n"
+        "    c = Cache()\n    return c.get(key)\n"
+    )
+    store, _updater = _indexed(root, {**CACHE, "pkg/use.py": shadowed})
+    before = _tree(root)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "pkg/use.py"),
+            PROJECT,
+            CACHE_GET,
+            "fetch",
+            allow_heuristic=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "pkg/use.py", 6, 13, "receiver_unknown")]
+    assert _tree(root) == before
