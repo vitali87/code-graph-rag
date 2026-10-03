@@ -130,10 +130,15 @@ def callees_cmd(
     "implementors", help=ch.CMD_GRAPH_IMPLEMENTORS, short_help=ch.CMD_GRAPH_IMPLEMENTORS
 )
 @click.argument("qualified_name")
+@_depth_option
 @_graph_options
-def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
+def implementors_cmd(
+    qualified_name: str, depth: int, project: str | None, repo_path: Path
+) -> None:
     _run_query_and_emit(
-        project, repo_path, lambda f, n: graph_query.implementors(f, n, qualified_name)
+        project,
+        repo_path,
+        lambda f, n: graph_query.implementors(f, n, qualified_name, depth),
     )
 
 
@@ -141,10 +146,15 @@ def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) 
     "overrides", help=ch.CMD_GRAPH_OVERRIDES, short_help=ch.CMD_GRAPH_OVERRIDES
 )
 @click.argument("qualified_name")
+@_depth_option
 @_graph_options
-def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
+def overrides_cmd(
+    qualified_name: str, depth: int, project: str | None, repo_path: Path
+) -> None:
     _run_query_and_emit(
-        project, repo_path, lambda f, n: graph_query.overrides(f, n, qualified_name)
+        project,
+        repo_path,
+        lambda f, n: graph_query.overrides(f, n, qualified_name, depth),
     )
 
 

@@ -166,6 +166,8 @@ KEY_FROM_HASH = "from_hash"
 KEY_TO_HASH = "to_hash"
 KEY_FROM_QNS = "from_qns"
 KEY_TO_QNS = "to_qns"
+# The frontier node a hierarchy hop row was reached from (issue #2624).
+KEY_THROUGH = "through"
 KEY_PROJECT_PREFIX = "project_prefix"
 KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"

@@ -476,15 +476,23 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.IMPLEMENTORS: self._graph_tool(
                 cs.MCPToolName.IMPLEMENTORS,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.implementors,
+                integer_params={cs.MCPParamName.DEPTH},
             ),
             cs.MCPToolName.OVERRIDES: self._graph_tool(
                 cs.MCPToolName.OVERRIDES,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.overrides,
+                integer_params={cs.MCPParamName.DEPTH},
             ),
             cs.MCPToolName.ANNOTATE: self._graph_tool(
                 cs.MCPToolName.ANNOTATE,
@@ -2814,24 +2822,24 @@ class MCPToolsRegistry:
         )
 
     async def implementors(
-        self, qualified_name: str, project: str | None = None
+        self, qualified_name: str, project: str | None = None, depth: int | None = None
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.IMPLEMENTORS,
             project,
             lambda name: graph_query.implementors(
-                self.ingestor.fetch_all, name, qualified_name
+                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
         )
 
     async def overrides(
-        self, qualified_name: str, project: str | None = None
+        self, qualified_name: str, project: str | None = None, depth: int | None = None
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.OVERRIDES,
             project,
             lambda name: graph_query.overrides(
-                self.ingestor.fetch_all, name, qualified_name
+                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
         )
 

@@ -123,6 +123,13 @@ class RelatedRow(TypedDict):
     relationship: str
 
 
+class TransitiveRelatedRow(RelatedRow):
+    # Hops from the queried name, and the node this row's edge hangs off,
+    # as `callers` rows carry them (issue #2624).
+    depth: int
+    through: str
+
+
 class ImporterRow(TypedDict):
     module: str
     path: str | None
@@ -479,19 +486,116 @@ def _related_rows(
     return sorted(out, key=lambda r: (r["qualified_name"], r["relationship"]))
 
 
+def _walk_related(
+    fetch_all: QueryFn,
+    project_name: str,
+    start: str,
+    depth: int,
+    hop_queries: tuple[str, ...],
+) -> list[TransitiveRelatedRow]:
+    """Breadth-first over `hop_queries`, one batched query per hop and query.
+
+    Each query keeps its own frontier, so a direction is only ever followed
+    onwards in that same direction. A node is listed at the depth it is
+    first reached, once per edge reaching it there (a diamond's two
+    parents), and never again, so a cycle ends and the start is never its
+    own subtype. A foreign row is neither listed nor a hop (issue #1982).
+    """
+    prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
+    reached = {start}
+    # One list per query: each frontier is that query's own.
+    frontiers = {query: [start] for query in hop_queries}
+    out: list[TransitiveRelatedRow] = []
+    for level in range(1, depth + 1):
+        found: dict[str, set[str]] = {query: set() for query in hop_queries}
+        for query, frontier in frontiers.items():
+            if not frontier:
+                continue
+            rows = fetch_all(
+                query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier}
+            )
+            hop = _first_reached_rows(rows, reached, owns, level)
+            out.extend(hop)
+            found[query].update(row["qualified_name"] for row in hop)
+        for qns in found.values():
+            reached.update(qns)
+        frontiers = {query: sorted(qns) for query, qns in found.items()}
+        if not any(frontiers.values()):
+            break
+    return sorted(
+        out,
+        key=lambda r: (
+            r["depth"],
+            r["through"],
+            r["qualified_name"],
+            r["relationship"],
+        ),
+    )
+
+
+def _first_reached_rows(
+    rows: list[ResultRow],
+    reached: set[str],
+    owns: Callable[[str], bool],
+    level: int,
+) -> list[TransitiveRelatedRow]:
+    # The rows of one hop that reach a project node not reached at an
+    # earlier level, listed at `level`.
+    return [
+        TransitiveRelatedRow(
+            label=str(r.get(cs.KEY_LABEL, "")),
+            qualified_name=qn,
+            path=_opt_str(r.get(cs.KEY_PATH)),
+            relationship=str(r.get(cs.KEY_REL_TYPE, "")),
+            depth=level,
+            through=str(r.get(cs.KEY_THROUGH, "")),
+        )
+        for r in rows
+        if (qn := _text_qn(r)) not in reached and owns(qn)
+    ]
+
+
 def implementors(
-    fetch_all: QueryFn, project_name: str, qualified_name: str
-) -> list[RelatedRow]:
-    """Types that INHERIT from or IMPLEMENT `qualified_name`."""
+    fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
+) -> list[RelatedRow] | list[TransitiveRelatedRow]:
+    """Types that INHERIT from or IMPLEMENT `qualified_name`.
+
+    Direct subtypes only by default. `depth` > 1 also follows their own
+    subtypes, so every class implementing an interface through an abstract
+    base is listed; each row then carries its `depth` and the type it was
+    reached `through`.
+    """
+    if depth > 1:
+        return _walk_related(
+            fetch_all,
+            project_name,
+            qualified_name,
+            depth,
+            (cq.CYPHER_GRAPH_IMPLEMENTORS_OF,),
+        )
     return _related_rows(
         fetch_all, project_name, cq.CYPHER_GRAPH_IMPLEMENTORS, qualified_name
     )
 
 
 def overrides(
-    fetch_all: QueryFn, project_name: str, qualified_name: str
-) -> list[RelatedRow]:
-    """Methods that OVERRIDE `qualified_name`, and the method it overrides."""
+    fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
+) -> list[RelatedRow] | list[TransitiveRelatedRow]:
+    """Methods that OVERRIDE `qualified_name`, and the method it overrides.
+
+    Direct only by default. `depth` > 1 follows each direction on its own:
+    the overriders' overriders, and what the overridden method overrides in
+    turn, never a sibling override of the same method.
+    """
+    if depth > 1:
+        return _walk_related(
+            fetch_all,
+            project_name,
+            qualified_name,
+            depth,
+            (cq.CYPHER_GRAPH_OVERRIDERS_OF, cq.CYPHER_GRAPH_OVERRIDDEN_BY),
+        )
     return _related_rows(
         fetch_all, project_name, cq.CYPHER_GRAPH_OVERRIDES, qualified_name
     )

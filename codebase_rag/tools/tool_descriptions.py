@@ -212,11 +212,17 @@ MCP_CALLEES = (
 )
 MCP_IMPLEMENTORS = (
     "Types that inherit from or implement a class, interface or trait "
-    "(INHERITS / IMPLEMENTS edges). " + _MCP_DETERMINISTIC_NOTE
+    "(INHERITS / IMPLEMENTS edges). Direct subtypes only by default; `depth` "
+    "> 1 also follows their own subtypes (every class implementing an "
+    "interface through an abstract base), each row then carrying its `depth` "
+    "and the type it was reached `through`. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_OVERRIDES = (
     "Methods overriding a method, and the method it overrides (OVERRIDES "
-    "edges in both directions). " + _MCP_DETERMINISTIC_NOTE
+    "edges in both directions). Direct only by default; `depth` > 1 follows "
+    "each direction on its own (the overriders' overriders, and what the "
+    "overridden method overrides in turn), each row then carrying its "
+    "`depth` and the method it was reached `through`. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
