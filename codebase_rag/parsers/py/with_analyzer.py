@@ -50,7 +50,9 @@ if TYPE_CHECKING:
             self, text: str, owner_qn: str, module_qn: str
         ) -> str | None: ...
 
-        def own_class_rebinds_import(self, module_qn: str, name: str) -> bool: ...
+        def own_class_rebinds_import(
+            self, module_qn: str, name: str, scope: Node | None = None
+        ) -> bool: ...
 
     _WithBase: type = _WithBindingDeps
 else:
@@ -169,7 +171,7 @@ class PythonWithBindingMixin(_WithBase):
     def _entered_type(
         self, target: WithTarget, manager_type: str, module_qn: str
     ) -> str | None:
-        class_qn = self._indexed_class_qn(manager_type, module_qn)
+        class_qn = self._indexed_class_qn(manager_type, module_qn, target.manager)
         if class_qn is None:
             # An external class's `__enter__` cannot be read, so the
             # convention applies -- but only to a constructor call: a
@@ -258,9 +260,11 @@ class PythonWithBindingMixin(_WithBase):
             type_name = import_map.get(type_name, "")
         return type_name if type_name and _is_class_path(type_name) else None
 
-    def _indexed_class_qn(self, type_name: str, module_qn: str) -> str | None:
+    def _indexed_class_qn(
+        self, type_name: str, module_qn: str, scope: Node | None = None
+    ) -> str | None:
         """The registry qn of the indexed class `type_name` names, following
-        package re-exports, else None."""
+        package re-exports, else None. `scope` is where the name is read."""
         import_mapping = self.import_processor.import_mapping
         if cs.SEPARATOR_DOT in type_name:
             qn = follow_reexports(type_name, import_mapping, self.function_registry)
@@ -272,7 +276,7 @@ class PythonWithBindingMixin(_WithBase):
                 self.import_processor,
                 self.function_registry,
                 self.own_class_rebinds_import(
-                    module_qn, type_name.partition(cs.SEPARATOR_DOT)[0]
+                    module_qn, type_name.partition(cs.SEPARATOR_DOT)[0], scope
                 ),
             )
         qn = resolve_class_name(

@@ -498,6 +498,28 @@ def test_a_late_typed_target_does_not_retype_an_assignment_already_typed(
     assert types["forked"] == "Reader"
 
 
+def test_a_retry_does_not_type_an_assignment_from_a_later_with_binding(
+    tmp_path: Path,
+) -> None:
+    # `forked = session.fork()` reads the parameter `session`, before the
+    # with statement rebinds the name: the target typed by the retry is not
+    # what it read.
+    types = _local_types(
+        tmp_path,
+        "from managers import make_pool\n\n"
+        "def use(session):\n"
+        "    forked = session.fork()\n"
+        "    pool = make_pool()\n"
+        "    with pool as session:\n"
+        "        later = session.fork()\n"
+        "    forked.send()\n",
+        "use",
+    )
+    assert types["session"] == f"{PROJECT}.managers.Session"
+    assert types["later"] == "Other"
+    assert "forked" not in types
+
+
 def test_a_with_binding_after_an_assignment_takes_over(tmp_path: Path) -> None:
     types = _local_types(
         tmp_path,
@@ -811,6 +833,75 @@ def test_a_module_class_defined_after_the_import_wins(tmp_path: Path) -> None:
     assert types["client"] == f"{PROJECT}.app.pkg.Client"
     assert calls["use"].get(f"{PROJECT}.app.pkg.Client.send") == EXACT
     assert f"{CLIENT}.send" not in calls["use"]
+
+
+def test_a_module_class_declared_only_for_type_checking_does_not_win(
+    tmp_path: Path,
+) -> None:
+    # A class under `if TYPE_CHECKING:` never runs, so `pkg` stays the import.
+    source = (
+        "import pkg\n"
+        "from typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n"
+        "    class pkg:\n"
+        "        class Client:\n"
+        "            def send(self, request):\n"
+        "                return request\n\n"
+        "def use():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == CLIENT
+    assert calls["use"].get(f"{CLIENT}.send") == EXACT
+    assert f"{PROJECT}.app.pkg.Client.send" not in calls["use"]
+
+
+def test_a_module_class_in_the_runtime_branch_of_type_checking_still_wins(
+    tmp_path: Path,
+) -> None:
+    # The `else:` of `if TYPE_CHECKING:` is what runs.
+    source = (
+        "import pkg\n"
+        "import typing\n\n"
+        "if typing.TYPE_CHECKING:\n"
+        "    pass\n"
+        "else:\n"
+        "    class pkg:\n"
+        "        class Client:\n"
+        "            def send(self, request):\n"
+        "                return request\n\n"
+        "def use():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n"
+    )
+    types = _local_types(tmp_path, source, "use")
+    assert types["client"] == f"{PROJECT}.app.pkg.Client"
+
+
+def test_a_function_that_imports_the_name_again_reaches_the_import(
+    tmp_path: Path,
+) -> None:
+    # The module class rebinds `pkg` at module level, but `use` imports it
+    # again into its own scope, so its `pkg.Client` is the package's.
+    source = (
+        "import pkg\n\n" + LOCAL_PKG_CLASS + "\n"
+        "def use():\n"
+        "    import pkg\n"
+        "    client = pkg.Client()\n"
+        "    client.send('x')\n\n"
+        "def other():\n"
+        "    client = pkg.Client()\n"
+        "    client.send('y')\n"
+    )
+    types = _local_types(tmp_path / "types", source, "use")
+    calls = _calls(tmp_path / "calls", source, managers=False)
+    assert types["client"] == CLIENT
+    assert calls["use"].get(f"{CLIENT}.send") == EXACT
+    assert f"{PROJECT}.app.pkg.Client.send" not in calls["use"]
+    # A function without the re-import still sees the module class.
+    assert calls["other"].get(f"{PROJECT}.app.pkg.Client.send") == EXACT
 
 
 def test_an_import_after_a_module_class_of_that_name_wins(tmp_path: Path) -> None:

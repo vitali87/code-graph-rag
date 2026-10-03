@@ -676,6 +676,43 @@ def _own_bound_names(scope: Node) -> frozenset[str]:
     return frozenset(names)
 
 
+def _under_type_checking(node: Node) -> bool:
+    """Whether `node` sits in the body of an `if TYPE_CHECKING:` block."""
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_PY_IF_STATEMENT:
+            condition = current.child_by_field_name(cs.TS_FIELD_CONDITION)
+            body = current.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+            if (
+                condition is not None
+                and body is not None
+                and (safe_decode_text(condition) or "").rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                == cs.PY_TYPE_CHECKING
+                and body.start_byte <= node.start_byte < body.end_byte
+            ):
+                return True
+        current = current.parent
+    return False
+
+
+def _function_binds(scope: Node, name: str) -> bool:
+    """Whether a def enclosing `scope` (or `scope` itself) binds `name`, an
+    import included: Python skips class bodies, as `_locally_bound_names`
+    does."""
+    current: Node | None = scope
+    while current is not None:
+        if current.type == cs.TS_PY_FUNCTION_DEFINITION and (
+            name in _parameter_names(current)
+            or any(
+                safe_decode_text(identifier) == name
+                for _binder, identifier in _bindings_in(current)
+            )
+        ):
+            return True
+        current = current.parent
+    return False
+
+
 def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
     """The with targets `scope`'s own body binds, each only where no later
     binding in that body rebinds the name.
@@ -809,13 +846,18 @@ class PythonAstAnalyzerMixin(_AstBase):
             caller
         )
 
-    def own_class_rebinds_import(self, module_qn: str, name: str) -> bool:
+    def own_class_rebinds_import(
+        self, module_qn: str, name: str, scope: Node | None = None
+    ) -> bool:
         """Whether the module's own `class name` rebinds an imported `name`.
 
         Module-level code has run by the time a function reads the name, so
         the binding written last is the one it sees: a class defined after
         `import pkg` makes `pkg.Client` the class's attribute, an import
-        written after the class makes it the package's again. Read only when
+        written after the class makes it the package's again. A class under
+        `if TYPE_CHECKING:` never runs, so it rebinds nothing. A function
+        around `scope` that binds the name itself (`import pkg` again, a
+        parameter) reads its own binding, never the module's. Read only when
         the module both imports the name and defines a class of it.
         """
         own_class = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
@@ -828,10 +870,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         file_path = self.module_qn_to_file_path.get(module_qn)
         if not file_path or not (entry := self.ast_cache.load(file_path)):
             return False
+        if scope is not None and _function_binds(scope, name):
+            return False
         last: tuple[int, str] | None = None
         for binder, identifier in _bindings_in(entry[0]):
-            if safe_decode_text(identifier) == name and (
-                last is None or identifier.start_byte > last[0]
+            if (
+                safe_decode_text(identifier) == name
+                and not _under_type_checking(binder)
+                and (last is None or identifier.start_byte > last[0])
             ):
                 last = (identifier.start_byte, binder.type)
         return last is not None and last[1] == cs.TS_PY_CLASS_DEFINITION
@@ -944,9 +990,12 @@ class PythonAstAnalyzerMixin(_AstBase):
             retried = self._type_with_targets(pending, local_var_types, module_qn)
             if len(retried) == len(pending):
                 break
+            typed_now = [target for target in pending if target not in retried]
             pending = retried
             for assignment in assignments:
-                self._process_assignment_complex(assignment, local_var_types, module_qn)
+                self._retype_after_with_targets(
+                    assignment, typed_now, local_var_types, module_qn
+                )
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
@@ -965,6 +1014,28 @@ class PythonAstAnalyzerMixin(_AstBase):
             assignments, local_var_types, module_qn
         )
         return comprehensions, for_statements
+
+    def _retype_after_with_targets(
+        self,
+        assignment: Node,
+        typed_now: list[WithTarget],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """Re-run the complex pass on one assignment once a retry has typed
+        `typed_now`, without the targets bound only after it: an assignment
+        before `with pool as session` read the earlier `session`, not the
+        entered value."""
+        later = {
+            target.name: local_var_types.pop(target.name)
+            for target in typed_now
+            if target.binds_at > assignment.start_byte
+            and target.name in local_var_types
+        }
+        try:
+            self._process_assignment_complex(assignment, local_var_types, module_qn)
+        finally:
+            local_var_types.update(later)
 
     def _collect_traverse_nodes(
         self, node: Node

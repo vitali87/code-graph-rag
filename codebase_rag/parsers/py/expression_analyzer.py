@@ -58,7 +58,9 @@ if TYPE_CHECKING:
             self, caller: Node, module_qn: str
         ) -> frozenset[str]: ...
 
-        def own_class_rebinds_import(self, module_qn: str, name: str) -> bool: ...
+        def own_class_rebinds_import(
+            self, module_qn: str, name: str, scope: Node | None = None
+        ) -> bool: ...
 
         def _analyze_method_return_statements(
             self, method_node: Node, method_qn: str, module_qn: str | None = None
@@ -157,7 +159,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 module_qn,
                 self.import_processor,
                 self.function_registry,
-                self.own_class_rebinds_import(module_qn, head),
+                self.own_class_rebinds_import(module_qn, head, scope),
             )
         ):
             return method_call_text

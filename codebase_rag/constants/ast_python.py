@@ -49,6 +49,9 @@ TS_PY_ASYNC = "async"
 # target is bound to: `with` calls `__enter__`, `async with` awaits `__aenter__`.
 PY_DUNDER_ENTER = "__enter__"
 PY_DUNDER_AENTER = "__aenter__"
+# The `if TYPE_CHECKING:` guard (bare or `typing.`-qualified): its body is
+# read by type checkers only and binds nothing at runtime.
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_EXPRESSION_STATEMENT = "expression_statement"
 TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
