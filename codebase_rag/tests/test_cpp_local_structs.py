@@ -899,3 +899,73 @@ def test_block_local_still_hides_a_field_inside_its_block(
     assert (f"{module}.f.A.in_block", f"{module}.B.ping") not in calls
     assert (f"{module}.f.C.in_block", f"{module}.B.ping") in calls
     assert (f"{module}.f.C.in_block", f"{module}.f.C.B.ping") not in calls
+
+
+# The same window holds for a functor (#2631 re-review): a block-local
+# functor called (`b(1)`) or handed over (`keep(b)`) inside its block runs or
+# passes its own operator(), and once the block closes the name is the
+# field's again.
+_BLOCK_SHADOWED_FUNCTOR = """\
+#include <functional>
+
+struct B { void operator()(int) const {} };
+
+void keep(const std::function<void(int)>& fn) { (void)fn; }
+
+void f() {
+  struct A {
+    struct B { void operator()(int) const {} };
+    ::B b;
+    void call_in() { { B b; b(1); } }
+    void call_after() { { B b; (void)b; } b(1); }
+    void keep_in() { { B b; keep(b); } }
+    void keep_after() { { B b; (void)b; } keep(b); }
+    void plain_call() { b(1); }
+    void plain_keep() { keep(b); }
+  } a;
+  a.call_in();
+  a.call_after();
+  a.keep_in();
+  a.keep_after();
+  a.plain_call();
+  a.plain_keep();
+}
+"""
+
+
+def test_block_local_functor_binds_its_own_operator_inside_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(temp_repo, mock_ingestor, blockfn=_BLOCK_SHADOWED_FUNCTOR)
+
+    module = f"{_PROJECT}.blockfn"
+    local_op = f"{module}.f.A.B.operator_call"
+    field_op = f"{module}.B.operator_call"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{module}.f.A.call_in", local_op) in calls
+    assert (f"{module}.f.A.call_in", field_op) not in calls
+    references = _edges(mock_ingestor, RelationshipType.REFERENCES)
+    assert (f"{module}.f.A.keep_in", local_op) in references
+    assert (f"{module}.f.A.keep_in", field_op) not in references
+
+
+def test_field_functor_binds_outside_a_block_local_and_unshadowed(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: after the block, and in a method nothing shadows, `b` is the
+    # `::B` field.
+    _index(temp_repo, mock_ingestor, blockfn=_BLOCK_SHADOWED_FUNCTOR)
+
+    module = f"{_PROJECT}.blockfn"
+    local_op = f"{module}.f.A.B.operator_call"
+    field_op = f"{module}.B.operator_call"
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    references = _edges(mock_ingestor, RelationshipType.REFERENCES)
+    for method, edges in (
+        ("call_after", calls),
+        ("plain_call", calls),
+        ("keep_after", references),
+        ("plain_keep", references),
+    ):
+        assert (f"{module}.f.A.{method}", field_op) in edges
+        assert (f"{module}.f.A.{method}", local_op) not in edges

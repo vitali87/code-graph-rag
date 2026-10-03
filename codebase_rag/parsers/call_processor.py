@@ -322,6 +322,19 @@ def _cpp_scoped_bindings(
     return bindings
 
 
+def _cpp_types_at(
+    var_types: dict[str, str], spans: list[tuple[int, int, str, str]], pos: int
+) -> dict[str, str]:
+    # The type map as a C++ use at byte `pos` sees it: each spanned name
+    # bound by the narrowest of its declarations whose window holds `pos`.
+    narrowest: dict[str, tuple[int, str]] = {}
+    for start, end, name, bound in spans:
+        best = narrowest.get(name)
+        if start <= pos < end and (best is None or end - start < best[0]):
+            narrowest[name] = (end - start, bound)
+    return {**var_types, **{name: bound for name, (_, bound) in narrowest.items()}}
+
+
 def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
     # The byte span a declaration shadows: its nearest enclosing scope, with
     # statement scopes (for/try) starting at the declaration END because the
@@ -3881,19 +3894,19 @@ class CallProcessor:
             )
         else:
             local_var_types = None
-        # Rust match arms and iterator-adaptor closures both reuse one binding
-        # name for different types at different byte ranges (`cmd` per arm;
-        # `|x|` per collection), as does a C++ block local hiding a field;
-        # the flat map keeps only one. These span-scoped bindings let each
-        # call resolve against the binding containing it.
-        span_bindings: list[tuple[int, int, str, str]] = []
+        cpp_spans: list[tuple[int, int, str, str]] = []
         if language == cs.SupportedLanguage.CPP and local_var_types:
-            span_bindings = self._bind_cpp_local_types(
+            cpp_spans = self._bind_cpp_local_types(
                 caller_node, module_qn, local_var_types
             )
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
 
+        # Rust match arms and iterator-adaptor closures both reuse one binding
+        # name for different types at different byte ranges (`cmd` per arm;
+        # `|x|` per collection); the flat map keeps only one. These span-scoped
+        # bindings let each call resolve against the binding containing it.
+        span_bindings: list[tuple[int, int, str, str]] = []
         if language == cs.SupportedLanguage.RUST and local_var_types is not None:
             span_bindings = self._resolver.type_inference.collect_rust_span_bindings(
                 caller_node, module_qn, class_context
@@ -3970,12 +3983,29 @@ class CallProcessor:
             span_bindings,
             caller_params,
         )
-        for call_node in call_nodes:
-            self._ingest_call_node(ctx, call_node)
+        self._ingest_call_nodes(ctx, call_nodes, cpp_spans)
         # Edges the later passes emit (decorators, property reads, operator
         # dispatch) are exact bindings; they must not carry the verdict the
         # last call node of this loop left behind.
         self._resolution = cs.EdgeResolution.EXACT
+
+    def _ingest_call_nodes(
+        self,
+        ctx: _CallScanContext,
+        call_nodes: list[Node],
+        cpp_spans: list[tuple[int, int, str, str]],
+    ) -> None:
+        # A C++ name whose declarations disagree (a block local `B b` hiding
+        # a `::B b` field) is typed per call by the declaration in force
+        # there, for every use the call makes of it: a receiver, a functor
+        # called (`b(1)`) or handed over (`keep(b)`), an operator operand.
+        flat_types = ctx.local_var_types
+        for call_node in call_nodes:
+            if cpp_spans and flat_types is not None:
+                ctx.local_var_types = _cpp_types_at(
+                    flat_types, cpp_spans, call_node.start_byte
+                )
+            self._ingest_call_node(ctx, call_node)
 
     def _record_python_shadowed_imports(
         self, caller_node: Node, caller_qn: str, module_qn: str
