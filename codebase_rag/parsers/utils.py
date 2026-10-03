@@ -1427,6 +1427,34 @@ def _register_cpp_member_qn(
     return _CppMember(qualified_name, signature, declared)
 
 
+def _register_method_qn(
+    method_node: ASTNode,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    function_registry: FunctionRegistryTrieProtocol,
+    start_line: int,
+    start_col: int,
+) -> tuple[str, _CppMember | None]:
+    # The registered qn, and for C++ the member it names (issue #2455).
+    if language == cs.SupportedLanguage.CPP:
+        cpp_member = _register_cpp_member_qn(
+            method_node, method_qn, function_registry, start_line, start_col
+        )
+        return cpp_member.qualified_name, cpp_member
+    return function_registry.register_unique_qn(method_qn, start_line, start_col), None
+
+
+def _cpp_member_props(cpp_member: _CppMember | None) -> PropertyDict:
+    if cpp_member is None or cpp_member.signature is None:
+        return {}
+    props: PropertyDict = {cs.KEY_SIGNATURE: cpp_member.signature.text}
+    # Written only by the class body, never as False: node writes merge,
+    # so the definition written after its declaration leaves it standing.
+    if cpp_member.declared_in_class:
+        props[cs.KEY_DECLARED_IN_CLASS] = True
+    return props
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1464,20 +1492,14 @@ def ingest_method(
     warn_if_name_truncated(method_node, method_name, file_path)
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    cpp_member = None
-    if language == cs.SupportedLanguage.CPP:
-        cpp_member = _register_cpp_member_qn(
-            method_node,
-            method_qn,
-            function_registry,
-            method_start_line,
-            method_start_col,
-        )
-        method_qn = cpp_member.qualified_name
-    else:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
-        )
+    method_qn, cpp_member = _register_method_qn(
+        method_node,
+        method_qn,
+        language,
+        function_registry,
+        method_start_line,
+        method_start_col,
+    )
 
     decorators = []
     modifiers = []
@@ -1511,12 +1533,7 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-    if cpp_member is not None and cpp_member.signature is not None:
-        method_props[cs.KEY_SIGNATURE] = cpp_member.signature.text
-        # Written only by the class body, never as False: node writes merge,
-        # so the definition written after its declaration leaves it standing.
-        if cpp_member.declared_in_class:
-            method_props[cs.KEY_DECLARED_IN_CLASS] = True
+    method_props.update(_cpp_member_props(cpp_member))
     # Python only, and the receiver is deliberately kept: CPython counts the
     # bound `self` in "takes N positional arguments", so a stored list that
     # dropped it would under-count by one on every method (issue #227).

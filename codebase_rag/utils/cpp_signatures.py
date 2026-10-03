@@ -26,6 +26,7 @@ _TOKEN_RE = re.compile(r"[^\W\d]\w*(?:::[^\W\d]\w*)*|\S")
 _NAME_RE = re.compile(r"[^\W\d]\w*(?:::[^\W\d]\w*)*")
 _OPENERS = frozenset("(<[")
 _CLOSERS = frozenset(")>]")
+_DEPTH_CHANGE = {**dict.fromkeys(_OPENERS, 1), **dict.fromkeys(_CLOSERS, -1)}
 # What ends one template argument: the next one, or the list.
 _TEMPLATE_ARGUMENT_ENDS = frozenset({cs.CHAR_COMMA, cs.CHAR_ANGLE_CLOSE})
 # Where a parameter type's declarators begin: a pointer, a reference, an
@@ -40,15 +41,14 @@ def _split_signature(text: str) -> tuple[list[str], str]:
     current: list[str] = []
     end = len(text)
     for index, char in enumerate(text):
-        if char in _OPENERS:
-            depth += 1
-            if depth == 1:
-                continue
-        elif char in _CLOSERS:
-            depth -= 1
-            if depth == 0:
-                end = index
-                break
+        depth += _DEPTH_CHANGE.get(char, 0)
+        # The bracket that opens the list is no part of a parameter; the one
+        # that closes it ends the list.
+        if char in _OPENERS and depth == 1:
+            continue
+        if char in _CLOSERS and depth == 0:
+            end = index
+            break
         if depth == 1 and char == cs.CHAR_COMMA:
             parameters.append("".join(current))
             current = []
@@ -110,20 +110,29 @@ def _parse_type(
         elif token == cs.CHAR_PAREN_CLOSE:
             parens -= 1
         elif token == cs.CHAR_ANGLE_OPEN and units and _is_name(units[-1].token):
-            arguments: list[tuple[_TypeUnit, ...]] = []
-            while position < len(tokens):
-                argument, position = _parse_type(tokens, position, True)
-                arguments.append(tuple(argument))
-                if position >= len(tokens):
-                    break
-                separator = tokens[position]
-                position += 1
-                if separator == cs.CHAR_ANGLE_CLOSE:
-                    break
-            units[-1] = units[-1]._replace(arguments=tuple(arguments))
+            arguments, position = _parse_template_arguments(tokens, position)
+            units[-1] = units[-1]._replace(arguments=arguments)
             continue
         units.append(_TypeUnit(token, None))
     return units, position
+
+
+def _parse_template_arguments(
+    tokens: list[str], position: int
+) -> tuple[tuple[tuple[_TypeUnit, ...], ...], int]:
+    # From just past a `<`: its arguments, and the position past its `>` (or
+    # the end, for a list the text never closes).
+    arguments: list[tuple[_TypeUnit, ...]] = []
+    while position < len(tokens):
+        argument, position = _parse_type(tokens, position, True)
+        arguments.append(tuple(argument))
+        if position >= len(tokens):
+            break
+        separator = tokens[position]
+        position += 1
+        if separator == cs.CHAR_ANGLE_CLOSE:
+            break
+    return tuple(arguments), position
 
 
 def _type_units(type_text: str) -> list[_TypeUnit]:

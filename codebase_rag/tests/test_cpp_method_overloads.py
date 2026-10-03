@@ -8,8 +8,12 @@
 # definition still share one node.
 from __future__ import annotations
 
+import itertools
 import json
 import os
+import random
+import re
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -20,6 +24,7 @@ from codebase_rag.config import settings
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.cpp import overloads as cpp_overloads
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import (
@@ -32,6 +37,9 @@ from codebase_rag.tests.conftest import (
 from codebase_rag.types_defs import NodeType, OverloadSignature
 from codebase_rag.utils.cpp_signatures import (
     ClassLookups,
+    _split_signature,
+    _type_units,
+    _TypeUnit,
     parameter_types_may_match,
     signature_arity,
 )
@@ -241,7 +249,8 @@ def test_const_and_non_const_overloads_are_two_nodes(temp_repo: Path) -> None:
     # A declaration returning a reference is not ingested from the class body,
     # so the definitions alone name these; still one node per overload.
     at = _final_methods(ingestor, ".Vec.at")
-    assert len(at) == 2 and f"{PROJECT}.vec.h.Vec.at" in at, at
+    assert len(at) == 2, at
+    assert f"{PROJECT}.vec.h.Vec.at" in at, at
     assert {m[cs.KEY_START_LINE] for m in at.values()} == {4, 5}
 
 
@@ -1513,3 +1522,229 @@ def test_pure_libclang_call_to_an_overload_declared_later_binds_to_it(
     calls = {(src, dst) for src, dst, _ in _calls(frontend)}
     assert {dst for src, dst in calls if src == f"{fwd}.a"} == {f"{fwd}.later@5"}
     assert {dst for src, dst in calls if src == f"{fwd}.b"} == {f"{fwd}.later@5"}
+
+
+# --- pins: every branch of the signature parsers and the member write ------
+
+
+@pytest.mark.parametrize(
+    ("text", "parameters", "qualifiers"),
+    [
+        ("(map<int,int>,int) const", ["map<int,int>", "int"], "const"),
+        ("()", [], ""),
+        ("", [], ""),
+        ("(int(*)(int,char),T[3]) const&", ["int(*)(int,char)", "T[3]"], "const&"),
+        ("(f<(a,b)>,c) &&", ["f<(a,b)>", "c"], "&&"),
+        ("((a,b),c)", ["(a,b)", "c"], ""),
+        ("(a,)", ["a", ""], ""),
+        # What comes before the list is skipped; the first close ends it.
+        ("x(a) y", ["a"], "y"),
+        ("(a)(b)", ["a"], "(b)"),
+        ("<a,b>", ["a", "b"], ""),
+        # A stray `>` closes the list early.
+        ("(a>b,c)", ["a"], "b,c)"),
+        # A list never closed runs to the end of the text.
+        ("(", [], ""),
+        ("(int", ["int"], ""),
+        ("(a,b", ["a", "b"], ""),
+        # A close before any open drops the depth below zero: nothing is read.
+        (")x(a,b) c", [], ""),
+    ],
+)
+def test_split_signature_reads_the_first_bracketed_list(
+    text: str, parameters: list[str], qualifiers: str
+) -> None:
+    assert _split_signature(text) == (parameters, qualifiers)
+
+
+def _render_units(units: Sequence[_TypeUnit]) -> str:
+    # `map<[int][int]>`: each template argument in brackets, so a `<>` with
+    # no argument reads apart from one with a single empty argument.
+    return " ".join(
+        unit.token
+        if unit.arguments is None
+        else unit.token
+        + "<"
+        + "".join(f"[{_render_units(argument)}]" for argument in unit.arguments)
+        + ">"
+        for unit in units
+    )
+
+
+@pytest.mark.parametrize(
+    ("type_text", "rendered"),
+    [
+        ("const Foo* const&", "const Foo * const &"),
+        ("void(*)(int)", "void ( * ) ( int )"),
+        ("x<y<z>,w>", "x<[y<[z]>][w]>"),
+        ("s<t>u<w>", "s<[t]> u<[w]>"),
+        # A comma inside parentheses does not end a template argument.
+        ("std::function<void(int,char)>", "std::function<[void ( int , char )]>"),
+        ("f<(a,b)>", "f<[( a , b )]>"),
+        ("m<>", "m<[]>"),
+        ("v<a,>", "v<[a][]>"),
+        # A `<` after no name, and a `>` outside any list, stand alone.
+        ("<int>", "< int >"),
+        ("a<b,c>>d", "a<[b][c]> > d"),
+        ("A<B>::C", "A<[B]> : : C"),
+        # A list the text never closes takes what is left, or nothing.
+        ("vector<", "vector<>"),
+        ("map<int,int", "map<[int][int]>"),
+        ("p<q<r", "p<[q<[r]>]>"),
+        ("int(", "int ("),
+        # A `)` with no `(` leaves the depth below zero, so `>` ends nothing.
+        ("T<a)b>", "T<[a ) b >]>"),
+    ],
+)
+def test_type_units_nest_template_arguments(type_text: str, rendered: str) -> None:
+    assert _render_units(_type_units(type_text)) == rendered
+
+
+def _member_writes(ingestor: _MockIngestor) -> list[tuple[str, int, str, dict]]:
+    # Every Method write, not only the last per qn: the overload keys must
+    # be right on each.
+    keys = (cs.KEY_SIGNATURE, cs.KEY_DECLARED_IN_CLASS)
+    return sorted(
+        (
+            props[cs.KEY_PATH],
+            props[cs.KEY_START_LINE],
+            props[cs.KEY_QUALIFIED_NAME],
+            {key: props[key] for key in keys if key in props},
+        )
+        for props in (
+            call.args[1]
+            for call in ingestor.ensure_node_batch.call_args_list
+            if str(call.args[0]) == cs.NodeLabel.METHOD.value
+        )
+    )
+
+
+def test_only_the_class_body_writes_declared_in_class(temp_repo: Path) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "one.cpp": (
+                "class One {\n"
+                "public:\n"
+                "  int g(int a);\n"
+                "  int g(double a) const { return (int)a; }\n"
+                "};\n"
+                "int One::g(int a) { return a; }\n"
+            )
+        },
+    )
+    one = f"{PROJECT}.one.One.g"
+    assert _member_writes(_index(root)) == [
+        (
+            "one.cpp",
+            3,
+            one,
+            {cs.KEY_SIGNATURE: "(int)", cs.KEY_DECLARED_IN_CLASS: True},
+        ),
+        (
+            "one.cpp",
+            4,
+            f"{one}@4",
+            {cs.KEY_SIGNATURE: "(double) const", cs.KEY_DECLARED_IN_CLASS: True},
+        ),
+        ("one.cpp", 6, one, {cs.KEY_SIGNATURE: "(int)"}),
+    ]
+
+
+def test_a_member_with_no_readable_signature_keeps_its_plain_name(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As for a declarator error recovery mangled: no signature, so neither
+    # overload key is written and the plain name stands for both.
+    monkeypatch.setattr(cpp_overloads, "cpp_overload_signature", lambda _node: None)
+    root = _write(temp_repo / PROJECT, {"inl.cpp": INL_CPP})
+    inline = f"{PROJECT}.inl.Inline.f"
+    assert _member_writes(_index(root)) == [
+        ("inl.cpp", 3, inline, {}),
+        ("inl.cpp", 4, inline, {}),
+    ]
+
+
+def test_another_language_keeps_its_line_suffix_and_no_overload_keys(
+    temp_repo: Path,
+) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {
+            "dup.py": (
+                "class Dup:\n"
+                "    def f(self, a):\n"
+                "        return a\n"
+                "\n"
+                "    def f(self, a, b):\n"
+                "        return a + b\n"
+            )
+        },
+    )
+    ingestor = _MockIngestor()
+    run_updater(root, ingestor, skip_if_missing=cs.SupportedLanguage.PYTHON.value)
+    dup = f"{PROJECT}.dup.Dup.f"
+    assert _member_writes(ingestor) == [
+        ("dup.py", 2, dup, {}),
+        ("dup.py", 5, f"{dup}@5", {}),
+    ]
+
+
+_PUNCTUATION_CHARS = "*&<>,()[]:"
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def _whitespace_touching_punctuation_dropped(text: str) -> str:
+    # The rule stated directly: a run of whitespace goes when a punctuation
+    # character sits at either end of it.
+    def run(match: re.Match[str]) -> str:
+        before = text[match.start() - 1 : match.start()]
+        after = text[match.end() : match.end() + 1]
+        touches = any(c in _PUNCTUATION_CHARS for c in (before, after) if c)
+        return "" if touches else match.group(0)
+
+    return _WHITESPACE_RUN_RE.sub(run, text)
+
+
+def test_punctuation_spaces_agree_with_the_rule_on_every_short_text() -> None:
+    alphabet = " \t\xa0a" + _PUNCTUATION_CHARS
+    texts = [
+        "".join(chars)
+        for length in range(5)
+        for chars in itertools.product(alphabet, repeat=length)
+    ]
+    mismatches = [
+        text
+        for text in texts
+        if cpp_overloads._drop_punctuation_spaces(text)
+        != _whitespace_touching_punctuation_dropped(text)
+    ]
+    assert mismatches == []
+
+
+def test_punctuation_spaces_agree_with_the_rule_on_random_text() -> None:
+    rng = random.Random(2455)
+    pool = " \t\n\xa0　ab_9{.=" + _PUNCTUATION_CHARS
+    texts = [
+        "".join(rng.choice(pool) for _ in range(rng.randint(0, 40)))
+        for _ in range(2000)
+    ]
+    mismatches = [
+        text
+        for text in texts
+        if cpp_overloads._drop_punctuation_spaces(text)
+        != _whitespace_touching_punctuation_dropped(text)
+    ]
+    assert mismatches == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("a" + " " * 50_000 + "b", "a" + " " * 50_000 + "b"),
+        ("a" + " " * 25_000 + "," + " " * 25_000 + "b", "a,b"),
+        (" " * 50_000, " " * 50_000),
+    ],
+)
+def test_punctuation_spaces_on_a_long_run_of_spaces(text: str, expected: str) -> None:
+    assert cpp_overloads._drop_punctuation_spaces(text) == expected

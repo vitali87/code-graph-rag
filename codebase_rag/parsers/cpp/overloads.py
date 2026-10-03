@@ -60,9 +60,9 @@ _OUTSIDE_CLASS = frozenset(
 # `struct S&` and `S&` name one parameter type.
 _ELABORATED_RE = re.compile(r"\b(?:struct|class|enum|union|typename)\s+")
 _SPACE_RE = re.compile(r"\s+")
-# `::` joins in the set so `std :: string`, as the tokens are rejoined, reads
-# `std::string`.
-_PUNCTUATION_SPACE_RE = re.compile(r"\s*([*&<>,()\[\]:])\s*")
+# The whitespace around these goes; `:` is among them so `std :: string`, as
+# the tokens are rejoined, reads `std::string`.
+_PUNCTUATION = frozenset("*&<>,()[]:")
 # A leading `::` (the global namespace) names what the bare name names: not
 # after a name or a template's `>`, where it qualifies.
 _GLOBAL_SCOPE_RE = re.compile(r"(?<![\w>])::")
@@ -206,9 +206,7 @@ def _drop_top_level_cv(text: str) -> str:
         return match.group(0)
 
     stripped = _CV_WORD_RE.sub(own_qualifier, text)
-    return _PUNCTUATION_SPACE_RE.sub(
-        r"\1", _SPACE_RE.sub(cs.CHAR_SPACE, stripped)
-    ).strip()
+    return _drop_punctuation_spaces(_SPACE_RE.sub(cs.CHAR_SPACE, stripped)).strip()
 
 
 def _tokens(node: Node, name: Node | None) -> list[str]:
@@ -224,8 +222,34 @@ def _tokens(node: Node, name: Node | None) -> list[str]:
     return [token for child in node.children for token in _tokens(child, name)]
 
 
+def _drop_punctuation_spaces(text: str) -> str:
+    """`std :: map < int , int > &` -> `std::map<int,int>&`.
+
+    Every run of whitespace next to a punctuation character goes; any other
+    run stays as written. One walk over the text: a regex taking optional
+    space on both sides of the punctuation would rescan a long run of spaces
+    from every space in it.
+    """
+    kept: list[str] = []
+    space: list[str] = []
+    after_punctuation = False
+    for char in text:
+        if char.isspace():
+            space.append(char)
+            continue
+        is_punctuation = char in _PUNCTUATION
+        if not (after_punctuation or is_punctuation):
+            kept.extend(space)
+        space.clear()
+        kept.append(char)
+        after_punctuation = is_punctuation
+    if not after_punctuation:
+        kept.extend(space)
+    return "".join(kept)
+
+
 def _normalize(text: str) -> str:
     text = _ELABORATED_RE.sub("", text)
     text = _SPACE_RE.sub(cs.CHAR_SPACE, text)
-    text = _PUNCTUATION_SPACE_RE.sub(r"\1", text).strip()
+    text = _drop_punctuation_spaces(text).strip()
     return _GLOBAL_SCOPE_RE.sub("", text)
