@@ -897,11 +897,7 @@ class CallResolver:
             return None
         scope = caller_qn
         while True:
-            if hit := self._scope_candidate(scope, call_name, language):
-                return hit
-            if hit := self._dup_variant_scope_candidate(scope, call_name, language):
-                return hit
-            if hit := self._own_body_scoped_name(scope, call_name):
+            if hit := self._probe_scope(scope, call_name, language):
                 return hit
             if cs.SEPARATOR_DOT not in scope:
                 return None
@@ -914,6 +910,18 @@ class CallResolver:
             if self._local_stops_at_class(call_name, caller_qn, parent):
                 return None
             scope = parent
+
+    def _probe_scope(
+        self, scope: str, call_name: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # One step of the scope-chain walk: the name defined directly in
+        # `scope`, then in its variant-stripped form, then `scope`'s own
+        # body-scoped name.
+        return (
+            self._scope_candidate(scope, call_name, language)
+            or self._dup_variant_scope_candidate(scope, call_name, language)
+            or self._own_body_scoped_name(scope, call_name)
+        )
 
     def _own_body_scoped_name(
         self, scope: str, call_name: str
