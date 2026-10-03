@@ -354,6 +354,10 @@ MATCH (fn)-[:READS_FROM]->(r:Resource {qualified_name: 'resource::ENV::K'})
 RETURN fn.qualified_name;
 ```
 
+![The snippet above saved as flow.py, indexed with cgr start --update-graph --capture io, then the first and third example queries run in mgconsole](../assets/demos/data-flow-edges.gif)
+
+*Recorded on the snippet above saved as `flow.py`; the queries run in `mgconsole` against the indexed graph.*
+
 ## Cross-scope handle resolution
 
 A resource handle bound in one scope and used in another is resolved against the
