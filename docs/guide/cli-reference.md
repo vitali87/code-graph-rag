@@ -16,6 +16,10 @@ cgr help start
 cgr help daemon logs
 ```
 
+![cgr help listing commands by workflow, then cgr help daemon logs](../assets/demos/cli-help.gif)
+
+![cgr help start showing the options and examples for cgr start](../assets/demos/cli-help-start.gif)
+
 `cgr COMMAND --help` displays the same command-specific information.
 
 ## Command Overview
@@ -61,6 +65,8 @@ Parse a repository and/or start the interactive query CLI.
 cgr start --repo-path /path/to/repo [OPTIONS]
 ```
 
+![cgr start --repo-path . --update-graph indexing the pallets/click repository](../assets/demos/quickstart-update-graph.gif)
+
 <!-- SECTION:cli_options_start -->
 | Option | Description |
 |------|-----------|
@@ -76,7 +82,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
 | `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the names already stored. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
-| `--capture` | Capture GROUP (structure, calls, types, imports, io, findings, glosses, parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. A GROUP is added to the defaults (structure, calls, types, imports); use none first to capture only what follows (none,structure) and -GROUP to drop one. Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
+| `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
 | `--ask-agent`, `-a` | Ask one question, write the answer to stdout, and exit. |
 | `--output-format` | Format --ask-agent output as table or json. [default: table] |
@@ -115,6 +121,8 @@ cgr export -o OUTPUT [OPTIONS]
 A name that is not indexed is an error that lists the projects that are. A
 scoped file records its projects under `metadata.projects`. `--batch-size` and
 `--json` are deprecated and ignored with a warning; `--no-json` is an error.
+
+![cgr export writing the whole graph and one project, then refusing a directory as --output and an unindexed project name](../assets/demos/cli-export.gif)
 
 ### `cgr optimize`
 
@@ -159,6 +167,8 @@ A project's count covers its containment tree, what it defines, and the
 relationships that start there. A name that is not indexed is an error that
 lists the projects that are.
 
+![cgr stats totals with one line per project, then cgr stats --project-name with a name that is not indexed](../assets/demos/cli-stats.gif)
+
 ### `cgr dead-code`
 
 Report functions and methods unreachable from any entry point (candidates for
@@ -184,6 +194,8 @@ cgr dead-code [OPTIONS]
 | `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. [default: endpoint-roots] |
 <!-- /SECTION:cli_options_dead_code -->
 
+![cgr dead-code --project-name listing unreachable C functions in pallets/markupsafe](../assets/demos/cli-dead-code.gif)
+
 ### `cgr duplicates`
 
 Report groups of structurally duplicated functions and methods (copy-pastes,
@@ -207,6 +219,8 @@ cgr duplicates [OPTIONS]
 | `--fail-on-found` | Exit with status 1 when any duplicate is found. Useful in CI. |
 | `--open` | Open group N's first two members side by side in your editor (CGR_EDITOR picks the editor; CGR_DIFF_COMMAND overrides the command). [x>=1] |
 <!-- /SECTION:cli_options_duplicates -->
+
+![cgr duplicates --project-name finding one exact clone group in pallets/itsdangerous](../assets/demos/cli-duplicates.gif)
 
 ### `cgr mcp-server`
 
@@ -240,9 +254,11 @@ cgr index -o ./index-output --repo-path ./my-project
 | `--output-proto-dir`, `-o` | Write protobuf index files under DIRECTORY. [required] |
 | `--split-index` | Write separate nodes.bin and relationships.bin files. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
-| `--capture` | Capture GROUP (structure, calls, types, imports, io, findings, glosses, parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. A GROUP is added to the defaults (structure, calls, types, imports); use none first to capture only what follows (none,structure) and -GROUP to drop one. Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
+| `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
 <!-- /SECTION:cli_options_index -->
+
+![cgr index -o ./index-output --repo-path ./itsdangerous writing a protobuf index and provenance manifest](../assets/demos/cli-index.gif)
 
 ### `cgr doctor`
 
@@ -251,6 +267,8 @@ Check that the services, credentials and tools a session needs are in place.
 ```bash
 cgr doctor
 ```
+
+![cgr doctor checking Docker, Memgraph, the configured models and ripgrep](../assets/demos/installation-doctor.gif)
 
 It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher models: for a key-based provider, whether its credentials pass the rule `cgr start` applies (reported as "credentials present", with no network call); for a local Ollama model, whether Ollama answers at `OLLAMA_BASE_URL` and has the model pulled (reported as "ready", "not reachable" or "not pulled", with the `ollama pull` command to run); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
 
@@ -263,7 +281,12 @@ cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
 cgr language remove-language <language-name>
+cgr language cleanup-orphaned-modules
 ```
+
+![cgr language list-languages printing the configured languages table](../assets/demos/cli-language.gif)
+
+`add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
 
 ## Makefile Commands
 

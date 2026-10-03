@@ -38,7 +38,7 @@ from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
 from .definition_docstring import extract_definition_docstring
-from .dependency_parser import parse_dependencies
+from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
@@ -337,6 +337,9 @@ class DefinitionProcessor(
         # interface's node write is still in the ingestor's buffer, so it is
         # absent from the rows rehydration fetches.
         self.cpp_interfaces_parsed_this_run: set[str] = set()
+        # {manifest path: why its content could not be parsed}, for the one
+        # WARNING the updater logs per run in place of a line per file.
+        self.unparsable_manifests: dict[Path, str] = {}
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
@@ -762,8 +765,10 @@ class DefinitionProcessor(
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
 
-        dependencies = parse_dependencies(filepath)
-        for dep in dependencies:
+        manifest = read_manifest(filepath)
+        if manifest.unparsable is not None:
+            self.unparsable_manifests[filepath] = manifest.unparsable
+        for dep in manifest.dependencies:
             self._add_dependency(dep.name, dep.spec, dep.properties)
 
     def _add_dependency(

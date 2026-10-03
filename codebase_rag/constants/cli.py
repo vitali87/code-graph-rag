@@ -169,6 +169,8 @@ CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {err
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
+# What click prints for an aborted prompt (Ctrl+D) in standalone mode.
+CLI_MSG_ABORTED = "Aborted!"
 CLI_MSG_INDEXING_AT = "Indexing codebase at: {path}"
 CLI_MSG_OUTPUT_TO = "Output will be written to: {path}"
 CLI_MSG_INDEXING_DONE = "Indexing process completed successfully!"

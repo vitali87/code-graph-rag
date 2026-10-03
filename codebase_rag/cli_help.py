@@ -54,10 +54,23 @@ CMD_DELETE_PROJECT = "Delete one project without changing other indexed projects
 CMD_HELP = "Show help for a command"
 
 CMD_LANGUAGE_GROUP = CMD_LANGUAGE
-CMD_LANGUAGE_ADD = "Add and register a Tree-sitter grammar"
+CMD_LANGUAGE_ADD = "Add a Tree-sitter grammar to a code-graph-rag source checkout"
 CMD_LANGUAGE_LIST = "List configured languages and their node mappings"
-CMD_LANGUAGE_REMOVE = "Remove a language from cgr configuration"
-CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under .git/modules"
+CMD_LANGUAGE_REMOVE = "Remove a language from a code-graph-rag source checkout"
+CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under the checkout's .git"
+# add-grammar, remove-language and cleanup-orphaned-modules edit the checkout
+# the running cgr was imported from, never the cwd (issue #2422).
+HELP_LANGUAGE_CONTRIBUTOR_TOOL = (
+    "Contributor tool. It edits codebase_rag/language_spec.py and the grammars/ "
+    "submodules of the code-graph-rag source checkout this cgr runs from, "
+    "whatever the current directory. An installed cgr (pip, pipx, uv tool "
+    "install) has no checkout, so the command refuses and changes nothing."
+)
+CMD_LANGUAGE_ADD_HELP = f"{CMD_LANGUAGE_ADD}.\n\n{HELP_LANGUAGE_CONTRIBUTOR_TOOL}"
+CMD_LANGUAGE_REMOVE_HELP = f"{CMD_LANGUAGE_REMOVE}.\n\n{HELP_LANGUAGE_CONTRIBUTOR_TOOL}"
+CMD_LANGUAGE_CLEANUP_HELP = (
+    f"{CMD_LANGUAGE_CLEANUP}.\n\n{HELP_LANGUAGE_CONTRIBUTOR_TOOL}"
+)
 
 CMD_DAEMON = "Manage the shared Memgraph and Qdrant stack"
 CMD_DAEMON_GROUP = CMD_DAEMON
@@ -414,12 +427,14 @@ HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
 )
 HELP_INTERACTIVE_SETUP = "Choose which detected directories remain included."
+# Filled in by `capture.capture_help` from the capture model, so the groups
+# the help names cannot drift from the ones the resolver accepts (#2584).
 HELP_CAPTURE = (
-    "Capture GROUP (structure, calls, types, imports, io, findings, glosses, "
-    "parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. "
-    "A GROUP is added to the defaults (structure, calls, types, imports); use "
-    "none first to capture only what follows (none,structure) and -GROUP to drop "
-    "one. Repeatable or comma-separated; later values override CGR_CAPTURE. An "
+    "Capture GROUP on top of the defaults ({default_groups}). Opt-in groups: "
+    "{opt_in_groups}. {add}NAME adds and {drop}NAME drops a GROUP or a "
+    "relationship type such as {example_type}; {all} or {none} replaces the "
+    "selection, so {none} first captures only what follows ({none},{example_group}). "
+    "Repeatable or comma-separated; later values override CGR_CAPTURE. An "
     "unknown group or type is an error."
 )
 

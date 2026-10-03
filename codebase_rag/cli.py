@@ -32,7 +32,13 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import exceptions as ex
 from . import logs as ls
-from .capture import CaptureSelection, resolve_capture, split_spec, unknown_tokens
+from .capture import (
+    CaptureSelection,
+    capture_help,
+    resolve_capture,
+    split_spec,
+    unknown_tokens,
+)
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -900,7 +906,7 @@ def start(
     capture: list[str] | None = typer.Option(
         None,
         "--capture",
-        help=ch.HELP_CAPTURE,
+        help=capture_help(),
         callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
@@ -1063,7 +1069,7 @@ def index(
     capture: list[str] | None = typer.Option(
         None,
         "--capture",
-        help=ch.HELP_CAPTURE,
+        help=capture_help(),
         callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
@@ -1461,11 +1467,23 @@ _DELEGATED_GROUP_CONTEXT = {
 
 
 def _run_delegated_group(group: click.Group, ctx: typer.Context) -> None:
-    group.main(
-        args=list(ctx.args),
-        prog_name=ctx.command_path,
-        standalone_mode=False,
-    )
+    # The groups are the real click's and run non-standalone, so their usage
+    # errors and aborts reach typer, and a typer that vendors click handles
+    # only its own classes: they escaped as a traceback with exit 1. Reported
+    # here the way click's standalone mode would, whichever typer is
+    # installed (#2416).
+    try:
+        group.main(
+            args=list(ctx.args),
+            prog_name=ctx.command_path,
+            standalone_mode=False,
+        )
+    except click.ClickException as e:
+        e.show()
+        raise typer.Exit(e.exit_code) from e
+    except click.exceptions.Abort as e:
+        typer.echo(cs.CLI_MSG_ABORTED, err=True)
+        raise typer.Exit(1) from e
 
 
 @app.command(
@@ -2020,8 +2038,6 @@ def _dead_code_config(
 ) -> DeadCodeConfig:
     from .dead_code import normalize_decorator_root
 
-    # test_patterns is always set: included tests become roots; excluded, it
-    # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
@@ -2030,7 +2046,6 @@ def _dead_code_config(
             | {normalize_decorator_root(d) for d in decorator_roots}
         ),
         entry_points=tuple(entry_points),
-        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
         endpoint_roots=endpoint_roots,
     )
