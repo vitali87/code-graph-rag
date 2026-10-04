@@ -21,6 +21,7 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CONTEXT = "context"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -55,7 +56,7 @@ CMD_HELP = "Show help for a command"
 
 CMD_LANGUAGE_GROUP = CMD_LANGUAGE
 CMD_LANGUAGE_ADD = "Add a Tree-sitter grammar to a code-graph-rag source checkout"
-CMD_LANGUAGE_LIST = "List configured languages and their node mappings"
+CMD_LANGUAGE_LIST = "List supported languages by tier, and the optional frontends"
 CMD_LANGUAGE_REMOVE = "Remove a language from a code-graph-rag source checkout"
 CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under the checkout's .git"
 # add-grammar, remove-language and cleanup-orphaned-modules edit the checkout
@@ -180,6 +181,16 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CONTEXT = (
+    "Print a graph-ranked context slice for a symbol, location or task within "
+    "a token budget: source, caller lines, callee signatures, types, tests, docs."
+)
+EXAMPLES_CONTEXT = (
+    "Examples:\n  cgr context myproj.pkg.util.helper\n"
+    "  cgr context pkg/util.py:12 --budget 2000"
+)
+HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
+HELP_CONTEXT_BUDGET = "Token budget for the slice."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -441,6 +452,10 @@ HELP_GRAMMAR_URL = (
 HELP_KEEP_SUBMODULE = (
     "Keep the grammar git submodule when removing the language. By default, remove it."
 )
+HELP_LANGUAGE_LIST_VERBOSE = (
+    "Also list the tree-sitter node types each language maps to functions, "
+    "classes, modules and calls."
+)
 
 HELP_PROJECT_NAME = (
     "Project name to store in the graph. Defaults to the directory name plus a "
@@ -579,6 +594,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

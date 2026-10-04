@@ -46,6 +46,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites. |
+| `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
 | `cgr status` | Show stack state and the last sync time for each project |
@@ -219,9 +220,12 @@ Manage language support.
 cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
+cgr language list-languages --verbose
 cgr language remove-language <language-name>
 cgr language cleanup-orphaned-modules
 ```
+
+`list-languages` prints one row per language across all three parsing tiers: its name, file extensions, tier (`tree-sitter`, `ast-grep` or `document`), level of support (`full`, `in development`, `structural` or `headings`) and whether this install can parse it. A language marked `no` needs its extra, which the command names below the table. A second table shows the optional semantic frontends (libclang, go/types, Roslyn, javac, Jedi): whether each toolchain is found, the setting that selects it, and whether indexing will use it. The language name and extensions are never truncated, including in piped output. `--verbose` adds the tree-sitter node types each language maps to functions, classes, modules and calls.
 
 ![cgr language list-languages printing the configured languages table](../assets/demos/cli-language.gif)
 
