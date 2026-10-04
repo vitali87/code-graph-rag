@@ -280,6 +280,12 @@ TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
+# `f(...xs)`: an argument passing as many values as `xs` holds.
+TS_SPREAD_ELEMENT = "spread_element"
+# Bodiless TS declarations: an overload, an interface member, an abstract or
+# ambient one. A call matches one of possibly several such signatures.
+TS_METHOD_SIGNATURE = "method_signature"
+TS_ABSTRACT_METHOD_SIGNATURE = "abstract_method_signature"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"

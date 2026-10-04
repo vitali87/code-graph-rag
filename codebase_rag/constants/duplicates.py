@@ -122,6 +122,9 @@ KIND_SIMILAR = "similar"
 # Per-site arity verdicts in a structural delta (issue #1525).
 DELTA_ARITY_OK = "ok"
 DELTA_ARITY_TOO_MANY = "too_many"
+# Fewer arguments than the required parameters, where the signature declares
+# which are optional and the language rejects the call (issue #2517).
+DELTA_ARITY_TOO_FEW = "too_few"
 DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
 
