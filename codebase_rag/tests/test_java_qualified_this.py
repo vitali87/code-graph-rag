@@ -61,6 +61,34 @@ public class Base {
 }
 """
 
+# `Other.this` inside Host names the enclosing Host.Other, which shadows the
+# imported p.Other.
+HOST = """\
+package com.acme;
+
+import p.Other;
+
+public class Host {
+  class Other {
+    void m() {}
+
+    class Child {
+      void go() {
+        Other.this.m();
+      }
+    }
+  }
+}
+"""
+
+IMPORTED_OTHER = """\
+package p;
+
+public class Other {
+  public void m() {}
+}
+"""
+
 PREFIX = "src.main.java.com.acme"
 
 
@@ -69,6 +97,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("jthis") / "jthis"
     _write(root, f"{PREFIX.replace('.', '/')}/Adapter.java", ADAPTER)
     _write(root, f"{PREFIX.replace('.', '/')}/Base.java", BASE)
+    _write(root, f"{PREFIX.replace('.', '/')}/Host.java", HOST)
+    _write(root, "src/main/java/p/Other.java", IMPORTED_OTHER)
     return _index(root, MagicMock())
 
 
@@ -104,6 +134,14 @@ def test_a_qualified_this_call_binds_the_enclosing_class(
     graph: RecordedGraph, caller: str, callee: str
 ) -> None:
     assert callee in _callees(graph, caller)
+
+
+def test_a_qualified_this_names_the_enclosing_class_over_an_import(
+    graph: RecordedGraph,
+) -> None:
+    callees = _callees(graph, "Host.Other.Child.go()")
+    assert "Host.Host.Other.m()" in callees
+    assert not [qn for qn in callees if ".java.p.Other." in qn]
 
 
 # Negative: what must not change.

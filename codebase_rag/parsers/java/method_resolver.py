@@ -45,6 +45,15 @@ _JAVA_TYPE_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 _JAVA_FULLY_DECLARED_TYPES = frozenset(
     {cs.TS_CLASS_DECLARATION, cs.TS_INTERFACE_DECLARATION}
 )
+# The declarations that name a type a qualified `this` can refer to.
+_JAVA_NAMED_TYPE_DECLARATIONS = frozenset(
+    {
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_INTERFACE_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_RECORD_DECLARATION,
+    }
+)
 _NO_SUPERTYPES = JavaSupertypes({}, frozenset())
 
 
@@ -712,9 +721,9 @@ class JavaMethodResolverMixin:
         # known (issue #2936). A local never names it, so none is consulted.
         qualifier, dot, keyword = object_ref.rpartition(cs.SEPARATOR_DOT)
         if dot and qualifier and keyword == cs.JAVA_KEYWORD_THIS:
-            return self._resolve_java_object_type(
-                qualifier, {}, module_qn, context_node
-            )
+            return self._enclosing_class_named(
+                qualifier, module_qn, context_node
+            ) or self._resolve_java_object_type(qualifier, {}, module_qn, context_node)
 
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is not None and object_ref in import_map:
@@ -753,6 +762,34 @@ class JavaMethodResolverMixin:
                 object_ref, local_var_types, module_qn, context_node
             )
 
+        return None
+
+    def _enclosing_class_named(
+        self, name: str, module_qn: str, context_node: ASTNode | None
+    ) -> str | None:
+        # The qualifier of `Outer.this` must name a lexically enclosing
+        # class, so it is read from the declarations around the call, ahead
+        # of an imported or other same-named type (Greptile, PR #2972).
+        names: list[str] = []
+        target = None
+        current = context_node.parent if context_node is not None else None
+        while current is not None:
+            if current.type in _JAVA_NAMED_TYPE_DECLARATIONS:
+                name_node = current.child_by_field_name(cs.FIELD_NAME)
+                if name_node is None or not (decl := safe_decode_text(name_node)):
+                    return None
+                names.append(decl)
+                if target is None and decl == name:
+                    target = len(names)
+            current = current.parent
+        if target is None:
+            return None
+        qn = cs.SEPARATOR_DOT.join([module_qn, *reversed(names[target - 1 :])])
+        if (
+            qn in self.function_registry
+            and self.function_registry[qn] in _JAVA_TYPE_NODE_TYPES
+        ):
+            return qn
         return None
 
     def _lexical_class_qn(
