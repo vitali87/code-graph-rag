@@ -36,6 +36,7 @@ LIB = (
     "def opts(a, **kw):\n    return a\n\n\n"
     "def kwo(a, *, flag):\n    return a\n\n\n"
     "def posonly(a, b, /):\n    return a\n\n\n"
+    "def pos_kw(a, /, **kw):\n    return a\n\n\n"
     "def wrap(f):\n    return f\n\n\n"
     "class Svc:\n"
     "    def run(self, job):\n        return job\n\n"
@@ -45,7 +46,7 @@ LIB = (
     "    def make(cls, x):\n        return x\n"
 )
 APP = (
-    "from lib import Svc, connect, kwo, opts, posonly, send\n\n\n"
+    "from lib import Svc, connect, kwo, opts, pos_kw, posonly, send\n\n\n"
     'def call_connect():\n    return connect(host="a", port=80)\n\n\n'
     'def call_send():\n    return send("hi")\n\n\n'
     "def call_send_splat(params):\n    return send(**params)\n\n\n"
@@ -54,7 +55,9 @@ APP = (
     "def call_posonly():\n    return posonly(1, 2)\n\n\n"
     "def call_run():\n    return Svc().run(1)\n\n\n"
     "def call_util():\n    return Svc.util(1)\n\n\n"
-    "def call_make():\n    return Svc.make(1)\n"
+    "def call_make():\n    return Svc.make(1)\n\n\n"
+    "def call_pos_kw():\n    return pos_kw(1, b=2)\n\n\n"
+    "def call_run_by_keyword(svc):\n    return Svc.run(self=svc, job=1)\n"
 )
 
 Indexed = tuple[Path, _StatefulIngestor, GraphUpdater]
@@ -111,6 +114,7 @@ CALLER = {
     "Svc.run": "call_run",
     "Svc.util": "call_util",
     "Svc.make": "call_make",
+    "pos_kw": "call_pos_kw",
 }
 
 
@@ -209,6 +213,17 @@ def test_an_edited_call_the_signature_rejects_is_an_arity_finding(
     assert has_findings(delta)
 
 
+def test_a_keyword_naming_a_positional_only_parameter_does_not_fill_it(
+    indexed: Indexed,
+) -> None:
+    # `pos_kw(1, b=2)`: once `b` is positional-only, the keyword lands in
+    # `**kw` and `b` is missing (Greptile, PR #2947).
+    delta = _edit(indexed, "def pos_kw(a, /, **kw):", "def pos_kw(a, b, /, **kw):")
+
+    assert _verdict(delta, "pos_kw") == cs.DELTA_ARITY_TOO_FEW
+    assert has_findings(delta)
+
+
 # Negative: what must not change.
 
 
@@ -267,3 +282,18 @@ def test_a_keyword_splat_may_supply_the_new_required_parameter(
     # `send("hi")` on line 9 is certainly short.
     assert verdicts[13] != cs.DELTA_ARITY_TOO_FEW
     assert verdicts[9] == cs.DELTA_ARITY_TOO_FEW
+
+
+def test_a_receiver_passed_by_keyword_is_an_unbound_call(indexed: Indexed) -> None:
+    # `Svc.run(self=svc, job=1)` supplies the receiver itself; an optional
+    # parameter added to `run` breaks nothing (Greptile, PR #2947).
+    delta = _edit(indexed, "def run(self, job):", "def run(self, job, prio=0):")
+
+    (change,) = delta["signature_changes"]
+    verdicts = {site["caller"]: site["verdict"] for site in change["sites"]}
+    assert verdicts[f"{PROJECT}.app.call_run_by_keyword"] not in (
+        cs.DELTA_ARITY_UNEXPECTED_KEYWORD,
+        cs.DELTA_ARITY_TOO_FEW,
+        cs.DELTA_ARITY_TOO_MANY,
+    )
+    assert not has_findings(delta)

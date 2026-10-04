@@ -803,7 +803,7 @@ class TestListLanguagesCommand:
         result = CliRunner().invoke(list_languages, [])
 
         assert result.exit_code == 0
-        assert "Configured Languages" in result.output
+        assert "Supported Languages" in result.output
 
 
 class TestRemoveLanguageCommand:
