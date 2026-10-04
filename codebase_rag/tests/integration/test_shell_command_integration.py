@@ -125,27 +125,34 @@ class TestShellCommandToolIntegration:
     async def test_tool_executes_read_only_command_without_approval(
         self, shell_commander: ShellCommander
     ) -> None:
-        # A genuinely safe read-only command (no filesystem traversal) runs
-        # without approval. `ls` is now approval-gated because it can be pointed
-        # outside the workspace (see test_tool_requires_approval_for_filesystem_read).
+        # A read-only command with no filesystem traversal runs without
+        # approval.
         tool = create_shell_command_tool(shell_commander)
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
         result = await tool.function(mock_ctx, "pwd")
         assert result.return_code == 0
 
-    async def test_tool_requires_approval_for_filesystem_read(
+    async def test_tool_runs_a_read_confined_to_the_workspace_without_approval(
         self, shell_commander: ShellCommander
     ) -> None:
-        # `ls` reads the filesystem and can traverse (ls /etc, ls ../), so the
-        # hardened default requires approval before it runs.
-        from pydantic_ai.exceptions import ApprovalRequired
+        # A read that stays inside the project root shows nothing the file
+        # reader does not, so it runs without a prompt (issue #2359).
+        tool = create_shell_command_tool(shell_commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "ls")
+        assert result.return_code == 0
+        assert "file1.txt" in result.stdout
 
+    async def test_tool_requires_approval_for_a_read_outside_the_workspace(
+        self, shell_commander: ShellCommander
+    ) -> None:
         tool = create_shell_command_tool(shell_commander)
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
         with pytest.raises(ApprovalRequired):
-            await tool.function(mock_ctx, "ls")
+            await tool.function(mock_ctx, "ls ..")
 
     async def test_tool_requires_approval_for_write_command(
         self, shell_commander: ShellCommander
