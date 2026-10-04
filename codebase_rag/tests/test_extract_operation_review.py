@@ -752,3 +752,60 @@ def test_extract_leaves_multiline_string_contents_alone(
     qn = rel.rsplit(".", 1)[0].replace("/", ".") + ".letter"
     before, after = _extract_and_run(temp_repo, rel, source, qn, span)
     assert after == before
+
+
+_LAZY_JS = """\
+function pick(flag) {{
+  let x = flag ? null : 0;
+  {line}
+  return x;
+}}
+
+console.log(pick(false), pick(true));
+"""
+
+_LAZY_PY = """\
+def pick(flag, vals):
+    x = None if flag else 0
+    {line}
+    return x
+
+
+print(pick(False, []), pick(True, [5]))
+"""
+
+
+@pytest.mark.parametrize(
+    ("rel", "template", "line"),
+    [
+        ("src/pick.js", _LAZY_JS, "flag && (x = 1);"),
+        ("src/pick.js", _LAZY_JS, "flag || (x = 1);"),
+        ("src/pick.js", _LAZY_JS, "flag ? (x = 1) : 0;"),
+        ("src/pick.js", _LAZY_JS, "x ??= 1;"),
+        ("src/pick.js", _LAZY_JS, "x ||= 1;"),
+        ("src/pick.js", _LAZY_JS, "x &&= 1;"),
+        ("pkg/pick.py", _LAZY_PY, "flag and (x := 1)"),
+        ("pkg/pick.py", _LAZY_PY, "flag or (x := 1)"),
+        ("pkg/pick.py", _LAZY_PY, "y = (x := 1) if flag else 0"),
+        ("pkg/pick.py", _LAZY_PY, "[x := v for v in vals]"),
+    ],
+    ids=[
+        "js-and",
+        "js-or",
+        "js-ternary",
+        "js-nullish-assign",
+        "js-or-assign",
+        "js-and-assign",
+        "py-and-walrus",
+        "py-or-walrus",
+        "py-conditional-walrus",
+        "py-comprehension-walrus",
+    ],
+)
+def test_a_write_under_a_short_circuit_is_conditional(
+    temp_repo: Path, rel: str, template: str, line: str
+) -> None:
+    qn = rel.rsplit(".", 1)[0].replace("/", ".") + ".pick"
+    source = template.format(line=line)
+    before, after = _extract_and_run(temp_repo, rel, source, qn, (3, 3))
+    assert after == before
