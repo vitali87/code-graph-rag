@@ -280,6 +280,39 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
+def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
+    # PHP and C/C++ name a member call by its bare method name too
+    # (`$bag->count()` and `count($xs)` both read `count`; `a.b.max()` reads
+    # `max`), so only the call's shape tells that it has no receiver and so
+    # names no method of another class (issue #2575).
+    if language == cs.SupportedLanguage.PHP:
+        return call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION
+    if language in _C_FAMILY_LANGUAGES:
+        callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        return (
+            callee is not None
+            and callee.type == cs.TS_IDENTIFIER
+            and not _in_function_local_class(call_node)
+        )
+    return False
+
+
+def _in_function_local_class(node: Node) -> bool:
+    # A member of a class defined inside a function body has its calls
+    # attributed to that function (issue #2555), so the resolver cannot see
+    # the class a bare call there may reach; such a call keeps the name
+    # fallback it had.
+    in_class = False
+    current = node.parent
+    while current is not None:
+        if current.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES:
+            in_class = True
+        elif in_class and current.type == cs.TS_CPP_FUNCTION_DEFINITION:
+            return True
+        current = current.parent
+    return False
+
+
 def _class_qn_for_calls(
     class_node: Node,
     module_qn: str,
@@ -4675,6 +4708,7 @@ class CallProcessor:
             constructing=ctx.language
             in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
+            receiverless=_has_no_receiver(call_node, ctx.language),
         )
 
     def _resolve_java_callee(

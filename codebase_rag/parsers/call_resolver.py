@@ -68,6 +68,12 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+    receiverless: bool
+
+
+# A cached answer is keyed by the call name, the module and the two flags that
+# change the question: `constructing` and `receiverless`.
+_ResolutionKey = tuple[str, str, bool, bool]
 
 
 def _trie_search_name(call_name: str) -> str:
@@ -274,13 +280,11 @@ class CallResolver:
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
         self.type_aliases = type_aliases if type_aliases is not None else {}
-        self._simple_resolution_cache: dict[
-            tuple[str, str, bool], tuple[str, str] | None
-        ] = {}
+        self._simple_resolution_cache: dict[_ResolutionKey, tuple[str, str] | None] = {}
         # The branch that produced the last answer (issue #1526), memoised
         # beside the cache so a hit reports the same confidence as the miss.
         self.last_resolution: str = cs.EdgeResolution.EXACT
-        self._resolution_labels: dict[tuple[str, str, bool], str] = {}
+        self._resolution_labels: dict[_ResolutionKey, str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
         self._field_bindings: dict[tuple[str, str], set[str]] = {}
@@ -495,10 +499,13 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        receiverless: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name."""
+        function that merely shares the name. `receiverless`: a PHP or C/C++
+        call written with no receiver (`count($xs)`, `max(a, b)`), which
+        those languages' call names do not tell apart from a member call."""
         self.last_resolution = cs.EdgeResolution.EXACT
         return self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -511,6 +518,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
+                    receiverless,
                 )
             ),
             call_name,
@@ -1396,6 +1404,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        receiverless: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -1406,6 +1415,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
+            receiverless,
         )
         handled, result = self._resolve_receiver_shadow(call)
         if handled:
@@ -1415,6 +1425,8 @@ class CallResolver:
             return result
         handled, result = self._resolve_caller_scope(call)
         if handled:
+            return result
+        if result := self._resolve_c_family_inherited_member(call):
             return result
         # After the scope walk, which answers a nested def or class of the
         # name: any other local is a value the graph cannot follow, and the
@@ -1460,7 +1472,7 @@ class CallResolver:
             return None
 
         result = self._try_resolve_via_trie(
-            call_name, module_qn, language, call_point, constructing
+            call_name, module_qn, language, call_point, constructing, receiverless
         )
         self._remember_cacheable(cache_key, result)
         return result
@@ -1576,7 +1588,42 @@ class CallResolver:
             return True, result
         return False, None
 
-    def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
+    def _resolve_c_family_inherited_member(
+        self, call: _CallSite
+    ) -> tuple[str, str] | None:
+        # Inside a C/C++ member function a call with no receiver finds a
+        # member of the class or of a base, nearest class first: the one way
+        # such a call reaches a method, so the simple-name fallback offers
+        # none (issue #2575). The scope walk already answered the class's own
+        # members; this answers the inherited ones. Caller-specific, so it
+        # runs ahead of the module-keyed cache.
+        if not call.receiverless or not call.caller_qn:
+            return None
+        language = call.language or self._module_language(call.module_qn)
+        if language not in cs.C_FAMILY_LANGUAGES:
+            return None
+        if (owner := self._enclosing_class(call.caller_qn)) is None:
+            return None
+        for class_qn in self._mro(owner):
+            candidate = f"{class_qn}{cs.SEPARATOR_DOT}{call.call_name}"
+            if self.function_registry.get(candidate) == cs.NodeLabel.METHOD.value:
+                return cs.NodeLabel.METHOD.value, candidate
+        return None
+
+    def _enclosing_class(self, qualified_name: str) -> str | None:
+        # The nearest class above a definition, through any functions it is
+        # nested in; the module boundary (not in the registry) ends the walk.
+        scope = qualified_name
+        while cs.SEPARATOR_DOT in scope:
+            scope = self._parent_qn(scope)
+            label = self.function_registry.get(scope)
+            if label == cs.NodeLabel.CLASS.value:
+                return scope
+            if label is None:
+                return None
+        return None
+
+    def _resolution_cache_key(self, call: _CallSite) -> _ResolutionKey | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
         # The cache is keyed by (call_name, module_qn) only, so a caller whose
         # class carries extends-clause type arguments must bypass it: its
@@ -1612,8 +1659,9 @@ class CallResolver:
         if not use_cache:
             return None
         # `new X()` and a bare `X()` in one module are different
-        # questions with different answers, so they never share a slot.
-        return (call.call_name, module_qn, call.constructing)
+        # questions with different answers, so they never share a slot; so
+        # are PHP's `count($xs)` and `$bag->count()`, both named `count`.
+        return (call.call_name, module_qn, call.constructing, call.receiverless)
 
     def _resolve_structural_call(
         self, call: _CallSite
@@ -1657,7 +1705,7 @@ class CallResolver:
         return False, None
 
     def _resolve_rust_prefixed_or_local(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         # A `crate::`/`self::`/`super::` path says outright which module holds
@@ -1739,7 +1787,7 @@ class CallResolver:
         return False, None
 
     def _resolve_imported_or_module_member(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         if result := self._try_resolve_via_imports(
@@ -1789,7 +1837,7 @@ class CallResolver:
         return False, None
 
     def _resolve_external_target(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         # A bare name explicitly imported from outside the project binds to that
@@ -1826,7 +1874,7 @@ class CallResolver:
         return False, None
 
     def _resolve_untyped_member_or_unresolvable(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn, language = call.call_name, call.module_qn, call.language
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
@@ -1864,13 +1912,13 @@ class CallResolver:
         return False, None
 
     def _remember_cacheable(
-        self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
+        self, cache_key: _ResolutionKey | None, result: tuple[str, str] | None
     ) -> None:
         if cache_key is not None:
             self._remember(cache_key, result)
 
     def _remember(
-        self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
+        self, cache_key: _ResolutionKey, result: tuple[str, str] | None
     ) -> None:
         self._simple_resolution_cache[cache_key] = result
         self._resolution_labels[cache_key] = self.last_resolution
@@ -3341,6 +3389,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        receiverless: bool = False,
     ) -> tuple[str, str] | None:
         search_name = _trie_search_name(call_name)
         possible_matches = self._trie_candidates(call_name, module_qn, call_point)
@@ -3369,21 +3418,25 @@ class CallResolver:
             possible_matches = [
                 qn for qn in possible_matches if not self._name_hidden_in_body(qn)
             ]
-        if language == cs.SupportedLanguage.RUST and search_name == call_name:
-            # A bare Rust path NEVER names a method (inherent methods need
-            # self./Self::/Type::), so a same-named method must not soak
-            # up the edge when the real target is external, prelude, or a
-            # shadowing closure the graph cannot see (issue #1011).
+        caller_language = (
+            (language or self._module_language(module_qn))
+            if search_name == call_name
+            else None
+        )
+        if receiverless or caller_language in cs.BARE_CALL_NO_METHOD_LANGUAGES:
+            # A call with no receiver names no method here: a Rust inherent
+            # method needs self./Self::/Type:: (issue #1011), and a C/C++
+            # member's own and inherited methods were answered by name lookup
+            # above. So a same-named method must not soak up the edge when the
+            # real target is a builtin (`count($xs)`, `parseInt(s)`,
+            # `max(a, b)`), external, or a closure the graph cannot see
+            # (issue #2575).
             possible_matches = [
                 qn
                 for qn in possible_matches
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
             ]
-        elif (
-            search_name == call_name
-            and (language or self._module_language(module_qn))
-            == cs.SupportedLanguage.PYTHON
-        ):
+        elif caller_language == cs.SupportedLanguage.PYTHON:
             # A bare Python name is looked up in local, enclosing, global and
             # builtin scope; a method answers to its bare name only inside
             # its own class body, which lives in the caller's module. So a
