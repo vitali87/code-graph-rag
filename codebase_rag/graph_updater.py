@@ -131,6 +131,8 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    default_project_name,
+    project_roots_from_rows,
     python_stub_has_implementation,
     should_keep_dir,
     should_skip_path,
@@ -1271,7 +1273,7 @@ class GraphUpdater:
         )
         self.project_name = (
             project_name and project_name.strip()
-        ) or repo_path.resolve().name
+        ) or default_project_name(repo_path)
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
@@ -2196,6 +2198,7 @@ class GraphUpdater:
         self._trace_gone_paths = frozenset()
         if not force and self._is_already_in_sync():
             self._finish_in_sync_run()
+            self._retire_legacy_dotted_project()
             return
 
         # Cleared only when a REAL indexing run begins: an in-sync no-op above
@@ -2365,6 +2368,7 @@ class GraphUpdater:
         self._commit_run_state()
         if self._embeddings_interrupted:
             raise ex.EmbeddingsInterrupted
+        self._retire_legacy_dotted_project()
 
     def _clear_python_inference_caches(self) -> None:
         py_engine = self.factory.type_inference._python_type_inference
@@ -5053,6 +5057,122 @@ class GraphUpdater:
         return should_keep_dir(
             dirname, dir_prefix, self.exclude_paths, self.unignore_paths
         )
+
+    def _retire_legacy_dotted_project(self) -> None:
+        """Remove the project this checkout was indexed under before #2412.
+
+        A checkout at `acme.web/` used to default to project `acme.web`,
+        whose qualified names alias project `acme`'s package `web`. Syncing
+        under the new default would leave that project beside it (review of
+        PR 2497). It goes only once this run is committed, so a failed sync
+        keeps it; its vectors go first, since they are keyed by node id and
+        cannot be found once the nodes are gone, and while they cannot be
+        deleted the project stays for the next sync to try again.
+        """
+        ingestor = self.ingestor
+        if not isinstance(ingestor, QueryProtocol):
+            return
+        legacy = self._legacy_dotted_project()
+        if legacy is None:
+            return
+        try:
+            if not self._delete_legacy_embeddings(legacy):
+                logger.warning(
+                    ls.LEGACY_DOTTED_PROJECT_VECTORS_KEPT.format(legacy=legacy)
+                )
+                return
+            ingestor.execute_write(
+                cq.CYPHER_RETIRE_PROJECT,
+                {
+                    cs.KEY_PROJECT_NAME: legacy,
+                    cs.KEY_PROJECT_PREFIX: f"{legacy}{cs.SEPARATOR_DOT}",
+                },
+            )
+            # What `delete_project` sweeps after its walk: shared nodes the
+            # retired project alone anchored.
+            ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+            prune_unanchored_resources(ingestor)
+        except Exception as e:
+            # The sync itself succeeded; the next one tries again.
+            logger.warning(
+                ls.LEGACY_DOTTED_PROJECT_RETIRE_FAILED.format(legacy=legacy, error=e)
+            )
+            return
+        logger.info(
+            ls.LEGACY_DOTTED_PROJECT_RETIRED.format(
+                legacy=legacy, project=self.project_name
+            )
+        )
+
+    def _legacy_dotted_project(self) -> str | None:
+        """The pre-#2412 project of this checkout, if it can be removed.
+
+        Only an unnamed directory run has one, and only a project whose
+        recorded root is this checkout is it. It is kept while another
+        project's name is a prefix of it (`acme`) or extends it
+        (`acme.web.api`): their qualified names overlap, so some of its nodes
+        may be that project's too.
+        """
+        if self.project_named or self._single_file is not None:
+            return None
+        legacy = self.repo_path.resolve().name
+        if legacy == self.project_name or cs.SEPARATOR_DOT not in legacy:
+            return None
+        try:
+            roots = project_roots_from_rows(
+                self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
+            )
+        except Exception:
+            return None
+        root = roots.get(legacy)
+        if root is None or Path(root).resolve() != self.repo_path.resolve():
+            return None
+        sharing = sorted(
+            name
+            for name in roots
+            if name != legacy and legacy.startswith(f"{name}{cs.SEPARATOR_DOT}")
+        )
+        if sharing:
+            logger.warning(
+                ls.LEGACY_DOTTED_PROJECT_KEPT.format(
+                    legacy=legacy,
+                    project=self.project_name,
+                    sharing=", ".join(sharing),
+                )
+            )
+            return None
+        descendants = sorted(
+            name for name in roots if name.startswith(f"{legacy}{cs.SEPARATOR_DOT}")
+        )
+        if descendants:
+            logger.info(
+                ls.LEGACY_DOTTED_PROJECT_KEPT_FOR_DESCENDANTS.format(
+                    legacy=legacy,
+                    project=self.project_name,
+                    descendants=", ".join(descendants),
+                )
+            )
+            return None
+        return legacy
+
+    def _delete_legacy_embeddings(self, legacy: str) -> bool:
+        # A failed read raises: without the ids the vectors could never be
+        # found again, so the project must stay until a read succeeds. A
+        # failed delete, which the vector store logs and swallows, returns
+        # False for the same reason (review of PR 2497).
+        rows = self._graph_rows(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS, {cs.KEY_PROJECT_NAME: legacy}
+        )
+        node_ids = [
+            node_id
+            for row in rows
+            if isinstance(node_id := row.get(cs.KEY_NODE_ID), int)
+        ]
+        if not node_ids:
+            return True
+        from .vector_store import delete_project_embeddings
+
+        return delete_project_embeddings(legacy, node_ids)
 
     def _drop_cache_if_graph_lost(self) -> None:
         """Discard the hash cache when the graph no longer holds this project.

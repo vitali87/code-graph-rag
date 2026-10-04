@@ -5,6 +5,35 @@ PROVIDER_REGISTERED = "Registered provider: {name}"
 LOADING_GRAPH = "Loading graph from {path}"
 LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with indexes"
 ENSURING_PROJECT = "Ensuring Project: {name}"
+# A dotted checkout's project from before #2412, whose qualified names alias
+# another project's package; retired once the checkout syncs under its new
+# name (review of PR 2497).
+LEGACY_DOTTED_PROJECT_RETIRED = (
+    "Removed project '{legacy}', which this checkout was indexed under before "
+    "project names could not hold '.'; it is now project '{project}'"
+)
+LEGACY_DOTTED_PROJECT_KEPT = (
+    "Project '{legacy}' is this checkout's graph from before project names "
+    "could not hold '.', and it is now project '{project}'. '{legacy}' is kept "
+    "because its nodes may also belong to project(s) {sharing}; remove it with "
+    "`cgr delete-project -n {legacy}`, then sync {sharing} again"
+)
+LEGACY_DOTTED_PROJECT_KEPT_FOR_DESCENDANTS = (
+    "Project '{legacy}' is this checkout's graph from before project names "
+    "could not hold '.', and it is now project '{project}'. '{legacy}' is kept "
+    "because project(s) {descendants} have names under it and may share its "
+    "nodes; remove it with `cgr delete-project -n {legacy}`, then sync "
+    "{descendants} again"
+)
+LEGACY_DOTTED_PROJECT_RETIRE_FAILED = (
+    "Could not remove project '{legacy}', this checkout's graph from before "
+    "project names could not hold '.': {error}. The next sync tries again"
+)
+LEGACY_DOTTED_PROJECT_VECTORS_KEPT = (
+    "Kept project '{legacy}', this checkout's graph from before project names "
+    "could not hold '.': its vectors could not be deleted, and once its nodes "
+    "are gone nothing could find them. The next sync tries again"
+)
 
 # Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
