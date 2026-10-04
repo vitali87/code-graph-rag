@@ -24,6 +24,9 @@ import pytest
 from tree_sitter import Node, Query, QueryCursor
 
 import codebase_rag
+from codebase_rag import constants as cs
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.js_ts import utils as js_utils
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 
 PY = """\
@@ -147,6 +150,26 @@ def test_reversed_captures_give_the_document_order_binding(
 
 def test_the_graph_does_not_depend_on_capture_order(runs: dict[bool, _Calls]) -> None:
     assert runs[True] == runs[False]
+
+
+def test_the_js_return_reader_lists_returns_in_document_order() -> None:
+    # No JS factory's return type reaches a CALLS edge in the fixture (a
+    # call on a factory's result binds nothing in either order), so the
+    # reader that picks the first `return` is checked on its own.
+    parsers, queries = load_parsers()
+    source = (
+        b"function pick(flag) {\n  if (flag) return new A();\n  return new B();\n}\n"
+    )
+    tree = parsers[cs.SupportedLanguage.JS].parse(source)
+    returns: list[Node] = []
+    with patch(f"{js_utils.__name__}.QueryCursor", _ReversedCursor):
+        js_utils.find_return_statements(
+            tree.root_node, returns, queries[cs.SupportedLanguage.JS]["language"]
+        )
+    assert [node.text for node in returns] == [
+        b"return new A();",
+        b"return new B();",
+    ]
 
 
 def test_no_analysis_reads_unsorted_captures() -> None:
