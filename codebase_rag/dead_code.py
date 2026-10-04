@@ -643,6 +643,13 @@ def _is_root(
             and leaf in cs.PY_ENUM_HOOK_METHOD_NAMES
             and path.endswith(cs.EXT_PY)
         ),
+        # IPython's display machinery calls these by name on the object it
+        # shows, as the runtime calls a dunder (issue #2858).
+        lambda: (
+            is_method
+            and leaf in cs.PY_IPYTHON_DISPLAY_METHOD_NAMES
+            and path.endswith(cs.EXT_PY)
+        ),
         lambda: (
             not is_method
             and leaf in cs.GO_ROOT_FUNCTION_NAMES
