@@ -900,6 +900,14 @@ EXTRACT_JS_CONTEXT = (
 EXTRACT_JS_UNSUPPORTED_METHOD = (
     "{qn} is not a method of a named class; extracting from it is not supported"
 )
+EXTRACT_MAYBE_UNBOUND = (
+    "The span may leave `{name}` unchanged, and `{name}` may be unbound before "
+    "it; the extracted function could neither take it nor hand it back"
+)
+EXTRACT_STALE_CLOSURE = (
+    "A function defined in the span reads `{name}`, which later code rebinds; "
+    "moved out, it would keep reading the old value"
+)
 EDIT_ROLLBACK_REFUSED = (
     "Edit failed its postcondition ({reasons}) and was not rolled back "
     "({error}); its files may remain modified; check the working tree"
