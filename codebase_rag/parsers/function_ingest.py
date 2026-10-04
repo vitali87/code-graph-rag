@@ -1772,7 +1772,15 @@ class FunctionIngestMixin:
                 return None
             if result is not None:
                 path_parts.append(result)
-            current = current.parent
+            # A PHP anonymous class's part already spells the callable it is
+            # written in, as that callable is registered; naming the
+            # callables around it again here would put the closure under a
+            # different path than the class's own methods (issue #2538).
+            current = (
+                php_utils.anonymous_class_anchor_stop(current)
+                if result is not None and current.type == cs.TS_PHP_ANONYMOUS_CLASS
+                else current.parent
+            )
 
         path_parts.reverse()
         return path_parts
@@ -1821,10 +1829,9 @@ class FunctionIngestMixin:
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
             if name := self._extract_node_name(class_node):
                 return name
-            # A PHP anonymous class is named by position, as the definition
-            # pass names it; the callables it sits in are ancestors this walk
-            # names on its own (issue #2538).
-            if name := php_utils.anonymous_class_name(class_node):
+            # A PHP anonymous class is named as the definition pass names it,
+            # under the callable it is written in (issue #2538).
+            if name := php_utils.anonymous_class_scope_name(class_node):
                 return name
             # An anonymous class expression (`static Proxy = class {...}`) has no
             # `name` field; recover its binding name so a closure nested in its
