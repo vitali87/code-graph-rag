@@ -22,6 +22,17 @@ if TYPE_CHECKING:
 # register as CLASS).
 _JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 
+# The declarations that open a member-type scope: a simple type name read
+# inside one resolves first to a type it declares.
+_JAVA_TYPE_DECL_AST_TYPES = frozenset(
+    {
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_INTERFACE_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_RECORD_DECLARATION,
+    }
+)
+
 
 class JavaTypeResolverMixin:
     __slots__ = ()
@@ -126,7 +137,43 @@ class JavaTypeResolverMixin:
             return class_qn
         return target
 
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
+    def _enclosing_type_qns(self, scope: ASTNode, module_qn: str) -> list[str]:
+        """The qualified names of the named types enclosing `scope`,
+        innermost first: `module.Outer.Inner`, then `module.Outer`."""
+        names: list[str] = []
+        current = scope.parent
+        while current is not None:
+            if current.type in _JAVA_TYPE_DECL_AST_TYPES:
+                name_node = current.child_by_field_name(cs.FIELD_NAME)
+                if name_node is None or not (name := safe_decode_text(name_node)):
+                    return []
+                names.append(name)
+            current = current.parent
+        names.reverse()
+        return [
+            cs.SEPARATOR_DOT.join([module_qn, *names[:depth]])
+            for depth in range(len(names), 0, -1)
+        ]
+
+    def _scoped_member_type(
+        self, type_name: str, module_qn: str, scope: ASTNode
+    ) -> str | None:
+        # Java reads a simple type name as a member of the innermost
+        # enclosing type that declares one, ahead of the file's other types
+        # and its imports, so a same-named type elsewhere in the file does
+        # not make it ambiguous (Greptile, PR #2973).
+        for enclosing in self._enclosing_type_qns(scope, module_qn):
+            member = f"{enclosing}{cs.SEPARATOR_DOT}{type_name}"
+            if (
+                member in self.function_registry
+                and self.function_registry[member] in _JAVA_TYPE_DECL_NODE_TYPES
+            ):
+                return member
+        return None
+
+    def _resolve_java_type_name(
+        self, type_name: str, module_qn: str, scope: ASTNode | None = None
+    ) -> str:
         if not type_name:
             return cs.JAVA_TYPE_OBJECT
 
@@ -147,6 +194,11 @@ class JavaTypeResolverMixin:
         if cs.CHAR_ANGLE_OPEN in type_name and cs.CHAR_ANGLE_CLOSE in type_name:
             base_type = type_name.split(cs.CHAR_ANGLE_OPEN, maxsplit=1)[0]
             return self._resolve_java_type_name(base_type, module_qn)
+
+        if scope is not None and (
+            member := self._scoped_member_type(type_name, module_qn, scope)
+        ):
+            return member
 
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]

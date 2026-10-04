@@ -58,6 +58,28 @@ public enum Color {
 }
 """
 
+# `Helper` names two nested types: the class a member of `Scoped`, and an
+# enum a member of `Scoped.Other`. Java resolves each use to the member of
+# the innermost enclosing type declaring it.
+SCOPED = """\
+package demo;
+
+public final class Scoped {
+    static class Helper { boolean check() { return true; } }
+
+    public static boolean use(Helper h) { return h.check(); }
+
+    static class Other {
+        enum Helper {
+            X;
+            boolean check() { return false; }
+        }
+
+        static boolean useInner(Helper h) { return h.check(); }
+    }
+}
+"""
+
 PREFIX = "src.main.java.demo"
 
 
@@ -66,16 +88,21 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("jenum") / "jenum"
     _write(root, f"{PREFIX.replace('.', '/')}/Outer.java", OUTER)
     _write(root, f"{PREFIX.replace('.', '/')}/Color.java", COLOR)
+    _write(root, f"{PREFIX.replace('.', '/')}/Scoped.java", SCOPED)
     return _index(root, MagicMock())
 
 
-def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+def _calls_from(graph: RecordedGraph, caller: str) -> dict[str, str]:
     prefix = f"{graph.project}.{PREFIX}."
     return {
         dst.removeprefix(prefix): str(props.get("resolution"))
         for src, rel, dst, props in graph.edges
-        if rel == "CALLS" and src == f"{prefix}Outer.Outer.{caller}"
+        if rel == "CALLS" and src == f"{prefix}{caller}"
     }
+
+
+def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    return _calls_from(graph, f"Outer.Outer.{caller}")
 
 
 @pytest.mark.parametrize(
@@ -102,6 +129,23 @@ def test_a_nested_enum_with_constant_bodies_binds_both_definitions(
         "Outer.Outer.Factory.create()": "overload",
         "Outer.Outer.Factory.create()@15": "overload",
     }
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("Scoped.Scoped.use(Helper)", "Scoped.Scoped.Helper.check()"),
+        (
+            "Scoped.Scoped.Other.useInner(Helper)",
+            "Scoped.Scoped.Other.Helper.check()",
+        ),
+    ],
+    ids=["enclosing-class-member", "inner-scope-enum"],
+)
+def test_a_same_named_type_resolves_in_the_callers_scope(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    assert _calls_from(graph, caller) == {callee: "exact"}
 
 
 # Negative: what must not change.

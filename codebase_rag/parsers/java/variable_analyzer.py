@@ -88,7 +88,9 @@ class JavaVariableAnalyzerMixin:
     _resolve_java_method_return_type: Callable[[str, str], str | None]
 
     @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+    def _resolve_java_type_name(
+        self, type_name: str, module_qn: str, scope: ASTNode | None = None
+    ) -> str: ...
 
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
@@ -136,7 +138,9 @@ class JavaVariableAnalyzerMixin:
         param_type = safe_decode_text(param_type_node)
 
         if param_name and param_type:
-            resolved_type = self._resolve_java_type_name(param_type, module_qn)
+            resolved_type = self._resolve_java_type_name(
+                param_type, module_qn, param_node
+            )
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_PARAM, name=param_name, type=resolved_type)
 
@@ -158,7 +162,9 @@ class JavaVariableAnalyzerMixin:
                     param_name = safe_decode_text(name_node)
 
         if param_name and param_type:
-            resolved_type = self._resolve_java_type_name(param_type, module_qn)
+            resolved_type = self._resolve_java_type_name(
+                param_type, module_qn, param_node
+            )
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_VARARGS_PARAM, name=param_name, type=resolved_type)
 
@@ -237,7 +243,9 @@ class JavaVariableAnalyzerMixin:
                 )
                 return
 
-        resolved_type = self._resolve_java_type_name(declared_type, module_qn)
+        resolved_type = self._resolve_java_type_name(
+            declared_type, module_qn, declarator_node
+        )
         local_var_types[var_name] = resolved_type
         logger.debug(ls.JAVA_LOCAL_VAR_DECLARED, name=var_name, type=resolved_type)
 

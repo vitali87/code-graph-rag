@@ -606,7 +606,9 @@ class JavaMethodResolverMixin:
     _family_picks: dict[str, list[tuple[str, str]]]
 
     @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+    def _resolve_java_type_name(
+        self, type_name: str, module_qn: str, scope: ASTNode | None = None
+    ) -> str: ...
 
     @abstractmethod
     def _infer_java_type_from_expression(
