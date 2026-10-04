@@ -757,6 +757,15 @@ RENAME_ROLLBACK_REFUSED = (
     "Rename failed its postcondition ({reasons}) and was not rolled back "
     "({error}); renamed files may remain modified; check the working tree"
 )
+# A JS/TS use bound through a barrel's `export *`: the rename cannot reach
+# the importer's statement through the star, so no leave makes it safe
+# (issue #2464).
+RENAME_STAR_REEXPORT = (
+    "Cannot rename {qn}: {count} site(s) import it through an `export *` in "
+    "{barrels}, which the rename cannot follow; their imports would keep naming "
+    "what the barrel no longer exports"
+)
+RENAME_SITE_STAR_REEXPORT = "through export *"
 RENAME_ROLLBACK_UNKNOWN = (
     "Rename kept: its postcondition failed ({reasons}) and its transaction is "
     "no longer in the edit history, so whether it was already reversed cannot "
