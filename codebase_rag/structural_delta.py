@@ -1884,8 +1884,19 @@ def _signature_changes(
         if _params_moved(before.definitions[qn], after.definitions[qn])
         or before.definitions[qn].is_async != after.definitions[qn].is_async
     ]
+    # A handler that only turned `async` or back serves the same route with
+    # the same parameters, so its remote callers are not broken by the flip
+    # (Greptile, PR #2951); only a parameter change is looked up for them.
     remote = (
-        _remote_callers(fetch_all, project_name, changed)
+        _remote_callers(
+            fetch_all,
+            project_name,
+            [
+                qn
+                for qn in changed
+                if _params_moved(before.definitions[qn], after.definitions[qn])
+            ],
+        )
         if fetch_all is not None
         else {}
     )
@@ -1893,7 +1904,12 @@ def _signature_changes(
         old, new = before.definitions[qn], after.definitions[qn]
         async_change = _async_change(old, new)
         sites = [
-            _flipped_site(_site_finding(site, new, repo_root), new, async_change)
+            _flipped_site(
+                _site_finding(site, new, repo_root),
+                new,
+                async_change,
+                _site_call(site, repo_root),
+            )
             for site in after.sites
             if site.callee == qn and site.rel == cs.RelationshipType.CALLS.value
         ]
@@ -1911,6 +1927,24 @@ def _signature_changes(
     return out
 
 
+# Nodes that use a call's value where it stands, so a coroutine there is
+# never run (issue #2860); an attribute or subscript reads its object.
+_PY_SYNC_VALUE_READERS = frozenset(
+    {
+        cs.TS_PY_EXPRESSION_STATEMENT,
+        cs.TS_PY_BINARY_OPERATOR,
+        cs.TS_PY_COMPARISON_OPERATOR,
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_PY_NOT_OPERATOR,
+        cs.TS_PY_UNARY_OPERATOR,
+    }
+)
+_PY_READ_OBJECT_FIELDS = {
+    cs.TS_PY_ATTRIBUTE: cs.TS_FIELD_OBJECT,
+    cs.TS_PY_SUBSCRIPT: cs.FIELD_VALUE,
+}
+
+
 def _async_change(old: Definition, new: Definition) -> str | None:
     if old.is_async == new.is_async:
         return None
@@ -1918,22 +1952,74 @@ def _async_change(old: Definition, new: Definition) -> str | None:
 
 
 def _flipped_site(
-    finding: ArityAtSite, definition: Definition, async_change: str | None
+    finding: ArityAtSite,
+    definition: Definition,
+    async_change: str | None,
+    call: Node | None,
 ) -> ArityAtSite:
-    # Every call to a Python def that turned `async` gets a coroutine whose
-    # body never runs unless awaited, and every call to one that stopped
-    # being so awaits (or schedules) a plain value: each site fails (issue
-    # #2860). An arity verdict that already fails is the more precise word.
-    # Elsewhere (a JS Promise still runs) the flip is listed, not judged.
+    # A call written for the old kind of a Python def fails (issue #2860):
+    # its value read synchronously once the def turned `async` (a coroutine
+    # whose body never runs), or awaited once it stopped being so. How the
+    # call is written decides it, so a caller already migrated is fine and
+    # one handing the value on (returned, assigned, `asyncio.run(...)`) is
+    # left to the change's `async_change` hint (Greptile, PR #2951). An
+    # arity verdict that already fails is the more precise word. Elsewhere
+    # (a JS Promise still runs) the flip is listed, not judged.
     if (
         async_change is None
+        or call is None
         or Path(definition.path).suffix != cs.EXT_PY
         or finding["verdict"] in cs.DELTA_ARITY_DEFINITE
     ):
         return finding
+    parent, child = _value_parent(call)
+    awaited = parent is not None and parent.type == cs.TS_PY_AWAIT
+    if async_change == cs.DELTA_ASYNC_ADDED:
+        breaks = not awaited and _read_synchronously(parent, child)
+    else:
+        breaks = awaited
+    if not breaks:
+        return finding
     flipped = finding.copy()
     flipped["verdict"] = cs.DELTA_ARITY_ASYNC_CHANGED
     return flipped
+
+
+def _site_call(site: CallSite, repo_root: Path | None) -> Node | None:
+    """The call a Python site records, read back from its source, or None."""
+    if (
+        repo_root is None
+        or site.line is None
+        or site.col is None
+        or Path(site.caller_path).suffix != cs.EXT_PY
+    ):
+        return None
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return None
+    return _call_starting_at(tree.root_node, site.line - 1, site.col)
+
+
+def _value_parent(call: Node) -> tuple[Node | None, Node]:
+    """The node that receives a call's value, past any parentheses, and the
+    child of it the value arrives through."""
+    child = call
+    parent = call.parent
+    while parent is not None and parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        child, parent = parent, parent.parent
+    return parent, child
+
+
+def _read_synchronously(parent: Node | None, child: Node) -> bool:
+    """Whether the value is used on the spot: discarded as a statement, an
+    operand, or the object of an attribute or subscript read."""
+    if parent is None:
+        return False
+    if parent.type in _PY_SYNC_VALUE_READERS:
+        return True
+    field = _PY_READ_OBJECT_FIELDS.get(parent.type)
+    target = parent.child_by_field_name(field) if field else None
+    return target is not None and target.id == child.id
 
 
 # --- new duplicates -----------------------------------------------------------

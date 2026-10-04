@@ -403,6 +403,32 @@ def test_signature_change_lists_the_remote_callers_of_its_endpoint(
     ]
 
 
+def test_an_async_only_flip_lists_no_remote_callers(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A handler turning `async` serves the same route with the same
+    parameters, so its remote callers are not broken by the flip alone and
+    must not fail the check (Greptile, PR #2951)."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "async def helper(a):"),
+    )
+
+    def apply() -> None:
+        updater.reingest(["pkg/util.py"], deleted=[])
+        _link_remote_callers(store)
+
+    delta = observe(store.fetch_all, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+
+    (change,) = delta["signature_changes"]
+    assert change["async_change"] == cs.DELTA_ASYNC_ADDED
+    assert change["remote_callers"] == []
+    # `return helper(1)` hands the coroutine on: a hint, not a finding.
+    assert not has_findings(delta)
+
+
 def test_a_caller_both_query_shapes_return_is_listed_once() -> None:
     """The indirect and the direct query are each DISTINCT within
     themselves; a row both return is one caller (bot review on PR #1978)."""
