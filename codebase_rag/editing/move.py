@@ -86,6 +86,8 @@ _TS_FUTURE_IMPORT = "future_import_statement"
 _TS_HASH_BANG = "hash_bang_line"
 _PROLOGUE_TYPES = frozenset({_TS_HASH_BANG, _TS_FUTURE_IMPORT})
 _PINNED_COMMENT_LINES = 2
+# What a cut that ends mid-line swallows after the definition.
+_INLINE_SPACE = (b" ", b"\t")
 # `import D, * as ns, { a } from ...`: the clause between the keyword and
 # `from`, and the one-binding clauses it is split into.
 _JS_FROM = re.compile(r"\s+from\s+(?=['\"])")
@@ -367,6 +369,23 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     ):
         first = sibling
         sibling = sibling.prev_named_sibling
+    # Whole lines, unless other code shares the first or the last one
+    # (`function f() {} console.log('ready');` in JS): the whole-line cut
+    # deleted that statement from the old module and pasted it at the
+    # destination. Then only the definition's own bytes are cut.
+    before, after = first.prev_named_sibling, target.next_named_sibling
+    if (before is not None and before.end_point[0] == first.start_point[0]) or (
+        after is not None
+        and after.type != cs.TS_COMMENT
+        and after.start_point[0] == target.end_point[0]
+    ):
+        end = target.end_byte
+        while source[end : end + 1] in _INLINE_SPACE:
+            end += 1
+        text = source[first.start_byte : target.end_byte].decode(
+            cs.ENCODING_UTF8, errors="replace"
+        )
+        return _Cut(first.start_byte, end, text)
     start = source.rfind(b"\n", 0, first.start_byte) + 1
     end = source.find(b"\n", target.end_byte)
     end = len(source) if end < 0 else end + 1
