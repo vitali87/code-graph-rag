@@ -476,6 +476,26 @@ def test_extracted_updates_flow_back_to_the_caller(
     assert after == before
 
 
+GROW_JS = """\
+function grow(n) {
+  let x = n + 1;
+  x += 2;
+  return x;
+}
+
+console.log(grow(1));
+"""
+
+
+def test_extracted_js_declaration_stays_writable(temp_repo: Path) -> None:
+    before, after = _extract_and_run(
+        temp_repo, "src/grow.js", GROW_JS, "src.grow.grow", (2, 2)
+    )
+    assert after == before == "4"
+    text = (temp_repo / PROJECT / "src/grow.js").read_text()
+    assert "  let x = part(n);\n" in text
+
+
 PICK_PY = """\
 def pick(flag):
     x = 0
@@ -574,3 +594,161 @@ def test_extract_refuses_a_closure_over_a_name_rebound_after_the_span(
     # never see the caller's later `x = 1`.
     message = _refused(temp_repo, "pkg/late.py", LATE_PY, "pkg.late.late", (4, 5))
     assert "`x`" in message
+
+
+SHARED_FILES = {
+    "pkg/__init__.py": "",
+    "pkg/shared.py": (
+        "counter = 0\n\n\n"
+        "def bump():\n"
+        "    global counter\n"
+        "    counter += 1\n"
+        "    return counter\n\n\n"
+        "def outer():\n"
+        "    count = 0\n\n"
+        "    def inner():\n"
+        "        nonlocal count\n"
+        "        count += 1\n"
+        "        return count\n\n"
+        "    return inner()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("qn", "span", "word"),
+    [
+        ("pkg.shared.bump", (6, 6), "global"),
+        ("pkg.shared.outer.inner", (15, 15), "nonlocal"),
+    ],
+    ids=["global", "nonlocal"],
+)
+def test_extract_refuses_writes_to_global_or_nonlocal_names(
+    temp_repo: Path, qn: str, span: tuple[int, int], word: str
+) -> None:
+    root = _repo(temp_repo, SHARED_FILES)
+    store, _updater = _index(root)
+    with pytest.raises(ExtractRefused, match=word):
+        extract(
+            root, store.fetch_all, PROJECT, _project_qn(qn), span, "part", dry_run=True
+        )
+    assert (root / "pkg/shared.py").read_text() == SHARED_FILES["pkg/shared.py"]
+
+
+SCALE_PY = """\
+class Scale:
+    factor = 3
+
+    @classmethod
+    def apply(cls, x):
+        y = x * cls.factor
+        return y
+
+    @staticmethod
+    def twice(x):
+        y = x * 2
+        return y
+
+
+print(Scale.apply(2), Scale.twice(5), Scale().apply(1), Scale().twice(1))
+"""
+
+
+@pytest.mark.parametrize(
+    ("qn", "span", "call", "decorator"),
+    [
+        ("pkg.scale.Scale.apply", (6, 6), "y = cls.part(x)", "@classmethod"),
+        ("pkg.scale.Scale.twice", (11, 11), "y = Scale.part(x)", "@staticmethod"),
+    ],
+    ids=["classmethod", "staticmethod"],
+)
+def test_extract_keeps_the_method_binding_of_class_and_static_methods(
+    temp_repo: Path, qn: str, span: tuple[int, int], call: str, decorator: str
+) -> None:
+    before, after = _extract_and_run(temp_repo, "pkg/scale.py", SCALE_PY, qn, span)
+    assert after == before == "6 10 3 2"
+    text = (temp_repo / PROJECT / "pkg/scale.py").read_text()
+    assert f"        {call}\n" in text
+    assert f"    {decorator}\n    def part(" in text
+
+
+_TSC = shutil.which("tsc")
+
+AREA_TS = """\
+export function area(n: number): number {
+  const doubled: number = n * 2;
+  const total = doubled + 1;
+  return total;
+}
+"""
+
+
+def test_extracted_typescript_parameters_keep_the_local_type(
+    temp_repo: Path,
+) -> None:
+    root = _repo(temp_repo, {"src/area.ts": AREA_TS})
+    store, updater = _index(root)
+    report = extract(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _project_qn("src.area.area"),
+        (3, 3),
+        "part",
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert "function part(doubled: number) {\n" in (root / "src/area.ts").read_text()
+    if _TSC is not None:
+        done = subprocess.run(
+            [_TSC, "--strict", "--noEmit", "src/area.ts"],
+            cwd=root,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_extract_refuses_an_untyped_typescript_local_input(temp_repo: Path) -> None:
+    source = AREA_TS.replace("doubled: number", "doubled")
+    message = _refused(temp_repo, "src/area.ts", source, "src.area.area", (3, 3))
+    assert "`doubled`" in message
+
+
+LETTER_PY = '''\
+def letter(name):
+    text = """Dear
+  {0},
+thanks
+    """.format(name)
+    return text
+
+
+print(repr(letter("Ann")))
+'''
+
+LETTER_JS = """\
+function letter(name) {
+  const text = `Dear
+  ${name},
+thanks
+    `;
+  return text;
+}
+
+console.log(JSON.stringify(letter("Ann")));
+"""
+
+
+@pytest.mark.parametrize(
+    ("rel", "source", "span"),
+    [("pkg/letter.py", LETTER_PY, (2, 5)), ("src/letter.js", LETTER_JS, (2, 5))],
+    ids=["python", "javascript"],
+)
+def test_extract_leaves_multiline_string_contents_alone(
+    temp_repo: Path, rel: str, source: str, span: tuple[int, int]
+) -> None:
+    qn = rel.rsplit(".", 1)[0].replace("/", ".") + ".letter"
+    before, after = _extract_and_run(temp_repo, rel, source, qn, span)
+    assert after == before
