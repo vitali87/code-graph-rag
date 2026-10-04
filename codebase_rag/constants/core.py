@@ -281,7 +281,9 @@ EDIT_KEY_MODE = "mode"
 # Inputs to the parser fingerprint: everything that changes how source files
 # become graph nodes and edges, plus the installed grammar wheels. Paths are
 # relative to the codebase_rag package root.
-PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
+# `analyzers` holds the ast-grep finding analyzer: it decides which finding
+# nodes a file gets and how they are keyed, exactly as a parser decides edges.
+PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants", "analyzers")
 PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "graph_updater.py",
     "function_registry.py",
@@ -310,6 +312,13 @@ PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
     ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
     ("parsers/java_frontend/javac", ("**/*.java",)),
+    # The ast-grep YAML is data, not code, but it decides what unchanged
+    # sources produce: the finding rules which Pattern/CodeSmell/SecurityIssue
+    # nodes exist, the tier patterns which definitions do. A rule change with
+    # unchanged sources otherwise kept the old rules' findings on the in-sync
+    # fast path (review of #2533).
+    ("analyzers/ast_grep_rules", ("**/*.yaml",)),
+    ("parsers/ast_grep_patterns", ("*.yaml",)),
 )
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"
