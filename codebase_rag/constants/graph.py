@@ -133,6 +133,8 @@ KEY_ALIAS = "alias"
 KEY_IMPORTED_NAME = "imported_name"
 # `imported_name` of a wildcard import (`from x import *`, `export * from`).
 IMPORTED_NAME_WILDCARD = "*"
+# The key prefix an import map stores a wildcard import under (`*<module>`).
+IMPORT_MAPPING_WILDCARD_PREFIX = "*"
 KEY_PATH = "path"
 # Literal relative specifiers this module imported that named no file on disk
 # when it was parsed ("./index"). A dropped IMPORTS edge leaves no row for the

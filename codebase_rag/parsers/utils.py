@@ -48,13 +48,22 @@ def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
     function_registry: FunctionRegistryTrieProtocol,
+    python_star: bool = False,
 ) -> str:
     # `from .pkg import sym` records the importer's name against the re-export
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    seen: set[str] = set()
-    current = qn
+    return _follow_reexports(qn, import_mapping, function_registry, python_star, set())
+
+
+def _follow_reexports(
+    current: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    python_star: bool,
+    seen: set[str],
+) -> str:
     while (
         current
         and current not in seen
@@ -63,7 +72,27 @@ def follow_reexports(
     ):
         seen.add(current)
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
-        following = import_mapping.get(module_qn, {}).get(name)
+        module_map = import_mapping.get(module_qn, {})
+        following = module_map.get(name)
+        if not following and python_star and not name.startswith(cs.PY_PRIVATE_PREFIX):
+            # `from ._client import *` is one wildcard entry, not a name per
+            # export, so `pkg.Client` matched nothing and httpx's
+            # `client = httpx.Client()` stayed untyped (issue #2928). A star
+            # binds every public name of its module; `seen` bounds a cycle of
+            # stars. Python-only: other languages' stars bind differently.
+            for key, target in module_map.items():
+                if not key.startswith(cs.IMPORT_MAPPING_WILDCARD_PREFIX):
+                    continue
+                found = _follow_reexports(
+                    f"{target}{cs.SEPARATOR_DOT}{name}",
+                    import_mapping,
+                    function_registry,
+                    python_star,
+                    seen,
+                )
+                if found in function_registry:
+                    return found
+            break
         if not following or following == current:
             break
         current = following
