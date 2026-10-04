@@ -415,3 +415,95 @@ def test_a_statement_before_the_definition_on_its_first_line_stays(
     )
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.strip() == "a-b -"
+
+
+# --- imports for type checkers only stay guarded ----------------------------------
+
+# A module only a type checker may import: loading it at runtime fails.
+HEAVY = (
+    "raise ImportError('pkg.heavy is for type checkers only')\n\n\n"
+    "class Model:\n    pass\n\n\nclass Other:\n    pass\n"
+)
+GUARDED_HELPER = "\n\ndef helper(m: Model) -> str:\n    return 'ok'\n" + OTHER
+
+
+@pytest.mark.parametrize(
+    ("typing_import", "guard"),
+    [
+        pytest.param("from typing import TYPE_CHECKING", "TYPE_CHECKING", id="name"),
+        pytest.param("import typing", "typing.TYPE_CHECKING", id="attribute"),
+    ],
+)
+def test_a_type_checking_import_moves_under_the_guard(
+    temp_repo: Path, typing_import: str, guard: str
+) -> None:
+    """A name imported under `if TYPE_CHECKING:` is bound for the type
+    checker only. Copying the import unconditionally made the destination
+    load a module that must not be loaded at runtime; refusing it refused
+    the commonest annotation pattern there is."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/heavy.py"] = HEAVY
+    fixture["pkg/util.py"] = (
+        f"from __future__ import annotations\n\n{typing_import}\n\n"
+        f"if {guard}:\n    from pkg.heavy import Model\n" + GUARDED_HELPER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    core = (root / "pkg/core.py").read_text()
+    assert "from typing import TYPE_CHECKING\n" in core
+    assert "if TYPE_CHECKING:\n    from pkg.heavy import Model\n" in core
+    probe = _python(root, "from pkg.core import helper; print(helper(None))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "ok"
+
+
+def test_a_type_checking_import_merges_into_the_destinations_guard(
+    temp_repo: Path,
+) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/heavy.py"] = HEAVY
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\nfrom typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n    from pkg.heavy import Model\n" + GUARDED_HELPER
+    )
+    fixture["pkg/core.py"] = (
+        "from __future__ import annotations\n\nfrom typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n    from pkg.heavy import Other\n\n\n"
+        "def existing(o: Other) -> int:\n    return 1\n"
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    core = (root / "pkg/core.py").read_text()
+    assert core.count("TYPE_CHECKING") == 2
+    assert (
+        "if TYPE_CHECKING:\n"
+        "    from pkg.heavy import Other\n"
+        "    from pkg.heavy import Model\n"
+    ) in core
+    probe = _python(
+        root,
+        "from pkg.core import existing, helper; print(existing(None), helper(None))",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "1 ok"
+
+
+def test_a_type_checking_import_that_would_rebind_a_destination_name_refuses(
+    temp_repo: Path,
+) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/heavy.py"] = HEAVY
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\nfrom typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n    from pkg.heavy import Model\n" + GUARDED_HELPER
+    )
+    fixture["pkg/core.py"] = "Model = 1\n"
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="already binds Model"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == "Model = 1\n"
