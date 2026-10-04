@@ -1046,6 +1046,11 @@ LanguageFamily = frozenset[SupportedLanguage]
 StemSiblingModules = dict[str, dict[LanguageFamily, str]]
 
 
+# A write tool's post-write step (issue #2916): the written paths in, a note
+# for the tool's result out ("" for nothing to say).
+AfterWrite = Callable[[list[str]], Awaitable[str]]
+
+
 class ReingestReport(NamedTuple):
     """What one GraphUpdater.reingest() call touched (issue #1524)."""
 

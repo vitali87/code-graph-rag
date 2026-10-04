@@ -455,6 +455,8 @@ def _launch_session(
     output_format: cs.QueryFormat,
     sync_task: Callable[[], None] | None,
     sync_message: str,
+    project_name: str | None = None,
+    project_named: bool = False,
 ) -> None:
     # `-a` answers one question and exits; otherwise open the chat loop.
     try:
@@ -476,6 +478,8 @@ def _launch_session(
                     show_config_table=False,
                     pre_chat_sync=sync_task,
                     pre_chat_sync_message=sync_message,
+                    project_name=project_name,
+                    project_named=project_named,
                 )
             )
     except KeyboardInterrupt:
@@ -1090,6 +1094,8 @@ def start(
         output_format,
         sync_task,
         sync_message,
+        project_name=resolved_project_name,
+        project_named=project_name is not None,
     )
 
 
