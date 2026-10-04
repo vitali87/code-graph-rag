@@ -126,6 +126,28 @@ FILES = {
     "nest.lua": "local M = {sub = {}}\n\nfunction M.sub.deep(x)\n  return x\nend\n\nreturn M\n",
     "tobj.ts": "export const tobj = {\n  tarrow: (n: number): number => n,\n};\n",
     "pymod.py": "def pyhelper(x):\n    return x\n\n\ndef pycaller():\n    return pyhelper(1)\n",
+    # The pair's key names the property even when the value starts on the
+    # next line, or names itself too, or declares a same-named function
+    # inside (bot review on PR #2895).
+    "obj2.js": (
+        "const obj2 = {\n"
+        "  multi:\n"
+        "    function () {\n"
+        "      return 4;\n"
+        "    },\n"
+        "  named: function named() {\n"
+        "    return 5;\n"
+        "  },\n"
+        "  outer: () => {\n"
+        "    function outer() {\n"
+        "      return 6;\n"
+        "    }\n"
+        "    return outer();\n"
+        "  },\n"
+        "};\n"
+        "\n"
+        "module.exports = obj2;\n"
+    ),
 }
 
 
@@ -175,6 +197,10 @@ def _sites(report: RenameReport, kind: str) -> set[tuple[str, int, int]]:
         ("obj.arrowProp", ("obj.js", 2, 2)),
         ("obj.fnProp", ("obj.js", 3, 2)),
         ("tobj.tarrow", ("tobj.ts", 2, 2)),
+        ("obj2.multi", ("obj2.js", 2, 2)),
+        ("obj2.named", ("obj2.js", 6, 2)),
+        # The property; `obj2.outer` alone is the function declared inside.
+        ("obj2.outer@9", ("obj2.js", 9, 2)),
     ],
 )
 def test_the_definition_token_is_located(
@@ -252,6 +278,7 @@ def test_an_applied_rename_rewrites_definition_and_callers(
         ("mod.gf", ("mod.lua", 15, 9)),
         ("obj.shortProp", ("obj.js", 6, 2)),
         ("obj.make", ("obj.js", 11, 9)),
+        ("obj2.outer", ("obj2.js", 10, 13)),
     ],
 )
 def test_a_definition_with_a_name_field_is_located_as_before(

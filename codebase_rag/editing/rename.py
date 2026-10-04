@@ -26,7 +26,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -190,6 +190,31 @@ def _declared_name(node: Node) -> Node | None:
     return None
 
 
+def _pair_key_of(
+    nodes: list[Node], start_line: int, end_line: int, name: str
+) -> Node | None:
+    """The key of the object pair whose function value is the definition
+    spanning exactly `start_line`..`end_line`, when it spells `name`."""
+    for node in nodes:
+        parent = node.parent
+        if (
+            node.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES
+            and node.start_point[0] + 1 == start_line
+            and node.end_point[0] + 1 == end_line
+            and parent is not None
+            and parent.type == cs.TS_PAIR
+            and parent.child_by_field_name(cs.FIELD_VALUE) == node
+        ):
+            key = parent.child_by_field_name(cs.FIELD_KEY)
+            if (
+                key is not None
+                and key.text is not None
+                and key.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+            ):
+                return key
+    return None
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -206,6 +231,12 @@ def _name_token(
         in_span = list(
             _nodes_in_span(parser.parse(source).root_node, start_line, end_line)
         )
+        # A function that is a JS/TS object pair's value is the property its
+        # key names: the key comes first, though the value may start on the
+        # next line (outside the span) or spell the name itself, or declare
+        # a same-named function inside (bot review on PR #2895).
+        if (key := _pair_key_of(in_span, start_line, end_line, name)) is not None:
+            return key.start_point[0] + 1, key.start_point[1]
         for node in in_span:
             named = _spelling(node.child_by_field_name(cs.FIELD_NAME), name, start_line)
             if named is not None:
