@@ -13,6 +13,7 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
+from .utils import annotation_text
 from .with_analyzer import WithTarget
 
 _PY_SCOPE_TYPES = frozenset(
@@ -1221,7 +1222,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
             if var_name in local_var_types and var_name not in written:
                 continue
-            annotation = safe_decode_text(type_node) or ""
+            annotation = annotation_text(type_node) or ""
             if annotated := self._type_of_annotated_name(annotation, module_qn):
                 local_var_types[var_name] = annotated
                 written.add(var_name)
@@ -1383,7 +1384,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if type_node is None:
             return []
         return self._tuple_elements_from_text(
-            safe_decode_text(type_node) or "", callee_qn, module_qn
+            annotation_text(type_node) or "", callee_qn, module_qn
         )
 
     def _tuple_elements_from_text(
@@ -1678,7 +1679,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if type_node is None or type_node.text is None:
             return None
         return self._annotation_type_from_text(
-            safe_decode_text(type_node) or "", method_qn, module_qn
+            annotation_text(type_node) or "", method_qn, module_qn
         )
 
     def _annotation_type_from_text(

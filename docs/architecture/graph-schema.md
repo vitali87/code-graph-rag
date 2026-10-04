@@ -137,6 +137,14 @@ one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.
 
+Call resolution reads a Python annotation through `Annotated[T, ...]`
+(PEP 593) to `T`, quoted or not, so `t: Annotated[Router, Depends(get)]`
+types `t` as `Router` (issue #2873). A call written in a function's own
+annotations (`Depends(get)`, `Doc("x")`) runs when the `def` runs. So it is
+recorded on the scope that runs the `def`: the module, or the outer function
+for a nested `def`. It is never recorded on the function itself. A call in a
+local variable's annotation never runs and is not recorded.
+
 ## Capture Groups
 
 Which parts of the schema above an index writes is chosen per capture group. Every relationship type belongs to exactly one group; a node label a group owns is written only while at least one of that group's relationships is enabled, and a label no group owns is always written. A default index enables the groups marked ✓. The others are opt-in: until the repository is indexed with one of them, a query for its labels or relationships, such as `MATCH (f)-[:HAS_PARAMETER]->(p)`, returns nothing.
