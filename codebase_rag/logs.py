@@ -1105,6 +1105,9 @@ HASH_CACHE_ORPHANED = (
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+PREVIOUS_SYNC_UNFINISHED = (
+    "The previous sync of '{project}' did not finish; re-indexing the whole repository."
+)
 HASH_CACHE_DISCARD_FAILED = (
     "Could not discard the orphaned cache file {path} ({error}); this run "
     "ignores it and rebuilds fully, so nothing is lost, but the stale file is "

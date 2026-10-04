@@ -13,7 +13,7 @@ from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 import typer
@@ -89,6 +89,9 @@ from .utils.path_utils import (
 from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
+
+if TYPE_CHECKING:
+    from .graph_updater import GraphUpdater
 
 
 def _vendored_click_exception() -> type[click.ClickException]:
@@ -352,19 +355,32 @@ def _start_update_graph(
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
-    _run_graph_sync(
-        repo=repo,
-        project_name=project_name,
-        project_named=project_named,
-        batch_size=batch_size,
-        exclude=exclude,
-        interactive_setup=interactive_setup,
-        clean=clean,
-        output=output,
-        capture=capture,
-        skip_embeddings=skip_embeddings,
-        assume_yes=assume_yes,
-    )
+    try:
+        _run_graph_sync(
+            repo=repo,
+            project_name=project_name,
+            project_named=project_named,
+            batch_size=batch_size,
+            exclude=exclude,
+            interactive_setup=interactive_setup,
+            clean=clean,
+            output=output,
+            capture=capture,
+            skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
+        )
+    except KeyboardInterrupt as stop:
+        # Ctrl+C is a request, not a crash (#2442): one line when it left the
+        # graph partial, and the shell's interrupt status, set here so it
+        # does not hinge on how typer happens to handle a KeyboardInterrupt.
+        if isinstance(stop, ex.SyncInterrupted):
+            app_context.console.print(
+                style(
+                    cs.CLI_MSG_SYNC_INTERRUPTED.format(project=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+        raise typer.Exit(cs.CLI_EXIT_INTERRUPTED) from stop
     _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
 
 
@@ -677,6 +693,34 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _run_updater_deferring_interrupt(
+    updater: "GraphUpdater",
+) -> KeyboardInterrupt | None:
+    """Run the sync's graph update; return a Ctrl+C that landed after its commit.
+
+    The caller records the sync and clears its marker before re-raising what
+    this returns; a Ctrl+C before the commit raises `SyncInterrupted` instead.
+    """
+    try:
+        updater.run()
+    except ex.EmbeddingsInterrupted as stop:
+        # Raised only after the run committed, so the graph is whole and
+        # the sync is recorded like any other; the interrupt then ends
+        # the command outside the connection, which would otherwise log
+        # it as a failed write.
+        return stop
+    except KeyboardInterrupt as stop:
+        # Decided by whether the run committed, not by where the interrupt
+        # surfaced: a Ctrl+C between the commit and the return found the
+        # graph whole, and must be recorded and unmarked the same way.
+        if not updater.committed:
+            # Stopped short of the commit: the marker stays down, and only
+            # the caller knows whether to say so.
+            raise ex.SyncInterrupted from stop
+        return stop
+    return None
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -735,15 +779,7 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        interrupted: ex.EmbeddingsInterrupted | None = None
-        try:
-            updater.run()
-        except ex.EmbeddingsInterrupted as stop:
-            # Raised only after the run committed, so the graph is whole and
-            # the sync is recorded like any other; the interrupt then ends
-            # the command outside the connection, which would otherwise log
-            # it as a failed write.
-            interrupted = stop
+        interrupted = _run_updater_deferring_interrupt(updater)
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
         # Taken before the export: counting it made a no-op sync of a small

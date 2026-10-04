@@ -123,6 +123,13 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_SYNC_INTERRUPTED = (
+    "Interrupted: the graph for '{project}' is incomplete; re-run "
+    "'cgr start --update-graph' with the same options to finish it."
+)
+# 128 + SIGINT: what a shell reports for a command Ctrl+C stopped, so scripts
+# can tell an interrupted sync from a failed one (exit 1).
+CLI_EXIT_INTERRUPTED = 130
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 # The CLI sync's incomplete-run marker (issue #2219). One run id for every CLI
 # sync of a project, not one per run: a CLI sync never publishes its hash cache
