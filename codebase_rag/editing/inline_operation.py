@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import NamedTuple
@@ -26,7 +27,14 @@ from .extract_scope import (
 )
 from .extract_transaction import _commit, _enforce
 from .extract_types import ExtractRefused, InlineRefused, InlineReport
-from .imports import _JS_NAMED, ImportSite, _local_name, _match_py_from, _split_names
+from .imports import (
+    _JS_NAMED,
+    _JS_SPEC,
+    ImportSite,
+    _local_name,
+    _match_py_from,
+    _split_names,
+)
 from .move import _WRAPPERS, _cut_span, _statement_text, _text
 from .patcher import Patcher, SpanEdit, apply_span_edits, line_col_to_byte
 from .sites import call_node_at
@@ -118,6 +126,20 @@ _SCOPES = frozenset(
     }
 )
 _PY_BUILTINS = frozenset(dir(builtins))
+# The statements an import site can be: an ES or Python import, or the
+# declaration a CommonJS `require` initialises.
+_STATEMENTS = frozenset(
+    {
+        cs.TS_PY_IMPORT_STATEMENT,
+        cs.TS_PY_IMPORT_FROM_STATEMENT,
+        cs.TS_IMPORT_STATEMENT,
+        cs.TS_LEXICAL_DECLARATION,
+        cs.TS_VARIABLE_DECLARATION,
+    }
+)
+_TS_TYPE_ONLY = re.compile(r"\s*import\s+type\s*\{")
+_JS_IMPORT = re.compile(r"\s*import\b")
+_JS_REQUIRE = re.compile(r"\brequire\s*\(")
 
 
 class _Param(NamedTuple):
@@ -327,20 +349,53 @@ class Inliner:
             start = line_col_to_byte(source, site.line, site.col)
             end = line_col_to_byte(source, site.end_line, site.end_col)
             if replacement is None:
-                # The statement bound only this name: drop its whole line.
-                start = source.rfind(b"\n", 0, start) + 1
-                nl = source.find(b"\n", end)
-                end = len(source) if nl < 0 else nl + 1
-                replacement = ""
+                drop = self._emptied(site.path, source, (start, end), statement)
+                if drop is None:
+                    return None
             elif replacement == statement:
                 continue
-            drop = SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
+            else:
+                drop = SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
             if self._still_named(
                 site.path, source, [*edits.get(site.path, []), drop], local
             ):
                 return None
             drops.append((site.path, drop))
         return drops
+
+    def _emptied(
+        self,
+        path: str,
+        source: bytes,
+        span: tuple[int, int],
+        statement: str,
+    ) -> SpanEdit | None:
+        """The edit for an import left binding nothing; None keeps it.
+
+        Deleting it would also stop its module's import-time work (a handler
+        it registers, say), so it becomes an import that only loads the
+        module. Only one that loads nothing new (a type-only import, or the
+        importer's own package) is cut, and then alone: a statement sharing
+        its line stays.
+        """
+        loader = _loader(statement)
+        if loader is None:
+            return None
+        text, binds = loader
+        start, end = span
+        _language, root = self._extractor._parse(path, source)
+        if text:
+            # `import pkg.util` binds `pkg`, which must not take over a name
+            # the file gives something else. The rewritten call sites only
+            # add builtins to a file other than the callee's, so the file as
+            # it reads now, outside this statement, has every other use.
+            if binds is not None and _bound_elsewhere(root, binds, span):
+                return None
+            return SpanEdit(start, end, text.encode(cs.ENCODING_UTF8))
+        node = _statement_at(root, start, end)
+        if node is None:
+            return None
+        return SpanEdit(*_statement_cut(source, node), b"")
 
     def _reexported(self, importer_path: str, local: str) -> bool:
         from ..utils.path_utils import base_module_qn
@@ -778,6 +833,91 @@ def _substitute(
     if returned.type not in _POSTFIX:
         result = f"({result})"
     return result
+
+
+def _loader(statement: str) -> tuple[str, str | None] | None:
+    """An import of the statement's module that binds none of its names, and
+    the name it binds instead; empty text when the module is loaded anyway.
+    None when the statement's form is not known well enough to respell."""
+    if parsed := _match_py_from(statement):
+        module = parsed[1]
+        dots = module[: len(module) - len(module.lstrip("."))]
+        parent, _sep, leaf = module[len(dots) :].rpartition(cs.SEPARATOR_DOT)
+        if not dots:
+            return f"import {module}", module.split(cs.SEPARATOR_DOT)[0]
+        # `from . import helper` reads the importer's own package, which
+        # is loaded before the importer runs.
+        if not leaf:
+            return "", None
+        return f"from {dots}{parent} import {leaf}", leaf
+    if _TS_TYPE_ONLY.match(statement):
+        return "", None
+    spec = _JS_SPEC.search(statement)
+    if spec is None:
+        return None
+    end = ";" if statement.rstrip().endswith(";") else ""
+    if _JS_IMPORT.match(statement):
+        return f"import {spec.group(0)}{end}", None
+    if _JS_REQUIRE.search(statement):
+        return f"require({spec.group(0)}){end}", None
+    return None
+
+
+def _bound_elsewhere(root: Node, name: str, skip: tuple[int, int]) -> bool:
+    """Whether the file spells `name` outside `skip` other than as the module
+    path of an import, where it names the same package a plain `import`
+    binds."""
+    for n in _walk(root):
+        if (
+            n.type in _IDENTIFIERS
+            and not skip[0] <= n.start_byte < skip[1]
+            and _text(n) == name
+            and _read_field(n) not in _NON_READ_FIELDS
+            and not _in_module_path(n)
+        ):
+            return True
+    return False
+
+
+def _in_module_path(identifier: Node) -> bool:
+    dotted = identifier.parent
+    if dotted is None or dotted.type != cs.TS_PY_DOTTED_NAME:
+        return False
+    holder = dotted.parent
+    if holder is not None and holder.type == cs.TS_PY_ALIASED_IMPORT:
+        holder = holder.parent
+    if holder is None:
+        return False
+    if holder.type in (cs.TS_PY_IMPORT_STATEMENT, cs.TS_RELATIVE_IMPORT):
+        return True
+    return (
+        holder.type == cs.TS_PY_IMPORT_FROM_STATEMENT
+        and holder.child_by_field_name(cs.FIELD_MODULE_NAME) == dotted
+    )
+
+
+def _statement_at(root: Node, start: int, end: int) -> Node | None:
+    node: Node | None = root.descendant_for_byte_range(start, end)
+    while node is not None and node.type not in _STATEMENTS:
+        node = node.parent
+    return node
+
+
+def _statement_cut(source: bytes, node: Node) -> tuple[int, int]:
+    """The statement's whole lines, or only its bytes and the separator
+    beside them when other code shares its line (as move's `_cut_span`)."""
+    before, after = node.prev_named_sibling, node.next_named_sibling
+    if (
+        after is not None
+        and after.type != cs.TS_COMMENT
+        and after.start_point[0] == node.end_point[0]
+    ):
+        return node.start_byte, after.start_byte
+    if before is not None and before.end_point[0] == node.start_point[0]:
+        return before.end_byte, node.end_byte
+    start = source.rfind(b"\n", 0, node.start_byte) + 1
+    nl = source.find(b"\n", node.end_byte)
+    return start, len(source) if nl < 0 else nl + 1
 
 
 def _without_entry(statement: str, name: str) -> str | None:
