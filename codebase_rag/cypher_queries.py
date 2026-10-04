@@ -1132,7 +1132,8 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.positional_params AS positional_params,
        n.ast_fingerprint AS ast_fingerprint,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
-       n.ast_branch_fingerprints AS ast_branch_fingerprints"""
+       n.ast_branch_fingerprints AS ast_branch_fingerprints,
+       n.modifiers AS modifiers"""
 CYPHER_DELTA_DEFINITIONS = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes

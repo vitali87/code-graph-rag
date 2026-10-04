@@ -53,6 +53,9 @@ class Definition(NamedTuple):
     fingerprint: str
     fingerprint_nodes: int
     branches: frozenset[str]
+    # The shape fingerprint drops the keyword, so a `def` <-> `async def`
+    # flip is told apart by this alone (issue #2860).
+    is_async: bool = False
 
 
 class CallSite(NamedTuple):
@@ -127,6 +130,9 @@ class SignatureChange(TypedDict):
     before: list[str] | None
     after: list[str] | None
     sites: list[ArityAtSite]
+    # `added` or `removed` when the definition turned `async` or back
+    # (issue #2860), else None.
+    async_change: str | None
     # Call sites across the network that reach this definition's endpoint
     # (issue #1603): a signature change on a handler is a contract change
     # for them, and no CALLS edge would ever list them.
@@ -245,6 +251,7 @@ def _definition(row: ResultRow) -> Definition:
         fingerprint=_text(row.get(cs.KEY_AST_FINGERPRINT)),
         fingerprint_nodes=_int(row.get(cs.KEY_AST_FINGERPRINT_NODES)),
         branches=frozenset(_strings(row.get(cs.KEY_AST_BRANCH_FINGERPRINTS))),
+        is_async=cs.TS_PY_ASYNC in _strings(row.get(cs.KEY_MODIFIERS)),
     )
 
 
@@ -538,9 +545,10 @@ def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     changed: list[str] = []
     for qn in sorted(set(before.definitions) & set(after.definitions)):
         old, new = before.definitions[qn], after.definitions[qn]
-        if (old.fingerprint, old.positional_params) != (
+        if (old.fingerprint, old.positional_params, old.is_async) != (
             new.fingerprint,
             new.positional_params,
+            new.is_async,
         ):
             changed.append(qn)
     return changed
@@ -1058,8 +1066,11 @@ def _signature_changes(
     changed = [
         qn
         for qn in symbols["changed"]
-        if before.definitions[qn].positional_params
-        != after.definitions[qn].positional_params
+        if (
+            before.definitions[qn].positional_params,
+            before.definitions[qn].is_async,
+        )
+        != (after.definitions[qn].positional_params, after.definitions[qn].is_async)
     ]
     remote = (
         _remote_callers(fetch_all, project_name, changed)
@@ -1068,8 +1079,9 @@ def _signature_changes(
     )
     for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
+        async_change = _async_change(old, new)
         sites = [
-            _site_finding(site, new, repo_root)
+            _flipped_site(_site_finding(site, new, repo_root), new, async_change)
             for site in after.sites
             if site.callee == qn and site.rel == cs.RelationshipType.CALLS.value
         ]
@@ -1080,10 +1092,36 @@ def _signature_changes(
                 before=list(old.positional_params) if old.positional_params else None,
                 after=list(new.positional_params) if new.positional_params else None,
                 sites=sorted(sites, key=_site_order),
+                async_change=async_change,
                 remote_callers=remote.get(qn, []),
             )
         )
     return out
+
+
+def _async_change(old: Definition, new: Definition) -> str | None:
+    if old.is_async == new.is_async:
+        return None
+    return cs.DELTA_ASYNC_ADDED if new.is_async else cs.DELTA_ASYNC_REMOVED
+
+
+def _flipped_site(
+    finding: ArityAtSite, definition: Definition, async_change: str | None
+) -> ArityAtSite:
+    # Every call to a Python def that turned `async` gets a coroutine whose
+    # body never runs unless awaited, and every call to one that stopped
+    # being so awaits (or schedules) a plain value: each site fails (issue
+    # #2860). An arity verdict that already fails is the more precise word.
+    # Elsewhere (a JS Promise still runs) the flip is listed, not judged.
+    if (
+        async_change is None
+        or Path(definition.path).suffix != cs.EXT_PY
+        or finding["verdict"] in cs.DELTA_ARITY_DEFINITE
+    ):
+        return finding
+    flipped = finding.copy()
+    flipped["verdict"] = cs.DELTA_ARITY_ASYNC_CHANGED
+    return flipped
 
 
 # --- new duplicates -----------------------------------------------------------

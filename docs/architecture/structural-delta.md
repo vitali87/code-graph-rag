@@ -70,7 +70,7 @@ records it next to the re-ingest itself.
 | `symbols.renamed`    | A symbol that disappeared while one with the same whole-skeleton fingerprint appeared in the same file. Paired one-to-one. |
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
-| `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
+| `signature_changes`  | Symbols whose positional parameters changed or that turned `async` or back (`async_change`: `added` or `removed`, else null), with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
 | `arity_findings`     | Call sites in the edited files the callee certainly rejects: more positional arguments than it declares (`too_many`), a required parameter nothing fills (`too_few`), or a keyword it does not accept (`unexpected_keyword`). |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
@@ -110,6 +110,16 @@ A def wrapped by a decorator other than `@staticmethod`, `@classmethod`,
 `@abstractmethod` or `@override` is not judged from its header, since the
 decorator may change what a caller passes.
 
+A Python def that turns into an `async def`, or the reverse, breaks every
+call to it (issue #2860). A plain call to a now-async function gets a
+coroutine whose body never runs. An `await` (or `asyncio.run`) of a
+now-sync function gets a plain value it cannot await. Each such site reads
+`async_changed`, which trips `--fail-on-found`, unless its arity verdict
+already does. The same flip in JavaScript, TypeScript or Rust is listed in
+`symbols.changed` and `signature_changes` but is not judged. A JavaScript
+caller still runs the function and gets a Promise, so whether it breaks
+depends on what the caller does with the value.
+
 ## `cgr check`
 
 ```bash
@@ -124,7 +134,7 @@ The graph is assumed to reflect `--base` (index there, then edit). Files
 that differ between the base and the working tree, untracked files
 included, are re-ingested and the delta printed as JSON. With
 `--fail-on-found` the command exits 1 when the delta reports dangling
-callers, `too_many`, `too_few` or `unexpected_keyword` arity findings, new
-duplicates or new import cycles.
+callers, `too_many`, `too_few`, `unexpected_keyword` or `async_changed`
+sites, new duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.

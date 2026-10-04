@@ -149,8 +149,9 @@ HELP_CHECK_BASE = (
 HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, calls with "
     "too many arguments, too few for a required parameter or a keyword the "
-    "callee does not accept, new duplicates or new import cycles. A "
-    "possibly_missing site is reported but does not fail the check."
+    "callee does not accept, calls to a Python def that turned async or "
+    "back, new duplicates or new import cycles. A possibly_missing site is "
+    "reported but does not fail the check."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
