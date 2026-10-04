@@ -605,3 +605,105 @@ def test_a_relative_import_above_the_root_refuses_the_move(temp_repo: Path) -> N
     with pytest.raises(MoveRefused, match="from .. import deps"):
         _move(root, store, updater, target="pkg.sub.core")
     assert (root / "pkg/util.py").read_text() == fixture["pkg/util.py"]
+
+
+# --- module state the moved code rebinds stays one variable -----------------------
+
+
+@pytest.mark.parametrize(
+    ("util", "probe"),
+    [
+        pytest.param(
+            "COUNT = 0\n\n\ndef helper():\n    global COUNT\n    COUNT += 1\n"
+            "    return COUNT\n" + OTHER,
+            "import pkg.util\nfrom pkg.util import helper\n"
+            "helper()\nprint(pkg.util.COUNT)\n",
+            id="moved-writes",
+        ),
+        pytest.param(
+            "COUNT = 0\n\n\ndef bump():\n    global COUNT\n    COUNT += 1\n\n\n"
+            "def helper():\n    return COUNT\n" + OTHER,
+            "from pkg.util import bump, helper\nbump()\nprint(helper())\n",
+            id="old-module-writes",
+        ),
+    ],
+)
+def test_a_global_the_move_would_split_refuses_the_move(
+    temp_repo: Path, util: str, probe: str
+) -> None:
+    """The destination imported COUNT by value, so `global COUNT` then
+    rebound the destination's own copy: the moved helper counted in one
+    module while every reader of `pkg.util.COUNT` saw the other."""
+    fixture = {**FIXTURE, "pkg/util.py": util}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="COUNT"):
+        _move(root, store, updater)
+    assert (root / "pkg/util.py").read_text() == util
+    assert not (root / "pkg/core.py").exists()
+    result = _python(root, probe)
+    assert result.stdout.strip() == "1", result.stderr
+
+
+def test_a_global_only_the_moved_code_uses_does_not_refuse(temp_repo: Path) -> None:
+    """A cache the moved function alone creates and reads moves with it."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "def helper():\n    global _CACHE\n    _CACHE = 'warm'\n    return _CACHE\n"
+        + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper())")
+    assert probe.stdout.strip() == "warm", probe.stderr
+
+
+@needs_node
+@pytest.mark.parametrize("write", ["count += 1;", "count++;", "count = count + 1;"])
+def test_a_js_module_variable_the_moved_code_assigns_refuses_the_move(
+    temp_repo: Path, tmp_path: Path, write: str
+) -> None:
+    """An imported binding is read-only, so the moved `count += 1` that
+    updated the module's `let` threw a TypeError at the destination."""
+    root = temp_repo / PROJECT
+    util = (
+        "export let count = 0;\n\n"
+        f"export function helper() {{\n  {write}\n  return count;\n}}\n\n"
+        "export function run() {\n  return 'r';\n}\n"
+    )
+    _write(root, "pkg/util.js", util)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="count"):
+        _move(root, store, updater, target="pkg/core.js")
+    assert (root / "pkg/util.js").read_text() == util
+    probe = _node(
+        root,
+        tmp_path,
+        "import { helper } from './pkg/util.js';\nconsole.log(helper());\n",
+    )
+    assert probe.stdout.strip() == "1", probe.stderr
+
+
+@needs_node
+def test_a_js_local_that_shadows_a_module_variable_does_not_refuse(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export let count = 0;\n\n"
+        "export function helper() {\n  let count = 1;\n  count += 1;\n  return count;\n}\n\n"
+        "export function run() {\n  return count;\n}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js")
+    assert report.applied, report.message
+    probe = _node(
+        root,
+        tmp_path,
+        "import { helper } from './pkg/core.js';\nconsole.log(helper());\n",
+    )
+    assert probe.stdout.strip() == "2", probe.stderr
