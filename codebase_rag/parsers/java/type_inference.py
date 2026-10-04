@@ -32,6 +32,25 @@ if TYPE_CHECKING:
 JAVA_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
+def _capturing_method(scope_node: ASTNode) -> ASTNode | None:
+    """The method whose locals a method of an anonymous or local class
+    captures, or None for a method of a member or top-level class."""
+    body = scope_node.parent
+    if body is None or body.type != cs.TS_CLASS_BODY or body.parent is None:
+        return None
+    # The class body belongs to `new T() { ... }` or to a class declaration;
+    # above either, a method comes before any named type only when the class
+    # is declared inside that method.
+    current = body.parent.parent
+    while current is not None:
+        if current.type in cs.JAVA_METHOD_NODE_TYPES:
+            return current
+        if current.type in cs.JAVA_CLASS_NODE_TYPES:
+            return None
+        current = current.parent
+    return None
+
+
 class JavaTypeInferenceEngine(
     JavaTypeResolverMixin,
     JavaVariableAnalyzerMixin,
@@ -179,6 +198,16 @@ class JavaTypeInferenceEngine(
         except Exception as e:
             logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED, error=e)
 
+        # A method of an anonymous or local class sees the parameters and
+        # locals of the method that declares the class (effectively final
+        # captures, so their declared types hold): `codec.encode(in)` in a
+        # `new Handler() { ... }` bound nothing where the same call from a
+        # lambda bound exactly (issue #2937). Its own names shadow them.
+        if (enclosing := _capturing_method(scope_node)) is not None:
+            local_var_types = {
+                **self.build_variable_type_map(enclosing, module_qn),
+                **local_var_types,
+            }
         return local_var_types
 
     def resolve_java_method_call(
