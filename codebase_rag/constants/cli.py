@@ -76,6 +76,11 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_WORKSPACE_PROJECT_NAME = (
+    "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
+    "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
+    "`cgr workspace add-repo {workspace} {path} --project-name <name>`."
+)
 CLI_ERR_CAPTURE_UNKNOWN = (
     "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
     "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
@@ -123,6 +128,13 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_SYNC_INTERRUPTED = (
+    "Interrupted: the graph for '{project}' is incomplete; re-run "
+    "'cgr start --update-graph' with the same options to finish it."
+)
+# 128 + SIGINT: what a shell reports for a command Ctrl+C stopped, so scripts
+# can tell an interrupted sync from a failed one (exit 1).
+CLI_EXIT_INTERRUPTED = 130
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 # The CLI sync's incomplete-run marker (issue #2219). One run id for every CLI
 # sync of a project, not one per run: a CLI sync never publishes its hash cache
@@ -331,6 +343,28 @@ CLI_DUPLICATES_TRUNCATED_NOTICE = (
 CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
 CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
     "Project '{project}' is not indexed. Indexed projects: {projects}."
+)
+
+# `cgr graph` refuses a project or a name the graph does not hold (issue
+# #2461). Both used to answer `[]` with exit 0, the same as "exists, nothing
+# matches", and scripts and agents act on that answer: a function nobody
+# calls is safe to delete, a change no test reaches needs no test run. The
+# statuses sit above click's 1 (error) and 2 (usage) so a caller can tell
+# them apart.
+GRAPH_EXIT_UNKNOWN_PROJECT = 3
+GRAPH_EXIT_UNKNOWN_TARGET = 4
+CLI_ERR_GRAPH_UNKNOWN_PROJECT = "Project '{project}' is not indexed."
+CLI_ERR_GRAPH_INDEXED_PROJECTS = " Indexed projects: {projects}."
+CLI_ERR_GRAPH_NOTHING_INDEXED = (
+    " No project is indexed yet; run 'cgr start --update-graph' in a repository."
+)
+CLI_ERR_GRAPH_REPO_NOT_INDEXED = (
+    "No project is indexed for {path}; run 'cgr start --update-graph' there "
+    "first, or pass --project."
+)
+CLI_ERR_GRAPH_UNKNOWN_TARGET = "'{qualified_name}' is not in the graph."
+CLI_ERR_GRAPH_RESOLVE_HINT = (
+    " 'cgr graph resolve NAME' lists the qualified names a name matches."
 )
 
 # Clickable report locations (OSC 8 hyperlinks) and `duplicates --open`.
@@ -708,10 +742,13 @@ RENAME_DEFINITION_UNREADABLE = (
     "The index names a file the tree no longer has; re-index and retry."
 )
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
+# `{option}` is the opt-in as the caller spells it: `--allow-heuristic` on the
+# command line, `allow_heuristic` in MCP (issue #2886).
 RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
-    "fan-out, or only by a trace; pass allow_heuristic to rewrite through them"
+    "fan-out, or only by a trace; pass {option} to rewrite through them"
 )
+RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
@@ -732,6 +769,15 @@ RENAME_ROLLBACK_REFUSED = (
     "Rename failed its postcondition ({reasons}) and was not rolled back "
     "({error}); renamed files may remain modified; check the working tree"
 )
+# A JS/TS use bound through a barrel's `export *`: the rename cannot reach
+# the importer's statement through the star, so no leave makes it safe
+# (issue #2464).
+RENAME_STAR_REEXPORT = (
+    "Cannot rename {qn}: {count} site(s) import it through an `export *` in "
+    "{barrels}, which the rename cannot follow; their imports would keep naming "
+    "what the barrel no longer exports"
+)
+RENAME_SITE_STAR_REEXPORT = "through export *"
 RENAME_ROLLBACK_UNKNOWN = (
     "Rename kept: its postcondition failed ({reasons}) and its transaction is "
     "no longer in the edit history, so whether it was already reversed cannot "
@@ -977,6 +1023,24 @@ MOVE_MAYBE_UNBOUND = (
     "{names} may be unbound in {path}: it is set under a module-level if, "
     "try or loop that does not bind it on every path, so the moved "
     "definition cannot import it safely"
+)
+MOVE_SPLIT_GLOBAL = (
+    "{names} is a variable of {path} rebound through a global statement; "
+    "the destination would import it as a separate copy, so the moved "
+    "definition and {path} would stop seeing each other's updates"
+)
+MOVE_ASSIGNS_IMPORT = (
+    "{names} is a variable of {path} that the moved definition assigns; "
+    "imported into the destination it is a read-only binding, so the "
+    "assignment would throw"
+)
+MOVE_WILDCARD_IMPORTER = (
+    "{importers} import(s) everything from {path} with *, and would no "
+    "longer get {name} from it; pass keep_alias to keep {path} exporting it"
+)
+MOVE_RELATIVE_IMPORT_ESCAPES = (
+    "{statement} in {qn} climbs above the top-level package of {path}, so "
+    "the move cannot respell it for the destination"
 )
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"

@@ -117,6 +117,8 @@ _PY_SCOPES = (
     ast.GeneratorExp,
 )
 _PY_STAR = "*"
+_PY_ALL = "__all__"
+_PY_PRIVATE = "_"
 _MODULE_SCOPE = "module"
 _SYMTABLE_FILENAME = "<moved>"
 _SYMTABLE_MODE = "exec"
@@ -160,6 +162,8 @@ class _Cut(NamedTuple):
     start: int
     end: int
     text: str
+    # Where `text` begins in the source; `start` may sit before it.
+    origin: int
 
 
 class _NeededImport(NamedTuple):
@@ -346,6 +350,153 @@ def _global_references(text: str) -> set[str] | None:
     return names
 
 
+def _global_writes(text: str) -> set[str]:
+    """Module names the Python `text` rebinds from inside a function or a
+    class through a `global` statement."""
+    try:
+        table = symtable.symtable(text, _SYMTABLE_FILENAME, _SYMTABLE_MODE)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    tables = list(table.get_children())
+    while tables:
+        current = tables.pop()
+        tables.extend(current.get_children())
+        names.update(
+            symbol.get_name()
+            for symbol in current.get_symbols()
+            if symbol.is_declared_global() and symbol.is_assigned()
+        )
+    return names
+
+
+def _module_scope_names(text: str) -> set[str]:
+    """Every module-scope name the Python `text` binds, imports or reads,
+    at the top level or from inside a function."""
+    try:
+        table = symtable.symtable(text, _SYMTABLE_FILENAME, _SYMTABLE_MODE)
+    except SyntaxError:
+        return set()
+    # A name another scope declares `global` is listed at module scope
+    # with no flags of its own; only real uses count.
+    names = {
+        symbol.get_name()
+        for symbol in table.get_symbols()
+        if symbol.is_assigned() or symbol.is_imported() or symbol.is_referenced()
+    }
+    tables = list(table.get_children())
+    while tables:
+        current = tables.pop()
+        tables.extend(current.get_children())
+        names.update(
+            symbol.get_name()
+            for symbol in current.get_symbols()
+            if symbol.is_global() and (symbol.is_referenced() or symbol.is_assigned())
+        )
+    return names
+
+
+def _split_globals(moved: str, remainder: str, name: str) -> list[str]:
+    """Module variables the move would split in two.
+
+    The destination imports an old-module name by value, so a `global`
+    rebinding on one side of the move updates that side's copy only: the
+    moved code counting in its own module while the old one, and every
+    reader of it, kept the old value -- or the other way round.
+    """
+    reads = _global_references(moved) or set()
+    staying = _module_scope_names(remainder)
+    split = {n for n in _global_writes(moved) if n in staying}
+    split |= {n for n in _global_writes(remainder) if n in reads}
+    return sorted(split - {name})
+
+
+def _star_exports(source: bytes, name: str) -> bool:
+    """Whether `from module import *` of the Python `source` binds `name`.
+
+    Without `__all__` it binds every public name; with one, the names it
+    lists. An `__all__` built any other way than by one literal assignment
+    is read as listing everything, since the move cannot tell what it holds.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return True
+    text = source.decode(cs.ENCODING_UTF8, errors="replace")
+    if _PY_ALL not in _module_scope_names(text):
+        return not name.startswith(_PY_PRIVATE)
+    assigned = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == _PY_ALL for t in node.targets)
+    ]
+    if len(assigned) != 1:
+        return True
+    try:
+        listed = ast.literal_eval(assigned[0])
+    except ValueError:
+        return True
+    return not isinstance(listed, list | tuple) or name in listed
+
+
+def _identifiers(node: Node) -> set[str]:
+    found: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_IDENTIFIER:
+            found.add(_text(current))
+        stack.extend(current.named_children)
+    return found
+
+
+def _js_parameter_names(parameters: Node) -> set[str]:
+    """The names a JS/TS parameter list binds, leaving out its defaults."""
+    names: set[str] = set()
+    for parameter in parameters.named_children:
+        bound: Node | None = parameter
+        if parameter.type == cs.TS_ASSIGNMENT_PATTERN:
+            bound = parameter.child_by_field_name(cs.FIELD_LEFT)
+        elif parameter.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+            bound = parameter.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if bound is not None:
+            names |= _identifiers(bound)
+    return names
+
+
+def _js_assigned(top: Node) -> set[str]:
+    """Names the JS/TS definition `top` assigns without declaring them.
+
+    Scope is read coarsely: a name declared anywhere inside counts as
+    local throughout, so a write is reported only when no declaration of
+    the definition could be what it assigns.
+    """
+    declared: set[str] = set()
+    written: set[str] = set()
+    stack = [top]
+    while stack:
+        current = stack.pop()
+        stack.extend(current.named_children)
+        target: Node | None = None
+        if current.type in (
+            cs.TS_JS_ASSIGNMENT_EXPRESSION,
+            cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        ):
+            target = current.child_by_field_name(cs.FIELD_LEFT)
+        elif current.type == cs.TS_JS_UPDATE_EXPRESSION:
+            target = current.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+        elif current.type == cs.TS_VARIABLE_DECLARATOR:
+            named = current.child_by_field_name(cs.FIELD_NAME)
+            if named is not None:
+                declared |= _identifiers(named)
+        elif current.type == cs.TS_JS_FORMAL_PARAMETERS:
+            declared |= _js_parameter_names(current)
+        if target is not None and target.type == cs.TS_IDENTIFIER:
+            written.add(_text(target))
+    return written - declared
+
+
 def _type_checking_imports(
     source: bytes, old_path: str, new_path: str
 ) -> dict[str, str]:
@@ -419,6 +570,32 @@ def _definition_at(root: Node, line: int, col: int) -> Node | None:
     return None
 
 
+def _own_span(source: bytes, first: Node, last: Node) -> tuple[int, int] | None:
+    """The bytes of `first` through `last` alone, and the spaces setting
+    them apart on the shared line, when another statement shares their
+    first or last line; None when they have their lines to themselves. A
+    trailing comment is not a statement: it goes with the lines.
+    """
+    before, after = first.prev_named_sibling, last.next_named_sibling
+    shares_last = (
+        after is not None
+        and after.type != cs.TS_COMMENT
+        and after.start_point[0] == last.end_point[0]
+    )
+    if not shares_last and (
+        before is None or before.end_point[0] != first.start_point[0]
+    ):
+        return None
+    start, end = first.start_byte, last.end_byte
+    if shares_last:
+        while source[end : end + 1] in _INLINE_SPACE:
+            end += 1
+    else:
+        while start > 0 and source[start - 1 : start] in _INLINE_SPACE:
+            start -= 1
+    return start, end
+
+
 def _cut_span(source: bytes, node: Node) -> _Cut:
     """Whole lines of the definition plus decorators, export and comments."""
     target = node
@@ -437,19 +614,12 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     # (`function f() {} console.log('ready');` in JS): the whole-line cut
     # deleted that statement from the old module and pasted it at the
     # destination. Then only the definition's own bytes are cut.
-    before, after = first.prev_named_sibling, target.next_named_sibling
-    if (before is not None and before.end_point[0] == first.start_point[0]) or (
-        after is not None
-        and after.type != cs.TS_COMMENT
-        and after.start_point[0] == target.end_point[0]
-    ):
-        end = target.end_byte
-        while source[end : end + 1] in _INLINE_SPACE:
-            end += 1
+    own = _own_span(source, first, target)
+    if own is not None:
         text = source[first.start_byte : target.end_byte].decode(
             cs.ENCODING_UTF8, errors="replace"
         )
-        return _Cut(first.start_byte, end, text)
+        return _Cut(*own, text, first.start_byte)
     start = source.rfind(b"\n", 0, first.start_byte) + 1
     end = source.find(b"\n", target.end_byte)
     end = len(source) if end < 0 else end + 1
@@ -464,7 +634,7 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
             end += 1
         else:
             break
-    return _Cut(start, end, text)
+    return _Cut(start, end, text, start)
 
 
 def _line_end(source: bytes, node: Node) -> int:
@@ -568,6 +738,10 @@ class Mover:
         self.verify = verify
         self.reingest = reingest
         self._parsers = load_parsers()[0]
+        # Whether the last plan respelled imports inside the moved text,
+        # which changes its shape: the contract must then take the move's
+        # word for the pairing.
+        self._reshaped = False
 
     def _parse(
         self, path: str, source: bytes
@@ -643,6 +817,12 @@ class Mover:
         if existing is not None:
             _language, target_root = self._parse(new_path, existing)
         cut = _cut_span(source, node)
+        moved_text = (
+            self._rebase_local_imports(source, top, cut, qn, old_path, new_path)
+            if language == cs.SupportedLanguage.PYTHON
+            else cut.text
+        )
+        self._reshaped = moved_text != cut.text
         # A JS definition exported by its own `export { helper }` lost the
         # export with the cut: the destination did not export it, and every
         # rewritten importer (and the old module's import of it back)
@@ -678,6 +858,13 @@ class Mover:
                 if n != name
                 and (n in reads if reads is not None else _uses(cut.text, n))
             )
+            split = _split_globals(cut.text, remainder, name)
+            if split:
+                raise MoveRefused(
+                    cs.MOVE_SPLIT_GLOBAL.format(
+                        names=cs.SEPARATOR_COMMA_SPACE.join(split), path=old_path
+                    )
+                )
             typed = _type_checking_imports(source, old_path, new_path)
             guarded = {n: typed[n] for n in unbound if n in typed}
             unbound = [n for n in unbound if n not in guarded]
@@ -690,6 +877,15 @@ class Mover:
             old_bindings = {**dict.fromkeys(carried, False), **old_bindings}
         from_old = self._needed_from_old(old_path, cut.text, name, old_bindings)
         if language in _JS_LANGUAGES:
+            # An imported binding is read-only: the moved `count += 1` that
+            # updated the old module's `let` would throw at the destination.
+            assigned = sorted(_js_assigned(top) & set(from_old))
+            if assigned:
+                raise MoveRefused(
+                    cs.MOVE_ASSIGNS_IMPORT.format(
+                        names=cs.SEPARATOR_COMMA_SPACE.join(assigned), path=old_path
+                    )
+                )
             # `import { X }` of a name the module never exported is a load
             # error in ESM and a compile error in TypeScript.
             hidden = [n for n in from_old if not old_bindings.get(n, False)]
@@ -715,6 +911,10 @@ class Mover:
                 language,
             )
         old_uses = _uses(remainder, name)
+        if not keep_alias:
+            self._refuse_wildcard_loss(
+                old_module, old_path, source, root, name, language, old_uses
+            )
         # The cycle check runs on the graph BEFORE any file is touched.
         self._refuse_cycles(
             old_module,
@@ -751,7 +951,7 @@ class Mover:
             patcher, existing, target_root, guarded, new_path
         )
         paste = self._paste_text(
-            cut.text,
+            moved_text,
             needed,
             from_old,
             old_spelled,
@@ -878,6 +1078,56 @@ class Mover:
             raise MoveRefused(str(error)) from error
 
     @staticmethod
+    def _rebase_local_imports(
+        source: bytes,
+        top: Node,
+        cut: _Cut,
+        qn: str,
+        old_path: str,
+        new_path: str,
+    ) -> str:
+        """The cut text with each relative import inside it respelled for
+        `new_path`, where it stays, in the scope it was written in.
+
+        Copied verbatim, `from .deps import X` in a function moved from
+        pkg/sub/util.py to pkg/core.py counted its dots from `pkg` and
+        imported `pkg.deps` (or nothing) the first time the function ran.
+        """
+        edits: list[SpanEdit] = []
+        stack = [top]
+        while stack:
+            current = stack.pop()
+            stack.extend(current.named_children)
+            if current.type != cs.TS_PY_IMPORT_FROM_STATEMENT:
+                continue
+            module = current.child_by_field_name(cs.FIELD_MODULE_NAME)
+            if module is None or module.type != cs.TS_RELATIVE_IMPORT:
+                continue
+            spelled = _text(module)
+            level = len(spelled) - len(spelled.lstrip(cs.SEPARATOR_DOT))
+            # Climbing to or past the tree's top names no package any
+            # destination could spell.
+            if level - 1 >= len(Path(old_path).parent.parts):
+                raise MoveRefused(
+                    cs.MOVE_RELATIVE_IMPORT_ESCAPES.format(
+                        statement=_text(current), qn=qn, path=old_path
+                    )
+                )
+            rebased = _rebase_py_relative(spelled, old_path, new_path)
+            if rebased != spelled:
+                edits.append(
+                    SpanEdit(
+                        module.start_byte - cut.origin,
+                        module.end_byte - cut.origin,
+                        rebased.encode(cs.ENCODING_UTF8),
+                    )
+                )
+        if not edits:
+            return cut.text
+        moved = apply_span_edits(cut.text.encode(cs.ENCODING_UTF8), edits)
+        return moved.decode(cs.ENCODING_UTF8, errors="replace")
+
+    @staticmethod
     def _bindings(root: Node) -> dict[str, bool]:
         """Top-level names a module binds, each with whether it is exported.
 
@@ -949,6 +1199,13 @@ class Mover:
                         f"{{ {', '.join(kept)} }}".encode(cs.ENCODING_UTF8),
                     )
                 )
+                continue
+            # Its own bytes when other code shares its line: the whole-line
+            # removal took `registerPlugin();` in `export { helper };
+            # registerPlugin();` with it.
+            own = _own_span(source, child, child)
+            if own is not None:
+                edits.append(SpanEdit(*own, b""))
                 continue
             start = source.rfind(b"\n", 0, child.start_byte) + 1
             end = _line_end(source, child)
@@ -1149,6 +1406,48 @@ class Mover:
             other for other in bindings if other != name and _uses(moved_text, other)
         )
         return sorted(names)
+
+    def _refuse_wildcard_loss(
+        self,
+        old_module: str,
+        old_path: str,
+        source: bytes,
+        root: Node,
+        name: str,
+        language: cs.SupportedLanguage | None,
+        old_uses: bool,
+    ) -> None:
+        """Refuse when a wildcard importer of the old module would lose `name`.
+
+        The graph records `from pkg.util import *` (and JS `export *` or
+        `import * as ns`) under the name `*`, which no importer rewrite
+        matches: the move left it in place, and `from pkg.api import
+        helper` through the re-export raised ImportError. The old module
+        importing the name back keeps a Python star reaching it; in JS only
+        an export does, which is `keep_alias`.
+        """
+        if language == cs.SupportedLanguage.PYTHON:
+            if old_uses or not _star_exports(source, name):
+                return
+        elif not self._bindings(root).get(name, False):
+            return
+        importers = sorted(
+            {
+                row["path"]
+                for row in graph_query.importers(
+                    self.fetch_all, self.project, old_module
+                )
+                if row["imported_name"] == cs.IMPORTED_NAME_WILDCARD and row["path"]
+            }
+        )
+        if importers:
+            raise MoveRefused(
+                cs.MOVE_WILDCARD_IMPORTER.format(
+                    importers=cs.SEPARATOR_COMMA_SPACE.join(importers),
+                    name=name,
+                    path=old_path,
+                )
+            )
 
     def _refuse_cycles(
         self,
@@ -1575,6 +1874,7 @@ class Mover:
                 # without it the move of one reads as a removal plus an
                 # addition.
                 declared_renames=(renamed,),
+                reshaped_renames=(renamed,) if self._reshaped else (),
             )
         # The move has landed; a graph that cannot be measured is reported,
         # never raised past the committed edit (as for change_signature).

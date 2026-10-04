@@ -56,6 +56,8 @@ TS_PHP_COMPOUND_STATEMENT = "compound_statement"
 TS_PHP_FORMAL_PARAMETERS = "formal_parameters"
 TS_PHP_SIMPLE_PARAMETER = "simple_parameter"
 TS_PHP_ARGUMENT = "argument"
+# `f(...$xs)`, inside an `argument`: unpacks an array into the call.
+TS_PHP_VARIADIC_UNPACKING = "variadic_unpacking"
 TS_PHP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
 TS_PHP_SUBSCRIPT_EXPRESSION = "subscript_expression"
 # `echo $a, $b;` (echo_statement) and `print $x` (print_intrinsic) write STDOUT;
