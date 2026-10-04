@@ -26,7 +26,7 @@ from .extract_scope import (
 from .extract_transaction import _commit, _enforce
 from .extract_types import ExtractRefused, InlineRefused, InlineReport
 from .imports import _JS_NAMED, ImportSite, _local_name, _match_py_from, _split_names
-from .move import _cut_span, _statement_text, _text
+from .move import _WRAPPERS, _cut_span, _statement_text, _text
 from .patcher import Patcher, SpanEdit, apply_span_edits, line_col_to_byte
 from .sites import call_node_at
 from .transaction import StagedTree, VerificationResult
@@ -267,14 +267,13 @@ class Inliner:
         (Greptile, PR #2058).
         """
         name = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        cut = _cut_span(source, node)
-        cut_edit = SpanEdit(cut.start, cut.end, b"")
+        cut_edit = _definition_cut(source, node)
         if self._still_named(path, source, [*edits.get(path, []), cut_edit], name):
             return False
         drops = self._import_drops(patcher, qn, path, edits)
         if drops is None:
             return False
-        patcher.replace_span(path, (cut.start, cut.end), "")
+        patcher.replace_span(path, (cut_edit.start, cut_edit.end), "")
         for site_path, edit in drops:
             patcher.replace_span(site_path, (edit.start, edit.end), edit.text)
         return True
@@ -393,6 +392,28 @@ class Inliner:
         return report
 
 
+def _definition_cut(source: bytes, node: Node) -> SpanEdit:
+    """The definition's removal: its whole lines when it has them to itself,
+    else only its own bytes, so a statement sharing its first or last line
+    survives (Greptile, PR #2932)."""
+    target = node
+    if target.parent is not None and target.parent.type in _WRAPPERS:
+        target = target.parent
+    line_start = source.rfind(b"\n", 0, target.start_byte) + 1
+    line_end = source.find(b"\n", target.end_byte)
+    line_end = len(source) if line_end < 0 else line_end
+    if not (
+        source[line_start : target.start_byte].strip()
+        or source[target.end_byte : line_end].strip()
+    ):
+        cut = _cut_span(source, node)
+        return SpanEdit(cut.start, cut.end, b"")
+    end = target.end_byte
+    while source[end : end + 1] in (b" ", b"\t"):
+        end += 1
+    return SpanEdit(target.start_byte, end, b"")
+
+
 def _is_docstring(statement: Node) -> bool:
     return statement.type == cs.TS_PY_EXPRESSION_STATEMENT and any(
         c.type == cs.TS_PY_STRING for c in statement.named_children
@@ -416,6 +437,14 @@ def _refuse_unsupported(qn: str, definition: Node, returned: Node) -> None:
     copied into a caller they read the caller's binding (Greptile and
     Copilot, PR #2060).
     """
+    holder = definition.parent
+    if (holder is not None and holder.type == cs.TS_PY_DECORATED_DEFINITION) or (
+        definition.prev_named_sibling is not None
+        and definition.prev_named_sibling.type == cs.TS_DECORATOR
+    ):
+        # A decorator decides what calling the name does; the bare returned
+        # expression would skip it (Greptile, PR #2932).
+        raise InlineRefused(cs.INLINE_REFUSED_DECORATED.format(qn=qn))
     tokens = {c.type for c in definition.children if not c.is_named}
     if cs.TS_ASYNC_KEYWORD in tokens:
         raise InlineRefused(cs.INLINE_REFUSED_ASYNC.format(qn=qn))
@@ -496,9 +525,18 @@ def _is_literal(node: Node) -> bool:
     return node.type in _LITERALS
 
 
+def _is_inert(node: Node) -> bool:
+    """A name or a literal: evaluating it has no effect, so it may be read
+    any number of times, or none. An attribute read is not: it may run a
+    property getter (Greptile, PR #2932)."""
+    if node.type in _IDENTIFIERS or node.type in _IMPLICIT_TYPES:
+        return True
+    return _is_literal(node)
+
+
 def _is_atomic(node: Node) -> bool:
-    """A name, a literal, or an attribute chain without calls: evaluating it
-    has no effect, so it may be read any number of times, or none."""
+    """A name, a literal, or an attribute chain without calls: one operand,
+    which splices in without parentheses."""
     if node.type in _IDENTIFIERS or node.type in _IMPLICIT_TYPES:
         return True
     if node.type in _ACCESSES:
@@ -663,7 +701,9 @@ def _evaluation_kept(
     effects = [n for n in _walk(returned) if n.type in _EVALUATING]
     last = -1
     for name, arg in evaluated:
-        if _is_atomic(arg):
+        # The object a module-qualified call names (`util.helper(x)`) is
+        # dropped with the call; only an argument has to keep its reads.
+        if _is_inert(arg) or (name is None and _is_atomic(arg)):
             continue
         uses = reads.get(name, []) if name is not None else []
         if len(uses) != 1:
