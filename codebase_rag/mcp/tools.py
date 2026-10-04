@@ -2970,15 +2970,6 @@ class MCPToolsRegistry:
         budget_tokens: int = cs.CONTEXT_DEFAULT_BUDGET,
         project: str | None = None,
     ) -> object:
-        # The CLI enforces this with typer's min=1; without the same check an
-        # MCP caller's zero or negative budget returns an empty slice that
-        # reads as success.
-        if budget_tokens < 1:
-            return {
-                cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(
-                    budget=budget_tokens
-                )
-            }
         return await self._graph_query(
             cs.MCPToolName.CONTEXT,
             project,
@@ -2989,6 +2980,17 @@ class MCPToolsRegistry:
         self, project_name: str, target: str, budget_tokens: int
     ) -> object:
         from codebase_rag.context_slice import context as build_context
+
+        # The CLI enforces this with typer's min=1; without the same check an
+        # MCP caller's zero or negative budget returns an empty slice that
+        # reads as success. Checked here rather than in `context` so that
+        # handler stays a pure delegation to the locked `_graph_query`.
+        if budget_tokens < 1:
+            return {
+                cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(
+                    budget=budget_tokens
+                )
+            }
 
         # Scoped to the project `_graph_query` resolved, not the optional
         # argument: an omitted `project` would otherwise search every project
