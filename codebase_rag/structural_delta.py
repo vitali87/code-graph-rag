@@ -1268,7 +1268,9 @@ def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
 
 
 def _python_source_tree(path: Path) -> Tree | None:
-    if path.suffix != cs.EXT_PY:
+    # A stub (`.pyi`) is Python source too: a call can resolve to a function
+    # only a stub defines (Greptile, PR #2946).
+    if path.suffix not in cs.PY_EXTENSIONS:
         return None
     try:
         stat = path.stat()
@@ -1345,13 +1347,17 @@ def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
     return None
 
 
-def _passes_self_explicitly(site: CallSite, repo_root: Path | None) -> bool:
+def _passes_self_explicitly(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> bool:
     """`Base.__init__(self, a)`: a method called through its class, with the
     receiver written as the first argument rather than bound (issue #2899).
 
     The site records only its counts, so the call is read back: a receiver
-    other than `self`, `cls` or a call (`super()`), and a first positional
-    argument that is `self`.
+    that names a class, and a first positional argument that is `self`. A
+    receiver names a class when it is the method's own class or is spelled
+    as one (CapWords); `tool.m(self, x)` through an instance binds `tool`
+    and passes `self` as well (Greptile, PR #2946).
     """
     if repo_root is None or site.line is None or site.col is None:
         return False
@@ -1368,6 +1374,10 @@ def _passes_self_explicitly(site: CallSite, repo_root: Path | None) -> bool:
         or receiver.type == cs.TS_PY_CALL
         or _node_text(receiver) in _PY_BOUND_RECEIVERS
     ):
+        return False
+    named = _node_text(receiver).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    owner = definition.qualified_name.rsplit(cs.SEPARATOR_DOT, 2)[-2:-1]
+    if not (named[:1].isupper() or named in owner):
         return False
     arguments = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS) if call else None
     first = next(
@@ -1548,7 +1558,7 @@ def _arity_verdict(
     # judged as a plain function call against every declared parameter.
     is_method = definition.label in _METHOD_LABELS and not (
         site.arg_count > len(site.kwarg_names)
-        and _passes_self_explicitly(site, repo_root)
+        and _passes_self_explicitly(site, definition, repo_root)
     )
     # `arg_count` counts keyword arguments too (issue #1522); only the
     # positionals plus the keywords naming a declared positional parameter
