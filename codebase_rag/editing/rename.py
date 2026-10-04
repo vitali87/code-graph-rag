@@ -26,7 +26,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -44,6 +44,7 @@ from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
+from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -55,18 +56,14 @@ from .transaction import (
 
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
-_AMBIGUOUS = frozenset(
-    {
-        cs.EdgeResolution.HEURISTIC.value,
-        cs.EdgeResolution.OVERLOAD.value,
-        cs.EdgeResolution.DYNAMIC.value,
-    }
-)
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
 
 _STRUCTURAL = "structural"
 _SITELESS = "siteless"
+# A call site whose recorded position no longer holds a call: the source
+# changed after indexing, so the site must be refused, not guessed at.
+_STALE_CALL = (-1, -1)
 # A same-named link of a fluent chain the index has no row for.
 _CHAIN = "chain"
 _MEMBER_NAME_TYPES = frozenset(
@@ -138,20 +135,6 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
-def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
-    """`qn` plus every method it overrides or is overridden by, transitively."""
-    seen: list[str] = [qn]
-    frontier = [qn]
-    while frontier:
-        current = frontier.pop()
-        for row in graph_query.overrides(fetch_all, project, current):
-            other = row["qualified_name"]
-            if other not in seen:
-                seen.append(other)
-                frontier.append(other)
-    return seen
-
-
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     names = {
@@ -204,45 +187,6 @@ def _name_token(
     return None
 
 
-def _best_call_at(
-    root: Node, line: int, col: int, recorded_end: tuple[int, int] | None
-) -> Node | None:
-    """The call node at (line, col) that the graph site refers to.
-
-    Several calls can share a start point -- `helper(helper(1))`,
-    `helper(2).upper()`, and both links of `obj.helper(1).helper(2)` -- so the
-    right one is the call ending where the site recorded its end, or the
-    outermost when no end was recorded.
-
-    Extracted from `_callee_span` to keep it under the cognitive complexity
-    limit (S3776); the tree walk itself lives in `_calls_starting_at`.
-    """
-    best: Node | None = None
-    for node in _calls_starting_at(root, line, col):
-        if node.end_point == recorded_end:
-            return node
-        if best is None or node.end_byte > best.end_byte:
-            best = node
-    return best
-
-
-def _calls_starting_at(root: Node, line: int, col: int) -> Iterator[Node]:
-    """Yield, in walk order, every call node that starts at (line, col).
-
-    Only subtrees whose line span covers `line` are entered.
-    """
-    stack: list[Node] = [root]
-    while stack:
-        node = stack.pop()
-        if (
-            node.start_point == (line - 1, col)
-            and node.child_by_field_name(cs.FIELD_FUNCTION) is not None
-        ):
-            yield node
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
-            stack.extend(node.children)
-
-
 def _callee_span(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -270,12 +214,24 @@ def _callee_span(
         if end_line is not None and end_col is not None
         else None
     )
-    best = _best_call_at(root, line, col, recorded_end)
+    best = call_node_at(root, line, col, recorded_end)
     if best is None:
         return None
     func = best.child_by_field_name(cs.FIELD_FUNCTION)
     assert func is not None
     return func.start_byte, func.end_byte
+
+
+def _calls_start_at(
+    source: bytes, language: cs.SupportedLanguage | None, line: int, col: int
+) -> bool:
+    if language is None:
+        return False
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return False
+    return bool(calls_starting_at(parser.parse(source).root_node, line - 1, col))
 
 
 def _chain_links(
@@ -343,10 +299,11 @@ def _last_identifier(
     source: bytes,
     line: int,
     col: int,
-    end_line: int,
-    end_col: int,
+    end_line: int | None,
+    end_col: int | None,
     name: str,
     language: cs.SupportedLanguage | None = None,
+    is_call: bool = False,
 ) -> tuple[int, int] | None:
     """(line, col) of the token to rename inside a site span.
 
@@ -355,8 +312,23 @@ def _last_identifier(
     its arguments; for any other site it is the rightmost `name` in the span.
     """
     start = line_col_to_byte(source, line, col)
-    end = line_col_to_byte(source, end_line, end_col)
+    # A site with no recorded end gets a span that covers the name, for the
+    # text fallback only: handed to the call lookup it would read as a
+    # recorded end that no call matches, and mark a live call stale.
+    end = line_col_to_byte(
+        source,
+        end_line if end_line is not None else line,
+        end_col if end_col is not None else col + len(name),
+    )
     callee = _callee_span(source, language, line, col, end_line, end_col)
+    if callee is None and is_call and _calls_start_at(source, language, line, col):
+        # Calls DO start at the recorded position but none ends where the
+        # site recorded its end: the index is stale here. The no-grammar
+        # fallback below would cut at the last `(` and pick the INNER callee
+        # of `helper(helper(1))` (bot review). A position no call starts at
+        # (a grammar whose call node has no `function` field, such as Java's
+        # method_invocation) keeps the fallback.
+        return _STALE_CALL
     if callee is not None and callee[0] == start:
         start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
@@ -591,11 +563,24 @@ class Renamer:
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else line,
-            end_col if isinstance(end_col, int) else col + len(old_name),
+            end_line if isinstance(end_line, int) else None,
+            end_col if isinstance(end_col, int) else None,
             old_name,
             get_language_for_extension(Path(path).suffix),
+            is_call=kind == "call",
         )
+        if token == _STALE_CALL:
+            self._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="stale site",
+                site_resolution=_SITELESS,
+            )
+            return
         if token is None:
             # The site spells the symbol under an alias (`h(1, 2)` for
             # `import helper as h`); the alias keeps binding, so nothing to
@@ -678,11 +663,11 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        hierarchy = _hierarchy(self.fetch_all, self.project, qn)
+        members = hierarchy(self.fetch_all, self.project, qn)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
-        for member in hierarchy:
+        for member in members:
             member_sites, member_unlocatable, member_name, _label = self._collect(
                 member
             )
@@ -714,7 +699,7 @@ class Renamer:
                 unlocatable,
             )
         ambiguous = [
-            s for s in sites if s.resolution in _AMBIGUOUS or s.resolution == _CHAIN
+            s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
         if ambiguous and not allow_heuristic:
             raise RenameRefused(
@@ -722,7 +707,7 @@ class Renamer:
                 ambiguous,
                 unlocatable,
             )
-        for member in hierarchy:
+        for member in members:
             for site, module in self._import_sites(member, old_name):
                 sites.append(
                     RenameSite(
@@ -749,7 +734,7 @@ class Renamer:
             ambiguous=tuple(ambiguous),
             unlocatable=tuple(unlocatable),
             doc_mentions=tuple(self._doc_mentions(old_name)),
-            hierarchy=tuple(hierarchy),
+            hierarchy=tuple(members),
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
