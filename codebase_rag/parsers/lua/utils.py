@@ -274,3 +274,124 @@ def _declares_self_parameter(func_node: Node) -> bool:
         and safe_decode_text(param) == cs.KEYWORD_SELF
         for param in params.named_children
     )
+
+
+def _named_identifiers(node: Node) -> set[str]:
+    # The identifiers a parameter list or variable list holds in its `name`
+    # field (a `...` vararg binds none).
+    return {
+        text
+        for i in range(node.child_count)
+        if node.field_name_for_child(i) == cs.FIELD_NAME
+        and (child := node.child(i)) is not None
+        and child.type == cs.TS_LUA_IDENTIFIER
+        and (text := safe_decode_text(child))
+    }
+
+
+def _local_value_names(declaration: Node) -> set[str]:
+    # Names a `local a, b = x, y` (or bare `local a`) binds to a VALUE. A
+    # name paired with a function expression binds a function the
+    # definition pass registers under that name, so it hides nothing.
+    assignment = next(
+        (
+            child
+            for child in declaration.named_children
+            if child.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+        ),
+        declaration,
+    )
+    variables = next(
+        (
+            child
+            for child in assignment.named_children
+            if child.type == cs.TS_LUA_VARIABLE_LIST
+        ),
+        None,
+    )
+    if variables is None:
+        return set()
+    expressions = next(
+        (
+            child
+            for child in assignment.named_children
+            if child.type == cs.TS_LUA_EXPRESSION_LIST
+        ),
+        None,
+    )
+    values = (
+        [
+            child
+            for i in range(expressions.child_count)
+            if expressions.field_name_for_child(i) == cs.FIELD_VALUE
+            and (child := expressions.child(i)) is not None
+        ]
+        if expressions is not None
+        else []
+    )
+    names = [
+        child
+        for i in range(variables.child_count)
+        if variables.field_name_for_child(i) == cs.FIELD_NAME
+        and (child := variables.child(i)) is not None
+    ]
+    return {
+        text
+        for idx, child in enumerate(names)
+        if child.type == cs.TS_LUA_IDENTIFIER
+        and not (
+            idx < len(values) and values[idx].type == cs.TS_LUA_FUNCTION_DEFINITION
+        )
+        and (text := safe_decode_text(child))
+    }
+
+
+def _loop_variables(clause: Node) -> set[str]:
+    names = _named_identifiers(clause)
+    for child in clause.named_children:
+        if child.type == cs.TS_LUA_VARIABLE_LIST:
+            names |= _named_identifiers(child)
+    return names
+
+
+def is_local_value(identifier: Node) -> bool:
+    """Whether a Lua local, parameter or loop variable in scope binds the
+    name `identifier` reads, hiding any same-name function.
+
+    Lua scoping is lexical: a `local` is visible from the statement after it
+    to the end of its block, a parameter throughout its function, and a loop
+    variable throughout the loop body.
+    """
+    name = safe_decode_text(identifier)
+    if not name:
+        return False
+    inner = identifier
+    scope = identifier.parent
+    while scope is not None:
+        if scope.type in (
+            cs.TS_LUA_FUNCTION_DECLARATION,
+            cs.TS_LUA_FUNCTION_DEFINITION,
+        ):
+            params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
+            if params is not None and name in _named_identifiers(params):
+                return True
+        elif scope.type == cs.TS_LUA_FOR_STATEMENT:
+            clause = scope.child_by_field_name(cs.TS_LUA_FIELD_CLAUSE)
+            if (
+                clause is not None
+                and inner != clause
+                and name in _loop_variables(clause)
+            ):
+                return True
+        elif scope.type in (cs.TS_LUA_BLOCK, cs.TS_LUA_CHUNK):
+            for statement in scope.named_children:
+                if statement.start_byte >= inner.start_byte:
+                    break
+                if (
+                    statement.type == cs.TS_LUA_VARIABLE_DECLARATION
+                    and name in _local_value_names(statement)
+                ):
+                    return True
+        inner = scope
+        scope = scope.parent
+    return False

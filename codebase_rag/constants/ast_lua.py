@@ -48,3 +48,8 @@ IMPORT_IMPORT = "import"
 # Lua `...` in a parameter list: occupies the trailing variadic slot and
 # binds no simple name (issue #1365).
 TS_LUA_VARARG_EXPRESSION = "vararg_expression"
+
+# A `for` statement's loop header: `for_numeric_clause` names its variable in
+# a `name` field, `for_generic_clause` in a `variable_list` (issue #2925).
+TS_LUA_FOR_STATEMENT = "for_statement"
+TS_LUA_FIELD_CLAUSE = "clause"

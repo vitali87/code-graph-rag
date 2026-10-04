@@ -202,7 +202,12 @@ _JS_SCOPE_CONTAINER_TYPES = frozenset(
 # callable-param flow: passing a function keeps it reachable (REFERENCES),
 # while invocation edges stay with the flow languages.
 _ARG_REF_ONLY_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.DART}
+    {
+        cs.SupportedLanguage.CSHARP,
+        cs.SupportedLanguage.DART,
+        cs.SupportedLanguage.PHP,
+        cs.SupportedLanguage.LUA,
+    }
 )
 _DART_VALUE_WRAPPER_TYPES = frozenset(
     {cs.TS_DART_LIST_LITERAL, cs.TS_DART_SET_OR_MAP_LITERAL, cs.TS_DART_ARGUMENT}
@@ -589,6 +594,13 @@ _JS_LEXICAL_HOISTED_DECLARATIONS = frozenset(
 # Inline values that ARE callables when held by a declarator; generators
 # included (a `const gen = function* () {...}` receiver is invocable).
 _JS_INLINE_CALLABLE_VALUE_TYPES = _INLINE_FUNC_VALUE_TYPES | {cs.TS_GENERATOR_FUNCTION}
+# A PHP closure and a Lua function expression are inline function values
+# only in their own language: the same node type names a DECLARATION in
+# Python, C++ and Scala, which can never sit in argument position.
+_LANG_INLINE_FUNC_VALUE_TYPES: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.PHP: frozenset({cs.TS_PHP_ANONYMOUS_FUNCTION}),
+    cs.SupportedLanguage.LUA: frozenset({cs.TS_LUA_FUNCTION_DEFINITION}),
+}
 # Declarations that bind a VALUE name for the receiver index: classes, TS
 # enums (compiled to vars) and namespaces/modules (compiled to objects).
 _JS_VALUE_TYPE_DECLARATIONS = frozenset(
@@ -7799,7 +7811,11 @@ class CallProcessor:
         # registered anonymously in the enclosing scope but named after no
         # identifier, so resolve_func cannot find it. The call consumes it, so
         # reference it by position the same way inline object-literal values are.
-        if arg_node.type in _INLINE_FUNC_VALUE_TYPES:
+        if arg_node.type in _INLINE_FUNC_VALUE_TYPES or (
+            language is not None
+            and arg_node.type
+            in _LANG_INLINE_FUNC_VALUE_TYPES.get(language, frozenset())
+        ):
             self._emit_inline_arg_function_ref(
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
@@ -7808,6 +7824,15 @@ class CallProcessor:
         # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
         # as if it were one (issue #2438).
         if not _names_a_callable(arg_node):
+            return
+        # A Lua local or parameter hides a same-name function, which the
+        # name-based resolver cannot see: `show(view)` with a local `view`
+        # string would reference the module's `view` function.
+        if (
+            language == cs.SupportedLanguage.LUA
+            and arg_node.type == cs.TS_LUA_IDENTIFIER
+            and lua_utils.is_local_value(arg_node)
+        ):
             return
         if not (arg_text := safe_decode_text(arg_node)):
             return
