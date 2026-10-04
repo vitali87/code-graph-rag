@@ -1635,7 +1635,7 @@ def rename_command(
     ),
     project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
     allow_heuristic: bool = typer.Option(
-        False, "--allow-heuristic", help=ch.HELP_RENAME_ALLOW_HEURISTIC
+        False, cs.RENAME_CLI_ALLOW_HEURISTIC, help=ch.HELP_RENAME_ALLOW_HEURISTIC
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
 ) -> None:
@@ -1664,6 +1664,7 @@ def rename_command(
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
                 reingest=updater.reingest,
+                heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
