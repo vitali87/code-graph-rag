@@ -844,7 +844,10 @@ def _signature_verdict(
     if site.star_args or site.star_kwargs or site.arg_count is None:
         return None
     written = site.arg_count - len(site.kwarg_names)
-    supplied = set(positional[:written]) | set(site.kwarg_names)
+    # Only a keyword the def accepts by name fills a parameter: one naming a
+    # positional-only parameter lands in `**kw` and leaves it unfilled
+    # (Greptile, PR #2947).
+    supplied = set(positional[:written]) | (set(site.kwarg_names) & by_keyword)
     expected = (set(positional) | set(signature.keyword_only)) & signature.required
     return cs.DELTA_ARITY_TOO_FEW if expected - supplied else None
 
@@ -908,11 +911,28 @@ def _arity_verdict(
     if signature is None:
         return declared_count, verdict
     bound = definition.label in _METHOD_LABELS and not (
-        site.arg_count is not None
-        and site.arg_count > len(site.kwarg_names)
-        and _passes_self_explicitly(site, repo_root)
+        (
+            site.arg_count is not None
+            and site.arg_count > len(site.kwarg_names)
+            and _passes_self_explicitly(site, repo_root)
+        )
+        or _passes_receiver_by_keyword(site, signature)
     )
     return declared_count, (_signature_verdict(site, signature, bound) or verdict)
+
+
+def _passes_receiver_by_keyword(site: CallSite, signature: _PySignature) -> bool:
+    """`Base.m(self=self, x=x)`: the receiver supplied by keyword.
+
+    A bound call naming its own receiver is a `TypeError` (multiple values
+    for it), so a site that names it is an unbound call through the class
+    (Greptile, PR #2947).
+    """
+    return (
+        signature.receiver
+        and bool(signature.positional)
+        and signature.positional[0] in site.kwarg_names
+    )
 
 
 def _count_verdict(
