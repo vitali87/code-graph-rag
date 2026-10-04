@@ -16,6 +16,7 @@ import re
 from tree_sitter import Node, Parser, Tree
 
 from ... import constants as cs
+from .class_macro import retry_without_class_name_macros
 from .trailing_annotation import retry_without_trailing_annotations
 
 _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
@@ -243,6 +244,7 @@ def parse_with_preproc_recovery(
     # tree-sitter-c keeps a trailing `LOCKS_REQUIRED(mu)` inside the
     # function_declarator of a definition; the C++ grammar splits there.
     if language == cs.SupportedLanguage.CPP:
+        tree, source_bytes = retry_without_class_name_macros(parser, tree, source_bytes)
         tree, source_bytes = retry_without_trailing_annotations(
             parser, tree, source_bytes
         )
