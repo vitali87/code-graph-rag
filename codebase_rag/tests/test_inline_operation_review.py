@@ -409,3 +409,87 @@ def test_inline_rewrites_the_inner_call_of_a_chained_site(temp_repo: Path) -> No
     assert report is not None and report.applied, report
     assert "str(2).upper()" in (root / "pkg/app.py").read_text()
     assert _python(root, "from pkg.app import run; print(run())") == "2"
+
+
+# --- behaviour preservation (Greptile, PR #2932) ----------------------------------
+
+_PROPERTY_FILES = {
+    "pkg/__init__.py": "",
+    "pkg/meter.py": (
+        "class Meter:\n"
+        "    def __init__(self):\n        self.reads = 0\n\n"
+        "    @property\n"
+        "    def value(self):\n        self.reads += 1\n        return self.reads\n"
+    ),
+    "pkg/twice.py": (
+        "def twice(x):\n    return x + x\n\n\n"
+        "def use_twice(meter):\n    return twice(meter.value)\n"
+    ),
+    "pkg/ignore.py": (
+        "def ignore(x):\n    return 5\n\n\n"
+        "def use_ignore(meter):\n    return ignore(meter.value)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("rel", "probe", "expected"),
+    [
+        ("pkg.twice.twice", "use_twice", "2 1"),
+        ("pkg.ignore.ignore", "use_ignore", "5 1"),
+    ],
+    ids=["read-twice", "never-read"],
+)
+def test_inline_reads_an_attribute_argument_exactly_once(
+    temp_repo: Path, rel: str, probe: str, expected: str
+) -> None:
+    root, store = _build(temp_repo, _PROPERTY_FILES)
+    module = rel.rsplit(".", 1)[0]
+    code = (
+        f"from pkg.meter import Meter\nfrom {module} import {probe}\n"
+        f"m = Meter()\nprint({probe}(m), m.reads)"
+    )
+    assert _python(root, code) == expected
+    _inline(root, store, rel)
+    assert _python(root, code) == expected
+
+
+_DECORATED_FILES = {
+    "pkg/__init__.py": "",
+    "pkg/greet.py": (
+        "def shout(fn):\n"
+        "    def wrapper(x):\n        return fn(x).upper()\n\n"
+        "    return wrapper\n\n\n"
+        "@shout\n"
+        "def greet(x):\n    return 'hi ' + x\n\n\n"
+        "def use():\n    return greet('bob')\n"
+    ),
+}
+
+
+def test_inline_refuses_a_decorated_definition(temp_repo: Path) -> None:
+    root, store = _build(temp_repo, _DECORATED_FILES)
+    with pytest.raises(InlineRefused, match="decorat"):
+        inline(root, store.fetch_all, PROJECT, _project_qn("pkg.greet.greet"))
+    assert (root / "pkg/greet.py").read_text() == _DECORATED_FILES["pkg/greet.py"]
+    assert _python(root, "from pkg.greet import use; print(use())") == "HI BOB"
+
+
+_SHARED_LINE_JS = (
+    "function helper(x) { return x + 1; } console.log('ready');\n"
+    "console.log(helper(1));\n"
+)
+
+
+def test_inline_keeps_code_sharing_a_line_with_the_definition(
+    temp_repo: Path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    root, store = _build(temp_repo, {"web/ready.js": _SHARED_LINE_JS})
+    before = _node(root, "web/ready.js")
+    assert before == "ready\n2"
+    report = _inline(root, store, "web.ready.helper")
+    assert report is not None and report.applied, report
+    assert "console.log('ready');" in (root / "web/ready.js").read_text()
+    assert _node(root, "web/ready.js") == before
