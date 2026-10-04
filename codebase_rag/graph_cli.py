@@ -107,18 +107,19 @@ def _named_target(
 ) -> tuple[str, _Refusal | None]:
     """The qualified name a short `target` stands for (issue #2861).
 
-    A node of that exact qualified name, in any project, is taken as
-    written (`os`, another project's function). Otherwise the name is
-    resolved as `cgr graph resolve` resolves it, and has to name exactly one
-    definition.
+    The name is resolved in the selected project as `cgr graph resolve`
+    resolves it, and has to name exactly one definition. Only when it names
+    none there is a node of that exact qualified name, in any project, taken
+    as written (`os`, another project's function): `lib.helper` is this
+    project's `app.lib.helper` before it is a project `lib`'s `helper`.
     """
-    if graph_query.node_exists(fetch_all, target):
-        return target, None
     names = graph_query.resolve_one(fetch_all, name, target)
     if len(names) == 1:
         return names[0], None
     if names:
         return target, _ambiguous_target(target, names)
+    if graph_query.node_exists(fetch_all, target):
+        return target, None
     return target, _unknown_target(fetch_all, name, target)
 
 
@@ -153,7 +154,11 @@ def _run_target_query_and_emit(
     with ingestor:
         refusal = _unknown_project(fetch_all, name, project, repo_path)
         qualified_name, checked = target, False
-        if refusal is None and not target.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+        # `app.py:5` in a project named `app` is a location, not a name.
+        qualified = target.startswith(f"{name}{cs.SEPARATOR_DOT}")
+        if refusal is None and (
+            not qualified or graph_query.parse_location(target) is not None
+        ):
             qualified_name, refusal = _named_target(fetch_all, name, target)
             checked = True
         result = None if refusal is not None else query(fetch_all, name, qualified_name)

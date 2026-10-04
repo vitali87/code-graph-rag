@@ -20,9 +20,11 @@ from click.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_cli import cli as graph_cli
+from codebase_rag.tests import test_graph_unknown_targets as fake_graph
 from codebase_rag.tests.test_graph_unknown_targets import (
     AREA,
     AVERAGE,
+    CALLS,
     NODES,
     REPORT_TOTAL,
     SHAPE,
@@ -45,6 +47,11 @@ SPANS: dict[str, tuple[int, int]] = {
 }
 
 
+# `app/shapes.py`, and the same spans under a file named like the project:
+# `app.py` in a project named `app` (Greptile, PR #2963).
+SPANNED_PATHS = ("app/shapes.py", f"{P}.py")
+
+
 class SpannedGraph(FakeGraph):
     """FakeGraph that also answers a `path:line` lookup from SPANS."""
 
@@ -56,16 +63,17 @@ class SpannedGraph(FakeGraph):
         self.queries.append(query)
         p = params or {}
         line = int(str(p[cs.KEY_LINE]))
+        path = str(p[cs.KEY_PATH])
         return [
             {
                 cs.KEY_LABEL: NODES[qn],
                 cs.KEY_QUALIFIED_NAME: qn,
-                cs.KEY_PATH: "app/shapes.py",
+                cs.KEY_PATH: path,
                 cs.KEY_START_LINE: start,
                 cs.KEY_END_LINE: end,
             }
             for qn, (start, end) in SPANS.items()
-            if p[cs.KEY_PATH] == "app/shapes.py" and start <= line <= end
+            if path in SPANNED_PATHS and start <= line <= end
         ]
 
 
@@ -114,6 +122,37 @@ def test_a_name_resolve_accepts_is_queried_as_its_definition(
     assert code == 0, err
     assert _qns(out) == expected
     assert err == ""
+
+
+def test_a_location_in_a_file_named_like_the_project_is_resolved(
+    connected: SpannedGraph, tmp_path: Path
+) -> None:
+    # `<project>.py:5` starts with the project prefix but is a location.
+    code, out, err = _graph(tmp_path, "callees", f"{P}.py:5")
+
+    assert code == 0, err
+    assert _qns(out) == [TOTAL]
+
+
+LOCAL_HELPER = f"{P}.app.lib.helper"
+
+
+def test_a_project_definition_wins_over_another_projects_exact_name(
+    connected: SpannedGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `lib.helper` is a node of a project named `lib`, and the dotted suffix
+    # of this project's `app.lib.helper`: the selected project's definition
+    # is the one meant (CodeRabbit, PR #2963).
+    monkeypatch.setitem(NODES, "lib", "Module")
+    monkeypatch.setitem(NODES, "lib.helper", "Function")
+    monkeypatch.setitem(NODES, f"{P}.app.lib", "Module")
+    monkeypatch.setitem(NODES, LOCAL_HELPER, "Function")
+    monkeypatch.setattr(fake_graph, "CALLS", [*CALLS, (AVERAGE, LOCAL_HELPER)])
+
+    code, out, err = _graph(tmp_path, "callers", "lib.helper")
+
+    assert code == 0, err
+    assert _qns(out) == [AVERAGE]
 
 
 def test_a_line_inside_a_method_names_the_method_not_its_class(
