@@ -89,6 +89,9 @@ TS_RS_STRUCT_EXPRESSION = "struct_expression"
 TS_RS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_RS_FIELD_DECLARATION = "field_declaration"
 TS_RS_VISIBILITY_MODIFIER = "visibility_modifier"
+# The syntax around a `pub(...)` restriction; what is left names its scope:
+# `crate`, `self`, `super`, or the path after `in`.
+RS_VISIBILITY_SYNTAX_TOKENS = frozenset({"pub", "(", ")", "in"})
 TS_RS_FIELD_IDENTIFIER = "field_identifier"
 TS_RS_MATCH_EXPRESSION = "match_expression"
 TS_RS_MATCH_ARM = "match_arm"

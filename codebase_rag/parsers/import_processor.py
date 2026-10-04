@@ -886,6 +886,8 @@ class ImportProcessor:
         "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
+        "rust_restricted_use_names",
+        "_rust_restricted_use_keys",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
@@ -1096,6 +1098,15 @@ class ImportProcessor:
         # holds one slot for both namespaces, so a qualified `name::item`
         # reads here and a bare call reads there (issue #1054).
         self.rust_self_module_imports: dict[str, dict[str, str]] = {}
+        # Names a module-level `use` binds with less than `pub` visibility,
+        # per scope qn, each with the module whose subtree alone sees it: the
+        # scope itself for a private (or `pub(self)`) one, the module a
+        # `pub(crate)`/`pub(super)`/`pub(in path)` names. A glob re-export
+        # (`pub use inner::*;`) written outside that subtree does not carry
+        # them (issue #2542, #2599 review). Keys are tracked per declaring
+        # file so a re-parse drops exactly what it wrote.
+        self.rust_restricted_use_names: dict[str, dict[str, str]] = {}
+        self._rust_restricted_use_keys: dict[str, set[str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
         # parsed: whether the key collides with an indexer-registered
         # module is only knowable then (finalise_rust_mod_scope_uses).
@@ -3491,8 +3502,12 @@ class ImportProcessor:
         the EFFECTIVE module of the use declaration, including inline `mod`
         blocks. A head naming a workspace member crate rewrites the same
         way, unless a `mod` in the declaring scope (local_mods) claims it:
-        rustc binds the local module first (issue #1033). External paths
-        (std::fmt) pass through unchanged.
+        rustc binds the local module first (issue #1033). Such a head is the
+        2018-edition spelling of `self::` (`pub mod get; pub use get::Get;`),
+        so it resolves the same way; kept raw it read as an external crate
+        named `get`, and every re-export written like that dead-ended
+        outside the project (issue #2542). External paths (std::fmt) pass
+        through unchanged.
         """
         parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
         head = parts[0]
@@ -3506,11 +3521,11 @@ class ImportProcessor:
                 depth += 1
             base = self._rust_super_base(module_qn, depth)
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
+        if head in local_mods:
+            return self._rust_resolve_relative(module_qn, parts, module_qn)
         if (
-            head not in local_mods
-            and (root := self._rust_workspace_crate_roots().get(head)) is not None
-            and self._rust_member_rewrite_allowed(root[0], module_qn)
-        ):
+            root := self._rust_workspace_crate_roots().get(head)
+        ) is not None and self._rust_member_rewrite_allowed(root[0], module_qn):
             _pkg, dir_parts, stem = root
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
@@ -4461,6 +4476,8 @@ class ImportProcessor:
         for _start, _end, items in self.rust_block_items.pop(module_qn, ()):
             self.rust_block_item_qns.difference_update(items.values())
         self.rust_self_module_imports.pop(module_qn, None)
+        for key in self._rust_restricted_use_keys.pop(module_qn, ()):
+            self.rust_restricted_use_names.pop(key, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
@@ -4542,12 +4559,52 @@ class ImportProcessor:
             # scope corresponds to the use, and any key would serve a
             # real scope's readers. Keep only the IMPORTS edges.
             return
+        self._record_rust_use_visibility(
+            use_node, module_qn, effective_qn, resolved_imports
+        )
         if not scope_parts:
             self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
             return
         self._commit_rust_mod_scope_use(
             use_node, module_qn, effective_qn, pure_chain, resolved_imports
         )
+
+    def _record_rust_use_visibility(
+        self,
+        use_node: Node,
+        module_qn: str,
+        effective_qn: str,
+        resolved_imports: dict[str, str],
+    ) -> None:
+        # The map has one slot per name and the last `use` writing it wins,
+        # so the slot's visibility follows the same writer.
+        root = self._rust_use_visibility_root(use_node, effective_qn)
+        if root is None:
+            if names := self.rust_restricted_use_names.get(effective_qn):
+                for name in resolved_imports:
+                    names.pop(name, None)
+            return
+        self.rust_restricted_use_names.setdefault(effective_qn, {}).update(
+            dict.fromkeys(resolved_imports, root)
+        )
+        self._rust_restricted_use_keys.setdefault(module_qn, set()).add(effective_qn)
+
+    def _rust_use_visibility_root(
+        self, use_node: Node, effective_qn: str
+    ) -> str | None:
+        # The module whose subtree alone sees what a `use` binds; None for a
+        # plain `pub`, and for a restriction path that leaves the project,
+        # which no glob of it can be outside of.
+        path = rs_utils.use_visibility_path(use_node)
+        if path is None:
+            return None
+        if path == cs.KEYWORD_SELF:
+            return effective_qn
+        root = self._rewrite_rust_local_use_path(path, effective_qn)
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if root == self.project_name or root.startswith(project_prefix):
+            return root
+        return None
 
     def _record_rust_body_scope_use(
         self, scope_node: Node, module_qn: str, resolved_imports: dict[str, str]
