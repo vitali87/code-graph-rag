@@ -294,6 +294,10 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+LANG_LIST_AST_GREP_UNREADABLE = (
+    "Cannot read the ast-grep tier's language configs, so its languages are "
+    "left out of the list: {error}"
+)
 
 # Ignore pattern logs
 CGRIGNORE_LOADED = (

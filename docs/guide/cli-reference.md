@@ -219,9 +219,12 @@ Manage language support.
 cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
+cgr language list-languages --verbose
 cgr language remove-language <language-name>
 cgr language cleanup-orphaned-modules
 ```
+
+`list-languages` prints one row per language across all three parsing tiers: its name, file extensions, tier (`tree-sitter`, `ast-grep` or `document`), level of support (`full`, `in development`, `structural` or `headings`) and whether this install can parse it. A language marked `no` needs its extra, which the command names below the table. A second table shows the optional semantic frontends (libclang, go/types, Roslyn, javac, Jedi): whether each toolchain is found, the setting that selects it, and whether indexing will use it. The language name and extensions are never truncated, including in piped output. `--verbose` adds the tree-sitter node types each language maps to functions, classes, modules and calls.
 
 ![cgr language list-languages printing the configured languages table](../assets/demos/cli-language.gif)
 
