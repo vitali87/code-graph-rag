@@ -43,6 +43,15 @@ TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_PY_WITH_STATEMENT = "with_statement"
 TS_PY_AS_PATTERN = "as_pattern"
 TS_PY_AS_PATTERN_TARGET = "as_pattern_target"
+# The keyword child of an `async with` (and of `async for` / `async def`).
+TS_PY_ASYNC = "async"
+# What a with statement calls on its context manager, whose result its `as`
+# target is bound to: `with` calls `__enter__`, `async with` awaits `__aenter__`.
+PY_DUNDER_ENTER = "__enter__"
+PY_DUNDER_AENTER = "__aenter__"
+# The `if TYPE_CHECKING:` guard (bare or `typing.`-qualified): its body is
+# read by type checkers only and binds nothing at runtime.
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_EXPRESSION_STATEMENT = "expression_statement"
 TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
@@ -56,6 +65,24 @@ TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
+# A definition's parameter list node, and the splats an argument list can
+# carry (`f(*args)`, `f(**opts)`); the `_pattern` forms above are the
+# definition-side spellings.
+TS_PY_PARAMETERS = "parameters"
+TS_PY_LIST_SPLAT = "list_splat"
+TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
+# Scopes nested in a function body, where a parameter's name may be re-bound
+# rather than read, and the statements that re-bind a name in place.
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
+TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
+# `typing` names a literal-versus-annotation check understands.
+PY_TYPING_OPTIONAL = "Optional"
+PY_TYPING_UNION = "Union"
+# The first parameter of a method that names the instance or class; a
+# signature change keeps it in place and never remaps it.
+PY_RECEIVER_NAMES = frozenset({"self", "cls"})
 TS_PY_SUBSCRIPT = "subscript"
 # The `subscript` node's index field (`os.environ["K"]` -> the `"K"` string).
 TS_PY_FIELD_SUBSCRIPT = "subscript"
@@ -321,3 +348,17 @@ GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
 # letting a RecursionError discard the whole method's variable types.
 GUARD_JAVA_INFERENCE_DEPTH = "_java_inference_depth_guard"
 JAVA_MAX_INFERENCE_DEPTH = 64
+
+# A Python `__all__` assignment (group 1 is the bracketed body) and one string
+# entry in it. Shared by the rename that rewrites the entries, its rollback
+# check, and the structural delta that reports entries naming a removed symbol
+# (issue #2516), so the three cannot disagree about what an entry is.
+PY_DUNDER_ALL_BLOCK_PATTERN = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
+PY_DUNDER_ALL_ENTRY_PATTERN = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
+# The module attribute `from module import *` reads, its two list methods a
+# module may grow it with, and the prefix that keeps a name out of a wildcard
+# import of a module without one.
+PY_DUNDER_ALL = "__all__"
+PY_LIST_EXTEND = "extend"
+PY_LIST_APPEND = "append"
+PY_PRIVATE_PREFIX = "_"
