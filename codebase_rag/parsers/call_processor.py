@@ -1710,7 +1710,17 @@ def _go_asserted_receiver_call_name(selector: Node) -> str | None:
     ):
         return None
     type_node = operand.child_by_field_name(cs.FIELD_TYPE)
-    type_name = go_utils.type_identifier_text(type_node) if type_node else None
+    while type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
+        type_node = type_node.named_child(0)
+    if type_node is None:
+        return None
+    # `other.Dog` keeps its package: read as `Dog` alone it named the
+    # caller's own `Dog` (Greptile, PR #2961).
+    type_name = (
+        decode_node_text(type_node.text)
+        if type_node.type == cs.TS_GO_QUALIFIED_TYPE and type_node.text
+        else go_utils.type_identifier_text(type_node)
+    )
     if not type_name:
         return None
     return f"{type_name}{cs.SEPARATOR_DOT}{decode_node_text(method.text)}"
@@ -5762,7 +5772,17 @@ class CallProcessor:
             return undecided
         root, methods = chain
         if root.type == cs.TS_GO_COMPOSITE_LITERAL:
-            class_qn, owned = self._go_literal_receiver_class(root, ctx.module_qn)
+            class_qn, owned = self._go_literal_receiver_class(
+                root.child_by_field_name(cs.FIELD_TYPE), ctx.module_qn
+            )
+        elif root.type == cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
+            # `a.(other.Dog).Fetch()` names the receiver's type, read in this
+            # file's imports like a literal's: `other.Dog` is the imported
+            # package's Dog, never this package's (Greptile, PR #2961).
+            asserted = root.child_by_field_name(cs.FIELD_TYPE)
+            while asserted is not None and asserted.type == cs.TS_GO_POINTER_TYPE:
+                asserted = asserted.named_child(0)
+            class_qn, owned = self._go_literal_receiver_class(asserted, ctx.module_qn)
         else:
             owned, class_qn = self._go_package_function_root(root, ctx.module_qn)
             if not owned:
@@ -5959,14 +5979,15 @@ class CallProcessor:
         )
 
     def _go_literal_receiver_class(
-        self, literal: Node, module_qn: str
+        self, type_node: Node | None, module_qn: str
     ) -> tuple[str | None, bool]:
-        # (first-party struct, owned) for a composite literal receiver. A
-        # type of an EXTERNAL package (`bytes.Buffer{}`) is owned with no
-        # struct: its methods are that package's, never a first-party one
-        # sharing the name. Any other miss (a named slice type, an unknown
-        # name) is not owned.
-        type_name = _go_composite_type_name(literal.child_by_field_name(cs.FIELD_TYPE))
+        # (first-party struct, owned) for a receiver of the written type
+        # `type_node`: a composite literal's, or a type assertion's. A type
+        # of an EXTERNAL package (`bytes.Buffer{}`) is owned with no struct:
+        # its methods are that package's, never a first-party one sharing
+        # the name. Any other miss (a named slice type, an unknown name) is
+        # not owned.
+        type_name = _go_composite_type_name(type_node)
         if not type_name:
             return None, False
         if class_qn := self._go_struct_class(type_name, module_qn):

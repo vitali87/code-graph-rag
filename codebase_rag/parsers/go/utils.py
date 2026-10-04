@@ -125,8 +125,9 @@ def call_receiver_chain(call_node: Node) -> tuple[Node, list[str]] | None:
     """`NewBox().With(1).Bump()` -> (the `NewBox()` call, ["With", "Bump"]).
 
     The method names called along a receiver chain, innermost first, and the
-    node the chain starts from: a call, or a composite literal with its
-    parentheses and `&` taken off (`(&Box{}).Bump()`). None when the callee
+    node the chain starts from: a call, a type assertion (`a.(Dog).Fetch()`),
+    or a composite literal with its parentheses and `&` taken off
+    (`(&Box{}).Bump()`). None when the callee
     is not a method on such a value; a variable, field or package receiver
     (`b.Bump()`, `pkg.F()`) is what the name-based resolver types already.
     """
@@ -161,6 +162,7 @@ def _value_receiver(operand: Node | None) -> Node | None:
     if node is not None and node.type in (
         cs.TS_GO_CALL_EXPRESSION,
         cs.TS_GO_COMPOSITE_LITERAL,
+        cs.TS_GO_TYPE_ASSERTION_EXPRESSION,
     ):
         return node
     return None
