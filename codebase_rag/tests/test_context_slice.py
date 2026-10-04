@@ -268,9 +268,8 @@ async def test_mcp_context_tool(
         target=_qn("pkg.util.helper"), budget_tokens=300, project=PROJECT
     )
     assert isinstance(payload, dict)
-    assert (
-        payload["resolved"] == _qn("pkg.util.helper") and payload["used_tokens"] <= 300
-    )
+    assert payload["resolved"] == _qn("pkg.util.helper")
+    assert payload["used_tokens"] <= 300
 
 
 # A broken skip guard is invisible: if `_markdown_unavailable` silently returned

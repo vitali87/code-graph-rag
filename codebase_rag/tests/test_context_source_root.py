@@ -79,7 +79,8 @@ async def test_mcp_context_reads_no_local_source_for_another_project(
     foreign = await registry.context(
         target=f"{OTHER}.pkg.mod.f", budget_tokens=500, project=OTHER
     )
-    assert isinstance(foreign, dict) and foreign["resolved"] == f"{OTHER}.pkg.mod.f"
+    assert isinstance(foreign, dict)
+    assert foreign["resolved"] == f"{OTHER}.pkg.mod.f"
     assert "local checkout source" not in _sources(foreign)
 
     # The project indexed from this checkout still gets its excerpt.
