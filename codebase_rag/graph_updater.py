@@ -2350,6 +2350,7 @@ class GraphUpdater:
             py_engine._return_stmt_cache.clear()
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
+            py_engine._class_member_type_cache.clear()
 
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)
@@ -7343,6 +7344,11 @@ class GraphUpdater:
         as the walk would leave them.
         """
         started = time.perf_counter()
+        # The Python engine memoises per pass, as run() knows: on the
+        # long-lived updater the MCP server, the watcher and rename hold, an
+        # edited function's old return type would re-resolve its dependents,
+        # and the Node-keyed entries would pin every re-parsed tree (#2927).
+        self._clear_python_inference_caches()
         # A scoped re-ingest is never a full build, whatever the previous
         # run() was: the flag decides whether a failed inbound-edge capture
         # aborts (it must, or the run drops cross-file edges under a
