@@ -2,14 +2,25 @@
 ast_grep_id: typescript
 extensions: [.ts, .mts, .cts]
 rules:
+  # A constant string or a template with no ${...} cannot carry data into the
+  # DOM, and `el.innerHTML = ''` (clearing an element) is the commonest use of
+  # the sink; flagging those buried the interpolated hits (issue #2533).
   - id: innerhtml_xss
     message: "Possible XSS: assignment to innerHTML/outerHTML"
     rule:
-      any:
-        - pattern: "$EL.innerHTML = $X"
-        - pattern: "$EL.innerHTML += $X"
-        - pattern: "$EL.outerHTML = $X"
-        - pattern: "$EL.outerHTML += $X"
+      all:
+        - any:
+            - pattern: "$EL.innerHTML = $X"
+            - pattern: "$EL.innerHTML += $X"
+            - pattern: "$EL.outerHTML = $X"
+            - pattern: "$EL.outerHTML += $X"
+        - not:
+            has:
+              field: right
+              any:
+                - kind: string
+                - kind: template_string
+                  not: { has: { kind: template_substitution } }
   - id: eval_use
     message: "eval() executes arbitrary code"
     rule:
@@ -17,7 +28,19 @@ rules:
   - id: document_write
     message: "document.write() can enable XSS"
     rule:
-      pattern: "document.write($$$)"
+      all:
+        - pattern: "document.write($$$)"
+        # Flag only when some argument can carry data. nthChild counts named
+        # nodes only, which skips the `(` `,` `)` tokens of the argument list.
+        - has:
+            field: arguments
+            has:
+              nthChild: "n+1"
+              not:
+                any:
+                  - kind: string
+                  - kind: template_string
+                    not: { has: { kind: template_substitution } }
   - id: hardcoded_secret
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
