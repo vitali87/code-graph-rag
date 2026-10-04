@@ -123,6 +123,42 @@ def test_cli_refusal_exits_nonzero_with_the_reason(repo: Indexed) -> None:
     assert "No definition named" in result.stderr
 
 
+def test_cli_refuses_a_project_indexed_from_another_checkout(
+    repo: Indexed, tmp_path: Path
+) -> None:
+    # The same relative paths exist in the other checkout, so without the
+    # root check its files would be rewritten under this project's graph.
+    root, store, updater = repo
+    other = tmp_path / "other"
+    for rel, text in FILES.items():
+        path = other / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    project_and_fetch = MagicMock(return_value=(PROJECT, store.fetch_all, MagicMock()))
+    with (
+        patch("codebase_rag.graph_cli._project_and_fetch", project_and_fetch),
+        patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
+    ):
+        result = CliRunner().invoke(
+            app,
+            [
+                "change-signature",
+                HELPER,
+                "a",
+                "n: int",
+                "b",
+                "--map",
+                "n==1",
+                "--repo-path",
+                str(other),
+            ],
+        )
+    assert result.exit_code == 1
+    assert "was not indexed from" in result.stderr
+    assert _read(other, APP) == FILES[APP]
+    assert _read(root, APP) == FILES[APP]
+
+
 def test_cli_change_that_is_not_applied_exits_nonzero(repo: Indexed) -> None:
     root = repo[0]
     # A literal that breaks the call's syntax: the rewrite is rolled back.
