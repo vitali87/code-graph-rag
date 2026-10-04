@@ -49,7 +49,13 @@ from .imports import (
     _relative_specifier,
     _split_names,
 )
-from .patcher import Patcher, PatcherError, line_col_to_byte
+from .patcher import (
+    Patcher,
+    PatcherError,
+    SpanEdit,
+    apply_span_edits,
+    line_col_to_byte,
+)
 from .rename import _name_token
 from .transaction import (
     EditTransaction,
@@ -547,7 +553,19 @@ class Mover:
         if existing is not None:
             _language, target_root = self._parse(new_path, existing)
         cut = _cut_span(source, node)
-        remainder = (source[: cut.start] + source[cut.end :]).decode(
+        # A JS definition exported by its own `export { helper }` lost the
+        # export with the cut: the destination did not export it, and every
+        # rewritten importer (and the old module's import of it back)
+        # failed to link. The entry moves with it unless `keep_alias`.
+        listed = (
+            self._listed_exports(source, root, name)
+            if language in _JS_LANGUAGES
+            else []
+        )
+        old_edits = [SpanEdit(cut.start, cut.end, b"")]
+        if not keep_alias:
+            old_edits.extend(listed)
+        remainder = apply_span_edits(source, old_edits).decode(
             cs.ENCODING_UTF8, errors="replace"
         )
 
@@ -617,8 +635,8 @@ class Mover:
         )
 
         # 1. Cut from the old module, import the name back when still used.
-        replacement = ""
-        patcher.replace_span(old_path, (cut.start, cut.end), replacement)
+        for edit in old_edits:
+            patcher.replace_span(old_path, (edit.start, edit.end), edit.text)
         if old_uses or keep_alias:
             self._add_import(
                 patcher,
@@ -629,12 +647,22 @@ class Mover:
                 new_spelled,
                 new_path,
                 name,
-                export=keep_alias and not old_uses,
+                use=old_uses,
+                # An export list `keep_alias` left in place already exports it.
+                export=keep_alias and not listed,
             )
         # 2. Paste into the target with what it needs.
         paste = self._paste_text(
             cut.text, needed, from_old, old_spelled, old_path, new_path, language
         )
+        if (
+            language in _JS_LANGUAGES
+            and top.type != cs.TS_EXPORT_STATEMENT
+            and (listed or old_uses or keep_alias)
+        ):
+            # Whatever imports it from the destination needs it exported
+            # there: the rewritten importers, and the old module.
+            paste += f"\nexport {{ {name} }};\n"
         # `from __future__ import annotations` is never referenced by name,
         # so the use filter above drops it, and without it the destination
         # evaluates the moved annotations eagerly: a forward reference that
@@ -772,6 +800,57 @@ class Mover:
             if named in bound:
                 bound[named] = True
         return bound
+
+    @staticmethod
+    def _listed_exports(source: bytes, root: Node, name: str) -> list[SpanEdit]:
+        """The edits that take `name` out of the module's `export { ... }`
+        lists: the entry alone, or the whole statement when it was the only
+        one. Only an unaliased entry is taken, since importers of `name`
+        are rewritten to the destination; an alias (`helper as h`) stays,
+        and the old module imports the name back for it.
+        """
+        edits: list[SpanEdit] = []
+        for child in root.children:
+            if (
+                child.type != cs.TS_EXPORT_STATEMENT
+                or child.child_by_field_name(cs.FIELD_SOURCE) is not None
+            ):
+                continue
+            clause = next(
+                (c for c in child.named_children if c.type == cs.TS_EXPORT_CLAUSE),
+                None,
+            )
+            if clause is None:
+                continue
+            specs = [
+                spec
+                for spec in clause.named_children
+                if spec.type == cs.TS_EXPORT_SPECIFIER
+            ]
+            kept = [
+                _text(spec)
+                for spec in specs
+                if _text(spec.child_by_field_name(cs.FIELD_NAME)) != name
+                or spec.child_by_field_name(cs.FIELD_ALIAS) is not None
+            ]
+            if len(kept) == len(specs):
+                continue
+            if kept:
+                edits.append(
+                    SpanEdit(
+                        clause.start_byte,
+                        clause.end_byte,
+                        f"{{ {', '.join(kept)} }}".encode(cs.ENCODING_UTF8),
+                    )
+                )
+                continue
+            start = source.rfind(b"\n", 0, child.start_byte) + 1
+            end = _line_end(source, child)
+            # Swallow the blank lines that separated it from what follows.
+            while source[end : end + 1] == b"\n":
+                end += 1
+            edits.append(SpanEdit(start, end, b""))
+        return edits
 
     @staticmethod
     def _bound_names(node: Node) -> list[str]:
@@ -1049,8 +1128,17 @@ class Mover:
         new_spelled: str,
         new_path: str,
         name: str,
+        use: bool,
         export: bool,
     ) -> None:
+        """Import `name` back into the old module (`use`), re-export it
+        from there (`export`), or both.
+
+        Both is JavaScript's case only: a Python import of the name is
+        already a re-export, but a JS import is not, and writing just the
+        import when the old module still used the name took the old path
+        away from every external importer `keep_alias` was meant to keep.
+        """
         at = _import_block_end(source, root)
         if not at and language == cs.SupportedLanguage.PYTHON:
             # No imports: offset 0 would push a shebang, an encoding line or
@@ -1058,14 +1146,15 @@ class Mover:
             at = self._head_end(source, root)
         if language in _JS_LANGUAGES:
             spec = _relative_specifier(path, new_path)
-            line = (
-                f"export {{ {name} }} from '{spec}';\n"
-                if export
-                else f"import {{ {name} }} from '{spec}';\n"
-            )
+            if not use:
+                line = f"export {{ {name} }} from '{spec}';\n"
+            else:
+                line = f"import {{ {name} }} from '{spec}';\n"
+                if export:
+                    line += f"export {{ {name} }};\n"
         else:
             line = f"from {new_spelled} import {name}\n"
-            if export:
+            if export and not use:
                 line = f"from {new_spelled} import {name}  # noqa: F401  (moved; re-exported for compatibility)\n"
         patcher.replace_span(path, (at, at), line if at else line + "\n")
 
