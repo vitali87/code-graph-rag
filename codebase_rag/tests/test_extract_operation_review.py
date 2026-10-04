@@ -865,3 +865,83 @@ def test_extract_allows_a_write_to_a_hoisted_var(temp_repo: Path) -> None:
         temp_repo, "src/count.js", source, "src.count.count", (5, 5)
     )
     assert after == before == "2"
+
+
+# --- generic TypeScript functions -------------------------------------------------
+
+_GENERIC_TS = {
+    "function": (
+        "export function build<T extends U, U, V = string>(x: T, u: U): T[] {\n"
+        "  const y: T = x;\n"
+        "  const out = [y, y];\n"
+        "  return out;\n"
+        "}\n\n"
+        "console.log(JSON.stringify(build(3, 4)));\n"
+    ),
+    "method": (
+        "class Box<K> {\n"
+        "  constructor(private k: K) {}\n\n"
+        "  pick<T>(x: T): [T, K] {\n"
+        "    const y: T = x;\n"
+        "    const out: [T, K] = [y, this.k];\n"
+        "    return out;\n"
+        "  }\n"
+        "}\n\n"
+        "console.log(JSON.stringify(new Box('k').pick(3)));\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("shape", "qn", "span", "header", "call"),
+    [
+        (
+            "function",
+            "src.build.build",
+            (2, 2),
+            "function part<T extends U, U>(x: T) {",
+            "const y = part<T, U>(x);",
+        ),
+        (
+            "method",
+            "src.build.Box.pick",
+            (5, 5),
+            "  part<T>(x: T) {",
+            "const y = this.part<T>(x);",
+        ),
+    ],
+    ids=["function", "method"],
+)
+def test_extracted_typescript_helper_keeps_its_type_parameters(
+    temp_repo: Path,
+    shape: str,
+    qn: str,
+    span: tuple[int, int],
+    header: str,
+    call: str,
+) -> None:
+    # A carried `x: T` names the enclosing function's own type parameter;
+    # outside its declaration the helper must declare it again (TS2304).
+    root = _repo(temp_repo, {"src/build.ts": _GENERIC_TS[shape]})
+    store, updater = _index(root)
+    report = extract(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _project_qn(qn),
+        span,
+        "part",
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    text = (root / "src/build.ts").read_text()
+    assert header in text and call in text, text
+    if _TSC is not None:
+        done = subprocess.run(
+            [_TSC, "--strict", "--noEmit", "--target", "es2020", "src/build.ts"],
+            cwd=root,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+        )
+        assert done.returncode == 0, done.stdout + done.stderr

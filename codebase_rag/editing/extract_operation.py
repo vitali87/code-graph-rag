@@ -65,6 +65,8 @@ _JS_RECEIVER_SCOPES = _FUNCTION_SCOPES - {cs.TS_ARROW_FUNCTION}
 # `await` (Python and JS), the `async` of `async for`/`async with`, and the
 # `await (X)()` call the JS grammar spells with an identifier.
 _AWAIT_TOKENS = frozenset({cs.JS_AWAIT_IDENTIFIER, cs.JS_ASYNC_KEYWORD})
+# A name inside a TypeScript type's text: a type parameter it may refer to.
+_TS_NAME = re.compile(r"[A-Za-z_$][\w$]*")
 
 
 class Extractor:
@@ -560,7 +562,14 @@ def _js_helper_and_call(
     if typed:
         annotations = _ts_input_types(definition, parts, inputs, annotations)
     params = [f"{name}{annotations.get(name, '')}" for name in inputs]
-    header = f"{method.modifier}{new_name}" if method else f"function {new_name}"
+    generics, type_args = (
+        _carried_type_parameters(definition, params, parts) if typed else ("", "")
+    )
+    header = (
+        f"{method.modifier}{new_name}{generics}"
+        if method
+        else f"function {new_name}{generics}"
+    )
     lines = [f"{header}({', '.join(params)}) {{"]
     # A name the span assigns without declaring it is the enclosing
     # function's local; moved into the helper it would be an undeclared
@@ -579,7 +588,7 @@ def _js_helper_and_call(
     lines.append("}")
     function_text = "\n" + _reindent("\n".join(lines), def_indent, keep) + "\n"
     callee = f"{method.receiver}.{new_name}" if method else new_name
-    call = f"{callee}({', '.join(inputs)})"
+    call = f"{callee}{type_args}({', '.join(inputs)})"
     declared_in_span: list[str] = []
     for statement in parts.statements:
         _binds(statement, declared_in_span)
@@ -717,6 +726,62 @@ def _ts_input_types(
             raise ExtractRefused(cs.EXTRACT_TS_UNTYPED_INPUT.format(name=name))
         typed[name] = _text(annotation)
     return typed
+
+
+def _carried_type_parameters(
+    definition: Node, params: list[str], parts: _Span
+) -> tuple[str, str]:
+    """The function's own type parameters the helper names, as the helper
+    declares them and as its call passes them.
+
+    The helper sits beside the function, outside its `<T>`, so a carried
+    `x: T` named nothing there (TS2304). An enclosing
+    class's or function's parameters stay in scope beside it. A parameter
+    a kept one's constraint or default names is kept too, and the call
+    passes them explicitly: one the body alone uses has nothing to infer
+    it from.
+    """
+    holder = definition.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    declared = [
+        p
+        for p in (holder.named_children if holder is not None else [])
+        if p.type == cs.TS_TYPE_PARAMETER
+    ]
+    names = {_text(p.child_by_field_name(cs.FIELD_NAME)): p for p in declared}
+    needed = set(_TS_NAME.findall(" ".join(params))) | {
+        _text(n)
+        for statement in parts.statements
+        for n in _descendants(statement)
+        if n.type == cs.TS_TYPE_IDENTIFIER
+    }
+    keep: set[str] = set()
+    pending = [name for name in names if name in needed]
+    while pending:
+        name = pending.pop()
+        if name in keep:
+            continue
+        keep.add(name)
+        node = names[name]
+        own = node.child_by_field_name(cs.FIELD_NAME)
+        bounds = " ".join(_text(c) for c in node.named_children if c != own)
+        pending.extend(n for n in _TS_NAME.findall(bounds) if n in names)
+    kept = [name for name in names if name in keep]
+    if not kept:
+        return "", ""
+    return (
+        f"<{', '.join(_text(names[name]) for name in kept)}>",
+        f"<{', '.join(kept)}>",
+    )
+
+
+def _descendants(node: Node) -> list[Node]:
+    out: list[Node] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        out.append(current)
+        stack.extend(current.children)
+    return out
 
 
 def _implicit_parameters(definition: Node) -> set[str]:
