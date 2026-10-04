@@ -71,7 +71,7 @@ records it next to the re-ingest itself.
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
 | `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
-| `arity_findings`     | Call sites in the edited files that pass more positional arguments than the callee declares (`too_many`), the only verdict that needs no knowledge of defaults. |
+| `arity_findings`     | Call sites in the edited files the callee certainly rejects: more positional arguments than it declares (`too_many`), a required parameter nothing fills (`too_few`), or a keyword it does not accept (`unexpected_keyword`). |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
 | `tests_reaching`     | Test functions from which any symbol of the edited files is reachable through the call graph, with the shortest distance and the symbol it is reached through. |
@@ -93,6 +93,23 @@ means fewer arguments than parameters: the graph does not record
 defaults, so this is a hint, not a finding, and does not trip
 `--fail-on-found`.
 
+For a Python callee the header itself is read back, which records what the
+graph does not: which parameters have defaults, which take keywords, and
+whether `**kwargs` exists. Two more verdicts are definite from it, and
+both trip `--fail-on-found` (issues #2845, #2853):
+
+- `unexpected_keyword`: the site passes a keyword the def does not accept
+  by name (a renamed or removed parameter, or a positional-only one before
+  `/`) and the def has no `**kwargs` to take it.
+- `too_few`: a parameter without a default that no positional and no
+  keyword at the site fills, and the site has no `*rest` or `**opts` that
+  may carry it. Adding `channel` to `send(msg)` makes `send("hi")` read
+  `too_few`; adding `channel=None` leaves it `possibly_missing`.
+
+A def wrapped by a decorator other than `@staticmethod`, `@classmethod`,
+`@abstractmethod` or `@override` is not judged from its header, since the
+decorator may change what a caller passes.
+
 ## `cgr check`
 
 ```bash
@@ -107,6 +124,7 @@ The graph is assumed to reflect `--base` (index there, then edit). Files
 that differ between the base and the working tree, untracked files
 included, are re-ingested and the delta printed as JSON. With
 `--fail-on-found` the command exits 1 when the delta reports dangling
-callers, `too_many` arity findings, new duplicates or new import cycles.
+callers, `too_many`, `too_few` or `unexpected_keyword` arity findings, new
+duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.

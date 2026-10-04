@@ -122,6 +122,29 @@ DELTA_ARITY_OK = "ok"
 DELTA_ARITY_TOO_MANY = "too_many"
 DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
+# Definite only where the callee's header was read back (issues #2853,
+# #2845): a keyword the new signature does not accept, with no `**kwargs`,
+# and a required parameter no argument fills, with no splat to supply it.
+DELTA_ARITY_UNEXPECTED_KEYWORD = "unexpected_keyword"
+DELTA_ARITY_TOO_FEW = "too_few"
+# The verdicts that fail `--fail-on-found`: each is a certain `TypeError`.
+DELTA_ARITY_DEFINITE = frozenset(
+    {DELTA_ARITY_TOO_MANY, DELTA_ARITY_UNEXPECTED_KEYWORD, DELTA_ARITY_TOO_FEW}
+)
+# Decorators that hand the call to the def as written; any other may change
+# what a caller must pass, so the header alone settles nothing.
+PY_STATICMETHOD = "staticmethod"
+PY_SIGNATURE_PRESERVING_DECORATORS = frozenset(
+    {
+        PY_STATICMETHOD,
+        "classmethod",
+        "abstractmethod",
+        "abc.abstractmethod",
+        "override",
+        "typing.override",
+        "typing_extensions.override",
+    }
+)
 # Hops the backward test-reach walk follows before giving up.
 DELTA_REACH_MAX_DEPTH = 12
 # Source files whose syntax tree the arity verdicts keep while judging one

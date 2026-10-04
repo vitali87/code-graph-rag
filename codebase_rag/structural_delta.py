@@ -66,6 +66,8 @@ class CallSite(NamedTuple):
     arg_count: int | None
     kwarg_names: tuple[str, ...]
     star_args: bool
+    # `**opts` at the site: it may supply any keyword, required ones too.
+    star_kwargs: bool = False
 
 
 class Snapshot(NamedTuple):
@@ -258,6 +260,7 @@ def _site(row: ResultRow) -> CallSite:
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
         star_args=row.get(cs.KEY_STAR_ARGS) is True,
+        star_kwargs=row.get(cs.KEY_STAR_KWARGS) is True,
     )
 
 
@@ -639,9 +642,9 @@ def _node_text(node: Node) -> str:
     return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
 
 
-def _parameters_of(root: Node, name: str, start_line: int) -> Node | None:
-    """The `parameters` node of the def named `name` starting on `start_line`
-    (its decorators' line, for a decorated def)."""
+def _function_of(root: Node, name: str, start_line: int) -> Node | None:
+    """The def named `name` starting on `start_line` (its decorators' line,
+    for a decorated def)."""
     stack = [root]
     while stack:
         node = stack.pop()
@@ -658,9 +661,14 @@ def _parameters_of(root: Node, name: str, start_line: int) -> Node | None:
                 and _node_text(name_node) == name
                 and start_line in starts
             ):
-                return node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+                return node
         stack.extend(node.named_children)
     return None
+
+
+def _parameters_of(root: Node, name: str, start_line: int) -> Node | None:
+    function = _function_of(root, name, start_line)
+    return function.child_by_field_name(cs.TS_FIELD_PARAMETERS) if function else None
 
 
 def _is_star_args(parameter: Node) -> bool:
@@ -692,6 +700,153 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     return parameters is not None and any(
         _is_star_args(parameter) for parameter in parameters.named_children
     )
+
+
+class _PySignature(NamedTuple):
+    """A Python def's header, as a caller must satisfy it (issues #2853, #2845)."""
+
+    positional: tuple[str, ...]
+    positional_only: frozenset[str]
+    keyword_only: tuple[str, ...]
+    required: frozenset[str]
+    var_positional: bool
+    var_keyword: bool
+    # Defined in a class and not a staticmethod: a bound call fills the
+    # first positional (`self` / `cls`) itself.
+    receiver: bool
+
+
+def _decorators(function: Node) -> list[str]:
+    parent = function.parent
+    if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
+        return []
+    return [
+        _node_text(child).lstrip(cs.DECORATOR_AT).strip()
+        for child in parent.named_children
+        if child.type == cs.TS_PY_DECORATOR
+    ]
+
+
+def _parameter_name(parameter: Node) -> tuple[str, bool] | None:
+    """(name, has a default) of a plain parameter, or None for anything else."""
+    match parameter.type:
+        case cs.TS_PY_IDENTIFIER:
+            return _node_text(parameter), False
+        case cs.TS_PY_DEFAULT_PARAMETER | cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+            name = parameter.child_by_field_name(cs.TS_FIELD_NAME)
+            return (_node_text(name), True) if name is not None else None
+        case cs.TS_PY_TYPED_PARAMETER:
+            name = next(
+                (c for c in parameter.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            return (_node_text(name), False) if name is not None else None
+    return None
+
+
+def _is_star_kwargs(parameter: Node) -> bool:
+    if parameter.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN:
+        return True
+    return parameter.type == cs.TS_PY_TYPED_PARAMETER and any(
+        child.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN
+        for child in parameter.named_children
+    )
+
+
+def _python_signature(
+    definition: Definition, repo_root: Path | None
+) -> _PySignature | None:
+    """The header of a Python def, read back from its syntax tree.
+
+    None when it cannot be read, or when a decorator other than the
+    signature-preserving ones wraps it: `@click.command`, `@overload` or a
+    fixture may stand between the call and the header, so judging the call
+    against the header would be a guess.
+    """
+    if repo_root is None or not definition.path or definition.start_line < 1:
+        return None
+    tree = _python_source_tree(repo_root / definition.path)
+    function = (
+        _function_of(tree.root_node, definition.name, definition.start_line)
+        if tree
+        else None
+    )
+    parameters = (
+        function.child_by_field_name(cs.TS_FIELD_PARAMETERS) if function else None
+    )
+    if function is None or parameters is None:
+        return None
+    decorators = _decorators(function)
+    if any(d not in cs.PY_SIGNATURE_PRESERVING_DECORATORS for d in decorators):
+        return None
+    positional: list[str] = []
+    keyword_only: list[str] = []
+    positional_only: set[str] = set()
+    required: set[str] = set()
+    var_positional = var_keyword = after_star = False
+    for parameter in parameters.named_children:
+        if parameter.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            positional_only.update(positional)
+        elif parameter.type == cs.TS_PY_KEYWORD_SEPARATOR:
+            after_star = True
+        elif _is_star_args(parameter):
+            var_positional = after_star = True
+        elif _is_star_kwargs(parameter):
+            var_keyword = True
+        elif (named := _parameter_name(parameter)) is not None:
+            name, has_default = named
+            (keyword_only if after_star else positional).append(name)
+            if not has_default:
+                required.add(name)
+    container = function.parent
+    if container is not None and container.type == cs.TS_PY_DECORATED_DEFINITION:
+        container = container.parent
+    in_class = (
+        container is not None
+        and container.type == cs.TS_PY_BLOCK
+        and container.parent is not None
+        and container.parent.type == cs.TS_PY_CLASS_DEFINITION
+    )
+    return _PySignature(
+        positional=tuple(positional),
+        positional_only=frozenset(positional_only),
+        keyword_only=tuple(keyword_only),
+        required=frozenset(required),
+        var_positional=var_positional,
+        var_keyword=var_keyword,
+        receiver=in_class and cs.PY_STATICMETHOD not in decorators,
+    )
+
+
+def _signature_verdict(
+    site: CallSite, signature: _PySignature, bound: bool
+) -> str | None:
+    """A definite verdict the header alone settles, or None.
+
+    `unexpected_keyword`: a keyword naming nothing the def accepts by
+    keyword (a positional-only name included), with no `**kwargs` to take
+    it, is a certain `TypeError` (issue #2853). `too_few`: a required
+    parameter no positional and no keyword fills is one too, unless a
+    `*rest` or `**opts` at the site may carry it (issue #2845).
+    """
+    positional = (
+        signature.positional[1:]
+        if bound and signature.receiver and signature.positional
+        else signature.positional
+    )
+    by_keyword = {
+        name for name in positional if name not in signature.positional_only
+    } | set(signature.keyword_only)
+    if not signature.var_keyword and any(
+        name not in by_keyword for name in site.kwarg_names
+    ):
+        return cs.DELTA_ARITY_UNEXPECTED_KEYWORD
+    if site.star_args or site.star_kwargs or site.arg_count is None:
+        return None
+    written = site.arg_count - len(site.kwarg_names)
+    supplied = set(positional[:written]) | set(site.kwarg_names)
+    expected = (set(positional) | set(signature.keyword_only)) & signature.required
+    return cs.DELTA_ARITY_TOO_FEW if expected - supplied else None
 
 
 def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
@@ -744,6 +899,23 @@ def _passes_self_explicitly(site: CallSite, repo_root: Path | None) -> bool:
 
 
 def _arity_verdict(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> tuple[int, str]:
+    declared_count, verdict = _count_verdict(site, definition, repo_root)
+    if verdict == cs.DELTA_ARITY_TOO_MANY:
+        return declared_count, verdict
+    signature = _python_signature(definition, repo_root)
+    if signature is None:
+        return declared_count, verdict
+    bound = definition.label in _METHOD_LABELS and not (
+        site.arg_count is not None
+        and site.arg_count > len(site.kwarg_names)
+        and _passes_self_explicitly(site, repo_root)
+    )
+    return declared_count, (_signature_verdict(site, signature, bound) or verdict)
+
+
+def _count_verdict(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> tuple[int, str]:
     declared = definition.positional_params
@@ -826,7 +998,7 @@ def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite
         ):
             continue
         finding = _site_finding(site, callee, repo_root)
-        if finding["verdict"] == cs.DELTA_ARITY_TOO_MANY:
+        if finding["verdict"] in cs.DELTA_ARITY_DEFINITE:
             out.append(finding)
     return sorted(out, key=_site_order)
 
@@ -1428,12 +1600,12 @@ def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
         delta["dangling_callers"]
-        # Only a definite verdict: the graph records no defaults, so a
-        # `possibly_missing` site (`send(msg)` becoming `send(msg,
-        # channel=None)`) is a hint the JSON keeps, not a finding (issue
-        # #2656, as structural-delta.md documents).
+        # Only a definite verdict: a `possibly_missing` site (`send(msg)`
+        # becoming `send(msg, channel=None)`) is a hint the JSON keeps, not
+        # a finding (issue #2656, as structural-delta.md documents). The
+        # header settles `too_few` and `unexpected_keyword` (#2845, #2853).
         or any(
-            site["verdict"] == cs.DELTA_ARITY_TOO_MANY
+            site["verdict"] in cs.DELTA_ARITY_DEFINITE
             for change in delta["signature_changes"]
             for site in change["sites"]
         )
