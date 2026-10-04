@@ -618,3 +618,75 @@ def test_inline_keeps_the_import_when_the_module_name_is_taken(
     assert not report.definition_removed
     probe = "from pkg import app, hooks\nprint(app.use(), hooks.loaded)"
     assert _python(root, probe) == "(2, 'mine') ['util']"
+
+
+# --- arguments the copied body may rebind -----------------------------------------
+
+_REBIND_PY = {
+    "pkg/__init__.py": "",
+    "pkg/state.py": (
+        "n = 1\n\n\n"
+        "def advance():\n    global n\n    n = 2\n    return 10\n\n\n"
+        "def helper(x):\n    return advance() + x\n\n\n"
+        "def use_global():\n    return helper(n)\n\n\n"
+        "def use_local():\n    m = 1\n    return helper(m)\n"
+    ),
+    # `x if c else y` runs `c` first, though it is spelled after `x`.
+    "pkg/cond.py": (
+        "n = 1\n\n\n"
+        "def advance():\n    global n\n    n = 2\n    return 10\n\n\n"
+        "def helper(x):\n    return x if advance() else 0\n\n\n"
+        "def use_cond():\n    return helper(n)\n"
+    ),
+    # A nested function's `nonlocal` rebinds the caller's own local.
+    "pkg/closure.py": (
+        "def helper(x, f):\n    return f() + x\n\n\n"
+        "def use_closure():\n"
+        "    m = 1\n\n"
+        "    def bump():\n        nonlocal m\n        m = 5\n        return 10\n\n"
+        "    return helper(m, bump)\n"
+    ),
+}
+
+
+def test_inline_does_not_read_a_name_argument_after_a_call_may_rebind_it(
+    temp_repo: Path,
+) -> None:
+    root, store = _build(temp_repo, _REBIND_PY)
+    probe = (
+        "import pkg.state as s, pkg.closure as c, pkg.cond as k\n"
+        "print(s.use_global(), c.use_closure(), k.use_cond(), s.use_local())"
+    )
+    before = _python(root, probe)
+    assert before == "11 11 1 11"
+    for rel in ("pkg.state.helper", "pkg.closure.helper", "pkg.cond.helper"):
+        _inline(root, store, rel)
+    assert _python(root, probe) == before
+    text = (root / "pkg/state.py").read_text()
+    # A plain local nothing else can rebind is still substituted.
+    assert "def use_local():\n    m = 1\n    return (advance() + m)\n" in text
+
+
+_REBIND_JS = (
+    "let n = 1;\n"
+    "const k = 1;\n"
+    "function advance() { n = 2; return 10; }\n"
+    "function helper(x) { return advance() + x; }\n"
+    "console.log(helper(n));\n"
+    "console.log(helper(k));\n"
+)
+
+
+def test_inline_does_not_read_a_js_name_argument_after_a_call_may_rebind_it(
+    temp_repo: Path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    root, store = _build(temp_repo, {"web/state.js": _REBIND_JS})
+    before = _node(root, "web/state.js")
+    assert before == "11\n11"
+    report = _inline(root, store, "web.state.helper")
+    assert report is not None and report.applied, report
+    assert _node(root, "web/state.js") == before
+    # A `const` cannot be rebound, so its read may move past the call.
+    assert "console.log((advance() + k));" in (root / "web/state.js").read_text()
