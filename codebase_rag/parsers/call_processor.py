@@ -5287,8 +5287,16 @@ class CallProcessor:
         callee_type: str,
         callee_qn: str,
     ) -> None:
-        if ctx.is_python and (
-            dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+        if (
+            ctx.is_python
+            # A stub the name-only fallback merely guessed (a dict literal's
+            # `.get(...)`) says nothing about the receiver: fanning it out
+            # turned one guess into exact edges to every conformer, test
+            # doubles included (issue #2931). It stays one heuristic edge.
+            and self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC
+            and (
+                dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+            )
         ):
             # The call resolved to a Protocol stub; the stub never runs, so emit
             # edges to the method on every conformer instead of the stub.
@@ -5364,13 +5372,25 @@ class CallProcessor:
     def _emit_protocol_conformer_edges(
         self, ctx: _CallScanContext, dispatch_targets: set[tuple[str, str]]
     ) -> None:
-        for conformer_type, conformer_qn in dispatch_targets:
-            for target_qn in self._resolver.function_registry.variants(conformer_qn):
-                ctx.ensure_rel(
-                    ctx.caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        edges = [
+            (conformer_type, target_qn)
+            for conformer_type, conformer_qn in dispatch_targets
+            for target_qn in self._resolver.function_registry.variants(conformer_qn)
+        ]
+        # The receiver is one of the conformers, so with several the call is
+        # a fan-out like any other same-named candidate set (issue #1526):
+        # renaming one conformer must not rewrite the shared call site.
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for conformer_type, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str

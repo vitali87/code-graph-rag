@@ -1180,19 +1180,56 @@ class CallResolver:
     def protocol_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # A call resolved to a Protocol stub method (P.M) never runs the stub: the
         # runtime receiver is some conformer, so the sound call graph emits an edge
-        # to M on every non-Protocol class that defines it. Gating on the resolved
-        # target being a Protocol method keeps this from firing on ordinary calls.
+        # to M on every class that implements P. Gating on the resolved target
+        # being a Protocol method keeps this from firing on ordinary calls.
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or class_qn not in self._protocol_classes():
             return set()
         protocols = self._protocol_classes()
+        # The receiver is a class that implements the Protocol: one defining
+        # every method it declares, or its XxxProtocol -> Xxx implementer. A
+        # class that merely shares this method's name (an LRU cache's `get`
+        # beside a client Protocol's `get`/`set`) is not one (issue #2931).
+        conformers = set(self._protocol_structural_implementers(class_qn))
+        if named_impl := self._protocol_impl_map().get(class_qn):
+            conformers.add(named_impl)
+        methods = {
+            resolved[1]
+            for conformer in conformers
+            if (resolved := self._try_resolve_method(conformer, method_name))
+        }
+        # The definers of a same-named method, read from the registry, which
+        # an incremental run holds whole: the class hierarchy those scans
+        # walk holds only the re-parsed files' classes then (issue #532).
+        required = self._protocol_method_names(class_qn)
+        definers = {
+            definer: qn
+            for qn in self.function_registry.find_ending_with(method_name)
+            if (parts := qn.rpartition(cs.SEPARATOR_DOT))[1]
+            and parts[2] == method_name
+            and (definer := parts[0]) not in protocols
+        }
+        # The XxxProtocol -> Xxx convention, held to the uniqueness
+        # `_protocol_impl_map` asks of it.
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        named = [
+            definer
+            for definer in definers
+            if simple != cs.PY_PROTOCOL
+            and simple.endswith(cs.PY_PROTOCOL)
+            and definer.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            == simple.removesuffix(cs.PY_PROTOCOL)
+        ]
+        for definer, qn in definers.items():
+            if (len(named) == 1 and definer == named[0]) or all(
+                self._try_resolve_method(definer, m) for m in required
+            ):
+                methods.add(qn)
         targets: set[tuple[str, str]] = set()
-        # Conformers are found by method name, so the same reachability bound
-        # the simple-name fallback uses applies: nothing written in a language
-        # the Protocol's own cannot call into conforms to it (issue #945).
-        for qn in self._nameable_candidates(
-            self.function_registry.find_ending_with(method_name), class_qn
-        ):
+        # The same reachability bound the simple-name fallback uses applies:
+        # nothing written in a language the Protocol's own cannot call into
+        # conforms to it (issue #945).
+        for qn in self._nameable_candidates(sorted(methods), class_qn):
             definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if dot and name == method_name and definer not in protocols:
                 targets.add((self.function_registry[qn], qn))
@@ -4498,17 +4535,21 @@ class CallResolver:
         # Protocol/implementer names don't follow the XxxProtocol convention.
         if protocol_qn in self._struct_impl_cache:
             return self._struct_impl_cache[protocol_qn]
-        sep = cs.SEPARATOR_DOT
-        protocol_methods = {
-            qn.rsplit(sep, 1)[-1]
-            for qn, node_type in self.function_registry.find_with_prefix(protocol_qn)
-            if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == protocol_qn
-        }
+        protocol_methods = self._protocol_method_names(protocol_qn)
         result: set[str] = set()
         if protocol_methods:
             result = self._classes_defining_all(protocol_methods)
         self._struct_impl_cache[protocol_qn] = result
         return result
+
+    def _protocol_method_names(self, protocol_qn: str) -> set[str]:
+        """The names of the methods a Protocol declares itself."""
+        sep = cs.SEPARATOR_DOT
+        return {
+            qn.rsplit(sep, 1)[-1]
+            for qn, node_type in self.function_registry.find_with_prefix(protocol_qn)
+            if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == protocol_qn
+        }
 
     def _classes_defining_all(self, protocol_methods: set[str]) -> set[str]:
         result: set[str] = set()
