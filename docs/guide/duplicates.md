@@ -423,10 +423,19 @@ Each reported group lists its members with `file:line` locations, ordered so
 the largest wins — the groups with the most copies and the biggest bodies come
 first, because that is where applying DRY pays off most.
 
-Every pair inside a group clears the similarity threshold, and a function can
-appear in more than one `similar` group: when `A` duplicates both `B` and `C`
-but `B` and `C` are not similar to each other, the report shows `{A, B}` and
-`{A, C}` rather than lumping all three together or dropping one pair.
+Groups are disjoint: every function appears in at most one group, so the
+group count is the number of separate places to refactor. Near-duplicate pairs
+are clustered: when `A` duplicates both `B` and `C` but `B` and `C` are not
+similar to each other, the report shows one group `{A, B, C}` rather than
+`{A, B}` and `{A, C}` with `A` in both. No qualifying pair is ever dropped;
+every pair at or above the threshold sits inside one group. Two members of a
+`similar` group may therefore be linked only through a third, which is why its
+similarity is shown as a range, from its weakest link to its strongest.
+
+Exact copies that are also near-duplicates of something else are reported
+inside that `similar` group rather than again as a group of their own: the
+table numbers them in an extra `Exact` column (members sharing a number are
+copies of each other), and the JSON lists them under `exact_subgroups`.
 
 Candidate discovery is *exact*: any pair of functions clearing the threshold
 is guaranteed to be compared, no matter how common their shared blocks are.
@@ -443,11 +452,14 @@ scan can never be mistaken for a complete one.
 
 By default the report contains both kinds of finding:
 
-- **Clone groups** — functions with identical structural fingerprints:
-  exact copies and renamed copies. These are certain matches.
-- **Near-duplicate pairs** — functions whose branch overlap meets the
-  similarity threshold: copies that were edited after pasting. These carry a
-  score (e.g. `0.87`) so you can judge how close they are.
+- **Clone groups** (`exact`) — functions with identical structural
+  fingerprints: exact copies and renamed copies. These are certain matches.
+- **Near-duplicate groups** (`similar`) — functions whose branch overlap
+  meets the similarity threshold: copies that were edited after pasting.
+  These carry a score range (e.g. `82-95%`) so you can judge how close they
+  are. A `similar` group at 100% shares every statement shape, but its bodies
+  still differ (statement order, repeats or short statements), so it is not
+  an exact copy.
 
 Tighten or loosen the second kind with `--threshold`:
 
@@ -533,8 +545,10 @@ cgr duplicates --open 3
 
 opens group 3's first two members in your editor's diff view (`code --diff`
 and equivalents; `CGR_DIFF_COMMAND="meld {left} {right}"` substitutes any
-tool). Groups with more than two members open their first pair — the two
-whose paths sort first.
+tool). Groups with more than two members open their first pair. In an
+`exact` group those are the two whose paths sort first; a `similar` group
+lists its most similar qualifying pair first, so the diff never shows two
+members that are linked only through a third.
 
 Both features need the graph to record where the project lives on disk;
 graphs indexed before this existed fall back to plain text until re-indexed.
@@ -563,6 +577,7 @@ could not be analyzed:
     {
       "kind": "exact",
       "similarity": 1.0,
+      "max_similarity": 1.0,
       "node_count": 24,
       "members": [
         {
@@ -573,7 +588,9 @@ could not be analyzed:
           "start_line": 5,
           "end_line": 12
         }
-      ]
+      ],
+      "exact_subgroups": [],
+      "links": []
     }
   ],
   "skipped_symbols": 0,
@@ -581,12 +598,26 @@ could not be analyzed:
 }
 ```
 
+`similarity` and `max_similarity` are a group's weakest and strongest link
+(both `1.0` for an `exact` group). `exact_subgroups` lists, for a `similar`
+group, the qualified names of each set of members that are exact copies of
+each other; it is empty for an `exact` group, which is one such set as a
+whole. `links` lists a `similar` group's qualifying pairs between different
+fingerprints, strongest first, as `{"first", "second", "similarity"}` objects
+naming two members by qualified name. Together with `exact_subgroups` they
+are the group's duplicate pairs: two members not paired by either are in the
+group only because a third links them. It is empty for an `exact` group,
+where every pair is a duplicate. Two similar clone classes link every copy of
+one to every copy of the other, so a group lists at most 10,000 links, the
+strongest; when it has more, `truncated` is `true`.
+
 `skipped_symbols` counts functions and methods with no structural
 fingerprint: pattern-tier languages and bodiless declarations. `truncated`
 is `true` when similar-group enumeration stopped at its internal cap —
 qualifying groups may be missing, and narrowing the scan with a higher
-`--threshold` or `--min-size` brings the report back under the cap. The
-table output prints the same facts as notices after the report.
+`--threshold` or `--min-size` brings the report back under the cap — or
+when a group's `links` were cut to their cap, which only the JSON report
+lists. The table output prints the other facts as notices after the report.
 
 ## Use in CI
 
