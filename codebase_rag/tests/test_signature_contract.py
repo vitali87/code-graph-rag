@@ -131,7 +131,8 @@ def test_passing_change_is_kept_with_its_verdict(harness: _Harness) -> None:
     result = harness.run(_report())
     assert harness.measured == [("pkg/util.py", "pkg/app.py")]
     assert result.applied
-    assert result.verdict is not None and result.verdict.ok
+    assert result.verdict is not None
+    assert result.verdict.ok
     assert result.message == "applied"
     assert harness.undone == []
 
@@ -147,7 +148,8 @@ def test_listed_unmapped_site_is_keyed_by_column(harness: _Harness) -> None:
         UnmappedSite("p.pkg.app.run", "pkg/app.py", None, None, "no location"),
     )
     result = harness.run(_report(unmapped=listed))
-    assert result.verdict is not None and not result.verdict.ok
+    assert result.verdict is not None
+    assert not result.verdict.ok
     assert result.verdict.failures == (
         cs.CONTRACT_SITES_UNMAPPED.format(sites="pkg/app.py:7:20 (too_many)"),
     )
@@ -157,7 +159,9 @@ def test_listed_unmapped_site_is_keyed_by_column(harness: _Harness) -> None:
     harness.undone.clear()
     harness.delta = _delta([_finding("pkg/app.py", 7, 4)])
     kept = harness.run(_report(unmapped=listed))
-    assert kept.applied and kept.verdict is not None and kept.verdict.ok
+    assert kept.applied
+    assert kept.verdict is not None
+    assert kept.verdict.ok
     assert harness.undone == []
 
 
@@ -173,7 +177,9 @@ def test_failed_postcondition_undoes_this_transaction(harness: _Harness) -> None
 
 def test_heuristic_rewrite_is_kept_when_allowed(harness: _Harness) -> None:
     result = harness.run(_report(resolution="heuristic"), allow_heuristic=True)
-    assert result.applied and result.verdict is not None and result.verdict.ok
+    assert result.applied
+    assert result.verdict is not None
+    assert result.verdict.ok
     assert harness.undone == []
 
 
@@ -184,7 +190,8 @@ def test_rollback_refused_by_a_later_edit_keeps_the_change(
     result = harness.run(_report(resolution="heuristic"))
     reasons = cs.CONTRACT_HEURISTIC_REWRITTEN.format(sites="pkg/app.py:5:11")
     assert result.applied
-    assert result.verdict is not None and not result.verdict.ok
+    assert result.verdict is not None
+    assert not result.verdict.ok
     assert result.message == cs.SIGNATURE_ROLLBACK_REFUSED.format(reasons=reasons)
     assert harness.reingested == []
 
