@@ -171,6 +171,21 @@ _NOT_MODELLED: frozenset[str] = frozenset(
         cq.CYPHER_UNANCHORED_GLOSSES,
     }
 )
+# The issue #897 migration's damage detectors: Folder/File rows with no
+# per-project key, or one reached by containment from two parents.
+_STRUCTURE_LABELS = frozenset({cs.NodeLabel.FOLDER.value, cs.NodeLabel.FILE.value})
+_STRUCTURE_CONTAINMENT_RELS = frozenset(
+    {
+        cs.RelationshipType.CONTAINS_FOLDER.value,
+        cs.RelationshipType.CONTAINS_FILE.value,
+    }
+)
+
+
+def _damaged_rows(damaged: bool) -> list[ResultRow]:
+    return [{cs.KEY_DAMAGED: 1}] if damaged else []
+
+
 _MODULE_QN_LABELS = frozenset(
     {
         _MODULE_LABEL,
@@ -1701,6 +1716,29 @@ class _StatefulIngestor:
             case cs.CYPHER_ALL_METHOD_LOCATIONS:
                 prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
                 return self._definition_location_rows(prefix, cs.NodeLabel.METHOD.value)
+            case cq.CYPHER_ANY_KEYLESS_STRUCTURE:
+                return _damaged_rows(
+                    any(
+                        label in _STRUCTURE_LABELS
+                        and props.get(cs.KEY_ABSOLUTE_PATH) is None
+                        for (label, _uid), props in self.nodes.items()
+                    )
+                )
+            case cq.CYPHER_ANY_SHARED_STRUCTURE:
+                return _damaged_rows(
+                    any(
+                        node_id[0] in _STRUCTURE_LABELS
+                        and len(
+                            {
+                                (edge[0], edge[1])
+                                for edge in self._in.get(node_id, ())
+                                if edge[2] in _STRUCTURE_CONTAINMENT_RELS
+                            }
+                        )
+                        > 1
+                        for node_id in self.nodes
+                    )
+                )
             case _:
                 if query in _NOT_MODELLED:
                     return []

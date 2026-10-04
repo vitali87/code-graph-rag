@@ -130,6 +130,42 @@ async def test_a_second_preview_still_plans_after_a_refusal(
     assert result["sites"], result
 
 
+async def test_a_preview_whose_hydration_purged_legacy_structure_keeps_the_marker(
+    indexed: tuple[MCPToolsRegistry, str],
+) -> None:
+    # A keyless File is legacy structure the constraint migration purges
+    # when the cold updater hydrates; the graph then lacks nodes until a
+    # rebuild, so the preview must not clear the marker that says so
+    # (Greptile, PR #2900).
+    server, project = indexed
+    server.ingestor.execute_write("CREATE (:File {path: 'legacy.py'})", None)
+
+    await server.rename(f"{project}.pkg.core.helper", "helper2", dry_run=True)
+
+    assert _markers(server, project) != []
+
+
+async def test_a_preview_whose_marker_clear_fails_reports_it(
+    indexed: tuple[MCPToolsRegistry, str],
+) -> None:
+    # The finally block discarded `_require_marker_cleared`'s error, so the
+    # preview read as a success over a project left marked (CodeRabbit, PR
+    # #2900).
+    server, project = indexed
+    persist = server._persist_incomplete
+
+    def failing_clear(name: str, incomplete: bool, *, writing: bool = True) -> bool:
+        return False if not incomplete else persist(name, incomplete, writing=writing)
+
+    with patch.object(server, "_persist_incomplete", failing_clear):
+        result = await server.rename(
+            f"{project}.pkg.core.helper", "helper2", dry_run=True
+        )
+
+    stuck = cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project)
+    assert _error(result) == stuck
+
+
 # Negative: what must not change.
 
 

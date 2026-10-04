@@ -3117,6 +3117,17 @@ class MCPToolsRegistry:
             ),
         )
 
+    def _legacy_structure_present(self) -> bool:
+        """Whether the graph holds the legacy Folder/File structure the
+        constraint migration purges (issue #897)."""
+        return any(
+            self.ingestor.fetch_all(query)
+            for query in (
+                cq.CYPHER_ANY_SHARED_STRUCTURE,
+                cq.CYPHER_ANY_KEYLESS_STRUCTURE,
+            )
+        )
+
     def _retained_updater_for(self, project_name: str) -> GraphUpdater | None:
         """The warm updater a rename re-ingests through, if this project has one.
 
@@ -3269,8 +3280,14 @@ class MCPToolsRegistry:
         # up front: it is what refuses a rename over a partial graph, or one
         # whose marker cannot be written, before any file changes.
         hydrates = self._retained_updater_for(project_name) is None
+        # Hydration runs the constraint migration, which purges legacy
+        # structure; the graph then lacks those nodes until a rebuild, so the
+        # marker hydration put down stays (Greptile, PR #2900).
+        purges_legacy = hydrates and self._legacy_structure_present()
         guarded: Callable[[list[str]], ReingestReport] | None = None
         reingested: list[list[str]] = []
+        marker_error: str | None = None
+        refusal: RenameRefused | None = None
         try:
             # The applied rename is held to its postcondition contract through
             # the scoped re-ingest (issue #1531); a project that is not indexed
@@ -3293,20 +3310,29 @@ class MCPToolsRegistry:
                 heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:
-            return {
-                cs.DICT_KEY_ERROR: str(refused),
-                cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
-                cs.KEY_UNLOCATABLE: list(refused.unlocatable),
-            }
+            refusal = refused
         finally:
             # The callback, once called, settles the marker itself (cleared,
             # or kept over a graph it may have written). Uncalled, nothing
             # touched the graph after hydration, so the run is complete. A
-            # failed clear raises the in-process flag and logs, the same
-            # record a failed clear leaves everywhere else.
-            if hydrates and guarded is not None and not reingested:
-                self._require_marker_cleared(project_name)
-        payload_marker_error: str | None = None
+            # failed clear raises the in-process flag and is reported in the
+            # result, never dropped (CodeRabbit, PR #2900).
+            if (
+                hydrates
+                and guarded is not None
+                and not reingested
+                and not purges_legacy
+            ):
+                marker_error = self._require_marker_cleared(project_name)
+        if refusal is not None:
+            return {
+                cs.DICT_KEY_ERROR: " ".join(
+                    part for part in (str(refusal), marker_error) if part
+                ),
+                cs.KEY_AMBIGUOUS: sites_for(refusal.ambiguous),
+                cs.KEY_UNLOCATABLE: list(refusal.unlocatable),
+            }
+        payload_marker_error: str | None = marker_error
         if getattr(report, "graph_incomplete", False):
             # The rollback's re-ingest failed: the same invalidation the
             # scoped re-ingest applies, so no later call reuses a partial graph.
