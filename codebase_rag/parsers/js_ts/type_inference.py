@@ -10,7 +10,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from . import utils as ut
 
 # Callable node types whose bodies own their locals and returns; the shared
@@ -149,7 +149,7 @@ class JsTypeInferenceEngine:
                 try:
                     q = get_cached_query(lang_queries["language"], _JS_DECLARATOR_QUERY)
                     cursor = QueryCursor(q)
-                    captures = cursor.captures(caller_node)
+                    captures = sorted_captures(cursor, caller_node)
                     return captures.get("declarator", [])
                 except Exception:  # noqa: S112 - a failed query falls through to the next language
                     continue

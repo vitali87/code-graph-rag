@@ -15,7 +15,7 @@ from ...types_defs import (
     NodeType,
 )
 from ..import_processor import ImportProcessor
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .utils import resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
@@ -394,7 +394,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             try:
                 q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = sorted_captures(cursor, node)
                 for assign_node in captures.get("assignment", []):
                     self._process_self_assignment(
                         assign_node, local_var_types, module_qn

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Language, Node, QueryCursor
 
 from ... import constants as cs
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, safe_decode_text, sorted_captures
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
@@ -119,7 +119,7 @@ def find_return_statements(
         try:
             q = get_cached_query(language_obj, _JS_RETURN_QUERY)
             cursor = QueryCursor(q)
-            captures = cursor.captures(node)
+            captures = sorted_captures(cursor, node)
             return_nodes.extend(captures.get("return_stmt", []))
             return
         except Exception:  # noqa: S110 - a failed query falls back to the walk below
