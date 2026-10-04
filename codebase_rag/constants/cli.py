@@ -955,6 +955,9 @@ INLINE_REFUSED_GENERATOR = (
 INLINE_REFUSED_IMPLICIT = (
     "{qn} reads `{name}`, which would bind to the call site instead of the callee"
 )
+INLINE_REFUSED_DECORATED = (
+    "{qn} is decorated; inlining would replace the decorated call with its bare body"
+)
 INLINE_REFUSED_PARAMETER = "{qn} has a parameter inlining cannot bind: {parameter}"
 # move (issue #1534).
 MOVE_UNKNOWN = "No definition named {qn} in the graph"
