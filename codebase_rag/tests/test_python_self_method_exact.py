@@ -20,6 +20,23 @@ from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 FILES = {
+    # Python resolves `self.m()` in D along D's C3 MRO, D, B, A, C: A.m,
+    # though a breadth-first walk of the bases meets C first (Greptile, PR
+    # #2908).
+    "mro.py": (
+        "class A:\n    def m(self):\n        return 1\n\n\n"
+        "class B(A):\n    pass\n\n\n"
+        "class C:\n    def m(self):\n        return 2\n\n\n"
+        "class D(B, C):\n    def run(self):\n        return self.m()\n"
+    ),
+    # A static method's `self` is an ordinary parameter, typed here.
+    "static_self.py": (
+        "class Other:\n    def m(self):\n        return 3\n\n\n"
+        "class Host:\n"
+        "    def m(self):\n        return 4\n\n"
+        "    @staticmethod\n"
+        "    def run(self: Other):\n        return self.m()\n"
+    ),
     "leaf.py": (
         "class Leaf:\n"
         "    def helper(self):\n        return 1\n\n"
@@ -166,3 +183,15 @@ def test_an_annotated_receiver_binds_its_own_type(graph: RecordedGraph) -> None:
     # `self: Other2` in a method of `Mine` names the receiver's type; the
     # enclosing class must not take the call (Greptile, PR #2953).
     assert _calls(graph, "annotated.Mine.typed").get("annotated.Other2.m") == "exact"
+
+
+def test_an_inherited_self_call_follows_the_python_mro(graph: RecordedGraph) -> None:
+    calls = _calls(graph, "mro.D.run")
+    assert calls.get("mro.A.m") == "exact"
+    assert "mro.C.m" not in calls
+
+
+def test_a_static_methods_typed_self_binds_its_type(graph: RecordedGraph) -> None:
+    calls = _calls(graph, "static_self.Host.run")
+    assert calls.get("static_self.Other.m") == "exact"
+    assert "static_self.Host.m" not in calls
