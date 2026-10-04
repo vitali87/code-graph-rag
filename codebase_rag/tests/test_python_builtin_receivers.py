@@ -49,8 +49,19 @@ APP = (
     "def untyped(x):\n    return x.get(1)\n\n\n"
     "def loop_keys():\n    d = {}\n    for k in d:\n        k.get(1)\n\n\n"
     "def loop_bags():\n    for b in [Bag(), Bag()]:\n        b.get(1)\n\n\n"
-    'def no_counterpart():\n    return "abc".upper()\n'
+    'def no_counterpart():\n    return "abc".upper()\n\n\n'
+    # Bot review on PR #2912.
+    "class Store:\n"
+    "    def __init__(self):\n        self.cache: dict = {}\n\n"
+    "    def lookup(self, k):\n        return self.cache.get(k)\n\n\n"
+    "def chars_strip(chars: str):\n    for ch in chars:\n        ch.strip()\n\n\n"
+    "def make_bag() -> Bag:\n    return Bag()\n\n\n"
+    "def factory_reassigned():\n    x = {}\n    x = make_bag()\n    return x.get(1)\n\n\n"
+    "def bag_then_literal():\n"
+    "    x = Bag()\n    first = x.get(1)\n    x = {}\n    return first\n"
 )
+# A first-party class imported under a builtin's name is that class.
+ALIASED = "from lib import Bag as dict\n\n\ndef fetch(x: dict):\n    return x.get(1)\n"
 
 
 @pytest.fixture(scope="module")
@@ -58,6 +69,7 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("builtins") / "lit"
     _write(root, "lib.py", LIB)
     _write(root, "app.py", APP)
+    _write(root, "aliased.py", ALIASED)
     return _index(root, MagicMock())
 
 
@@ -85,12 +97,33 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         "local_strip",
         "App.lookup",
         "App.record",
+        "Store.lookup",
+        "chars_strip",
     ],
 )
 def test_a_call_on_a_builtin_value_binds_no_first_party_method(
     graph: RecordedGraph, caller: str
 ) -> None:
     assert not [c for c in _callees(graph, caller) if c.startswith("lib.")]
+
+
+@pytest.mark.parametrize("caller", ["factory_reassigned", "bag_then_literal"])
+def test_a_literal_does_not_retype_a_name_also_bound_to_an_instance(
+    graph: RecordedGraph, caller: str
+) -> None:
+    assert _callees(graph, caller).get("lib.Bag.get") == "exact"
+
+
+def test_a_class_imported_under_a_builtins_name_is_that_class(
+    graph: RecordedGraph,
+) -> None:
+    prefix = f"{graph.project}."
+    callees = {
+        dst.removeprefix(prefix)
+        for src, rel, dst, _props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}aliased.fetch"
+    }
+    assert "lib.Bag.get" in callees
 
 
 # Negative: what must not change.

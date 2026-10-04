@@ -2622,8 +2622,18 @@ class CallResolver:
             return False
         typed = (call.local_var_types or {}).get(receiver)
         if typed is not None:
-            return typed in cs.PY_BUILTIN_VALUE_TYPES
+            # A builtin's name the module binds itself (`from lib import Bag
+            # as dict`) is that binding, not the builtin (Greptile, PR #2912).
+            return typed in cs.PY_BUILTIN_VALUE_TYPES and not self._module_binds(
+                call.module_qn, typed
+            )
         return python_literal_text_type(receiver) is not None
+
+    def _module_binds(self, module_qn: str, name: str) -> bool:
+        return (
+            name in self.import_processor.import_mapping.get(module_qn, {})
+            or f"{module_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+        )
 
     def _receiver_is_external_python_module(self, call: _CallSite) -> bool:
         # True for a Python `mod.attr(...)` whose `mod` is bound by an import

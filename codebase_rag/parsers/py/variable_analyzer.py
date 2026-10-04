@@ -112,6 +112,14 @@ def _container_element_type(type_str: str | None) -> str | None:
     return None
 
 
+def _builtin_annotation(annotation: ASTNode) -> str | None:
+    """The builtin an attribute annotation names (`dict`, `list[int]`), or
+    None for any other type."""
+    text = (safe_decode_text(annotation) or "").split(cs.PY_GENERIC_ARGS_OPEN, 1)[0]
+    name = text.strip()
+    return name if name in cs.PY_BUILTIN_VALUE_TYPES else None
+
+
 class PythonVariableAnalyzerMixin(_VarBase):
     __slots__ = ()
     import_processor: ImportProcessor
@@ -380,13 +388,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # (already-seeded) parameter or local, so flow it onto the attribute.
             ident = safe_decode_text(right_node)
             assigned_type = local_var_types.get(ident) if ident else None
-        if (
-            not assigned_type
-            and assignment.child_by_field_name(cs.TS_FIELD_TYPE) is None
-        ):
+        if not assigned_type:
             # `self.cache = {}`: the builtin, so `self.cache.get(k)` is
-            # `dict.get` (issue #2859). An annotation says more, and wins.
-            assigned_type = python_literal_type(right_node)
+            # `dict.get` (issue #2859). An annotation says more, and wins:
+            # `self.cache: dict = {}` is the builtin its annotation names
+            # (CodeRabbit, PR #2912), and any other annotation is no builtin.
+            annotation = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+            assigned_type = (
+                python_literal_type(right_node)
+                if annotation is None
+                else _builtin_annotation(annotation)
+            )
         if not assigned_type:
             return
         local_var_types[attr_name] = assigned_type
@@ -1006,6 +1018,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
+        if local_var_types.get(var_name) == cs.PY_TYPE_STR:
+            # A string iterates as one-character strings (CodeRabbit, PR #2912).
+            return cs.PY_TYPE_STR
         if (
             var_name in local_var_types
             and (var_type := local_var_types[var_name])

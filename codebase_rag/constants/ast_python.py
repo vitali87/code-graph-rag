@@ -334,6 +334,8 @@ PY_RECEIVER_LITERAL_TYPES: dict[str, str] = {
     TS_PY_LIST_COMPREHENSION: TYPE_INFERENCE_LIST,
 }
 PY_BUILTIN_VALUE_TYPES = frozenset(PY_LITERAL_BUILTIN_TYPES.values()) | {PY_TYPE_BYTES}
+# Opens a generic annotation's arguments: `dict[str, int]` names `dict`.
+PY_GENERIC_ARGS_OPEN = "["
 # Only these can open a literal receiver's text: a quote, a bracket, a digit,
 # or a string prefix (`b"`, `rf'`). Anything else is never parsed.
 PY_LITERAL_RECEIVER_RE = r"""(?:[rRbBuUfF]{1,2})?["']|[\[{(0-9]"""
