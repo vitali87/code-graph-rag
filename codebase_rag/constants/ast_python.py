@@ -287,6 +287,8 @@ PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
 # A static method takes no receiver: a first parameter named `self` is explicit.
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
+# A class method takes the class as its receiver.
+CLASS_DECORATORS: frozenset[str] = frozenset({"classmethod"})
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no

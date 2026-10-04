@@ -904,6 +904,21 @@ EXTRACT_MAYBE_UNBOUND = (
     "The span may leave `{name}` unchanged, and `{name}` may be unbound before "
     "it; the extracted function could neither take it nor hand it back"
 )
+EXTRACT_SHARED_NAME = (
+    "The span writes `{name}`, which the function declares {keyword}; the "
+    "extracted function would bind a local of its own"
+)
+EXTRACT_SHARED_DECLARATION = (
+    "The span holds the {keyword} declaration at line {line}, which the rest of "
+    "the function would lose"
+)
+EXTRACT_PY_UNSUPPORTED_METHOD = (
+    "{qn} has no receiver the extracted method could be called through"
+)
+EXTRACT_TS_UNTYPED_INPUT = (
+    "The span reads `{name}`, whose type is not declared; the extracted "
+    "function's parameter would be an implicit any"
+)
 EXTRACT_STALE_CLOSURE = (
     "A function defined in the span reads `{name}`, which later code rebinds; "
     "moved out, it would keep reading the old value"

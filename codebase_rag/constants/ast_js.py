@@ -247,6 +247,8 @@ TS_JS_SWITCH_BODY = "switch_body"
 # `for (var x of xs)` hoists x to the function; only this `kind` widens the
 # loop binding's scope past the for statement itself.
 TS_JS_VAR_KIND = "var"
+JS_LET_KIND = "let"
+JS_CONST_KIND = "const"
 TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
 FIELD_CONSEQUENCE = "consequence"
