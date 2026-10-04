@@ -26,6 +26,7 @@ from ..utils import safe_decode_text
 from .utils import (
     _normalize_type_name,
     annotate_type_ref,
+    collection_element_text,
     generic_arity_of_type_text,
     leaf_type_segment,
     split_type_ref,
@@ -385,13 +386,125 @@ class CSharpTypeInferenceEngine:
             for declarator in decl.children:
                 if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     self._record_local(declarator, declared, types, conflicted)
+        self._collect_foreach_bindings(scope_node, types, conflicted)
+
+    def _collect_foreach_bindings(
+        self, scope_node: Node, types: dict[str, str], conflicted: set[str]
+    ) -> None:
+        # A `foreach` declares its binding in its own `type` / `left` /
+        # `right` fields, never in a variable_declaration, so no loop variable
+        # was typed: `foreach (var sink in _sinks) sink.Emit(m)` bound nothing
+        # and the explicitly typed form only by name (issue #2938). An
+        # explicit type is the binding's; `var` takes the element type of the
+        # collection's declared type, when the collection is a parameter,
+        # local or field and that type is an array or a known collection.
+        for loop in self._own_scope_nodes(scope_node, cs.TS_CSHARP_FOREACH_STATEMENT):
+            bound = loop.child_by_field_name(cs.FIELD_LEFT)
+            if bound is None or bound.type != cs.TS_CSHARP_IDENTIFIER:
+                continue
+            name = safe_decode_text(bound)
+            declared = loop.child_by_field_name(cs.FIELD_TYPE)
+            if declared is not None and declared.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+                text = safe_decode_text(declared)
+            else:
+                text = self._foreach_element_text(loop, scope_node)
+            if name and text:
+                self._record_type(name, annotate_type_ref(text), types, conflicted)
+
+    def _foreach_element_text(self, loop: Node, scope_node: Node) -> str | None:
+        collection = loop.child_by_field_name(cs.FIELD_RIGHT)
+        if collection is None:
+            return None
+        if collection.type == cs.TS_CSHARP_IDENTIFIER:
+            name = safe_decode_text(collection)
+            # A parameter or local of that name shadows the field.
+            declared = (
+                self._parameter_type_text(scope_node, name)
+                or self._local_type_text(scope_node, name)
+                or self._field_type_text(scope_node, name)
+                if name
+                else None
+            )
+        elif (
+            collection.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+            and (
+                receiver := collection.child_by_field_name(
+                    cs.TS_CSHARP_FIELD_EXPRESSION
+                )
+            )
+            is not None
+            and receiver.type == cs.TS_CSHARP_THIS
+            and (
+                name := safe_decode_text(collection.child_by_field_name(cs.FIELD_NAME))
+            )
+        ):
+            declared = self._field_type_text(scope_node, name)
+        else:
+            return None
+        return collection_element_text(declared) if declared else None
+
+    @staticmethod
+    def _parameter_type_text(scope_node: Node, name: str) -> str | None:
+        param_list = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        for param in param_list.named_children if param_list is not None else ():
+            if (
+                param.type == cs.TS_CSHARP_PARAMETER
+                and safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)) == name
+            ):
+                return safe_decode_text(param.child_by_field_name(cs.FIELD_TYPE))
+        return None
+
+    def _local_type_text(self, scope_node: Node, name: str) -> str | None:
+        # The declared type, or for `var` the type the initializer constructs.
+        for decl in self._local_variable_declarations(scope_node):
+            type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+            for declarator in decl.named_children:
+                if (
+                    declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR
+                    or safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+                    != name
+                ):
+                    continue
+                if type_node is not None and type_node.type != (
+                    cs.TS_CSHARP_IMPLICIT_TYPE
+                ):
+                    return safe_decode_text(type_node)
+                for creation in self._descendants_of_type(
+                    declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
+                ):
+                    return safe_decode_text(creation.child_by_field_name(cs.FIELD_TYPE))
+        return None
+
+    @staticmethod
+    def _field_type_text(scope_node: Node, name: str) -> str | None:
+        # A field of the type that declares this member, read off the syntax:
+        # the per-class field map is keyed by class qn, unknown here.
+        owner = scope_node.parent
+        while owner is not None and owner.type not in cs.CSHARP_TYPE_DECLARATION_NODES:
+            owner = owner.parent
+        body = owner.child_by_field_name(cs.FIELD_BODY) if owner is not None else None
+        for member in body.named_children if body is not None else ():
+            if member.type != cs.TS_CSHARP_FIELD_DECLARATION:
+                continue
+            for decl in member.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                if any(
+                    declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+                    and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+                    == name
+                    for declarator in decl.named_children
+                ):
+                    return safe_decode_text(decl.child_by_field_name(cs.FIELD_TYPE))
+        return None
 
     def _binds_local(self, node: Node, name: str) -> bool:
         """Whether a local in scope at `node` binds `name`.
 
         Two binders, both of which can leave the name out of
         `local_var_types` and so read as a TYPE: a `foreach (var name in
-        ...)` loop, whose element type is not inferred, and a local declared
+        ...)` loop whose element type is not read (a call's result, a
+        dictionary), and a local declared
         in an enclosing block whose initializer is not inferred
         (`var Config = Ext.Make();`, Copilot, #2011).
 
@@ -464,7 +577,14 @@ class CSharpTypeInferenceEngine:
         if not var_name or var_name in conflicted:
             return
         var_type = declared or self._infer_initializer_type(declarator)
-        if not var_type:
+        if var_type:
+            self._record_type(var_name, var_type, types, conflicted)
+
+    @staticmethod
+    def _record_type(
+        var_name: str, var_type: str, types: dict[str, str], conflicted: set[str]
+    ) -> None:
+        if var_name in conflicted:
             return
         existing = types.get(var_name)
         if existing is not None and existing != var_type:
@@ -724,8 +844,8 @@ class CSharpTypeInferenceEngine:
         # on an untyped receiver resolves to System.Object.
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return True
-        # A `foreach (var x in ...)` binding is a LOCAL whose element type is
-        # not inferred, so it never reaches `local_var_types`. Left to the
+        # A `foreach (var x in ...)` binding is a LOCAL whose element type
+        # may not be read, so it may not reach `local_var_types`. Left to the
         # checks below it read as an external TYPE when PascalCase and fell
         # to the name trie otherwise, which bound the call to a registered
         # class of the same name: `foreach (var Config in items) {
@@ -775,7 +895,8 @@ class CSharpTypeInferenceEngine:
     def _is_untyped_local(self, bound: Node, local_var_types: dict[str, str]) -> bool:
         # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
         # type, reaches local_var_types, and resolves normally -- this
-        # branch is never reached for it. Guarding on the `var` form
+        # branch is never reached for it, nor for a `var` binding whose
+        # element type was read (issue #2938). Guarding on the `var` form
         # keeps that path working.
         if bound.type != cs.TS_CSHARP_IDENTIFIER:
             return False
@@ -2108,7 +2229,11 @@ class CSharpTypeInferenceEngine:
         return found
 
     def _local_variable_declarations(self, scope_node: Node) -> list[Node]:
-        # Every variable_declaration lexically in this method's own scope,
+        return self._own_scope_nodes(scope_node, cs.TS_CSHARP_VARIABLE_DECLARATION)
+
+    @staticmethod
+    def _own_scope_nodes(scope_node: Node, node_type: str) -> list[Node]:
+        # Every `node_type` node lexically in this method's own scope,
         # pruning nested callables (lambdas, local functions, anonymous
         # methods): their locals belong to a separate scope and must not leak
         # into or shadow the enclosing method's type map.
@@ -2118,7 +2243,7 @@ class CSharpTypeInferenceEngine:
             current = stack.pop()
             if current.type in cs.TS_CSHARP_NESTED_SCOPE_TYPES:
                 continue
-            if current.type == cs.TS_CSHARP_VARIABLE_DECLARATION:
+            if current.type == node_type:
                 found.append(current)
             stack.extend(current.children)
         return found

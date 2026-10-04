@@ -156,6 +156,47 @@ TS_CSHARP_PARAMETER_LIST = "parameter_list"
 # variable_declaration; a property_declaration exposes `type` and `name` directly.
 TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
 TS_CSHARP_FOREACH_STATEMENT = "foreach_statement"
+# The declarations a field belongs to.
+CSHARP_TYPE_DECLARATION_NODES = frozenset(
+    {
+        TS_CSHARP_CLASS_DECLARATION,
+        TS_CSHARP_STRUCT_DECLARATION,
+        TS_CSHARP_RECORD_DECLARATION,
+        TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+# Generic collections whose one type argument is the element a `foreach`
+# binds (issue #2938); any other generic (`Dictionary<K, V>`) is not read.
+CSHARP_ENUMERABLE_GENERICS = frozenset(
+    {
+        "IEnumerable",
+        "IAsyncEnumerable",
+        "ICollection",
+        "IList",
+        "IReadOnlyCollection",
+        "IReadOnlyList",
+        "ISet",
+        "IReadOnlySet",
+        "List",
+        "HashSet",
+        "SortedSet",
+        "LinkedList",
+        "Queue",
+        "Stack",
+        "Collection",
+        "ReadOnlyCollection",
+        "ObservableCollection",
+        "ImmutableArray",
+        "ImmutableList",
+        "ImmutableHashSet",
+        "IImmutableList",
+        "IImmutableSet",
+        "ConcurrentBag",
+        "ConcurrentQueue",
+        "ConcurrentStack",
+        "BlockingCollection",
+    }
+)
 TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CSHARP_IMPLICIT_TYPE = "implicit_type"
 TS_CSHARP_FIELD_DECLARATION = "field_declaration"
