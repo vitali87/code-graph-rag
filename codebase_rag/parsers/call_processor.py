@@ -5401,6 +5401,7 @@ class CallProcessor:
             call_name,
             ctx.module_qn,
             self._resolver.function_registry.variants(callee_qn),
+            ctx.caller_qn,
         )
         if len(
             targets
