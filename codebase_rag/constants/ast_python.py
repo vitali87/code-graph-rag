@@ -323,3 +323,17 @@ GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
 # letting a RecursionError discard the whole method's variable types.
 GUARD_JAVA_INFERENCE_DEPTH = "_java_inference_depth_guard"
 JAVA_MAX_INFERENCE_DEPTH = 64
+
+# A Python `__all__` assignment (group 1 is the bracketed body) and one string
+# entry in it. Shared by the rename that rewrites the entries, its rollback
+# check, and the structural delta that reports entries naming a removed symbol
+# (issue #2516), so the three cannot disagree about what an entry is.
+PY_DUNDER_ALL_BLOCK_PATTERN = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
+PY_DUNDER_ALL_ENTRY_PATTERN = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
+# The module attribute `from module import *` reads, its two list methods a
+# module may grow it with, and the prefix that keeps a name out of a wildcard
+# import of a module without one.
+PY_DUNDER_ALL = "__all__"
+PY_LIST_EXTEND = "extend"
+PY_LIST_APPEND = "append"
+PY_PRIVATE_PREFIX = "_"
