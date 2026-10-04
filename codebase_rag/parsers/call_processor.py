@@ -1617,6 +1617,30 @@ def _truthiness_operands(node: Node) -> list[Node | None]:
     return []
 
 
+def _go_asserted_receiver_call_name(selector: Node) -> str | None:
+    # `a.(Dog).Fetch()` and `x.(*Cat).Purr()` name the receiver's concrete
+    # type at the call site, so the call is `Dog.Fetch`, which the resolver
+    # binds as it binds a typed receiver (and as it already did once the
+    # assertion was hoisted into a local); the selector's own text was a call
+    # name it could not read (issue #2891).
+    operand = selector.child_by_field_name(cs.FIELD_OPERAND)
+    method = selector.child_by_field_name(cs.FIELD_FIELD)
+    while operand is not None and operand.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        operand = operand.named_child(0)
+    if (
+        operand is None
+        or operand.type != cs.TS_GO_TYPE_ASSERTION_EXPRESSION
+        or method is None
+        or method.text is None
+    ):
+        return None
+    type_node = operand.child_by_field_name(cs.FIELD_TYPE)
+    type_name = go_utils.type_identifier_text(type_node) if type_node else None
+    if not type_name:
+        return None
+    return f"{type_name}{cs.SEPARATOR_DOT}{decode_node_text(method.text)}"
+
+
 def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None]:
     """Peel type-transparent wrappers off a getter read's receiver.
 
@@ -3571,6 +3595,10 @@ class CallProcessor:
         # The callee name a call's `function` field spells; None means no case
         # named it and the caller falls back to the call node's own shape.
         match func_child.type:
+            case cs.TS_SELECTOR_EXPRESSION if language == cs.SupportedLanguage.GO and (
+                asserted_call := _go_asserted_receiver_call_name(func_child)
+            ):
+                return asserted_call
             case (
                 cs.TS_IDENTIFIER
                 | cs.TS_ATTRIBUTE
