@@ -4977,15 +4977,17 @@ class CallProcessor:
                 self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
             return
         if ctx.is_python and (
-            members := self._union_receiver_callees(
+            union := self._union_receiver_callees(
                 ctx, call_node, call_name, call_var_types
             )
         ):
             # Each member type's method is a runtime-possible target of this
             # one site: an edge to each, `overload` when there are several
-            # (issue #2842).
+            # (issue #2842), or when a member resolved to nothing first-party
+            # and may run a method of its own (Greptile, PR #2957).
+            members, every_member_resolved = union
             for member_callee in members:
-                if len(members) > 1:
+                if len(members) > 1 or not every_member_resolved:
                     self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
                 self._ingest_resolved_call(ctx, call_node, call_name, member_callee)
             return
@@ -5028,32 +5030,39 @@ class CallProcessor:
         call_node: Node,
         call_name: str,
         call_var_types: dict[str, str] | None,
-    ) -> list[tuple[str, str]]:
+    ) -> tuple[list[tuple[str, str]], bool] | None:
         # `s._area()` where `s` is `Circle | Square` (rebound in a branch,
-        # or annotated so): the call resolved once per member type. A union
-        # receiver otherwise stays unresolved, and typing it by one member
-        # dropped the other's method (issue #2842). `X | None` is not a
-        # union of receivers: the resolver strips the None itself.
+        # or annotated so): the call resolved once per member type, and
+        # whether every member resolved. A union receiver otherwise stays
+        # unresolved, and typing it by one member dropped the other's method
+        # (issue #2842). `X | None` is not a union of receivers: the
+        # resolver strips the None itself. None when there is no union, or
+        # no member resolves.
         if not call_var_types or cs.SEPARATOR_DOT not in call_name:
-            return []
+            return None
         receiver = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
         union = call_var_types.get(receiver)
         if union is None or cs.PY_UNION_SEPARATOR not in union:
-            return []
+            return None
         members = [
             member
             for raw in union.split(cs.PY_UNION_SEPARATOR)
             if (member := raw.strip()) and member != cs.PY_NONE
         ]
         if len(members) < 2:
-            return []
+            return None
         found: dict[str, tuple[str, str]] = {}
+        every_member_resolved = True
         for member in members:
             if callee := self._resolve_call_callee(
                 ctx, call_node, call_name, {**call_var_types, receiver: member}
             ):
                 found.setdefault(callee[1], callee)
-        return list(found.values())
+            else:
+                every_member_resolved = False
+        if not found:
+            return None
+        return list(found.values()), every_member_resolved
 
     def _emit_cpp_template_dispatch(
         self,

@@ -1018,8 +1018,22 @@ class PythonAstAnalyzerMixin(_AstBase):
         with_targets = _with_targets(node, with_statements)
         pending = self._type_with_targets(with_targets, local_var_types, module_qn)
 
+        # The simple pass ran in order; this one reads its final state, so a
+        # branch rebinding a later top-level assignment replaces joins
+        # nothing (it never reaches a use after that replacement).
+        replaced_at = self._top_level_rebinding_offsets(assignments, node)
         for assignment in assignments:
-            self._process_assignment_complex(assignment, local_var_types, module_qn)
+            name = self._assignment_name(assignment)
+            self._process_assignment_complex(
+                assignment,
+                local_var_types,
+                module_qn,
+                joins=_in_branch(assignment, node)
+                and not any(
+                    offset > assignment.start_byte
+                    for offset in replaced_at.get(name or "", ())
+                ),
+            )
         # The complex pass went by an assignment reading a target typed only
         # by the retry (`forked = session.fork()`), so it runs again whenever
         # a retry types a manager; it types only names still untyped. Each
@@ -1174,8 +1188,29 @@ class PythonAstAnalyzerMixin(_AstBase):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
 
+    def _assignment_name(self, assignment: Node) -> str | None:
+        left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+        return self._extract_assignment_variable_name(left_node) if left_node else None
+
+    def _top_level_rebinding_offsets(
+        self, assignments: list[Node], scope: Node
+    ) -> dict[str, list[int]]:
+        """Where each name is rebound at `scope`'s top level, which always runs
+        and so replaces whatever a branch bound before it."""
+        offsets: dict[str, list[int]] = {}
+        for assignment in assignments:
+            if not _in_branch(assignment, scope) and (
+                name := self._assignment_name(assignment)
+            ):
+                offsets.setdefault(name, []).append(assignment.start_byte)
+        return offsets
+
     def _process_assignment_complex(
-        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+        self,
+        assignment_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        joins: bool = False,
     ) -> None:
         left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -1187,7 +1222,26 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not var_name:
             return
 
-        if var_name in local_var_types:
+        # A name already typed keeps its type, unless this rebinding sits in
+        # a branch: a factory call or an alias the simple pass could not read
+        # joins the type it may replace (Greptile, PR #2957). One the simple
+        # pass read is joined already.
+        prior = local_var_types.get(var_name)
+        if prior is not None:
+            if not joins or self._infer_type_from_expression_simple(
+                right_node, module_qn
+            ):
+                return
+            added = (
+                local_var_types.get(name)
+                if right_node.type == cs.TS_IDENTIFIER
+                and (name := safe_decode_text(right_node))
+                else self._infer_type_from_expression_complex(
+                    right_node, module_qn, local_var_types
+                )
+            )
+            if added:
+                local_var_types[var_name] = _joined_type(prior, added)
             return
 
         if inferred_type := self._infer_type_from_expression_complex(

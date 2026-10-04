@@ -16,6 +16,9 @@ import pytest
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 
 SHAPES = """\
+from geometry import External
+
+
 class Circle:
     def _area(self):
         return 3.14159
@@ -88,6 +91,36 @@ def same_both(flag):
     else:
         s = Circle()
     return s._area()
+
+
+def make_square() -> Square:
+    return Square()
+
+
+def factory_branch(flag):
+    s = Circle()
+    if flag:
+        s = make_square()
+    return s._area()
+
+
+def alias_branch(flag, other: Square):
+    s = Circle()
+    if flag:
+        s = other
+    return s._area()
+
+
+def factory_then_reset(flag):
+    s = Circle()
+    if flag:
+        s = make_square()
+    s = Circle()
+    return s._area()
+
+
+def with_unindexed(s: Circle | External):
+    return s._area()
 """
 
 CIRCLE = "shapes.Circle._area"
@@ -111,7 +144,16 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize(
-    "caller", ["total", "either", "guarded", "looped", "annotated"]
+    "caller",
+    [
+        "total",
+        "either",
+        "guarded",
+        "looped",
+        "annotated",
+        "factory_branch",
+        "alias_branch",
+    ],
 )
 def test_a_receiver_that_may_hold_either_type_reaches_both_methods(
     graph: RecordedGraph, caller: str
@@ -122,6 +164,14 @@ def test_a_receiver_that_may_hold_either_type_reaches_both_methods(
         CIRCLE: "overload",
         SQUARE: "overload",
     }
+
+
+def test_a_union_with_an_unindexed_member_is_not_exact(graph: RecordedGraph) -> None:
+    # `External` comes from a dependency and may define `_area` too: the one
+    # first-party target is not the only one this site can run (Greptile,
+    # PR #2957).
+    callees = _callees(graph, "with_unindexed")
+    assert callees.get(CIRCLE) == "overload"
 
 
 # Negative: what must not change.
@@ -135,6 +185,7 @@ def test_a_receiver_that_may_hold_either_type_reaches_both_methods(
         ("single", CIRCLE),
         ("optional", CIRCLE),
         ("same_both", CIRCLE),
+        ("factory_then_reset", CIRCLE),
     ],
     ids=[
         "straight-line-rebinding",
@@ -142,6 +193,7 @@ def test_a_receiver_that_may_hold_either_type_reaches_both_methods(
         "one-assignment",
         "optional-annotation",
         "same-type-in-both-branches",
+        "branch-factory-replaced-after",
     ],
 )
 def test_a_receiver_of_one_type_still_binds_that_method_exactly(
