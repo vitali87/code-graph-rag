@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import re
+import symtable
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -48,7 +49,7 @@ from .imports import (
     _relative_specifier,
     _split_names,
 )
-from .patcher import Patcher, PatcherError
+from .patcher import Patcher, PatcherError, line_col_to_byte
 from .rename import _name_token
 from .transaction import (
     EditTransaction,
@@ -86,6 +87,31 @@ _JS_NAMESPACE = re.compile(r"\*\s*as\s+(?P<name>[\w$]+)")
 # A TS inline type-only entry (`{ type Foo }`) binds `Foo`; the modifier
 # must be set aside before comparing, but `{ type }` alone is a real name.
 _TS_INLINE_TYPE = re.compile(r"^type\s+(?=\S)")
+# Module-level statements whose bodies may run once, many times or never,
+# and the nodes opening a scope of their own: a name bound inside one is
+# not a module binding (a definition's own name is).
+_PY_FLOW = (
+    ast.If,
+    ast.Try,
+    ast.TryStar,
+    ast.With,
+    ast.AsyncWith,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.Match,
+)
+_PY_SCOPES = (
+    ast.Lambda,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+_PY_STAR = "*"
+_MODULE_SCOPE = "module"
+_SYMTABLE_FILENAME = "<moved>"
+_SYMTABLE_MODE = "exec"
 
 
 class MoveRefused(ValueError):
@@ -174,6 +200,132 @@ def _module_bound(text: str, module: str) -> bool:
 
 def _uses(text: str, name: str) -> bool:
     return re.search(_IDENTIFIER % re.escape(name), text) is not None
+
+
+def _py_bound(node: ast.AST) -> set[str]:
+    """Every module-scope name `node` can bind, on whichever path it runs."""
+    names: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names.add(current.name)
+            continue
+        if isinstance(current, _PY_SCOPES) or (
+            # `x: int` declares `x` without binding it.
+            isinstance(current, ast.AnnAssign) and current.value is None
+        ):
+            continue
+        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Store):
+            names.add(current.id)
+        elif isinstance(current, ast.Import | ast.ImportFrom):
+            names.update(
+                alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0]
+                for alias in current.names
+                if alias.name != _PY_STAR
+            )
+        elif (
+            isinstance(current, ast.ExceptHandler | ast.MatchAs | ast.MatchStar)
+            and current.name
+        ):
+            names.add(current.name)
+        elif isinstance(current, ast.MatchMapping) and current.rest:
+            names.add(current.rest)
+        stack.extend(ast.iter_child_nodes(current))
+    return names
+
+
+def _meet(left: set[str] | None, right: set[str] | None) -> set[str] | None:
+    # None is a path that never completes, which binds everything vacuously.
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left & right
+
+
+def _py_definite(body: list[ast.stmt]) -> set[str] | None:
+    """Names certainly bound once `body` completes; None when it never does.
+
+    Conservative where it cannot tell: a loop may run zero times and a
+    `match` may match nothing, so neither binds anything for certain.
+    """
+    names: set[str] = set()
+    for statement in body:
+        if isinstance(statement, ast.Raise):
+            return None
+        if isinstance(statement, ast.If):
+            bound = _meet(_py_definite(statement.body), _py_definite(statement.orelse))
+        elif isinstance(statement, ast.Try | ast.TryStar):
+            bound = _py_definite(statement.body + statement.orelse)
+            for handler in statement.handlers:
+                bound = _meet(bound, _py_definite(handler.body))
+            final = _py_definite(statement.finalbody)
+            bound = None if bound is None or final is None else bound | final
+        elif isinstance(statement, ast.With | ast.AsyncWith):
+            bound = _py_definite(statement.body)
+            if bound is not None:
+                for item in statement.items:
+                    if item.optional_vars is not None:
+                        bound |= _py_bound(item.optional_vars)
+        elif isinstance(statement, _PY_FLOW):
+            bound = set()
+        else:
+            bound = _py_bound(statement)
+        if bound is None:
+            return None
+        names |= bound
+    return names
+
+
+def _flow_bindings(source: bytes) -> tuple[frozenset[str], frozenset[str]]:
+    """(carried, unsafe): module names bound under top-level control flow.
+
+    `carried` are bound on every path that loads the module, and only
+    there, so the destination can import them back like any constant;
+    `unsafe` may be left unbound, and importing one by name would fail
+    on load wherever the old module skipped it, where before only a call
+    reaching it failed. Names a top-level statement binds are neither:
+    `_bindings` and `_needed_imports` already account for them.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return frozenset(), frozenset()
+    simple: set[str] = set()
+    anywhere: set[str] = set()
+    for statement in tree.body:
+        bound = _py_bound(statement)
+        anywhere |= bound
+        if not isinstance(statement, _PY_FLOW):
+            simple |= bound
+    definite = _py_definite(tree.body) or set()
+    return frozenset(definite - simple), frozenset(anywhere - definite)
+
+
+def _global_references(text: str) -> set[str] | None:
+    """Module-scope names the Python `text` reads; None when it won't parse.
+
+    Scoped, unlike `_uses`: a refusal on a name the moved code only binds
+    locally (a loop variable sharing a module-level loop's name) would
+    refuse a move that is safe.
+    """
+    try:
+        table = symtable.symtable(text, _SYMTABLE_FILENAME, _SYMTABLE_MODE)
+    except SyntaxError:
+        return None
+    names: set[str] = set()
+    tables = [table]
+    while tables:
+        current = tables.pop()
+        tables.extend(current.get_children())
+        at_module = current.get_type() == _MODULE_SCOPE
+        names.update(
+            symbol.get_name()
+            for symbol in current.get_symbols()
+            if symbol.is_referenced() and (at_module or symbol.is_global())
+        )
+    return names
 
 
 def _definition_at(root: Node, line: int, col: int) -> Node | None:
@@ -400,9 +552,28 @@ class Mover:
         )
 
         needed = self._needed_imports(
-            old_module, old_path, new_path, cut.text, language
+            old_module, old_path, new_path, source, root, cut.text, language
         )
         old_bindings = self._bindings(root)
+        if language == cs.SupportedLanguage.PYTHON:
+            # `_bindings` reads top-level statements only, so a constant set
+            # in both branches of an `if` was left behind (a NameError once
+            # moved); a name some path leaves unbound cannot be carried.
+            carried, unsafe = _flow_bindings(source)
+            reads = _global_references(cut.text)
+            unbound = sorted(
+                n
+                for n in unsafe
+                if n != name
+                and (n in reads if reads is not None else _uses(cut.text, n))
+            )
+            if unbound:
+                raise MoveRefused(
+                    cs.MOVE_MAYBE_UNBOUND.format(
+                        names=cs.SEPARATOR_COMMA_SPACE.join(unbound), path=old_path
+                    )
+                )
+            old_bindings = {**dict.fromkeys(carried, False), **old_bindings}
         from_old = self._needed_from_old(old_path, cut.text, name, old_bindings)
         if language in _JS_LANGUAGES:
             # `import { X }` of a name the module never exported is a load
@@ -665,10 +836,25 @@ class Mover:
         old_module: str,
         old_path: str,
         new_path: str,
+        source: bytes,
+        root: Node,
         moved_text: str,
         language: cs.SupportedLanguage | None,
     ) -> list[_NeededImport]:
-        """The old module's import statements the moved text relies on."""
+        """The old module's import statements the moved text relies on.
+
+        Only the module's own top-level imports are copied. The graph holds
+        an import written inside a function as well, and pasting that one at
+        the destination's top level makes an import the function ran only
+        on demand (an optional backend) run, and fail, on load. One inside
+        the moved definition travels with its text; one under a top-level
+        `if` or `try` is a module binding, left to `_flow_bindings`.
+        """
+        top_level = [
+            (child.start_byte, child.end_byte)
+            for child in root.children
+            if child.type in _IMPORT_TYPES
+        ]
         rows = self.fetch_all(
             cq.CYPHER_GRAPH_IMPORTS_OF,
             {
@@ -676,7 +862,6 @@ class Mover:
                 cs.KEY_QN: old_module,
             },
         )
-        source = Patcher(self.repo_root).source(old_path)
         out: dict[str, _NeededImport] = {}
         for row in rows:
             alias = row.get(cs.KEY_ALIAS)
@@ -692,6 +877,12 @@ class Mover:
             imported_raw = row.get(cs.KEY_IMPORTED_NAME)
             imported = imported_raw if isinstance(imported_raw, str) else None
             if not _uses(moved_text, bound):
+                continue
+            try:
+                at = line_col_to_byte(source, line, col)
+            except PatcherError:
+                continue
+            if not any(start <= at < end for start, end in top_level):
                 continue
             site = ImportSite(
                 old_path,
@@ -935,8 +1126,6 @@ class Mover:
         """`pkg.util.helper(...)` through `import pkg.util` follows the move."""
         if language != cs.SupportedLanguage.PYTHON:
             return
-        from .patcher import line_col_to_byte
-
         old_attr = f"{old_spelled}{cs.SEPARATOR_DOT}{name}".encode(cs.ENCODING_UTF8)
         new_attr = f"{new_spelled}{cs.SEPARATOR_DOT}{name}"
         touched: set[str] = set()
@@ -1104,8 +1293,6 @@ class Mover:
 
 
 def _statement_text(source: bytes, site: ImportSite) -> str:
-    from .patcher import line_col_to_byte
-
     start = line_col_to_byte(source, site.line, site.col)
     end = line_col_to_byte(source, site.end_line, site.end_col)
     return source[start:end].decode(cs.ENCODING_UTF8, errors="replace")

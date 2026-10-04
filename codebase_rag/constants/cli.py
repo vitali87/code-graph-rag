@@ -881,6 +881,11 @@ MOVE_SAME_MODULE = "{path} already holds the definition"
 MOVE_NO_GRAMMAR = "No grammar for {path}; the definition cannot be moved"
 MOVE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
 MOVE_CYCLE = "Refusing to move: it would create the import cycle {cycle}"
+MOVE_MAYBE_UNBOUND = (
+    "{names} may be unbound in {path}: it is set under a module-level if, "
+    "try or loop that does not bind it on every path, so the moved "
+    "definition cannot import it safely"
+)
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
 MOVE_SOURCE_CHANGED = (
