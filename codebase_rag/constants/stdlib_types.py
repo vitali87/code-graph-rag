@@ -51,6 +51,67 @@ JS_GLOBAL_CLASS_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Platform types a JS/TS receiver may be declared as with no import, none
+# of whose methods the project defines: a member call on one never binds a
+# first-party method by name (issue #2609). Absence from this list proves
+# nothing; an unlisted, unresolved name stays unknown.
+JS_TS_GLOBAL_RECEIVER_TYPES: frozenset[str] = (
+    JS_BUILTIN_TYPES
+    | JS_GLOBAL_CLASS_NAMES
+    | frozenset(
+        {
+            "ReadonlyArray",
+            "ReadonlyMap",
+            "ReadonlySet",
+            "WeakRef",
+            "Symbol",
+            "BigInt",
+            "Iterable",
+            "Iterator",
+            "IterableIterator",
+            "AsyncIterable",
+            "AsyncIterator",
+            "Generator",
+            "AsyncGenerator",
+            "PromiseLike",
+            "Int8Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Int16Array",
+            "Uint16Array",
+            "Int32Array",
+            "Uint32Array",
+            "Float32Array",
+            "Float64Array",
+            "BigInt64Array",
+            "BigUint64Array",
+            "URL",
+            "URLSearchParams",
+            "Headers",
+            "Request",
+            "Response",
+            "FormData",
+            "Blob",
+            "File",
+            "AbortController",
+            "AbortSignal",
+            "TextEncoder",
+            "TextDecoder",
+            "ReadableStream",
+            "WritableStream",
+            "WebSocket",
+            "Worker",
+            "Storage",
+            "Window",
+            "Document",
+            "Element",
+            "Node",
+            "NodeList",
+            "Buffer",
+        }
+    )
+)
+
 JS_BUILTIN_PATTERNS: frozenset[str] = frozenset(
     {
         "Object.create",

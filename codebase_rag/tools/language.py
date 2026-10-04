@@ -18,7 +18,6 @@ from typing import NamedTuple, NoReturn
 
 import click
 from rich.console import Console
-from rich.table import Table
 
 from .. import cli_help as ch
 from .. import constants as cs
@@ -852,41 +851,13 @@ def _resolve_node_categories(grammar_path: str, language_name: str) -> NodeCateg
 
 
 @cli.command(help=ch.CMD_LANGUAGE_LIST, short_help=ch.CMD_LANGUAGE_LIST)
-def list_languages() -> None:
-    console = Console()
+@click.option("--verbose", "-v", is_flag=True, help=ch.HELP_LANGUAGE_LIST_VERBOSE)
+def list_languages(verbose: bool = False) -> None:
+    # Deferred: the catalog loads the parsers package, which every other
+    # `cgr` invocation must not pay for at start-up.
+    from .language_catalog import print_language_catalog
 
-    table = Table(
-        title=f"List: {cs.LANG_TABLE_TITLE}",
-        show_header=True,
-        header_style=f"bold {cs.Color.MAGENTA}",
-    )
-    table.add_column(cs.LANG_TABLE_COL_LANGUAGE, style=cs.Color.CYAN, width=12)
-    table.add_column(cs.LANG_TABLE_COL_EXTENSIONS, style=cs.Color.GREEN, width=20)
-    table.add_column(cs.LANG_TABLE_COL_FUNCTION_TYPES, style=cs.Color.YELLOW, width=30)
-    table.add_column(cs.LANG_TABLE_COL_CLASS_TYPES, style=cs.Color.BLUE, width=35)
-    table.add_column(cs.LANG_TABLE_COL_CALL_TYPES, style=cs.Color.RED, width=30)
-
-    for lang_name, config in LANGUAGE_SPECS.items():
-        extensions = ", ".join(config.file_extensions)
-        function_types = (
-            ", ".join(config.function_node_types)
-            if config.function_node_types
-            else cs.LANG_TABLE_PLACEHOLDER
-        )
-        class_types = (
-            ", ".join(config.class_node_types)
-            if config.class_node_types
-            else cs.LANG_TABLE_PLACEHOLDER
-        )
-        call_types = (
-            ", ".join(config.call_node_types)
-            if config.call_node_types
-            else cs.LANG_TABLE_PLACEHOLDER
-        )
-
-        table.add_row(lang_name, extensions, function_types, class_types, call_types)
-
-    console.print(table)
+    print_language_catalog(Console(), verbose=verbose)
 
 
 @cli.command(

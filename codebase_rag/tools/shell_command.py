@@ -7,7 +7,7 @@ import shlex
 import shutil
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
@@ -1583,11 +1583,33 @@ def _segment_requires_approval(segment: str) -> bool | None:
 
 def _pipeline_env() -> dict[str, str]:
     env = os.environ.copy()
-    if sys.platform == "win32":
-        git_bin = r"C:\Program Files\Git\usr\bin"
-        if os.path.isdir(git_bin) and git_bin not in env["PATH"]:
-            env["PATH"] = f"{git_bin};{env['PATH']}"
+    git_bin = cs.SHELL_WINDOWS_GIT_USR_BIN
+    if sys.platform == "win32" and os.path.isdir(git_bin):
+        # First, not merely present: System32 usually precedes Git's usr\bin
+        # on PATH, and its find.exe and sort.exe answer to the POSIX names
+        # (issue #2359, the Windows runner).
+        wanted = os.path.normcase(os.path.normpath(git_bin))
+        others = [
+            entry
+            for entry in env["PATH"].split(os.pathsep)
+            if os.path.normcase(os.path.normpath(entry)) != wanted
+        ]
+        env["PATH"] = os.pathsep.join([git_bin, *others])
     return env
+
+
+def _is_windows_namesake(cmd: str, executable: str) -> bool:
+    """Whether `executable` is Windows' own program of a POSIX tool's name.
+
+    Running it for the POSIX tool the agent meant fails in a way nothing
+    explains (`find pkg -name '*.py'` gave `File not found - *.py`), so the
+    executor names the clash instead (issue #2359). Read from os.environ,
+    whose lookups ignore case on Windows, unlike a copy of it.
+    """
+    system_root = os.environ.get(cs.SHELL_WINDOWS_SYSTEM_ROOT_ENV)
+    if cmd not in cs.SHELL_WINDOWS_NAMESAKES or not system_root:
+        return False
+    return Path(executable).resolve().is_relative_to(Path(system_root).resolve())
 
 
 def _group_should_run(operator: str | None, last_return_code: int) -> bool:
@@ -1616,9 +1638,14 @@ class ShellCommander:
         self, segment: str, env: dict[str, str], pipe_stdin: bool
     ) -> asyncio.subprocess.Process:
         cmd_parts = shlex.split(segment)
-        executable = shutil.which(cmd_parts[0], path=env["PATH"])
-        if not executable:
-            executable = cmd_parts[0]
+        resolved = shutil.which(cmd_parts[0], path=env["PATH"])
+        if resolved and _is_windows_namesake(cmd_parts[0], resolved):
+            raise RuntimeError(
+                te.COMMAND_WINDOWS_NAMESAKE.format(
+                    cmd=cmd_parts[0], executable=resolved, segment=segment
+                )
+            )
+        executable = resolved or cmd_parts[0]
 
         try:
             return await asyncio.create_subprocess_exec(
@@ -1634,9 +1661,15 @@ class ShellCommander:
             # A bare str(OSError) hides WHICH segment failed to spawn, so
             # an intermittent runner failure surfaces as an opaque -1
             # (issue #902). Name the segment and the resolved executable.
+            template = te.COMMAND_SPAWN_FAILED
+            if resolved is None and isinstance(e, FileNotFoundError):
+                # Nothing on PATH answers to the name. The description
+                # steers the agent to `rg`, which many hosts lack, so say
+                # it is missing rather than that a spawn failed (#2359).
+                template = te.COMMAND_NOT_INSTALLED
             raise RuntimeError(
-                te.COMMAND_SPAWN_FAILED.format(
-                    segment=segment, executable=executable, error=e
+                template.format(
+                    cmd=cmd_parts[0], segment=segment, executable=executable, error=e
                 )
             ) from e
 
@@ -1725,44 +1758,33 @@ class ShellCommander:
 
         return last_return_code, "\n".join(all_stdout), "\n".join(all_stderr)
 
+    def refusal(self, command: str) -> str | None:
+        """Why the safety checks refuse `command`, or None when it may run.
+
+        The tool asks this BEFORE any approval prompt: a command the allowlist
+        or a danger check rejects is refused whatever the user answers, so
+        prompting for it only interrupts them (issue #2359, comment).
+        """
+        if subshell_pattern := _has_subshell(command):
+            return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern)
+        if pattern_reason := _check_pipeline_patterns(command):
+            return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
+        groups = _parse_command(command)
+        if not groups:
+            return te.COMMAND_EMPTY
+        return self._validation_error(groups)
+
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
-            if subshell_pattern := _has_subshell(command):
-                err_msg = te.COMMAND_SUBSHELL_NOT_ALLOWED.format(
-                    pattern=subshell_pattern
-                )
+            if err_msg := self.refusal(command):
                 logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
-
-            if pattern_reason := _check_pipeline_patterns(command):
-                err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=err_msg,
-                )
-
             groups = _parse_command(command)
-            if not groups:
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=te.COMMAND_EMPTY,
-                )
-
-            if err_msg := self._validation_error(groups):
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=err_msg,
-                )
 
             last_return_code, final_stdout, final_stderr = await self._run_groups(
                 groups
@@ -1792,6 +1814,31 @@ class ShellCommander:
             )
 
 
+def _refusal_or_none(shell_commander: ShellCommander, command: str) -> str | None:
+    # A command that cannot even be parsed is the executor's to report, with
+    # the same message it always gave.
+    try:
+        return shell_commander.refusal(command)
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_confined_read(command: str, project_root: Path) -> bool:
+    """Whether every segment is a read the non-interactive rules allow.
+
+    Those rules already let an operator-less run read with `ls`, `rg`, `cat`,
+    `find`, `wc`, `head`, `tail`, `sort`, `uniq` and `cut`: no write forms,
+    redirects, symlink following, option-carried inputs, or paths outside
+    the project root. Such a read shows the agent nothing the file reader
+    tool does not, which never asks, and its output still feeds the egress
+    taint gate (issue #1128). Prompting for it in interactive mode only
+    interrupted the user and pushed the agent further from the graph
+    (issue #2359). Git stays behind approval: `-C` and `--git-dir` reach
+    outside the root in ways these rules do not model.
+    """
+    return _noninteractive_denial(command, project_root) is None
+
+
 def create_shell_command_tool(
     shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
 ) -> Tool[None]:
@@ -1802,9 +1849,15 @@ def create_shell_command_tool(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
         """Run a shell command, recording both output streams."""
+        if err_msg := _refusal_or_none(shell_commander, command):
+            logger.error(err_msg)
+            return ShellCommandResult(
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+            )
         if (
             not shell_commander.is_yolo()
             and _requires_approval(command)
+            and not _is_confined_read(command, shell_commander.project_root)
             and not ctx.tool_call_approved
         ):
             raise ApprovalRequired(metadata={"command": command})
@@ -1944,6 +1997,131 @@ def _option_carries_file_input(parts: list[str]) -> bool:
     return False
 
 
+_CONFINED_READ_OPTION_KINDS: dict[str, dict[str, cs.ReadOptionKind]] = {
+    command: {
+        option: kind for kind, options in table.items() for option in options.split()
+    }
+    for command, table in cs.SHELL_CONFINED_READ_OPTIONS.items()
+}
+_FIND_NEWER_XY = re.compile(cs.SHELL_FIND_NEWER_XY)
+_VALUED_OPTION_KINDS = (cs.ReadOptionKind.VALUE, cs.ReadOptionKind.PATH)
+
+
+class _ReadOption(NamedTuple):
+    name: str
+    # None when SHELL_CONFINED_READ_OPTIONS does not list the option.
+    kind: cs.ReadOptionKind | None
+    value: str
+
+
+def _confined_option_denial(parts: list[str], root: Path) -> str | None:
+    """Why an option of this read is refused, or None when every one may run.
+
+    An allowlist (SHELL_CONFINED_READ_OPTIONS): an option it does not list is
+    refused, and a file-naming option's value is confined like an operand in
+    every spelling (`-f F`, `-fF`, `-nfF`, `--file F`, `--file=F`). Only the
+    `=` spelling was checked before, so `rg -f/outside/patterns inside.txt`
+    read an outside file without a prompt and quoted it in stderr (Greptile
+    security review on PR #2485).
+    """
+    kinds = _CONFINED_READ_OPTION_KINDS.get(parts[0], {})
+    scan = (
+        _parse_find_options if parts[0] == cs.SHELL_CMD_FIND else _parse_getopt_options
+    )
+    for option in scan(parts, kinds):
+        if option.kind is None:
+            return te.NONINTERACTIVE_UNKNOWN_OPTION.format(option=option.name)
+        if option.kind == cs.ReadOptionKind.PATH and _path_value_escapes(
+            option.value, root
+        ):
+            return te.NONINTERACTIVE_PATH_ESCAPES
+    return None
+
+
+def _parse_getopt_options(
+    parts: list[str], kinds: dict[str, cs.ReadOptionKind]
+) -> Iterator[_ReadOption]:
+    # GNU getopt and ripgrep alike: options may follow operands, `--` ends
+    # them, short options cluster (`-nf`), and a value-taking one takes the
+    # rest of its cluster or else the next argument.
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "--":
+            return
+        if arg == "-" or not arg.startswith("-"):
+            continue
+        if arg.startswith("--"):
+            yield _parse_long_option(parts[0], arg, kinds, rest)
+        elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
+            yield from _parse_short_option_cluster(arg, kinds, rest)
+
+
+def _parse_long_option(
+    command: str,
+    arg: str,
+    kinds: dict[str, cs.ReadOptionKind],
+    rest: Iterator[str],
+) -> _ReadOption:
+    name, attached, value = arg.partition("=")
+    kind = kinds.get(name)
+    if (
+        kind is None
+        and command in cs.SHELL_NEGATABLE_READS
+        and name.startswith(cs.SHELL_NEGATION_PREFIX)
+    ):
+        kind = cs.ReadOptionKind.FLAG
+    if kind == cs.ReadOptionKind.FLAG and attached:
+        # A switch given a value is a spelling these rules do not model.
+        kind = None
+    elif kind in _VALUED_OPTION_KINDS and not attached:
+        value = next(rest, "")
+    return _ReadOption(name, kind, value)
+
+
+def _parse_short_option_cluster(
+    arg: str, kinds: dict[str, cs.ReadOptionKind], rest: Iterator[str]
+) -> Iterator[_ReadOption]:
+    for offset in range(1, len(arg)):
+        name = f"-{arg[offset]}"
+        kind = kinds.get(name)
+        if kind in _VALUED_OPTION_KINDS:
+            yield _ReadOption(name, kind, arg[offset + 1 :] or next(rest, ""))
+            return
+        yield _ReadOption(name, kind, "")
+
+
+def _parse_find_options(
+    parts: list[str], kinds: dict[str, cs.ReadOptionKind]
+) -> Iterator[_ReadOption]:
+    # find's options are whole words, and each takes the next argument as
+    # its value even when that starts with a dash (`-size -10k`).
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "-" or not arg.startswith("-"):
+            continue
+        kind = kinds.get(arg)
+        if kind is None and _FIND_NEWER_XY.fullmatch(arg):
+            kind = cs.ReadOptionKind.PATH
+        value = next(rest, "") if kind in _VALUED_OPTION_KINDS else ""
+        yield _ReadOption(arg, kind, value)
+
+
+def _path_value_escapes(value: str, root: Path) -> bool:
+    # ripgrep drops an `=` between a short option and its value (`-f=F`
+    # reads F) where GNU getopt keeps it, so both readings are confined.
+    return any(
+        _path_escapes_root(candidate, root)
+        for candidate in (value, value.removeprefix("="))
+        if candidate
+    )
+
+
+def _path_escapes_root(path: str, root: Path) -> bool:
+    if _ESCAPING_PATH_ARG.search(path) or ".." in path.split("/"):
+        return True
+    return _escapes_root(root / path, root)
+
+
 def _noninteractive_denial(command: str, project_root: Path) -> str | None:
     # The denial reason for an operator-less run, or None when every segment
     # is a confined read: a read-only command in a non-writing form, no
@@ -2008,6 +2186,8 @@ def _noninteractive_segment_denial(
         return te.COMMAND_NONINTERACTIVE_DENIED.format(
             command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
         )
+    if reason := _confined_option_denial(parts, root):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(command=segment, reason=reason)
     return None
 
 

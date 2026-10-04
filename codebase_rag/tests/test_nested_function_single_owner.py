@@ -126,11 +126,12 @@ JS_MIXIN = (
 def test_a_function_nested_in_an_unnamed_js_class_keeps_its_edge(
     tmp_path: Path,
 ) -> None:
-    # The class pass drops a class expression it cannot name, so it never
-    # walks this `inner`. The module pass must still walk it, once, or the
-    # nested function loses every edge (local review of the #1903 fix).
+    # The nested function must keep its edge, exactly once (local review of
+    # the #1903 fix). Since #2567 the unbound class expression is named by its
+    # position, so `inner` hangs off its real method instead of `app.m`.
     edges = _js_call_edges(tmp_path, JS_MIXIN)
-    assert edges[("repo.app.m.inner", "repo.app.bar")] == 1, edges
+    assert edges[("repo.app.anonymous_1_24.m.inner", "repo.app.bar")] == 1, edges
+    assert edges[("repo.app.m.inner", "repo.app.bar")] == 0, edges
 
 
 JS_NAMELESS_IN_METHOD = (

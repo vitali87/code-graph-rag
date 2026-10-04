@@ -16,7 +16,8 @@ the call; `callee_path` is where the invoked symbol is defined (issue #2460).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import difflib
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TypedDict
 
@@ -30,6 +31,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .types_defs import PropertyDict, PropertyParams, ResultRow
+from .utils.path_utils import project_roots_from_rows
 from .utils.source_extraction import extract_source_lines
 
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
@@ -750,3 +752,101 @@ def remote_dependencies(
         )
         for row in fetch_all(cq.CYPHER_GRAPH_REMOTE_DEPENDENCIES, params)
     ]
+
+
+# --- unknown projects and names (issue #2461) ----------------------------------
+#
+# Every read above is scoped by a project prefix and walks edges from a name,
+# so a project the graph does not hold and a name it never saw both answer
+# with nothing -- the same `[]` a definition nobody calls gets. The CLI and
+# the MCP tools tell them apart with these, and only once an answer is empty.
+
+
+def indexed_projects(fetch_all: QueryFn) -> dict[str, str | None]:
+    """{project name: the root it was indexed from} for every project."""
+    return project_roots_from_rows(fetch_all(cq.CYPHER_LIST_PROJECTS, None))
+
+
+def close_project_names(project_name: str, known: Iterable[str]) -> list[str]:
+    """The indexed projects a mistyped or stale `project_name` most likely
+    means, closest spelling first.
+
+    Names are `<dir>__<hash>`: a close spelling catches a typo in the hash,
+    and the same `<dir>` part catches a bare directory name, a stale hash or
+    another checkout, which a spelling ratio misses once the hash differs.
+    """
+    names = sorted(set(known))
+    close = difflib.get_close_matches(
+        project_name,
+        names,
+        n=cs.GRAPH_SUGGESTION_LIMIT,
+        cutoff=cs.GRAPH_SUGGESTION_CUTOFF,
+    )
+    stem = project_name.split(cs.PROJECT_NAME_DIGEST_MARKER, 1)[0]
+    same_dir = [
+        name
+        for name in names
+        if name.split(cs.PROJECT_NAME_DIGEST_MARKER, 1)[0] == stem
+    ]
+    return list(dict.fromkeys([*close, *same_dir]))[: cs.GRAPH_SUGGESTION_LIMIT]
+
+
+def projects_rooted_at(roots: dict[str, str | None], repo_root: Path) -> list[str]:
+    """The projects indexed from `repo_root`, whatever they were named.
+
+    A repository indexed with a name of its own is not the `<dir>__<hash>`
+    its path derives, so a query run from inside it misses it by name alone.
+    """
+    here = repo_root.resolve()
+    return sorted(
+        name for name, root in roots.items() if root and Path(root).resolve() == here
+    )
+
+
+def node_exists(fetch_all: QueryFn, qualified_name: str) -> bool:
+    """Whether any node, in any project, carries `qualified_name`."""
+    return bool(fetch_all(cq.CYPHER_GRAPH_NODE_EXISTS, {cs.KEY_QN: qualified_name}))
+
+
+def similar_targets(
+    fetch_all: QueryFn, project_name: str, qualified_name: str
+) -> list[str]:
+    """This project's definitions a missing `qualified_name` most likely
+    means: close spellings of its last part under the same parent, then the
+    definitions that carry that last part as their name, wherever they are.
+    """
+    owns = _owner_check(fetch_all, project_name)
+    parent, _, leaf = qualified_name.rpartition(cs.SEPARATOR_DOT)
+    close: list[str] = []
+    # Under the project root itself the pool would be the whole project.
+    if parent.startswith(_prefix(project_name)):
+        under = _prefix(parent)
+        rows = fetch_all(
+            cq.CYPHER_GRAPH_DEFINITIONS_UNDER, {cs.KEY_PROJECT_PREFIX: under}
+        )
+        # Scored on the part after the parent: the shared prefix would make
+        # every sibling look close.
+        by_rest = {qn[len(under) :]: qn for r in rows if owns(qn := _text_qn(r))}
+        close = [
+            by_rest[rest]
+            for rest in difflib.get_close_matches(
+                leaf,
+                sorted(by_rest),
+                n=cs.GRAPH_SUGGESTION_LIMIT,
+                cutoff=cs.GRAPH_SUGGESTION_CUTOFF,
+            )
+        ]
+    same_name = (
+        [s["qualified_name"] for s in resolve(fetch_all, project_name, leaf)]
+        if leaf
+        else []
+    )
+    named = [qn for qn in same_name if qn.rpartition(cs.SEPARATOR_DOT)[2] == leaf]
+    return list(dict.fromkeys([*close, *named]))[: cs.GRAPH_SUGGESTION_LIMIT]
+
+
+def did_you_mean(names: Sequence[str]) -> str:
+    """The " Did you mean: ...?" tail of a refusal, or nothing."""
+    if not names:
+        return ""
+    return cs.GRAPH_DID_YOU_MEAN.format(names=cs.SEPARATOR_COMMA_SPACE.join(names))
