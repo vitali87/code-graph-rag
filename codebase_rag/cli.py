@@ -1913,6 +1913,7 @@ def change_signature_command(
         unmapped_for,
     )
     from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
 
     try:
         parsed = parse_mapping(mapping or [])
@@ -1921,6 +1922,17 @@ def change_signature_command(
         raise typer.Exit(code=1) from refused
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this
+        # one. The MCP handler refuses the same mismatch.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.SIGNATURE_CLI_WRONG_ROOT.format(
+                    project=name, root=repo_path.resolve()
+                ),
+                err=True,
+            )
+            raise typer.Exit(code=1)
         parsers, queries = load_parsers()
         from .graph_updater import GraphUpdater
 
