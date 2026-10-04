@@ -129,7 +129,12 @@ CMD_GRAPH_IMPORTERS = (
 CMD_GRAPH_TESTS_REACHING = (
     "Tests from which a qualified name is reachable, with distance."
 )
-EPILOG_GRAPH = "Run 'cgr help graph COMMAND' for command-specific help."
+EPILOG_GRAPH = (
+    "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "Exit status: 0 with the JSON answer, where [] means the name is in the "
+    "graph and nothing matches it; 3 when the project is not indexed; 4 when "
+    "a qualified name is not in the graph."
+)
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."

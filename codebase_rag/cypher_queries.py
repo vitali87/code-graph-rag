@@ -34,10 +34,12 @@ from .constants import (
     KEY_FROM_VAL,
     KEY_TO_MISSING,
     KEY_TO_VAL,
+    NODE_UNIQUE_CONSTRAINTS,
     SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
+    UniqueKeyType,
 )
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
@@ -1113,6 +1115,29 @@ CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
        type(r) AS rel_type"""
+# Whether the graph holds a node by this name at all (issue #2461): the edge
+# walks above answer [] both for a definition nothing reaches and for a name
+# the graph never saw, and only the second is a mistake. Every label keyed by
+# qualified_name, not just the definitions, because a target may be an
+# ExternalModule (importers of `os`) or another project's node; the label
+# disjunction plans as one index lookup per label, where a bare
+# `(n {qualified_name: $qn})` scans every node.
+_QUALIFIED_NAME_LABELS = "|".join(
+    sorted(
+        label
+        for label, key in NODE_UNIQUE_CONSTRAINTS.items()
+        if key == UniqueKeyType.QUALIFIED_NAME
+    )
+)
+CYPHER_GRAPH_NODE_EXISTS = f"""MATCH (n:{_QUALIFIED_NAME_LABELS})
+WHERE n.qualified_name = $qn
+RETURN n.qualified_name AS qualified_name
+LIMIT 1"""
+# The definitions under one dotted parent, which a name mistyped in its last
+# part is closest to.
+CYPHER_GRAPH_DEFINITIONS_UNDER = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+RETURN n.qualified_name AS qualified_name"""
 # Structural delta after a write (issue #1525): the touched files' definitions
 # with the properties the delta compares, every call/reference site touching
 # them, and the project's module import graph.

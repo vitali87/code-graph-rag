@@ -97,6 +97,15 @@ cgr daemon up
 | `rank_root_causes` | Rank the sites that can explain a Python traceback's failure, best first. The anchor (failing) is the innermost frame the graph resolves; anchor_is_crash_site is false when the actual crash line sits deeper (a library frame, or a frame the graph cannot match), so the ranking reads as relative to the deepest resolvable frame. Candidates score by three additive signals: being a FLOWS_TO source into the failing frame (a possible producer of the failing value), sitting on the crashing stack itself, and reaching the failing frame through CALLS edges (closer callers score higher). Each candidate carries its file, definition line, reasons, and the call path to the failure. When the project has no FLOWS_TO edges the ranking degrades to a CALLS-only walk and flow_used is false; flow_gaps always names the files outside flow-analysis coverage. Frames from another checkout resolve as in explain_traceback, and resolution plus note say why a ranking is empty. |
 <!-- /SECTION:mcp_tools -->
 
+The graph tools refuse, rather than answer empty, a question the graph cannot
+answer: an unknown `project`, a server root that was never indexed when
+`project` is omitted, and, for `callers`, `callees`, `implementors`,
+`overrides`, `importers` and `tests_reaching`, a qualified name the graph does
+not hold. A refusal is a result with `isError: true` and the JSON
+`{"error": "..."}`, naming close matches when there are any, so `[]` always
+means the name is in the graph and nothing matches it. `definition` still
+answers `found: false` for a qualified name it does not find.
+
 ![A Python MCP client over stdio listing the server's tools and calling list_projects, resolve, callers, get_code_snippet and find_duplicate_code on pallets/itsdangerous](../assets/demos/mcp-server-tools.gif)
 
 *`call_tools.py` is a small client built on the `mcp` Python SDK; none of these tools calls an LLM.*
