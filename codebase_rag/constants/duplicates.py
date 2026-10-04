@@ -124,6 +124,9 @@ DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
 # Hops the backward test-reach walk follows before giving up.
 DELTA_REACH_MAX_DEPTH = 12
+# Source files whose syntax tree the arity verdicts keep while judging one
+# delta's sites (issue #2899): one parse per file version, however many sites.
+DELTA_PARSED_SOURCES_KEPT = 64
 
 # Cypher return alias for the not-analyzed symbol count.
 KEY_SKIPPED = "skipped"

@@ -17,11 +17,13 @@ found by walking its callers one hop at a time.
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable, Iterable, Iterator
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple, TypedDict
+
+from tree_sitter import Node, Tree
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -603,9 +605,72 @@ def _dangling(
 # --- signature changes --------------------------------------------------------
 
 
-# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
-# and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
+# The receivers that bind a method: a call through anything else that passes
+# `self` itself is an unbound call through the class (issue #2899).
+_PY_BOUND_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+
+
+@lru_cache(maxsize=cs.DELTA_PARSED_SOURCES_KEPT)
+def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
+    """One parse per version of a source file, shared by every site in it."""
+    # Local import: parser_loader pulls in the language grammars.
+    from .parser_loader import load_parsers
+
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    if parser is None:
+        return None
+    try:
+        return parser.parse(Path(path).read_bytes())
+    except OSError:
+        return None
+
+
+def _python_source_tree(path: Path) -> Tree | None:
+    if path.suffix != cs.EXT_PY:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _python_tree(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _node_text(node: Node) -> str:
+    return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _parameters_of(root: Node, name: str, start_line: int) -> Node | None:
+    """The `parameters` node of the def named `name` starting on `start_line`
+    (its decorators' line, for a decorated def)."""
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > start_line:
+            continue
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+            name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+            parent = node.parent
+            starts = {node.start_point[0] + 1}
+            if parent is not None and parent.type == cs.TS_PY_DECORATED_DEFINITION:
+                starts.add(parent.start_point[0] + 1)
+            if (
+                name_node is not None
+                and _node_text(name_node) == name
+                and start_line in starts
+            ):
+                return node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+        stack.extend(node.named_children)
+    return None
+
+
+def _is_star_args(parameter: Node) -> bool:
+    # `*rest` or `*rest: int`; a bare `*` is a keyword separator, and
+    # `**opts` takes keywords, not positionals.
+    if parameter.type == cs.TS_PY_LIST_SPLAT_PATTERN:
+        return True
+    return parameter.type == cs.TS_PY_TYPED_PARAMETER and any(
+        child.type == cs.TS_PY_LIST_SPLAT_PATTERN for child in parameter.named_children
+    )
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
@@ -614,29 +679,68 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
     header is read back so a variadic callee is never reported as
-    receiving too many arguments.
+    receiving too many arguments. Read from the syntax tree, not the text up
+    to the first `)`, which a default such as `b=dict()` closes early, so
+    `*rest` after it was never seen (issue #2899).
     """
     if repo_root is None or not definition.path or definition.start_line < 1:
         return False
-    try:
-        lines = (
-            (repo_root / definition.path)
-            .read_text(encoding=cs.ENCODING_UTF8)
-            .splitlines()
-        )
-    except (OSError, UnicodeDecodeError):
+    tree = _python_source_tree(repo_root / definition.path)
+    if tree is None:
         return False
-    header: list[str] = []
-    for line in lines[definition.start_line - 1 : definition.end_line or None]:
-        header.append(line)
-        if ")" in line:
-            break
-    text = "\n".join(header)
-    open_at = text.find("(")
-    close_at = text.find(")", open_at + 1)
-    if open_at < 0 or close_at < 0:
+    parameters = _parameters_of(tree.root_node, definition.name, definition.start_line)
+    return parameters is not None and any(
+        _is_star_args(parameter) for parameter in parameters.named_children
+    )
+
+
+def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
+    node: Node | None = root.descendant_for_point_range((row, col), (row, col))
+    while node is not None and node.start_point == (row, col):
+        if node.type == cs.TS_PY_CALL:
+            return node
+        node = node.parent
+    return None
+
+
+def _passes_self_explicitly(site: CallSite, repo_root: Path | None) -> bool:
+    """`Base.__init__(self, a)`: a method called through its class, with the
+    receiver written as the first argument rather than bound (issue #2899).
+
+    The site records only its counts, so the call is read back: a receiver
+    other than `self`, `cls` or a call (`super()`), and a first positional
+    argument that is `self`.
+    """
+    if repo_root is None or site.line is None or site.col is None:
         return False
-    return _VARIADIC.search(text[open_at:close_at]) is not None
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return False
+    call = _call_starting_at(tree.root_node, site.line - 1, site.col)
+    function = call.child_by_field_name(cs.TS_FIELD_FUNCTION) if call else None
+    if function is None or function.type != cs.TS_PY_ATTRIBUTE:
+        return False
+    receiver = function.child_by_field_name(cs.TS_FIELD_OBJECT)
+    if (
+        receiver is None
+        or receiver.type == cs.TS_PY_CALL
+        or _node_text(receiver) in _PY_BOUND_RECEIVERS
+    ):
+        return False
+    arguments = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS) if call else None
+    first = next(
+        (
+            argument
+            for argument in (arguments.named_children if arguments else [])
+            if argument.type not in (cs.TS_PY_KEYWORD_ARGUMENT, cs.TS_COMMENT)
+        ),
+        None,
+    )
+    return (
+        first is not None
+        and first.type == cs.TS_PY_IDENTIFIER
+        and _node_text(first) == cs.PY_KEYWORD_SELF
+    )
 
 
 def _arity_verdict(
@@ -647,7 +751,12 @@ def _arity_verdict(
         return -1, cs.DELTA_ARITY_UNKNOWN
     if site.arg_count is None:
         return len(declared), cs.DELTA_ARITY_UNKNOWN
-    is_method = definition.label in _METHOD_LABELS
+    # An unbound call through the class supplies `self` itself, so it is
+    # judged as a plain function call against every declared parameter.
+    is_method = definition.label in _METHOD_LABELS and not (
+        site.arg_count > len(site.kwarg_names)
+        and _passes_self_explicitly(site, repo_root)
+    )
     # `arg_count` counts keyword arguments too (issue #1522); only the
     # positionals plus the keywords naming a declared positional parameter
     # fill the declared list. A keyword naming nothing declared is neutral:
