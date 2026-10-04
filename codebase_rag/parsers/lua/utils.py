@@ -480,16 +480,47 @@ def _identifiers(nodes: list[Node]) -> set[str]:
     }
 
 
-def _named_identifiers(node: Node) -> set[str]:
-    # The identifiers a parameter list or variable list holds in its `name`
-    # field (a `...` vararg binds none).
+def _name_value_pairs(assignment: Node) -> list[tuple[Node, Node | None]]:
+    # Each target of `a, b = x, y` with the expression assigned to it, or
+    # None past the end of the expression list (a bare `local a`).
+    variables = next(
+        (
+            child
+            for child in assignment.named_children
+            if child.type == cs.TS_LUA_VARIABLE_LIST
+        ),
+        None,
+    )
+    if variables is None:
+        return []
+    expressions = next(
+        (
+            child
+            for child in assignment.named_children
+            if child.type == cs.TS_LUA_EXPRESSION_LIST
+        ),
+        None,
+    )
+    values = (
+        expressions.children_by_field_name(cs.FIELD_VALUE)
+        if expressions is not None
+        else []
+    )
+    names = variables.children_by_field_name(cs.FIELD_NAME)
+    return [
+        (target, values[idx] if idx < len(values) else None)
+        for idx, target in enumerate(names)
+    ]
+
+
+def _paired_names(assignment: Node, function_valued: bool) -> set[str]:
     return {
         text
-        for i in range(node.child_count)
-        if node.field_name_for_child(i) == cs.FIELD_NAME
-        and (child := node.child(i)) is not None
-        and child.type == cs.TS_LUA_IDENTIFIER
-        and (text := safe_decode_text(child))
+        for target, value in _name_value_pairs(assignment)
+        if target.type == cs.TS_LUA_IDENTIFIER
+        and (value is not None and value.type == cs.TS_LUA_FUNCTION_DEFINITION)
+        == function_valued
+        and (text := safe_decode_text(target))
     }
 
 
@@ -505,97 +536,100 @@ def _local_value_names(declaration: Node) -> set[str]:
         ),
         declaration,
     )
-    variables = next(
-        (
-            child
-            for child in assignment.named_children
-            if child.type == cs.TS_LUA_VARIABLE_LIST
-        ),
-        None,
-    )
-    if variables is None:
-        return set()
-    expressions = next(
-        (
-            child
-            for child in assignment.named_children
-            if child.type == cs.TS_LUA_EXPRESSION_LIST
-        ),
-        None,
-    )
-    values = (
-        [
-            child
-            for i in range(expressions.child_count)
-            if expressions.field_name_for_child(i) == cs.FIELD_VALUE
-            and (child := expressions.child(i)) is not None
-        ]
-        if expressions is not None
-        else []
-    )
-    names = [
-        child
-        for i in range(variables.child_count)
-        if variables.field_name_for_child(i) == cs.FIELD_NAME
-        and (child := variables.child(i)) is not None
-    ]
-    return {
-        text
-        for idx, child in enumerate(names)
-        if child.type == cs.TS_LUA_IDENTIFIER
-        and not (
-            idx < len(values) and values[idx].type == cs.TS_LUA_FUNCTION_DEFINITION
+    return _paired_names(assignment, function_valued=False)
+
+
+def _assigns_function(node: Node, name: str) -> bool:
+    # `name = function ... end`, or a non-local `function name() ... end`:
+    # either stores a function in the local `name` already names, and the
+    # definition pass registers it under that name.
+    if node.type == cs.TS_LUA_FUNCTION_DECLARATION:
+        first = node.children[0] if node.children else None
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        return (
+            first is not None
+            and first.type != cs.TS_LUA_LOCAL_KEYWORD
+            and target is not None
+            and target.type == cs.TS_LUA_IDENTIFIER
+            and safe_decode_text(target) == name
         )
-        and (text := safe_decode_text(child))
-    }
+    parent = node.parent
+    return (
+        node.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+        and (parent is None or parent.type != cs.TS_LUA_VARIABLE_DECLARATION)
+        and name in _paired_names(node, function_valued=True)
+    )
 
 
-def _loop_variables(clause: Node) -> set[str]:
-    names = _named_identifiers(clause)
-    for child in clause.named_children:
-        if child.type == cs.TS_LUA_VARIABLE_LIST:
-            names |= _named_identifiers(child)
-    return names
+def _function_assigned(region: Node, after: int, before: int, name: str) -> bool:
+    """True when `region` assigns a function to `name` between the byte
+    offsets `after` and `before`, so the value bound earlier may no longer
+    be what the read at `before` sees."""
+    stack = [region]
+    while stack:
+        node = stack.pop()
+        if node.end_byte <= after or node.start_byte >= before:
+            continue
+        if node.start_byte >= after and _assigns_function(node, name):
+            return True
+        stack.extend(node.named_children)
+    return False
+
+
+def _last_declaration(block: Node, before: int, name: str) -> Node | None:
+    # The latest `local` statement of `block` ahead of `before` that
+    # declares `name`: a later one shadows an earlier one.
+    found = None
+    for statement in block.named_children:
+        if statement.start_byte >= before:
+            break
+        if name in _local_names(statement):
+            found = statement
+    return found
+
+
+def _binding_at(scope: Node, child: Node, name: str) -> Node | None:
+    """What binds `name` in `scope`, the parent of `child`, as `child` sees
+    it: the nearest `local` ahead of it in a block (or, from a `repeat`'s
+    `until` condition, anywhere in the loop's body, whose locals stay in
+    scope there), or a function or `for` loop whose body `child` is and
+    which binds it as a parameter or loop variable."""
+    if scope.type in (cs.TS_LUA_BLOCK, cs.TS_LUA_CHUNK):
+        return _last_declaration(scope, child.start_byte, name)
+    if scope.type == cs.TS_LUA_REPEAT_STATEMENT and child.type != cs.TS_LUA_BLOCK:
+        body = next(
+            (c for c in scope.named_children if c.type == cs.TS_LUA_BLOCK), None
+        )
+        return _last_declaration(body, child.start_byte, name) if body else None
+    if child.type == cs.TS_LUA_BLOCK and name in _scope_names(scope):
+        return scope
+    return None
 
 
 def is_local_value(identifier: Node) -> bool:
-    """Whether a Lua local, parameter or loop variable in scope binds the
-    name `identifier` reads, hiding any same-name function.
+    """Whether the nearest Lua binding of the name `identifier` reads is a
+    local VALUE -- a value-bound `local`, a parameter or a loop variable --
+    hiding any same-name function.
 
     Lua scoping is lexical: a `local` is visible from the statement after it
-    to the end of its block, a parameter throughout its function, and a loop
-    variable throughout the loop body.
+    to the end of its block (through the `until` of a `repeat`), a parameter
+    throughout its function, and a loop variable throughout the loop body.
+    Only the nearest binding counts, and a `local function`, or a local a
+    function is assigned to before the read, binds the function the
+    definition pass registers under that name, so it hides nothing.
     """
     name = safe_decode_text(identifier)
     if not name:
         return False
-    inner = identifier
-    scope = identifier.parent
+    child, scope = identifier, identifier.parent
     while scope is not None:
-        if scope.type in (
-            cs.TS_LUA_FUNCTION_DECLARATION,
-            cs.TS_LUA_FUNCTION_DEFINITION,
-        ):
-            params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
-            if params is not None and name in _named_identifiers(params):
-                return True
-        elif scope.type == cs.TS_LUA_FOR_STATEMENT:
-            clause = scope.child_by_field_name(cs.TS_LUA_FIELD_CLAUSE)
-            if (
-                clause is not None
-                and inner != clause
-                and name in _loop_variables(clause)
-            ):
-                return True
-        elif scope.type in (cs.TS_LUA_BLOCK, cs.TS_LUA_CHUNK):
-            for statement in scope.named_children:
-                if statement.start_byte >= inner.start_byte:
-                    break
-                if (
-                    statement.type == cs.TS_LUA_VARIABLE_DECLARATION
-                    and name in _local_value_names(statement)
-                ):
-                    return True
-        inner = scope
-        scope = scope.parent
+        binding = _binding_at(scope, child, name)
+        if binding is not None:
+            if binding.type == cs.TS_LUA_FUNCTION_DECLARATION and binding != scope:
+                return False
+            if binding != scope and name not in _local_value_names(binding):
+                return False
+            after = binding.end_byte if binding != scope else child.start_byte
+            return not _function_assigned(scope, after, identifier.start_byte, name)
+        child, scope = scope, scope.parent
     return False

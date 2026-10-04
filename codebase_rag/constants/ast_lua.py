@@ -94,7 +94,6 @@ LUA_RESERVED_WORDS = frozenset(
 )
 
 
-# A `for` statement's loop header: `for_numeric_clause` names its variable in
-# a `name` field, `for_generic_clause` in a `variable_list` (issue #2925).
-TS_LUA_FOR_STATEMENT = "for_statement"
-TS_LUA_FIELD_CLAUSE = "clause"
+# A `repeat` loop: the locals of its body stay in scope through the `until`
+# condition, which sits outside the body's block (issue #2925).
+TS_LUA_REPEAT_STATEMENT = "repeat_statement"

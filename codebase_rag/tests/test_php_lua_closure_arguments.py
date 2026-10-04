@@ -100,6 +100,38 @@ function M.shadow_upvalue(t, view)
   table.sort(t, function(a, b) return render(view) < render(a) end)
 end
 
+function M.nearer_local_function(t, cmp)
+  local function cmp(a, b) return a < b end
+  table.sort(t, cmp)
+end
+
+function M.assigned_later(t)
+  local cmp
+  cmp = function(a, b) return a < b end
+  table.sort(t, cmp)
+end
+
+function M.assigned_from_nil(t)
+  local cmp = nil
+  cmp = function(a, b) return a < b end
+  table.sort(t, cmp)
+end
+
+function M.newer_function_local(t, cb)
+  local cb = function(a, b) return a < b end
+  table.sort(t, cb)
+end
+
+function M.shadow_repeat()
+  repeat local view = "text" until render(view)
+end
+
+function M.shadow_reassigned_value()
+  local view = "home"
+  view = "about"
+  return render(view)
+end
+
 -- Module-level calls root the module functions here, keeping the
 -- export-roots gap (#2578) out of the dead-code assertion.
 M.sort_desc({3, 1, 2})
@@ -111,6 +143,12 @@ M.shadow_local()
 M.shadow_param("x")
 M.shadow_loop({"x"})
 M.shadow_upvalue({1}, "x")
+M.nearer_local_function({2, 1}, 1)
+M.assigned_later({2, 1})
+M.assigned_from_nil({2, 1})
+M.newer_function_local({2, 1}, 1)
+M.shadow_repeat()
+M.shadow_reassigned_value()
 
 return M
 """
@@ -215,8 +253,21 @@ def _targets(graph: RecordedGraph, caller: str) -> set[str]:
         ("app.M.sort_by_length", "app.by_length"),
         ("app.M.sort_by_local", "app.M.sort_by_local.cmp"),
         ("app.M.read_before_local", "app.view"),
+        # The definition pass registers a `local function` under its module.
+        ("app.M.nearer_local_function", "app.cmp"),
+        ("app.M.assigned_later", "app.M.assigned_later.cmp"),
+        ("app.M.assigned_from_nil", "app.M.assigned_from_nil.cmp"),
+        ("app.M.newer_function_local", "app.M.newer_function_local.cb"),
     ],
-    ids=["local-function", "function-valued-local", "read-before-the-local"],
+    ids=[
+        "local-function",
+        "function-valued-local",
+        "read-before-the-local",
+        "local-function-nearer-than-a-parameter",
+        "function-assigned-after-a-bare-local",
+        "function-assigned-after-a-nil-local",
+        "function-local-nearer-than-a-parameter",
+    ],
 )
 def test_a_named_lua_function_argument_is_referenced(
     graph: RecordedGraph, caller: str, target: str
@@ -234,8 +285,17 @@ def test_a_named_lua_function_argument_is_referenced(
         "app.M.shadow_param",
         "app.M.shadow_loop",
         "app.M.shadow_upvalue",
+        "app.M.shadow_repeat",
+        "app.M.shadow_reassigned_value",
     ],
-    ids=["local-value", "parameter", "loop-variable", "upvalue"],
+    ids=[
+        "local-value",
+        "parameter",
+        "loop-variable",
+        "upvalue",
+        "repeat-body-local-in-until",
+        "value-reassigned-a-value",
+    ],
 )
 def test_a_lua_value_shadowing_a_function_binds_nothing(
     graph: RecordedGraph, caller: str
