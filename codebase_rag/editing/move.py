@@ -120,6 +120,14 @@ _PY_STAR = "*"
 _MODULE_SCOPE = "module"
 _SYMTABLE_FILENAME = "<moved>"
 _SYMTABLE_MODE = "exec"
+# `if TYPE_CHECKING:` binds its imports for the type checker only. They are
+# carried under the same guard rather than refused as maybe-unbound, since
+# annotations are the one use that never needs them at runtime.
+_TYPE_CHECKING = "TYPE_CHECKING"
+_TYPE_CHECKING_GUARDS = frozenset({_TYPE_CHECKING, f"typing.{_TYPE_CHECKING}"})
+_TYPE_CHECKING_IMPORT = f"from typing import {_TYPE_CHECKING}"
+_TYPE_CHECKING_HEAD = f"if {_TYPE_CHECKING}:\n"
+_PY_INDENT = "    "
 
 
 class MoveRefused(ValueError):
@@ -336,6 +344,62 @@ def _global_references(text: str) -> set[str] | None:
             if symbol.is_referenced() and (at_module or symbol.is_global())
         )
     return names
+
+
+def _type_checking_imports(
+    source: bytes, old_path: str, new_path: str
+) -> dict[str, str]:
+    """Names an import under a top-level `if TYPE_CHECKING:` binds, each
+    with that import narrowed to it and spelled for `new_path`.
+
+    Only a guard without an `else` counts: one with an `else` binds at
+    runtime too, and is control flow like any other `if`.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if (
+            not isinstance(node, ast.If)
+            or node.orelse
+            or ast.unparse(node.test) not in _TYPE_CHECKING_GUARDS
+        ):
+            continue
+        for statement in node.body:
+            if isinstance(statement, ast.ImportFrom):
+                module = _rebase_py_relative(
+                    cs.SEPARATOR_DOT * statement.level + (statement.module or ""),
+                    old_path,
+                    new_path,
+                )
+                for alias in statement.names:
+                    if alias.name != _PY_STAR:
+                        out.setdefault(
+                            alias.asname or alias.name,
+                            f"from {module} import {ast.unparse(alias)}",
+                        )
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    out.setdefault(
+                        alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0],
+                        f"import {ast.unparse(alias)}",
+                    )
+    return out
+
+
+def _type_checking_block(root: Node) -> Node | None:
+    """The body of a module's top-level `if TYPE_CHECKING:`, if it has one."""
+    for child in root.children:
+        if (
+            child.type == cs.TS_PY_IF_STATEMENT
+            and child.child_by_field_name(cs.FIELD_ALTERNATIVE) is None
+            and _text(child.child_by_field_name(cs.TS_FIELD_CONDITION))
+            in _TYPE_CHECKING_GUARDS
+        ):
+            return child.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+    return None
 
 
 def _definition_at(root: Node, line: int, col: int) -> Node | None:
@@ -594,6 +658,7 @@ class Mover:
             old_module, old_path, new_path, source, root, cut.text, language
         )
         old_bindings = self._bindings(root)
+        guarded: dict[str, str] = {}
         if language == cs.SupportedLanguage.PYTHON:
             # `_bindings` reads top-level statements only, so a constant set
             # in both branches of an `if` was left behind (a NameError once
@@ -606,6 +671,9 @@ class Mover:
                 if n != name
                 and (n in reads if reads is not None else _uses(cut.text, n))
             )
+            typed = _type_checking_imports(source, old_path, new_path)
+            guarded = {n: typed[n] for n in unbound if n in typed}
+            unbound = [n for n in unbound if n not in guarded]
             if unbound:
                 raise MoveRefused(
                     cs.MOVE_MAYBE_UNBOUND.format(
@@ -636,6 +704,7 @@ class Mover:
                     from_old, old_spelled, old_path, new_path, language
                 ),
                 from_old,
+                guarded,
                 language,
             )
         old_uses = _uses(remainder, name)
@@ -671,8 +740,19 @@ class Mover:
                 export=keep_alias and not listed,
             )
         # 2. Paste into the target with what it needs.
+        guard_lines, guard_head = self._place_guarded(
+            patcher, existing, target_root, guarded, new_path
+        )
         paste = self._paste_text(
-            cut.text, needed, from_old, old_spelled, old_path, new_path, language
+            cut.text,
+            needed,
+            from_old,
+            old_spelled,
+            old_path,
+            new_path,
+            language,
+            guard_lines,
+            guard_head,
         )
         if (
             language in _JS_LANGUAGES
@@ -745,7 +825,7 @@ class Mover:
             files=tuple(files),
             importers=tuple(sorted(importers)),
             unchanged_importers=tuple(sorted(unchanged)),
-            copied_imports=tuple(n.statement for n in needed),
+            copied_imports=tuple(n.statement for n in needed) + tuple(guarded.values()),
             diff=self._preview_diff(patcher, new_path, new_content),
             message=cs.MOVE_PLANNED.format(
                 importers=len(importers), unchanged=len(unchanged)
@@ -1186,6 +1266,8 @@ class Mover:
         old_path: str,
         new_path: str,
         language: cs.SupportedLanguage | None,
+        guarded: list[str],
+        guard_head: bool,
     ) -> str:
         lines = [n.statement.rstrip("\n") for n in needed]
         statement = self._from_old_statement(
@@ -1193,8 +1275,65 @@ class Mover:
         )
         if statement is not None:
             lines.append(statement)
+        if guard_head:
+            lines.append(_TYPE_CHECKING_IMPORT)
         header = "\n".join(lines)
+        if guarded:
+            block = _TYPE_CHECKING_HEAD + "\n".join(_PY_INDENT + g for g in guarded)
+            header = (header + "\n\n" if header else "") + block
         return (header + "\n\n\n" if header else "") + moved.rstrip("\n") + "\n"
+
+    def _place_guarded(
+        self,
+        patcher: Patcher,
+        existing: bytes | None,
+        target_root: Node | None,
+        guarded: dict[str, str],
+        new_path: str,
+    ) -> tuple[list[str], bool]:
+        """Put the TYPE_CHECKING-only imports under the destination's guard.
+
+        Merged into the destination's own `if TYPE_CHECKING:` when it has
+        one (and an import it already holds is not repeated); otherwise
+        returned for `_paste_text` to write in a new guard, with whether
+        `TYPE_CHECKING` itself must be imported for it.
+        """
+        language = cs.SupportedLanguage.PYTHON
+        if not guarded:
+            return [], False
+        if existing is None or target_root is None:
+            return list(guarded.values()), True
+        held = self._import_texts(existing, target_root, new_path)
+        lines = [
+            statement
+            for local, statement in guarded.items()
+            if not any(
+                _binding_key(other, local, language, new_path)
+                == _binding_key(statement, local, language, new_path)
+                for other in held
+            )
+        ]
+        block = _type_checking_block(target_root)
+        if block is None:
+            binds_flag = _TYPE_CHECKING in self._bindings(target_root) or any(
+                _binding_key(other, _TYPE_CHECKING, language, new_path) is not None
+                for other in held
+            )
+            return lines, bool(lines) and not binds_flag
+        if lines:
+            at = _line_end(existing, block)
+            indent = " " * block.named_children[0].start_point[1]
+            text = "".join(f"{indent}{line}\n" for line in lines)
+            if at == len(existing) and not existing.endswith(b"\n"):
+                text = "\n" + text
+            patcher.replace_span(new_path, (at, at), text)
+        return [], False
+
+    @staticmethod
+    def _import_texts(source: bytes, root: Node, path: str) -> list[str]:
+        """A Python module's top-level imports and its TYPE_CHECKING ones."""
+        top = [_text(c) for c in root.children if c.type in _IMPORT_TYPES]
+        return top + list(_type_checking_imports(source, path, path).values())
 
     @staticmethod
     def _from_old_statement(
@@ -1223,6 +1362,7 @@ class Mover:
         needed: list[_NeededImport],
         from_old_statement: str | None,
         from_old: list[str],
+        guarded: dict[str, str],
         language: cs.SupportedLanguage | None,
     ) -> None:
         """Refuse when anything the move binds at the destination rebinds
@@ -1234,10 +1374,14 @@ class Mover:
         binds the name to what it is already bound to replaces nothing.
         """
         defined = set(self._bindings(target_root))
+        imports = [_text(c) for c in target_root.children if c.type in _IMPORT_TYPES]
         if language == cs.SupportedLanguage.PYTHON:
             carried, unsafe = _flow_bindings(existing)
-            defined |= carried | unsafe
-        imports = [_text(c) for c in target_root.children if c.type in _IMPORT_TYPES]
+            # A TYPE_CHECKING import is compared like any import: binding
+            # the same name to the same thing under the guard is no clash.
+            typed = _type_checking_imports(existing, new_path, new_path)
+            defined |= carried | (unsafe - typed.keys())
+            imports.extend(typed.values())
         # The destination's own import of the moved name from the old
         # module is rewired by the move, not rebound by it.
         rewired = any(
@@ -1255,6 +1399,7 @@ class Mover:
         added = [(n.local, n.statement) for n in needed]
         if from_old_statement is not None:
             added.extend((n, from_old_statement) for n in from_old)
+        added.extend(guarded.items())
         for local, statement in added:
             key = _binding_key(statement, local, language, new_path)
             if local in defined or any(
