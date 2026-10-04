@@ -540,6 +540,15 @@ class FunctionIngestMixin:
         ):
             self.go_function_return_types[qualified_name] = return_type
 
+        # Its SINGLE result does go there, as a Go method's does, so that
+        # `NewBox().Bump()` types its receiver the way `c.Root().Run()`
+        # does (issue #2467). Same extractor as the methods: a multi-value
+        # or container result records nothing, so the skip above holds.
+        if language == cs.SupportedLanguage.GO and (
+            return_type := go_utils.extract_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # A span is claimed when a pass recorded THIS function node's location;
         # the column in the key keeps a same-line neighbour's claim from masking
@@ -1720,7 +1729,7 @@ class FunctionIngestMixin:
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         return lua_utils.extract_assigned_name(
             func_node,
-            accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
+            accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS,
         )
 
     def _extract_lua_field_function_name(
