@@ -160,6 +160,8 @@ class _Cut(NamedTuple):
     start: int
     end: int
     text: str
+    # Where `text` begins in the source; `start` may sit before it.
+    origin: int
 
 
 class _NeededImport(NamedTuple):
@@ -468,7 +470,7 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
         text = source[first.start_byte : target.end_byte].decode(
             cs.ENCODING_UTF8, errors="replace"
         )
-        return _Cut(*own, text)
+        return _Cut(*own, text, first.start_byte)
     start = source.rfind(b"\n", 0, first.start_byte) + 1
     end = source.find(b"\n", target.end_byte)
     end = len(source) if end < 0 else end + 1
@@ -476,7 +478,7 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     # Swallow the blank lines that separated it from what follows.
     while source[end : end + 1] == b"\n":
         end += 1
-    return _Cut(start, end, text)
+    return _Cut(start, end, text, start)
 
 
 def _line_end(source: bytes, node: Node) -> int:
@@ -580,6 +582,10 @@ class Mover:
         self.verify = verify
         self.reingest = reingest
         self._parsers = load_parsers()[0]
+        # Whether the last plan respelled imports inside the moved text,
+        # which changes its shape: the contract must then take the move's
+        # word for the pairing.
+        self._reshaped = False
 
     def _parse(
         self, path: str, source: bytes
@@ -655,6 +661,12 @@ class Mover:
         if existing is not None:
             _language, target_root = self._parse(new_path, existing)
         cut = _cut_span(source, node)
+        moved_text = (
+            self._rebase_local_imports(source, top, cut, qn, old_path, new_path)
+            if language == cs.SupportedLanguage.PYTHON
+            else cut.text
+        )
+        self._reshaped = moved_text != cut.text
         # A JS definition exported by its own `export { helper }` lost the
         # export with the cut: the destination did not export it, and every
         # rewritten importer (and the old module's import of it back)
@@ -763,7 +775,7 @@ class Mover:
             patcher, existing, target_root, guarded, new_path
         )
         paste = self._paste_text(
-            cut.text,
+            moved_text,
             needed,
             from_old,
             old_spelled,
@@ -888,6 +900,56 @@ class Mover:
             if inside and not candidate.exists() and not candidate.is_symlink():
                 return None
             raise MoveRefused(str(error)) from error
+
+    @staticmethod
+    def _rebase_local_imports(
+        source: bytes,
+        top: Node,
+        cut: _Cut,
+        qn: str,
+        old_path: str,
+        new_path: str,
+    ) -> str:
+        """The cut text with each relative import inside it respelled for
+        `new_path`, where it stays, in the scope it was written in.
+
+        Copied verbatim, `from .deps import X` in a function moved from
+        pkg/sub/util.py to pkg/core.py counted its dots from `pkg` and
+        imported `pkg.deps` (or nothing) the first time the function ran.
+        """
+        edits: list[SpanEdit] = []
+        stack = [top]
+        while stack:
+            current = stack.pop()
+            stack.extend(current.named_children)
+            if current.type != cs.TS_PY_IMPORT_FROM_STATEMENT:
+                continue
+            module = current.child_by_field_name(cs.FIELD_MODULE_NAME)
+            if module is None or module.type != cs.TS_RELATIVE_IMPORT:
+                continue
+            spelled = _text(module)
+            level = len(spelled) - len(spelled.lstrip(cs.SEPARATOR_DOT))
+            # Climbing to or past the tree's top names no package any
+            # destination could spell.
+            if level - 1 >= len(Path(old_path).parent.parts):
+                raise MoveRefused(
+                    cs.MOVE_RELATIVE_IMPORT_ESCAPES.format(
+                        statement=_text(current), qn=qn, path=old_path
+                    )
+                )
+            rebased = _rebase_py_relative(spelled, old_path, new_path)
+            if rebased != spelled:
+                edits.append(
+                    SpanEdit(
+                        module.start_byte - cut.origin,
+                        module.end_byte - cut.origin,
+                        rebased.encode(cs.ENCODING_UTF8),
+                    )
+                )
+        if not edits:
+            return cut.text
+        moved = apply_span_edits(cut.text.encode(cs.ENCODING_UTF8), edits)
+        return moved.decode(cs.ENCODING_UTF8, errors="replace")
 
     @staticmethod
     def _bindings(root: Node) -> dict[str, bool]:
@@ -1594,6 +1656,7 @@ class Mover:
                 # without it the move of one reads as a removal plus an
                 # addition.
                 declared_renames=(renamed,),
+                reshaped_renames=(renamed,) if self._reshaped else (),
             )
         # The move has landed; a graph that cannot be measured is reported,
         # never raised past the committed edit (as for change_signature).

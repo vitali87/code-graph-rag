@@ -549,3 +549,59 @@ def test_a_statement_sharing_the_export_line_stays(
     )
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.strip() == "1 2"
+
+
+# --- relative imports inside the moved code keep their target ---------------------
+
+NESTED = {
+    "pkg/__init__.py": "",
+    "pkg/deps.py": "X = 'pkg.deps'\n",
+    "pkg/sub/__init__.py": "NAME = 'pkg.sub'\n",
+    "pkg/sub/deps.py": "X = 'pkg.sub.deps'\n",
+    "pkg/sub/inner/__init__.py": "",
+    "pkg/sub/inner/mod.py": "X = 'pkg.sub.inner.mod'\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param("from .deps import X\n    return X", "pkg.sub.deps", id="sibling"),
+        pytest.param("from . import deps\n    return deps.X", "pkg.sub.deps", id="dot"),
+        pytest.param("from .. import deps\n    return deps.X", "pkg.deps", id="dotdot"),
+        pytest.param(
+            "from .inner.mod import X\n    return X", "pkg.sub.inner.mod", id="deep"
+        ),
+        pytest.param("from . import NAME\n    return NAME", "pkg.sub", id="package"),
+    ],
+)
+def test_a_relative_import_inside_the_moved_function_keeps_its_target(
+    temp_repo: Path, body: str, expected: str
+) -> None:
+    """The function-local import travelled verbatim, and its dots now
+    counted from the destination's package: `from .deps import X` moved
+    from pkg/sub/util.py to pkg/core.py silently read `pkg.deps`."""
+    fixture = {
+        **NESTED,
+        "pkg/sub/util.py": f"def helper():\n    {body}\n" + OTHER,
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater, qn=f"{PROJECT}.pkg.sub.util.helper")
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper())")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == expected
+
+
+def test_a_relative_import_above_the_root_refuses_the_move(temp_repo: Path) -> None:
+    """It names no module the destination could spell."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "def helper():\n    from .. import deps\n    return deps\n" + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="from .. import deps"):
+        _move(root, store, updater, target="pkg.sub.core")
+    assert (root / "pkg/util.py").read_text() == fixture["pkg/util.py"]

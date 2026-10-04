@@ -648,6 +648,7 @@ def _renames(
     before: Snapshot,
     after: Snapshot,
     declared: frozenset[tuple[str, str]] = frozenset(),
+    reshaped: frozenset[tuple[str, str]] = frozenset(),
 ) -> list[RenameFinding]:
     # A rename keeps the body: the same whole-skeleton fingerprint under a
     # new name in the same file. Paired one-to-one in sorted order so a
@@ -682,6 +683,22 @@ def _renames(
             still_unpaired, renames, paired_new, added, before, after, declared
         )
     )
+    # Pass 5: a pair whose body the operation itself rewrote (a move that
+    # respelled a relative import for its new package) changed shape by
+    # design, so only the operation's word can pair it.
+    paired_old = {r["old"] for r in renames}
+    for old, new in sorted(reshaped):
+        if (
+            old in still_unpaired
+            and old not in paired_old
+            and new in added
+            and new not in paired_new
+            and before.definitions[old].label == after.definitions[new].label
+        ):
+            renames.append(
+                RenameFinding(old=old, new=new, path=before.definitions[old].path)
+            )
+            paired_new.add(new)
     return renames
 
 
@@ -739,10 +756,11 @@ def _symbols(
     before: Snapshot,
     after: Snapshot,
     declared: frozenset[tuple[str, str]] = frozenset(),
+    reshaped: frozenset[tuple[str, str]] = frozenset(),
 ) -> SymbolDelta:
     added = sorted(set(after.definitions) - set(before.definitions))
     removed = sorted(set(before.definitions) - set(after.definitions))
-    renamed = _renames(removed, added, before, after, declared)
+    renamed = _renames(removed, added, before, after, declared, reshaped)
     renamed_old = {r["old"] for r in renamed}
     renamed_new = {r["new"] for r in renamed}
     return SymbolDelta(
@@ -3277,12 +3295,15 @@ def structural_delta(
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
     *,
     longer_project_prefixes: tuple[str, ...] | None = None,
+    reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Diff two snapshots of the same paths, then look up what they touch.
 
     `declared_renames` are pairs the CALLER applied and therefore knows. They
     are needed only where the snapshots cannot show identity -- an empty
     container -- and are empty for a plain write, which really is inferring.
+    `reshaped_renames` are pairs whose body the caller rewrote on purpose,
+    so their shapes no longer match.
     """
     started = time.perf_counter()
     longer_prefixes = (
@@ -3290,7 +3311,7 @@ def structural_delta(
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
-    symbols = _symbols(before, after, declared_renames)
+    symbols = _symbols(before, after, declared_renames, reshaped_renames)
     # A decorator or modifier change leaves the body a duplicate is made of
     # as it was, so only a reshaped symbol can be a new duplicate.
     fresh = set(symbols["added"]) | {
@@ -3431,6 +3452,7 @@ def observe(
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
@@ -3464,6 +3486,7 @@ def observe(
         repo_root,
         declared_renames=declared_renames,
         longer_project_prefixes=longer_prefixes,
+        reshaped_renames=reshaped_renames,
     )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
