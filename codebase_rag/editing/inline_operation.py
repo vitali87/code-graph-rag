@@ -20,6 +20,7 @@ from .extract_scope import (
     _AMBIGUOUS,
     _IDENTIFIERS,
     _NON_READ_FIELDS,
+    _SHORT_CIRCUIT,
     _body_statements,
     _index_in,
 )
@@ -51,7 +52,6 @@ _LAZY = frozenset(
         cs.TS_JS_TERNARY_EXPRESSION,
     }
 )
-_SHORT_CIRCUIT = frozenset({"&&", "||", "??"})
 # Nested scopes rebind names and defer evaluation; assignments rebind them.
 _REFUSED_IN_EXPRESSION = frozenset(
     {
