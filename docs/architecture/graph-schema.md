@@ -38,6 +38,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | Parameter (opt-in: [`parameters`](#capture-groups)) | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
 | Field (opt-in: [`fields`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
 | EnumVariant (opt-in: [`enum_variants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
+| Constant (opt-in: [`constants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, value: string?}` |
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
@@ -90,7 +91,8 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | Function, Method | HAS_PARAMETER (opt-in: [`parameters`](#capture-groups)) | Parameter |
 | Class, Interface, Enum, Type, Union | HAS_FIELD (opt-in: [`fields`](#capture-groups)) | Field |
 | Enum | HAS_VARIANT (opt-in: [`enum_variants`](#capture-groups)) | EnumVariant |
-| Parameter, Field | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
+| Module | DEFINES_CONSTANT (opt-in: [`constants`](#capture-groups)) | Constant |
+| Parameter, Field, Constant | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict, a Java method reference such as `Acc::add`). `INSTANTIATES` records a class being constructed; a Java constructor reference (`Acc::new`) instantiates its class and references each declared constructor. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
@@ -152,6 +154,7 @@ Which parts of the schema above an index writes is chosen per capture group. Eve
 | `parameters` | - | Parameter | HAS_PARAMETER, OF_TYPE | One node per declared parameter of a function or method, and the OF_TYPE edge from a parameter or field to the project type its annotation names. |
 | `fields` | - | Field | HAS_FIELD | One node per field of a class, interface, enum, type or union. A field's OF_TYPE edge belongs to parameters, so field types need both. |
 | `enum_variants` | - | EnumVariant | HAS_VARIANT | One node per enum member, with its position and value. |
+| `constants` | - | Constant | DEFINES_CONSTANT | One node per module-level constant, with its declared type and value. A constant's OF_TYPE edge belongs to parameters, so constant types need both. |
 <!-- /SECTION:capture_groups -->
 
 ### Choosing Groups
