@@ -361,3 +361,57 @@ def test_a_js_export_list_entry_follows_the_moved_definition(
     )
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.strip() == "3 2 o 1"
+
+
+# --- the cut takes the definition, not the code sharing its lines -----------------
+
+
+@needs_node
+def test_a_statement_after_the_definition_on_its_last_line_stays(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    """The cut took whole lines, so a statement sharing the definition's
+    last line was deleted from the old module (and pasted at the
+    destination, where it ran on the wrong module's load)."""
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export function helper(x) { return x + 1; } console.log('ready');\n\n"
+        "export function run() {\n  return helper(1);\n}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js")
+    assert report.applied, report.message
+    assert "console.log" not in (root / "pkg/core.js").read_text()
+    probe = _node(
+        root, tmp_path, "import { run } from './pkg/util.js';\nconsole.log(run());\n"
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.split() == ["ready", "2"]
+
+
+@needs_node
+def test_a_statement_before_the_definition_on_its_first_line_stays(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export const SEP = '-'; export function helper(a) {\n"
+        "  return a.join(SEP);\n}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js")
+    assert report.applied, report.message
+    assert "export const SEP = '-';" in (root / "pkg/util.js").read_text()
+    probe = _node(
+        root,
+        tmp_path,
+        "import { helper } from './pkg/core.js';\n"
+        "import { SEP } from './pkg/util.js';\n"
+        "console.log(helper(['a', 'b']), SEP);\n",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "a-b -"
