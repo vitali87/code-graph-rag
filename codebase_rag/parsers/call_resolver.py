@@ -629,16 +629,63 @@ class CallResolver:
             or (call.local_var_types and receiver in call.local_var_types)
         ):
             return None
-        own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
-        target = (
-            (self.function_registry[own_qn], own_qn)
-            if own_qn in self.function_registry
-            else self._resolve_inherited_method(call.class_context, method_name)
-        )
+        target = self._method_by_mro(call.class_context, method_name)
         if target is None or self.function_registry.is_abstract(target[1]):
             return None
         self.last_resolution = cs.EdgeResolution.EXACT
         return target
+
+    def _method_by_mro(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
+        """The `method_name` a lookup on `class_qn` runs: its own, else the
+        first base in its C3 method resolution order that defines it. For
+        `D(B, C)` with `B(A)` that is D, B, A, C, where a breadth-first walk
+        of the bases meets C before A (Greptile, PR #2908). A hierarchy C3
+        cannot order falls back to the breadth-first walk."""
+        own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if own_qn in self.function_registry:
+            return self.function_registry[own_qn], own_qn
+        mro = self._c3_mro(class_qn, frozenset())
+        if mro is None:
+            return self._resolve_inherited_method(class_qn, method_name)
+        for base_qn in mro[1:]:
+            method_qn = f"{base_qn}{cs.SEPARATOR_DOT}{method_name}"
+            if method_qn in self.function_registry:
+                return self.function_registry[method_qn], method_qn
+        return None
+
+    def _c3_mro(self, class_qn: str, visiting: frozenset[str]) -> list[str] | None:
+        # Python's C3 linearization over the recorded bases, which keep their
+        # declared order; None on a cycle or an order C3 rejects.
+        if class_qn in visiting:
+            return None
+        bases = [
+            self._follow_reexports(base)
+            for base in self.class_inheritance.get(class_qn, [])
+        ]
+        sequences: list[list[str]] = []
+        for base in bases:
+            linear = self._c3_mro(base, visiting | {class_qn})
+            if linear is None:
+                return None
+            sequences.append(list(linear))
+        sequences.append(list(bases))
+        order = [class_qn]
+        while sequences := [seq for seq in sequences if seq]:
+            head = next(
+                (
+                    seq[0]
+                    for seq in sequences
+                    if not any(seq[0] in other[1:] for other in sequences)
+                ),
+                None,
+            )
+            if head is None:
+                return None
+            order.append(head)
+            for seq in sequences:
+                if seq[0] == head:
+                    del seq[0]
+        return order
 
     def _is_python_local_name(self, call: _CallSite) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
@@ -1264,7 +1311,7 @@ class CallResolver:
         # override does), so it must not be a call target; a concrete sibling/impl
         # wins. Abstract methods only "reached" polymorphically are handled as
         # dead-code roots, not by a spurious CALLS edge.
-        if (base := self._try_resolve_method(class_context, method_name)) and (
+        if (base := self._method_by_mro(class_context, method_name)) and (
             not self.function_registry.is_abstract(base[1])
         ):
             targets.add(base)
