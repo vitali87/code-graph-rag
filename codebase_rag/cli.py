@@ -216,7 +216,7 @@ def validate_models_early() -> None:
         cypher_config = settings.active_cypher_config
         cypher_config.validate_api_key(cs.ModelRole.CYPHER)
     except ValueError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
+        typer.echo(cs.CLI_ERR_STARTUP.format(error=e), err=True)
         raise typer.Exit(1) from e
 
 
@@ -224,7 +224,7 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
     try:
         update_model_settings(orchestrator, cypher)
     except ValueError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
+        typer.echo(cs.CLI_ERR_STARTUP.format(error=e), err=True)
         raise typer.Exit(1) from e
 
     validate_models_early()
