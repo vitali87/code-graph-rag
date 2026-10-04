@@ -117,6 +117,8 @@ _PY_SCOPES = (
     ast.GeneratorExp,
 )
 _PY_STAR = "*"
+_PY_ALL = "__all__"
+_PY_PRIVATE = "_"
 _MODULE_SCOPE = "module"
 _SYMTABLE_FILENAME = "<moved>"
 _SYMTABLE_MODE = "exec"
@@ -407,6 +409,35 @@ def _split_globals(moved: str, remainder: str, name: str) -> list[str]:
     split = {n for n in _global_writes(moved) if n in staying}
     split |= {n for n in _global_writes(remainder) if n in reads}
     return sorted(split - {name})
+
+
+def _star_exports(source: bytes, name: str) -> bool:
+    """Whether `from module import *` of the Python `source` binds `name`.
+
+    Without `__all__` it binds every public name; with one, the names it
+    lists. An `__all__` built any other way than by one literal assignment
+    is read as listing everything, since the move cannot tell what it holds.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return True
+    text = source.decode(cs.ENCODING_UTF8, errors="replace")
+    if _PY_ALL not in _module_scope_names(text):
+        return not name.startswith(_PY_PRIVATE)
+    assigned = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == _PY_ALL for t in node.targets)
+    ]
+    if len(assigned) != 1:
+        return True
+    try:
+        listed = ast.literal_eval(assigned[0])
+    except ValueError:
+        return True
+    return not isinstance(listed, list | tuple) or name in listed
 
 
 def _identifiers(node: Node) -> set[str]:
@@ -873,6 +904,10 @@ class Mover:
                 language,
             )
         old_uses = _uses(remainder, name)
+        if not keep_alias:
+            self._refuse_wildcard_loss(
+                old_module, old_path, source, root, name, language, old_uses
+            )
         # The cycle check runs on the graph BEFORE any file is touched.
         self._refuse_cycles(
             old_module,
@@ -1364,6 +1399,48 @@ class Mover:
             other for other in bindings if other != name and _uses(moved_text, other)
         )
         return sorted(names)
+
+    def _refuse_wildcard_loss(
+        self,
+        old_module: str,
+        old_path: str,
+        source: bytes,
+        root: Node,
+        name: str,
+        language: cs.SupportedLanguage | None,
+        old_uses: bool,
+    ) -> None:
+        """Refuse when a wildcard importer of the old module would lose `name`.
+
+        The graph records `from pkg.util import *` (and JS `export *` or
+        `import * as ns`) under the name `*`, which no importer rewrite
+        matches: the move left it in place, and `from pkg.api import
+        helper` through the re-export raised ImportError. The old module
+        importing the name back keeps a Python star reaching it; in JS only
+        an export does, which is `keep_alias`.
+        """
+        if language == cs.SupportedLanguage.PYTHON:
+            if old_uses or not _star_exports(source, name):
+                return
+        elif not self._bindings(root).get(name, False):
+            return
+        importers = sorted(
+            {
+                row["path"]
+                for row in graph_query.importers(
+                    self.fetch_all, self.project, old_module
+                )
+                if row["imported_name"] == cs.IMPORTED_NAME_WILDCARD and row["path"]
+            }
+        )
+        if importers:
+            raise MoveRefused(
+                cs.MOVE_WILDCARD_IMPORTER.format(
+                    importers=cs.SEPARATOR_COMMA_SPACE.join(importers),
+                    name=name,
+                    path=old_path,
+                )
+            )
 
     def _refuse_cycles(
         self,
