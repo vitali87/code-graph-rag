@@ -78,6 +78,36 @@ FILES = {
         "def fetch(store: StoreProtocol, key):\n"
         "    return store.read(key)\n"
     ),
+    "pkg/overloaded.py": (
+        "from typing import Protocol, overload\n\n\n"
+        "class Reader(Protocol):\n"
+        "    @overload\n"
+        "    def read(self, n: int) -> bytes: ...\n\n"
+        "    @overload\n"
+        "    def read(self, n: None = None) -> bytes: ...\n\n\n"
+        "class DiskReader:\n"
+        "    def read(self, n=None):\n"
+        '        return b""\n\n\n'
+        "def load(reader: Reader):\n"
+        "    return reader.read(3)\n"
+    ),
+    "pkg/inherited.py": (
+        "from typing import Protocol\n\n\n"
+        "class Closer(Protocol):\n"
+        "    def close(self) -> None: ...\n\n\n"
+        "class Stream(Closer, Protocol):\n"
+        "    def pull(self) -> bytes: ...\n\n\n"
+        "class Pump:\n"
+        "    def pull(self) -> bytes:\n"
+        '        return b""\n\n\n'
+        "class Socket:\n"
+        "    def pull(self) -> bytes:\n"
+        '        return b""\n\n'
+        "    def close(self) -> None:\n"
+        "        return None\n\n\n"
+        "def drain(stream: Stream):\n"
+        "    return stream.pull()\n"
+    ),
 }
 
 
@@ -113,6 +143,22 @@ def test_a_typed_call_dispatches_only_to_classes_that_conform(
     assert "pkg.utils.LRUCache.get" not in calls
     assert "pkg.memcached.Memcached.get" in calls
     assert "tests.test_cache.MockClient.get" in calls
+
+
+def test_an_overloaded_stub_still_reaches_its_implementer(
+    graph: RecordedGraph,
+) -> None:
+    # The two `@overload` stubs register as `read` and `read@<line>`; the
+    # implementer defines `read` once and still conforms.
+    assert "pkg.overloaded.DiskReader.read" in _calls(graph, "pkg.overloaded.load")
+
+
+def test_an_inherited_protocol_method_is_required_too(graph: RecordedGraph) -> None:
+    # `Stream` inherits `close` from `Closer`: `Pump` defines only `pull`, so
+    # it does not implement `Stream`, and `Socket`, which defines both, does.
+    calls = _calls(graph, "pkg.inherited.drain")
+    assert "pkg.inherited.Pump.pull" not in calls
+    assert "pkg.inherited.Socket.pull" in calls
 
 
 def test_a_dispatch_to_several_conformers_is_not_exact(graph: RecordedGraph) -> None:
@@ -161,4 +207,6 @@ def test_the_layout_is_indexed(tmp_path: Path) -> None:
         "tests.test_cache",
         "pkg.single",
         "pkg.named",
+        "pkg.overloaded",
+        "pkg.inherited",
     } <= modules

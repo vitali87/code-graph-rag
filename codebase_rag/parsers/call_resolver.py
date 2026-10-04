@@ -4606,13 +4606,33 @@ class CallResolver:
         return result
 
     def _protocol_method_names(self, protocol_qn: str) -> set[str]:
-        """The names of the methods a Protocol declares itself."""
+        """The names of the methods a Protocol and its Protocol bases declare.
+
+        An inherited method is required as much as an own one, and the
+        `@overload` stubs of one method are one name, though the registry
+        keeps each under its own `@<line>` marker.
+        """
         sep = cs.SEPARATOR_DOT
-        return {
-            qn.rsplit(sep, 1)[-1]
-            for qn, node_type in self.function_registry.find_with_prefix(protocol_qn)
-            if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == protocol_qn
-        }
+        protocols = self._protocol_classes()
+        names: set[str] = set()
+        pending = [protocol_qn]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            names.update(
+                qn_markers.strip_dup_marker(qn.rsplit(sep, 1)[-1])
+                for qn, node_type in self.function_registry.find_with_prefix(current)
+                if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == current
+            )
+            pending.extend(
+                base
+                for base in self.class_inheritance.get(current, ())
+                if base in protocols
+            )
+        return names
 
     def _classes_defining_all(self, protocol_methods: set[str]) -> set[str]:
         result: set[str] = set()
