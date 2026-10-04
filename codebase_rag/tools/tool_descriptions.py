@@ -70,8 +70,13 @@ FILE_WRITER = (
 )
 
 SHELL_COMMAND = (
-    "Executes shell commands from allowlist. "
-    "Read-only commands run without approval; write operations require user confirmation."
+    "Executes allowlisted shell commands; `grep` is not available, use `rg`. "
+    "Reads confined to the project (ls, rg, cat, find, wc, head, tail, sort, uniq, "
+    "cut, with no redirects or paths outside it) run without approval; anything "
+    "else asks the user first. A fallback: callers, callees, inheritance, counts, "
+    "package layout and dependencies come from `"
+    + AgenticToolName.QUERY_GRAPH
+    + "`, so ask it before reconstructing them with rg, ls or wc."
 )
 
 CODE_RETRIEVAL = (
@@ -571,6 +576,22 @@ MCP_RANK_ROOT_CAUSES = (
     "ranking is empty."
 )
 
+MCP_CONTEXT = (
+    "A graph-ranked minimal context slice for a task, within a token budget. "
+    "`target` is a qualified name, a bare name, `path:line`, or free text "
+    "(matched by embedding similarity when the semantic extra is installed). "
+    "Returns the target's source, its direct callers' call lines, its direct "
+    "callees' signatures, the types it accepts and returns, the tests that "
+    "reach it, and the documentation sections whose file links to it, ranked "
+    "by graph distance (trace hotness and similarity break ties) and trimmed "
+    "to `budget_tokens`. Every piece says why it is included. Use this before "
+    "reading whole files."
+)
+MCP_PARAM_CONTEXT_TARGET = (
+    "A qualified name, a bare name (`helper`, `Store.get`), `path:line`, or a "
+    "free-text description of the task."
+)
+MCP_PARAM_BUDGET_TOKENS = "Token budget for the slice (default 4000)."
 MCP_PARAM_TRACEBACK_TEXT = (
     "The traceback text exactly as Python printed it (the 'Traceback "
     "(most recent call last):' block; chained tracebacks are fine, the "
@@ -609,6 +630,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.MOVE: MCP_MOVE,
     MCPToolName.EXTRACT: MCP_EXTRACT,
     MCPToolName.INLINE: MCP_INLINE,
+    MCPToolName.CONTEXT: MCP_CONTEXT,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,

@@ -507,3 +507,306 @@ def test_a_type_checking_import_that_would_rebind_a_destination_name_refuses(
     with pytest.raises(MoveRefused, match="already binds Model"):
         _move(root, store, updater)
     assert (root / "pkg/core.py").read_text() == "Model = 1\n"
+
+
+# --- removing the export takes the export, not its line ---------------------------
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "line",
+    [
+        "export { helper }; registerPlugin();",
+        "registerPlugin(); export { helper };",
+        "export { helper, other }; registerPlugin();",
+    ],
+)
+def test_a_statement_sharing_the_export_line_stays(
+    temp_repo: Path, tmp_path: Path, line: str
+) -> None:
+    """The sole `export { helper }` was removed with its whole line, and
+    `registerPlugin()` on it with it: the old module silently stopped
+    registering anything on load."""
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export const plugins = [];\n\n"
+        "function registerPlugin() {\n  plugins.push('p');\n}\n\n"
+        "function helper(a) {\n  return a + 1;\n}\n\n"
+        "function other() {\n  return 'o';\n}\n\n"
+        f"{line}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js")
+    assert report.applied, report.message
+    probe = _node(
+        root,
+        tmp_path,
+        "import { plugins } from './pkg/util.js';\n"
+        "import { helper } from './pkg/core.js';\n"
+        "console.log(plugins.length, helper(1));\n",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "1 2"
+
+
+# --- relative imports inside the moved code keep their target ---------------------
+
+NESTED = {
+    "pkg/__init__.py": "",
+    "pkg/deps.py": "X = 'pkg.deps'\n",
+    "pkg/sub/__init__.py": "NAME = 'pkg.sub'\n",
+    "pkg/sub/deps.py": "X = 'pkg.sub.deps'\n",
+    "pkg/sub/inner/__init__.py": "",
+    "pkg/sub/inner/mod.py": "X = 'pkg.sub.inner.mod'\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param("from .deps import X\n    return X", "pkg.sub.deps", id="sibling"),
+        pytest.param("from . import deps\n    return deps.X", "pkg.sub.deps", id="dot"),
+        pytest.param("from .. import deps\n    return deps.X", "pkg.deps", id="dotdot"),
+        pytest.param(
+            "from .inner.mod import X\n    return X", "pkg.sub.inner.mod", id="deep"
+        ),
+        pytest.param("from . import NAME\n    return NAME", "pkg.sub", id="package"),
+    ],
+)
+def test_a_relative_import_inside_the_moved_function_keeps_its_target(
+    temp_repo: Path, body: str, expected: str
+) -> None:
+    """The function-local import travelled verbatim, and its dots now
+    counted from the destination's package: `from .deps import X` moved
+    from pkg/sub/util.py to pkg/core.py silently read `pkg.deps`."""
+    fixture = {
+        **NESTED,
+        "pkg/sub/util.py": f"def helper():\n    {body}\n" + OTHER,
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater, qn=f"{PROJECT}.pkg.sub.util.helper")
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper())")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == expected
+
+
+def test_a_relative_import_above_the_root_refuses_the_move(temp_repo: Path) -> None:
+    """It names no module the destination could spell."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "def helper():\n    from .. import deps\n    return deps\n" + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="from .. import deps"):
+        _move(root, store, updater, target="pkg.sub.core")
+    assert (root / "pkg/util.py").read_text() == fixture["pkg/util.py"]
+
+
+# --- module state the moved code rebinds stays one variable -----------------------
+
+
+@pytest.mark.parametrize(
+    ("util", "probe"),
+    [
+        pytest.param(
+            "COUNT = 0\n\n\ndef helper():\n    global COUNT\n    COUNT += 1\n"
+            "    return COUNT\n" + OTHER,
+            "import pkg.util\nfrom pkg.util import helper\n"
+            "helper()\nprint(pkg.util.COUNT)\n",
+            id="moved-writes",
+        ),
+        pytest.param(
+            "COUNT = 0\n\n\ndef bump():\n    global COUNT\n    COUNT += 1\n\n\n"
+            "def helper():\n    return COUNT\n" + OTHER,
+            "from pkg.util import bump, helper\nbump()\nprint(helper())\n",
+            id="old-module-writes",
+        ),
+    ],
+)
+def test_a_global_the_move_would_split_refuses_the_move(
+    temp_repo: Path, util: str, probe: str
+) -> None:
+    """The destination imported COUNT by value, so `global COUNT` then
+    rebound the destination's own copy: the moved helper counted in one
+    module while every reader of `pkg.util.COUNT` saw the other."""
+    fixture = {**FIXTURE, "pkg/util.py": util}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="COUNT"):
+        _move(root, store, updater)
+    assert (root / "pkg/util.py").read_text() == util
+    assert not (root / "pkg/core.py").exists()
+    result = _python(root, probe)
+    assert result.stdout.strip() == "1", result.stderr
+
+
+def test_a_global_only_the_moved_code_uses_does_not_refuse(temp_repo: Path) -> None:
+    """A cache the moved function alone creates and reads moves with it."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "def helper():\n    global _CACHE\n    _CACHE = 'warm'\n    return _CACHE\n"
+        + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper())")
+    assert probe.stdout.strip() == "warm", probe.stderr
+
+
+@needs_node
+@pytest.mark.parametrize("write", ["count += 1;", "count++;", "count = count + 1;"])
+def test_a_js_module_variable_the_moved_code_assigns_refuses_the_move(
+    temp_repo: Path, tmp_path: Path, write: str
+) -> None:
+    """An imported binding is read-only, so the moved `count += 1` that
+    updated the module's `let` threw a TypeError at the destination."""
+    root = temp_repo / PROJECT
+    util = (
+        "export let count = 0;\n\n"
+        f"export function helper() {{\n  {write}\n  return count;\n}}\n\n"
+        "export function run() {\n  return 'r';\n}\n"
+    )
+    _write(root, "pkg/util.js", util)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="count"):
+        _move(root, store, updater, target="pkg/core.js")
+    assert (root / "pkg/util.js").read_text() == util
+    probe = _node(
+        root,
+        tmp_path,
+        "import { helper } from './pkg/util.js';\nconsole.log(helper());\n",
+    )
+    assert probe.stdout.strip() == "1", probe.stderr
+
+
+@needs_node
+def test_a_js_local_that_shadows_a_module_variable_does_not_refuse(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export let count = 0;\n\n"
+        "export function helper() {\n  let count = 1;\n  count += 1;\n  return count;\n}\n\n"
+        "export function run() {\n  return count;\n}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js")
+    assert report.applied, report.message
+    probe = _node(
+        root,
+        tmp_path,
+        "import { helper } from './pkg/core.js';\nconsole.log(helper());\n",
+    )
+    assert probe.stdout.strip() == "2", probe.stderr
+
+
+# --- a wildcard importer still reaches the moved name -----------------------------
+
+
+@pytest.mark.parametrize(
+    "util",
+    [
+        pytest.param("def helper(a):\n    return a + 1\n", id="last-definition"),
+        pytest.param("def helper(a):\n    return a + 1\n" + OTHER, id="with-sibling"),
+        pytest.param(
+            "def helper(a):\n    return a + 1\n"
+            + OTHER
+            + "\n\n__all__ = [n for n in dir() if not n.startswith('_')]\n",
+            id="computed-all",
+        ),
+    ],
+)
+def test_a_wildcard_reexport_of_the_moved_name_refuses_the_move(
+    temp_repo: Path, util: str
+) -> None:
+    """`from pkg.util import *` is recorded with the name `*`, which neither
+    the move rewrote nor the contract counted as reaching `helper`: the
+    move passed, and `from pkg.api import helper` raised ImportError."""
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": util,
+        "pkg/api.py": "from pkg.util import *  # noqa: F403\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="pkg/api.py"):
+        _move(root, store, updater)
+    assert (root / "pkg/util.py").read_text() == util
+    probe = _python(root, "from pkg.api import helper; print(helper(1))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "2"
+
+
+@pytest.mark.parametrize(
+    ("util", "keep_alias"),
+    [
+        pytest.param(
+            "def helper(a):\n    return a + 1\n\n\nVALUE = helper(1)\n",
+            False,
+            id="old-module-imports-it-back",
+        ),
+        pytest.param("def helper(a):\n    return a + 1\n", True, id="keep-alias"),
+        pytest.param(
+            "def _helper(a):\n    return a + 1\n" + OTHER, False, id="private-name"
+        ),
+    ],
+)
+def test_a_wildcard_reexport_that_still_reaches_the_name_does_not_refuse(
+    temp_repo: Path, util: str, keep_alias: bool
+) -> None:
+    """When the old module binds the name again, or the star never exported
+    it, the wildcard importer sees what it saw before."""
+    name = "_helper" if "_helper" in util else "helper"
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": util,
+        "pkg/api.py": "from pkg.util import *  # noqa: F403\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(
+        root, store, updater, qn=f"{PROJECT}.pkg.util.{name}", keep_alias=keep_alias
+    )
+    assert report.applied, report.message
+    source = "pkg.util" if name == "_helper" else "pkg.api"
+    probe = _python(root, f"from {source} import {name}; print({name}(1))")
+    if name == "_helper":
+        # Only the old path changed; the wildcard never carried it.
+        assert probe.returncode != 0
+        probe = _python(root, "from pkg.core import _helper; print(_helper(1))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "2"
+
+
+def test_the_contract_counts_a_wildcard_importer_of_a_vacated_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The contract's own check, with the planner's refusal out of the way:
+    the stale-importer exemption cleared any import whose names held
+    neither "" nor the moved name, and `*` holds neither."""
+    monkeypatch.setattr(
+        move_mod.Mover, "_refuse_wildcard_loss", lambda *_args, **_kwargs: None
+    )
+    util = "def helper(a):\n    return a + 1\n"
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": util,
+        "pkg/api.py": "from pkg.util import *  # noqa: F403\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert not report.applied
+    assert "pkg/api.py" in report.message, report.message
+    assert (root / "pkg/util.py").read_text() == util
+    probe = _python(root, "from pkg.api import helper; print(helper(1))")
+    assert probe.stdout.strip() == "2", probe.stderr
