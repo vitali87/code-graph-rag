@@ -133,7 +133,10 @@ STRUCTURAL_EDITOR = (
 # MCP tool descriptions
 MCP_LIST_PROJECTS = (
     "List all indexed projects in the knowledge graph database. "
-    "Returns a list of project names that have been indexed."
+    "Returns a list of project names that have been indexed. A server scoped "
+    "to a workspace lists the workspace's indexed projects, and names the ones "
+    "the graph does not hold in `not_indexed`, with a `hint` saying how to "
+    "index them."
 )
 
 MCP_DELETE_PROJECT = (

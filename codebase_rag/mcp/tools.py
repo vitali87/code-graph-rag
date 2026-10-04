@@ -68,7 +68,7 @@ from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependenc
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
-from codebase_rag.workspaces import WorkspaceConfig
+from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 
 
 def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
@@ -166,6 +166,51 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     # this registry calls directly is built without one, which this states
     # once instead of at each call site.
     return tool.function
+
+
+def _not_indexed_hint(
+    workspace: WorkspaceConfig,
+    missing: list[WorkspaceRepo],
+    roots: dict[str, str | None],
+) -> str:
+    """Which workspace projects the graph lacks, and for each repo whose
+    code the graph holds under another project, which one (issue #2867)."""
+    hint = cs.MCP_WORKSPACE_NOT_INDEXED.format(
+        workspace=workspace.name,
+        names=cs.SEPARATOR_COMMA_SPACE.join(r.project_name for r in missing),
+    )
+    for repo in missing:
+        holder = _project_holding(repo.repo_path(), roots)
+        if holder is None:
+            continue
+        project, root = holder
+        template = (
+            cs.MCP_WORKSPACE_REPO_INDEXED_AS
+            if root == repo.repo_path()
+            else cs.MCP_WORKSPACE_REPO_INDEXED_INSIDE
+        )
+        hint += template.format(
+            path=repo.repo_path(),
+            project=project,
+            root=root,
+            expected=repo.project_name,
+        )
+    return hint
+
+
+def _project_holding(
+    repo_path: Path, roots: dict[str, str | None]
+) -> tuple[str, Path] | None:
+    # The project indexed from the repo itself or from the closest directory
+    # above it: that index is where the repo's code is.
+    holders = [
+        (name, root)
+        for name, raw in roots.items()
+        if raw and repo_path.is_relative_to(root := Path(raw).resolve())
+    ]
+    if not holders:
+        return None
+    return max(holders, key=lambda h: len(h[1].parts))
 
 
 class MCPToolsRegistry:
@@ -1177,13 +1222,28 @@ class MCPToolsRegistry:
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
                 projects = await asyncio.to_thread(self.ingestor.list_projects)
+            if self.workspace is None:
+                return ListProjectsSuccessResult(projects=projects, count=len(projects))
             # A workspace server lists the workspace's projects that are
             # indexed: a workspace repo not yet in the graph is not a project
             # a query can reach, and one outside the workspace is not served.
-            if self.workspace is not None:
-                allowed = set(self.workspace.project_names())
-                projects = [p for p in projects if p in allowed]
-            return ListProjectsSuccessResult(projects=projects, count=len(projects))
+            allowed = set(self.workspace.project_names())
+            indexed = set(projects)
+            projects = [p for p in projects if p in allowed]
+            missing = [r for r in self.workspace.repos if r.project_name not in indexed]
+            if not missing:
+                return ListProjectsSuccessResult(projects=projects, count=len(projects))
+            # Named rather than dropped (issue #2867): with the repos' parent
+            # directory indexed as one project, every workspace project was
+            # missing and the answer was an unexplained empty list.
+            async with self._ingestor_lock:
+                roots = await asyncio.to_thread(self.ingestor.list_project_roots)
+            return ListProjectsSuccessResult(
+                projects=projects,
+                count=len(projects),
+                not_indexed=[r.project_name for r in missing],
+                hint=_not_indexed_hint(self.workspace, missing, roots),
+            )
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
