@@ -90,6 +90,7 @@ class TypeInferenceEngine:
         "_dart_type_inference",
         "dart_extends_type_args",
         "dart_constructor_qns",
+        "dart_extension_on_types",
     )
 
     def __init__(
@@ -133,6 +134,7 @@ class TypeInferenceEngine:
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
         dart_constructor_qns: set[str] | None = None,
+        dart_extension_on_types: dict[str, str] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -229,6 +231,9 @@ class TypeInferenceEngine:
         # Constructor qns, read by the call pass to record a named
         # constructor call as a construction (#2012).
         self.dart_constructor_qns = _shared(dart_constructor_qns, set)
+        # Extension qn -> its `on` type as written, read by the resolver when
+        # a typed receiver's class lacks the member (#2482).
+        self.dart_extension_on_types = _shared(dart_extension_on_types, dict)
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._csharp_type_inference: CSharpTypeInferenceEngine | None = None
@@ -598,7 +603,13 @@ class TypeInferenceEngine:
                 return None
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
-        return self.method_return_types.get(method_qn)
+        return_type = self.method_return_types.get(method_qn)
+        # Another package's type (`model.Item`) is spelled for the METHOD's
+        # file; a local typed with that spelling resolves to nothing here and
+        # would lose the edge its calls get by name, so it stays untyped.
+        if return_type and cs.SEPARATOR_DOT in return_type:
+            return None
+        return return_type
 
     def js_function_return_type(self, fn_qn: str) -> str | None:
         """The class a call of the JS/TS free function `fn_qn` evaluates to.
