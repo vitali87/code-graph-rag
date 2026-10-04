@@ -76,3 +76,27 @@ def test_the_capture_and_the_delete_start_from_the_module_path_index(
             )
         )
         assert "ScanAllByLabelProperties (m :Module {path})" in plan, plan
+
+
+@pytest.fixture
+def alpha_beside_nested(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+) -> GraphUpdater:
+    # `alpha.nested` is a project of its own whose modules sit under
+    # `alpha.`, at the same relative paths as alpha's.
+    memgraph_ingestor.ensure_constraints()
+    for project in ("alpha.nested", "alpha"):
+        _updater(memgraph_ingestor, tmp_path / project, project).run(force=True)
+    memgraph_ingestor.flush_all()
+    return _updater(memgraph_ingestor, tmp_path / "alpha", "alpha")
+
+
+def test_a_nested_projects_edges_are_not_captured(
+    alpha_beside_nested: GraphUpdater,
+) -> None:
+    captured = {
+        (r[cs.KEY_CALLER_QN], r[cs.KEY_REL], r[cs.KEY_TARGET_QN])
+        for r in alpha_beside_nested._capture_inbound_edges(["util.py"])
+    }
+    assert ("alpha.app.run", "CALLS", "alpha.util.helper") in captured
+    assert not [row for row in captured if str(row[2]).startswith("alpha.nested.")]

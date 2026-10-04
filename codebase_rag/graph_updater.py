@@ -4216,6 +4216,7 @@ class GraphUpdater:
                     cs.CYPHER_PARAM_PATHS: reindexed_keys,
                     cs.KEY_PROJECT_NAME: self.project_name,
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
                 },
             )
         except Exception:

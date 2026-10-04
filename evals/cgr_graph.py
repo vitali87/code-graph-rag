@@ -1272,7 +1272,10 @@ class _StatefulIngestor:
                 targets: set[_NodeId] = set()
                 for changed_path in sorted(changed):
                     targets |= self._module_subtree(
-                        changed_path, project_name, project_prefix
+                        changed_path,
+                        project_name,
+                        project_prefix,
+                        params.get(cs.KEY_NESTED_PROJECTS) if params else None,
                     )
                 inbound: list[ResultRow] = []
                 for edge in (e for t in targets for e in self._in.get(t, ())):

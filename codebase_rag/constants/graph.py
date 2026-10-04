@@ -816,16 +816,11 @@ _CYPHER_MODULE_SUBTREE_RELS = (
     "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
     "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
 )
-CYPHER_DELETE_MODULE = (
-    # Scoped to the project: two projects in the shared graph can hold the
-    # same relative path, and a path-only match would take the sibling's
-    # module subtree with it. A repository-root __init__.py's module qn IS
-    # the bare project name (no trailing dot), so the prefix test alone
-    # would miss it.
-    # `svc.` also prefixes `svc.v2`'s modules, so a registered project whose
-    # name extends this one is excluded: a module belongs to the LONGEST
-    # registered name it sits under (issue #1985).
-    "MATCH (m:Module {path: $path}) "
+# Which matched Module `m` this project owns. `svc.` also prefixes
+# `svc.v2`'s modules, so a registered project whose name extends this one is
+# excluded: a module belongs to the LONGEST registered name it sits under
+# (issue #1985).
+_CYPHER_OWN_MODULE = (
     "WHERE (m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix) "
     "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
@@ -841,6 +836,15 @@ CYPHER_DELETE_MODULE = (
     "AND (m.qualified_name = nested.name "
     "OR m.qualified_name STARTS WITH (nested.name + '.')) "
     "WITH m, nested WHERE nested IS NULL "
+)
+CYPHER_DELETE_MODULE = (
+    # Scoped to the project: two projects in the shared graph can hold the
+    # same relative path, and a path-only match would take the sibling's
+    # module subtree with it. A repository-root __init__.py's module qn IS
+    # the bare project name (no trailing dot), so the prefix test alone
+    # would miss it.
+    "MATCH (m:Module {path: $path}) "
+    + _CYPHER_OWN_MODULE
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
@@ -849,7 +853,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    f"OPTIONAL MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(c) "
+    + f"OPTIONAL MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -1079,12 +1083,12 @@ CYPHER_INBOUND_EDGES = (
     # over every edge scanned the whole shared database, once per sync, and
     # returned other projects' edges into their own same-path files (issue
     # #2918). A target outside the subtree is not deleted, so its edges
-    # never needed restoring.
+    # never needed restoring, and a nested project's module is not deleted
+    # either, so the capture applies the delete's ownership filter too.
     "UNWIND $paths AS path "
     "MATCH (m:Module {path: path}) "
-    "WHERE m.qualified_name = $project_name "
-    "OR m.qualified_name STARTS WITH $project_prefix "
-    f"MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(target) "
+    + _CYPHER_OWN_MODULE
+    + f"MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(target) "
     "WITH DISTINCT target "
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
     "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS]->(target) "
