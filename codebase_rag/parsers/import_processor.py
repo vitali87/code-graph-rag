@@ -424,6 +424,26 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
                 yield local, name
 
 
+def _js_declared_export_names(statement: Node) -> Iterator[str]:
+    # The names `export function f`, `export class C`, `export const f = ...`
+    # (and TypeScript's `export declare function f`) declare and export.
+    # `export default function f` exports `default`, recorded on its own.
+    if any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children):
+        return
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    pending = [declaration] if declaration is not None else []
+    while pending:
+        node = pending.pop()
+        if (name := node.child_by_field_name(cs.FIELD_NAME)) is not None:
+            if node.type == cs.TS_VARIABLE_DECLARATOR and name.type != cs.TS_IDENTIFIER:
+                # A destructuring pattern names no single binding here.
+                continue
+            if text := safe_decode_text(name):
+                yield text
+            continue
+        pending.extend(node.named_children)
+
+
 def _is_js_star_reexport(site: PropertyDict | None) -> bool:
     # `export * from` records `*` as its imported name and binds no alias,
     # where `import * as ns` binds one.
@@ -4402,6 +4422,13 @@ class ImportProcessor:
                 )
             elif (target := mapped.get(name)) is not None:
                 exported[name] = JsExport(target, local=False)
+        # An exported declaration is in the table too: `export *` passes on
+        # a source's exports, not every function it defines (Greptile, PR
+        # #2965).
+        for name in _js_declared_export_names(statement):
+            exported[name] = JsExport(
+                f"{module_qn}{cs.SEPARATOR_DOT}{name}", local=True
+            )
         if exported:
             self.js_export_bindings.setdefault(module_qn, {}).update(exported)
 

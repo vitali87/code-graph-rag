@@ -25,6 +25,10 @@ import * as schemasJs from "./classic/schemas.js";
 import * as top from "./v4/index.js";
 import * as renamed from "./renamed/index.js";
 import * as ambiguous from "./ambiguous/index.js";
+import * as priv from "./private/index.js";
+import * as mixed from "./mixed/index.js";
+import * as consts from "./consts/index.js";
+import * as clauses from "./clauses/index.js";
 
 export function nsDirImport() { return dir.object({}); }
 export function nsIndexJs() { return idxJs.object({}); }
@@ -35,6 +39,10 @@ export function nsDefiningModuleJs() { return schemasJs.object({}); }
 export function nsNotExported() { return idxJs.internal(); }
 export function nsAmbiguous() { return ambiguous.clash(); }
 export function nsMissing() { return idxJs.nothing(); }
+export function nsPrivate() { return priv.helper(); }
+export function nsPrivateBesideExported() { return mixed.pick(); }
+export function nsExportedConst() { return consts.make(); }
+export function nsExportClause() { return clauses.later(); }
 """
 
 FILES = {
@@ -51,6 +59,22 @@ FILES = {
     "src/ambiguous/a.ts": "export function clash() { return 1; }\n",
     "src/ambiguous/b.ts": "export function clash() { return 2; }\n",
     "src/ambiguous/index.ts": 'export * from "./a";\nexport * from "./b";\n',
+    # `export *` passes on a source's exports only: `helper` and `a.pick`
+    # are private to their files.
+    "src/private/hidden.ts": (
+        "function helper() { return 1; }\n"
+        "export function shown() { return helper(); }\n"
+    ),
+    "src/private/index.ts": 'export * from "./hidden";\n',
+    "src/mixed/a.ts": (
+        "function pick() { return 1; }\nexport function other() { return pick(); }\n"
+    ),
+    "src/mixed/b.ts": "export function pick() { return 2; }\n",
+    "src/mixed/index.ts": 'export * from "./a";\nexport * from "./b";\n',
+    "src/consts/impl.ts": "export const make = () => 1;\n",
+    "src/consts/index.ts": 'export * from "./impl";\n',
+    "src/clauses/impl.ts": "function later() { return 1; }\nexport { later };\n",
+    "src/clauses/index.ts": 'export * from "./impl";\n',
     "src/app.ts": APP,
 }
 
@@ -79,8 +103,15 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("nsIndex", "src.classic.schemas.object"),
         ("nsChain", "src.classic.schemas.number"),
         ("nsRenamed", "src.renamed.impl.build"),
+        ("nsPrivateBesideExported", "src.mixed.b.pick"),
     ],
-    ids=["index-js-specifier", "index-specifier", "star-chain", "renamed-export"],
+    ids=[
+        "index-js-specifier",
+        "index-specifier",
+        "star-chain",
+        "renamed-export",
+        "exported-beside-a-private-twin",
+    ],
 )
 def test_a_namespace_member_follows_the_barrels_reexports(
     graph: RecordedGraph, caller: str, callee: str
@@ -96,8 +127,15 @@ def test_a_namespace_member_follows_the_barrels_reexports(
     [
         ("nsDirImport", "src.classic.schemas.object"),
         ("nsDefiningModuleJs", "src.classic.schemas.object"),
+        ("nsExportedConst", "src.consts.impl.make"),
+        ("nsExportClause", "src.clauses.impl.later"),
     ],
-    ids=["directory-specifier", "defining-module"],
+    ids=[
+        "directory-specifier",
+        "defining-module",
+        "exported-const-function",
+        "export-clause",
+    ],
 )
 def test_a_namespace_that_already_bound_still_binds(
     graph: RecordedGraph, caller: str, callee: str
@@ -107,8 +145,13 @@ def test_a_namespace_that_already_bound_still_binds(
 
 @pytest.mark.parametrize(
     "caller",
-    ["nsAmbiguous", "nsMissing", "nsNotExported"],
-    ids=["two-star-sources", "no-such-export", "sibling-the-barrel-skips"],
+    ["nsAmbiguous", "nsMissing", "nsNotExported", "nsPrivate"],
+    ids=[
+        "two-star-sources",
+        "no-such-export",
+        "sibling-the-barrel-skips",
+        "private-to-the-star-source",
+    ],
 )
 def test_a_name_the_barrel_does_not_single_out_binds_nothing(
     graph: RecordedGraph, caller: str
