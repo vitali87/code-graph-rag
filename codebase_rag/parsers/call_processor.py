@@ -1858,7 +1858,11 @@ class CallProcessor:
     ) -> dict[str, str] | None:
         # One decorated definition's bare decorators, each a module-load CALLS
         # edge; returns the (lazily built) local-alias map for the next one.
-        callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+        decorator_labels = (
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
+            cs.NodeLabel.CLASS,
+        )
         for child in parent.children:
             if child.type != cs.TS_PY_DECORATOR:
                 continue
@@ -1869,13 +1873,45 @@ class CallProcessor:
             callee, alias_map = self._resolve_decorator_callee(
                 name, module_qn, root_node, lang_config, alias_map
             )
-            if callee and callee[0] in callable_labels:
-                self._emit_rel(
-                    module_spec,
-                    cs.RelationshipType.CALLS,
-                    (callee[0], cs.KEY_QUALIFIED_NAME, callee[1]),
-                )
+            if callee and callee[0] in decorator_labels:
+                self._emit_bare_decorator_targets(module_spec, *callee)
         return alias_map
+
+    def _emit_bare_decorator_targets(
+        self, module_spec: tuple[str, str, str], callee_type: str, callee_qn: str
+    ) -> None:
+        # `@deco` runs `deco(func)`, so it binds as that call does: each
+        # same-named definition is a candidate, and a class is constructed.
+        # networkx's `@nx._dispatchable` is a class with a same-named docs
+        # shim; skipping classes left its decorator sites on the shim alone
+        # (issue #2621).
+        registry = self._resolver.function_registry
+        variants = registry.variants(callee_qn)
+        prev_resolution = self._resolution
+        if len(variants) > 1:
+            self._resolution = cs.EdgeResolution.OVERLOAD
+        try:
+            for variant in variants:
+                targets: list[tuple[str, str]] = []
+                match registry.get(variant):
+                    case NodeType.FUNCTION | NodeType.METHOD as kind:
+                        targets.append((cs.NodeLabel(kind.value), variant))
+                    case NodeType.CLASS:
+                        # `_emit_rel` writes a CALLS to a Class as INSTANTIATES.
+                        targets.append((cs.NodeLabel.CLASS, variant))
+                        init_qn = f"{variant}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+                        if init_qn in registry:
+                            targets.append((cs.NodeLabel.METHOD, init_qn))
+                    case None if callee_type != cs.NodeLabel.CLASS:
+                        targets.append((callee_type, variant))
+                for label, target_qn in targets:
+                    self._emit_rel(
+                        module_spec,
+                        cs.RelationshipType.CALLS,
+                        (label, cs.KEY_QUALIFIED_NAME, target_qn),
+                    )
+        finally:
+            self._resolution = prev_resolution
 
     def _resolve_decorator_callee(
         self,
@@ -5206,6 +5242,8 @@ class CallProcessor:
             # a phantom the database drops (issue #652).
             variant_type = self._resolver.function_registry.get(class_variant)
             if variant_type is not None and variant_type != NodeType.CLASS:
+                if ctx.is_python:
+                    self._emit_python_binding_twin(ctx, class_variant, variant_type)
                 continue
             ctx.ensure_rel(
                 ctx.caller_spec,
@@ -5363,6 +5401,7 @@ class CallProcessor:
             call_name,
             ctx.module_qn,
             self._resolver.function_registry.variants(callee_qn),
+            ctx.caller_qn,
         )
         if len(
             targets
@@ -5394,11 +5433,42 @@ class CallProcessor:
                 NodeType.FUNCTION,
                 NodeType.METHOD,
             ):
+                if ctx.is_python:
+                    self._emit_python_binding_twin(ctx, target_qn, target_type)
                 continue
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
                 (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    def _emit_python_binding_twin(
+        self, ctx: _CallScanContext, twin_qn: str, twin_type: NodeType
+    ) -> None:
+        # A Python name holds one binding at a time, so a class and a
+        # same-named def (a docs shim, an ImportError fallback) are both what
+        # `Tool()` may run. Skipping the twin of the other kind bound every
+        # construction to the shim alone (issue #2621).
+        if twin_type in (NodeType.FUNCTION, NodeType.METHOD):
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel(twin_type.value), cs.KEY_QUALIFIED_NAME, twin_qn),
+            )
+            return
+        if twin_type != NodeType.CLASS:
+            return
+        ctx.ensure_rel(
+            ctx.caller_spec,
+            cs.RelationshipType.INSTANTIATES,
+            (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, twin_qn),
+        )
+        init_qn = f"{twin_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+        if init_qn in self._resolver.function_registry:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, init_qn),
             )
 
     def _emit_callee_fanouts(
@@ -7600,11 +7670,12 @@ class CallProcessor:
         res_type, res_qn = resolved
         registry = self._resolver.function_registry
         if res_type == cs.NodeLabel.CLASS:
-            init_qn = f"{res_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
-            if init_qn not in registry:
+            constructor = self._class_callback_target(
+                source_spec, res_qn, rel_type, ensure_rel, module_qn, language
+            )
+            if constructor is None:
                 return
-            res_type = cs.NodeLabel.METHOD
-            res_qn = init_qn
+            res_type, res_qn = constructor
         # Only callables are meaningful callback/reference targets: a value can
         # resolve to an Interface/Type node (`selector = identity as Selector`
         # resolves the cast's TYPE name in some paths), and emitting that
@@ -7628,6 +7699,40 @@ class CallProcessor:
         self._emit_callback_targets(
             source_spec, res_type, res_qn, rel_type, ensure_rel, module_qn, language
         )
+
+    def _class_callback_target(
+        self,
+        source_spec: tuple[str, str, str],
+        class_qn: str,
+        rel_type: cs.RelationshipType,
+        ensure_rel: Callable[..., None],
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[str, str] | None:
+        # A class passed as a callback is called through its constructor.
+        # None when the edges were already fanned out here, or when the
+        # class has no `__init__` node to reference.
+        registry = self._resolver.function_registry
+        if any(
+            registry.get(variant) in (NodeType.FUNCTION, NodeType.METHOD)
+            for variant in registry.variants(class_qn)
+        ):
+            # A same-named def is passed on with the class (issue
+            # #2621); the fan-out gives each variant its own target.
+            self._emit_callback_targets(
+                source_spec,
+                cs.NodeLabel.CLASS,
+                class_qn,
+                rel_type,
+                ensure_rel,
+                module_qn,
+                language,
+            )
+            return None
+        init_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+        if init_qn not in registry:
+            return None
+        return cs.NodeLabel.METHOD, init_qn
 
     def _emit_csharp_method_group(
         self,
@@ -7726,11 +7831,27 @@ class CallProcessor:
             else self._resolver.last_resolution
         )
         try:
-            for target_qn in targets:
+            for variant in targets:
+                # A variant can be another kind than the resolved callback:
+                # a Python class beside a same-named def. Written under the
+                # callback's label it named no node, so the database dropped
+                # it (issue #2621). A class is passed on through its __init__,
+                # as `_emit_callback_edge` passes a lone class.
+                match registry.get(variant):
+                    case NodeType.FUNCTION | NodeType.METHOD as kind:
+                        target_type, target_qn = cs.NodeLabel(kind.value), variant
+                    case None:
+                        target_type, target_qn = res_type, variant
+                    case NodeType.CLASS if (
+                        init_qn := f"{variant}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
+                    ) in registry:
+                        target_type, target_qn = cs.NodeLabel.METHOD, init_qn
+                    case _:
+                        continue
                 ensure_rel(
                     source_spec,
                     rel_type,
-                    (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                    (target_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
                 if language == cs.SupportedLanguage.CSHARP:
                     self._record_csharp_cross_module_use(module_qn, target_qn)

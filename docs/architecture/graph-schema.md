@@ -19,7 +19,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
-| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
 | Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
@@ -38,6 +38,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | Parameter (opt-in: [`parameters`](#capture-groups)) | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
 | Field (opt-in: [`fields`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
 | EnumVariant (opt-in: [`enum_variants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
+| Constant (opt-in: [`constants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, value: string?}` |
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
@@ -90,7 +91,8 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | Function, Method | HAS_PARAMETER (opt-in: [`parameters`](#capture-groups)) | Parameter |
 | Class, Interface, Enum, Type, Union | HAS_FIELD (opt-in: [`fields`](#capture-groups)) | Field |
 | Enum | HAS_VARIANT (opt-in: [`enum_variants`](#capture-groups)) | EnumVariant |
-| Parameter, Field | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
+| Module | DEFINES_CONSTANT (opt-in: [`constants`](#capture-groups)) | Constant |
+| Parameter, Field, Constant | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict, a Java method reference such as `Acc::add`). `INSTANTIATES` records a class being constructed; a Java constructor reference (`Acc::new`) instantiates its class and references each declared constructor. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
@@ -152,6 +154,7 @@ Which parts of the schema above an index writes is chosen per capture group. Eve
 | `parameters` | - | Parameter | HAS_PARAMETER, OF_TYPE | One node per declared parameter of a function or method, and the OF_TYPE edge from a parameter or field to the project type its annotation names. |
 | `fields` | - | Field | HAS_FIELD | One node per field of a class, interface, enum, type or union. A field's OF_TYPE edge belongs to parameters, so field types need both. |
 | `enum_variants` | - | EnumVariant | HAS_VARIANT | One node per enum member, with its position and value. |
+| `constants` | - | Constant | DEFINES_CONSTANT | One node per module-level constant, with its declared type and value. A constant's OF_TYPE edge belongs to parameters, so constant types need both. |
 <!-- /SECTION:capture_groups -->
 
 ### Choosing Groups
@@ -308,15 +311,17 @@ right one.
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
 
+A JavaScript or TypeScript named function expression whose value is not stored under that same name (a callback argument such as `app.use(function createError (req, res, next) {...})`, a return value, `var g = function f () {}`) carries `is_body_scoped_name: true`. Its name is in scope inside its own body only, so a bare call by that name resolves to it from there (recursion). Anywhere else the name reaches it only as one `@line` variant of a same-named definition that does bind the name (see Qualified Name Uniqueness below).
+
 Methods of classes defined inside function bodies are captured only when `CGR_CAPTURE_LOCAL_DEFINITIONS` is enabled, which is the default (see [Configuration](../getting-started/configuration.md)); function-local *classes* are always captured, and setting the flag to `false` skips their methods.
 
 ## Qualified Name Uniqueness
 
 `qualified_name` uniquely identifies each `Function`, `Method`, and `Class` node. When the same qualified name is defined more than once in a module, every definition is kept as a distinct node. This happens with the `if has_x(): ... else: ...` import-fallback idiom, `typing.overload`, and `try/except ImportError` fallbacks.
 
-The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant.
+The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant. Source order decides across labels too: a Python `class Tool` followed by a same-named `def Tool` in an `if` block (a docs or `TYPE_CHECKING` shim) keeps `m.Tool` for the class, and the `def` becomes `m.Tool@<line>`.
 
-A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
+A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target. When a Python name has both a class and a function variant, a call such as `Tool()` records `INSTANTIATES` to each class variant and `CALLS` to each function variant, and a method call on the result (`Tool().run()`) resolves through the class. A bare decorator `@Tool` runs `Tool(func)` and binds the same way: the module `INSTANTIATES` a class decorator (and `CALLS` its `__init__`), whether or not a same-named function shares its name.
 
 A JavaScript or TypeScript function written as an object literal's property value (`{retry: {delay: () => 0}}`, `{delay: function () {}}`, `{delay () {}}`) is named by its key under the enclosing scope, without the object's path, and carries `is_object_member: true`. Only its object reaches it (`options.retry.delay()`), so a bare call such as `delay(5)` never links to it by name, and a bare call to a real `delay` does not fan out onto such a variant. A binding imported from a module that exports the object (`const { delay } = require('./opts')`) still resolves to it.
 

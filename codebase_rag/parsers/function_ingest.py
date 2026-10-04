@@ -1396,14 +1396,10 @@ class FunctionIngestMixin:
         func_props = self._build_function_props(
             func_node, resolution, module_qn, lang_queries, language
         )
-        if language in cs.JS_TS_LANGUAGES and js_ts_utils.is_object_literal_method(
-            func_node
-        ):
-            # `{delay () {...}}` registers here, under its key, before the
-            # object-literal pass would; only its object reaches it (issue
-            # #2435), and the persisted mark keeps that across incremental runs.
-            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
-            self.function_registry.mark_object_member(resolution.qualified_name)
+        if language in cs.JS_TS_LANGUAGES:
+            self._mark_js_ts_name_scope(
+                func_node, resolution.qualified_name, func_props
+            )
         is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
         if is_macro:
             # Rust macros live in a separate namespace from functions; Pass-3 gates
@@ -1515,6 +1511,23 @@ class FunctionIngestMixin:
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
+
+    def _mark_js_ts_name_scope(
+        self, func_node: Node, qualified_name: str, func_props: PropertyDict
+    ) -> None:
+        if js_ts_utils.is_object_literal_method(func_node):
+            # `{delay () {...}}` registers here, under its key, before the
+            # object-literal pass would; only its object reaches it (issue
+            # #2435), and the persisted mark keeps that across incremental runs.
+            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
+            self.function_registry.mark_object_member(qualified_name)
+        # A JS/TS function expression whose name only its own body can call:
+        # bare-name resolution skips it everywhere else (issue #2402), and the
+        # persisted property lets an incremental run's rehydrated registry
+        # skip it too (the is_macro pattern).
+        if js_ts_utils.name_is_body_scoped(func_node):
+            func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
+            self.function_registry.mark_body_scoped_name(qualified_name)
 
     def _record_csharp_local_function(
         self, func_node: Node, qualified_name: str, module_qn: str

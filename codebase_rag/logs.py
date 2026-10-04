@@ -638,6 +638,10 @@ DUPLICATES_GROUPS_TRUNCATED = (
     "Similar-group enumeration stopped at the cap of {cap} groups; the report "
     "is truncated. Raise --threshold or --min-size to narrow the scan."
 )
+DUPLICATES_LINKS_TRUNCATED = (
+    "A duplicate group has more than {cap} linked member pairs; the report "
+    "lists the strongest {cap} of each such group."
+)
 DUPLICATES_PAIRS_TRUNCATED = (
     "Candidate-pair generation stopped at the budget of {cap} pairs; the "
     "report is truncated. Raise --threshold or --min-size to narrow the scan."
@@ -864,6 +868,7 @@ PY_INSTANCE_VAR_INFERRED = "Inferred instance variable: {attr} -> {type}"
 PY_LOOP_VAR_INFERRED = "Inferred loop variable type: {var} -> {type}"
 PY_TYPE_SIMPLE = "Inferred type (simple): {var} -> {type}"
 PY_TYPE_COMPLEX = "Inferred type (complex): {var} -> {type}"
+PY_TYPE_WITH = "Inferred type (with target): {var} -> {type}"
 PY_TYPE_INFERRED = "Inferred type: {var} -> {type}"
 PY_RECURSION_GUARD = "Recursion guard (method call): skipping {method}"
 PY_RECURSION_GUARD_QN = "Recursion guard: skipping {method_qn}"

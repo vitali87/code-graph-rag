@@ -946,6 +946,142 @@ def _drop_excluded_paths(
     }
 
 
+def _is_php_test_path(path: str) -> bool:
+    # PHPUnit finds test classes by file suffix wherever its suite points, and
+    # PSR-4 components (Symfony) keep them in a `Tests/` directory beside the
+    # code, so a PHP test need not sit under a lowercase `tests/` root (issue
+    # #2472). A file named just `Test.php` declares a class called Test, which
+    # is a domain name as often as a test.
+    if not path.endswith(cs.PHP_EXTENSIONS):
+        return False
+    normalized = cs.SEPARATOR_SLASH + path.lstrip(cs.SEPARATOR_SLASH)
+    filename = normalized.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    return cs.PHP_TEST_DIR_SEGMENT in normalized or (
+        filename.endswith(cs.PHP_TEST_FILE_SUFFIX)
+        and filename != cs.PHP_TEST_FILE_SUFFIX
+    )
+
+
+def _qn_leaf(qn: str) -> str:
+    # Two same-named classes in one file's two namespaces register as `X` and
+    # `X@8`; the marker is not part of the name a `use` import spells.
+    return qn_markers.strip_dup_marker(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+
+
+def _is_php_framework_test_base(qn: str) -> bool:
+    leaf = _qn_leaf(qn)
+    return leaf in cs.PHP_TEST_BASE_NAMES or (
+        leaf.endswith(cs.PHP_TEST_CASE_SUFFIX)
+        and qn.startswith(cs.PHP_TEST_FRAMEWORK_NAMESPACES)
+    )
+
+
+def _php_project_class_named(
+    external_qn: str, by_leaf: dict[str, list[str]], namespaces: dict[str, str]
+) -> str | None:
+    # The PHP inheritance pass leaves a base imported from another file's
+    # namespace as an external name (`App.AdapterTestUtilities.X`). It is the
+    # project class only when exactly one class of that name declares that
+    # exact namespace: a shared name and directory do not make a vendor's
+    # `Acme\Shared\BaseTestCase` the project's `Tests\Shared` one, and a
+    # class whose file declares no single namespace is never matched.
+    namespace, sep, leaf = external_qn.rpartition(cs.SEPARATOR_DOT)
+    if not sep:
+        return None
+    matches = [qn for qn in by_leaf.get(leaf, ()) if namespaces.get(qn) == namespace]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _php_test_classes(
+    nodes: dict[_NodeId, PropertyDict], inherits_subclasses: dict[str, set[str]]
+) -> set[str]:
+    # PHPUnit runs `test*`, `@test` and `#[Test]` methods (and their data
+    # providers) only on a class extending its TestCase, so that ancestry,
+    # not the directory, makes a PHP class test code: flysystem keeps
+    # `src/**/XxxTest.php` beside its adapters, extending the abstract
+    # `src/AdapterTestUtilities/FilesystemAdapterTestCase.php`. The walk is
+    # seeded by a test framework's base, or by a project `*TestCase` that
+    # sits in a test path, and follows first-party subclasses down any
+    # depth. A `*TestCase` name alone proves nothing: a test-management app
+    # has a `TestCase` entity, and its subclasses are production code.
+    php_classes = {
+        str(uid): props
+        for (label, uid), props in nodes.items()
+        if label == _CLASS
+        and str(props.get(cs.KEY_PATH, "")).endswith(cs.PHP_EXTENSIONS)
+    }
+    php_paths = {
+        qn: str(props.get(cs.KEY_PATH, "")) for qn, props in php_classes.items()
+    }
+    namespaces = {
+        qn: namespace
+        for qn, props in php_classes.items()
+        if isinstance(namespace := props.get(cs.KEY_NAMESPACE), str) and namespace
+    }
+    by_leaf: dict[str, list[str]] = defaultdict(list)
+    for qn in php_paths:
+        by_leaf[_qn_leaf(qn)].append(qn)
+    seeds = {
+        qn
+        for qn, path in php_paths.items()
+        if _qn_leaf(qn).endswith(cs.PHP_TEST_CASE_SUFFIX)
+        and (matches_test_path(path) or _is_php_test_path(path))
+    }
+    children: dict[str, set[str]] = defaultdict(set)
+    for base, subclasses in inherits_subclasses.items():
+        php_subclasses = subclasses & php_paths.keys()
+        if not php_subclasses:
+            continue
+        parent = (
+            base
+            if base in php_paths
+            else _php_project_class_named(base, by_leaf, namespaces)
+        )
+        if parent is not None:
+            children[parent] |= php_subclasses
+        elif _is_php_framework_test_base(base):
+            seeds |= php_subclasses
+    found = set(seeds)
+    _walk(seeds, children, found)
+    return found
+
+
+def _within_php_test_class(qn: str, php_test_classes: set[str]) -> bool:
+    # A test class's methods, the closures in them and the anonymous test
+    # doubles they build all register under the class's qn, so a prefix walk
+    # finds every one of them (and the class itself, with --classes).
+    prefix = qn
+    while prefix:
+        if prefix in php_test_classes:
+            return True
+        prefix = prefix.rpartition(cs.SEPARATOR_DOT)[0]
+    return False
+
+
+def _php_test_symbols(
+    scan: _CandidateScan,
+    nodes: dict[_NodeId, PropertyDict],
+    inherits_subclasses: dict[str, set[str]],
+) -> set[str]:
+    """PHP candidates that are test code by PHPUnit's conventions (issue
+    #2472): a `*Test.php` file, a `Tests/` directory, or a class extending
+    TestCase directly or through any number of first-party bases."""
+    php_candidates = {
+        qn
+        for qn in scan.candidates
+        if str(scan.props_by_qn[qn].get(cs.KEY_PATH, "")).endswith(cs.PHP_EXTENSIONS)
+    }
+    if not php_candidates:
+        return set()
+    test_classes = _php_test_classes(nodes, inherits_subclasses)
+    return {
+        qn
+        for qn in php_candidates
+        if _is_php_test_path(str(scan.props_by_qn[qn].get(cs.KEY_PATH, "")))
+        or _within_php_test_class(qn, test_classes)
+    }
+
+
 def dead_code_from_graph(
     nodes: dict[_NodeId, PropertyDict],
     rels: list[_RelTuple],
@@ -974,6 +1110,16 @@ def dead_code_from_graph(
     )
     structural = _scan_structural_rels(rels, project_prefix)
     roots = _module_roots(rels, module_rels, scan, config)
+    # PHPUnit names its tests by class ancestry, which only the INHERITS
+    # edges show, so the per-symbol test rule in _scan_candidates cannot see
+    # them. Both polarities still read one set: rooted with tests on,
+    # neither a candidate nor a root with them off.
+    php_tests = _php_test_symbols(scan, nodes, structural.inherits_subclasses)
+    if config.include_tests:
+        roots |= php_tests
+    else:
+        scan.candidates -= php_tests
+        roots -= php_tests
 
     protocol_stubs = {
         m for c, m in structural.class_methods if c in structural.protocol_classes
@@ -1060,6 +1206,8 @@ def _node_props(row: ResultRow) -> PropertyDict:
         # well-known-symbol name (`[Symbol.toStringTag]`) contains a dot and
         # cannot be recovered from the qn's last dotted segment.
         cs.KEY_NAME: str(row.get(cs.KEY_NAME) or ""),
+        # A PHP class's declared namespace links an imported base to it.
+        cs.KEY_NAMESPACE: str(row.get(cs.KEY_NAMESPACE) or ""),
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
