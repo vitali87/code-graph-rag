@@ -659,6 +659,28 @@ def _rebinds_nonlocal(binding: Node, scope: Node) -> bool:
     )
 
 
+def _in_branch(binding: Node, scope: Node) -> bool:
+    """Whether a binding sits in a branch or loop body of `scope`, which may
+    not run (issue #2842)."""
+    current = binding.parent
+    while current is not None and current.id != scope.id:
+        if current.type in cs.PY_BRANCH_SCOPES:
+            return True
+        current = current.parent
+    return False
+
+
+def _joined_type(prior: str, added: str) -> str:
+    """The union `prior | added`, each member once, as an annotation spells it."""
+    members = dict.fromkeys(
+        member
+        for part in (prior, added)
+        for raw in part.split(cs.PY_UNION_SEPARATOR)
+        if (member := raw.strip())
+    )
+    return f" {cs.PY_UNION_SEPARATOR} ".join(members)
+
+
 def _belongs_to(binding: Node, scope: Node) -> bool:
     """Whether an assignment or `for` binds into `scope`'s own names: it sits
     in `scope`'s body, or rebinds one of them through `nonlocal`."""
@@ -978,8 +1000,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         for_statements = [f for f in for_statements if _belongs_to(f, node)]
         comprehensions = [c for c in comprehensions if _scope_of(c) == node.id]
 
+        # A rebinding inside a branch or a loop may not run, so after it the
+        # name holds either type; one at the body's top level always runs and
+        # replaces it (issue #2842).
         for assignment in assignments:
-            self._process_assignment_simple(assignment, local_var_types, module_qn)
+            self._process_assignment_simple(
+                assignment,
+                local_var_types,
+                module_qn,
+                joins=_in_branch(assignment, node),
+            )
 
         # Between the two assignment passes: a with target types from its
         # manager, which the simple pass may have typed, and the complex pass
@@ -1120,7 +1150,11 @@ class PythonAstAnalyzerMixin(_AstBase):
                     local_var_types[name] = scratch[name]
 
     def _process_assignment_simple(
-        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+        self,
+        assignment_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        joins: bool = False,
     ) -> None:
         left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -1135,6 +1169,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         if inferred_type := self._infer_type_from_expression_simple(
             right_node, module_qn
         ):
+            if joins and (prior := local_var_types.get(var_name)):
+                inferred_type = _joined_type(prior, inferred_type)
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
 

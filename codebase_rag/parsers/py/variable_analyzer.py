@@ -648,13 +648,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
         """The type an alias gives the variable, after any operator.
 
         Candidates of different types -- `widget if flag else engine` -- become
-        the union an annotation would spell (`Widget | Engine`), so the resolver
-        applies the one policy it already has for a genuine multi-type union
-        (`_strip_optional`: it "stays unresolved"). Typing only the first branch
-        drops the other's call, and leaving the receiver untyped hands it to the
-        bare-name fallback, which picks one of the two arbitrarily. Only `| None`
-        is ignored when comparing: an Optional and its bare type are the same
-        receiver.
+        the union an annotation would spell (`Widget | Engine`), so the call
+        processor applies the one policy it has for a genuine multi-type union:
+        an edge to each member's method (issue #2842). Typing only the first
+        branch drops the other's call, and leaving the receiver untyped hands it
+        to the bare-name fallback, which picks one of the two arbitrarily. Only
+        `| None` is ignored when comparing: an Optional and its bare type are
+        the same receiver.
         """
         left = self._get_candidate_types(alias.candidates, local_var_types, module_qn)
         if alias.dunder is None:
