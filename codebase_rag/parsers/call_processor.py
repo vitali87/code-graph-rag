@@ -2947,19 +2947,25 @@ class CallProcessor:
         field = lua_utils.field_function_path(func_node)
         if field is not None:
             return field[0]
-        if lua_utils.is_field_value(func_node):
-            # A field with no name is anonymous in the definition
-            # pass too; naming it after the assignment here would
-            # credit its calls to a node that does not exist
-            # (#1750 review).
-            return None
-        return lua_utils.extract_assigned_name(
-            func_node,
-            accepted_var_types=(
-                cs.TS_DOT_INDEX_EXPRESSION,
-                cs.TS_IDENTIFIER,
-            ),
-        )
+        # A field with no name is anonymous in the definition pass too;
+        # naming it after the assignment here would credit its calls to a
+        # node that does not exist (#1750 review).
+        if not lua_utils.is_field_value(func_node) and (
+            name := lua_utils.extract_assigned_name(
+                func_node, accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS
+            )
+        ):
+            return name
+        # Nameless, but a node the program reaches: the value of
+        # `t["lume.clamp"] =` or `t[k] =`, or a function the module returns
+        # (`return function() ... end`, `return { function() ... end }`). Its
+        # body's calls were dropped with the name (issue #2578); they belong
+        # to the node the definition pass registered under the generated name.
+        if lua_utils.bracket_assignment_target(
+            func_node
+        ) is not None or lua_utils.is_module_return_value(func_node):
+            return lua_utils.anonymous_function_name(func_node)
+        return None
 
     def _ingest_func_node_calls(
         self,
