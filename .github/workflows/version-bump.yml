@@ -177,7 +177,7 @@ jobs:
           # RELEASE_EVERY cadence (issue #1149). A commit counts as a security
           # fix when its message carries a GHSA id (advisory-fork merges do),
           # an explicit [security] marker, or an associated pull request
-          # labelled "security". Every commit since the last bump's tag is
+          # labelled "security". The commits since the last bump's tag are
           # checked, not only the triggering one: runs that stood down (or
           # were replaced in the concurrency queue) left their commits to
           # this run. The compare API caps an unpaginated answer at 250
@@ -223,34 +223,49 @@ jobs:
               fi
             done
           fi
+          # The API cost must not grow with the backlog: the token's budget is
+          # shared by every workflow in the repository, and a scan that runs
+          # out of it fails the run. The compare pages already carry every
+          # message, so messages cost no further call. Pull request labels are
+          # read only along main's first-parent line, one commit per push:
+          # exactly the commit each stood-down run would have checked itself,
+          # since a branch commit belongs to the pull request that merged it.
+          # Every lookup fails the run rather than reading as "no marker": a
+          # scan that silently skipped a commit could ship a security fix
+          # without its release.
           if [ -n "$BASE_TAG" ]; then
             if ! RANGE=$(gh api --paginate \
                 "repos/${GITHUB_REPOSITORY}/compare/${BASE_TAG}...${GITHUB_SHA}?per_page=100" \
-                --jq '.commits[].sha'); then
+                --jq '.commits[] | {sha, parent: .parents[0].sha, message: .commit.message} | @json'); then
               echo "::error::could not list the commits since ${BASE_TAG}; refusing to decide the release without scanning them"
               exit 1
             fi
-            RANGE=$(printf '%s\n' "$RANGE" | grep -xE '[0-9a-f]{40}' || true)
+            if ! RANGE=$(printf '%s\n' "$RANGE" \
+                | jq -c 'select((.sha | type) == "string" and (.sha | test("^[0-9a-f]{40}$")))'); then
+              echo "::error::could not parse the commits since ${BASE_TAG}; refusing to decide the release"
+              exit 1
+            fi
             if [ -z "$RANGE" ]; then
               echo "::error::the compare API returned no commits since ${BASE_TAG}; refusing to decide the release"
               exit 1
             fi
-            COMMITS="$RANGE"
-          else
-            echo "::notice::no release tag found; scanning only ${GITHUB_SHA}"
-          fi
-          # Every lookup below fails the run rather than reading as "no
-          # marker": a scan that silently skipped a commit could ship a
-          # security fix without its release.
-          MESSAGE=""
-          for SHA in $COMMITS; do
-            if ! BODY=$(git log -1 --pretty=%B "$SHA" 2>/dev/null) \
-                && ! BODY=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}" --jq .commit.message); then
-              echo "::error::could not read the message of ${SHA}; refusing to decide the release"
+            MESSAGE=$(printf '%s\n' "$RANGE" | jq -r '.message')
+            COMMITS=$(printf '%s\n' "$RANGE" | jq -rs --arg head "$GITHUB_SHA" '
+              (map({key: .sha, value: .parent}) | from_entries) as $parent
+              | $head | recurse($parent[.] // empty)
+              | . as $sha | select($parent | has($sha))')
+            if [ -z "$COMMITS" ]; then
+              echo "::error::${GITHUB_SHA} is missing from the commits since ${BASE_TAG}; refusing to decide the release"
               exit 1
             fi
-            MESSAGE+="${BODY}"$'\n'
-          done
+          else
+            echo "::notice::no release tag found; scanning only ${GITHUB_SHA}"
+            if ! MESSAGE=$(git log -1 --pretty=%B "$GITHUB_SHA" 2>/dev/null) \
+                && ! MESSAGE=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" --jq .commit.message); then
+              echo "::error::could not read the message of ${GITHUB_SHA}; refusing to decide the release"
+              exit 1
+            fi
+          fi
           GHSA=$(printf '%s' "$MESSAGE" | grep -oiE 'GHSA(-[0-9a-z]{4}){3}' | head -1 || true)
           SECURITY=false
           case "$MESSAGE" in

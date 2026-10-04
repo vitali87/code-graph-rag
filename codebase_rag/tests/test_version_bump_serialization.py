@@ -203,6 +203,7 @@ gh() {
   for arg in "$@"; do
     case "$arg" in repos/*) url="$arg" ;; esac
   done
+  printf '%s\n' "$url" >> gh_calls
   case "$url" in
     */releases/latest) printf 'v0.0.1\n' ;;
     */compare/*)
@@ -217,9 +218,17 @@ gh() {
       esac
       printf '%s\n' "$*" > compare_call
       [ "$COMPARE_FAILS" = true ] && return 1
-      printf '%b' "$RANGE"
+      local prev="" sha parent
+      for sha in $(printf '%b' "$RANGE"); do
+        parent=$(cat "parents/$sha" 2> /dev/null || printf '%s' "$prev")
+        jq -nc --arg sha "$sha" --arg parent "$parent" \
+          --arg message "$(cat "messages/$sha" 2> /dev/null)" \
+          '{sha: $sha, parent: (if $parent == "" then null else $parent end), message: $message}'
+        prev="$sha"
+      done
       ;;
     */pulls)
+      basename "$(dirname "$url")" >> pulls_calls
       [ "$PULLS_FAIL" = true ] && return 1
       cat "labels/$(basename "$(dirname "$url")")" 2> /dev/null || true
       ;;
@@ -247,9 +256,16 @@ git() {
 
 
 def _commits(
-    tmp_path: Path, messages: dict[str, str], labels: dict[str, str] | None = None
+    tmp_path: Path,
+    messages: dict[str, str],
+    labels: dict[str, str] | None = None,
+    parents: dict[str, str] | None = None,
 ) -> None:
-    for folder, entries in (("messages", messages), ("labels", labels or {})):
+    for folder, entries in (
+        ("messages", messages),
+        ("labels", labels or {}),
+        ("parents", parents or {}),
+    ):
         (tmp_path / folder).mkdir()
         for sha, text in entries.items():
             (tmp_path / folder / sha).write_text(text + "\n", encoding="utf-8")
@@ -258,6 +274,8 @@ def _commits(
 def _decide_run(
     tmp_path: Path, range_: str, **env: str
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    if shutil.which("jq") is None:
+        pytest.skip("the Ubuntu workflow requires jq")
     return _run(
         "Decide whether this tag ships a release",
         DECIDE_STUBS,
@@ -386,11 +404,57 @@ def test_failed_tip_lookup_fails_instead_of_standing_down(tmp_path: Path) -> Non
 
 
 def test_unreadable_commit_message_fails_the_run(tmp_path: Path) -> None:
-    _commits(tmp_path, {SHA: "feat: x"})
-    result, out = _decide_run(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    _commits(tmp_path, {})
+    result, out = _decide_run(tmp_path, "", LS_REMOTE_EXIT="2")
     assert result.returncode != 0
-    assert f"could not read the message of {OLDER}" in result.stdout
+    assert f"could not read the message of {SHA}" in result.stdout
     assert "release" not in out
+
+
+def _lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").split() if path.exists() else []
+
+
+BRANCH_COMMITS = [f"{n:040x}" for n in range(1, 51)]
+OUTSIDE = "e" * 40
+
+
+def test_label_lookups_follow_mains_first_parent_line_only(tmp_path: Path) -> None:
+    _commits(
+        tmp_path,
+        {
+            OLDER: "fix: a",
+            SHA: "Merge pull request #2",
+            **dict.fromkeys(BRANCH_COMMITS, "wip"),
+        },
+        parents={OLDER: OUTSIDE, SHA: OLDER, **dict.fromkeys(BRANCH_COMMITS, OUTSIDE)},
+    )
+    range_ = "\\n".join([OLDER, *BRANCH_COMMITS, SHA]) + "\\n"
+    out = _decide(tmp_path, range_)
+    assert out["security"] == "false"
+    assert _lines(tmp_path / "pulls_calls") == [SHA, OLDER]
+    assert len(_lines(tmp_path / "gh_calls")) == 4
+
+
+def test_security_marker_on_a_branch_commit_ships_without_extra_calls(
+    tmp_path: Path,
+) -> None:
+    _commits(
+        tmp_path,
+        {
+            OLDER: "fix: a",
+            SHA: "Merge pull request #2",
+            **dict.fromkeys(BRANCH_COMMITS, "wip"),
+            BRANCH_COMMITS[7]: "fix: patch [security]",
+        },
+        parents={OLDER: OUTSIDE, SHA: OLDER, **dict.fromkeys(BRANCH_COMMITS, OUTSIDE)},
+    )
+    range_ = "\\n".join([OLDER, *BRANCH_COMMITS, SHA]) + "\\n"
+    out = _decide(tmp_path, range_)
+    assert out["security"] == "true"
+    assert out["release"] == "true"
+    assert _lines(tmp_path / "pulls_calls") == []
+    assert len(_lines(tmp_path / "gh_calls")) == 2
 
 
 def test_unreadable_pull_request_labels_fail_the_run(tmp_path: Path) -> None:
