@@ -153,17 +153,20 @@ class JavaTypeResolverMixin:
             if type_name in import_map:
                 return self._imported_class_qn(import_map[type_name], type_name)
 
+        # An enum is a type declaration like a class or an interface: a
+        # receiver of a nested enum's type was left untyped (issue #2922).
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
-        if same_package_qn in self.function_registry and self.function_registry[
-            same_package_qn
-        ] in [NodeType.CLASS, NodeType.INTERFACE]:
+        if (
+            same_package_qn in self.function_registry
+            and self.function_registry[same_package_qn] in _JAVA_TYPE_DECL_NODE_TYPES
+        ):
             return same_package_qn
 
         # A nested class referenced by its simple name from within the same file
         # (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
         # `module.Outer.Nested`, not `module.Nested`, so the direct check above
         # misses it. Search only this module's trie subtree (bounded, not a
-        # whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
+        # whole-registry scan) for a type declaration whose last segment is the simple
         # name, used only when unambiguous so a same-named nested type elsewhere
         # cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
         # already excludes character-level prefix collisions.
@@ -171,8 +174,7 @@ class JavaTypeResolverMixin:
         nested = [
             qn
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
-            if qn.endswith(suffix)
-            and entity_type in (NodeType.CLASS, NodeType.INTERFACE)
+            if qn.endswith(suffix) and entity_type in _JAVA_TYPE_DECL_NODE_TYPES
         ]
         if len(nested) == 1:
             return nested[0]

@@ -1,0 +1,121 @@
+"""Issue #2922: a variable typed by an enum nested in a class is typed.
+
+The type resolver mapped a simple type name to a type declared in the same
+file only when that type was a class or an interface, so a nested enum's
+name stayed unresolved: every method call on a parameter, local or field of
+that type bound nothing, and the enum's methods were reported dead (gson:
+61 `factory.create(...)` sites through a nested `enum Factory`).
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+
+OUTER = """\
+package demo;
+
+public final class Outer {
+    static class Box { int size() { return 1; } }
+
+    enum Kind {
+        A, B;
+        int code() { return ordinal(); }
+    }
+
+    enum Factory {
+        PLAIN {
+            @Override String create() { return "plain"; }
+        };
+        abstract String create();
+    }
+
+    private Kind field = Kind.A;
+
+    public static int useKind(Kind kind) { return kind.code(); }
+
+    public static int useLocalEnum() { Kind k = Kind.A; return k.code(); }
+
+    public int useField() { return field.code(); }
+
+    public static String useFactory(Factory factory) { return factory.create(); }
+
+    public static int useBox(Box box) { return box.size(); }
+
+    public static String useColor(Color c) { return c.hex(); }
+}
+"""
+
+COLOR = """\
+package demo;
+
+public enum Color {
+    RED;
+    String hex() { return "#f00"; }
+}
+"""
+
+PREFIX = "src.main.java.demo"
+
+
+@pytest.fixture(scope="module")
+def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("jenum") / "jenum"
+    _write(root, f"{PREFIX.replace('.', '/')}/Outer.java", OUTER)
+    _write(root, f"{PREFIX.replace('.', '/')}/Color.java", COLOR)
+    return _index(root, MagicMock())
+
+
+def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    prefix = f"{graph.project}.{PREFIX}."
+    return {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}Outer.Outer.{caller}"
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("useKind(Kind)", "Outer.Outer.Kind.code()"),
+        ("useLocalEnum()", "Outer.Outer.Kind.code()"),
+        ("useField()", "Outer.Outer.Kind.code()"),
+    ],
+    ids=["parameter", "local", "field"],
+)
+def test_a_nested_enum_receiver_binds_its_method(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    assert _callees(graph, caller).get(callee) == "exact"
+
+
+def test_a_nested_enum_with_constant_bodies_binds_both_definitions(
+    graph: RecordedGraph,
+) -> None:
+    # The constant's body overrides the abstract method; the call can run
+    # either, so it fans out to both (gson's `JsonReaderPathTest.Factory`).
+    assert _callees(graph, "useFactory(Factory)") == {
+        "Outer.Outer.Factory.create()": "overload",
+        "Outer.Outer.Factory.create()@15": "overload",
+    }
+
+
+# Negative: what must not change.
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("useBox(Box)", "Outer.Outer.Box.size()"),
+        ("useColor(Color)", "Color.Color.hex()"),
+    ],
+    ids=["nested-class", "top-level-enum"],
+)
+def test_a_nested_class_or_top_level_enum_still_binds(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    assert _callees(graph, caller).get(callee) == "exact"
