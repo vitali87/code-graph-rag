@@ -60,6 +60,9 @@ class CSharpFrontend:
         return find_csharp_project(repo_path) is not None
 
     def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
+        # Roslyn compiles the whole project in one run: a narrowed file list
+        # cannot bind calls whose targets live in the files it omits.
+        del files
         return _adapt_csharp_semantic_facts(run_csharp_frontend(repo_path))
 
 

@@ -57,6 +57,9 @@ class GoFrontend:
         return find_go_module(repo_path) is not None
 
     def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
+        # go/types checks every package of each module in one run: a narrowed
+        # file list cannot bind calls whose targets live in the files it omits.
+        del files
         return _adapt_go_semantic_facts(run_go_frontend(repo_path))
 
 
