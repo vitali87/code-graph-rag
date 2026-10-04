@@ -150,9 +150,10 @@ so no name or path is cut to fit 80 columns.
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
-   decorated handlers, dunder/lifecycle methods, plus any `--entry-point` and
-   `--decorator-root` you add. Each language's own visibility rule decides
-   what is public:
+   decorated handlers, dunder/lifecycle methods, program entry points (`main`
+   in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
+   plus any `--entry-point` and `--decorator-root` you add. Each language's
+   own visibility rule decides what is public:
    - **C:** a function without `static`.
    - **C++:** besides a C++20 module `export`:
      - a non-`static` function at namespace scope, outside an anonymous

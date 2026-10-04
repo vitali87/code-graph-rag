@@ -191,3 +191,6 @@ AGENTIC_QA_RESUME_MISMATCH = (
 # The toolchain could not run the oracle: a stated RESULT, not a crash.
 # Carries the probe stderr so the operator sees why (issue #1639).
 ORACLE_UNAVAILABLE = "Oracle unavailable: {reason}"
+FIRST_TOOL_SUMMARY = (
+    "{graph_first}/{total} structural questions went to the graph first"
+)
