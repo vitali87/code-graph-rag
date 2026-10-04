@@ -1933,6 +1933,13 @@ class CallResolver:
             ):
                 return True, result
             result = self._resolve_js_member_call_unique(call_name, module_qn)
+            if result is not None and language in cs.JS_TS_LANGUAGES:
+                # Chosen because no other visible class defines the name, not
+                # because anything says the receiver is that class (issue
+                # #2609). Only the call site's AST can say that, so the call
+                # processor confirms or drops the pick from the receiver's
+                # declaration; this caller-independent verdict is what caches.
+                self.last_resolution = cs.EdgeResolution.HEURISTIC
             self._remember_cacheable(cache_key, result)
             return True, result
 
