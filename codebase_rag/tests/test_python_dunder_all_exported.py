@@ -74,11 +74,38 @@ OTHER = """\
 def _explicitly_exported():
     return 11
 """
+# A later plain `__all__ =` replaces the earlier list (CodeRabbit, PR
+# #2954), and each listed name is its whole literal value: `"_foo" "bar"` is
+# `_foobar`, and `"\\x5fapi"` is `_api` (Greptile, PR #2954).
+REPLACED = """\
+__all__ = ["_old"]
+__all__ = ["_new", "_foo" "bar", "\\x5fapi"]
+
+
+def _old():
+    return 1
+
+
+def _new():
+    return 2
+
+
+def _foobar():
+    return 3
+
+
+def _foo():
+    return 4
+
+
+def _api():
+    return 5
+"""
 
 
 @pytest.fixture
 def exported(tmp_path: Path) -> dict[str, bool]:
-    return _run(tmp_path, {"lib.py": LIB, "other.py": OTHER})
+    return _run(tmp_path, {"lib.py": LIB, "other.py": OTHER, "repl.py": REPLACED})
 
 
 @pytest.mark.parametrize(
@@ -89,6 +116,9 @@ def exported(tmp_path: Path) -> dict[str, bool]:
         "lib._extended",
         "lib._appended",
         "lib._conditional",
+        "repl._new",
+        "repl._foobar",
+        "repl._api",
     ],
 )
 def test_an_underscore_name_in_dunder_all_is_exported(
@@ -109,6 +139,8 @@ def test_an_underscore_name_in_dunder_all_is_exported(
         ("lib.outer._explicitly_exported", False),
         ("lib.Holder._added", False),
         ("other._explicitly_exported", False),
+        ("repl._old", False),
+        ("repl._foo", False),
     ],
 )
 def test_names_dunder_all_does_not_list_keep_their_rule(

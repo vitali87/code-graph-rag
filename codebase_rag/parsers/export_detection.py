@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterator
 
 from tree_sitter import Node
@@ -141,22 +142,30 @@ def _python_dunder_all(root: Node) -> frozenset[str]:
     global _last_dunder_all
     if _last_dunder_all is not None and _last_dunder_all[0] == root:
         return _last_dunder_all[1]
-    names = frozenset(_dunder_all_names(root))
-    _last_dunder_all = (root, names)
-    return names
+    names: set[str] = set()
+    _collect_dunder_all(root, names, top_level=True)
+    frozen = frozenset(names)
+    _last_dunder_all = (root, frozen)
+    return frozen
 
 
-def _dunder_all_names(scope: Node) -> Iterator[str]:
+def _collect_dunder_all(scope: Node, names: set[str], top_level: bool) -> None:
     # `__all__ = [...]`, `__all__ += [...]`, `__all__.extend([...])` and
-    # `__all__.append(...)` at module level, including inside a top-level
-    # `if`/`try`/`with`; a function or class body is not the module's.
+    # `__all__.append(...)` at module level, in order, including inside a
+    # top-level `if`/`try`/`with`; a function or class body is not the
+    # module's. A plain assignment at the top level always runs and replaces
+    # the list (CodeRabbit, PR #2954); one in a block may not run, so what it
+    # lists is added to what the list may hold.
     for statement in scope.children:
         if statement.type in cs.PY_MODULE_LEVEL_BLOCKS:
-            yield from _dunder_all_names(statement)
+            _collect_dunder_all(statement, names, top_level=False)
         elif statement.type == cs.TS_PY_EXPRESSION_STATEMENT:
             for expression in statement.named_children:
-                if (listed := _dunder_all_update(expression)) is not None:
-                    yield from _string_values(listed)
+                if (listed := _dunder_all_update(expression)) is None:
+                    continue
+                if top_level and expression.type == cs.TS_PY_ASSIGNMENT:
+                    names.clear()
+                names.update(_string_values(listed))
 
 
 def _dunder_all_update(expression: Node) -> Node | None:
@@ -185,8 +194,19 @@ def _dunder_all_update(expression: Node) -> Node | None:
 
 
 def _string_values(node: Node) -> Iterator[str]:
-    if node.type == cs.TS_PY_STRING_CONTENT and node.text is not None:
-        yield node.text.decode(cs.ENCODING_UTF8)
+    # Each string literal's VALUE, as Python reads it: adjacent literals join
+    # (`"_foo" "bar"` is `_foobar`) and escapes decode (`"\x5fapi"` is
+    # `_api`), where the raw source fragments named neither (Greptile, PR
+    # #2954). A literal that is no constant (an f-string) names nothing
+    # knowable.
+    if node.type in (cs.TS_PY_STRING, cs.TS_PY_CONCATENATED_STRING):
+        if node.text is not None:
+            try:
+                value = ast.literal_eval(node.text.decode(cs.ENCODING_UTF8))
+            except (ValueError, SyntaxError):
+                return
+            if isinstance(value, str):
+                yield value
         return
     for child in node.children:
         yield from _string_values(child)
