@@ -233,9 +233,18 @@ Deterministic graph queries, printed as JSON, with no LLM in the path.
 
 ```bash
 cgr graph resolve helper
-cgr graph callers myrepo__1a2b3c4d.pkg.util.helper --depth 2
-cgr graph tests-reaching myrepo__1a2b3c4d.pkg.util.helper --project myrepo__1a2b3c4d
+cgr graph callers helper --depth 2
+cgr graph callees util.helper
+cgr graph tests-reaching pkg/util.py:12 --project myrepo__1a2b3c4d
+cgr graph callers myrepo__1a2b3c4d.pkg.util.helper
 ```
+
+`callers`, `callees`, `implementors`, `overrides`, `importers` and
+`tests-reaching` take a qualified name, or anything `resolve` takes that names
+exactly one definition: a bare name, a dotted suffix of a qualified name, or
+`path:line`, which names the innermost definition spanning that line. A dotted
+name has to end a qualified name: `util.helper` names `pkg.util.helper`, but
+`pkg.helper` does not, however unique `helper` is.
 
 The project is `--project`, or else the one `--repo-path` (default `.`) was
 indexed as. The exit status tells an empty answer apart from a question the
@@ -245,7 +254,8 @@ graph cannot answer, and a refusal prints nothing on stdout:
 |--------|---------|
 | `0` | The JSON answer. `[]` means the name is in the graph and nothing matches it. |
 | `3` | The project is not indexed, or, without `--project`, the directory was never indexed. The message on stderr names close matches. |
-| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold. The message names close matches, or points at `cgr graph resolve`. |
+| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a name the graph does not hold. The message names close matches, or points at `cgr graph resolve`. |
+| `5` | One of those commands was given a name, dotted suffix or `path:line` that names several definitions. The message lists them; pass one of their qualified names. |
 
 `resolve` answers `[]` when no name matches, and `definition` answers
 `{"found": false, ...}` for a qualified name it does not find; neither exits

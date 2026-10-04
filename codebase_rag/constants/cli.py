@@ -341,6 +341,10 @@ CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
 # them apart.
 GRAPH_EXIT_UNKNOWN_PROJECT = 3
 GRAPH_EXIT_UNKNOWN_TARGET = 4
+# A name given in place of a qualified name that names several definitions
+# (issue #2861): picking one would answer about a symbol the caller may not
+# have meant.
+GRAPH_EXIT_AMBIGUOUS_TARGET = 5
 CLI_ERR_GRAPH_UNKNOWN_PROJECT = "Project '{project}' is not indexed."
 CLI_ERR_GRAPH_INDEXED_PROJECTS = " Indexed projects: {projects}."
 CLI_ERR_GRAPH_NOTHING_INDEXED = (
@@ -354,6 +358,12 @@ CLI_ERR_GRAPH_UNKNOWN_TARGET = "'{qualified_name}' is not in the graph."
 CLI_ERR_GRAPH_RESOLVE_HINT = (
     " 'cgr graph resolve NAME' lists the qualified names a name matches."
 )
+CLI_ERR_GRAPH_AMBIGUOUS_TARGET = (
+    "'{target}' names {count} definitions: {names}{more}. "
+    "Pass one of their qualified names."
+)
+CLI_ERR_GRAPH_AMBIGUOUS_MORE = " and {more} more ('cgr graph resolve' lists them all)"
+GRAPH_AMBIGUOUS_LIST_LIMIT = 10
 
 # Clickable report locations (OSC 8 hyperlinks) and `duplicates --open`.
 # A template receives {path} (absolute, URL-quoted for URLs) and {line};
