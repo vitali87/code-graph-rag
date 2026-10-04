@@ -707,6 +707,15 @@ class JavaMethodResolverMixin:
         if object_ref == cs.JAVA_KEYWORD_SUPER:
             return self._java_super_type(context_node, module_qn)
 
+        # `Outer.this` in an inner or anonymous class is the enclosing `Outer`
+        # instance, so its type is the class `Outer`; only a bare `this` was
+        # known (issue #2936). A local never names it, so none is consulted.
+        qualifier, dot, keyword = object_ref.rpartition(cs.SEPARATOR_DOT)
+        if dot and qualifier and keyword == cs.JAVA_KEYWORD_THIS:
+            return self._resolve_java_object_type(
+                qualifier, {}, module_qn, context_node
+            )
+
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is not None and object_ref in import_map:
             return self._imported_class_qn(import_map[object_ref], object_ref)
