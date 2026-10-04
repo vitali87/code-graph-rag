@@ -973,13 +973,33 @@ class Mover:
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
         broken = [key for key, result in results.items() if result.parses is False]
+        # What each staged file held when the move was planned: the patched
+        # bytes the edits were built from, and nothing at a new destination.
+        planned: dict[str, bytes | None] = {key: patcher.source(key) for key in results}
         if new_content is not None:
+            planned[report.new_path] = None
             # `stage_into` parses every patched file; a new destination is
             # not patched, so it gets the same gate here.
             if self._parses(report.new_path, new_content):
                 tx.stage(report.new_path, new_content)
             else:
                 broken.append(report.new_path)
+        # `stage` takes the disk as the baseline, so a file edited (or a
+        # destination created) since planning would be overwritten with
+        # content built from the old bytes, and commit's conflict check
+        # would compare against the edit itself and pass.
+        changed = [
+            staged.path
+            for staged in tx.staged
+            if planned.get(staged.path, staged.before) != staged.before
+        ]
+        if changed:
+            tx.rollback()
+            raise MoveRefused(
+                cs.MOVE_SOURCE_CHANGED.format(
+                    files=cs.SEPARATOR_COMMA_SPACE.join(changed)
+                )
+            )
         if broken:
             tx.rollback()
             return report._replace(
