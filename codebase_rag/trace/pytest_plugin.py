@@ -110,12 +110,24 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 def pytest_terminal_summary(
     terminalreporter: pytest.TerminalReporter, config: pytest.Config
 ) -> None:
+    _report_summary(terminalreporter, config)
+
+
+def _report_summary(reporter: pytest.TerminalReporter, config: pytest.Config) -> None:
     summary = config.stash.get(_SUMMARY_KEY, None)
-    if summary is not None:
-        terminalreporter.write_line(summary)
+    if summary is None:
+        return
+    del config.stash[_SUMMARY_KEY]
+    reporter.ensure_newline()
+    reporter.write_line(summary)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     tracer = config.stash.get(_STASH_KEY, None)
     if tracer is not None and tracer.active:
         tracer.stop()
+    # `--no-summary` skips `pytest_terminal_summary`; the trace written is
+    # still confirmed, after the progress line (Greptile, PR #2902).
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    if isinstance(reporter, pytest.TerminalReporter):
+        _report_summary(reporter, config)
