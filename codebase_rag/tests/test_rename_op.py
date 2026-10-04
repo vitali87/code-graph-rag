@@ -70,6 +70,10 @@ class RecordedGraph:
             # `_persisted_incomplete` reads a raise as "cannot tell, refuse",
             # so leaving it out makes every reingest here refuse.
             return []
+        if query in (cq.CYPHER_ANY_SHARED_STRUCTURE, cq.CYPHER_ANY_KEYLESS_STRUCTURE):
+            # Written by the current indexer: no legacy Folder/File structure
+            # for a cold rename's migration to purge (PR #2900).
+            return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
         if query in (
