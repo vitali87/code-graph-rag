@@ -474,14 +474,16 @@ def _rebase_for(
     A root the caller names beats one guessed from the paths, so inference
     runs only when no given prefix anchors any frame.
     """
-    given = PathRebase.from_prefix_map(repo_root, path_prefix_map or {})
+    given = PathRebase.from_prefix_map(
+        repo_root, path_prefix_map or {}, resolver.path_spellings
+    )
     if any(given.matches(frame) for frame in frames):
         return given, None
     inferred = resolver.infer_recorded_root(frames)
     if inferred is None:
         return given, None
     return PathRebase.from_prefix_map(
-        repo_root, {inferred: cs.PATH_CURRENT_DIR}
+        repo_root, {inferred: cs.PATH_CURRENT_DIR}, resolver.path_spellings
     ), inferred
 
 
