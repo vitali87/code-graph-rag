@@ -192,6 +192,14 @@ MCP_ROOT_NOT_INDEXED = (
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
 MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+# `flow_verdict` with a source or sink it cannot walk from (issue #2939).
+MCP_FLOW_SOURCE = "source"
+MCP_FLOW_SINK = "sink"
+MCP_FLOW_ENDPOINT = "The {side}: {problem}"
+MCP_FLOW_SOURCE_ELSEWHERE = (
+    "The source {qualified_name!r} belongs to project {owner!r}; flow_verdict "
+    "walks the flow edges of {project!r}, this server's project."
+)
 GRAPH_DID_YOU_MEAN = " Did you mean: {names}?"
 # How many close matches a refusal names, and how close a spelling must be
 # (difflib's ratio) to be offered at all.

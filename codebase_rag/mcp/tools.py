@@ -1080,6 +1080,13 @@ class MCPToolsRegistry:
                 self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
             ):
                 return {cs.DICT_KEY_ERROR: refusal}
+            if refusal := await asyncio.to_thread(
+                self._flow_endpoint_refusal,
+                project,
+                source_qualified_name,
+                sink_qualified_name,
+            ):
+                return {cs.DICT_KEY_ERROR: refusal}
             result = await asyncio.to_thread(
                 flow_reachability_verdict,
                 self.ingestor.fetch_all,
@@ -2690,6 +2697,49 @@ class MCPToolsRegistry:
         return cs.MCP_ROOT_NOT_INDEXED.format(
             path=root.resolve()
         ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+
+    def _flow_endpoint_refusal(
+        self, project_name: str, source: str, sink: str
+    ) -> str | None:
+        """Why `flow_verdict` cannot answer for these names (issue #2939).
+
+        A name that is no node has no flow edges, so the walk found no path
+        and, on a fully covered project, answered NO_FLOW: the verified
+        absence a taint question reads as safe, for a typo. The source must
+        also be this project's own, or a resource no project owns: only this
+        project's flow edges are walked from it. A sink may sit across a
+        service boundary, in another project.
+        """
+        problems = [
+            cs.MCP_FLOW_ENDPOINT.format(side=side, problem=problem)
+            for side, qualified_name in (
+                (cs.MCP_FLOW_SOURCE, source),
+                (cs.MCP_FLOW_SINK, sink),
+            )
+            if (problem := self._unknown_target_error(project_name, qualified_name))
+        ]
+        if not problems and (owner := self._other_owner(project_name, source)):
+            problems.append(
+                cs.MCP_FLOW_SOURCE_ELSEWHERE.format(
+                    qualified_name=source, owner=owner, project=project_name
+                )
+            )
+        return " ".join(problems) or None
+
+    def _other_owner(self, project_name: str, qualified_name: str) -> str | None:
+        # The longest registered project the name sits under, when it is not
+        # this one: project names may contain dots.
+        if qualified_name == project_name or qualified_name.startswith(
+            f"{project_name}{cs.SEPARATOR_DOT}"
+        ):
+            return None
+        owners = [
+            name
+            for name in self.ingestor.list_projects()
+            if qualified_name == name
+            or qualified_name.startswith(f"{name}{cs.SEPARATOR_DOT}")
+        ]
+        return max(owners, key=len) if owners else None
 
     def _unknown_target_error(self, project_name: str, target: str) -> str | None:
         fetch_all = self.ingestor.fetch_all
