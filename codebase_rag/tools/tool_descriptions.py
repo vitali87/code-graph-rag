@@ -36,7 +36,13 @@ CODEBASE_QUERY = (
     "cross-check suspiciously short result lists with a text search."
 )
 
-DIRECTORY_LISTER = "Lists the contents of a directory to explore the codebase."
+DIRECTORY_LISTER = (
+    "Lists the names of the entries directly inside one directory of the "
+    "project, sorted, one per line. It does not recurse and does not mark "
+    "which entries are directories. `directory_path` is relative to the "
+    "project root; a path outside the project, a missing directory, or a "
+    "file is refused with an error."
+)
 
 WEB_SEARCH = (
     "Searches the web and returns ranked results with titles, URLs and summaries; "
@@ -64,17 +70,24 @@ RESEARCH = (
 )
 
 FILE_WRITER = (
-    "Creates a new file with content. IMPORTANT: Check file existence first! "
-    "Overwrites completely WITHOUT showing diff. "
-    "Use only for new files, not existing file modifications."
+    "Writes `content` to `file_path` inside the project, creating any missing "
+    "parent directories. An existing file at that path is replaced entirely "
+    "and no diff is shown, so use it for new files and change existing ones "
+    f"with `{AgenticToolName.REPLACE_CODE}`. The write may need the user's "
+    "approval first. Returns the written path, or an error."
 )
 
 SHELL_COMMAND = (
-    "Executes allowlisted shell commands; `grep` is not available, use `rg`. "
-    "Reads confined to the project (ls, rg, cat, find, wc, head, tail, sort, uniq, "
-    "cut, with no redirects or paths outside it) run without approval; anything "
-    "else asks the user first. A fallback: callers, callees, inheritance, counts, "
-    "package layout and dependencies come from `"
+    "Runs `command` as an allowlisted shell command in the project root and "
+    "returns its exit code, stdout and stderr; pipes and `&&` / `||` chains "
+    "are supported. `grep` is not available, use `rg`. Reads confined to the "
+    "project (ls, rg, cat, find, wc, head, tail, sort, uniq, cut, with no "
+    "redirects or paths outside it) run without approval; anything else needs "
+    "the user's approval, which the application asks for before running it. A "
+    "declined command, or one needing approval when no one can be asked, "
+    "returns the reason instead of running. Commands are stopped after a time "
+    "limit. A fallback: callers, callees, inheritance, counts, package layout "
+    "and dependencies come from `"
     + AgenticToolName.QUERY_GRAPH
     + "`, so ask it before reconstructing them with rg, ls or wc."
 )
@@ -96,15 +109,20 @@ GET_FUNCTION_SOURCE = (
 )
 
 FILE_READER = (
-    "Reads the content of text-based files. "
+    "Reads one text file inside the project and returns its whole content; "
+    "there is no offset or line range. Binary files and files that are not "
+    "valid text are refused with an error. `file_path` is relative to the "
+    "project root. "
     "Images and PDFs the user references are attached inline; read them directly."
 )
 
 FILE_EDITOR = (
-    "Surgically replaces specific code blocks in files. "
-    "Requires exact target code and replacement. "
-    "Only modifies the specified block, leaving rest of file unchanged. "
-    "True surgical patching."
+    "Replaces `target_code` in `file_path` with `replacement_code` and leaves "
+    "the rest of the file unchanged. `target_code` must match the file's "
+    "current text exactly and occur exactly once; the edit is refused if the "
+    "file is missing or outside the project, the block is not found, or it "
+    "occurs more than once (include more surrounding lines to make it "
+    "unique). The edit may need the user's approval first."
 )
 
 STRUCTURAL_SEARCH = (
@@ -154,12 +172,12 @@ MCP_WIPE_DATABASE = (
 
 MCP_INDEX_REPOSITORY = (
     "WARNING: Clears all data for the current project including its embeddings. "
-    "Parse and ingest the repository into the Memgraph knowledge graph. "
+    "Parse and ingest the repository into the knowledge graph. "
     "Use update_repository for incremental updates. Only use when explicitly requested."
 )
 
 MCP_UPDATE_REPOSITORY = (
-    "Update the repository in the Memgraph knowledge graph without clearing existing data. "
+    "Update the repository in the knowledge graph without clearing existing data. "
     "Use this for incremental updates."
 )
 

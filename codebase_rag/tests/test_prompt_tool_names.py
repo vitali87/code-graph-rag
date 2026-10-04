@@ -1,13 +1,17 @@
 """Regression tests for issue #1199: the orchestrator system prompt must only
 reference tool names that are actually registered on the agent."""
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from loguru import logger
 from pydantic_ai import Tool
 
 from codebase_rag.prompts import build_rag_orchestrator_prompt, extract_tool_names
+from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 from codebase_rag.tools.tool_descriptions import AgenticToolName
 from codebase_rag.types_defs import ToolNames
 
@@ -176,3 +180,73 @@ def test_absent_other_tool_still_warns() -> None:
     assert [m for m in messages if read_file in m], (
         f"unhandled absence of {read_file} was not reported: {messages}"
     )
+
+
+def _orchestrator_prompts() -> list[str]:
+    """The prompt as built with and without semantic search."""
+    return [
+        build_rag_orchestrator_prompt(_all_registered_tools()),
+        build_rag_orchestrator_prompt(_tools_without_semantic_search()),
+    ]
+
+
+def test_shell_rule_names_no_argument_the_tool_lacks(tmp_path: Path) -> None:
+    """The prompt described a confirmation round-trip through a
+    `user_confirmed` argument and a -2 return code. The tool now pauses for
+    the user's approval itself and takes only `command`, so the rule sent the
+    model after an argument that does not exist."""
+    shell = create_shell_command_tool(ShellCommander(str(tmp_path)))
+    params = set(shell.function_schema.json_schema["properties"])
+
+    for prompt in _orchestrator_prompts():
+        assert "user_confirmed" in params or "user_confirmed" not in prompt
+        assert "return code -2" not in prompt
+
+
+def test_read_file_rule_names_no_argument_the_tool_lacks(tmp_path: Path) -> None:
+    """`read_file` takes only `file_path` and returns the whole file, yet the
+    prompt told the model to page through large files with offset/limit."""
+    reader = create_file_reader_tool(FileReader(str(tmp_path)))
+    params = set(reader.function_schema.json_schema["properties"])
+
+    for prompt in _orchestrator_prompts():
+        assert "offset" in params or "offset" not in prompt.lower()
+
+
+_SHOUTED = re.compile(
+    r"\b(?:MUST|ALWAYS|NEVER|CRITICAL|EXCLUSIVELY|AUTOMATICALLY|ONLY|IMPORTANT)\b"
+)
+
+
+def test_orchestrator_prompt_states_rules_without_shouting() -> None:
+    """MUST/ALWAYS/NEVER/CRITICAL stacked through the prompt read as equally
+    urgent, and current models over-apply them. Each rule is stated once,
+    plainly, with its reason."""
+    for prompt in _orchestrator_prompts():
+        assert not _SHOUTED.findall(prompt)
+
+
+def test_orchestrator_prompt_scripts_no_single_question_type() -> None:
+    """Entry-point questions were scripted four times over: a per-language
+    catalogue, two tool-chaining walkthroughs and a seven-step checklist that
+    disagreed with each other on how much to report. The prompt states the
+    goal once instead."""
+    for prompt in _orchestrator_prompts():
+        for scaffold in (
+            "Entry Point Recognition Patterns",
+            "Tool Chaining Example",
+            "Complete the Investigation Cycle",
+        ):
+            assert scaffold not in prompt
+
+
+def test_project_instructions_defer_to_the_rules_heading() -> None:
+    """The precedence sentence must name the heading the rules sit under;
+    renaming one without the other leaves the project's instructions
+    deferring to nothing."""
+    prompt = build_rag_orchestrator_prompt(
+        _all_registered_tools(), project_instructions="Use tabs."
+    )
+
+    assert "**Rules:**" in prompt
+    assert "the rules above win" in prompt
