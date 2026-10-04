@@ -40,6 +40,7 @@ from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
+from ..php import namespaces as php_namespaces
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -565,6 +566,42 @@ class ClassIngestMixin:
             )
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
+
+    def _reserve_python_class_qns(
+        self,
+        combined_captures: dict[str, list] | None,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> None:
+        # A file's functions and methods register before its classes, so a
+        # `def Tool` shim written below `class Tool` took the plain name the
+        # class is owed as the first definition (issue #2621). Only a class
+        # sharing its name with a def can lose it, which spares every other
+        # class a second identity pass (and a second truncated-name warning).
+        reservations: dict[str, tuple[int, int]] = {}
+        captures = combined_captures or {}
+        def_names = {
+            safe_decode_text(func_node.child_by_field_name(cs.FIELD_NAME))
+            for func_node in captures.get(cs.CAPTURE_FUNCTION, [])
+        }
+        for class_node in captures.get(cs.CAPTURE_CLASS, []):
+            name = safe_decode_text(class_node.child_by_field_name(cs.FIELD_NAME))
+            if name is None or name not in def_names:
+                continue
+            identity = id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                cs.SupportedLanguage.PYTHON,
+                lang_config,
+                file_path,
+            )
+            if identity is None:
+                continue
+            class_qn = identity[0]
+            start = _class_start_point(class_node, cs.SupportedLanguage.PYTHON)
+            reservations[class_qn] = min(reservations.get(class_qn, start), start)
+        self.function_registry.reserve_qns(reservations)
 
     def resolve_deferred_forward_declarations(self) -> int:
         # Run after every file's definitions are registered. A deferred forward
@@ -1235,6 +1272,8 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        if language == cs.SupportedLanguage.PHP:
+            self._record_php_namespace(class_node, class_props)
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
         # a member edit is a change under it. It makes a class note gradable
@@ -1387,6 +1426,16 @@ class ClassIngestMixin:
                     func_node_starts,
                 )
             )
+
+    def _record_php_namespace(
+        self, class_node: Node, class_props: PropertyDict
+    ) -> None:
+        # A PHP class's qn follows its path, but other files `use` it by the
+        # namespace around its declaration; the dead-code walk needs that name
+        # to tell an imported project base from a vendor class of the same
+        # name (issue #2472).
+        if namespace := php_namespaces.enclosing_namespace(class_node):
+            class_props[cs.KEY_NAMESPACE] = namespace
 
     def _record_csharp_namespace(
         self, class_node: Node, class_qn: str, class_props: PropertyDict

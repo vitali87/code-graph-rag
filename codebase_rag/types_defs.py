@@ -168,6 +168,10 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool: ...
 
+    def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None: ...
+
+    def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool: ...
+
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
     ) -> None: ...
@@ -175,6 +179,10 @@ class FunctionRegistryTrieProtocol(Protocol):
     def callable_params(
         self, qualified_name: QualifiedName
     ) -> dict[str, int] | None: ...
+
+    def reserve_qns(
+        self, reservations: dict[QualifiedName, tuple[int, int]]
+    ) -> None: ...
 
 
 class ASTCacheProtocol(Protocol):
@@ -605,11 +613,34 @@ class DuplicateMember(TypedDict):
     end_line: int
 
 
+class DuplicateLink(TypedDict):
+    # Qualified names of two members whose own pair clears the threshold.
+    first: str
+    second: str
+    similarity: float
+
+
 class DuplicateGroup(TypedDict):
     kind: str
+    # Groups are disjoint clusters (issue #2473), so two members of a
+    # `similar` group may be linked only through a third: similarity is its
+    # weakest qualifying link and max_similarity its strongest (1.0 for an
+    # `exact` group, and for a cluster holding exact copies).
     similarity: float
+    max_similarity: float
     node_count: int
     members: list[DuplicateMember]
+    # Qualified names of the members that are exact copies of each other,
+    # one list per shared fingerprint. Always empty for an `exact` group,
+    # which is one such list as a whole.
+    exact_subgroups: list[list[str]]
+    # The qualifying pairs between different fingerprints, strongest first:
+    # with the exact copies, the only member pairs that are duplicates. Empty
+    # for an `exact` group, where every pair is one. Collected groups hold one
+    # link per fingerprint pair, named by its best member pair, since two
+    # clone classes would otherwise cost their cross product; the JSON report
+    # expands each over both sides' exact copies (duplicates.expanded_links).
+    links: list[DuplicateLink]
 
 
 class DuplicatesReport(NamedTuple):
@@ -1034,6 +1065,13 @@ _ENUM_VARIANT_NODE_PROPS = (
     "start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}"
 )
 
+# A module-level constant (issue #1806). `value` is the right-hand side as
+# written, absent when it is longer than CONSTANT_VALUE_MAX_CHARS.
+_CONSTANT_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, type_name: string?, value: string?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
@@ -1064,7 +1102,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
@@ -1115,6 +1153,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
     NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
     NodeSchema(NodeLabel.ENUM_VARIANT, _ENUM_VARIANT_NODE_PROPS),
+    NodeSchema(NodeLabel.CONSTANT, _CONSTANT_NODE_PROPS),
 )
 
 
@@ -1373,13 +1412,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
+    # Only a Module declares one today: a class-level member is a Field
+    # (issue #1805), so the two labels never share a qualified name.
     RelationshipSchema(
         (NodeLabel.ENUM,),
         RelationshipType.HAS_VARIANT,
         (NodeLabel.ENUM_VARIANT,),
     ),
     RelationshipSchema(
-        (NodeLabel.PARAMETER, NodeLabel.FIELD),
+        (NodeLabel.MODULE,),
+        RelationshipType.DEFINES_CONSTANT,
+        (NodeLabel.CONSTANT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PARAMETER, NodeLabel.FIELD, NodeLabel.CONSTANT),
         RelationshipType.OF_TYPE,
         _PARAMETER_TYPE_LABELS,
     ),
