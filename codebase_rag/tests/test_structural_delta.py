@@ -26,6 +26,7 @@ from codebase_rag.structural_delta import (
     observe,
     strongly_connected,
 )
+from codebase_rag.types_defs import PropertyParams, ReingestReport, ResultRow
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "delta_fixture"
@@ -416,11 +417,15 @@ def test_an_async_only_flip_lists_no_remote_callers(
         FIXTURE["pkg/util.py"].replace("def helper(a):", "async def helper(a):"),
     )
 
-    def apply() -> None:
-        updater.reingest(["pkg/util.py"], deleted=[])
+    def apply() -> ReingestReport:
+        report = updater.reingest(["pkg/util.py"], deleted=[])
         _link_remote_callers(store)
+        return report
 
-    delta = observe(store.fetch_all, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+    def fetch(query: str, params: PropertyParams | None) -> list[ResultRow]:
+        return store.fetch_all(query, dict(params) if params is not None else None)
+
+    delta = observe(fetch, PROJECT, ["pkg/util.py"], apply, repo_root=root)
 
     (change,) = delta["signature_changes"]
     assert change["async_change"] == cs.DELTA_ASYNC_ADDED
