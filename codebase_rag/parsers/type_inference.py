@@ -600,6 +600,26 @@ class TypeInferenceEngine:
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
         return self.method_return_types.get(method_qn)
 
+    def js_function_return_type(self, fn_qn: str) -> str | None:
+        """The class a call of the JS/TS free function `fn_qn` evaluates to.
+
+        No JS/TS function's return is recorded at ingest, so it is read off the
+        function's own syntax on demand (issue #2893). Its file is the longest
+        qn prefix that names a module: a nested function's qn also carries the
+        functions around it.
+        """
+        module_qn, _, name = fn_qn.rpartition(cs.SEPARATOR_DOT)
+        while module_qn and module_qn not in self.module_qn_to_file_path:
+            module_qn = module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if not module_qn or not (
+            entry := self.ast_cache.load(self.module_qn_to_file_path[module_qn])
+        ):
+            return None
+        root, language = entry
+        if language not in cs.JS_TS_LANGUAGES:
+            return None
+        return self.js_type_inference.free_function_return_type(root, name, module_qn)
+
     def drop_go_return_types(self, qns: Collection[str]) -> None:
         """Forget the Go return types recorded under `qns` and drop the index.
 

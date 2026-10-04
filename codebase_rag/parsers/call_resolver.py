@@ -274,6 +274,7 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
+        "_js_function_return_cache",
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
@@ -344,6 +345,9 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
+        # JS/TS free function qn -> the class its call evaluates to (#2893),
+        # read off its syntax once rather than at every `f().m()` site.
+        self._js_function_return_cache: dict[str, str | None] = {}
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -542,6 +546,8 @@ class CallResolver:
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
+        # A re-parsed factory can return another class: read it again.
+        self._js_function_return_cache.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the
@@ -4918,7 +4924,9 @@ class CallResolver:
             call_point,
         )
         if resolved is not None:
-            return_type = self.type_inference.method_return_types.get(resolved[1])
+            return_type = self.type_inference.method_return_types.get(
+                resolved[1]
+            ) or self._js_function_return_type(resolved, language)
             if return_type:
                 return self._resolve_type_to_class_qn(return_type, module_qn)
         if language in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.DART):
@@ -4928,6 +4936,24 @@ class CallResolver:
             # Dart `_Usage(...).generate()`).
             return self._resolve_type_to_class_qn(callee, module_qn)
         return None
+
+    def _js_function_return_type(
+        self, resolved: tuple[str, str], language: cs.SupportedLanguage | None
+    ) -> str | None:
+        # `make().handle()`: no JS/TS free function's return is recorded at
+        # ingest, so read it off the function itself (issue #2893). A
+        # container (`Service[]`) is not an instance the next hop runs on.
+        label, fn_qn = resolved
+        if language not in cs.JS_TS_LANGUAGES or label != cs.NodeLabel.FUNCTION:
+            return None
+        if fn_qn not in self._js_function_return_cache:
+            self._js_function_return_cache[fn_qn] = (
+                self.type_inference.js_function_return_type(fn_qn)
+            )
+        return_type = self._js_function_return_cache[fn_qn]
+        if return_type is None or return_type.startswith(cs.JS_LIST_TYPE_PREFIX):
+            return None
+        return return_type
 
     def _resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:
         # Resolve a recorded return-type path to a registered CLASS qn. A factory
