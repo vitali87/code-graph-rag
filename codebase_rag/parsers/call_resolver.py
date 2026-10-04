@@ -1699,11 +1699,32 @@ class CallResolver:
             return None
         if (owner := self._enclosing_class(call.caller_qn)) is None:
             return None
-        for class_qn in self._mro(owner):
-            candidate = f"{class_qn}{cs.SEPARATOR_DOT}{call.call_name}"
-            if self.function_registry.get(candidate) == cs.NodeLabel.METHOD.value:
-                return cs.NodeLabel.METHOD.value, candidate
-        return None
+        definers = [
+            class_qn
+            for class_qn in self._mro(owner)
+            if self.function_registry.get(
+                f"{class_qn}{cs.SEPARATOR_DOT}{call.call_name}"
+            )
+            == cs.NodeLabel.METHOD.value
+        ]
+        # A member hides the name in every base its class derives from, so
+        # lookup finds the definers no other definer derives from: in a
+        # virtual diamond, DB::probe over DA::probe, though a breadth-first
+        # walk meets DA first (Greptile, PR #2948). Two left is a lookup C++
+        # rejects as ambiguous, and nothing is guessed.
+        found = [
+            class_qn
+            for class_qn in definers
+            if not any(
+                other != class_qn and class_qn in self._mro(other) for other in definers
+            )
+        ]
+        if len(found) != 1:
+            return None
+        return (
+            cs.NodeLabel.METHOD.value,
+            f"{found[0]}{cs.SEPARATOR_DOT}{call.call_name}",
+        )
 
     def _enclosing_class(self, qualified_name: str) -> str | None:
         # The nearest class above a definition, through any functions it is
@@ -2035,7 +2056,7 @@ class CallResolver:
         return False
 
     def _resolve_rust_external_path(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         # A Rust path whose head binds an item outside the project names
         # that crate's associated function: `String::new()`,
@@ -2062,7 +2083,7 @@ class CallResolver:
         return True, result
 
     def _resolve_rust_named_owner(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         # The last stop before the bare-name trie for a Rust call that names
         # the type owning its target: `Type::f()` or `Self::f()` on a

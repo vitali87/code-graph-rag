@@ -87,6 +87,20 @@ FILES = {
         "int lone() { return helper(); }\n"
         "int viaStat(Stat s) { return s.max(1, 2); }\n"
     ),
+    # A virtual diamond: DB's `probe` hides DA's along every path to DD, so
+    # C++ lookup finds DB::probe though a breadth-first walk meets DA first
+    # (Greptile, PR #2948).
+    "c/diamond.h": (
+        "class DA { public: int probe() { return 1; } };\n"
+        "class DB : public virtual DA { public: int probe() { return 2; } };\n"
+        "class DC : public virtual DA {};\n"
+        "class DE : public DB {};\n"
+        "class DD : public DC, public DE { public: int go() { return probe(); } };\n"
+    ),
+    # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
+    # #2948); `flush()` is a global, never `M:flush`.
+    "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
+    "lua_use.lua": "local function go() return flush() end\nreturn go\n",
     # A class local to a function: its members' calls are the function's.
     "c/local.cpp": (
         "void work() {\n"
@@ -138,6 +152,7 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("c.free.pick", "c.stat.h.Stat.max"),
         ("c.free.lone", "c.other.h.Other.helper"),
         ("c.free.lone", "c.base.Base.helper"),
+        ("lua_use.go", "lua_m.M:flush"),
     ],
 )
 def test_a_bare_call_binds_no_method_of_an_unrelated_class(
@@ -151,6 +166,7 @@ def test_a_bare_call_binds_no_method_of_an_unrelated_class(
     [
         ("c.stat.h.Stat.inherited", "c.base.Base.helper"),
         ("c.stat.h.Deeper.twice", "c.base.Base.helper"),
+        ("c.diamond.DD.go", "c.diamond.DB.probe"),
     ],
 )
 def test_a_cpp_member_reaches_an_inherited_method_by_name_lookup(
