@@ -97,6 +97,41 @@ def outer():
     return inner
 """
 
+# `def __enter__(self: T) -> T`, the pre-3.11 self-type idiom, with both
+# annotations wrapped in `Annotated`: the two must still read as one `T`
+# (Greptile, PR #2955), for `__aenter__` too.
+CONTEXT = """from typing import Annotated, TypeVar
+
+T = TypeVar("T", bound="Session")
+
+
+class Session:
+    def __enter__(self: Annotated[T, "tag"]) -> Annotated[T, "tag"]:
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    async def __aenter__(self: Annotated[T, "tag"]) -> Annotated[T, "tag"]:
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    def run(self):
+        return 1
+
+
+def use():
+    with Session() as session:
+        session.run()
+
+
+async def use_async():
+    async with Session() as session:
+        session.run()
+"""
+
 HANDLER = "m.Target.handler"
 DOC_INIT = "m.Doc.__init__"
 
@@ -105,6 +140,7 @@ DOC_INIT = "m.Doc.__init__"
 def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("annotated") / "ann"
     _write(root, "m.py", SOURCE)
+    _write(root, "ctx.py", CONTEXT)
     return _index(root, MagicMock())
 
 
@@ -115,6 +151,13 @@ def _edges(graph: RecordedGraph, caller: str, rel: str = "CALLS") -> dict[str, s
         for src, kind, dst, props in graph.edges
         if kind == rel and src == f"{prefix}{caller}"
     }
+
+
+@pytest.mark.parametrize("caller", ["ctx.use", "ctx.use_async"])
+def test_an_annotated_self_type_enter_types_the_with_target(
+    graph: RecordedGraph, caller: str
+) -> None:
+    assert _edges(graph, caller).get("ctx.Session.run") == "exact"
 
 
 @pytest.mark.parametrize(

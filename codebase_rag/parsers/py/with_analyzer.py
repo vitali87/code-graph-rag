@@ -71,9 +71,14 @@ def _receiver_parameter(method: Node) -> tuple[str | None, str | None]:
         (c for c in first.named_children if c.type == cs.TS_PY_IDENTIFIER), None
     )
     annotation = first.child_by_field_name(cs.FIELD_TYPE)
+    # Read as the return annotation is, through any `Annotated[T, ...]`, so
+    # `self: Annotated[T, m]` still matches `-> Annotated[T, m]` (Greptile,
+    # PR #2955).
     return (
         safe_decode_text(ident) if ident is not None else None,
-        safe_decode_text(annotation) if annotation is not None else None,
+        (annotation_text(annotation) or "").strip().strip("\"'")
+        if annotation is not None
+        else None,
     )
 
 
