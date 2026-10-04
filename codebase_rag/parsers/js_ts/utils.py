@@ -200,14 +200,42 @@ def class_binding_name(class_node: Node) -> str | None:
     # and are enumerated as callers; without it the class expression is skipped
     # in the caller pass and every callback inside its methods reports dead
     # (issue #970). A NAMED class expression (`class Named {}`) keeps its own
-    # name. Non-class nodes and unbound anonymous classes (`foo(class {})`)
-    # return None, matching today's skip.
+    # name. Non-class nodes return None.
+    #
+    # A class with no binding still needs a name, or it gets no Class node,
+    # its members no Method nodes, and closures in them hang off a parent that
+    # does not exist (issue #2567). The definition pass (via `_js_get_name`),
+    # the caller pass and the closure-path walk all name the class here, so
+    # they agree on its qn.
     if class_node.type != cs.TS_CLASS_EXPRESSION:
         return None
     name_node = class_node.child_by_field_name(cs.FIELD_NAME)
     if name_node is not None and name_node.text:
         return safe_decode_text(name_node)
-    return _value_binding_name(class_node)
+    if (bound := _value_binding_name(class_node)) is not None:
+        return bound
+    if _is_default_export_value(class_node):
+        return cs.JS_DEFAULT_EXPORT_NAME
+    # Same position-based name as an anonymous function, so it is stable
+    # across re-indexes of an unchanged file.
+    row, col = class_node.start_point
+    return f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
+
+
+def _is_default_export_value(node: Node) -> bool:
+    # `export default class {...}`: the class is the statement's `value`. A
+    # class merely nested in a default export (`export default function () {
+    # return class {} }`) is not the default export and keeps a positional name.
+    parent = node.parent
+    while parent is not None and parent.type in _BINDING_WRAPPER_TYPES:
+        node = parent
+        parent = node.parent
+    return (
+        parent is not None
+        and parent.type == cs.TS_EXPORT_STATEMENT
+        and parent.child_by_field_name(cs.FIELD_VALUE) == node
+        and any(child.type == cs.TS_EXPORT_DEFAULT for child in parent.children)
+    )
 
 
 def is_object_literal_method(func_node: Node) -> bool:
