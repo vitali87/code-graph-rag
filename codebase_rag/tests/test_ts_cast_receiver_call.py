@@ -30,6 +30,19 @@ function anyCast(s: unknown) { return (s as any).handle(7); }
 function otherCast(s: unknown) { return (s as Other).other(); }
 """
 
+# Two classes sharing `run`, and a local VALUE named like the cast's type:
+# TypeScript keeps types and values apart, so `as Real` still names the
+# class Real (Greptile, PR #2959).
+SHADOW = """\
+class Real { run(): number { return 1; } }
+class Fake { run(): number { return 2; } }
+
+function shadowedCast(s: unknown) {
+  const Real = new Fake();
+  return (s as Real).run();
+}
+"""
+
 HANDLE = "m.Service.handle"
 
 
@@ -37,6 +50,7 @@ HANDLE = "m.Service.handle"
 def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("tscast") / "tscast"
     _write(root, "m.ts", SOURCE)
+    _write(root, "shadow.ts", SHADOW)
     return _index(root, MagicMock())
 
 
@@ -65,6 +79,18 @@ def test_a_cast_receiver_binds_the_method_of_the_cast_type(
     graph: RecordedGraph, caller: str, callee: str
 ) -> None:
     assert _callees(graph, caller) == {callee: "exact"}
+
+
+def test_a_local_value_named_like_the_cast_type_does_not_redirect_it(
+    graph: RecordedGraph,
+) -> None:
+    prefix = f"{graph.project}."
+    callees = {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}shadow.shadowedCast"
+    }
+    assert callees == {"shadow.Real.run": "exact"}
 
 
 # Negative: what must not change.

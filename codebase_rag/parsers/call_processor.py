@@ -1726,6 +1726,27 @@ def _ts_cast_receiver_call_name(member: Node) -> str | None:
     )
 
 
+def _without_cast_type_value(
+    call_node: Node,
+    language: cs.SupportedLanguage | None,
+    var_types: dict[str, str] | None,
+) -> dict[str, str] | None:
+    # `(s as Real).run()` is named `Real.run`, where `Real` is a TYPE: a local
+    # value of that name (`const Real = new Fake()`) lives in TypeScript's
+    # other namespace, so it must not type the receiver (Greptile, PR #2959).
+    if language not in _JS_TS_LANGUAGES or not var_types:
+        return var_types
+    member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+    if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
+        return var_types
+    if not (cast_call := _ts_cast_receiver_call_name(member)):
+        return var_types
+    type_root = cast_call.split(cs.SEPARATOR_DOT, 1)[0]
+    if type_root not in var_types:
+        return var_types
+    return {name: kind for name, kind in var_types.items() if name != type_root}
+
+
 def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None]:
     """Peel type-transparent wrappers off a getter read's receiver.
 
@@ -4992,6 +5013,9 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
+        call_var_types = _without_cast_type_value(
+            call_node, ctx.language, call_var_types
+        )
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
