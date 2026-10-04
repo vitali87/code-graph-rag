@@ -190,3 +190,62 @@ def test_a_local_name_that_a_module_loop_also_binds_does_not_refuse(
     assert report.applied, report.message
     probe = _python(root, "from pkg.core import helper; print(helper(['a']))")
     assert probe.returncode == 0, probe.stderr
+
+
+# --- what the move adds must not rebind a destination name ------------------------
+
+RATE_CORE = "RATE = 0.1\n\n\ndef rate():\n    return RATE\n"
+RATE_HELPER = "\n\ndef helper(a):\n    return a * RATE\n" + OTHER
+
+
+@pytest.mark.parametrize(
+    ("util", "core", "extra"),
+    [
+        pytest.param(
+            "RATE = 0.5\n" + RATE_HELPER, RATE_CORE, {}, id="old-module-constant"
+        ),
+        pytest.param(
+            "from pkg.cfg import RATE\n" + RATE_HELPER,
+            RATE_CORE,
+            {"pkg/cfg.py": "RATE = 0.5\n"},
+            id="copied-import",
+        ),
+        pytest.param(
+            "RATE = 0.5\n" + RATE_HELPER,
+            "from pkg.cfg import RATE\n\n\ndef rate():\n    return RATE\n",
+            {"pkg/cfg.py": "RATE = 0.1\n"},
+            id="destination-import",
+        ),
+    ],
+)
+def test_an_import_that_would_rebind_a_destination_name_refuses_the_move(
+    temp_repo: Path, util: str, core: str, extra: dict[str, str]
+) -> None:
+    """Only the moved name was checked against the destination, so the
+    `from pkg.util import RATE` pasted for the helper silently replaced the
+    destination's own RATE, and its `rate()` started answering 0.5."""
+    fixture = {**FIXTURE, "pkg/util.py": util, "pkg/core.py": core, **extra}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="already binds RATE"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == core
+    assert (root / "pkg/util.py").read_text() == util
+    probe = _python(root, "from pkg.core import rate; print(rate())")
+    assert probe.stdout.strip() == "0.1", probe.stderr
+
+
+def test_an_import_the_destination_already_has_is_not_a_collision(
+    temp_repo: Path,
+) -> None:
+    """Binding a name to what it is already bound to replaces nothing."""
+    core = "import os\n\n\ndef sep():\n    return os.sep\n"
+    fixture = {**FIXTURE, "pkg/core.py": core}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(
+        root, "from pkg.core import helper, sep; print(helper(['a']), sep())"
+    )
+    assert probe.returncode == 0, probe.stderr

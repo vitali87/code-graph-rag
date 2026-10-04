@@ -149,6 +149,8 @@ class _Cut(NamedTuple):
 class _NeededImport(NamedTuple):
     statement: str
     target_qn: str
+    # The one name the statement binds at the destination.
+    local: str
 
 
 def _text(node: Node | None) -> str:
@@ -544,13 +546,13 @@ class Mover:
         target_root: Node | None = None
         if existing is not None:
             _language, target_root = self._parse(new_path, existing)
-            if name in self._bindings(target_root):
-                raise MoveRefused(self._COLLISION.format(path=new_path, name=name))
         cut = _cut_span(source, node)
         remainder = (source[: cut.start] + source[cut.end :]).decode(
             cs.ENCODING_UTF8, errors="replace"
         )
 
+        old_spelled = _strip_project(old_module, self.project)
+        new_spelled = _strip_project(new_module, self.project)
         needed = self._needed_imports(
             old_module, old_path, new_path, source, root, cut.text, language
         )
@@ -583,6 +585,22 @@ class Mover:
                 raise MoveRefused(
                     self._NOT_EXPORTED.format(names=", ".join(hidden), path=old_path)
                 )
+        if existing is not None:
+            assert target_root is not None
+            self._refuse_collisions(
+                existing,
+                target_root,
+                old_module,
+                new_module,
+                new_path,
+                name,
+                needed,
+                self._from_old_statement(
+                    from_old, old_spelled, old_path, new_path, language
+                ),
+                from_old,
+                language,
+            )
         old_uses = _uses(remainder, name)
         # The cycle check runs on the graph BEFORE any file is touched.
         self._refuse_cycles(
@@ -598,8 +616,6 @@ class Mover:
             language,
         )
 
-        old_spelled = _strip_project(old_module, self.project)
-        new_spelled = _strip_project(new_module, self.project)
         # 1. Cut from the old module, import the name back when still used.
         replacement = ""
         patcher.replace_span(old_path, (cut.start, cut.end), replacement)
@@ -904,7 +920,7 @@ class Mover:
             ):
                 continue
             target = str(row.get(cs.KEY_TO_QN) or "")
-            out.setdefault(narrowed, _NeededImport(narrowed, target))
+            out.setdefault(narrowed, _NeededImport(narrowed, target, bound))
         return list(out.values())
 
     def _needed_from_old(
@@ -1064,14 +1080,84 @@ class Mover:
         language: cs.SupportedLanguage | None,
     ) -> str:
         lines = [n.statement.rstrip("\n") for n in needed]
-        if from_old:
-            if language in _JS_LANGUAGES:
-                spec = _relative_specifier(new_path, old_path)
-                lines.append(f"import {{ {', '.join(from_old)} }} from '{spec}';")
-            else:
-                lines.append(f"from {old_spelled} import {', '.join(from_old)}")
+        statement = self._from_old_statement(
+            from_old, old_spelled, old_path, new_path, language
+        )
+        if statement is not None:
+            lines.append(statement)
         header = "\n".join(lines)
         return (header + "\n\n\n" if header else "") + moved.rstrip("\n") + "\n"
+
+    @staticmethod
+    def _from_old_statement(
+        from_old: list[str],
+        old_spelled: str,
+        old_path: str,
+        new_path: str,
+        language: cs.SupportedLanguage | None,
+    ) -> str | None:
+        """The import the destination needs of the old module's names."""
+        if not from_old:
+            return None
+        if language in _JS_LANGUAGES:
+            spec = _relative_specifier(new_path, old_path)
+            return f"import {{ {', '.join(from_old)} }} from '{spec}';"
+        return f"from {old_spelled} import {', '.join(from_old)}"
+
+    def _refuse_collisions(
+        self,
+        existing: bytes,
+        target_root: Node,
+        old_module: str,
+        new_module: str,
+        new_path: str,
+        name: str,
+        needed: list[_NeededImport],
+        from_old_statement: str | None,
+        from_old: list[str],
+        language: cs.SupportedLanguage | None,
+    ) -> None:
+        """Refuse when anything the move binds at the destination rebinds
+        a name the destination already binds to something else.
+
+        Checking the moved name alone let a pasted `from pkg.util import
+        RATE` replace the destination's own `RATE`, and every existing
+        reader of it silently saw the old module's value. An import that
+        binds the name to what it is already bound to replaces nothing.
+        """
+        defined = set(self._bindings(target_root))
+        if language == cs.SupportedLanguage.PYTHON:
+            carried, unsafe = _flow_bindings(existing)
+            defined |= carried | unsafe
+        imports = [_text(c) for c in target_root.children if c.type in _IMPORT_TYPES]
+        # The destination's own import of the moved name from the old
+        # module is rewired by the move, not rebound by it.
+        rewired = any(
+            row["module"] == new_module and row["imported_name"] == name
+            for row in graph_query.importers(self.fetch_all, self.project, old_module)
+        )
+        if name in defined or (
+            not rewired
+            and any(
+                _binding_key(other, name, language, new_path) is not None
+                for other in imports
+            )
+        ):
+            raise MoveRefused(self._COLLISION.format(path=new_path, name=name))
+        added = [(n.local, n.statement) for n in needed]
+        if from_old_statement is not None:
+            added.extend((n, from_old_statement) for n in from_old)
+        for local, statement in added:
+            key = _binding_key(statement, local, language, new_path)
+            if local in defined or any(
+                other_key is not None and other_key != key
+                for other_key in (
+                    _binding_key(other, local, language, new_path) for other in imports
+                )
+            ):
+                raise MoveRefused(
+                    cs.MOVE_IMPORT_COLLISION.format(path=new_path, name=local)
+                )
 
     def _retarget_importers(
         self,
@@ -1325,6 +1411,46 @@ def _narrow_statement(
         module = _rebase_py_relative(module, old_path, new_path)
         return f"from {module} import {kept[0]}"
     return _narrow_py_import(statement, alias)
+
+
+def _binding_key(
+    statement: str,
+    local: str,
+    language: cs.SupportedLanguage | None,
+    path: str,
+) -> tuple[str, ...] | None:
+    """What the import `statement` binds `local` to, in `path`; None when
+    it does not bind `local` at all.
+
+    Two statements that agree on it bind the same thing however they were
+    spelled: `import os` and `import os.path` both bind `os` to `os`.
+    """
+    if language in _JS_LANGUAGES:
+        # A side-effect import (`import './x'`) binds nothing.
+        if _JS_FROM.search(statement) is None:
+            return None
+        narrowed = _narrow_js(statement, local, path, path)
+        return None if narrowed is None else (narrowed.rstrip(";").strip(),)
+    try:
+        tree = ast.parse(statement.strip())
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname == local:
+                    return (alias.name, "", local)
+                if (
+                    alias.asname is None
+                    and alias.name.split(cs.SEPARATOR_DOT)[0] == local
+                ):
+                    return (local, "", local)
+        elif isinstance(node, ast.ImportFrom):
+            module = cs.SEPARATOR_DOT * node.level + (node.module or "")
+            for alias in node.names:
+                if (alias.asname or alias.name) == local:
+                    return (module, alias.name, local)
+    return None
 
 
 def _rebase_py_relative(module: str, old_path: str, new_path: str) -> str:
