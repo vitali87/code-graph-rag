@@ -3565,6 +3565,33 @@ class CallProcessor:
                 return name
         return self._node_shaped_call_name(call_node, language)
 
+    def _prefixed_generic_call_name(
+        self, func_child: Node, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        # `await client.call<number>(x)` and `!isKind<string>(v)` parse as a
+        # call of `await client.call` / `!isKind`: the grammar binds the
+        # operator tighter than a call with type arguments, and the call is
+        # what the operator applies to (issue #2930). Only that misparse puts
+        # an operator in the `function` field, so the call must carry type
+        # arguments; the operand names the callee, possibly under another
+        # operator (`!await f<T>()`).
+        call = func_child.parent
+        if (
+            call is None
+            or call.child_by_field_name(cs.TS_JS_FIELD_TYPE_ARGUMENTS) is None
+        ):
+            return None
+        operand: Node | None = func_child
+        while operand is not None and operand.type in cs.TS_JS_PREFIXED_CALLEES:
+            operand = (
+                operand.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+                if operand.type == cs.TS_JS_UNARY_EXPRESSION
+                else next(reversed(operand.named_children), None)
+            )
+        if operand is None:
+            return None
+        return self._function_field_call_name(operand, language)
+
     def _function_field_call_name(
         self, func_child: Node, language: cs.SupportedLanguage | None
     ) -> str | None:
@@ -3625,6 +3652,11 @@ class CallProcessor:
                 # `recv.Method` chain as the unconditional form so the
                 # resolver (or its exact Roslyn call fact) can bind it.
                 return self._csharp_conditional_access_call_name(func_child)
+            case callee_type if (
+                callee_type in cs.TS_JS_PREFIXED_CALLEES
+                and language in _JS_TS_LANGUAGES
+            ):
+                return self._prefixed_generic_call_name(func_child, language)
             case cs.TS_CALL_EXPRESSION if language in _JS_TS_LANGUAGES:
                 # A bound function that is itself invoked (`fn.bind(ctx)()`)
                 # has a nested `fn.bind(ctx)` call_expression as its callee, so

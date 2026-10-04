@@ -214,6 +214,13 @@ TS_JS_TERNARY_EXPRESSION = "ternary_expression"
 # spelled `await` with X as its argument (the TS grammar does not); climbs
 # treat that call as the transparent await it denotes.
 JS_AWAIT_IDENTIFIER = "await"
+# tree-sitter-typescript binds `await` / a unary operator tighter than a call
+# with type arguments: `await f<T>(x)` is a call whose `function` is the
+# await_expression `await f` (issue #2930).
+TS_JS_AWAIT_EXPRESSION = "await_expression"
+TS_JS_UNARY_EXPRESSION = "unary_expression"
+TS_JS_FIELD_TYPE_ARGUMENTS = "type_arguments"
+TS_JS_PREFIXED_CALLEES = frozenset({TS_JS_AWAIT_EXPRESSION, TS_JS_UNARY_EXPRESSION})
 # Short-circuit operators whose result IS one of the operands, so a
 # bind through them unions both operands' taints.
 JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
