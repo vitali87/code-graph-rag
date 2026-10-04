@@ -75,6 +75,9 @@ _TARGET_CONTAINERS = frozenset(
     }
 )
 _PY_IMPORTS = frozenset({cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT})
+_JS_UPDATES = frozenset(
+    {cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION, cs.TS_JS_UPDATE_EXPRESSION}
+)
 
 
 def _reads(node: Node, out: list[str]) -> None:
@@ -189,6 +192,15 @@ def _binds(node: Node, out: list[str]) -> None:
                 left.type in _IDENTIFIERS or left.type in _JS_PATTERNS
             ):
                 _targets(left, out)
+        elif kind in _JS_UPDATES:
+            # `x += 1`, `x++` and `--x` rebind x as surely as `x = ...`: left
+            # out, the helper updated its own parameter and the caller kept
+            # the old value (Greptile, PR #2932).
+            target = current.child_by_field_name(
+                cs.TS_FIELD_LEFT
+            ) or current.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+            if target is not None and target.type in _IDENTIFIERS:
+                _targets(target, out)
         elif kind in _PY_IMPORTS:
             # An import binds a name like an assignment does: missing it kept
             # `import os` inside the helper while the caller still used `os`
@@ -352,9 +364,12 @@ def _analyse_span_dependencies(
     that were bound before it, and the names it binds that are read after."""
     params = _parameter_names(definition)
     bound_before: list[str] = list(params)
+    surely_before: list[str] = list(params)
     for statement in span.before:
         _binds(statement, bound_before)
+        _surely_binds(statement, surely_before)
     bound_in: list[str] = []
+    surely_in: list[str] = []
     inputs: list[str] = []
     for statement in span.statements:
         reads: list[str] = []
@@ -363,11 +378,119 @@ def _analyse_span_dependencies(
             if name in bound_before and name not in bound_in and name not in inputs:
                 inputs.append(name)
         _binds(statement, bound_in)
+        _surely_binds(statement, surely_in)
+    bound_after: list[str] = []
+    captured_in: list[str] = []
+    _captured(span.statements, captured_in)
+    for statement in span.after:
+        _binds(statement, bound_after)
+    if stale := next((n for n in captured_in if n in bound_after), None):
+        # Moved into the helper, the closure would read the helper's copy and
+        # miss the rebinding the original sees when it is called later
+        # (Greptile, PR #2932).
+        raise ExtractRefused(cs.EXTRACT_STALE_CLOSURE.format(name=stale))
     read_after: list[str] = []
     for statement in span.after:
         _reads(statement, read_after)
+    # A closure defined before the span reads what the span rebinds when it
+    # is called, under its own name: `read()` after the span reads x
+    # (Greptile, PR #2932).
+    _captured(span.before, read_after)
     outputs = [name for name in bound_in if name in read_after]
+    for name in outputs:
+        if name in inputs or name in surely_in or name not in bound_before:
+            continue
+        # A path through the span that leaves the name alone must hand back
+        # the value it came in with, so the helper takes it as a parameter;
+        # returned unbound it raised or read undefined (Greptile, PR #2932).
+        if name not in surely_before:
+            raise ExtractRefused(cs.EXTRACT_MAYBE_UNBOUND.format(name=name))
+        inputs.append(name)
     return inputs, outputs
+
+
+# Statements whose body may run zero times, or stop partway, on a path that
+# still completes normally.
+_UNSURE = frozenset(
+    {
+        *_LOOPS,
+        cs.TS_PY_TRY_STATEMENT,
+        cs.TS_PY_MATCH_STATEMENT,
+        cs.TS_JS_TRY_STATEMENT,
+        cs.TS_JS_SWITCH_STATEMENT,
+    }
+)
+_SEQUENCES = frozenset({cs.TS_PY_BLOCK, cs.TS_STATEMENT_BLOCK})
+_IFS = frozenset({cs.TS_PY_IF_STATEMENT, cs.TS_JS_IF_STATEMENT})
+
+
+def _surely_binds(statement: Node, out: list[str]) -> None:
+    """Names `statement` binds on every path through it that completes: an
+    `if` binds what all of its arms bind, and only when it has an `else`."""
+    kind = statement.type
+    found: list[str] = []
+    if kind in _IFS:
+        arms = _if_arms(statement)
+        for index, arm in enumerate(arms or []):
+            names: list[str] = []
+            _surely_binds(arm, names)
+            found = names if index == 0 else [n for n in found if n in names]
+    elif kind in _SEQUENCES:
+        for child in statement.named_children:
+            _surely_binds(child, found)
+    elif kind == cs.TS_PY_WITH_STATEMENT:
+        body = statement.child_by_field_name(cs.FIELD_BODY)
+        if body is not None:
+            _surely_binds(body, found)
+    elif kind not in _UNSURE:
+        _binds(statement, found)
+    out.extend(name for name in found if name not in out)
+
+
+def _if_arms(statement: Node) -> list[Node] | None:
+    """Every branch of an `if`, or None when a path runs none of them."""
+    consequence = statement.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+    if consequence is None:
+        return None
+    arms = [consequence]
+    otherwise = False
+    for clause in statement.children_by_field_name(cs.FIELD_ALTERNATIVE):
+        if clause.type == cs.TS_PY_ELIF_CLAUSE:
+            branch = clause.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+        else:
+            # Python's `else` has a body; JS's holds its statement, which may
+            # be the `if` of an `else if`.
+            otherwise = True
+            branch = clause.child_by_field_name(cs.FIELD_BODY) or next(
+                iter(clause.named_children), None
+            )
+        if branch is None:
+            return None
+        arms.append(branch)
+    return arms if otherwise else None
+
+
+def _captured(statements: list[Node], out: list[str]) -> None:
+    """Names the functions and lambdas defined in `statements` read from the
+    enclosing scope: a closure reads them when it is called, so it sees
+    whatever binds them later, not their value when it was made."""
+    stack = list(reversed(statements))
+    while stack:
+        current = stack.pop()
+        if current.type not in _NESTED_SCOPES:
+            stack.extend(reversed(current.children))
+            continue
+        body = current.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            continue
+        own = _parameter_names(current)
+        single = current.child_by_field_name(cs.TS_FIELD_PARAMETER)
+        if single is not None:
+            _targets(single, own)
+        _binds(body, own)
+        reads: list[str] = []
+        _reads(body, reads)
+        out.extend(name for name in reads if name not in own and name not in out)
 
 
 # The old name, kept while the extract operation still imports it.
