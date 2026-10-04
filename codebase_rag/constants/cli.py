@@ -883,6 +883,10 @@ MOVE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
 MOVE_CYCLE = "Refusing to move: it would create the import cycle {cycle}"
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
+MOVE_SOURCE_CHANGED = (
+    "Cannot stage the move: {files} changed on disk after the move was "
+    "planned; retry once the tree is settled"
+)
 MOVE_CONTRACT_FAILED = "Move rolled back, postcondition failed: {reasons}"
 MOVE_CONTRACT_UNMEASURED = (
     "Move applied, but its postcondition could not be measured: {error}"
