@@ -1163,7 +1163,8 @@ WHERE a.qualified_name STARTS WITH $project_prefix
 RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.star_args AS star_args, r.star_kwargs AS star_kwargs"""
+       r.star_args AS star_args, r.star_kwargs AS star_kwargs,
+       r.resolution AS resolution"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
 # The blast radius of a signature change crosses services (issue #1603): a
