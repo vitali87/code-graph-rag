@@ -3906,12 +3906,18 @@ class CallResolver:
 
     def _in_python_module(self, qn: str, module_qn: str) -> bool:
         # Defined in the module itself, not in a module under it: a package's
-        # `__init__` qn prefixes every module of the package.
+        # `__init__` qn prefixes every module of the package, and a module
+        # under a plain directory (`lib/tools/output.py`, no `__init__.py`)
+        # sits deeper than the first segment, so every prefix is checked.
         own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
         if not qn.startswith(own_module):
             return False
-        head = qn[len(own_module) :].split(cs.SEPARATOR_DOT, 1)[0]
-        return f"{own_module}{head}" not in self.type_inference.module_qn_to_file_path
+        rest = qn[len(own_module) :].split(cs.SEPARATOR_DOT)
+        modules = self.type_inference.module_qn_to_file_path
+        return not any(
+            f"{own_module}{cs.SEPARATOR_DOT.join(rest[:depth])}" in modules
+            for depth in range(1, len(rest))
+        )
 
     def _python_import_may_bind(self, call_name: str, module_qn: str) -> bool:
         import_map = self.import_processor.import_mapping.get(module_qn, {})

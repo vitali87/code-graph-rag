@@ -39,6 +39,10 @@ def shout():
 
 def unbound():
     return track()
+
+
+def namespaced():
+    return emit("x")
 """
 
 PROGRESS = """\
@@ -72,6 +76,12 @@ SCRIPTS = """\
 def report(rows):
     for row in rows:
         print(row)
+"""
+
+# In `lib/tools/`, a directory with no `__init__.py`.
+OUTPUT = """\
+def emit(x):
+    return x
 """
 
 OTHER = """\
@@ -109,6 +119,7 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("bltn") / "bltn"
     _write(root, "lib/__init__.py", LIB)
     _write(root, "lib/progress.py", PROGRESS)
+    _write(root, "lib/tools/output.py", OUTPUT)
     _write(root, "app.py", APP)
     _write(root, "scripts.py", SCRIPTS)
     _write(root, "other.py", OTHER)
@@ -129,14 +140,19 @@ def _targets(graph: RecordedGraph, caller: str) -> dict[str, str]:
 
 @pytest.mark.parametrize(
     "caller",
-    ["app.main", "scripts.report", "lib.unbound"],
-    ids=["builtins", "builtin-in-loop", "package-submodule"],
+    ["app.main", "scripts.report", "lib.unbound", "lib.namespaced"],
+    ids=[
+        "builtins",
+        "builtin-in-loop",
+        "package-submodule",
+        "module-under-a-plain-directory",
+    ],
 )
 def test_a_bare_name_its_module_cannot_see_binds_nothing_elsewhere(
     graph: RecordedGraph, caller: str
 ) -> None:
-    # `print`, `open`, `sorted` are builtins there; `track` is in a
-    # submodule `lib/__init__.py` never imports.
+    # `print`, `open`, `sorted` are builtins there; `track` and `emit` are
+    # in submodules `lib/__init__.py` never imports.
     assert _targets(graph, caller) == {}
 
 
