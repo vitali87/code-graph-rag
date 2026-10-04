@@ -78,6 +78,20 @@ _PY_IMPORTS = frozenset({cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEME
 _JS_UPDATES = frozenset(
     {cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION, cs.TS_JS_UPDATE_EXPRESSION}
 )
+# Expressions whose operands may not run: a write under one is conditional.
+_LAZY = frozenset(
+    {
+        cs.TS_PY_CONDITIONAL_EXPRESSION,
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_JS_TERNARY_EXPRESSION,
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+    }
+)
+_SHORT_CIRCUIT = frozenset({"&&", "||", "??"})
+_LOGICAL_ASSIGNMENTS = frozenset({"&&=", "||=", "??="})
 
 
 def _reads(node: Node, out: list[str]) -> None:
@@ -124,7 +138,7 @@ def _plain_target(node: Node) -> Node | None:
         cs.TS_ASSIGNMENT_EXPRESSION,
     ):
         return node.child_by_field_name(cs.TS_FIELD_LEFT)
-    if kind in _JS_DECLARATORS:
+    if kind in _JS_DECLARATORS or kind == cs.TS_PY_NAMED_EXPRESSION:
         return node.child_by_field_name(cs.FIELD_NAME)
     return None
 
@@ -163,13 +177,17 @@ def _index_in(parent: Node, child: Node) -> int:
     return -1
 
 
-def _binds(node: Node, out: list[str]) -> None:
+def _binds(node: Node, out: list[str], surely: bool = False) -> None:
     """Names bound by `node` (assignment targets, declarators, for
-    targets, `as` targets, nested def/class names), in order."""
+    targets, `as` targets, walrus targets, nested def/class names), in
+    order; with `surely`, only those bound whenever `node` runs, not the
+    ones under a short circuit, a conditional or a comprehension."""
     stack = [node]
     while stack:
         current = stack.pop()
         kind = current.type
+        if surely and _is_lazy(current):
+            continue
         if kind in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
             left = current.child_by_field_name(cs.TS_FIELD_LEFT)
             if left is not None:
@@ -201,6 +219,10 @@ def _binds(node: Node, out: list[str]) -> None:
             ) or current.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
             if target is not None and target.type in _IDENTIFIERS:
                 _targets(target, out)
+        elif kind == cs.TS_PY_NAMED_EXPRESSION:
+            named = current.child_by_field_name(cs.FIELD_NAME)
+            if named is not None:
+                _targets(named, out)
         elif kind in _PY_IMPORTS:
             # An import binds a name like an assignment does: missing it kept
             # `import os` inside the helper while the caller still used `os`
@@ -213,6 +235,22 @@ def _binds(node: Node, out: list[str]) -> None:
                 _targets(named, out)
             continue
         stack.extend(reversed(current.children))
+
+
+def _is_lazy(node: Node) -> bool:
+    """Whether `node`'s operands may not run: `a && b`, `c ? a : b`, Python
+    `and`/`or`/`if`-`else` and comprehensions, and a logical assignment
+    (`x ??= 1`), which writes its target only on one outcome."""
+    if node.type in _LAZY:
+        return True
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    if operator is None:
+        return False
+    if node.type == cs.TS_BINARY_EXPRESSION:
+        return _text(operator) in _SHORT_CIRCUIT
+    return node.type == cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION and (
+        _text(operator) in _LOGICAL_ASSIGNMENTS
+    )
 
 
 def _import_binds(node: Node, out: list[str]) -> None:
@@ -443,7 +481,9 @@ def _surely_binds(statement: Node, out: list[str]) -> None:
         if body is not None:
             _surely_binds(body, found)
     elif kind not in _UNSURE:
-        _binds(statement, found)
+        # `c && (x = 1)` and `flag and (x := 1)` write x on one path only
+        # (Greptile, PR #2932).
+        _binds(statement, found, surely=True)
     out.extend(name for name in found if name not in out)
 
 
