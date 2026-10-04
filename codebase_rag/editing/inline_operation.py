@@ -16,14 +16,23 @@ from .. import graph_query
 from ..graph_query import QueryFn
 from ..parsers.call_processor import _find_call_arguments_node, _split_call_arguments
 from .contract import Expectation, Reingest
-from .extract_operation import Extractor
+from .extract_operation import (
+    _JS_ASSIGNMENTS,
+    _JS_NAMED_DECLARATIONS,
+    _PY_SHARED,
+    Extractor,
+)
 from .extract_scope import (
     _AMBIGUOUS,
     _IDENTIFIERS,
+    _JS_DECLARATORS,
     _NON_READ_FIELDS,
     _SHORT_CIRCUIT,
+    _binds,
     _body_statements,
     _index_in,
+    _parameter_names,
+    _targets,
 )
 from .extract_transaction import _commit, _enforce
 from .extract_types import ExtractRefused, InlineRefused, InlineReport
@@ -137,6 +146,18 @@ _STATEMENTS = frozenset(
         cs.TS_VARIABLE_DECLARATION,
     }
 )
+# Scopes a Python call can sit in; only a function's locals are its own.
+_PY_SCOPES = frozenset(
+    {
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+        cs.TS_PY_LAMBDA,
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+    }
+)
 _TS_TYPE_ONLY = re.compile(r"\s*import\s+type\s*\{")
 _JS_IMPORT = re.compile(r"\s*import\b")
 _JS_REQUIRE = re.compile(r"\brequire\s*\(")
@@ -233,7 +254,9 @@ class Inliner:
                 continue
             substituted = None
             if _scope_safe(free, c_path == path, c_language, root, call):
-                substituted = _substitute(returned, params, receiver, call, args_node)
+                substituted = _substitute(
+                    returned, params, receiver, call, args_node, c_language, root
+                )
             if substituted is None:
                 rewritten_all = False
                 continue
@@ -772,6 +795,120 @@ def _evaluation_kept(
     return True
 
 
+def _names_kept(
+    returned: Node,
+    reads: dict[str, list[Node]],
+    bound: dict[str, Node],
+    evaluated: list[tuple[str | None, Node]],
+    language: cs.SupportedLanguage | None,
+    root: Node,
+    call: Node,
+) -> bool:
+    """Whether every name argument still reads the value it had at the call.
+
+    The call read it before the callee ran; substituted, it is read where
+    the parameter was, after whatever code the copied expression runs
+    first, which may rebind it: `helper(n)` returning `advance() + x` gave
+    11, `advance() + n` 12 once `advance` set `n = 2`. Only a name nothing
+    can rebind meanwhile may be read late.
+    """
+    runs = [n.end_byte for n in _walk(returned) if n.type in _EVALUATING]
+    # An argument with an effect runs it where its parameter is read.
+    runs.extend(
+        use.end_byte
+        for name, arg in evaluated
+        if name is not None and not _is_inert(arg)
+        for use in reads.get(name, [])
+    )
+    if not runs:
+        return True
+    for name, arg in bound.items():
+        if arg.type not in _IDENTIFIERS:
+            continue
+        late = any(
+            # Python's `a if c else b` runs `c` before `a`.
+            any(end <= use.start_byte for end in runs) or _py_conditional(use, returned)
+            for use in reads.get(name, [])
+        )
+        if late and not _unrebindable(_text(arg), language, root, call):
+            return False
+    return True
+
+
+def _py_conditional(node: Node, returned: Node) -> bool:
+    current = node.parent
+    while current is not None and current.start_byte >= returned.start_byte:
+        if current.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+            return True
+        if current == returned:
+            break
+        current = current.parent
+    return False
+
+
+def _unrebindable(
+    name: str, language: cs.SupportedLanguage | None, root: Node, call: Node
+) -> bool:
+    """Whether no code a call runs can rebind `name` as `call` sees it.
+
+    In Python that is a local of the enclosing function no nested scope
+    declares `nonlocal`; a global any function can rebind. In JavaScript
+    any closure can write a binding it sees, so it is one the file
+    declares and never assigns: an import is rebound by the module that
+    exports it, and an undeclared global by any script.
+    """
+    if language == cs.SupportedLanguage.PYTHON:
+        scope = call.parent
+        while scope is not None and scope.type not in _PY_SCOPES:
+            scope = scope.parent
+        if scope is None or scope.type != cs.TS_PY_FUNCTION_DEFINITION:
+            return False
+        local = _parameter_names(scope)
+        for statement in _body_statements(scope):
+            _binds(statement, local)
+        return name in local and not any(
+            n.type in _PY_SHARED and name in {_text(c) for c in n.named_children}
+            for n in _walk(scope)
+        )
+    return _js_declares(root, name) and not _js_writes(root, name)
+
+
+def _js_declares(root: Node, name: str) -> bool:
+    for n in _walk(root):
+        found: list[str] = []
+        if n.type in _JS_DECLARATORS or n.type in _JS_NAMED_DECLARATIONS:
+            target = n.child_by_field_name(cs.FIELD_NAME)
+            if target is not None:
+                _targets(target, found)
+        elif n.type in cs.JS_TS_FUNCTION_NODES:
+            found = _parameter_names(n)
+            single = n.child_by_field_name(cs.TS_FIELD_PARAMETER)
+            if single is not None:
+                _targets(single, found)
+        if name in found:
+            return True
+    return False
+
+
+def _js_writes(root: Node, name: str) -> bool:
+    for n in _walk(root):
+        target = None
+        if n.type in _JS_ASSIGNMENTS:
+            target = n.child_by_field_name(cs.FIELD_LEFT) or n.child_by_field_name(
+                cs.TS_JS_FIELD_ARGUMENT
+            )
+        elif n.type == cs.TS_FOR_IN_STATEMENT and (
+            n.child_by_field_name(cs.FIELD_KIND) is None
+        ):
+            target = n.child_by_field_name(cs.FIELD_LEFT)
+        found: list[str] = []
+        if target is not None:
+            _targets(target, found)
+        if name in found:
+            return True
+    return False
+
+
 def _lazy(node: Node, returned: Node) -> bool:
     current = node.parent
     while current is not None and current.start_byte >= returned.start_byte:
@@ -793,6 +930,8 @@ def _substitute(
     receiver: str | None,
     call: Node,
     args_node: Node,
+    language: cs.SupportedLanguage | None,
+    root: Node,
 ) -> str | None:
     binding = _bind(params, receiver, call, args_node)
     if binding is None:
@@ -809,6 +948,8 @@ def _substitute(
         if _is_read(current) and _text(current) in bound:
             reads.setdefault(_text(current), []).append(current)
     if not _evaluation_kept(returned, reads, evaluated):
+        return None
+    if not _names_kept(returned, reads, bound, evaluated, language, root, call):
         return None
     # Substitute by token position so `a` never touches `a.b`'s attribute or
     # a longer name; arguments that are not bare atoms are parenthesised.
