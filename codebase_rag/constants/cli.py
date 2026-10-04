@@ -308,6 +308,10 @@ CLI_DUPLICATES_COL_LOCATION = "Location"
 CLI_DUPLICATES_LOCATION = "{path}:{start}-{end}"
 CLI_DUPLICATES_SIMILARITY_EXACT = "100%"
 CLI_DUPLICATES_SIMILARITY_PCT = "{pct:.0f}%"
+CLI_DUPLICATES_SIMILARITY_RANGE = "{low:.0f}-{high:.0f}%"
+# Shown only when a similar group holds exact copies: members of one group
+# that share a number in it are copies of each other (issue #2473).
+CLI_DUPLICATES_COL_EXACT = "Exact"
 CLI_DUPLICATES_SUMMARY = "{groups} duplicate group(s) covering {members} function(s)."
 CLI_DUPLICATES_NONE = "No duplicated functions or methods found."
 CLI_DUPLICATES_WRITTEN = "Wrote {count} group(s) to {path}"
