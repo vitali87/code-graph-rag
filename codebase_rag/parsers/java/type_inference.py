@@ -54,6 +54,7 @@ class JavaTypeInferenceEngine(
         "java_external_sites",
         "function_locations",
         "_rel_to_module",
+        "_family_picks",
     )
 
     def __init__(
@@ -89,6 +90,7 @@ class JavaTypeInferenceEngine(
             function_locations if function_locations is not None else {}
         )
         self._rel_to_module: dict[str, str] = {}
+        self._family_picks: dict[str, list[tuple[str, str]]] = {}
 
         self._lookup_cache: dict[str, str | None] = {}
         self._lookup_in_progress: set[str] = set()
@@ -186,6 +188,9 @@ class JavaTypeInferenceEngine(
         module_qn: str,
         caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
+        # A pick recorded for an earlier call must not lend this one its
+        # overload family.
+        self._family_picks.clear()
         return self._do_resolve_java_method_call(
             call_node, local_var_types or {}, module_qn, caller_qn
         )

@@ -22,7 +22,6 @@ _CONFIG = DeadCodeConfig(
     include_classes=False,
     root_decorators=frozenset(),
     entry_points=(),
-    test_patterns=cs.TEST_PATH_PATTERNS,
 )
 
 

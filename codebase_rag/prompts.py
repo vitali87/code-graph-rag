@@ -306,7 +306,8 @@ def build_rag_orchestrator_prompt(
 1.  **TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.
 2.  **NATURAL LANGUAGE QUERIES**: When using the `{t.query_graph}` tool, ALWAYS use natural language questions. NEVER write Cypher queries directly - the tool will translate your natural language into the appropriate database query.
 3.  **HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.
-4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
+4.  **STRUCTURE COMES FROM THE GRAPH, NOT THE SHELL**: Callers and callees, inheritance and implementations, counts (the most-called functions, how many classes, how big the codebase is), package and module layout, and external dependencies are all in the graph. Ask `{t.query_graph}` first. `{t.shell_command}` is a fallback for what the graph does not hold; never use `rg`, `ls` or `wc` to reconstruct what one graph question answers.
+5.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
     - For source code files (.py, .ts, etc.), use `{t.read_file}`.
     - Images and PDFs the user references are attached inline to the message; read them directly from your own multimodal input.
 
@@ -480,6 +481,16 @@ Provide only the Cypher query.
 
 # Backwards-compatible default (no project scope injected)
 CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
+
+
+def build_cypher_repair_request(question: str, failed_query: str, error: str) -> str:
+    return (
+        f"{question}\n\n"
+        "Your previous query for this question was rejected by the database.\n"
+        f"Query: {failed_query}\n"
+        f"Error: {error}\n"
+        "Return a corrected query that answers the same question."
+    )
 
 
 # Stricter prompt for less capable open-source/local models (e.g., Ollama)
