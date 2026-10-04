@@ -493,3 +493,128 @@ def test_inline_keeps_code_sharing_a_line_with_the_definition(
     assert report is not None and report.applied, report
     assert "console.log('ready');" in (root / "web/ready.js").read_text()
     assert _node(root, "web/ready.js") == before
+
+
+# --- removed imports --------------------------------------------------------------
+
+_HOOK_FILES = {
+    "pkg/__init__.py": "",
+    "pkg/hooks.py": "loaded = []\n",
+    "pkg/util.py": (
+        "from pkg import hooks\n\nhooks.loaded.append('util')\n\n\n"
+        "def helper(x):\n    return x + 1\n"
+    ),
+}
+
+
+_USE = "\n\n\ndef use():\n    return helper(1)\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "qn"),
+    [
+        (
+            {
+                **_HOOK_FILES,
+                "pkg/app.py": "from pkg.util import helper; print('ready')" + _USE,
+            },
+            "pkg.util.helper",
+        ),
+        (
+            {
+                **_HOOK_FILES,
+                "pkg/app.py": "print('ready'); from pkg.util import helper" + _USE,
+            },
+            "pkg.util.helper",
+        ),
+        # The importer's own package is loaded anyway, so the import goes.
+        (
+            {
+                "pkg/__init__.py": "def helper(x):\n    return x + 1\n",
+                "pkg/app.py": "from . import helper; print('ready')" + _USE,
+            },
+            "pkg.helper",
+        ),
+    ],
+    ids=["code-after", "code-before", "own-package"],
+)
+def test_inline_keeps_code_sharing_a_line_with_a_removed_import(
+    temp_repo: Path, files: dict[str, str], qn: str
+) -> None:
+    root, store = _build(temp_repo, files)
+    probe = "import pkg.app\nprint(pkg.app.use())"
+    before = _python(root, probe)
+    assert before == "ready\n2"
+    report = _inline(root, store, qn)
+    assert report is not None and report.applied, report
+    assert report.definition_removed
+    assert "helper" not in (root / "pkg/app.py").read_text()
+    assert _python(root, probe) == before
+
+
+_JS_IMPORT_FILES = {
+    "web/package.json": '{"type": "module"}\n',
+    "web/util.js": (
+        "globalThis.loaded = ['util'];\nexport function helper(x) { return x + 1; }\n"
+    ),
+    "web/app.js": (
+        "import { helper } from './util.js'; console.log('ready');\n"
+        "console.log(helper(1), globalThis.loaded);\n"
+    ),
+}
+
+
+def test_inline_keeps_js_code_sharing_a_line_with_a_removed_import(
+    temp_repo: Path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    root, store = _build(temp_repo, _JS_IMPORT_FILES)
+    before = _node(root, "web/app.js")
+    assert before == "ready\n2 [ 'util' ]"
+    report = _inline(root, store, "web.util.helper")
+    assert report is not None and report.applied, report
+    assert report.definition_removed
+    assert "helper" not in (root / "web/app.js").read_text()
+    assert _node(root, "web/app.js") == before
+
+
+_SIDE_EFFECT_APPS = {
+    "absolute": "from pkg.util import helper\n\n\ndef use():\n    return helper(1)\n",
+    "relative": "from .util import helper\n\n\ndef use():\n    return helper(1)\n",
+    "aliased": "from pkg.util import helper as h\n\n\ndef use():\n    return h(1)\n",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_SIDE_EFFECT_APPS))
+def test_inline_still_loads_the_module_of_a_removed_import(
+    temp_repo: Path, shape: str
+) -> None:
+    root, store = _build(
+        temp_repo, {**_HOOK_FILES, "pkg/app.py": _SIDE_EFFECT_APPS[shape]}
+    )
+    probe = "import pkg.app\nfrom pkg import hooks\nprint(pkg.app.use(), hooks.loaded)"
+    before = _python(root, probe)
+    assert before == "2 ['util']"
+    report = _inline(root, store, "pkg.util.helper")
+    assert report is not None and report.applied, report
+    assert report.definition_removed
+    assert "def helper" not in (root / "pkg/util.py").read_text()
+    assert _python(root, probe) == before
+
+
+def test_inline_keeps_the_import_when_the_module_name_is_taken(
+    temp_repo: Path,
+) -> None:
+    # `import pkg.util` would rebind the file's own `pkg`, so the import and
+    # with it the definition stay.
+    app = (
+        "from pkg.util import helper\n\npkg = 'mine'\n\n\n"
+        "def use():\n    return helper(1), pkg\n"
+    )
+    root, store = _build(temp_repo, {**_HOOK_FILES, "pkg/app.py": app})
+    report = _inline(root, store, "pkg.util.helper")
+    assert report is not None and report.applied, report
+    assert not report.definition_removed
+    probe = "from pkg import app, hooks\nprint(app.use(), hooks.loaded)"
+    assert _python(root, probe) == "(2, 'mine') ['util']"
