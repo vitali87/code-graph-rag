@@ -3247,6 +3247,11 @@ class GraphUpdater:
         # macro defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_MACRO):
             self.factory.definition_processor.macro_qns.add(qn)
+        # Restore the body-scoped-name set for unchanged files, or a
+        # re-parsed file's bare call binds by name to a function expression
+        # only its own body can call by that name (issue #2402).
+        if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
+            self.function_registry.mark_body_scoped_name(qn)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).

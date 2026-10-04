@@ -362,3 +362,30 @@ JS_WELL_KNOWN_SYMBOLS: frozenset[str] = frozenset(
         "asyncDispose",
     }
 )
+
+# PHP test code that lives beside the production code (issue #2472):
+# PHPUnit's default test-file suffix, the PSR-4 `Tests/` directory that
+# Symfony-style components keep their tests in, and the name suffix of the
+# base every PHPUnit test class extends (PHPUnit's `TestCase`, Symfony's
+# `KernelTestCase`/`WebTestCase`, a project's abstract `*TestCase`). All three
+# apply to .php files only, so the capitalised directory and the suffixes keep
+# their meaning in other languages.
+PHP_TEST_FILE_SUFFIX = "Test.php"
+PHP_TEST_DIR_SEGMENT = "/Tests/"
+PHP_TEST_CASE_SUFFIX = "TestCase"
+# The external bases that make a PHP class a test, as the graph holds them:
+# by class name alone (spelled fully qualified or never imported), or
+# namespace-qualified through a `use` import. A name ending in
+# PHP_TEST_CASE_SUFFIX counts only from one of these test-framework
+# namespaces, so a vendor's `Acme\Qa\ScenarioTestCase` is not a test base.
+PHP_TEST_BASE_NAMES: frozenset[str] = frozenset(
+    {"TestCase", "KernelTestCase", "WebTestCase", "ApiTestCase", "PantherTestCase"}
+)
+PHP_TEST_FRAMEWORK_NAMESPACES: tuple[str, ...] = (
+    "PHPUnit.",
+    "Symfony.Bundle.FrameworkBundle.Test.",
+    "Symfony.Component.Panther.",
+    "Illuminate.Foundation.Testing.",
+    "Orchestra.Testbench.",
+    "Mockery.Adapter.Phpunit.",
+)

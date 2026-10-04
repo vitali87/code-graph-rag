@@ -335,6 +335,10 @@ JSON_KEY_HAS_ENTITY = "hasEntity"
 JSON_KEY_ENTITY_TYPE = "entityType"
 
 IMPORT_DEFAULT_SUFFIX = ".default"
+# The simple name of a JS/TS module's default export: an unnamed
+# `export default class {...}` registers under it, so the `<module>.default`
+# target a default import is mapped to (IMPORT_DEFAULT_SUFFIX) is a real node.
+JS_DEFAULT_EXPORT_NAME = "default"
 IMPORT_STD_PREFIX = "std."
 CPP_STD_PREFIX = "std"
 IMPORT_MODULE_LABEL = "Module"
