@@ -38,6 +38,14 @@ TS_LOCALS_PATTERN = """
 # `module.exports.x()`, prototype-pattern `this`): only these bind a dotted call
 # to a same-module free function; `view.render()` is an instance call.
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
+# A chained call's receiver written as a construction (`new Box()`,
+# `(new Box())`): only text that reads `new` once these are stripped is
+# looked up in the file's tree to see whether it IS a construction (#2465).
+JS_NEW_KEYWORD = "new"
+JS_RECEIVER_LEADING_CHARS = "( \t\r\n"
+# The directive that makes a script or function strict, where a function
+# declared in a block is scoped to that block (no Annex B hoisting).
+JS_USE_STRICT_DIRECTIVE = "use strict"
 # `this.` receiver prefix of a call name; a prototype-assigned function
 # (`Date.prototype.strftime`) dispatches such calls to a sibling method of
 # the same prototype target before the module-receiver fallback applies.

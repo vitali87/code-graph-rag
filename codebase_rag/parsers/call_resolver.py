@@ -15,6 +15,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .import_processor import ImportProcessor
+from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .py import resolve_class_name
 from .rs import utils as rs_utils
@@ -4933,6 +4934,38 @@ class CallResolver:
             or type_name
         )
 
+    def _infer_js_construction_base_type(
+        self,
+        base: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        call_point: int | None,
+    ) -> str | None:
+        # `new Box().bump()`, `(new Box()).bump()`: the base is neither a
+        # local, an import nor a factory with a recorded return, so the chain
+        # stayed untyped and the call bound nothing beside INSTANTIATES Box
+        # (issue #2465). It types the way `const b = new Box()` types `b`, so
+        # both spellings of one construction reach the same class. The
+        # receiver starts where the call does; without that site in the
+        # file's tree, a `Box` the caller binds itself cannot be ruled out.
+        if language not in cs.JS_TS_LANGUAGES or call_point is None:
+            return None
+        root = self._cached_module_root(module_qn)
+        if root is None:
+            return None
+        construction = js_ts_utils.construction_at(root, call_point, base)
+        if construction is None:
+            return None
+        var_type = (
+            self.type_inference.js_type_inference._infer_js_variable_type_from_value(
+                construction, module_qn, language
+            )
+        )
+        if not var_type:
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return self._resolve_class_qn_from_type(var_type, import_map, module_qn) or None
+
     def _infer_call_base_type(
         self,
         base: str,
@@ -4949,7 +4982,14 @@ class CallResolver:
         # CONSTRUCTOR TEMPORARY (`Reader<decltype(ia)>(...)`, nlohmann's
         # from_cbor): the callee names the receiver's class itself. The callee is
         # cut at `<` or `(`, whichever comes first, since template args can carry
-        # their own parens.
+        # their own parens. A JS/TS construction (`new Box()`) has no callee to
+        # resolve: it is the instance it builds.
+        if (
+            constructed := self._infer_js_construction_base_type(
+                base, module_qn, language, call_point
+            )
+        ) is not None:
+            return constructed
         cut = len(base)
         for bracket in (cs.CHAR_ANGLE_OPEN, cs.CHAR_PAREN_OPEN):
             idx = base.find(bracket)
