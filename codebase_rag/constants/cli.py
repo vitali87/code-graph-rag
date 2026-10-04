@@ -899,6 +899,10 @@ MOVE_ASSIGNS_IMPORT = (
     "imported into the destination it is a read-only binding, so the "
     "assignment would throw"
 )
+MOVE_WILDCARD_IMPORTER = (
+    "{importers} import(s) everything from {path} with *, and would no "
+    "longer get {name} from it; pass keep_alias to keep {path} exporting it"
+)
 MOVE_RELATIVE_IMPORT_ESCAPES = (
     "{statement} in {qn} climbs above the top-level package of {path}, so "
     "the move cannot respell it for the destination"

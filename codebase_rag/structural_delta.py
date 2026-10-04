@@ -1380,11 +1380,17 @@ def _imports_what_left(
     `from old import TAX_RATE` then failed the move it was carried for.
     Only a named import of something that did NOT move is cleared; a
     whole-module import, or one the graph recorded without names, may still
-    reach the moved symbol and stays stale.
+    reach the moved symbol and stays stale. So does a wildcard (`from old
+    import *`, recorded as `*`), unless the vacated module imports every
+    moved name back for the star to carry.
     """
     names = {
         name for (src, dst, name) in after.imported if src == importer and dst == target
     }
+    if cs.IMPORTED_NAME_WILDCARD in names:
+        kept = {name for (src, _dst, name) in after.imported if src == target}
+        if not moved <= kept:
+            return True
     return not names or "" in names or bool(names & moved)
 
 

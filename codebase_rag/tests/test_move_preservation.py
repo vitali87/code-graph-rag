@@ -707,3 +707,106 @@ def test_a_js_local_that_shadows_a_module_variable_does_not_refuse(
         "import { helper } from './pkg/core.js';\nconsole.log(helper());\n",
     )
     assert probe.stdout.strip() == "2", probe.stderr
+
+
+# --- a wildcard importer still reaches the moved name -----------------------------
+
+
+@pytest.mark.parametrize(
+    "util",
+    [
+        pytest.param("def helper(a):\n    return a + 1\n", id="last-definition"),
+        pytest.param("def helper(a):\n    return a + 1\n" + OTHER, id="with-sibling"),
+        pytest.param(
+            "def helper(a):\n    return a + 1\n"
+            + OTHER
+            + "\n\n__all__ = [n for n in dir() if not n.startswith('_')]\n",
+            id="computed-all",
+        ),
+    ],
+)
+def test_a_wildcard_reexport_of_the_moved_name_refuses_the_move(
+    temp_repo: Path, util: str
+) -> None:
+    """`from pkg.util import *` is recorded with the name `*`, which neither
+    the move rewrote nor the contract counted as reaching `helper`: the
+    move passed, and `from pkg.api import helper` raised ImportError."""
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": util,
+        "pkg/api.py": "from pkg.util import *  # noqa: F403\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="pkg/api.py"):
+        _move(root, store, updater)
+    assert (root / "pkg/util.py").read_text() == util
+    probe = _python(root, "from pkg.api import helper; print(helper(1))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "2"
+
+
+@pytest.mark.parametrize(
+    ("util", "keep_alias"),
+    [
+        pytest.param(
+            "def helper(a):\n    return a + 1\n\n\nVALUE = helper(1)\n",
+            False,
+            id="old-module-imports-it-back",
+        ),
+        pytest.param("def helper(a):\n    return a + 1\n", True, id="keep-alias"),
+        pytest.param(
+            "def _helper(a):\n    return a + 1\n" + OTHER, False, id="private-name"
+        ),
+    ],
+)
+def test_a_wildcard_reexport_that_still_reaches_the_name_does_not_refuse(
+    temp_repo: Path, util: str, keep_alias: bool
+) -> None:
+    """When the old module binds the name again, or the star never exported
+    it, the wildcard importer sees what it saw before."""
+    name = "_helper" if "_helper" in util else "helper"
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": util,
+        "pkg/api.py": "from pkg.util import *  # noqa: F403\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(
+        root, store, updater, qn=f"{PROJECT}.pkg.util.{name}", keep_alias=keep_alias
+    )
+    assert report.applied, report.message
+    source = "pkg.util" if name == "_helper" else "pkg.api"
+    probe = _python(root, f"from {source} import {name}; print({name}(1))")
+    if name == "_helper":
+        # Only the old path changed; the wildcard never carried it.
+        assert probe.returncode != 0
+        probe = _python(root, "from pkg.core import _helper; print(_helper(1))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "2"
+
+
+def test_the_contract_counts_a_wildcard_importer_of_a_vacated_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The contract's own check, with the planner's refusal out of the way:
+    the stale-importer exemption cleared any import whose names held
+    neither "" nor the moved name, and `*` holds neither."""
+    monkeypatch.setattr(
+        move_mod.Mover, "_refuse_wildcard_loss", lambda *_args, **_kwargs: None
+    )
+    util = "def helper(a):\n    return a + 1\n"
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": util,
+        "pkg/api.py": "from pkg.util import *  # noqa: F403\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert not report.applied
+    assert "pkg/api.py" in report.message, report.message
+    assert (root / "pkg/util.py").read_text() == util
+    probe = _python(root, "from pkg.api import helper; print(helper(1))")
+    assert probe.stdout.strip() == "2", probe.stderr
