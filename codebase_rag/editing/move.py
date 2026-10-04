@@ -348,6 +348,124 @@ def _global_references(text: str) -> set[str] | None:
     return names
 
 
+def _global_writes(text: str) -> set[str]:
+    """Module names the Python `text` rebinds from inside a function or a
+    class through a `global` statement."""
+    try:
+        table = symtable.symtable(text, _SYMTABLE_FILENAME, _SYMTABLE_MODE)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    tables = list(table.get_children())
+    while tables:
+        current = tables.pop()
+        tables.extend(current.get_children())
+        names.update(
+            symbol.get_name()
+            for symbol in current.get_symbols()
+            if symbol.is_declared_global() and symbol.is_assigned()
+        )
+    return names
+
+
+def _module_scope_names(text: str) -> set[str]:
+    """Every module-scope name the Python `text` binds, imports or reads,
+    at the top level or from inside a function."""
+    try:
+        table = symtable.symtable(text, _SYMTABLE_FILENAME, _SYMTABLE_MODE)
+    except SyntaxError:
+        return set()
+    # A name another scope declares `global` is listed at module scope
+    # with no flags of its own; only real uses count.
+    names = {
+        symbol.get_name()
+        for symbol in table.get_symbols()
+        if symbol.is_assigned() or symbol.is_imported() or symbol.is_referenced()
+    }
+    tables = list(table.get_children())
+    while tables:
+        current = tables.pop()
+        tables.extend(current.get_children())
+        names.update(
+            symbol.get_name()
+            for symbol in current.get_symbols()
+            if symbol.is_global() and (symbol.is_referenced() or symbol.is_assigned())
+        )
+    return names
+
+
+def _split_globals(moved: str, remainder: str, name: str) -> list[str]:
+    """Module variables the move would split in two.
+
+    The destination imports an old-module name by value, so a `global`
+    rebinding on one side of the move updates that side's copy only: the
+    moved code counting in its own module while the old one, and every
+    reader of it, kept the old value -- or the other way round.
+    """
+    reads = _global_references(moved) or set()
+    staying = _module_scope_names(remainder)
+    split = {n for n in _global_writes(moved) if n in staying}
+    split |= {n for n in _global_writes(remainder) if n in reads}
+    return sorted(split - {name})
+
+
+def _identifiers(node: Node) -> set[str]:
+    found: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_IDENTIFIER:
+            found.add(_text(current))
+        stack.extend(current.named_children)
+    return found
+
+
+def _js_parameter_names(parameters: Node) -> set[str]:
+    """The names a JS/TS parameter list binds, leaving out its defaults."""
+    names: set[str] = set()
+    for parameter in parameters.named_children:
+        bound: Node | None = parameter
+        if parameter.type == cs.TS_ASSIGNMENT_PATTERN:
+            bound = parameter.child_by_field_name(cs.FIELD_LEFT)
+        elif parameter.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+            bound = parameter.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if bound is not None:
+            names |= _identifiers(bound)
+    return names
+
+
+def _js_assigned(top: Node) -> set[str]:
+    """Names the JS/TS definition `top` assigns without declaring them.
+
+    Scope is read coarsely: a name declared anywhere inside counts as
+    local throughout, so a write is reported only when no declaration of
+    the definition could be what it assigns.
+    """
+    declared: set[str] = set()
+    written: set[str] = set()
+    stack = [top]
+    while stack:
+        current = stack.pop()
+        stack.extend(current.named_children)
+        target: Node | None = None
+        if current.type in (
+            cs.TS_JS_ASSIGNMENT_EXPRESSION,
+            cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        ):
+            target = current.child_by_field_name(cs.FIELD_LEFT)
+        elif current.type == cs.TS_JS_UPDATE_EXPRESSION:
+            target = current.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+        elif current.type == cs.TS_VARIABLE_DECLARATOR:
+            named = current.child_by_field_name(cs.FIELD_NAME)
+            if named is not None:
+                declared |= _identifiers(named)
+        elif current.type == cs.TS_JS_FORMAL_PARAMETERS:
+            declared |= _js_parameter_names(current)
+        if target is not None and target.type == cs.TS_IDENTIFIER:
+            written.add(_text(target))
+    return written - declared
+
+
 def _type_checking_imports(
     source: bytes, old_path: str, new_path: str
 ) -> dict[str, str]:
@@ -702,6 +820,13 @@ class Mover:
                 if n != name
                 and (n in reads if reads is not None else _uses(cut.text, n))
             )
+            split = _split_globals(cut.text, remainder, name)
+            if split:
+                raise MoveRefused(
+                    cs.MOVE_SPLIT_GLOBAL.format(
+                        names=cs.SEPARATOR_COMMA_SPACE.join(split), path=old_path
+                    )
+                )
             typed = _type_checking_imports(source, old_path, new_path)
             guarded = {n: typed[n] for n in unbound if n in typed}
             unbound = [n for n in unbound if n not in guarded]
@@ -714,6 +839,15 @@ class Mover:
             old_bindings = {**dict.fromkeys(carried, False), **old_bindings}
         from_old = self._needed_from_old(old_path, cut.text, name, old_bindings)
         if language in _JS_LANGUAGES:
+            # An imported binding is read-only: the moved `count += 1` that
+            # updated the old module's `let` would throw at the destination.
+            assigned = sorted(_js_assigned(top) & set(from_old))
+            if assigned:
+                raise MoveRefused(
+                    cs.MOVE_ASSIGNS_IMPORT.format(
+                        names=cs.SEPARATOR_COMMA_SPACE.join(assigned), path=old_path
+                    )
+                )
             # `import { X }` of a name the module never exported is a load
             # error in ESM and a compile error in TypeScript.
             hidden = [n for n in from_old if not old_bindings.get(n, False)]
