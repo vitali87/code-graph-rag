@@ -112,6 +112,7 @@ nav:
     - Change Signature Operation: architecture/change-signature.md
     - Postcondition Contract: architecture/postcondition-contract.md
     - Move: architecture/move.md
+    - Context Slice: architecture/context-slice.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md

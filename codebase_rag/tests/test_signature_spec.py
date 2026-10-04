@@ -64,28 +64,33 @@ def test_mapping_by_name_index_and_literal() -> None:
 
 
 def test_mapping_naming_an_unknown_new_parameter_is_refused() -> None:
+    specs = [_spec("a")]
     with pytest.raises(SignatureRefused, match="not a new parameter"):
-        _resolve_sources([_spec("a")], OLD, {"q": "a"})
+        _resolve_sources(specs, OLD, {"q": "a"})
 
 
 def test_one_old_parameter_cannot_feed_two_new_ones() -> None:
+    specs = [_spec("x"), _spec("y")]
     with pytest.raises(SignatureRefused, match="cannot feed both x and y"):
-        _resolve_sources([_spec("x"), _spec("y")], OLD, {"x": "a", "y": "0"})
+        _resolve_sources(specs, OLD, {"x": "a", "y": "0"})
 
 
 def test_empty_literal_is_refused() -> None:
+    specs = [_spec("x")]
     with pytest.raises(SignatureRefused, match="empty literal"):
-        _resolve_sources([_spec("x")], OLD, {"x": "=  "})
+        _resolve_sources(specs, OLD, {"x": "=  "})
 
 
 def test_out_of_range_index_is_refused() -> None:
+    specs = [_spec("x")]
     with pytest.raises(SignatureRefused, match="only 3 old"):
-        _resolve_sources([_spec("x")], OLD, {"x": "3"})
+        _resolve_sources(specs, OLD, {"x": "3"})
 
 
 def test_unknown_old_source_is_refused() -> None:
+    specs = [_spec("x")]
     with pytest.raises(SignatureRefused, match="neither an old parameter"):
-        _resolve_sources([_spec("x")], OLD, {"x": "nope"})
+        _resolve_sources(specs, OLD, {"x": "nope"})
 
 
 # --- _parse_new_param / _new_specs -------------------------------------------------
@@ -179,8 +184,9 @@ def test_literal_that_fits_or_cannot_be_checked_passes(
     ],
 )
 def test_literal_of_the_wrong_type_is_refused(annotation: str, literal: str) -> None:
+    spec = _spec("p", annotation)
     with pytest.raises(SignatureRefused, match="does not fit the declared type"):
-        _check_literal(_spec("p", annotation), literal)
+        _check_literal(spec, literal)
 
 
 # --- report helpers ----------------------------------------------------------------

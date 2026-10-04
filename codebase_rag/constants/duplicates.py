@@ -4,6 +4,8 @@
 # (constants/ is one of PARSER_FINGERPRINT_SOURCE_DIRS), which is exactly the
 # invalidation the feature relies on.
 
+from enum import StrEnum
+
 # Placeholder tokens for the blanked node classes. Control-character prefixes
 # cannot collide with a tree-sitter node type or an unnamed token's text.
 AST_FP_ID_TOKEN = "\x01ID"
@@ -120,8 +122,21 @@ KIND_SIMILAR = "similar"
 # Per-site arity verdicts in a structural delta (issue #1525).
 DELTA_ARITY_OK = "ok"
 DELTA_ARITY_TOO_MANY = "too_many"
+# Fewer arguments than the required parameters, where the signature declares
+# which are optional and the language rejects the call (issue #2517).
+DELTA_ARITY_TOO_FEW = "too_few"
 DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
+
+
+# What still names a removed or renamed symbol in a structural delta's
+# `dangling_importers` (issue #2516): an import statement binding it, or a
+# Python `__all__` string entry exporting it.
+class DanglingImportKind(StrEnum):
+    IMPORT = "import"
+    ALL = "__all__"
+
+
 # Hops the backward test-reach walk follows before giving up.
 DELTA_REACH_MAX_DEPTH = 12
 

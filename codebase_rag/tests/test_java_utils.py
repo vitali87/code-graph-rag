@@ -1,4 +1,8 @@
+import pytest
+from tree_sitter import Language, Node, Parser
+
 from codebase_rag.parsers.java.utils import (
+    _extract_interface_name,
     build_qualified_name,
     extract_annotation_info,
     extract_class_info,
@@ -10,8 +14,9 @@ from codebase_rag.parsers.java.utils import (
     find_package_start_index,
     get_java_visibility,
     is_main_method,
+    java_written_supertype_count,
 )
-from codebase_rag.tests.conftest import create_mock_node
+from codebase_rag.tests.conftest import MockNode, create_mock_node
 from codebase_rag.types_defs import (
     JavaAnnotationInfo,
     JavaClassInfo,
@@ -711,3 +716,60 @@ def test_varargs_element_types_of_every_shape_are_read() -> None:
     assert parameters("void m(int... zs) {}") == ["int..."]
     assert parameters("void m(final @NonNull String... ws) {}") == ["String..."]
     assert parameters("void m(final /* c */ String... vs) {}") == ["String..."]
+
+
+def _parse_type_declaration(source: str) -> Node:
+    tsjava = pytest.importorskip("tree_sitter_java")
+    tree = Parser(Language(tsjava.language())).parse(source.encode())
+    assert not tree.root_node.has_error
+    return tree.root_node.named_children[0]
+
+
+@pytest.mark.parametrize(
+    ("source", "interfaces", "written"),
+    [
+        (
+            "class C implements A, Outer.B, java.util.Map.Entry<K, V>, H<T> {}",
+            ["A", "Outer.B", "java.util.Map.Entry", "H"],
+            4,
+        ),
+        (
+            "class C extends /* s */ Base implements /* i */ A, /* j */ @M B {}",
+            ["A"],
+            3,
+        ),
+        ("interface I extends A, Outer.B<T> {}", [], 2),
+        ("class C {}", [], 0),
+    ],
+    ids=["scoped-and-generic", "annotated-and-comments", "interface", "none"],
+)
+def test_written_supertypes_are_counted_whether_or_not_they_are_named(
+    source: str, interfaces: list[str], written: int
+) -> None:
+    # The resolver trusts its supertype walk only when it named as many
+    # supertypes as the declaration writes; a scoped interface is named
+    # whole, an annotated one not at all (CodeRabbit on #2800).
+    declaration = _parse_type_declaration(source)
+    assert extract_class_info(declaration)["interfaces"] == interfaces
+    assert java_written_supertype_count(declaration) == written
+
+
+@pytest.mark.parametrize(
+    ("children", "expected"),
+    [
+        (
+            [
+                create_mock_node("type_arguments", "<T>"),
+                create_mock_node("scoped_type_identifier", "Outer.B"),
+            ],
+            "Outer.B",
+        ),
+        ([create_mock_node("type_arguments", "<T>")], None),
+    ],
+    ids=["scoped-base", "no-base"],
+)
+def test_generic_interface_is_named_by_its_base_type(
+    children: list[MockNode], expected: str | None
+) -> None:
+    generic = create_mock_node("generic_type", children=children)
+    assert _extract_interface_name(generic) == expected

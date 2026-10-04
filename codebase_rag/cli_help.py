@@ -23,6 +23,7 @@ class CLICommandName(StrEnum):
     RENAME = "rename"
     CHANGE_SIGNATURE = "change-signature"
     MOVE = "move"
+    CONTEXT = "context"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -57,7 +58,7 @@ CMD_HELP = "Show help for a command"
 
 CMD_LANGUAGE_GROUP = CMD_LANGUAGE
 CMD_LANGUAGE_ADD = "Add a Tree-sitter grammar to a code-graph-rag source checkout"
-CMD_LANGUAGE_LIST = "List configured languages and their node mappings"
+CMD_LANGUAGE_LIST = "List supported languages by tier, and the optional frontends"
 CMD_LANGUAGE_REMOVE = "Remove a language from a code-graph-rag source checkout"
 CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under the checkout's .git"
 # add-grammar, remove-language and cleanup-orphaned-modules edit the checkout
@@ -131,7 +132,12 @@ CMD_GRAPH_IMPORTERS = (
 CMD_GRAPH_TESTS_REACHING = (
     "Tests from which a qualified name is reachable, with distance."
 )
-EPILOG_GRAPH = "Run 'cgr help graph COMMAND' for command-specific help."
+EPILOG_GRAPH = (
+    "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "Exit status: 0 with the JSON answer, where [] means the name is in the "
+    "graph and nothing matches it; 3 when the project is not indexed; 4 when "
+    "a qualified name is not in the graph."
+)
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
@@ -139,19 +145,20 @@ HELP_GRAPH_REPO_PATH = (
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
 CMD_CHECK = (
     "Report the structural delta of the working tree against a git ref: "
-    "dangling callers, arity findings, new duplicates, new import cycles, "
-    "tests reaching the edited symbols."
+    "dangling callers and importers, arity findings, new duplicates, new "
+    "import cycles, tests reaching the edited symbols."
 )
 EXAMPLES_CHECK = (
     "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
+    "\n  cgr check --base origin/main --isolated --fail-on-found"
 )
 HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
 )
 HELP_CHECK_FAIL_ON_FOUND = (
-    "Exit with status 1 when the delta reports dangling callers, calls with "
-    "too many arguments, new duplicates or new import cycles. A "
-    "possibly_missing site is reported but does not fail the check."
+    "Exit with status 1 when the delta reports dangling callers, dangling "
+    "importers, calls with too many arguments, new duplicates or new import "
+    "cycles. A possibly_missing site is reported but does not fail the check."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
@@ -214,6 +221,16 @@ HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative 
 HELP_MOVE_KEEP_ALIAS = (
     "Leave a re-export at the old location so the old import path still works."
 )
+CMD_CONTEXT = (
+    "Print a graph-ranked context slice for a symbol, location or task within "
+    "a token budget: source, caller lines, callee signatures, types, tests, docs."
+)
+EXAMPLES_CONTEXT = (
+    "Examples:\n  cgr context myproj.pkg.util.helper\n"
+    "  cgr context pkg/util.py:12 --budget 2000"
+)
+HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
+HELP_CONTEXT_BUDGET = "Token budget for the slice."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -475,6 +492,10 @@ HELP_GRAMMAR_URL = (
 HELP_KEEP_SUBMODULE = (
     "Keep the grammar git submodule when removing the language. By default, remove it."
 )
+HELP_LANGUAGE_LIST_VERBOSE = (
+    "Also list the tree-sitter node types each language maps to functions, "
+    "classes, modules and calls."
+)
 
 HELP_PROJECT_NAME = (
     "Project name to store in the graph. Defaults to the directory name plus a "
@@ -615,6 +636,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
     CLICommandName.MOVE: CMD_MOVE,
+    CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
