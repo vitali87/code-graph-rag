@@ -35,7 +35,7 @@ APP = (
     "def use():\n    return fetch() + 1\n\n\n"
     "async def ause():\n    return await afetch()\n\n\n"
     "async def aload():\n    return await load(1)\n\n\n"
-    "def use_svc():\n    return Svc().run()\n"
+    "def use_svc():\n    return Svc().run() + 1\n"
 )
 
 Indexed = tuple[Path, _StatefulIngestor, GraphUpdater]
@@ -82,6 +82,25 @@ def _edit(indexed: Indexed, old: str, new: str) -> StructuralDelta:
     )
 
 
+def _edit_both(
+    indexed: Indexed, lib: tuple[str, str], app: tuple[str, str]
+) -> StructuralDelta:
+    # The callee and its caller edited together: a caller migrated with it.
+    root, store, updater = indexed
+    for name, (old, new) in (("lib.py", lib), ("app.py", app)):
+        path = root / name
+        text = path.read_text()
+        assert old in text, old
+        path.write_text(text.replace(old, new))
+    return observe(
+        _fetch(store),
+        PROJECT,
+        ["lib.py", "app.py"],
+        lambda: updater.reingest(["lib.py", "app.py"]),
+        repo_root=root,
+    )
+
+
 def _qn(name: str) -> str:
     return f"{PROJECT}.lib.{name}"
 
@@ -112,6 +131,58 @@ def test_an_async_flip_is_a_definite_finding_at_every_call(
     verdicts = {site["caller"]: site["verdict"] for site in change["sites"]}
     assert verdicts[f"{PROJECT}.app.{caller}"] == cs.DELTA_ARITY_ASYNC_CHANGED
     assert has_findings(delta)
+
+
+@pytest.mark.parametrize(
+    ("lib", "app"),
+    [
+        (
+            ("def fetch():", "async def fetch():"),
+            (
+                "def use():\n    return fetch() + 1",
+                "async def use():\n    return await fetch() + 1",
+            ),
+        ),
+        (
+            ("async def afetch():", "def afetch():"),
+            ("return await afetch()", "return afetch()"),
+        ),
+    ],
+    ids=["awaited-once-async", "plain-once-sync"],
+)
+def test_a_caller_migrated_with_the_flip_has_no_finding(
+    indexed: Indexed, lib: tuple[str, str], app: tuple[str, str]
+) -> None:
+    # Greptile, PR #2951: the verdict reads how each call is written now.
+    delta = _edit_both(indexed, lib, app)
+
+    # `use` itself turns async in the first case: read the callee's change.
+    callee = lib[0].split("def ", 1)[1].split("(", 1)[0]
+    (change,) = [
+        c for c in delta["signature_changes"] if c["qualified_name"] == _qn(callee)
+    ]
+    assert cs.DELTA_ARITY_ASYNC_CHANGED not in {s["verdict"] for s in change["sites"]}
+    assert not has_findings(delta)
+
+
+def test_a_coroutine_handed_on_is_a_hint_not_a_finding(indexed: Indexed) -> None:
+    # `asyncio.run(fetch())` and `return fetch()` hand the coroutine on;
+    # whether it is awaited is up to the code it reaches.
+    delta = _edit_both(
+        indexed,
+        ("def fetch():", "async def fetch():"),
+        (
+            "from lib import Svc, afetch, fetch, load\n\n\ndef use():\n"
+            "    return fetch() + 1",
+            "import asyncio\n\nfrom lib import Svc, afetch, fetch, load\n\n\n"
+            "def use():\n    return asyncio.run(fetch())",
+        ),
+    )
+
+    (change,) = delta["signature_changes"]
+    assert change["async_change"] == cs.DELTA_ASYNC_ADDED
+    assert cs.DELTA_ARITY_ASYNC_CHANGED not in {s["verdict"] for s in change["sites"]}
+    assert not has_findings(delta)
 
 
 # Negative: what must not change.

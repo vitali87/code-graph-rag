@@ -34,10 +34,12 @@ from .constants import (
     KEY_FROM_VAL,
     KEY_TO_MISSING,
     KEY_TO_VAL,
+    NODE_UNIQUE_CONSTRAINTS,
     SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
+    UniqueKeyType,
 )
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
@@ -192,6 +194,25 @@ CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+DETACH DELETE p, container, defined
+"""
+
+# Retires a project whose checkout was just re-indexed under another name
+# (issue #2412). Both projects index the same files, so they share every
+# Folder and File node (keyed on absolute path), and the walk above would
+# cross those into the new project's modules. Only containers carrying the
+# old project's qualified name go, with what they define; the shared Folder
+# and File nodes stay with the project that still contains them. A
+# repository-root `__init__.py` makes the root Package and Module's qn the
+# bare project name, so the prefix test alone would miss them (review of PR
+# 2497); the trailing dot of the prefix still keeps a project whose name only
+# starts with this one (`acme.webapp` beside `acme.web`).
+CYPHER_RETIRE_PROJECT = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+WHERE container.qualified_name = $project_name
+   OR container.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
 DETACH DELETE p, container, defined
 """
 
@@ -580,7 +601,9 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.decorators AS decorators, n.is_exported AS is_exported,
        n.overrides_external AS overrides_external,
        n.rust_cfg_test_mods AS rust_cfg_test_mods,
-       n.rust_ungated_mods AS rust_ungated_mods"""
+       n.rust_ungated_mods AS rust_ungated_mods,
+       n.modifiers AS modifiers, n.return_type AS return_type,
+       n.param_types AS param_types"""
 
 CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_REL_TYPES}]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
@@ -1113,6 +1136,29 @@ CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
        type(r) AS rel_type"""
+# Whether the graph holds a node by this name at all (issue #2461): the edge
+# walks above answer [] both for a definition nothing reaches and for a name
+# the graph never saw, and only the second is a mistake. Every label keyed by
+# qualified_name, not just the definitions, because a target may be an
+# ExternalModule (importers of `os`) or another project's node; the label
+# disjunction plans as one index lookup per label, where a bare
+# `(n {qualified_name: $qn})` scans every node.
+_QUALIFIED_NAME_LABELS = "|".join(
+    sorted(
+        label
+        for label, key in NODE_UNIQUE_CONSTRAINTS.items()
+        if key == UniqueKeyType.QUALIFIED_NAME
+    )
+)
+CYPHER_GRAPH_NODE_EXISTS = f"""MATCH (n:{_QUALIFIED_NAME_LABELS})
+WHERE n.qualified_name = $qn
+RETURN n.qualified_name AS qualified_name
+LIMIT 1"""
+# The definitions under one dotted parent, which a name mistyped in its last
+# part is closest to.
+CYPHER_GRAPH_DEFINITIONS_UNDER = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+RETURN n.qualified_name AS qualified_name"""
 # Structural delta after a write (issue #1525): the touched files' definitions
 # with the properties the delta compares, every call/reference site touching
 # them, and the project's module import graph.
@@ -1161,6 +1207,8 @@ WHERE a.qualified_name STARTS WITH $project_prefix
             AND NOT a.qualified_name STARTS WITH (longer_project + '.'))
   AND (a.path IN $paths OR b.path IN $paths)
 RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
+       r.resolution AS resolution, r.spread_args AS spread_args,
+       r.call_qualifier AS call_qualifier,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
        r.star_args AS star_args, r.star_kwargs AS star_kwargs,
@@ -1226,6 +1274,23 @@ WHERE m.qualified_name STARTS WITH $project_prefix
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn"""
+# The import statements that bind a symbol BY NAME into or out of the
+# touched files (issue #2516), one row per bound name: an importer of a
+# touched module still naming a symbol the edit removed, and a touched
+# module's own imports, which may re-export that name from its new home.
+# `to_path` lets a re-export be followed into a module the edit left alone,
+# which this same query then reads one file at a time.
+CYPHER_DELTA_NAMED_IMPORTS = """MATCH (m:Module)-[r:IMPORTS]->(t)
+WHERE m.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE m.qualified_name <> longer_project
+            AND NOT m.qualified_name STARTS WITH (longer_project + '.'))
+  AND r.imported_name IS NOT NULL
+  AND (m.path IN $paths OR t.path IN $paths)
+RETURN m.qualified_name AS from_qn, m.path AS from_path,
+       t.qualified_name AS to_qn, t.path AS to_path,
+       r.imported_name AS imported_name,
+       r.alias AS alias, r.line AS line, r.col AS col"""
 # Context slice reads (issue #1536): trace hotness of the callers of one
 # symbol, the types it returns and accepts, and the sections of the
 # documents whose links point at its file.
