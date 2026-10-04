@@ -2,6 +2,7 @@ import asyncio
 import functools
 import itertools
 import json
+import shlex
 import sys
 import uuid
 from collections.abc import Callable, Collection
@@ -191,6 +192,10 @@ def _not_indexed_hint(
         workspace=workspace.name,
         names=cs.SEPARATOR_COMMA_SPACE.join(r.project_name for r in missing),
     )
+    for repo in missing:
+        hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(
+            path=shlex.quote(str(repo.repo_path())), project=repo.project_name
+        )
     for repo in missing:
         holder = _project_holding(repo.repo_path(), roots)
         if holder is None:

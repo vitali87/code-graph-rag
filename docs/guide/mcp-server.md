@@ -186,7 +186,7 @@ claude mcp add --transport stdio code-graph-rag-workspace \
 
 A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace.
 
-`list_projects` names a workspace repo the graph does not hold under its project name in `not_indexed`, with a `hint`: run `cgr start --workspace NAME --update-graph` to index each repo as its own project. When the repo's code is in the graph under another project, the hint names it: a project indexed from the directory holding the repos (one project for all of them) or from the repo under another name.
+`list_projects` names a workspace repo the graph does not hold under its project name in `not_indexed`, with a `hint` giving the command that indexes each one as its own project: `cgr start --repo-path PATH --project-name PROJECT --update-graph`. When the repo's code is in the graph under another project, the hint names it: a project indexed from the directory holding the repos (one project for all of them) or from the repo under another name.
 
 ## Troubleshooting
 

@@ -22,7 +22,10 @@ ALPHA = "alpha__1111"
 BETA = "beta__2222"
 GAMMA = "gamma__3333"
 PARENT = "projects__0000"
-INDEX_HINT = "Index them with 'cgr start --workspace ws --update-graph'"
+# `cgr start --update-graph` indexes one directory and does not read
+# `--workspace`, so the hint names each repo's own command (Greptile, PR
+# #2964).
+INDEX_COMMAND = "cgr start --repo-path {path} --project-name {name} --update-graph"
 
 
 @pytest.fixture
@@ -77,7 +80,9 @@ async def test_a_workspace_project_missing_from_the_graph_is_named(
     assert f"Workspace 'ws' projects not in the graph: {GAMMA}." in str(
         result.get("hint")
     )
-    assert INDEX_HINT in str(result.get("hint"))
+    hint = str(result.get("hint"))
+    assert INDEX_COMMAND.format(path=root / "g", name=GAMMA) in hint
+    assert "--workspace" not in hint
 
 
 @pytest.mark.anyio

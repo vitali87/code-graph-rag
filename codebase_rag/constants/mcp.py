@@ -218,9 +218,14 @@ MCP_WORKSPACE_SOURCE_UNPROVEN = (
 )
 # `list_projects` on a workspace server whose repos are not all indexed under
 # their own project names (issue #2867).
+# `cgr start --update-graph` indexes one directory and does not read
+# `--workspace`, so each repo gets its own command (Greptile, PR #2964).
 MCP_WORKSPACE_NOT_INDEXED = (
-    "Workspace {workspace!r} projects not in the graph: {names}. Index them "
-    "with 'cgr start --workspace {workspace} --update-graph'."
+    "Workspace {workspace!r} projects not in the graph: {names}. Index each "
+    "repo under its project name:"
+)
+MCP_WORKSPACE_INDEX_COMMAND = (
+    " 'cgr start --repo-path {path} --project-name {project} --update-graph'."
 )
 MCP_WORKSPACE_REPO_INDEXED_AS = (
     " {path} is indexed as project {project!r}, not {expected!r}."
