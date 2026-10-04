@@ -41,6 +41,7 @@ from ..utils.path_utils import (
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
+    dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
     dart_local_name,
@@ -502,9 +503,7 @@ def _parse_tsconfig_aliases(data: dict, dir_prefix: str) -> list[tuple[str, str,
     paths = options.get(cs.TS_PATHS_KEY)
     if not isinstance(paths, dict):
         return []
-    base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
-    base = str(base).strip(cs.SEPARATOR_SLASH)
-    base_prefix = "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+    base_prefix = _tsconfig_base_prefix(options)
     aliases: list[tuple[str, str, bool]] = []
     for pattern, targets in paths.items():
         if not isinstance(targets, list) or not targets:
@@ -525,6 +524,75 @@ def _parse_tsconfig_aliases(data: dict, dir_prefix: str) -> list[tuple[str, str,
     return aliases
 
 
+def _tsconfig_base_prefix(options: dict) -> str:
+    # `baseUrl` as a path prefix relative to the tsconfig's own directory.
+    base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
+    base = str(base).strip(cs.SEPARATOR_SLASH)
+    return "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
+
+
+def _tsconfig_dir_prefix(cfg: Path, repo_path: Path) -> str:
+    parent = cfg.parent
+    if parent == repo_path:
+        return ""
+    return parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
+
+
+def _tsconfig_extends(data: dict, cfg: Path, repo_path: Path) -> list[Path]:
+    # The in-repo configs `cfg` extends, last (most overriding) first. A
+    # package-shipped base (`@tsconfig/node20`) lives in node_modules, which
+    # is never indexed, so only relative entries are followed.
+    raw = data.get(cs.TS_EXTENDS_KEY)
+    entries = raw if isinstance(raw, list) else [raw]
+    found: list[Path] = []
+    for entry in reversed(entries):
+        if not isinstance(entry, str) or not entry.startswith(cs.PATH_CURRENT_DIR):
+            continue
+        target = Path(os.path.normpath(cfg.parent / entry))
+        if not target.is_file():
+            target = target.with_name(f"{target.name}{cs.TSCONFIG_EXTENSION}")
+        if target.is_file() and target.is_relative_to(repo_path):
+            found.append(target)
+    return found
+
+
+def _tsconfig_base_url(
+    cfg: Path, repo_path: Path, seen: frozenset[Path] = frozenset()
+) -> str | None:
+    # The repo-relative prefix `cfg`'s effective `baseUrl` names: its own, or
+    # one inherited through `extends`, which TypeScript resolves against the
+    # config that declares it (an app extending the root `tsconfig.base.json`).
+    data = _load_jsonc(cfg) if cfg not in seen else None
+    if not data:
+        return None
+    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+    if isinstance(options, dict) and options.get(cs.TS_BASE_URL_KEY):
+        return _tsconfig_dir_prefix(cfg, repo_path) + _tsconfig_base_prefix(options)
+    for parent in _tsconfig_extends(data, cfg, repo_path):
+        if (base := _tsconfig_base_url(parent, repo_path, seen | {cfg})) is not None:
+            return base
+    return None
+
+
+def _load_ts_base_urls(repo_path: Path) -> tuple[tuple[str, str | None], ...]:
+    # (config directory as a dotted module prefix, its effective `baseUrl` as a
+    # repo-relative path prefix or None), deepest directory first. With a
+    # `baseUrl`, TypeScript resolves a bare specifier against it before
+    # node_modules, so `widgets` names `<baseUrl>/widgets.tsx` with no `paths`
+    # entry at all; but only for files that config governs: those under its
+    # directory, the nearest config winning, so a sibling app's `baseUrl`
+    # never reaches this app's imports. The first config file found in a
+    # directory governs it (tsconfig.json before jsconfig.json).
+    governing: dict[str, str | None] = {}
+    for cfg in _find_tsconfig_files(repo_path):
+        dotted = _tsconfig_dir_prefix(cfg, repo_path).replace(
+            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+        )
+        if dotted not in governing:
+            governing[dotted] = _tsconfig_base_url(cfg, repo_path)
+    return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
+
+
 def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
     # Aggregate `paths` aliases from every tsconfig at or below the repo root, each
     # target prefixed by the tsconfig's own directory so `@/util` resolves against
@@ -536,13 +604,9 @@ def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
         data = _load_jsonc(cfg)
         if not data:
             continue
-        parent = cfg.parent
-        dir_prefix = (
-            ""
-            if parent == repo_path
-            else parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
+        aliases.extend(
+            _parse_tsconfig_aliases(data, _tsconfig_dir_prefix(cfg, repo_path))
         )
-        aliases.extend(_parse_tsconfig_aliases(data, dir_prefix))
     return aliases
 
 
@@ -557,6 +621,18 @@ def _has_aliased_scheme(specifier: str) -> bool:
     # _load_ts_path_aliases, so no trie fallback is needed for it.
     match = _JS_SCHEME_RE.match(specifier)
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
+
+
+class JsImportTarget(NamedTuple):
+    """The module qn a JS/TS specifier resolves to, and whether it is a package."""
+
+    module_qn: str
+    # A bare or scoped specifier no tsconfig alias or workspace package maps
+    # to a project file. Its qn is the specifier itself, which can spell the
+    # project's own name (`react` in a repo named react) or a local module's
+    # path (`react` beside a repo-root `react.tsx`) without naming either, so
+    # only this flag, recorded while resolution still knows, marks it external.
+    is_package: bool
 
 
 def _is_conditional_import_node(import_node: Node) -> bool:
@@ -826,6 +902,19 @@ def _kept_mod_scope_writers(
     return [] if len({w[0] for w in kept}) > 1 else kept
 
 
+def _import_site_props(
+    node: Node, local_name: str, imported_name: str | None
+) -> PropertyDict:
+    # Sentinel keys (`*pkg` wildcards, Go `.pkg` dot-imports) bind no name,
+    # so they carry no alias.
+    site = node_site_properties(node)
+    if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
+        site[cs.KEY_ALIAS] = local_name
+    if imported_name:
+        site[cs.KEY_IMPORTED_NAME] = imported_name
+    return site
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -843,7 +932,9 @@ class ImportProcessor:
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
+        "js_ts_package_imports",
         "js_path_aliases",
+        "js_base_urls",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -886,6 +977,7 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "rust_restricted_use_names",
@@ -1078,6 +1170,12 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {library module qn: [module qns it hands to ITS importers]}: the
+        # targets of its `export` and `part` directives. import_mapping holds
+        # those beside plain imports, which expose nothing, so an extension
+        # reached through a barrel file could not be told from one the barrel
+        # merely uses (issue #2482).
+        self.dart_exposed_libraries: dict[str, list[str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -1170,10 +1268,17 @@ class ImportProcessor:
         # being suppressed. Ordinary package specifiers (bare, scoped, node:/npm:)
         # are excluded, so genuine external calls stay suppressed.
         self.js_ts_bare_imports: dict[str, set[str]] = {}
+        # Local names a JS/TS import or `require` binds to a package (see
+        # JsImportTarget.is_package), keyed by module: what they name lives in
+        # node_modules, so a member of one never binds a first-party symbol.
+        self.js_ts_package_imports: dict[str, set[str]] = {}
         # tsconfig `paths` aliases (match_prefix, target_prefix, is_wildcard), parsed
         # once from the repo-root tsconfig so `@/util` imports resolve to the real
         # first-party module instead of being dropped as external.
         self.js_path_aliases: list[tuple[str, str, bool]] = _load_ts_path_aliases(
+            repo_path
+        )
+        self.js_base_urls: tuple[tuple[str, str | None], ...] = _load_ts_base_urls(
             repo_path
         )
         self.stdlib_extractor = StdlibExtractor(
@@ -1350,6 +1455,7 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def displaced_include_targets(self) -> dict[str, frozenset[str]]:
@@ -1458,6 +1564,7 @@ class ImportProcessor:
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
+        self.js_ts_package_imports.pop(module_qn, None)
         # A re-parse that drops a fallback import must not leave the binding
         # it removed standing beside the one that remains.
         self.python_import_rebinds.pop(module_qn, None)
@@ -1574,11 +1681,7 @@ class ImportProcessor:
         self._import_site_writers[(scope_qn, local_name)] = (
             owner_qn if owner_qn is not None else scope_qn
         )
-        site = node_site_properties(node)
-        if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
-            site[cs.KEY_ALIAS] = local_name
-        if imported_name:
-            site[cs.KEY_IMPORTED_NAME] = imported_name
+        site = _import_site_props(node, local_name, imported_name)
         self._import_sites.setdefault(scope_qn, {})[local_name] = site
         return site
 
@@ -1936,9 +2039,62 @@ class ImportProcessor:
         return emitted
 
     def _is_rust_project_import(self, entry: DeferredImportEdge) -> bool:
-        return entry.language == cs.SupportedLanguage.RUST and (
-            entry.full_name == self.project_name
-            or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+        return entry.language == cs.SupportedLanguage.RUST and self._is_project_qn(
+            entry.full_name
+        )
+
+    def _rust_use_takes_file_slot(
+        self,
+        module_qn: str,
+        name: str,
+        resolved: str,
+        use_node: Node,
+        source_name: str,
+    ) -> bool:
+        """Settle a second file-level `use` of a bound name (issue #2462).
+
+        Rust rejects two same-namespace imports of one name in one scope
+        (E0252), so a second `use` brings in another namespace (thiserror's
+        derive macro beside the crate's own `Error` type) or a cfg-exclusive
+        twin; both are real imports. The map keeps one binding per name, and
+        the module's IMPORTS edges are read from it alone, so the binding
+        left out queues its own edge here instead of vanishing.
+        """
+        held = self.import_mapping.get(module_qn, {}).get(name)
+        if held is None or held == resolved:
+            return True
+        if self._rust_held_use_keeps_slot(module_qn, name, held, resolved):
+            self.defer_import_edge(
+                module_qn,
+                resolved,
+                cs.SupportedLanguage.RUST,
+                site=_import_site_props(use_node, name, source_name),
+            )
+            return False
+        self.defer_import_edge(
+            module_qn,
+            held,
+            cs.SupportedLanguage.RUST,
+            site=self._import_sites.get(module_qn, {}).get(name),
+        )
+        return True
+
+    def _rust_held_use_keeps_slot(
+        self, module_qn: str, name: str, held: str, incoming: str
+    ) -> bool:
+        if self.rust_self_module_imports.get(module_qn, {}).get(name) == held:
+            # A `{self}` module stays reachable through its own map, so it
+            # yields the slot as before (issue #1054).
+            return False
+        # Name resolution only ever binds project items, which an external
+        # crate's item (a derive macro) can never be: letting it take the
+        # slot would just send the project binding's uses to a name-wide
+        # fallback. Two bindings on the same side keep the later one.
+        return self._is_project_qn(held) and not self._is_project_qn(incoming)
+
+    def _is_project_qn(self, qn: str) -> bool:
+        return qn == self.project_name or qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
         )
 
     def _flush_rust_project_import(
@@ -3831,6 +3987,32 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
+    def _js_base_url_names_file(self, import_path: str, current_module: str) -> bool:
+        # A bare specifier the importing file's own `baseUrl` resolves to a
+        # project file is first-party even though no `paths` alias maps it.
+        # Its qn stays the bare path it always had; only the package flag
+        # needs the disk's answer, so resolution beyond this flag is unchanged.
+        base = self._js_governing_base_url(current_module)
+        return (
+            base is not None
+            and self._js_module_rel_on_disk(f"{base}{import_path}") is not None
+        )
+
+    def _js_governing_base_url(self, current_module: str) -> str | None:
+        # The `baseUrl` of the nearest tsconfig whose directory holds the
+        # module; module qns spell directories as dotted segments, as the
+        # relative-specifier resolver below reads them.
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        relative = current_module.removeprefix(project_prefix)
+        return next(
+            (
+                base
+                for directory, base in self.js_base_urls
+                if relative.startswith(directory)
+            ),
+            None,
+        )
+
     def _js_module_rel_on_disk(self, normalized: str) -> str | None:
         """The repo-relative module this path names on disk, or None.
 
@@ -3887,13 +4069,26 @@ class ImportProcessor:
     def _resolve_js_module_path(
         self, import_path: str, current_module: str, require: bool = False
     ) -> str:
+        return self._resolve_js_import_target(
+            import_path, current_module, require
+        ).module_qn
+
+    def _resolve_js_import_target(
+        self, import_path: str, current_module: str, require: bool = False
+    ) -> JsImportTarget:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
-                return aliased
+                return JsImportTarget(aliased, False)
             if workspace := self._map_js_workspace_import(import_path, require):
                 dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
-            return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+                return JsImportTarget(
+                    f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
+                )
+            return JsImportTarget(
+                import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
+                not _has_aliased_scheme(import_path)
+                and not self._js_base_url_names_file(import_path, current_module),
+            )
         import_path = self._strip_js_extension(import_path)
 
         current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
@@ -3908,7 +4103,7 @@ class ImportProcessor:
             elif part:
                 current_parts.append(part)
 
-        return cs.SEPARATOR_DOT.join(current_parts)
+        return JsImportTarget(cs.SEPARATOR_DOT.join(current_parts), False)
 
     def _parse_js_import_clause(
         self,
@@ -3916,6 +4111,7 @@ class ImportProcessor:
         source_module: str,
         current_module: str,
         is_aliased_scheme: bool = False,
+        is_package: bool = False,
     ) -> None:
         # The clause's parent is the import statement whose span the edge
         # records; the clause alone would drop the `from '...'` half.
@@ -3932,6 +4128,7 @@ class ImportProcessor:
                 self._note_js_bare_import(
                     current_module, imported_name, is_aliased_scheme
                 )
+                self._note_js_package_import(current_module, imported_name, is_package)
                 logger.debug(
                     ls.IMP_JS_DEFAULT, name=imported_name, module=source_module
                 )
@@ -3945,11 +4142,12 @@ class ImportProcessor:
                             current_module,
                             statement,
                             is_aliased_scheme,
+                            is_package,
                         )
 
             elif child.type == cs.TS_NAMESPACE_IMPORT:
                 self._record_js_namespace_import(
-                    child, source_module, current_module, statement
+                    child, source_module, current_module, statement, is_package
                 )
 
     def _note_js_bare_import(
@@ -3958,6 +4156,16 @@ class ImportProcessor:
         if is_aliased_scheme:
             self.js_ts_bare_imports.setdefault(current_module, set()).add(local_name)
 
+    def _note_js_package_import(
+        self, current_module: str, local_name: str, is_package: bool
+    ) -> None:
+        # The last binding of a name wins, as it does in import_mapping: a
+        # second `var UI = require("./ui")` makes `UI` the project module's.
+        if is_package:
+            self.js_ts_package_imports.setdefault(current_module, set()).add(local_name)
+        elif names := self.js_ts_package_imports.get(current_module):
+            names.discard(local_name)
+
     def _record_js_named_import(
         self,
         specifier: Node,
@@ -3965,6 +4173,7 @@ class ImportProcessor:
         current_module: str,
         statement: Node,
         is_aliased_scheme: bool,
+        is_package: bool,
     ) -> None:
         name_node = specifier.child_by_field_name(cs.FIELD_NAME)
         if not name_node:
@@ -3979,6 +4188,7 @@ class ImportProcessor:
         )
         self._record_import_site(current_module, local_name, statement, imported_name)
         self._note_js_bare_import(current_module, local_name, is_aliased_scheme)
+        self._note_js_package_import(current_module, local_name, is_package)
         logger.debug(
             ls.IMP_JS_NAMED,
             local=local_name,
@@ -3992,6 +4202,7 @@ class ImportProcessor:
         source_module: str,
         current_module: str,
         statement: Node,
+        is_package: bool,
     ) -> None:
         identifier = next(
             (c for c in namespace_node.children if c.type == cs.TS_IDENTIFIER), None
@@ -4006,6 +4217,7 @@ class ImportProcessor:
             statement,
             cs.IMPORTED_NAME_WILDCARD,
         )
+        self._note_js_package_import(current_module, namespace_name, is_package)
         logger.debug(
             ls.IMP_JS_NAMESPACE,
             name=namespace_name,
@@ -4043,15 +4255,15 @@ class ImportProcessor:
         # A CommonJS `require()` reads a dual-package exports map from the
         # require side.
         require_text = safe_decode_with_fallback(arg).strip("'\"")
-        resolved_module = self._resolve_js_module_path(
-            require_text, current_module, True
-        )
+        target = self._resolve_js_import_target(require_text, current_module, True)
+        resolved_module = target.module_qn
         self._note_unresolved_js_specifier(current_module, require_text)
         if name_node.type == cs.TS_IDENTIFIER:
             # `const fs = require('fs')`: bind the whole module.
             var_name = safe_decode_with_fallback(name_node)
             self.import_mapping[current_module][var_name] = resolved_module
             self._record_import_site(current_module, var_name, decl_node)
+            self._note_js_package_import(current_module, var_name, target.is_package)
             logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
         elif name_node.type == cs.TS_OBJECT_PATTERN:
             # `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
@@ -4060,38 +4272,43 @@ class ImportProcessor:
                 full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
                 self.import_mapping[current_module][local] = full
                 self._record_import_site(current_module, local, decl_node, imported)
+                self._note_js_package_import(current_module, local, target.is_package)
                 logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
 
     def _js_statement_source(
         self, statement: Node, module_qn: str
-    ) -> tuple[str, str | None] | None:
-        # The statement's source string (`from './x'`) and its resolved
-        # module; None when the statement names no source at all.
+    ) -> tuple[str, JsImportTarget] | None:
+        # The statement's source string (`from './x'`) and what it resolves
+        # to; None when the statement names no source at all.
         for child in statement.children:
             if child.type == cs.TS_STRING:
                 source_text = safe_decode_with_fallback(child).strip("'\"")
-                source_module = self._resolve_js_module_path(source_text, module_qn)
+                target = self._resolve_js_import_target(source_text, module_qn)
                 self._note_unresolved_js_specifier(module_qn, source_text)
-                return source_text, source_module
+                return source_text, target
         return None
 
     def _parse_js_import_statement(self, import_node: Node, module_qn: str) -> None:
         source = self._js_statement_source(import_node, module_qn)
         if source is None:
             return
-        source_text, source_module = source
-        if not source_module:
+        source_text, target = source
+        if not target.module_qn:
             return
         is_aliased_scheme = _has_aliased_scheme(source_text)
         for child in import_node.children:
             if child.type == cs.TS_IMPORT_CLAUSE:
                 self._parse_js_import_clause(
-                    child, source_module, module_qn, is_aliased_scheme
+                    child,
+                    target.module_qn,
+                    module_qn,
+                    is_aliased_scheme,
+                    target.is_package,
                 )
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
         source = self._js_statement_source(export_node, current_module)
-        source_module = source[1] if source is not None else None
+        source_module = source[1].module_qn if source is not None else None
         if not source_module:
             return
 
@@ -4554,12 +4771,17 @@ class ImportProcessor:
                     # binding from the other namespace, and evicting it would
                     # send that name's bare calls to the trie (issue #1054).
                     continue
+            source_name = full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
+            if not sub_scope and not self._rust_use_takes_file_slot(
+                module_qn, imported_name, resolved, use_node, source_name
+            ):
+                continue
             resolved_imports[imported_name] = resolved
             site = self._record_import_site(
                 effective_qn,
                 imported_name,
                 use_node,
-                full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1],
+                source_name,
                 owner_qn=module_qn,
             )
             if sub_scope:
@@ -4569,6 +4791,26 @@ class ImportProcessor:
                     module_qn, resolved, cs.SupportedLanguage.RUST, site=site
                 )
             logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
+        self._store_rust_use_imports(
+            use_node,
+            module_qn,
+            effective_qn,
+            scope_node,
+            scope_parts,
+            pure_chain,
+            resolved_imports,
+        )
+
+    def _store_rust_use_imports(
+        self,
+        use_node: Node,
+        module_qn: str,
+        effective_qn: str,
+        scope_node: Node | None,
+        scope_parts: list[str] | None,
+        pure_chain: bool,
+        resolved_imports: dict[str, str],
+    ) -> None:
         if scope_node is not None:
             self._record_rust_body_scope_use(scope_node, module_qn, resolved_imports)
             return
@@ -5354,37 +5596,21 @@ class ImportProcessor:
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                if dart_exposes_library(import_node):
+                    self.dart_exposed_libraries.setdefault(module_qn, []).append(
+                        full_name
+                    )
                 # `import 'lib.dart' as p;` binds the library's names under
                 # `p`, and the file-derived key never appears in the source,
                 # so a prefixed reference (`p.Box`) resolves only once the
                 # PREFIX is a key too (issue #2033). Both keys are kept: the
                 # file-derived one still serves an unprefixed import of the
                 # same file elsewhere in the module.
-                # An alias must not clobber a key another import already
-                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
-                # would otherwise drop the first import entirely, since the
-                # file-derived key and the alias collide. The prefix is the
-                # name the source uses for THIS import, so it is only added
-                # where it is free.
                 prefix = dart_import_prefix(import_node)
                 if prefix:
-                    # An explicit `as` prefix is the name the SOURCE uses for
-                    # this import, so it owns that name outright. Recorded in
-                    # its own map rather than overwriting import_mapping,
-                    # whose values carry the IMPORTS edges: writing it there
-                    # dropped the colliding unprefixed import entirely.
-                    # Several imports may SHARE a prefix (`import 'a.dart' as
-                    # p; import 'b.dart' as p;`), so every library is kept and
-                    # the fold picks the one defining the name (CodeRabbit,
-                    # PR #2040).
-                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
-                        prefix, []
-                    ).append(full_name)
-                    if prefix not in self.import_mapping[module_qn]:
-                        self.import_mapping[module_qn][prefix] = full_name
-                        # Its IMPORTS edge carries a span and alias like every
-                        # other binding (Copilot, PR #2040).
-                        self._record_import_site(module_qn, prefix, import_node, uri)
+                    self._bind_dart_import_prefix(
+                        module_qn, prefix, full_name, import_node, uri
+                    )
                     prefixes.add(prefix)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
@@ -5395,6 +5621,38 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _bind_dart_import_prefix(
+        self,
+        module_qn: str,
+        prefix: str,
+        full_name: str,
+        import_node: Node,
+        uri: str,
+    ) -> None:
+        # An explicit `as` prefix is the name the SOURCE uses for
+        # this import, so it owns that name outright. Recorded in
+        # its own map rather than overwriting import_mapping,
+        # whose values carry the IMPORTS edges: writing it there
+        # dropped the colliding unprefixed import entirely.
+        # Several imports may SHARE a prefix (`import 'a.dart' as
+        # p; import 'b.dart' as p;`), so every library is kept and
+        # the fold picks the one defining the name (CodeRabbit,
+        # PR #2040).
+        self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+            prefix, []
+        ).append(full_name)
+        # An alias must not clobber a key another import already
+        # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+        # would otherwise drop the first import entirely, since the
+        # file-derived key and the alias collide. The prefix is the
+        # name the source uses for THIS import, so it is only added
+        # where it is free.
+        if prefix not in self.import_mapping[module_qn]:
+            self.import_mapping[module_qn][prefix] = full_name
+            # Its IMPORTS edge carries a span and alias like every
+            # other binding (Copilot, PR #2040).
+            self._record_import_site(module_qn, prefix, import_node, uri)
 
     def _record_lua_require(
         self,
