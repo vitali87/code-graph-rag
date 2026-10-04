@@ -12,11 +12,13 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_for_extension
-from ..types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
+from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .parameter_nodes import c_family_parameter_list
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -271,6 +273,7 @@ class CallResolver:
         "_subclass_map_cache",
         "_protocol_classes_cache",
         "_struct_impl_cache",
+        "_cpp_free_operators",
         "_ctor_params",
         "_ctor_param_attrs",
         "_pending_field_bindings",
@@ -335,6 +338,10 @@ class CallResolver:
         self._subclass_map_cache: dict[str, set[str]] | None = None
         self._protocol_classes_cache: set[str] | None = None
         self._struct_impl_cache: dict[str, set[str]] = {}
+        # {module qn: {free operator qn: its declarations' signatures}}.
+        self._cpp_free_operators: dict[
+            str, dict[str, tuple[CppOperatorSignature, ...]]
+        ] = {}
         # Ordered constructor parameter names per class (explicit __init__
         # params, or annotated class-body fields for NamedTuple/dataclass),
         # plus the param -> stored-attribute renames found in __init__ bodies
@@ -537,6 +544,7 @@ class CallResolver:
         self._subclass_map_cache = None
         self._protocol_classes_cache = None
         self._struct_impl_cache.clear()
+        self._cpp_free_operators.clear()
         # The qn -> language memo goes too: after a same-stem replacement
         # across languages (`util.rs` deleted, `util.py` added) the bare qn
         # `proj.util` now names a Python module, and a stale RUST answer
@@ -4598,29 +4606,115 @@ class CallResolver:
 
         return None
 
-    def cpp_operator_for_type(
+    def cpp_member_operator(
         self, call_name: str, operand_type_qn: str
     ) -> tuple[str, str] | None:
         # Operand-type-directed operator binding: the overload is either a
-        # member of the operand's own class or a free overload in that
-        # class's module (the beside-the-class convention). A typed operand
-        # with NEITHER is a builtin operation (enum/int comparison) with no
-        # first-party callee; nlohmann's `token == token_type::x` must
-        # not rebind to an unrelated class's operator== and fan out to all
-        # its overload variants.
+        # member of the operand's own class or a free overload beside it. A
+        # typed operand with NEITHER is a builtin operation (enum/int
+        # comparison) with no first-party callee; nlohmann's
+        # `token == token_type::x` must not rebind to an unrelated class's
+        # operator== and fan out to all its overload variants.
         # _try_resolve_method covers both the direct member and one
         # INHERITED from a base (Derived : Base with Base::operator==).
-        if member := self._try_resolve_method(operand_type_qn, call_name):
-            return member
+        return self._try_resolve_method(operand_type_qn, call_name)
+
+    def cpp_free_operator_for_type(
+        self, call_name: str, operand_type_qn: str, position: int, arity: int
+    ) -> tuple[str, str] | None:
         # ADL: a free overload may live in ANY enclosing namespace of the
-        # operand's type, not only its immediate parent scope.
+        # operand's type, not only its immediate parent scope. Sharing the
+        # name is not enough: `1 + v` with V converting to int is built-in
+        # `+` even beside an unrelated `operator+(W, W)`, so an overload set
+        # counts only when one of its declarations takes the operand's class
+        # at the operand's position (issue #2554 review).
         parts = operand_type_qn.split(cs.SEPARATOR_DOT)
         for depth in range(len(parts) - 1, 0, -1):
             scope = cs.SEPARATOR_DOT.join(parts[:depth])
             free_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-            if free_qn in self.function_registry:
+            if free_qn in self.function_registry and any(
+                self._cpp_operator_accepts(signature, operand_type_qn, position, arity)
+                for signature in self._cpp_free_operator_signatures(free_qn)
+            ):
                 return (self.function_registry[free_qn], free_qn)
         return None
+
+    def _cpp_operator_accepts(
+        self,
+        signature: CppOperatorSignature,
+        operand_type_qn: str,
+        position: int,
+        arity: int,
+    ) -> bool:
+        # The parameter at the operand's position takes its class by value
+        # or reference (a base class too), or is a template parameter that
+        # deduces to it; a pointer parameter never takes a class value.
+        if len(signature.parameters) != arity:
+            return False
+        param = signature.parameters[position]
+        if param.indirection or not param.type_name:
+            return False
+        if param.type_name in signature.template_params:
+            return True
+        import_map = self.import_processor.import_mapping.get(signature.module_qn, {})
+        param_qn = self._resolve_class_qn_from_type(
+            param.type_name, import_map, signature.module_qn
+        )
+        return bool(param_qn) and param_qn in self._mro(operand_type_qn)
+
+    def _cpp_free_operator_signatures(
+        self, free_qn: str
+    ) -> tuple[CppOperatorSignature, ...]:
+        # Parameter types are not stored on C++ Function nodes, so they are
+        # read from the declaring module's AST: one walk per module collects
+        # every free operator it declares, a prototype included. The AST
+        # rather than the definition pass's span records, so an incremental
+        # run that did not re-parse the module reads the same signatures.
+        module_qn = free_qn
+        module_paths = self.type_inference.module_qn_to_file_path
+        while module_qn and module_qn not in module_paths:
+            module_qn = module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if not module_qn:
+            return ()
+        if (by_qn := self._cpp_free_operators.get(module_qn)) is None:
+            by_qn = self._cpp_free_operators[module_qn] = (
+                self._collect_cpp_free_operators(module_qn)
+            )
+        return by_qn.get(free_qn, ())
+
+    def _collect_cpp_free_operators(
+        self, module_qn: str
+    ) -> dict[str, tuple[CppOperatorSignature, ...]]:
+        found: dict[str, list[CppOperatorSignature]] = {}
+        root = self._cached_module_root(module_qn)
+        if root is None:
+            return {}
+        engine = self.type_inference.cpp_type_inference
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_CPP_COMPOUND_STATEMENT:
+                continue
+            stack.extend(node.children)
+            if (
+                node.type not in cs.CPP_FREE_FUNCTION_DECLARATION_TYPES
+                or node.parent is None
+                or node.parent.type == cs.CppNodeType.FIELD_DECLARATION_LIST
+                or not (name := cpp_utils.extract_function_name(node))
+                or not name.startswith(cs.OPERATOR_PREFIX)
+                or (params := c_family_parameter_list(node)) is None
+            ):
+                continue
+            found.setdefault(
+                cpp_utils.build_qualified_name(node, module_qn, name), []
+            ).append(
+                CppOperatorSignature(
+                    module_qn,
+                    engine.parameter_types(params),
+                    engine.collect_template_param_names(node),
+                )
+            )
+        return {qn: tuple(signatures) for qn, signatures in found.items()}
 
     def cpp_operand_class_qn(
         self,
@@ -4630,8 +4724,7 @@ class CallResolver:
     ) -> str | None:
         # A bare-identifier operand with a locally inferred type resolves
         # to a REGISTERED first-party type qn, or nothing: only a known
-        # type may direct or suppress the operator binding; anything
-        # uninferable keeps the caller on the legacy best-candidate path.
+        # class type can select an operator overload (issue #2554).
         if not operand_name or not local_var_types:
             return None
         var_type = local_var_types.get(operand_name)
