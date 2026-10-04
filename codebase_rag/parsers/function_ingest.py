@@ -132,6 +132,9 @@ class FunctionResolution(NamedTuple):
     # (object literal, export, assignment, prototype) may own this same source
     # function, so registration defers until those ran.
     is_anonymous: bool = False
+    # A C++20 module `export`, the only thing a Module -[EXPORTS]-> edge
+    # means; `is_exported` also counts ordinary public API (issue #2707).
+    module_exported: bool = False
 
 
 class _DeferredCppArtifact(NamedTuple):
@@ -671,7 +674,13 @@ class FunctionIngestMixin:
         )
 
         is_exported = export_detection.is_exported(func_node, simple_name, language)
-        return FunctionResolution(func_qn, simple_name, is_exported)
+        return FunctionResolution(
+            func_qn,
+            simple_name,
+            is_exported,
+            module_exported=language == cs.SupportedLanguage.CPP
+            and cpp_utils.is_exported(func_node),
+        )
 
     def _fallback_function_resolution(
         self,
@@ -1316,8 +1325,13 @@ class FunctionIngestMixin:
                 return None
 
         func_qn = cpp_utils.build_qualified_name(func_node, module_qn, func_name)
-        is_exported = cpp_utils.is_exported(func_node)
-        return FunctionResolution(func_qn, func_name, is_exported)
+        module_exported = cpp_utils.is_exported(func_node)
+        is_exported = module_exported or export_detection.is_exported(
+            func_node, func_name, cs.SupportedLanguage.CPP
+        )
+        return FunctionResolution(
+            func_qn, func_name, is_exported, module_exported=module_exported
+        )
 
     def _resolve_generic_function(
         self,
@@ -1664,7 +1678,7 @@ class FunctionIngestMixin:
                 ),
             )
 
-        if resolution.is_exported and language == cs.SupportedLanguage.CPP:
+        if resolution.module_exported and language == cs.SupportedLanguage.CPP:
             self.ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                 cs.RelationshipType.EXPORTS,

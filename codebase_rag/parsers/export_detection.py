@@ -91,8 +91,13 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _csharp_exported(node)
         case cs.SupportedLanguage.RUST:
             return _rust_exported(node)
+        case cs.SupportedLanguage.C:
+            return _c_exported(node)
         case cs.SupportedLanguage.CPP:
-            return cpp_utils.is_exported(node)
+            # A C++20 module `export`, or ordinary code's public API.
+            return cpp_utils.is_exported(node) or _cpp_public_api(node)
+        case cs.SupportedLanguage.SCALA:
+            return _scala_exported(node)
         case cs.SupportedLanguage.DART:
             return _dart_exported(node, name)
         case _:
@@ -691,3 +696,107 @@ def _rust_macro_exported(node: Node) -> bool:
             return True
         prev = prev.prev_named_sibling
     return False
+
+
+def _c_exported(node: Node) -> bool:
+    # A C function without `static` has external linkage: any translation
+    # unit may call it, so it is the library's API (issue #2707).
+    return node.type == cs.TS_CPP_FUNCTION_DEFINITION and not _cpp_static(node)
+
+
+def _cpp_static(node: Node) -> bool:
+    return any(
+        child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
+        and child.text == cs.CPP_KEYWORD_STATIC.encode()
+        for child in node.children
+    )
+
+
+def _cpp_public_api(node: Node) -> bool:
+    # Outside a module, a C++ function is API when another translation unit
+    # can call it: a non-`static` namespace-scope function outside an
+    # anonymous namespace, or a non-`private` member of a class that is not
+    # local to a function (issue #2707). An out-of-line member definition
+    # (`int Box::f() {}`) is left alone: its access is in the class, which is
+    # usually in another file.
+    if node.type != cs.TS_CPP_FUNCTION_DEFINITION or _cpp_static(node):
+        return False
+    member = node
+    while member.parent is not None and member.parent.type == (
+        cs.TS_CPP_TEMPLATE_DECLARATION
+    ):
+        member = member.parent
+    scope = member.parent
+    if scope is None or _cpp_local_or_anonymous(scope):
+        return False
+    if scope.type == cs.TS_FIELD_DECLARATION_LIST:
+        return _cpp_member_access(member, scope) != cs.CPP_ACCESS_PRIVATE
+    return scope.type in (
+        cs.TS_CPP_TRANSLATION_UNIT,
+        cs.TS_CPP_DECLARATION_LIST,
+    ) and not _cpp_defined_out_of_line(node)
+
+
+def _cpp_local_or_anonymous(scope: Node) -> bool:
+    # Inside a function body (a local class) or an unnamed namespace: no
+    # other translation unit can name it.
+    current: Node | None = scope
+    while current is not None:
+        if current.type in (cs.TS_CPP_COMPOUND_STATEMENT, cs.TS_CPP_LAMBDA_EXPRESSION):
+            return True
+        if (
+            current.type == cs.CppNodeType.NAMESPACE_DEFINITION
+            and current.child_by_field_name(cs.FIELD_NAME) is None
+        ):
+            return True
+        current = current.parent
+    return False
+
+
+def _cpp_member_access(member: Node, body: Node) -> str:
+    # The access a member falls under: the last `public:` / `protected:` /
+    # `private:` label before it, else its class kind's default.
+    access: str | None = None
+    for child in body.children:
+        if child.id == member.id:
+            break
+        if child.type == cs.TS_ACCESS_SPECIFIER and child.text is not None:
+            access = child.text.decode(cs.ENCODING_UTF8).strip()
+    if access is not None:
+        return access
+    owner = body.parent
+    if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT:
+        return cs.CPP_ACCESS_PRIVATE
+    return cs.CPP_ACCESS_PUBLIC
+
+
+def _cpp_defined_out_of_line(node: Node) -> bool:
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    name = (
+        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is not None
+        else None
+    )
+    return name is not None and name.type == cs.TS_CPP_QUALIFIED_IDENTIFIER
+
+
+def _scala_exported(node: Node) -> bool:
+    # A Scala member or top-level definition is public unless declared
+    # `private` (or `private[pkg]`, visible in that package alone);
+    # `protected` stays API, as it does for Java. A def local to another
+    # def's body is no API at all (issue #2707).
+    parent = node.parent
+    if parent is None or parent.type not in cs.SCALA_API_SCOPES:
+        return False
+    modifiers = next(
+        (c for c in node.children if c.type == cs.TS_SCALA_MODIFIERS), None
+    )
+    if modifiers is None:
+        return True
+    return not any(
+        access.type == cs.TS_SCALA_ACCESS_MODIFIER
+        and any(c.type == cs.TS_SCALA_PRIVATE for c in access.children)
+        for access in modifiers.children
+    )

@@ -35,6 +35,11 @@ TS_SCALA_TEMPLATE_BODY = "template_body"
 TS_SCALA_VAL_DEFINITION = "val_definition"
 TS_SCALA_VAR_DEFINITION = "var_definition"
 TS_SCALA_ACCESS_MODIFIER = "access_modifier"
+TS_SCALA_MODIFIERS = "modifiers"
+# `private` and `private[pkg]` both start with the keyword (issue #2707).
+TS_SCALA_PRIVATE = "private"
+# Where a definition is a member or a top-level one, not a local.
+SCALA_API_SCOPES = frozenset({"template_body", "compilation_unit"})
 TS_SCALA_LAMBDA_EXPRESSION = "lambda_expression"
 TS_SCALA_IDENTIFIER = "identifier"
 TS_SCALA_INSTANCE_EXPRESSION = "instance_expression"

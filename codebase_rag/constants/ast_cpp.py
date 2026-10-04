@@ -85,6 +85,12 @@ CPP_KEYWORD_STRUCT = "struct"
 # `static` storage on a declaration: internal linkage, TU-local symbol.
 CPP_KEYWORD_STATIC = "static"
 TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
+# A class member's access when no `access_specifier` precedes it: a `class`
+# starts private, a `struct` or `union` public (issue #2707).
+CPP_PRIVATE_BY_DEFAULT = frozenset({"class_specifier"})
+CPP_ACCESS_PRIVATE = "private"
+CPP_ACCESS_PUBLIC = "public"
+TS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
