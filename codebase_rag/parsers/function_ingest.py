@@ -44,6 +44,7 @@ from .parameter_nodes import (
     emit_declared_parameters,
 )
 from .php import utils as php_utils
+from .positional_params import declared_positional_params
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -538,6 +539,15 @@ class FunctionIngestMixin:
             return_type := go_utils.extract_first_return_type_name(func_node)
         ):
             self.go_function_return_types[qualified_name] = return_type
+
+        # Its SINGLE result does go there, as a Go method's does, so that
+        # `NewBox().Bump()` types its receiver the way `c.Root().Run()`
+        # does (issue #2467). Same extractor as the methods: a multi-value
+        # or container result records nothing, so the skip above holds.
+        if language == cs.SupportedLanguage.GO and (
+            return_type := go_utils.extract_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # A span is claimed when a pass recorded THIS function node's location;
@@ -1396,14 +1406,10 @@ class FunctionIngestMixin:
         func_props = self._build_function_props(
             func_node, resolution, module_qn, lang_queries, language
         )
-        if language in cs.JS_TS_LANGUAGES and js_ts_utils.is_object_literal_method(
-            func_node
-        ):
-            # `{delay () {...}}` registers here, under its key, before the
-            # object-literal pass would; only its object reaches it (issue
-            # #2435), and the persisted mark keeps that across incremental runs.
-            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
-            self.function_registry.mark_object_member(resolution.qualified_name)
+        if language in cs.JS_TS_LANGUAGES:
+            self._mark_js_ts_name_scope(
+                func_node, resolution.qualified_name, func_props
+            )
         is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
         if is_macro:
             # Rust macros live in a separate namespace from functions; Pass-3 gates
@@ -1516,6 +1522,23 @@ class FunctionIngestMixin:
             func_node, resolution, module_qn, language, lang_config
         )
 
+    def _mark_js_ts_name_scope(
+        self, func_node: Node, qualified_name: str, func_props: PropertyDict
+    ) -> None:
+        if js_ts_utils.is_object_literal_method(func_node):
+            # `{delay () {...}}` registers here, under its key, before the
+            # object-literal pass would; only its object reaches it (issue
+            # #2435), and the persisted mark keeps that across incremental runs.
+            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
+            self.function_registry.mark_object_member(qualified_name)
+        # A JS/TS function expression whose name only its own body can call:
+        # bare-name resolution skips it everywhere else (issue #2402), and the
+        # persisted property lets an incremental run's rehydrated registry
+        # skip it too (the is_macro pattern).
+        if js_ts_utils.name_is_body_scoped(func_node):
+            func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
+            self.function_registry.mark_body_scoped_name(qualified_name)
+
     def _record_csharp_local_function(
         self, func_node: Node, qualified_name: str, module_qn: str
     ) -> None:
@@ -1590,13 +1613,16 @@ class FunctionIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        # Python only: the other frontends have no positional/keyword-only
-        # distinction extracted, and an absent property reads as "kinds
-        # unknown" downstream rather than as "zero positional parameters".
+        # Python's list is CPython's positional names; the languages that
+        # declare optionality store every parameter marked with it (issue
+        # #2517). The rest stay absent, which reads as "kinds unknown"
+        # downstream rather than as "zero positional parameters".
         if language == cs.SupportedLanguage.PYTHON:
             props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
                 func_node
             )
+        elif (declared := declared_positional_params(func_node, language)) is not None:
+            props[cs.KEY_POSITIONAL_PARAMS] = declared
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
@@ -1703,7 +1729,7 @@ class FunctionIngestMixin:
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         return lua_utils.extract_assigned_name(
             func_node,
-            accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
+            accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS,
         )
 
     def _extract_lua_field_function_name(
@@ -1759,7 +1785,15 @@ class FunctionIngestMixin:
                 return None
             if result is not None:
                 path_parts.append(result)
-            current = current.parent
+            # A PHP anonymous class's part already spells the callable it is
+            # written in, as that callable is registered; naming the
+            # callables around it again here would put the closure under a
+            # different path than the class's own methods (issue #2538).
+            current = (
+                php_utils.anonymous_class_anchor_stop(current)
+                if result is not None and current.type == cs.TS_PHP_ANONYMOUS_CLASS
+                else current.parent
+            )
 
         path_parts.reverse()
         return path_parts
@@ -1808,10 +1842,9 @@ class FunctionIngestMixin:
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
             if name := self._extract_node_name(class_node):
                 return name
-            # A PHP anonymous class is named by position, as the definition
-            # pass names it; the callables it sits in are ancestors this walk
-            # names on its own (issue #2538).
-            if name := php_utils.anonymous_class_name(class_node):
+            # A PHP anonymous class is named as the definition pass names it,
+            # under the callable it is written in (issue #2538).
+            if name := php_utils.anonymous_class_scope_name(class_node):
                 return name
             # An anonymous class expression (`static Proxy = class {...}`) has no
             # `name` field; recover its binding name so a closure nested in its

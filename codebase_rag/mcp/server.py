@@ -14,6 +14,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
@@ -61,10 +62,10 @@ def get_project_root() -> Path:
     project_root = Path(repo_path).resolve()
 
     if not project_root.exists():
-        raise ValueError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
+        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
 
     if not project_root.is_dir():
-        raise ValueError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
 
     logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root
@@ -187,7 +188,18 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             else:
                 result_text = str(result)
 
-            return [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            # A JSON tool refuses with a result that is nothing but its error
+            # (an unknown project or name, a partial graph, a failed read).
+            # One that carries an error beside its data, such as an applied
+            # rename reporting a marker it could not clear, did its work.
+            if (
+                returns_json
+                and isinstance(result, dict)
+                and result.keys() == {cs.DICT_KEY_ERROR}
+            ):
+                return CallToolResult(content=content, isError=True)
+            return content
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)

@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -113,6 +114,23 @@ _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_FIELD.value,
     cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
+    cs.RelationshipType.DEFINES_CONSTANT.value,
+}
+# What CYPHER_RETIRE_PROJECT walks: the project's containers, then what the
+# ones carrying its prefix define.
+_PROJECT_CONTAINMENT_RELS = frozenset(
+    {
+        cs.RelationshipType.CONTAINS_PACKAGE.value,
+        cs.RelationshipType.CONTAINS_FOLDER.value,
+        cs.RelationshipType.CONTAINS_FILE.value,
+        cs.RelationshipType.CONTAINS_MODULE.value,
+        cs.RelationshipType.CONTAINS_SECTION.value,
+    }
+)
+_PROJECT_DEFINED_RELS = _DEFINES_RELS | {
+    cs.RelationshipType.HAS_PARAMETER.value,
+    cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
@@ -142,8 +160,16 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # answer here, not a silent default. The hash lookup that follows is issued
 # only for notes this read returned, so it is deliberately NOT listed: if a
 # test ever reaches it, the double is missing a real case.
+#
+# `CYPHER_QUERY_PROJECT_NODE_IDS` reads the internal ids a retired project's
+# vectors are keyed by (issue #2412). The double has no internal ids and no
+# vector store, so "no vectors to delete" is its true answer.
 _NOT_MODELLED: frozenset[str] = frozenset(
-    {cs.CYPHER_QUERY_EMBEDDINGS, cq.CYPHER_UNANCHORED_GLOSSES}
+    {
+        cs.CYPHER_QUERY_EMBEDDINGS,
+        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+        cq.CYPHER_UNANCHORED_GLOSSES,
+    }
 )
 _MODULE_QN_LABELS = frozenset(
     {
@@ -197,6 +223,31 @@ _ROUTE_HANDLER_LABELS = frozenset(
     {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
 )
 _INHERITS_REL = cs.RelationshipType.INHERITS.value
+# The path-keyed labels the isolated check's scope reaches beside the
+# module subtrees, and the far-end labels whose properties the capture
+# carries (issue #1718); both mirror the production query's label lists.
+_CHECK_PATH_LABELS = frozenset({_FILE_LABEL, _FOLDER_LABEL, _PACKAGE_LABEL})
+_SHARED_ORPHAN_LABELS = frozenset({_EXTERNAL_MODULE_LABEL, cs.NodeLabel.RESOURCE.value})
+_CHECK_FAR_PROP_LABELS = frozenset(
+    {
+        _EXTERNAL_MODULE_LABEL,
+        cs.NodeLabel.RESOURCE.value,
+        cs.NodeLabel.GLOSS.value,
+        # A finding the re-parse rewrites in place keeps its qualified name,
+        # so only its captured properties can restore it (#1718).
+        cs.NodeLabel.CODE_SMELL.value,
+        cs.NodeLabel.SECURITY_ISSUE.value,
+        cs.NodeLabel.PATTERN.value,
+    }
+)
+_CHECK_FINDING_LABELS = frozenset(
+    {
+        cs.NodeLabel.CODE_SMELL.value,
+        cs.NodeLabel.SECURITY_ISSUE.value,
+        cs.NodeLabel.PATTERN.value,
+    }
+)
+_CHECK_KEY_FIELDS = (cs.KEY_QUALIFIED_NAME, cs.KEY_ABSOLUTE_PATH, cs.KEY_NAME)
 
 
 def _str(value: PropertyValue | None) -> str:
@@ -444,6 +495,9 @@ class _StatefulIngestor:
                     cs.KEY_REL_TYPE: _result(rel),
                     cs.KEY_TO_QN: _result(tv),
                     cs.KEY_TO_PATH: _result(to_path),
+                    cs.KEY_RESOLUTION: _result(props.get(cs.KEY_RESOLUTION)),
+                    cs.KEY_SPREAD_ARGS: _result(props.get(cs.KEY_SPREAD_ARGS)),
+                    cs.KEY_CALL_QUALIFIER: _result(props.get(cs.KEY_CALL_QUALIFIER)),
                     cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
                     cs.KEY_COL: _result(props.get(cs.KEY_COL)),
                     cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
@@ -600,6 +654,46 @@ class _StatefulIngestor:
                             cs.KEY_TO_QN: _result(tv),
                         }
                     )
+        return rows
+
+    def _delta_named_imports(
+        self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
+        # One row per IMPORTS edge that binds a name, from a project module,
+        # whose importer or target sits at one of `paths` -- the target of
+        # any label, as the real query leaves it unconstrained.
+        module = cs.NodeLabel.MODULE.value
+        rows: list[ResultRow] = []
+        for node_id, props in self.nodes.items():
+            label, uid = node_id
+            source_qn = _str(uid)
+            if (
+                label != module
+                or not source_qn.startswith(prefix)
+                or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
+            ):
+                continue
+            from_path = _str(props.get(cs.KEY_PATH))
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
+                edge_props = self.edge_props.get(edge, {})
+                imported_name = edge_props.get(cs.KEY_IMPORTED_NAME)
+                if rel != cs.RelationshipType.IMPORTS.value or imported_name is None:
+                    continue
+                if from_path not in paths and self._delta_path_of(tl, tv) not in paths:
+                    continue
+                rows.append(
+                    {
+                        cs.KEY_FROM_QN: _result(fv),
+                        cs.KEY_FROM_PATH: _result(from_path),
+                        cs.KEY_TO_QN: _result(tv),
+                        cs.KEY_TO_PATH: _result(self._delta_path_of(tl, tv)),
+                        cs.KEY_IMPORTED_NAME: _result(imported_name),
+                        cs.KEY_ALIAS: _result(edge_props.get(cs.KEY_ALIAS)),
+                        cs.KEY_LINE: _result(edge_props.get(cs.KEY_LINE)),
+                        cs.KEY_COL: _result(edge_props.get(cs.KEY_COL)),
+                    }
+                )
         return rows
 
     # --- deterministic graph queries the edit operations issue (#1523) -------
@@ -990,6 +1084,8 @@ class _StatefulIngestor:
             return self._delta_sites(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DELTA_MODULE_IMPORTS:
             return self._delta_module_imports(prefix, longer_project_prefixes)
+        if query == cq.CYPHER_DELTA_NAMED_IMPORTS:
+            return self._delta_named_imports(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DEAD_CODE_RELS:
             return [
                 {
@@ -1027,6 +1123,10 @@ class _StatefulIngestor:
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
         _require_bound_params(query, params)
+        node = self._node_addressed_by(query, params or {}, cq.build_node_props_query)
+        if node is not None:
+            props = self.nodes.get(node)
+            return [] if props is None else [{cs.KEY_PROPS: _result_props(props)}]
         match query:
             case cq.CYPHER_LIST_PROJECTS:
                 return self._project_rows()
@@ -1037,6 +1137,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_DEFINITIONS_BY_QN
                 | cq.CYPHER_DELTA_SITES
                 | cq.CYPHER_DELTA_MODULE_IMPORTS
+                | cq.CYPHER_DELTA_NAMED_IMPORTS
                 | cq.CYPHER_DELTA_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
@@ -1124,6 +1225,36 @@ class _StatefulIngestor:
                 # every marker-consulting path refuse and looks exactly like
                 # a production guard firing (PR #1547).
                 return []
+            case cq.CYPHER_CHECK_SCOPE_NODES:
+                return [
+                    {
+                        cs.KEY_LABEL: label,
+                        cs.KEY_PROPS: _result_props(self.nodes[(label, uid)]),
+                    }
+                    for (label, uid) in sorted(
+                        self._check_scope(params or {}),
+                        key=lambda n: (n[0], _str(n[1])),
+                    )
+                ]
+            case cq.CYPHER_CHECK_GRAPH_IO_LINKS:
+                io = {
+                    cs.RelationshipType.FLOWS_TO.value,
+                    cs.RelationshipType.RESOLVES_TO.value,
+                }
+                found = next((edge[2] for edge in self.edges if edge[2] in io), None)
+                return [] if found is None else [{cs.KEY_REL: found}]
+            case cq.CYPHER_CHECK_SHARED_NODES:
+                return [
+                    {
+                        cs.KEY_LABEL: label,
+                        cs.KEY_PROPS: _result_props(props),
+                        cs.KEY_INBOUND: len(self._in.get((label, uid), ())),
+                    }
+                    for (label, uid), props in self.nodes.items()
+                    if label in _SHARED_ORPHAN_LABELS
+                ]
+            case cq.CYPHER_CHECK_SCOPE_EDGES:
+                return self._check_scope_edges(params or {})
             case cs.CYPHER_INBOUND_EDGES:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 changed: set[str] = (
@@ -1210,6 +1341,9 @@ class _StatefulIngestor:
                         cs.KEY_LABEL: label,
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
+                        cs.KEY_IS_BODY_SCOPED_NAME: bool(
+                            props.get(cs.KEY_IS_BODY_SCOPED_NAME)
+                        ),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
                         cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
@@ -1257,6 +1391,22 @@ class _StatefulIngestor:
                     }
                     for (label, _uid), props in self.nodes.items()
                     if label == cs.NodeLabel.FIELD.value
+                    and cs.KEY_TYPE_NAME in props
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
+                ]
+            case cs.CYPHER_PROJECT_CONSTANT_TYPES:
+                # The Constant counterpart (issue #1806), for the same reason.
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.CONSTANT.value
                     and cs.KEY_TYPE_NAME in props
                     and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
                         prefix
@@ -1636,6 +1786,8 @@ class _StatefulIngestor:
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         _require_bound_params(query, params)
         path = params.get(cs.KEY_PATH) if params else None
+        if self._remove_node_keys(query, params or {}):
+            return None
         match query:
             case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
                 # Modules with nothing unresolved this parse (issue #1568).
@@ -1672,6 +1824,11 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_PACKAGE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cq.CYPHER_RETIRE_PROJECT:
+                self._retire_project(
+                    params.get(cs.KEY_PROJECT_NAME) if params else None,
+                    _str(params.get(cs.KEY_PROJECT_PREFIX)) if params else "",
+                )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
             case cs.CYPHER_DELETE_PROJECT_DEPENDENCIES:
@@ -1686,8 +1843,159 @@ class _StatefulIngestor:
                         if node[0] == _EXTERNAL_PACKAGE_LABEL and not self._in.get(node)
                     }
                 )
+            case cq.CYPHER_CHECK_DELETE_FINDINGS:
+                self._delete_check_findings(params or {})
+            case cq.CYPHER_CHECK_DELETE_SHARED_NODES:
+                self._delete_created_shared_nodes(params or {})
             case _:
                 return None
+
+    # --- isolated check capture (issue #1718) --------------------------------
+
+    def _check_scope_seeds(self, params: PropertyDict) -> set[_NodeId]:
+        # The production query's entry points: project-scoped Modules at the
+        # paths and the path-keyed nodes at the absolute paths.
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        raw_absolute = params.get(cs.CYPHER_PARAM_ABSOLUTE_PATHS)
+        absolute = set(raw_absolute) if isinstance(raw_absolute, list) else set()
+        project = _str(params.get(cs.KEY_PROJECT_NAME))
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        seeds: set[_NodeId] = set()
+        for node_id, props in self.nodes.items():
+            label, _uid = node_id
+            qn = _str(props.get(cs.KEY_QUALIFIED_NAME))
+            scoped_module = (
+                label == _MODULE_LABEL
+                and props.get(cs.KEY_PATH) in paths
+                and (qn == project or qn.startswith(prefix))
+            )
+            path_node = (
+                label in _CHECK_PATH_LABELS
+                and props.get(cs.KEY_ABSOLUTE_PATH) in absolute
+            )
+            if scoped_module or path_node:
+                seeds.add(node_id)
+        return seeds
+
+    def _check_scope(self, params: PropertyDict) -> set[_NodeId]:
+        # The seeds walked through the subtree relations exactly as the
+        # delete walks them.
+        scope = self._check_scope_seeds(params)
+        frontier = list(scope)
+        while frontier:
+            node = frontier.pop()
+            for _fl, _fv, rel_type, to_label, to_val, _site in self._out.get(node, ()):
+                child = (to_label, to_val)
+                # `child in self.nodes` because this store accepts an edge
+                # without requiring its endpoints to exist, so an edge can
+                # outlive the node it points at. A real graph cannot hold
+                # that, and reading such a child would raise KeyError in
+                # the scope-node branch (CodeRabbit, #1718).
+                if (
+                    rel_type in _MODULE_SUBTREE_RELS
+                    and child not in scope
+                    and child in self.nodes
+                ):
+                    scope.add(child)
+                    frontier.append(child)
+        return scope
+
+    def _check_end_fields(self, node_id: _NodeId, prefix: str = "") -> ResultRow:
+        # The three key fields the production query returns for an end; an
+        # edge to a node never emitted (the emulator keeps such edges) still
+        # answers with its own key, as the real MERGE would have matched it.
+        label, uid = node_id
+        props = self.nodes.get(node_id)
+        fields: ResultRow = {prefix + cs.KEY_LABEL: label}
+        for key in _CHECK_KEY_FIELDS:
+            value = props.get(key) if props is not None else None
+            if value is None and cs.NODE_UNIQUE_CONSTRAINTS.get(label) == key:
+                value = uid
+            fields[prefix + key] = _result(value)
+        return fields
+
+    def _check_scope_edges(self, params: PropertyDict) -> list[ResultRow]:
+        rows: list[ResultRow] = []
+        for node in sorted(self._check_scope(params), key=lambda n: (n[0], _str(n[1]))):
+            touching = [(edge, True) for edge in self._out.get(node, ())] + [
+                (edge, False) for edge in self._in.get(node, ())
+            ]
+            for edge, outgoing in touching:
+                from_label, from_val, rel_type, to_label, to_val, _site = edge
+                far = (to_label, to_val) if outgoing else (from_label, from_val)
+                row = self._check_end_fields(node)
+                row.update(self._check_end_fields(far, cs.FAR_END_PREFIX))
+                row[cs.KEY_REL] = rel_type
+                row[cs.KEY_OUTGOING] = outgoing
+                row[cs.KEY_PROPS] = _result_props(self.edge_props.get(edge, {}))
+                far_props = self.nodes.get(far)
+                row[cs.KEY_FAR_PROPS] = (
+                    _result_props(far_props)
+                    if far[0] in _CHECK_FAR_PROP_LABELS and far_props is not None
+                    else None
+                )
+                rows.append(row)
+        return rows
+
+    @staticmethod
+    def _node_addressed_by(
+        query: str, params: PropertyDict, builder: Callable[[str, str], str]
+    ) -> _NodeId | None:
+        # The per-node queries are generated per label, so they are
+        # recognised by being exactly a builder's output for one label with
+        # a unique key, not matched against a constant.
+        for label, key in cs.NODE_UNIQUE_CONSTRAINTS.items():
+            if query == builder(label, key):
+                return (label, params.get(cs.KEY_ID))
+        return None
+
+    def _remove_node_keys(self, query: str, params: PropertyDict) -> bool:
+        for label, key in cs.NODE_UNIQUE_CONSTRAINTS.items():
+            prefix = cq.build_node_props_query(label, key).split(" RETURN ")[0]
+            if not query.startswith(prefix + " REMOVE "):
+                continue
+            names = re.findall(r"n\.`([^`]+)`", query[len(prefix) :])
+            props = self.nodes.get((label, params.get(cs.KEY_ID)))
+            if props is not None:
+                for name in names:
+                    props.pop(name, None)
+            return True
+        return False
+
+    def _delete_created_shared_nodes(self, params: PropertyDict) -> None:
+        # The shared nodes the isolated check created, by key (#1718).
+        labels = params.get(cs.CYPHER_PARAM_LABELS)
+        names = params.get(cs.CYPHER_PARAM_QUALIFIED_NAMES)
+        created = {
+            (_str(label), name)
+            for label, name in zip(
+                labels if isinstance(labels, list) else [],
+                names if isinstance(names, list) else [],
+                strict=False,
+            )
+        }
+        self._detach_delete(created & set(self.nodes))
+
+    def _delete_check_findings(self, params: PropertyDict) -> None:
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        raw_keep = params.get(cs.CYPHER_PARAM_KEEP)
+        keep = set(raw_keep) if isinstance(raw_keep, list) else set()
+        # Project-scoped, as the real query is: `$paths` are repo-relative
+        # and a sibling project in the shared graph can hold the same one.
+        project = _str(params.get(cs.KEY_PROJECT_NAME))
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        self._detach_delete(
+            {
+                (label, uid)
+                for (label, uid), props in self.nodes.items()
+                if label in _CHECK_FINDING_LABELS
+                and props.get(cs.KEY_PATH) in paths
+                and uid not in keep
+                and (_str(uid) == project or _str(uid).startswith(prefix))
+            }
+        )
 
     def _trace_edge_rows(self, paths: set[str], prefix: str) -> list[ResultRow]:
         touching: set[_EdgeKey] = set()
@@ -1874,6 +2182,39 @@ class _StatefulIngestor:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)
+        self._detach_delete(doomed)
+
+    def _reachable(self, start: _NodeId, rels: frozenset[str]) -> set[_NodeId]:
+        found: set[_NodeId] = set()
+        frontier = [start]
+        while frontier:
+            node = frontier.pop()
+            for _fl, _fv, rel_type, to_label, to_val, _site in self._out.get(node, ()):
+                child = (to_label, to_val)
+                if rel_type in rels and child not in found:
+                    found.add(child)
+                    frontier.append(child)
+        return found
+
+    def _retire_project(self, project_name: PropertyValue, prefix: str) -> None:
+        # Mirrors CYPHER_RETIRE_PROJECT: the walk may pass through Folder and
+        # File nodes another project shares, but only containers carrying the
+        # retired project's qualified name are deleted, with what they define:
+        # its bare name (a root Package or Module) or anything under it.
+        project = (_PROJECT_LABEL, project_name)
+        if project not in self.nodes:
+            return
+        containers = {
+            node
+            for node in self._reachable(project, _PROJECT_CONTAINMENT_RELS)
+            if isinstance(
+                qn := self.nodes.get(node, {}).get(cs.KEY_QUALIFIED_NAME), str
+            )
+            and (qn == project_name or qn.startswith(prefix))
+        }
+        doomed = {project} | containers
+        for container in containers:
+            doomed |= self._reachable(container, _PROJECT_DEFINED_RELS)
         self._detach_delete(doomed)
 
     def _delete_project_dependencies(self, project_name: PropertyValue) -> None:

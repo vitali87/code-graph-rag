@@ -32,6 +32,14 @@ No unreachable functions or methods found.
 12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
 ```
 
+PHP has no module privacy, so every function declared at file level and every
+non-`private` member of a named class, interface, trait or enum is a public
+root; closures and anonymous-class members are not. A PHP test is recognised
+wherever it lives: a `*Test.php` file, a `Tests/` directory, or a class
+extending PHPUnit's `TestCase` (directly, through a project base class, or
+through a framework base such as Symfony's `KernelTestCase`), together with
+everything declared in it.
+
 ## Prerequisites
 
 Index the repository first, so the graph exists in Memgraph:
@@ -142,8 +150,9 @@ so no name or path is cut to fit 80 columns.
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
-   decorated handlers, dunder/lifecycle methods, plus any `--entry-point` and
-   `--decorator-root` you add.
+   decorated handlers, dunder/lifecycle methods, program entry points (`main`
+   in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
+   plus any `--entry-point` and `--decorator-root` you add.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class
