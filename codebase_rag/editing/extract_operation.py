@@ -29,6 +29,7 @@ from .extract_scope import (
     _Span,
     _split_span,
     _string_lines,
+    _targets,
 )
 from .extract_transaction import _commit, _enforce
 from .extract_types import ExtractRefused, ExtractReport
@@ -161,6 +162,7 @@ class Extractor:
         )
         if language in _JS_LANGUAGES:
             _refuse_lost_js_context(parts, receiver_kept=js_method is not None)
+            _refuse_outer_writes(node, parts)
         if language == cs.SupportedLanguage.PYTHON:
             _refuse_shared_names(node, parts)
         if is_method and language == cs.SupportedLanguage.PYTHON:
@@ -453,6 +455,76 @@ def _refuse_lost_js_context(parts: _Span, receiver_kept: bool) -> None:
         raise ExtractRefused(
             cs.EXTRACT_JS_CONTEXT.format(word=_text(used), line=used.start_point[0] + 1)
         )
+
+
+def _refuse_outer_writes(definition: Node, parts: _Span) -> None:
+    """A name the span writes that the function never declares is an outer
+    binding, or an undeclared global. The helper would declare it as its
+    own local, so the write would never reach the binding the rest of the
+    program reads (Greptile, PR #2932)."""
+    declared = _js_declarations(definition, parts)
+    outer = next(
+        (n for n in _assigned_names(parts.statements) if n not in declared), None
+    )
+    if outer is not None:
+        raise ExtractRefused(cs.EXTRACT_JS_OUTER_WRITE.format(name=outer))
+
+
+_JS_NAMED_DECLARATIONS = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_CLASS_DECLARATION,
+    }
+)
+
+
+def _js_declarations(definition: Node, parts: _Span) -> set[str]:
+    """Names the function declares where the span sees them: its parameters,
+    its top-level declarations, every `var` in it (they hoist to the
+    function), and the catch and loop bindings inside the span itself."""
+    names = set(_parameter_names(definition))
+    single = definition.child_by_field_name(cs.TS_FIELD_PARAMETER)
+    if single is not None:
+        names.add(_text(single))
+    found: list[str] = []
+    for statement in _body_statements(definition):
+        if statement.type in _JS_NAMED_DECLARATIONS:
+            named = statement.child_by_field_name(cs.FIELD_NAME)
+            if named is not None:
+                names.add(_text(named))
+        elif statement.type in (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION):
+            _binds(statement, found)
+    span_ids = {statement.id for statement in parts.statements}
+    stack = list(_body_statements(definition))
+    while stack:
+        current, inside = stack.pop(), False
+        if current.type in _FUNCTION_SCOPES:
+            continue
+        if current.type == cs.TS_VARIABLE_DECLARATION:
+            _binds(current, found)
+        elif current.type == cs.TS_JS_CATCH_CLAUSE or (
+            current.type == cs.TS_FOR_IN_STATEMENT
+            and current.child_by_field_name(cs.FIELD_KIND) is not None
+        ):
+            inside = _within(current, span_ids)
+        if inside:
+            binding = current.child_by_field_name(
+                cs.TS_FIELD_PARAMETER
+            ) or current.child_by_field_name(cs.FIELD_LEFT)
+            if binding is not None:
+                _targets(binding, found)
+        stack.extend(current.children)
+    return names | set(found)
+
+
+def _within(node: Node, ids: set[int]) -> bool:
+    current: Node | None = node
+    while current is not None:
+        if current.id in ids:
+            return True
+        current = current.parent
+    return False
 
 
 def _first_in_scope(

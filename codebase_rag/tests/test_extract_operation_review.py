@@ -809,3 +809,59 @@ def test_a_write_under_a_short_circuit_is_conditional(
     source = template.format(line=line)
     before, after = _extract_and_run(temp_repo, rel, source, qn, (3, 3))
     assert after == before
+
+
+_OUTER_JS = {
+    "module-let": (
+        "let total = 0;\n"
+        "function add(n) {\n"
+        "  const m = n * 2;\n"
+        "  total += m;\n"
+        "  return m;\n"
+        "}\n\n"
+        "add(2);\n"
+        "console.log(total);\n"
+    ),
+    "undeclared-global": (
+        "function add(n) {\n"
+        "  const m = n * 2;\n"
+        "  ready = m;\n"
+        "  return m;\n"
+        "}\n\n"
+        "add(2);\n"
+        "console.log(ready);\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("shape", "span", "name"),
+    [("module-let", (4, 4), "total"), ("undeclared-global", (3, 3), "ready")],
+    ids=["module-let", "undeclared-global"],
+)
+def test_extract_refuses_a_write_to_a_name_declared_outside_the_function(
+    temp_repo: Path, shape: str, span: tuple[int, int], name: str
+) -> None:
+    # The helper would declare the name as its own local, so the write would
+    # never reach the outer binding the caller and the module read.
+    message = _refused(temp_repo, "src/add.js", _OUTER_JS[shape], "src.add.add", span)
+    assert f"`{name}`" in message
+
+
+def test_extract_allows_a_write_to_a_hoisted_var(temp_repo: Path) -> None:
+    # Control: a `var` anywhere in the function is its own local, however
+    # deeply it is nested, so the write stays the function's.
+    source = (
+        "function count(items) {\n"
+        "  if (items.length) {\n"
+        "    var seen = 0;\n"
+        "  }\n"
+        "  seen = items.length;\n"
+        "  return seen;\n"
+        "}\n\n"
+        "console.log(count([1, 2]));\n"
+    )
+    before, after = _extract_and_run(
+        temp_repo, "src/count.js", source, "src.count.count", (5, 5)
+    )
+    assert after == before == "2"
