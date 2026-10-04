@@ -40,6 +40,12 @@ extending PHPUnit's `TestCase` (directly, through a project base class, or
 through a framework base such as Symfony's `KernelTestCase`), together with
 everything declared in it.
 
+A Java method is a public root when it is declared `public` or `protected`. A
+member of an interface or annotation type is also a root unless it is
+declared `private`: it is implicitly public there, and is usually written
+without the keyword. This covers abstract, `default` and `static`
+interface methods.
+
 ## Prerequisites
 
 Index the repository first, so the graph exists in Memgraph:
