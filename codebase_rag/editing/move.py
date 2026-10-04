@@ -419,6 +419,32 @@ def _definition_at(root: Node, line: int, col: int) -> Node | None:
     return None
 
 
+def _own_span(source: bytes, first: Node, last: Node) -> tuple[int, int] | None:
+    """The bytes of `first` through `last` alone, and the spaces setting
+    them apart on the shared line, when another statement shares their
+    first or last line; None when they have their lines to themselves. A
+    trailing comment is not a statement: it goes with the lines.
+    """
+    before, after = first.prev_named_sibling, last.next_named_sibling
+    shares_last = (
+        after is not None
+        and after.type != cs.TS_COMMENT
+        and after.start_point[0] == last.end_point[0]
+    )
+    if not shares_last and (
+        before is None or before.end_point[0] != first.start_point[0]
+    ):
+        return None
+    start, end = first.start_byte, last.end_byte
+    if shares_last:
+        while source[end : end + 1] in _INLINE_SPACE:
+            end += 1
+    else:
+        while start > 0 and source[start - 1 : start] in _INLINE_SPACE:
+            start -= 1
+    return start, end
+
+
 def _cut_span(source: bytes, node: Node) -> _Cut:
     """Whole lines of the definition plus decorators, export and comments."""
     target = node
@@ -437,19 +463,12 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     # (`function f() {} console.log('ready');` in JS): the whole-line cut
     # deleted that statement from the old module and pasted it at the
     # destination. Then only the definition's own bytes are cut.
-    before, after = first.prev_named_sibling, target.next_named_sibling
-    if (before is not None and before.end_point[0] == first.start_point[0]) or (
-        after is not None
-        and after.type != cs.TS_COMMENT
-        and after.start_point[0] == target.end_point[0]
-    ):
-        end = target.end_byte
-        while source[end : end + 1] in _INLINE_SPACE:
-            end += 1
+    own = _own_span(source, first, target)
+    if own is not None:
         text = source[first.start_byte : target.end_byte].decode(
             cs.ENCODING_UTF8, errors="replace"
         )
-        return _Cut(first.start_byte, end, text)
+        return _Cut(*own, text)
     start = source.rfind(b"\n", 0, first.start_byte) + 1
     end = source.find(b"\n", target.end_byte)
     end = len(source) if end < 0 else end + 1
@@ -942,6 +961,13 @@ class Mover:
                         f"{{ {', '.join(kept)} }}".encode(cs.ENCODING_UTF8),
                     )
                 )
+                continue
+            # Its own bytes when other code shares its line: the whole-line
+            # removal took `registerPlugin();` in `export { helper };
+            # registerPlugin();` with it.
+            own = _own_span(source, child, child)
+            if own is not None:
+                edits.append(SpanEdit(*own, b""))
                 continue
             start = source.rfind(b"\n", 0, child.start_byte) + 1
             end = _line_end(source, child)
