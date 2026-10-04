@@ -4169,7 +4169,12 @@ class GraphUpdater:
             return []
         try:
             return self.ingestor.fetch_all(
-                cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
+                cs.CYPHER_INBOUND_EDGES,
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
             )
         except Exception:
             # A FULL build re-parses every caller, so the source-derived edges
@@ -4250,6 +4255,10 @@ class GraphUpdater:
             return None
         module_label = cs.NodeLabel.MODULE.value
         if target_label != module_label and target_qn not in self.function_registry:
+            return None
+        # Another project's node is never this run's to restore: a module
+        # passes the registry test above whoever owns it (issue #2918).
+        if not self._owns(target_qn):
             return None
         caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
         target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)

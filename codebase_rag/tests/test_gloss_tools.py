@@ -865,7 +865,7 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
     existed, so it must reach the store regardless of the selection."""
     ingestor = MagicMock()
     updater = GraphUpdater(
-        ingestor=ingestor, repo_path=tmp_path, parsers={}, queries={}
+        ingestor=ingestor, repo_path=tmp_path, parsers={}, queries={}, project_name=P
     )
     assert not updater.capture.rel_enabled(cs.RelationshipType.ANNOTATES)
     updater.function_registry[RUN] = NodeType.FUNCTION

@@ -1236,8 +1236,22 @@ class _StatefulIngestor:
                 changed: set[str] = (
                     set(raw_paths) if isinstance(raw_paths, list) else set()
                 )
+                # Mirrors the real query: the edges into what the module
+                # delete is about to take, this project's modules at those
+                # paths and their subtrees, not every node at a path (#2918).
+                project_name = (
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                )
+                project_prefix = (
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                )
+                targets: set[_NodeId] = set()
+                for changed_path in sorted(changed):
+                    targets |= self._module_subtree(
+                        changed_path, project_name, project_prefix
+                    )
                 inbound: list[ResultRow] = []
-                for edge in self._edges_into(changed):
+                for edge in (e for t in targets for e in self._in.get(t, ())):
                     from_label, from_val, rel_type, to_label, to_val, _site = edge
                     if rel_type not in _INBOUND_DEPENDENT_RELS:
                         continue
@@ -2105,6 +2119,17 @@ class _StatefulIngestor:
         project_prefix: str | None,
         nested_projects: PropertyValue = None,
     ) -> None:
+        self._detach_delete(
+            self._module_subtree(path, project_name, project_prefix, nested_projects)
+        )
+
+    def _module_subtree(
+        self,
+        path: PropertyValue,
+        project_name: str | None,
+        project_prefix: str | None,
+        nested_projects: PropertyValue = None,
+    ) -> set[_NodeId]:
         # Scoped like the real query: another project in the shared graph can
         # hold the same relative path, and only a module whose qn is the
         # project name or starts with its prefix goes (issue #2172). A missing
@@ -2153,7 +2178,7 @@ class _StatefulIngestor:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)
-        self._detach_delete(doomed)
+        return doomed
 
     def _delete_project_dependencies(self, project_name: PropertyValue) -> None:
         project = (_PROJECT_LABEL, project_name)

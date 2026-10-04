@@ -7,7 +7,11 @@ import pytest
 from loguru import logger
 
 from codebase_rag import logs as ls
-from codebase_rag.constants import NODE_NAME_INDEXES, NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.constants import (
+    NODE_NAME_INDEXES,
+    NODE_PATH_INDEXES,
+    NODE_UNIQUE_CONSTRAINTS,
+)
 from codebase_rag.cypher_queries import (
     build_create_node_query,
     build_create_relationship_query,
@@ -407,8 +411,14 @@ class TestEnsureConstraints:
             ingestor.ensure_constraints()
 
         # One SHOW, two damage probes, a create-constraint and a
-        # create-index per label, plus a name index per non-name-keyed label.
-        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
+        # create-index per label, plus a name index per non-name-keyed label
+        # and a path index per path-read label.
+        expected_queries = (
+            3
+            + len(NODE_UNIQUE_CONSTRAINTS) * 2
+            + len(NODE_NAME_INDEXES)
+            + len(NODE_PATH_INDEXES)
+        )
         assert call_count == expected_queries
 
     def test_continues_on_name_index_error(self) -> None:
