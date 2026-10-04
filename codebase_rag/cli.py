@@ -1581,6 +1581,7 @@ def check_command(
     fail_on_found: bool = typer.Option(
         False, "--fail-on-found", help=ch.HELP_CHECK_FAIL_ON_FOUND
     ),
+    isolated: bool = typer.Option(False, "--isolated", help=ch.HELP_CHECK_ISOLATED),
 ) -> None:
     from .structural_check import CheckError, indexed_scope, run_check
     from .structural_delta import has_findings
@@ -1607,6 +1608,7 @@ def check_command(
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
                 project_named=project is not None,
+                isolated=isolated,
             )
         except CheckError as error:
             typer.echo(str(error), err=True)
