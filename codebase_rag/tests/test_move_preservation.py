@@ -6,13 +6,22 @@
 from __future__ import annotations
 
 import importlib
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing.move import MoveRefused
 from codebase_rag.editing.transaction import load_history
-from codebase_rag.tests.test_move_op import FIXTURE, _index, _materialise
+from codebase_rag.tests.test_move_op import (
+    FIXTURE,
+    PROJECT,
+    _index,
+    _materialise,
+    _write,
+)
 from codebase_rag.tests.test_move_safety import OTHER, _move, _python
 
 move_mod = importlib.import_module("codebase_rag.editing.move")
@@ -249,3 +258,106 @@ def test_an_import_the_destination_already_has_is_not_a_collision(
         root, "from pkg.core import helper, sep; print(helper(['a']), sep())"
     )
     assert probe.returncode == 0, probe.stderr
+
+
+# --- JavaScript: the moved name stays exported where it was -----------------------
+
+NODE = shutil.which("node")
+# The move writes extensionless specifiers (`./core`), as a bundler takes
+# them; this hook resolves them the same way so plain node can load them.
+RESOLVE_HOOK = """export async function resolve(specifier, context, next) {
+  try {
+    return await next(specifier, context);
+  } catch (error) {
+    if (!specifier.startsWith('.')) throw error;
+    return next(`${specifier}.js`, context);
+  }
+}
+"""
+REGISTER_HOOK = (
+    "import { register } from 'node:module';\n"
+    "register('./hooks.mjs', import.meta.url);\n"
+)
+needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
+
+
+def _node(root: Path, hooks: Path, code: str) -> subprocess.CompletedProcess[str]:
+    assert NODE is not None
+    (root / "package.json").write_text('{"type": "module"}\n')
+    (hooks / "hooks.mjs").write_text(RESOLVE_HOOK)
+    (hooks / "register.mjs").write_text(REGISTER_HOOK)
+    (root / "probe.mjs").write_text(code)
+    return subprocess.run(
+        [NODE, "--import", (hooks / "register.mjs").as_uri(), "probe.mjs"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        encoding=cs.ENCODING_UTF8,
+    )
+
+
+@needs_node
+def test_keep_alias_still_exports_a_js_name_the_old_module_uses(
+    temp_repo: Path, tmp_path: Path
+) -> None:
+    """With the old module still calling the name, `keep_alias` wrote only
+    the local `import { helper }`, so the old path stopped exporting it."""
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export function helper(a) {\n  return a + 1;\n}\n\n"
+        "export function run() {\n  return helper(1);\n}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js", keep_alias=True)
+    assert report.applied, report.message
+    probe = _node(
+        root,
+        tmp_path,
+        "import { helper, run } from './pkg/util.js';\nconsole.log(helper(2), run());\n",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "3 2"
+
+
+@needs_node
+@pytest.mark.parametrize("keep_alias", [False, True], ids=["moved", "kept"])
+def test_a_js_export_list_entry_follows_the_moved_definition(
+    temp_repo: Path, tmp_path: Path, keep_alias: bool
+) -> None:
+    """`export { helper }` is its own statement, and the cut took only the
+    declaration: the destination did not export `helper`, so the old
+    module's import of it back, and every rewritten importer, failed to
+    link."""
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "function helper(a) {\n  return a + 1;\n}\n\n"
+        "function other() {\n  return 'o';\n}\n\n"
+        "export function run() {\n  return helper(1);\n}\n\n"
+        "export { helper, other };\n",
+    )
+    _write(
+        root,
+        "pkg/a.js",
+        "import { helper } from './util';\n\n"
+        "export function go() {\n  return helper(2);\n}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js", keep_alias=keep_alias)
+    assert report.applied, report.message
+    util = (root / "pkg/util.js").read_text()
+    assert ("helper, other" in util) is keep_alias
+    probe = _node(
+        root,
+        tmp_path,
+        "import { go } from './pkg/a.js';\n"
+        "import { run, other } from './pkg/util.js';\n"
+        "import { helper } from './pkg/core.js';\n"
+        + ("import { helper as kept } from './pkg/util.js';\n" if keep_alias else "")
+        + "console.log(go(), run(), other(), helper(0));\n",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "3 2 o 1"
