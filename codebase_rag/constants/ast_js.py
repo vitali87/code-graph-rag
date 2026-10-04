@@ -66,6 +66,14 @@ TS_NON_NULL_EXPRESSION = "non_null_expression"
 TS_CAST_WRAPPER_TYPES = frozenset(
     {TS_AS_EXPRESSION, TS_SATISFIES_EXPRESSION, TS_NON_NULL_EXPRESSION}
 )
+# The legacy angle-bracket cast `<T>x`, whose type sits in its type_arguments.
+TS_TYPE_ASSERTION = "type_assertion"
+TS_TYPE_ARGUMENTS = "type_arguments"
+# What a call receiver passes through without changing its type: parens,
+# `x!` and `x satisfies T` (issue #2890).
+TS_TYPE_KEEPING_WRAPPERS = frozenset(
+    {"parenthesized_expression", TS_NON_NULL_EXPRESSION, TS_SATISFIES_EXPRESSION}
+)
 
 # JS/TS ingest node types
 TS_PAIR = "pair"
