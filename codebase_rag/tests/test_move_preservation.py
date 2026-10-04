@@ -507,3 +507,45 @@ def test_a_type_checking_import_that_would_rebind_a_destination_name_refuses(
     with pytest.raises(MoveRefused, match="already binds Model"):
         _move(root, store, updater)
     assert (root / "pkg/core.py").read_text() == "Model = 1\n"
+
+
+# --- removing the export takes the export, not its line ---------------------------
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "line",
+    [
+        "export { helper }; registerPlugin();",
+        "registerPlugin(); export { helper };",
+        "export { helper, other }; registerPlugin();",
+    ],
+)
+def test_a_statement_sharing_the_export_line_stays(
+    temp_repo: Path, tmp_path: Path, line: str
+) -> None:
+    """The sole `export { helper }` was removed with its whole line, and
+    `registerPlugin()` on it with it: the old module silently stopped
+    registering anything on load."""
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        "export const plugins = [];\n\n"
+        "function registerPlugin() {\n  plugins.push('p');\n}\n\n"
+        "function helper(a) {\n  return a + 1;\n}\n\n"
+        "function other() {\n  return 'o';\n}\n\n"
+        f"{line}\n",
+    )
+    store, updater = _index(root)
+    report = _move(root, store, updater, target="pkg/core.js")
+    assert report.applied, report.message
+    probe = _node(
+        root,
+        tmp_path,
+        "import { plugins } from './pkg/util.js';\n"
+        "import { helper } from './pkg/core.js';\n"
+        "console.log(plugins.length, helper(1));\n",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "1 2"
