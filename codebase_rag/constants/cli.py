@@ -923,6 +923,10 @@ DICT_KEY_RESULTS = "results"
 DICT_KEY_ERROR = "error"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
+# Without the encoding's BPE file, which tiktoken downloads on first use, a
+# token is estimated as this many bytes of UTF-8: about what cl100k_base
+# averages on code and JSON (issue #2914).
+TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRUNCATED = (
     "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
