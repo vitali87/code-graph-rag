@@ -889,6 +889,16 @@ MOVE_MAYBE_UNBOUND = (
     "try or loop that does not bind it on every path, so the moved "
     "definition cannot import it safely"
 )
+MOVE_SPLIT_GLOBAL = (
+    "{names} is a variable of {path} rebound through a global statement; "
+    "the destination would import it as a separate copy, so the moved "
+    "definition and {path} would stop seeing each other's updates"
+)
+MOVE_ASSIGNS_IMPORT = (
+    "{names} is a variable of {path} that the moved definition assigns; "
+    "imported into the destination it is a read-only binding, so the "
+    "assignment would throw"
+)
 MOVE_RELATIVE_IMPORT_ESCAPES = (
     "{statement} in {qn} climbs above the top-level package of {path}, so "
     "the move cannot respell it for the destination"
