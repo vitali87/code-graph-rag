@@ -31,7 +31,18 @@ VIEW = f"{P}.app.views.direct"
 SINK = f"{P}.app.db.run_query"
 OTHER_SOURCE = f"{CLI}.app.inputs.read_user_input"
 ENV = "ENV::SEARCH_TERM"
-NODES = {SOURCE, VIEW, SINK, OTHER_SOURCE, f"{CLI}.app.db.run_query", ENV}
+# A project registered under a dotted name inside this one's prefix.
+NESTED = f"{P}.v2"
+NESTED_SOURCE = f"{NESTED}.api.read"
+NODES = {
+    SOURCE,
+    VIEW,
+    SINK,
+    OTHER_SOURCE,
+    f"{CLI}.app.db.run_query",
+    ENV,
+    NESTED_SOURCE,
+}
 EDGES = [(SOURCE, VIEW), (VIEW, SINK), (ENV, SOURCE)]
 
 
@@ -64,11 +75,10 @@ def _fetch_all(query: str, params: PropertyParams | None = None) -> list[ResultR
     raise AssertionError(query[:60])
 
 
-@pytest.fixture
-def registry(tmp_path: Path) -> MCPToolsRegistry:
+def _registry(tmp_path: Path, projects: list[str]) -> MCPToolsRegistry:
     ingestor = MagicMock()
     ingestor.fetch_all = MagicMock(side_effect=_fetch_all)
-    ingestor.list_projects.return_value = [CLI, P]
+    ingestor.list_projects.return_value = projects
     with patch("codebase_rag.mcp.tools.load_parsers", return_value=({}, {})):
         registry = MCPToolsRegistry(
             project_root=str(tmp_path), ingestor=ingestor, cypher_gen=MagicMock()
@@ -76,6 +86,11 @@ def registry(tmp_path: Path) -> MCPToolsRegistry:
     registry._fixed_root_project = MagicMock(return_value=(P, None))
     registry._incomplete_refusal = MagicMock(return_value=None)
     return registry
+
+
+@pytest.fixture
+def registry(tmp_path: Path) -> MCPToolsRegistry:
+    return _registry(tmp_path, [CLI, P])
 
 
 @pytest.mark.anyio
@@ -114,6 +129,20 @@ async def test_a_source_of_another_project_names_that_project(
 
     assert "verdict" not in result
     assert f"belongs to project '{CLI}'" in result[cs.DICT_KEY_ERROR]
+
+
+@pytest.mark.anyio
+async def test_a_source_of_a_nested_project_names_that_project(
+    tmp_path: Path,
+) -> None:
+    # `NESTED` sits under this project's prefix but is a project of its own,
+    # and the flow walk's prefix match would read its edges as this one's.
+    registry = _registry(tmp_path, [CLI, P, NESTED])
+
+    result = await registry.flow_verdict(NESTED_SOURCE, SINK)
+
+    assert "verdict" not in result
+    assert f"belongs to project '{NESTED}'" in result[cs.DICT_KEY_ERROR]
 
 
 # Negative: what must not change.

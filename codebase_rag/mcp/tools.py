@@ -2741,18 +2741,12 @@ class MCPToolsRegistry:
 
     def _other_owner(self, project_name: str, qualified_name: str) -> str | None:
         # The longest registered project the name sits under, when it is not
-        # this one: project names may contain dots.
-        if qualified_name == project_name or qualified_name.startswith(
-            f"{project_name}{cs.SEPARATOR_DOT}"
-        ):
-            return None
-        owners = [
-            name
-            for name in self.ingestor.list_projects()
-            if qualified_name == name
-            or qualified_name.startswith(f"{name}{cs.SEPARATOR_DOT}")
-        ]
-        return max(owners, key=len) if owners else None
+        # this one: project names may contain dots, so a name under this
+        # project's prefix can still belong to `<project>.v2`.
+        owner = self._name_owner(
+            qualified_name, [*self.ingestor.list_projects(), project_name]
+        )
+        return owner if owner != project_name else None
 
     def _unknown_target_error(self, project_name: str, target: str) -> str | None:
         fetch_all = self.ingestor.fetch_all
