@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import re
+import symtable
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -48,7 +49,13 @@ from .imports import (
     _relative_specifier,
     _split_names,
 )
-from .patcher import Patcher, PatcherError
+from .patcher import (
+    Patcher,
+    PatcherError,
+    SpanEdit,
+    apply_span_edits,
+    line_col_to_byte,
+)
 from .rename import _name_token
 from .transaction import (
     EditTransaction,
@@ -79,6 +86,8 @@ _TS_FUTURE_IMPORT = "future_import_statement"
 _TS_HASH_BANG = "hash_bang_line"
 _PROLOGUE_TYPES = frozenset({_TS_HASH_BANG, _TS_FUTURE_IMPORT})
 _PINNED_COMMENT_LINES = 2
+# What a cut that ends mid-line swallows after the definition.
+_INLINE_SPACE = (b" ", b"\t")
 # `import D, * as ns, { a } from ...`: the clause between the keyword and
 # `from`, and the one-binding clauses it is split into.
 _JS_FROM = re.compile(r"\s+from\s+(?=['\"])")
@@ -86,6 +95,39 @@ _JS_NAMESPACE = re.compile(r"\*\s*as\s+(?P<name>[\w$]+)")
 # A TS inline type-only entry (`{ type Foo }`) binds `Foo`; the modifier
 # must be set aside before comparing, but `{ type }` alone is a real name.
 _TS_INLINE_TYPE = re.compile(r"^type\s+(?=\S)")
+# Module-level statements whose bodies may run once, many times or never,
+# and the nodes opening a scope of their own: a name bound inside one is
+# not a module binding (a definition's own name is).
+_PY_FLOW = (
+    ast.If,
+    ast.Try,
+    ast.TryStar,
+    ast.With,
+    ast.AsyncWith,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.Match,
+)
+_PY_SCOPES = (
+    ast.Lambda,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+_PY_STAR = "*"
+_MODULE_SCOPE = "module"
+_SYMTABLE_FILENAME = "<moved>"
+_SYMTABLE_MODE = "exec"
+# `if TYPE_CHECKING:` binds its imports for the type checker only. They are
+# carried under the same guard rather than refused as maybe-unbound, since
+# annotations are the one use that never needs them at runtime.
+_TYPE_CHECKING = "TYPE_CHECKING"
+_TYPE_CHECKING_GUARDS = frozenset({_TYPE_CHECKING, f"typing.{_TYPE_CHECKING}"})
+_TYPE_CHECKING_IMPORT = f"from typing import {_TYPE_CHECKING}"
+_TYPE_CHECKING_HEAD = f"if {_TYPE_CHECKING}:\n"
+_PY_INDENT = "    "
 
 
 class MoveRefused(ValueError):
@@ -123,6 +165,8 @@ class _Cut(NamedTuple):
 class _NeededImport(NamedTuple):
     statement: str
     target_qn: str
+    # The one name the statement binds at the destination.
+    local: str
 
 
 def _text(node: Node | None) -> str:
@@ -176,6 +220,188 @@ def _uses(text: str, name: str) -> bool:
     return re.search(_IDENTIFIER % re.escape(name), text) is not None
 
 
+def _py_bound(node: ast.AST) -> set[str]:
+    """Every module-scope name `node` can bind, on whichever path it runs."""
+    names: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names.add(current.name)
+            continue
+        if isinstance(current, _PY_SCOPES) or (
+            # `x: int` declares `x` without binding it.
+            isinstance(current, ast.AnnAssign) and current.value is None
+        ):
+            continue
+        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Store):
+            names.add(current.id)
+        elif isinstance(current, ast.Import | ast.ImportFrom):
+            names.update(
+                alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0]
+                for alias in current.names
+                if alias.name != _PY_STAR
+            )
+        elif (
+            isinstance(current, ast.ExceptHandler | ast.MatchAs | ast.MatchStar)
+            and current.name
+        ):
+            names.add(current.name)
+        elif isinstance(current, ast.MatchMapping) and current.rest:
+            names.add(current.rest)
+        stack.extend(ast.iter_child_nodes(current))
+    return names
+
+
+def _meet(left: set[str] | None, right: set[str] | None) -> set[str] | None:
+    # None is a path that never completes, which binds everything vacuously.
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left & right
+
+
+def _py_definite(body: list[ast.stmt]) -> set[str] | None:
+    """Names certainly bound once `body` completes; None when it never does.
+
+    Conservative where it cannot tell: a loop may run zero times and a
+    `match` may match nothing, so neither binds anything for certain.
+    """
+    names: set[str] = set()
+    for statement in body:
+        if isinstance(statement, ast.Raise):
+            return None
+        if isinstance(statement, ast.If):
+            bound = _meet(_py_definite(statement.body), _py_definite(statement.orelse))
+        elif isinstance(statement, ast.Try | ast.TryStar):
+            bound = _py_definite(statement.body + statement.orelse)
+            for handler in statement.handlers:
+                bound = _meet(bound, _py_definite(handler.body))
+            final = _py_definite(statement.finalbody)
+            bound = None if bound is None or final is None else bound | final
+        elif isinstance(statement, ast.With | ast.AsyncWith):
+            bound = _py_definite(statement.body)
+            if bound is not None:
+                for item in statement.items:
+                    if item.optional_vars is not None:
+                        bound |= _py_bound(item.optional_vars)
+        elif isinstance(statement, _PY_FLOW):
+            bound = set()
+        else:
+            bound = _py_bound(statement)
+        if bound is None:
+            return None
+        names |= bound
+    return names
+
+
+def _flow_bindings(source: bytes) -> tuple[frozenset[str], frozenset[str]]:
+    """(carried, unsafe): module names bound under top-level control flow.
+
+    `carried` are bound on every path that loads the module, and only
+    there, so the destination can import them back like any constant;
+    `unsafe` may be left unbound, and importing one by name would fail
+    on load wherever the old module skipped it, where before only a call
+    reaching it failed. Names a top-level statement binds are neither:
+    `_bindings` and `_needed_imports` already account for them.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return frozenset(), frozenset()
+    simple: set[str] = set()
+    anywhere: set[str] = set()
+    for statement in tree.body:
+        bound = _py_bound(statement)
+        anywhere |= bound
+        if not isinstance(statement, _PY_FLOW):
+            simple |= bound
+    definite = _py_definite(tree.body) or set()
+    return frozenset(definite - simple), frozenset(anywhere - definite)
+
+
+def _global_references(text: str) -> set[str] | None:
+    """Module-scope names the Python `text` reads; None when it won't parse.
+
+    Scoped, unlike `_uses`: a refusal on a name the moved code only binds
+    locally (a loop variable sharing a module-level loop's name) would
+    refuse a move that is safe.
+    """
+    try:
+        table = symtable.symtable(text, _SYMTABLE_FILENAME, _SYMTABLE_MODE)
+    except SyntaxError:
+        return None
+    names: set[str] = set()
+    tables = [table]
+    while tables:
+        current = tables.pop()
+        tables.extend(current.get_children())
+        at_module = current.get_type() == _MODULE_SCOPE
+        names.update(
+            symbol.get_name()
+            for symbol in current.get_symbols()
+            if symbol.is_referenced() and (at_module or symbol.is_global())
+        )
+    return names
+
+
+def _type_checking_imports(
+    source: bytes, old_path: str, new_path: str
+) -> dict[str, str]:
+    """Names an import under a top-level `if TYPE_CHECKING:` binds, each
+    with that import narrowed to it and spelled for `new_path`.
+
+    Only a guard without an `else` counts: one with an `else` binds at
+    runtime too, and is control flow like any other `if`.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if (
+            not isinstance(node, ast.If)
+            or node.orelse
+            or ast.unparse(node.test) not in _TYPE_CHECKING_GUARDS
+        ):
+            continue
+        for statement in node.body:
+            if isinstance(statement, ast.ImportFrom):
+                module = _rebase_py_relative(
+                    cs.SEPARATOR_DOT * statement.level + (statement.module or ""),
+                    old_path,
+                    new_path,
+                )
+                for alias in statement.names:
+                    if alias.name != _PY_STAR:
+                        out.setdefault(
+                            alias.asname or alias.name,
+                            f"from {module} import {ast.unparse(alias)}",
+                        )
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    out.setdefault(
+                        alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0],
+                        f"import {ast.unparse(alias)}",
+                    )
+    return out
+
+
+def _type_checking_block(root: Node) -> Node | None:
+    """The body of a module's top-level `if TYPE_CHECKING:`, if it has one."""
+    for child in root.children:
+        if (
+            child.type == cs.TS_PY_IF_STATEMENT
+            and child.child_by_field_name(cs.FIELD_ALTERNATIVE) is None
+            and _text(child.child_by_field_name(cs.TS_FIELD_CONDITION))
+            in _TYPE_CHECKING_GUARDS
+        ):
+            return child.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+    return None
+
+
 def _definition_at(root: Node, line: int, col: int) -> Node | None:
     """The outermost definition whose own name token starts at (line, col)."""
     stack = [root]
@@ -207,6 +433,23 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     ):
         first = sibling
         sibling = sibling.prev_named_sibling
+    # Whole lines, unless other code shares the first or the last one
+    # (`function f() {} console.log('ready');` in JS): the whole-line cut
+    # deleted that statement from the old module and pasted it at the
+    # destination. Then only the definition's own bytes are cut.
+    before, after = first.prev_named_sibling, target.next_named_sibling
+    if (before is not None and before.end_point[0] == first.start_point[0]) or (
+        after is not None
+        and after.type != cs.TS_COMMENT
+        and after.start_point[0] == target.end_point[0]
+    ):
+        end = target.end_byte
+        while source[end : end + 1] in _INLINE_SPACE:
+            end += 1
+        text = source[first.start_byte : target.end_byte].decode(
+            cs.ENCODING_UTF8, errors="replace"
+        )
+        return _Cut(first.start_byte, end, text)
     start = source.rfind(b"\n", 0, first.start_byte) + 1
     end = source.find(b"\n", target.end_byte)
     end = len(source) if end < 0 else end + 1
@@ -399,17 +642,52 @@ class Mover:
         target_root: Node | None = None
         if existing is not None:
             _language, target_root = self._parse(new_path, existing)
-            if name in self._bindings(target_root):
-                raise MoveRefused(self._COLLISION.format(path=new_path, name=name))
         cut = _cut_span(source, node)
-        remainder = (source[: cut.start] + source[cut.end :]).decode(
+        # A JS definition exported by its own `export { helper }` lost the
+        # export with the cut: the destination did not export it, and every
+        # rewritten importer (and the old module's import of it back)
+        # failed to link. The entry moves with it unless `keep_alias`.
+        listed = (
+            self._listed_exports(source, root, name)
+            if language in _JS_LANGUAGES
+            else []
+        )
+        old_edits = [SpanEdit(cut.start, cut.end, b"")]
+        if not keep_alias:
+            old_edits.extend(listed)
+        remainder = apply_span_edits(source, old_edits).decode(
             cs.ENCODING_UTF8, errors="replace"
         )
 
+        old_spelled = _strip_project(old_module, self.project)
+        new_spelled = _strip_project(new_module, self.project)
         needed = self._needed_imports(
-            old_module, old_path, new_path, cut.text, language
+            old_module, old_path, new_path, source, root, cut.text, language
         )
         old_bindings = self._bindings(root)
+        guarded: dict[str, str] = {}
+        if language == cs.SupportedLanguage.PYTHON:
+            # `_bindings` reads top-level statements only, so a constant set
+            # in both branches of an `if` was left behind (a NameError once
+            # moved); a name some path leaves unbound cannot be carried.
+            carried, unsafe = _flow_bindings(source)
+            reads = _global_references(cut.text)
+            unbound = sorted(
+                n
+                for n in unsafe
+                if n != name
+                and (n in reads if reads is not None else _uses(cut.text, n))
+            )
+            typed = _type_checking_imports(source, old_path, new_path)
+            guarded = {n: typed[n] for n in unbound if n in typed}
+            unbound = [n for n in unbound if n not in guarded]
+            if unbound:
+                raise MoveRefused(
+                    cs.MOVE_MAYBE_UNBOUND.format(
+                        names=cs.SEPARATOR_COMMA_SPACE.join(unbound), path=old_path
+                    )
+                )
+            old_bindings = {**dict.fromkeys(carried, False), **old_bindings}
         from_old = self._needed_from_old(old_path, cut.text, name, old_bindings)
         if language in _JS_LANGUAGES:
             # `import { X }` of a name the module never exported is a load
@@ -419,6 +697,23 @@ class Mover:
                 raise MoveRefused(
                     self._NOT_EXPORTED.format(names=", ".join(hidden), path=old_path)
                 )
+        if existing is not None:
+            assert target_root is not None
+            self._refuse_collisions(
+                existing,
+                target_root,
+                old_module,
+                new_module,
+                new_path,
+                name,
+                needed,
+                self._from_old_statement(
+                    from_old, old_spelled, old_path, new_path, language
+                ),
+                from_old,
+                guarded,
+                language,
+            )
         old_uses = _uses(remainder, name)
         # The cycle check runs on the graph BEFORE any file is touched.
         self._refuse_cycles(
@@ -434,11 +729,9 @@ class Mover:
             language,
         )
 
-        old_spelled = _strip_project(old_module, self.project)
-        new_spelled = _strip_project(new_module, self.project)
         # 1. Cut from the old module, import the name back when still used.
-        replacement = ""
-        patcher.replace_span(old_path, (cut.start, cut.end), replacement)
+        for edit in old_edits:
+            patcher.replace_span(old_path, (edit.start, edit.end), edit.text)
         if old_uses or keep_alias:
             self._add_import(
                 patcher,
@@ -449,12 +742,33 @@ class Mover:
                 new_spelled,
                 new_path,
                 name,
-                export=keep_alias and not old_uses,
+                use=old_uses,
+                # An export list `keep_alias` left in place already exports it.
+                export=keep_alias and not listed,
             )
         # 2. Paste into the target with what it needs.
-        paste = self._paste_text(
-            cut.text, needed, from_old, old_spelled, old_path, new_path, language
+        guard_lines, guard_head = self._place_guarded(
+            patcher, existing, target_root, guarded, new_path
         )
+        paste = self._paste_text(
+            cut.text,
+            needed,
+            from_old,
+            old_spelled,
+            old_path,
+            new_path,
+            language,
+            guard_lines,
+            guard_head,
+        )
+        if (
+            language in _JS_LANGUAGES
+            and top.type != cs.TS_EXPORT_STATEMENT
+            and (listed or old_uses or keep_alias)
+        ):
+            # Whatever imports it from the destination needs it exported
+            # there: the rewritten importers, and the old module.
+            paste += f"\nexport {{ {name} }};\n"
         # `from __future__ import annotations` is never referenced by name,
         # so the use filter above drops it, and without it the destination
         # evaluates the moved annotations eagerly: a forward reference that
@@ -518,7 +832,7 @@ class Mover:
             files=tuple(files),
             importers=tuple(sorted(importers)),
             unchanged_importers=tuple(sorted(unchanged)),
-            copied_imports=tuple(n.statement for n in needed),
+            copied_imports=tuple(n.statement for n in needed) + tuple(guarded.values()),
             diff=self._preview_diff(patcher, new_path, new_content),
             message=cs.MOVE_PLANNED.format(
                 importers=len(importers), unchanged=len(unchanged)
@@ -592,6 +906,57 @@ class Mover:
             if named in bound:
                 bound[named] = True
         return bound
+
+    @staticmethod
+    def _listed_exports(source: bytes, root: Node, name: str) -> list[SpanEdit]:
+        """The edits that take `name` out of the module's `export { ... }`
+        lists: the entry alone, or the whole statement when it was the only
+        one. Only an unaliased entry is taken, since importers of `name`
+        are rewritten to the destination; an alias (`helper as h`) stays,
+        and the old module imports the name back for it.
+        """
+        edits: list[SpanEdit] = []
+        for child in root.children:
+            if (
+                child.type != cs.TS_EXPORT_STATEMENT
+                or child.child_by_field_name(cs.FIELD_SOURCE) is not None
+            ):
+                continue
+            clause = next(
+                (c for c in child.named_children if c.type == cs.TS_EXPORT_CLAUSE),
+                None,
+            )
+            if clause is None:
+                continue
+            specs = [
+                spec
+                for spec in clause.named_children
+                if spec.type == cs.TS_EXPORT_SPECIFIER
+            ]
+            kept = [
+                _text(spec)
+                for spec in specs
+                if _text(spec.child_by_field_name(cs.FIELD_NAME)) != name
+                or spec.child_by_field_name(cs.FIELD_ALIAS) is not None
+            ]
+            if len(kept) == len(specs):
+                continue
+            if kept:
+                edits.append(
+                    SpanEdit(
+                        clause.start_byte,
+                        clause.end_byte,
+                        f"{{ {', '.join(kept)} }}".encode(cs.ENCODING_UTF8),
+                    )
+                )
+                continue
+            start = source.rfind(b"\n", 0, child.start_byte) + 1
+            end = _line_end(source, child)
+            # Swallow the blank lines that separated it from what follows.
+            while source[end : end + 1] == b"\n":
+                end += 1
+            edits.append(SpanEdit(start, end, b""))
+        return edits
 
     @staticmethod
     def _bound_names(node: Node) -> list[str]:
@@ -672,10 +1037,25 @@ class Mover:
         old_module: str,
         old_path: str,
         new_path: str,
+        source: bytes,
+        root: Node,
         moved_text: str,
         language: cs.SupportedLanguage | None,
     ) -> list[_NeededImport]:
-        """The old module's import statements the moved text relies on."""
+        """The old module's import statements the moved text relies on.
+
+        Only the module's own top-level imports are copied. The graph holds
+        an import written inside a function as well, and pasting that one at
+        the destination's top level makes an import the function ran only
+        on demand (an optional backend) run, and fail, on load. One inside
+        the moved definition travels with its text; one under a top-level
+        `if` or `try` is a module binding, left to `_flow_bindings`.
+        """
+        top_level = [
+            (child.start_byte, child.end_byte)
+            for child in root.children
+            if child.type in _IMPORT_TYPES
+        ]
         rows = self.fetch_all(
             cq.CYPHER_GRAPH_IMPORTS_OF,
             {
@@ -683,7 +1063,6 @@ class Mover:
                 cs.KEY_QN: old_module,
             },
         )
-        source = Patcher(self.repo_root).source(old_path)
         out: dict[str, _NeededImport] = {}
         for row in rows:
             alias = row.get(cs.KEY_ALIAS)
@@ -699,6 +1078,12 @@ class Mover:
             imported_raw = row.get(cs.KEY_IMPORTED_NAME)
             imported = imported_raw if isinstance(imported_raw, str) else None
             if not _uses(moved_text, bound):
+                continue
+            try:
+                at = line_col_to_byte(source, line, col)
+            except PatcherError:
+                continue
+            if not any(start <= at < end for start, end in top_level):
                 continue
             site = ImportSite(
                 old_path,
@@ -720,7 +1105,7 @@ class Mover:
             ):
                 continue
             target = str(row.get(cs.KEY_TO_QN) or "")
-            out.setdefault(narrowed, _NeededImport(narrowed, target))
+            out.setdefault(narrowed, _NeededImport(narrowed, target, bound))
         return list(out.values())
 
     def _needed_from_old(
@@ -849,8 +1234,17 @@ class Mover:
         new_spelled: str,
         new_path: str,
         name: str,
+        use: bool,
         export: bool,
     ) -> None:
+        """Import `name` back into the old module (`use`), re-export it
+        from there (`export`), or both.
+
+        Both is JavaScript's case only: a Python import of the name is
+        already a re-export, but a JS import is not, and writing just the
+        import when the old module still used the name took the old path
+        away from every external importer `keep_alias` was meant to keep.
+        """
         at = _import_block_end(source, root)
         if not at and language == cs.SupportedLanguage.PYTHON:
             # No imports: offset 0 would push a shebang, an encoding line or
@@ -858,14 +1252,15 @@ class Mover:
             at = self._head_end(source, root)
         if language in _JS_LANGUAGES:
             spec = _relative_specifier(path, new_path)
-            line = (
-                f"export {{ {name} }} from '{spec}';\n"
-                if export
-                else f"import {{ {name} }} from '{spec}';\n"
-            )
+            if not use:
+                line = f"export {{ {name} }} from '{spec}';\n"
+            else:
+                line = f"import {{ {name} }} from '{spec}';\n"
+                if export:
+                    line += f"export {{ {name} }};\n"
         else:
             line = f"from {new_spelled} import {name}\n"
-            if export:
+            if export and not use:
                 line = f"from {new_spelled} import {name}  # noqa: F401  (moved; re-exported for compatibility)\n"
         patcher.replace_span(path, (at, at), line if at else line + "\n")
 
@@ -878,16 +1273,151 @@ class Mover:
         old_path: str,
         new_path: str,
         language: cs.SupportedLanguage | None,
+        guarded: list[str],
+        guard_head: bool,
     ) -> str:
         lines = [n.statement.rstrip("\n") for n in needed]
-        if from_old:
-            if language in _JS_LANGUAGES:
-                spec = _relative_specifier(new_path, old_path)
-                lines.append(f"import {{ {', '.join(from_old)} }} from '{spec}';")
-            else:
-                lines.append(f"from {old_spelled} import {', '.join(from_old)}")
+        statement = self._from_old_statement(
+            from_old, old_spelled, old_path, new_path, language
+        )
+        if statement is not None:
+            lines.append(statement)
+        if guard_head:
+            lines.append(_TYPE_CHECKING_IMPORT)
         header = "\n".join(lines)
+        if guarded:
+            block = _TYPE_CHECKING_HEAD + "\n".join(_PY_INDENT + g for g in guarded)
+            header = (header + "\n\n" if header else "") + block
         return (header + "\n\n\n" if header else "") + moved.rstrip("\n") + "\n"
+
+    def _place_guarded(
+        self,
+        patcher: Patcher,
+        existing: bytes | None,
+        target_root: Node | None,
+        guarded: dict[str, str],
+        new_path: str,
+    ) -> tuple[list[str], bool]:
+        """Put the TYPE_CHECKING-only imports under the destination's guard.
+
+        Merged into the destination's own `if TYPE_CHECKING:` when it has
+        one (and an import it already holds is not repeated); otherwise
+        returned for `_paste_text` to write in a new guard, with whether
+        `TYPE_CHECKING` itself must be imported for it.
+        """
+        language = cs.SupportedLanguage.PYTHON
+        if not guarded:
+            return [], False
+        if existing is None or target_root is None:
+            return list(guarded.values()), True
+        held = self._import_texts(existing, target_root, new_path)
+        lines = [
+            statement
+            for local, statement in guarded.items()
+            if not any(
+                _binding_key(other, local, language, new_path)
+                == _binding_key(statement, local, language, new_path)
+                for other in held
+            )
+        ]
+        block = _type_checking_block(target_root)
+        if block is None:
+            binds_flag = _TYPE_CHECKING in self._bindings(target_root) or any(
+                _binding_key(other, _TYPE_CHECKING, language, new_path) is not None
+                for other in held
+            )
+            return lines, bool(lines) and not binds_flag
+        if lines:
+            at = _line_end(existing, block)
+            indent = " " * block.named_children[0].start_point[1]
+            text = "".join(f"{indent}{line}\n" for line in lines)
+            if at == len(existing) and not existing.endswith(b"\n"):
+                text = "\n" + text
+            patcher.replace_span(new_path, (at, at), text)
+        return [], False
+
+    @staticmethod
+    def _import_texts(source: bytes, root: Node, path: str) -> list[str]:
+        """A Python module's top-level imports and its TYPE_CHECKING ones."""
+        top = [_text(c) for c in root.children if c.type in _IMPORT_TYPES]
+        return top + list(_type_checking_imports(source, path, path).values())
+
+    @staticmethod
+    def _from_old_statement(
+        from_old: list[str],
+        old_spelled: str,
+        old_path: str,
+        new_path: str,
+        language: cs.SupportedLanguage | None,
+    ) -> str | None:
+        """The import the destination needs of the old module's names."""
+        if not from_old:
+            return None
+        if language in _JS_LANGUAGES:
+            spec = _relative_specifier(new_path, old_path)
+            return f"import {{ {', '.join(from_old)} }} from '{spec}';"
+        return f"from {old_spelled} import {', '.join(from_old)}"
+
+    def _refuse_collisions(
+        self,
+        existing: bytes,
+        target_root: Node,
+        old_module: str,
+        new_module: str,
+        new_path: str,
+        name: str,
+        needed: list[_NeededImport],
+        from_old_statement: str | None,
+        from_old: list[str],
+        guarded: dict[str, str],
+        language: cs.SupportedLanguage | None,
+    ) -> None:
+        """Refuse when anything the move binds at the destination rebinds
+        a name the destination already binds to something else.
+
+        Checking the moved name alone let a pasted `from pkg.util import
+        RATE` replace the destination's own `RATE`, and every existing
+        reader of it silently saw the old module's value. An import that
+        binds the name to what it is already bound to replaces nothing.
+        """
+        defined = set(self._bindings(target_root))
+        imports = [_text(c) for c in target_root.children if c.type in _IMPORT_TYPES]
+        if language == cs.SupportedLanguage.PYTHON:
+            carried, unsafe = _flow_bindings(existing)
+            # A TYPE_CHECKING import is compared like any import: binding
+            # the same name to the same thing under the guard is no clash.
+            typed = _type_checking_imports(existing, new_path, new_path)
+            defined |= carried | (unsafe - typed.keys())
+            imports.extend(typed.values())
+        # The destination's own import of the moved name from the old
+        # module is rewired by the move, not rebound by it.
+        rewired = any(
+            row["module"] == new_module and row["imported_name"] == name
+            for row in graph_query.importers(self.fetch_all, self.project, old_module)
+        )
+        if name in defined or (
+            not rewired
+            and any(
+                _binding_key(other, name, language, new_path) is not None
+                for other in imports
+            )
+        ):
+            raise MoveRefused(self._COLLISION.format(path=new_path, name=name))
+        added = [(n.local, n.statement) for n in needed]
+        if from_old_statement is not None:
+            added.extend((n, from_old_statement) for n in from_old)
+        added.extend(guarded.items())
+        for local, statement in added:
+            key = _binding_key(statement, local, language, new_path)
+            if local in defined or any(
+                other_key is not None and other_key != key
+                for other_key in (
+                    _binding_key(other, local, language, new_path) for other in imports
+                )
+            ):
+                raise MoveRefused(
+                    cs.MOVE_IMPORT_COLLISION.format(path=new_path, name=local)
+                )
 
     def _retarget_importers(
         self,
@@ -942,8 +1472,6 @@ class Mover:
         """`pkg.util.helper(...)` through `import pkg.util` follows the move."""
         if language != cs.SupportedLanguage.PYTHON:
             return
-        from .patcher import line_col_to_byte
-
         old_attr = f"{old_spelled}{cs.SEPARATOR_DOT}{name}".encode(cs.ENCODING_UTF8)
         new_attr = f"{new_spelled}{cs.SEPARATOR_DOT}{name}"
         touched: set[str] = set()
@@ -980,13 +1508,33 @@ class Mover:
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
         broken = [key for key, result in results.items() if result.parses is False]
+        # What each staged file held when the move was planned: the patched
+        # bytes the edits were built from, and nothing at a new destination.
+        planned: dict[str, bytes | None] = {key: patcher.source(key) for key in results}
         if new_content is not None:
+            planned[report.new_path] = None
             # `stage_into` parses every patched file; a new destination is
             # not patched, so it gets the same gate here.
             if self._parses(report.new_path, new_content):
                 tx.stage(report.new_path, new_content)
             else:
                 broken.append(report.new_path)
+        # `stage` takes the disk as the baseline, so a file edited (or a
+        # destination created) since planning would be overwritten with
+        # content built from the old bytes, and commit's conflict check
+        # would compare against the edit itself and pass.
+        changed = [
+            staged.path
+            for staged in tx.staged
+            if planned.get(staged.path, staged.before) != staged.before
+        ]
+        if changed:
+            tx.rollback()
+            raise MoveRefused(
+                cs.MOVE_SOURCE_CHANGED.format(
+                    files=cs.SEPARATOR_COMMA_SPACE.join(changed)
+                )
+            )
         if broken:
             tx.rollback()
             return report._replace(
@@ -1091,8 +1639,6 @@ class Mover:
 
 
 def _statement_text(source: bytes, site: ImportSite) -> str:
-    from .patcher import line_col_to_byte
-
     start = line_col_to_byte(source, site.line, site.col)
     end = line_col_to_byte(source, site.end_line, site.end_col)
     return source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
@@ -1125,6 +1671,46 @@ def _narrow_statement(
         module = _rebase_py_relative(module, old_path, new_path)
         return f"from {module} import {kept[0]}"
     return _narrow_py_import(statement, alias)
+
+
+def _binding_key(
+    statement: str,
+    local: str,
+    language: cs.SupportedLanguage | None,
+    path: str,
+) -> tuple[str, ...] | None:
+    """What the import `statement` binds `local` to, in `path`; None when
+    it does not bind `local` at all.
+
+    Two statements that agree on it bind the same thing however they were
+    spelled: `import os` and `import os.path` both bind `os` to `os`.
+    """
+    if language in _JS_LANGUAGES:
+        # A side-effect import (`import './x'`) binds nothing.
+        if _JS_FROM.search(statement) is None:
+            return None
+        narrowed = _narrow_js(statement, local, path, path)
+        return None if narrowed is None else (narrowed.rstrip(";").strip(),)
+    try:
+        tree = ast.parse(statement.strip())
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname == local:
+                    return (alias.name, "", local)
+                if (
+                    alias.asname is None
+                    and alias.name.split(cs.SEPARATOR_DOT)[0] == local
+                ):
+                    return (local, "", local)
+        elif isinstance(node, ast.ImportFrom):
+            module = cs.SEPARATOR_DOT * node.level + (node.module or "")
+            for alias in node.names:
+                if (alias.asname or alias.name) == local:
+                    return (module, alias.name, local)
+    return None
 
 
 def _rebase_py_relative(module: str, old_path: str, new_path: str) -> str:

@@ -970,8 +970,20 @@ MOVE_SAME_MODULE = "{path} already holds the definition"
 MOVE_NO_GRAMMAR = "No grammar for {path}; the definition cannot be moved"
 MOVE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
 MOVE_CYCLE = "Refusing to move: it would create the import cycle {cycle}"
+MOVE_IMPORT_COLLISION = (
+    "{path} already binds {name}; the import the moved definition needs would rebind it"
+)
+MOVE_MAYBE_UNBOUND = (
+    "{names} may be unbound in {path}: it is set under a module-level if, "
+    "try or loop that does not bind it on every path, so the moved "
+    "definition cannot import it safely"
+)
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
+MOVE_SOURCE_CHANGED = (
+    "Cannot stage the move: {files} changed on disk after the move was "
+    "planned; retry once the tree is settled"
+)
 MOVE_CONTRACT_FAILED = "Move rolled back, postcondition failed: {reasons}"
 MOVE_CONTRACT_UNMEASURED = (
     "Move applied, but its postcondition could not be measured: {error}"
