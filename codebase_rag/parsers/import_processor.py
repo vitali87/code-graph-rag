@@ -51,6 +51,7 @@ from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
+from .js_ts.reexports import JsExport, follow_js_reexports
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
@@ -392,6 +393,44 @@ def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
     if imported and local:
         return local, imported
     return None
+
+
+def _js_default_export_local(statement: Node) -> str | None:
+    # The local name `export default` publishes: a named function or class
+    # declaration, or a bare identifier. An anonymous function or any other
+    # expression is known by no name a binding could hold.
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    if declaration is not None:
+        return safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+    value = statement.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(value)
+    return None
+
+
+def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
+    # The (local, exported) names of each `export { local as exported }`
+    # specifier; a comment inside the braces is no specifier.
+    for clause in statement.named_children:
+        if clause.type != cs.TS_EXPORT_CLAUSE:
+            continue
+        for specifier in clause.named_children:
+            local = safe_decode_text(specifier.child_by_field_name(cs.FIELD_NAME))
+            name = (
+                safe_decode_text(specifier.child_by_field_name(cs.FIELD_ALIAS)) or local
+            )
+            if local and name:
+                yield local, name
+
+
+def _is_js_star_reexport(site: PropertyDict | None) -> bool:
+    # `export * from` records `*` as its imported name and binds no alias,
+    # where `import * as ns` binds one.
+    return (
+        site is not None
+        and site.get(cs.KEY_IMPORTED_NAME) == cs.IMPORTED_NAME_WILDCARD
+        and cs.KEY_ALIAS not in site
+    )
 
 
 def _load_jsonc(path: Path) -> dict | None:
@@ -800,6 +839,7 @@ class ImportProcessor:
         "csharp_global_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
+        "python_import_rebinds",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
@@ -818,6 +858,7 @@ class ImportProcessor:
         "_deferred_import_edges",
         "unresolved_specifiers",
         "unresolved_references",
+        "js_export_bindings",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -836,6 +877,8 @@ class ImportProcessor:
         "_rust_workspace_crates",
         "_rust_pkg_deps",
         "_rust_inline_scope_keys",
+        "rust_impl_self_paths",
+        "_rust_impl_self_path_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
@@ -845,6 +888,8 @@ class ImportProcessor:
         "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
+        "rust_restricted_use_names",
+        "_rust_restricted_use_keys",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
@@ -890,6 +935,14 @@ class ImportProcessor:
         # treats a same-named local def as the mutually-exclusive fallback
         # variant ONLY for these; an unconditional import is plain shadowing.
         self.conditional_imports: dict[str, set[str]] = {}
+        # Every target a Python name was bound to, for names its module's
+        # imports bind more than once (`try: import tomllib` / `except
+        # ImportError: import tomli as tomllib`). `import_mapping` keeps one
+        # binding, and plain imports are handled before from-imports whatever
+        # their source order, so the resolver needs all of them to tell a
+        # module that is external on every path from one a branch binds to
+        # first-party code (issue #2360).
+        self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -912,6 +965,13 @@ class ImportProcessor:
         # writes it onto the Module node after Pass 3, and matches an added
         # file against it to find the modules that waited (issue #1568).
         self.unresolved_references: dict[str, set[str]] = {}
+        # JS/TS module qn -> {exported name: what it names}, from every
+        # `export { ... }` (with or without a `from`) and `export default`.
+        # An importer's map holds `<module>.strip`, which names nothing
+        # registered; the call resolver follows it through this table, and
+        # only through it, since a module's own imports are not its exports
+        # (issue #2464).
+        self.js_export_bindings: dict[str, dict[str, JsExport]] = {}
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -972,6 +1032,14 @@ class ImportProcessor:
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
+        # An impl block's registration qn (`<module>.<Type>`) -> the self
+        # types written for it (`std::string::String`, `crate::shadow::String`,
+        # `String`). The qn alone cannot tell an impl on a foreign type from
+        # one on the crate's own same-named type written in another module
+        # (#2595 review); the path, read in the impl's module, can. Keys are
+        # tracked per declaring file for the re-parse drop.
+        self.rust_impl_self_paths: dict[str, set[str]] = {}
+        self._rust_impl_self_path_keys: dict[str, set[str]] = {}
         # Function-body uses parsed BEFORE the file's functions register:
         # the enclosing function's REGISTERED qn (colliding naturals are
         # deduplicated to `natural@<start_line>`) is only knowable after
@@ -1040,6 +1108,15 @@ class ImportProcessor:
         # holds one slot for both namespaces, so a qualified `name::item`
         # reads here and a bare call reads there (issue #1054).
         self.rust_self_module_imports: dict[str, dict[str, str]] = {}
+        # Names a module-level `use` binds with less than `pub` visibility,
+        # per scope qn, each with the module whose subtree alone sees it: the
+        # scope itself for a private (or `pub(self)`) one, the module a
+        # `pub(crate)`/`pub(super)`/`pub(in path)` names. A glob re-export
+        # (`pub use inner::*;`) written outside that subtree does not carry
+        # them (issue #2542, #2599 review). Keys are tracked per declaring
+        # file so a re-parse drops exactly what it wrote.
+        self.rust_restricted_use_names: dict[str, dict[str, str]] = {}
+        self._rust_restricted_use_keys: dict[str, set[str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
         # parsed: whether the key collides with an indexer-registered
         # module is only knowable then (finalise_rust_mod_scope_uses).
@@ -1164,10 +1241,11 @@ class ImportProcessor:
             # top-level names, so a bare top-level import resolves externally.
             if repo_is_package:
                 return module_name == project_name
-            return (
-                (repo_path / module_name).is_dir()
-                or (repo_path / f"{module_name}{cs.EXT_PY}").is_file()
-                or (repo_path / module_name / cs.INIT_PY).is_file()
+            # A top-level stub with no `.py` is a local module too: it is what
+            # a compiled extension's definitions are indexed from (#2445).
+            return (repo_path / module_name).is_dir() or any(
+                (repo_path / f"{module_name}{ext}").is_file()
+                for ext in cs.PY_EXTENSIONS
             )
 
         # Discovered annotation-processor roots (issue #1140): mutated via
@@ -1262,6 +1340,8 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        # Re-derived from the export statements the re-parse finds.
+        self.js_export_bindings.pop(module_qn, None)
         # The Dart prefix maps share the same invariant. Both are written
         # only when the file HAS prefixed imports, so removing the last one
         # left the previous parse's entries in place: a stale alias kept
@@ -1271,6 +1351,20 @@ class ImportProcessor:
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
         self._retract_import_sites(module_qn)
+
+    def displaced_include_targets(self) -> dict[str, frozenset[str]]:
+        """The headers each file includes under a local name a later include
+        took over (#1758), by including module.
+
+        The mapping holds one binding per local name, so these are the rest
+        of what a file includes: `a/util.h` and `b/util.h` both bind `util`,
+        and both are compiled into the file (Greptile, PR #2593).
+        """
+        displaced: dict[str, set[str]] = {}
+        for module_qn, target in self._cpp_shadowed_include_targets:
+            if (module_qn, target) not in self._cpp_declaration_mappings:
+                displaced.setdefault(module_qn, set()).add(target)
+        return {module: frozenset(targets) for module, targets in displaced.items()}
 
     def _defer_module_import_edges(
         self, module_qn: str, language: cs.SupportedLanguage
@@ -1364,6 +1458,9 @@ class ImportProcessor:
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
+        # A re-parse that drops a fallback import must not leave the binding
+        # it removed standing beside the one that remains.
+        self.python_import_rebinds.pop(module_qn, None)
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
@@ -1927,6 +2024,23 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
+        if entry.language in cs.JS_TS_LANGUAGES and _is_js_star_reexport(entry.site):
+            # `export * from "./add"` in `math/index.ts` stores the module
+            # `math.add`, which the resolution above reads as the name `add`
+            # of the `math` barrel: the barrel itself (issue #2464).
+            module_path = (
+                self._verify_internal_import_target(
+                    entry.full_name,
+                    known_module_paths,
+                    module_aliases,
+                    entry.language,
+                    siblings,
+                )
+                or module_path
+            )
+        if module_path == entry.module_qn and entry.language in cs.JS_TS_LANGUAGES:
+            # A module importing itself is no edge.
+            return 0
         self._emit_import_edge(entry, target_label, module_path)
         logger.debug(
             ls.IMP_CREATED_RELATIONSHIP,
@@ -2124,17 +2238,27 @@ class ImportProcessor:
             cs.CAPTURE_IMPORT_FROM, []
         )
         for import_node in all_imports:
-            before = set(self.import_mapping[module_qn])
+            before = dict(self.import_mapping[module_qn])
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
                 self._handle_python_import_from_statement(import_node, module_qn)
             if _is_conditional_import_node(import_node):
-                new_names = set(self.import_mapping[module_qn]) - before
+                new_names = self.import_mapping[module_qn].keys() - before.keys()
                 if new_names:
                     self.conditional_imports.setdefault(module_qn, set()).update(
                         new_names
                     )
+            self._record_python_rebinds(module_qn, before)
+
+    def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
+        mapping = self.import_mapping[module_qn]
+        for name, previous in before.items():
+            current = mapping.get(name)
+            if current is not None and current != previous:
+                self.python_import_rebinds.setdefault(module_qn, {}).setdefault(
+                    name, {previous}
+                ).add(current)
 
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str
@@ -3388,8 +3512,12 @@ class ImportProcessor:
         the EFFECTIVE module of the use declaration, including inline `mod`
         blocks. A head naming a workspace member crate rewrites the same
         way, unless a `mod` in the declaring scope (local_mods) claims it:
-        rustc binds the local module first (issue #1033). External paths
-        (std::fmt) pass through unchanged.
+        rustc binds the local module first (issue #1033). Such a head is the
+        2018-edition spelling of `self::` (`pub mod get; pub use get::Get;`),
+        so it resolves the same way; kept raw it read as an external crate
+        named `get`, and every re-export written like that dead-ended
+        outside the project (issue #2542). External paths (std::fmt) pass
+        through unchanged.
         """
         parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
         head = parts[0]
@@ -3403,11 +3531,11 @@ class ImportProcessor:
                 depth += 1
             base = self._rust_super_base(module_qn, depth)
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
+        if head in local_mods:
+            return self._rust_resolve_relative(module_qn, parts, module_qn)
         if (
-            head not in local_mods
-            and (root := self._rust_workspace_crate_roots().get(head)) is not None
-            and self._rust_member_rewrite_allowed(root[0], module_qn)
-        ):
+            root := self._rust_workspace_crate_roots().get(head)
+        ) is not None and self._rust_member_rewrite_allowed(root[0], module_qn):
             _pkg, dir_parts, stem = root
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
@@ -3610,7 +3738,10 @@ class ImportProcessor:
         if not module_qn.startswith(prefix):
             return False
         rel = module_qn[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
-        return (self.repo_path / rel / cs.INIT_PY).is_file()
+        # A stub-only package's `__init__.pyi` names the package too (#2445).
+        return any(
+            (self.repo_path / rel / init).is_file() for init in cs.PY_PACKAGE_INIT_FILES
+        )
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         # Relative imports are always internal; resolve to the full project-prefixed
@@ -3659,6 +3790,7 @@ class ImportProcessor:
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
+                self._record_js_export_bindings(import_node, module_qn)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
@@ -3964,7 +4096,7 @@ class ImportProcessor:
             return
 
         for child in export_node.children:
-            if child.type == cs.TS_ASTERISK:
+            if child.type == cs.TS_JS_STAR:
                 wildcard_key = f"*{source_module}"
                 self.import_mapping[current_module][wildcard_key] = source_module
                 self._record_import_site(
@@ -4008,6 +4140,53 @@ class ImportProcessor:
             module=source_module,
             original=original_name,
         )
+
+    def follow_js_reexports(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """Where a JS/TS import of `qn` leads through the barrels re-exporting
+        it; see `js_ts.reexports.follow_js_reexports`."""
+        return follow_js_reexports(
+            qn,
+            self.import_mapping,
+            self.js_export_bindings,
+            module_paths,
+            function_registry,
+        )
+
+    def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
+        """Record what each name an `export` statement publishes stands for.
+
+        `export { trim as strip }` and `export default upper` publish a local
+        binding under a name no definition is registered under, and
+        `export { add as plus } from "./add"` another module's export
+        (issue #2464). Recording only exports keeps a barrel's private import
+        of `foo` from standing in for the `foo` it exports through
+        `export *`.
+        """
+        reexport = statement.child_by_field_name(cs.FIELD_SOURCE) is not None
+        exported: dict[str, JsExport] = {}
+        if not reexport and any(
+            child.type == cs.TS_EXPORT_DEFAULT for child in statement.children
+        ):
+            if local := _js_default_export_local(statement):
+                exported[cs.TS_EXPORT_DEFAULT] = JsExport(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{local}", local=True
+                )
+        # `_parse_js_reexport` has just mapped this statement's re-exports.
+        mapped = self.import_mapping.get(module_qn, {})
+        for local, name in _js_export_specifiers(statement):
+            if not reexport:
+                exported[name] = JsExport(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{local}", local=True
+                )
+            elif (target := mapped.get(name)) is not None:
+                exported[name] = JsExport(target, local=False)
+        if exported:
+            self.js_export_bindings.setdefault(module_qn, {}).update(exported)
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -4307,11 +4486,21 @@ class ImportProcessor:
         for _start, _end, items in self.rust_block_items.pop(module_qn, ()):
             self.rust_block_item_qns.difference_update(items.values())
         self.rust_self_module_imports.pop(module_qn, None)
+        for key in self._rust_restricted_use_keys.pop(module_qn, ()):
+            self.rust_restricted_use_names.pop(key, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
             self.import_mapping.pop(key, None)
+        for key in self._rust_impl_self_path_keys.pop(module_qn, ()):
+            self.rust_impl_self_paths.pop(key, None)
+
+    def record_rust_impl_self_path(
+        self, module_qn: str, impl_qn: str, written_path: str
+    ) -> None:
+        self.rust_impl_self_paths.setdefault(impl_qn, set()).add(written_path)
+        self._rust_impl_self_path_keys.setdefault(module_qn, set()).add(impl_qn)
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         self.drop_rust_module_import_state(module_qn)
@@ -4388,12 +4577,52 @@ class ImportProcessor:
             # scope corresponds to the use, and any key would serve a
             # real scope's readers. Keep only the IMPORTS edges.
             return
+        self._record_rust_use_visibility(
+            use_node, module_qn, effective_qn, resolved_imports
+        )
         if not scope_parts:
             self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
             return
         self._commit_rust_mod_scope_use(
             use_node, module_qn, effective_qn, pure_chain, resolved_imports
         )
+
+    def _record_rust_use_visibility(
+        self,
+        use_node: Node,
+        module_qn: str,
+        effective_qn: str,
+        resolved_imports: dict[str, str],
+    ) -> None:
+        # The map has one slot per name and the last `use` writing it wins,
+        # so the slot's visibility follows the same writer.
+        root = self._rust_use_visibility_root(use_node, effective_qn)
+        if root is None:
+            if names := self.rust_restricted_use_names.get(effective_qn):
+                for name in resolved_imports:
+                    names.pop(name, None)
+            return
+        self.rust_restricted_use_names.setdefault(effective_qn, {}).update(
+            dict.fromkeys(resolved_imports, root)
+        )
+        self._rust_restricted_use_keys.setdefault(module_qn, set()).add(effective_qn)
+
+    def _rust_use_visibility_root(
+        self, use_node: Node, effective_qn: str
+    ) -> str | None:
+        # The module whose subtree alone sees what a `use` binds; None for a
+        # plain `pub`, and for a restriction path that leaves the project,
+        # which no glob of it can be outside of.
+        path = rs_utils.use_visibility_path(use_node)
+        if path is None:
+            return None
+        if path == cs.KEYWORD_SELF:
+            return effective_qn
+        root = self._rewrite_rust_local_use_path(path, effective_qn)
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if root == self.project_name or root.startswith(project_prefix):
+            return root
+        return None
 
     def _record_rust_body_scope_use(
         self, scope_node: Node, module_qn: str, resolved_imports: dict[str, str]

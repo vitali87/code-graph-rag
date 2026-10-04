@@ -294,6 +294,10 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+LANG_LIST_AST_GREP_UNREADABLE = (
+    "Cannot read the ast-grep tier's language configs, so its languages are "
+    "left out of the list: {error}"
+)
 
 # Ignore pattern logs
 CGRIGNORE_LOADED = (
@@ -335,6 +339,25 @@ TRUNCATED_SYMBOL_NAME = (
     "UTF-8; the grammar splits the token at the bad byte, so this symbol is "
     "indexed under a truncated name and its callers will not resolve to it "
     "(issue #1810)"
+)
+# PEP 263 declarations the reader cannot honour (issue #2445). Each keeps the
+# file on its old UTF-8 reading, so the run goes on and says why a non-ASCII
+# name may come out damaged.
+PY_ENCODING_UNKNOWN = (
+    "{path}: the source declares the encoding {codec!r}, which Python does "
+    "not know; reading it as UTF-8"
+)
+PY_ENCODING_UNSUPPORTED = (
+    "{path}: the declared encoding {codec!r} is not an ASCII-compatible text "
+    "encoding, as PEP 263 requires; reading it as UTF-8"
+)
+PY_ENCODING_UNDECODABLE = (
+    "{path}: the source does not decode as its declared encoding {codec!r} "
+    "({error}); reading it as UTF-8"
+)
+PY_ENCODING_BOM_CONFLICT = (
+    "{path}: a UTF-8 byte-order mark overrides the declared encoding "
+    "{codec!r}; reading it as UTF-8"
 )
 REINGEST_UNREADABLE = (
     "Re-ingest could not read {path} after classifying it from disk "
@@ -414,8 +437,10 @@ MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
+MG_DELIBERATE_EXIT = (
+    "Command ended with {kind} inside the graph connection; closing it normally"
+)
 MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
-MG_COMMAND_EXIT = "Command exited. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
@@ -617,6 +642,10 @@ DUPLICATES_GROUPS_TRUNCATED = (
     "Similar-group enumeration stopped at the cap of {cap} groups; the report "
     "is truncated. Raise --threshold or --min-size to narrow the scan."
 )
+DUPLICATES_LINKS_TRUNCATED = (
+    "A duplicate group has more than {cap} linked member pairs; the report "
+    "lists the strongest {cap} of each such group."
+)
 DUPLICATES_PAIRS_TRUNCATED = (
     "Candidate-pair generation stopped at the budget of {cap} pairs; the "
     "report is truncated. Raise --threshold or --min-size to narrow the scan."
@@ -661,9 +690,20 @@ CALL_INSTANCE_QUALIFIED = "Instance-resolved qualified call: {call_name} -> {met
 CALL_INSTANCE_INHERITED = "Instance-resolved inherited call: {call_name} -> {method_qn} (via {class_name}:{var_type})"
 CALL_WILDCARD = "Wildcard-resolved call: {call_name} -> {qn}"
 CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
+CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
+CALL_RUST_OWNER_UNRESOLVED = (
+    "No method of the type a Rust call names matches: {call_name}"
+)
+CALL_EXTERNAL_MODULE_RECEIVER = (
+    "Call on external module receiver, no first-party target: {call_name} "
+    "(module {target})"
+)
+CALL_AMBIGUOUS_UNTYPED_RECEIVER = (
+    "Untyped receiver with several same-named candidates, not guessed: {call_name}"
+)
 CALL_CHAINED = (
     "Resolved chained call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
 )
@@ -690,6 +730,12 @@ DEP_PARSE_ERROR_GEMFILE = "Error parsing Gemfile {path}: {error}"
 DEP_PARSE_ERROR_COMPOSER = "Error parsing composer.json {path}: {error}"
 DEP_PARSE_ERROR_CSPROJ = "Error parsing .csproj {path}: {error}"
 DEP_PARSE_ERROR_PUBSPEC = "Error parsing pubspec.yaml {path}: {error}"
+DEP_MANIFEST_EMPTY = "Dependency manifest {path} is empty; it declares no dependencies"
+DEP_MANIFEST_UNPARSABLE = "Dependency manifest {path} could not be parsed: {error}"
+DEP_MANIFESTS_UNPARSABLE = (
+    "{count} dependency manifest(s) could not be parsed, so their dependencies "
+    "are not in the graph (first: {path}: {error})"
+)
 
 # Import processor logs
 IMP_TOOL_NOT_AVAILABLE = "External tool '{tool}' not available for stdlib introspection"
@@ -829,6 +875,7 @@ PY_INSTANCE_VAR_INFERRED = "Inferred instance variable: {attr} -> {type}"
 PY_LOOP_VAR_INFERRED = "Inferred loop variable type: {var} -> {type}"
 PY_TYPE_SIMPLE = "Inferred type (simple): {var} -> {type}"
 PY_TYPE_COMPLEX = "Inferred type (complex): {var} -> {type}"
+PY_TYPE_WITH = "Inferred type (with target): {var} -> {type}"
 PY_TYPE_INFERRED = "Inferred type: {var} -> {type}"
 PY_RECURSION_GUARD = "Recursion guard (method call): skipping {method}"
 PY_RECURSION_GUARD_QN = "Recursion guard: skipping {method_qn}"
@@ -1118,6 +1165,22 @@ GLOSS_REANCHOR_FAILED = (
     "Could not re-attach Gloss notes to their symbols after the sync: {error}. "
     "Unattached notes are re-attached by the next run."
 )
+# Trace-derived CALLS edges carried across a re-parse (issue #2429).
+TRACE_EDGES_CARRIED = "Kept {carried} trace-derived CALLS edge(s) across the re-parse"
+TRACE_EDGES_OUTDATED = (
+    "Kept {carried} trace-derived CALLS edge(s) across the re-parse; "
+    "{stale} newly marked dynamic_stale (an endpoint's definition changed) and "
+    "{dropped} dropped (an endpoint no longer exists). Re-run the trace and "
+    "`cgr trace ingest` it to refresh them."
+)
+TRACE_CARRY_CAPTURE_FAILED = (
+    "Could not read trace-derived CALLS edges before the re-parse; this full "
+    "rebuild continues without them. Re-ingest the trace to restore them."
+)
+TRACE_CARRY_FAILED = (
+    "Could not re-apply {count} trace-derived CALLS edge(s) after the "
+    "re-parse: {error}. Re-ingest the trace to restore them."
+)
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
@@ -1173,6 +1236,11 @@ PROGRESS_FILES_PROCESSED = "{count} processed"
 
 # Capture selection logs
 CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
+CAPTURE_GROUP_ALREADY_ON = (
+    "Capture group '{group}' adds nothing: it is already captured. A group is "
+    "added to the defaults; use `--capture none --capture {group}` to capture "
+    "only it, or `-GROUP` to drop a group."
+)
 CAPTURE_DEPENDENCY_GAP = (
     "Capture selection keeps {rel} but its usual companion {missing} is disabled; "
     "obeying as requested (edges may be incomplete)"

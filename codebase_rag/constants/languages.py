@@ -19,6 +19,10 @@ BINARY_EXTENSIONS: frozenset[str] = frozenset(
 
 # Source file extensions by language
 EXT_PY = ".py"
+# A type stub is Python syntax with `...` bodies. It names the same module the
+# `.py` would, and for a compiled extension it is the only source that module
+# has (issue #2445).
+EXT_PYI = ".pyi"
 EXT_JS = ".js"
 EXT_JSX = ".jsx"
 EXT_MJS = ".mjs"
@@ -52,7 +56,7 @@ EXT_DART = ".dart"
 EXT_SQL = ".sql"
 
 # File extension tuples by language
-PY_EXTENSIONS = (EXT_PY,)
+PY_EXTENSIONS = (EXT_PY, EXT_PYI)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_MJS, EXT_CJS)
 TS_EXTENSIONS = (EXT_TS, EXT_MTS, EXT_CTS)
 TSX_EXTENSIONS = (EXT_TSX,)
@@ -271,6 +275,27 @@ class SupportedLanguage(StrEnum):
 
 # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
 C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
+
+# Languages whose definitions store `positional_params` with the optionality
+# the signature declares (issue #2517); Python stores CPython's positional
+# names instead. A call into one is judged by the count it passes.
+DECLARED_ARITY_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.GO,
+        SupportedLanguage.RUST,
+        SupportedLanguage.PHP,
+        SupportedLanguage.JAVA,
+        SupportedLanguage.CSHARP,
+    }
+)
+# Where a call passing fewer arguments than the required parameters fails to
+# compile or raises (PHP's ArgumentCountError). JavaScript passes `undefined`.
+ARITY_REJECTS_MISSING = DECLARED_ARITY_LANGUAGES - {SupportedLanguage.JS}
+# Where a surplus argument fails too. PHP and JavaScript drop it at run time.
+ARITY_REJECTS_SURPLUS = ARITY_REJECTS_MISSING - {SupportedLanguage.PHP}
 
 
 class LanguageStatus(StrEnum):

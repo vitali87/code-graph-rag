@@ -44,6 +44,9 @@ JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 JS_THIS_CALL_PREFIX = "this."
 
 JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
+# The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
+# spell it as an anonymous token, not Java's named `asterisk` node.
+TS_JS_STAR = "*"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
@@ -277,6 +280,12 @@ TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
+# `f(...xs)`: an argument passing as many values as `xs` holds.
+TS_SPREAD_ELEMENT = "spread_element"
+# Bodiless TS declarations: an overload, an interface member, an abstract or
+# ambient one. A call matches one of possibly several such signatures.
+TS_METHOD_SIGNATURE = "method_signature"
+TS_ABSTRACT_METHOD_SIGNATURE = "abstract_method_signature"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"
