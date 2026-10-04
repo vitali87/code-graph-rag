@@ -814,6 +814,9 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor.import_mapping = {"m": {"p": "m.lib"}}
     processor.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
     processor.dart_import_aliases = {"m": {"p": ["m.lib"]}}
+    # An `export` / `part` the file no longer has must stop exposing its
+    # target to importers too (issue #2482).
+    processor.dart_exposed_libraries = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
     processor._cpp_declaration_mappings = set()
     processor.csharp_static_imports = {}
@@ -824,6 +827,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
 
     assert processor.dart_prefix_shadows.get("m") is None
     assert processor.dart_import_aliases.get("m") is None
+    assert processor.dart_exposed_libraries.get("m") is None
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}
