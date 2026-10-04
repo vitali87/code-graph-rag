@@ -13,11 +13,13 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater
 from codebase_rag.graph_updater import (
     GraphUpdater,
     _cached_file_unchanged,
@@ -183,3 +185,55 @@ def test_a_file_untouched_since_the_cache_is_still_settled_unhashed(
     assert settled is True
     assert scan.skipped_count == 1
     assert _cached_file_unchanged(str(target), "not-the-hash", after_every_change)
+
+
+class _WindowsStat(NamedTuple):
+    """What Windows reports for a file overwritten in place under a restored
+    mtime: its creation time is kept, and both predate the cache."""
+
+    st_mtime: float
+    st_birthtime: float
+
+
+class _OsWithStat:
+    """The `os` module as graph_updater sees it, with `stat` answering one
+    fixed result; everything else is the real module."""
+
+    def __init__(self, result: _WindowsStat) -> None:
+        self._result = result
+
+    def stat(self, _path: str) -> _WindowsStat:
+        return self._result
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(os, name)
+
+
+@pytest.mark.parametrize(
+    ("content", "unchanged"),
+    [("def copied():\n    pass\n", False), (None, True)],
+    ids=["overwritten", "untouched"],
+)
+def test_on_windows_a_cached_file_is_hashed(
+    synced: tuple[Path, float],
+    monkeypatch: pytest.MonkeyPatch,
+    content: str | None,
+    unchanged: bool,
+) -> None:
+    # Windows has no inode change time, and an overwrite keeps the creation
+    # time, so no timestamp says the bytes changed: the hash decides (bot
+    # review on PR #2910).
+    repo, stamp = synced
+    target = repo / "module_b.py"
+    old_hash = _hash_file(target)
+    if content is not None:
+        target.write_text(content)
+    before_the_cache = stamp - CACHE_AGE_S
+    monkeypatch.setattr(graph_updater.sys, "platform", "win32")
+    monkeypatch.setattr(
+        graph_updater,
+        "os",
+        _OsWithStat(_WindowsStat(before_the_cache, before_the_cache)),
+    )
+
+    assert _cached_file_unchanged(str(target), old_hash, stamp) is unchanged
