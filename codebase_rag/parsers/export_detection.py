@@ -706,8 +706,50 @@ def _rust_macro_exported(node: Node) -> bool:
 
 def _c_exported(node: Node) -> bool:
     # A C function without `static` has external linkage: any translation
-    # unit may call it, so it is the library's API (issue #2707).
-    return node.type == cs.TS_CPP_FUNCTION_DEFINITION and not _cpp_static(node)
+    # unit may call it, so it is the library's API (issue #2707). A `static`
+    # declaration earlier in the file gives the definition internal linkage
+    # though it does not repeat the keyword (Greptile, PR #2952).
+    return (
+        node.type == cs.TS_CPP_FUNCTION_DEFINITION
+        and not _cpp_static(node)
+        and not _declared_static_before(node)
+    )
+
+
+def _declared_static_before(definition: Node) -> bool:
+    name = _cpp_declared_name(definition)
+    if name is None:
+        return False
+    root = definition
+    while root.parent is not None:
+        root = root.parent
+    pending = list(reversed(root.children))
+    while pending:
+        node = pending.pop()
+        if node.start_byte >= definition.start_byte:
+            return False
+        if node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES:
+            pending.extend(reversed(node.children))
+        elif (
+            node.type == cs.TS_CPP_DECLARATION
+            and _cpp_static(node)
+            and _cpp_declared_name(node) == name
+        ):
+            return True
+    return False
+
+
+def _cpp_declared_name(node: Node) -> str | None:
+    # The plain name a function definition or declaration declares.
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    name = (
+        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is not None
+        else None
+    )
+    return safe_decode_text(name) if name is not None else None
 
 
 def _cpp_static(node: Node) -> bool:
@@ -725,11 +767,19 @@ def _cpp_public_api(node: Node) -> bool:
     # local to a function (issue #2707). An out-of-line member definition
     # (`int Box::f() {}`) is left alone: its access is in the class, which is
     # usually in another file.
-    if node.type != cs.TS_CPP_FUNCTION_DEFINITION or _cpp_static(node):
+    #
+    # A function template is registered as its `template_declaration`, so
+    # the definition is read inside it; template and preprocessor wrappers
+    # open no scope, so the scope is the one around them. `static` makes a
+    # namespace-scope function file-private, but a member `static` only
+    # means it needs no instance (bot review, PR #2952).
+    definition = _cpp_function_definition(node)
+    if definition is None:
         return False
-    member = node
-    while member.parent is not None and member.parent.type == (
-        cs.TS_CPP_TEMPLATE_DECLARATION
+    member = definition
+    while member.parent is not None and (
+        member.parent.type == cs.TS_CPP_TEMPLATE_DECLARATION
+        or member.parent.type in cs.CPP_PREPROC_CONDITIONAL_TYPES
     ):
         member = member.parent
     scope = member.parent
@@ -737,10 +787,34 @@ def _cpp_public_api(node: Node) -> bool:
         return False
     if scope.type == cs.TS_FIELD_DECLARATION_LIST:
         return _cpp_member_access(member, scope) != cs.CPP_ACCESS_PRIVATE
-    return scope.type in (
-        cs.TS_CPP_TRANSLATION_UNIT,
-        cs.TS_CPP_DECLARATION_LIST,
-    ) and not _cpp_defined_out_of_line(node)
+    return (
+        scope.type
+        in (
+            cs.TS_CPP_TRANSLATION_UNIT,
+            cs.TS_CPP_DECLARATION_LIST,
+            cs.TS_CPP_LINKAGE_SPECIFICATION,
+        )
+        and not _cpp_static(definition)
+        and not _declared_static_before(definition)
+        and not _cpp_defined_out_of_line(definition)
+    )
+
+
+def _cpp_function_definition(node: Node) -> Node | None:
+    current: Node | None = node
+    while current is not None and current.type == cs.TS_CPP_TEMPLATE_DECLARATION:
+        current = next(
+            (
+                child
+                for child in current.named_children
+                if child.type
+                in (cs.TS_CPP_FUNCTION_DEFINITION, cs.TS_CPP_TEMPLATE_DECLARATION)
+            ),
+            None,
+        )
+    if current is None or current.type != cs.TS_CPP_FUNCTION_DEFINITION:
+        return None
+    return current
 
 
 def _cpp_local_or_anonymous(scope: Node) -> bool:
@@ -796,6 +870,13 @@ def _scala_exported(node: Node) -> bool:
     parent = node.parent
     if parent is None or parent.type not in cs.SCALA_API_SCOPES:
         return False
+    # Nor is a member of an object or class declared inside a def's body:
+    # nothing outside that body can name it (Greptile, PR #2952).
+    ancestor = parent.parent
+    while ancestor is not None:
+        if ancestor.type in (cs.TS_SCALA_FUNCTION_DEFINITION, cs.TS_SCALA_BLOCK):
+            return False
+        ancestor = ancestor.parent
     modifiers = next(
         (c for c in node.children if c.type == cs.TS_SCALA_MODIFIERS), None
     )

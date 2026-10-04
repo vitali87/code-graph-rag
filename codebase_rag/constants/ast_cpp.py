@@ -382,6 +382,11 @@ TS_CPP_POINTER_EXPRESSION = "pointer_expression"
 TS_CPP_CAST_EXPRESSION = "cast_expression"
 TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
 CPP_OP_ADDRESS_OF = "&"
+# Preprocessor conditionals: they wrap declarations without opening a scope,
+# so what they hold belongs to the scope around them (PR #2952).
+CPP_PREPROC_CONDITIONAL_TYPES = frozenset(
+    {"preproc_if", "preproc_ifdef", "preproc_else", "preproc_elif", "preproc_elifdef"}
+)
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(

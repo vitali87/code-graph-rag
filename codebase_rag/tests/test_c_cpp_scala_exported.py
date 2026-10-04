@@ -226,3 +226,110 @@ def test_a_cpp_module_export_edge_is_still_only_for_export(tmp_path: Path) -> No
     graph = _indexed(tmp_path, {"shapes.cpp": SHAPES_CPP, "kinds.cpp": KINDS_CPP})
 
     assert [e for e in graph.edges if e[1] == cs.RelationshipType.EXPORTS.value] == []
+
+
+# Bot review on PR #2952: shapes the first rules misread.
+LINKAGE_C = """\
+static int helper(void);
+
+int helper(void) { return 1; }
+
+int api(void) { return helper(); }
+
+#ifdef FEATURE
+int guarded(void) { return 2; }
+#endif
+"""
+EXTRA_CPP = """\
+struct Factory {
+    static int create() { return 1; }
+private:
+    static int hidden_static() { return 2; }
+};
+
+template <typename T> T convert(T value) { return value; }
+
+namespace lib {
+template <typename T> T twice(T value) { return value; }
+}
+
+#ifdef FEATURE
+int guarded_cpp() { return 3; }
+#endif
+
+class Guarded {
+public:
+#ifdef FEATURE
+    int maybe() { return 4; }
+#endif
+};
+
+namespace {
+template <typename T> T anon_tmpl(T v) { return v; }
+}
+"""
+LOCAL_SCALA = """\
+package loc
+
+object Holder {
+  private def unused(): Int = {
+    object Local { def helper(): Int = 1 }
+    Local.helper()
+  }
+}
+"""
+
+
+@pytest.fixture
+def reviewed(tmp_path: Path) -> dict[str, bool]:
+    return _run(
+        tmp_path,
+        {"linkage.c": LINKAGE_C, "extra.cpp": EXTRA_CPP, "Local.scala": LOCAL_SCALA},
+    )
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "linkage.api",
+        "linkage.guarded",
+        "extra.Factory.create",
+        "extra.convert",
+        "extra.lib.twice",
+        "extra.guarded_cpp",
+        "extra.Guarded.maybe",
+    ],
+    ids=[
+        "c-function",
+        "c-guarded-function",
+        "cpp-static-member",
+        "cpp-function-template",
+        "cpp-namespace-template",
+        "cpp-guarded-function",
+        "cpp-guarded-member",
+    ],
+)
+def test_reviewed_public_api_is_exported(
+    reviewed: dict[str, bool], symbol: str
+) -> None:
+    matches = [qn for qn in reviewed if qn.endswith(f".{symbol}")]
+    assert matches, symbol
+    assert all(reviewed[qn] for qn in matches), symbol
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["linkage.helper", "extra.Factory.hidden_static", "anon_tmpl", "Local.helper"],
+    ids=[
+        "c-static-by-earlier-declaration",
+        "cpp-private-static-member",
+        "cpp-anonymous-namespace-template",
+        "scala-object-local-to-a-def",
+    ],
+)
+def test_reviewed_private_code_stays_private(
+    reviewed: dict[str, bool], symbol: str
+) -> None:
+    matches = [qn for qn in reviewed if qn.endswith(f".{symbol}")]
+    assert matches, symbol
+    assert not any(reviewed[qn] for qn in matches), symbol
