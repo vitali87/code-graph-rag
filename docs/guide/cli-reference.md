@@ -46,6 +46,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites. |
+| `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
 | `cgr status` | Show stack state and the last sync time for each project |
