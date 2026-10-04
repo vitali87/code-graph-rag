@@ -424,7 +424,7 @@ class TestSourceCheckoutStillWorks:
         exit_code, output, _ = _invoke(["list-languages"])
 
         assert exit_code == 0
-        assert "Configured Languages" in output
+        assert "Supported Languages" in output
 
 
 _THIS_CHECKOUT = Path(language.__file__).resolve().parents[2]
