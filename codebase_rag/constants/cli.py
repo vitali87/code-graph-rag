@@ -919,6 +919,10 @@ EXTRACT_TS_UNTYPED_INPUT = (
     "The span reads `{name}`, whose type is not declared; the extracted "
     "function's parameter would be an implicit any"
 )
+EXTRACT_JS_OUTER_WRITE = (
+    "The span writes `{name}`, which the function does not declare; the "
+    "extracted function would write a local of its own instead"
+)
 EXTRACT_STALE_CLOSURE = (
     "A function defined in the span reads `{name}`, which later code rebinds; "
     "moved out, it would keep reading the old value"
