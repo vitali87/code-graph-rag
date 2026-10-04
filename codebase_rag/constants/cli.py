@@ -889,6 +889,10 @@ MOVE_MAYBE_UNBOUND = (
     "try or loop that does not bind it on every path, so the moved "
     "definition cannot import it safely"
 )
+MOVE_RELATIVE_IMPORT_ESCAPES = (
+    "{statement} in {qn} climbs above the top-level package of {path}, so "
+    "the move cannot respell it for the destination"
+)
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
 MOVE_SOURCE_CHANGED = (
