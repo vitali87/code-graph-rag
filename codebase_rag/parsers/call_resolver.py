@@ -543,6 +543,10 @@ class CallResolver:
             receiver not in _PY_SELF_RECEIVERS
             or not method_name
             or cs.SEPARATOR_DOT in method_name
+            # An annotated receiver (`self: B` in a method of `A`) names its
+            # own type; the typed-receiver lookup below honours it, where
+            # the enclosing class would bind `A.m` (Greptile, PR #2953).
+            or (call.local_var_types and receiver in call.local_var_types)
         ):
             return None
         own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"

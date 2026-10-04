@@ -61,6 +61,11 @@ FILES = {
         "class B:\n    def helper2(self):\n        return 1\n\n\n"
         "class C(A, B):\n    pass\n"
     ),
+    "annotated.py": (
+        "class Other2:\n    def m(self):\n        return 2\n\n\n"
+        "class Mine:\n    def m(self):\n        return 1\n\n"
+        "    def typed(self: Other2):\n        return self.m()\n"
+    ),
 }
 
 
@@ -155,3 +160,9 @@ def test_a_subclassed_base_self_call_is_still_exact(graph: RecordedGraph) -> Non
 
 def test_an_override_is_still_a_dispatch_target(graph: RecordedGraph) -> None:
     assert _calls(graph, "overridden.P.run")["overridden.Q.hook"] == "exact"
+
+
+def test_an_annotated_receiver_binds_its_own_type(graph: RecordedGraph) -> None:
+    # `self: Other2` in a method of `Mine` names the receiver's type; the
+    # enclosing class must not take the call (Greptile, PR #2953).
+    assert _calls(graph, "annotated.Mine.typed").get("annotated.Other2.m") == "exact"
