@@ -3,6 +3,7 @@
 import errno
 import hashlib
 import json
+import math
 import os
 import posixpath
 import secrets
@@ -1086,11 +1087,13 @@ def _last_changed(info: os.stat_result) -> float:
     change time is set by the kernel on every write and cannot be backdated
     from user space, so the later of the two catches all of them. A chmod or a
     hard link moves it too, which only costs a hash: the hash comparison stays
-    the authority. Windows has no inode change time, but a copy is CREATED
-    when it lands, whatever mtime it is given.
+    the authority. Windows has no inode change time, and its creation time
+    is kept when a file is overwritten in place, so no timestamp there says
+    the bytes changed: a cached file is always hashed (bot review on PR
+    #2910).
     """
     if sys.platform == "win32":
-        return max(info.st_mtime, info.st_birthtime)
+        return math.inf
     return max(info.st_mtime, info.st_ctime)
 
 
