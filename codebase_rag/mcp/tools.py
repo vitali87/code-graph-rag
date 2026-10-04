@@ -173,6 +173,36 @@ _READS_THE_GRAPH = frozenset(
 )
 
 
+async def _run_in_thread[**P, T](
+    fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
+) -> T:
+    """`asyncio.to_thread` that a cancelled request cannot outrun.
+
+    Cancelling a request cancels its handler, but no thread can be stopped:
+    with a bare `to_thread` the handler unwound at once, its `async with
+    self._ingestor_lock` released, and the next mutating call ran while the
+    thread was still writing. A `delete_project` under a cancelled
+    `index_repository` left 13,404 orphan nodes that every later sync and
+    delete missed (issue #2920). The cancellation is delivered once the
+    thread has ended, so a lock taken around this call is held as long as
+    the work it guards runs.
+    """
+    work = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            if work.cancelled():
+                raise
+            cancelled = True
+            continue
+        break
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
 def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     # pydantic-ai types `function` as taking a RunContext or not; every tool
     # this registry calls directly is built without one, which this states
@@ -1006,7 +1036,7 @@ class MCPToolsRegistry:
         ) -> object:
             # The refusal reads the graph: off the event loop, which the
             # direct handler holds under the ingestor lock (bot review).
-            refusal = await asyncio.to_thread(
+            refusal = await _run_in_thread(
                 self._workspace_source_refusal, qualified_name
             )
             if refusal is not None:
@@ -1026,14 +1056,14 @@ class MCPToolsRegistry:
 
         @functools.wraps(original)
         async def scoped(node_id: int, *args: object, **kwargs: object) -> object:
-            rows = await asyncio.to_thread(
+            rows = await _run_in_thread(
                 self.ingestor.fetch_all,
                 cq.CYPHER_GET_FUNCTION_SOURCE_LOCATION,
                 {cs.KEY_NODE_ID: node_id},
             )
             name = rows[0].get(cs.KEY_QUALIFIED_NAME) if rows else None
             if isinstance(name, str):
-                refusal = await asyncio.to_thread(self._workspace_source_refusal, name)
+                refusal = await _run_in_thread(self._workspace_source_refusal, name)
                 if refusal is not None:
                     return refusal
             return await original(node_id, *args, **kwargs)
@@ -1089,11 +1119,11 @@ class MCPToolsRegistry:
         # the check and the read leaves an approved read running against the
         # partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
-            if refusal := await asyncio.to_thread(
+            if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
             ):
                 return {cs.DICT_KEY_ERROR: refusal}
-            result = await asyncio.to_thread(
+            result = await _run_in_thread(
                 flow_reachability_verdict,
                 self.ingestor.fetch_all,
                 project,
@@ -1117,11 +1147,11 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
-            if refusal := await asyncio.to_thread(
+            if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
             ):
                 return {cs.DICT_KEY_ERROR: refusal}
-            report = await asyncio.to_thread(
+            report = await _run_in_thread(
                 explain_traceback,
                 self.ingestor.fetch_all,
                 project,
@@ -1154,11 +1184,11 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
-            if refusal := await asyncio.to_thread(
+            if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
             ):
                 return {cs.DICT_KEY_ERROR: refusal}
-            report = await asyncio.to_thread(
+            report = await _run_in_thread(
                 rank_root_causes,
                 self.ingestor.fetch_all,
                 project,
@@ -1189,7 +1219,7 @@ class MCPToolsRegistry:
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
-                projects = await asyncio.to_thread(self.ingestor.list_projects)
+                projects = await _run_in_thread(self.ingestor.list_projects)
             # A workspace server lists the workspace's projects that are
             # indexed: a workspace repo not yet in the graph is not a project
             # a query can reach, and one outside the workspace is not served.
@@ -1276,7 +1306,7 @@ class MCPToolsRegistry:
             return DeleteProjectErrorResult(success=False, error=scope_error)
         try:
             async with self._ingestor_lock:
-                return await asyncio.to_thread(self._delete_project_sync, project_name)
+                return await _run_in_thread(self._delete_project_sync, project_name)
         except Exception as e:
             logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
             return DeleteProjectErrorResult(success=False, error=str(e))
@@ -1297,8 +1327,8 @@ class MCPToolsRegistry:
                 # path below clears the flag itself; the failure path widens
                 # it to unbounded.
                 self._incomplete_project = None
-                await asyncio.to_thread(self.ingestor.clean_database)
-                await asyncio.to_thread(clear_all_embeddings)
+                await _run_in_thread(self.ingestor.clean_database)
+                await _run_in_thread(clear_all_embeddings)
                 self._graph_incomplete = False
                 self._incomplete_project = None
                 # A completed wipe spans every project, so it settles damage
@@ -1416,7 +1446,7 @@ class MCPToolsRegistry:
         logger.info(start_log.format(path=self.project_root))
         try:
             async with self._ingestor_lock:
-                return await asyncio.to_thread(sync_fn)
+                return await _run_in_thread(sync_fn)
         except Exception as e:
             logger.error(error_log.format(error=e))
             return error_message.format(error=e)
@@ -2267,7 +2297,7 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_REINGESTING.format(count=len(paths)))
         try:
             async with self._ingestor_lock:
-                return await asyncio.to_thread(
+                return await _run_in_thread(
                     self._reingest_sync, list(paths), list(deleted or ())
                 )
         except Exception as e:
@@ -2302,7 +2332,7 @@ class MCPToolsRegistry:
         if scope_error is not None:
             return scope_error
         if project is not None:
-            known = await asyncio.to_thread(self.ingestor.list_projects)
+            known = await _run_in_thread(self.ingestor.list_projects)
             if project not in known:
                 return self._unknown_project_error(project, known)
         # The vector store is searched first, but the hits are hydrated from
@@ -2315,7 +2345,7 @@ class MCPToolsRegistry:
         # the check and the read would leave an approved read running against
         # the partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
-            if refusal := await asyncio.to_thread(
+            if refusal := await _run_in_thread(
                 self._incomplete_refusal, search_project, cs.MCPToolName.SEMANTIC_SEARCH
             ):
                 return refusal
@@ -2344,7 +2374,7 @@ class MCPToolsRegistry:
             return scope_error
         dup_project = project or derive_project_name(Path(self.project_root))
         async with self._ingestor_lock:
-            if refusal := await asyncio.to_thread(
+            if refusal := await _run_in_thread(
                 self._incomplete_refusal,
                 dup_project,
                 cs.MCPToolName.FIND_DUPLICATE_CODE,
@@ -2364,7 +2394,7 @@ class MCPToolsRegistry:
         # A node id from a partial graph may name a node that the completed
         # index would not have produced at all.
         async with self._ingestor_lock:
-            if refusal := await asyncio.to_thread(
+            if refusal := await _run_in_thread(
                 self._incomplete_refusal,
                 derive_project_name(Path(self.project_root)),
                 cs.MCPToolName.GET_FUNCTION_SOURCE,
@@ -2398,9 +2428,7 @@ class MCPToolsRegistry:
                 return result
             if dry_run or not written:
                 return str(result)
-            return str(result) + await asyncio.to_thread(
-                self._delta_after_write, written
-            )
+            return str(result) + await _run_in_thread(self._delta_after_write, written)
 
     def _note_structural_changes(self, changes: list[StructuralReplaceChange]) -> None:
         self._structural_written = [c["file"] for c in changes if c["applied"]]
@@ -2623,7 +2651,7 @@ class MCPToolsRegistry:
                 project, scope_error = self._workspace_scope(project)
                 if scope_error is not None:
                     return {cs.DICT_KEY_ERROR: scope_error}
-                known = await asyncio.to_thread(self.ingestor.list_projects)
+                known = await _run_in_thread(self.ingestor.list_projects)
                 if project is not None and project not in known:
                     return {
                         cs.DICT_KEY_ERROR: self._unknown_project_error(project, known)
@@ -2634,7 +2662,7 @@ class MCPToolsRegistry:
                 # read with nothing (issue #2461).
                 if project_name not in known:
                     return {
-                        cs.DICT_KEY_ERROR: await asyncio.to_thread(
+                        cs.DICT_KEY_ERROR: await _run_in_thread(
                             self._root_not_indexed_error, project_name, known
                         )
                     }
@@ -2661,14 +2689,14 @@ class MCPToolsRegistry:
                 # read sets the graph incomplete and the approved read then
                 # runs against the partial graph.
                 if tool in _READS_THE_GRAPH and (
-                    refusal := await asyncio.to_thread(
+                    refusal := await _run_in_thread(
                         self._incomplete_refusal, project_name, tool
                     )
                 ):
                     return {cs.DICT_KEY_ERROR: refusal}
-                result = await asyncio.to_thread(run, project_name)
+                result = await _run_in_thread(run, project_name)
                 if target is not None and result == []:
-                    if unknown := await asyncio.to_thread(
+                    if unknown := await _run_in_thread(
                         self._unknown_target_error, project_name, target
                     ):
                         return {cs.DICT_KEY_ERROR: unknown}
@@ -3309,7 +3337,7 @@ class MCPToolsRegistry:
                     summary=scope_error,
                 )
             if project is not None:
-                known = await asyncio.to_thread(self.ingestor.list_projects)
+                known = await _run_in_thread(self.ingestor.list_projects)
                 if project not in known:
                     unknown = self._unknown_project_error(project, known)
                     return QueryResultDict(
@@ -3348,7 +3376,7 @@ class MCPToolsRegistry:
             # graph incomplete in the gap and the approved query still ran
             # (Greptile, PR #1547).
             async with self._ingestor_lock:
-                if refusal := await asyncio.to_thread(
+                if refusal := await _run_in_thread(
                     self._incomplete_refusal,
                     project_name,
                     cs.MCPToolName.QUERY_CODE_GRAPH,
@@ -3390,7 +3418,7 @@ class MCPToolsRegistry:
             # The guard is inside the lock so an update cannot land between
             # the check and the read (Greptile, PR #1547).
             async with self._ingestor_lock:
-                if refusal := await asyncio.to_thread(
+                if refusal := await _run_in_thread(
                     self._incomplete_refusal,
                     derive_project_name(Path(self.project_root)),
                     cs.MCPToolName.GET_CODE_SNIPPET,
@@ -3435,7 +3463,7 @@ class MCPToolsRegistry:
                 )
                 if str(result) != cs.MSG_SURGICAL_SUCCESS.format(path=file_path):
                     return te.ToolFailure(result)
-                delta = await asyncio.to_thread(self._delta_after_write, [file_path])
+                delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return str(result) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
@@ -3454,9 +3482,7 @@ class MCPToolsRegistry:
                 except (ValueError, RuntimeError):
                     return te.failure(lg.FILE_OUTSIDE_ROOT.format(action="access"))
                 start = offset if offset is not None else 0
-                return await asyncio.to_thread(
-                    _read_file_slice, full_path, start, limit
-                )
+                return await _run_in_thread(_read_file_slice, full_path, start, limit)
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
                 return await _plain_function(self._file_reader_tool)(
@@ -3476,7 +3502,7 @@ class MCPToolsRegistry:
                 )
                 if not result.success:
                     return te.failure(result.error_message)
-                delta = await asyncio.to_thread(self._delta_after_write, [file_path])
+                delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_WRITE.format(error=e))
