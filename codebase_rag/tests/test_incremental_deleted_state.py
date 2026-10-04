@@ -154,7 +154,9 @@ RS_PY_BEFORE = {
 }
 RS_PY_AFTER = {
     "util.py": "def helper():\n    return 1\n",
-    "main.py": RS_PY_BEFORE["main.py"] + "\n",
+    # The star import binds `helper` by name: with no import at all a bare
+    # Python name reaches no other module's function (issue #2929).
+    "main.py": "from util import *\n\n\n" + RS_PY_BEFORE["main.py"],
 }
 
 

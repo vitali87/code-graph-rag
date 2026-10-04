@@ -3822,12 +3822,17 @@ class CallResolver:
             # its own class body, which lives in the caller's module. So a
             # local `run` handed on as a callback, or a variable named like
             # some property, never names another module's method (#2360).
-            own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+            # Another module's function is no closer: only an import binds
+            # it, so with none naming the call (and no star import) the name
+            # is a builtin or a local, not that function (issue #2929).
             possible_matches = [
                 qn
                 for qn in possible_matches
-                if self.function_registry[qn] != cs.NodeLabel.METHOD.value
-                or qn.startswith(own_module)
+                if self._in_python_module(qn, module_qn)
+                or (
+                    self.function_registry[qn] != cs.NodeLabel.METHOD.value
+                    and self._python_import_may_bind(call_name, module_qn)
+                )
             ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
@@ -3841,6 +3846,21 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _in_python_module(self, qn: str, module_qn: str) -> bool:
+        # Defined in the module itself, not in a module under it: a package's
+        # `__init__` qn prefixes every module of the package.
+        own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+        if not qn.startswith(own_module):
+            return False
+        head = qn[len(own_module) :].split(cs.SEPARATOR_DOT, 1)[0]
+        return f"{own_module}{head}" not in self.type_inference.module_qn_to_file_path
+
+    def _python_import_may_bind(self, call_name: str, module_qn: str) -> bool:
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return call_name in import_map or any(
+            key.startswith(cs.IMPORTED_NAME_WILDCARD) for key in import_map
+        )
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:

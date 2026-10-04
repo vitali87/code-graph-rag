@@ -31,8 +31,10 @@ def heuristic_repo(tmp_path: Path) -> tuple[Path, RecordedGraph]:
     root = tmp_path / "heur"
     _write(root, "pkg/__init__.py", "")
     _write(root, "pkg/util.py", "def lonely():\n    return 1\n")
-    # Not imported: the call binds by name alone, so its site is heuristic.
-    _write(root, "pkg/app.py", "def run():\n    return lonely()\n")
+    # A star import: the call binds by name alone, so its site is heuristic.
+    _write(
+        root, "pkg/app.py", "from .util import *\n\n\ndef run():\n    return lonely()\n"
+    )
     return root, _index(root, MagicMock())
 
 
