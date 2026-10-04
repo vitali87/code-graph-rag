@@ -11,6 +11,10 @@ handlers such as routes/tasks/CLI commands, dunder/lifecycle methods, and
 JavaScript/TypeScript well-known symbol properties) and lists everything the
 walk never reaches.
 
+A Python symbol is public unless its name starts with an underscore. A
+module-level name the module lists in `__all__` is public even with one,
+since `__all__` is its declared API.
+
 The results are **candidates for review, not a guaranteed delete list**. Code
 reached only through dynamic dispatch, reflection, string-keyed lookups, or an
 external framework that the static graph cannot see may still be reported. Read
