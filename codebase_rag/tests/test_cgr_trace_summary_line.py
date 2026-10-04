@@ -58,6 +58,17 @@ def test_the_progress_line_ends_before_the_summary(traced: pytest.Pytester) -> N
     assert all(line.rstrip().endswith("[100%]") for line in progress)
 
 
+@pytest.mark.parametrize("args", [(), ("-q",)], ids=["default", "quiet"])
+def test_the_summary_is_reported_under_no_summary(
+    traced: pytest.Pytester, args: tuple[str, ...]
+) -> None:
+    # Pytest skips `pytest_terminal_summary` under `--no-summary`; the trace
+    # it wrote is still confirmed, on a line of its own (Greptile, PR #2902).
+    result = traced.runpytest_subprocess("--cgr-trace", "--no-summary", *args)
+
+    assert [SUMMARY.match(line) is not None for line in _mentions(result)] == [True]
+
+
 # Negative: what must not change.
 
 
