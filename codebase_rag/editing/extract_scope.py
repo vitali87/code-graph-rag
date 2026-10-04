@@ -508,11 +508,14 @@ def _indent_of(source: bytes, node: Node) -> str:
     return text if text.strip() == "" else ""
 
 
-def _dedent(text: str, indent: str) -> str:
+def _dedent(text: str, indent: str, keep: frozenset[int] = frozenset()) -> str:
+    """`text` less `indent` on every line but those numbered in `keep`."""
     out = []
-    for line in text.split("\n"):
+    for number, line in enumerate(text.split("\n")):
         out.append(
-            line[len(indent) :]
+            line
+            if number in keep
+            else line[len(indent) :]
             if line.startswith(indent)
             else line.lstrip()
             if line.strip()
@@ -521,5 +524,29 @@ def _dedent(text: str, indent: str) -> str:
     return "\n".join(out)
 
 
-def _reindent(text: str, indent: str) -> str:
-    return "\n".join(indent + line if line.strip() else "" for line in text.split("\n"))
+def _reindent(text: str, indent: str, keep: frozenset[int] = frozenset()) -> str:
+    """`text` with `indent` added to every non-blank line but those numbered
+    in `keep`."""
+    return "\n".join(
+        line if number in keep else indent + line if line.strip() else ""
+        for number, line in enumerate(text.split("\n"))
+    )
+
+
+_STRING_LITERALS = frozenset({cs.TS_PY_STRING, cs.TS_STRING, cs.TS_TEMPLATE_STRING})
+
+
+def _string_lines(statements: list[Node], first_row: int) -> frozenset[int]:
+    """Lines, counted from `first_row`, that continue a multi-line string:
+    their whitespace is the string's content, so re-indenting them changed
+    the value (Greptile, PR #2932)."""
+    rows: set[int] = set()
+    stack = list(statements)
+    while stack:
+        current = stack.pop()
+        if current.type in _STRING_LITERALS:
+            start, end = current.start_point[0], current.end_point[0]
+            rows.update(row - first_row for row in range(start + 1, end + 1))
+            continue
+        stack.extend(current.children)
+    return frozenset(rows)
