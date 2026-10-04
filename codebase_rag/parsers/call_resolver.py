@@ -5311,6 +5311,17 @@ class CallResolver:
         return_type = self._js_function_return_cache[fn_qn]
         if return_type is None or return_type.startswith(cs.JS_LIST_TYPE_PREFIX):
             return None
+        # The class is resolved through the factory's own imports, so only
+        # that class, indexed, is the receiver: an unindexed `package.Service`
+        # must not fall back to a project class sharing its last name
+        # (Greptile, PR #2962). A factory an incremental run rehydrated
+        # rather than re-parsed has no import map this run, so its class name
+        # is left bare and matched by name, as a recorded return is.
+        if (
+            self.function_registry.get(return_type) != cs.NodeLabel.CLASS
+            and fn_qn not in self.rehydrated_definition_paths
+        ):
+            return None
         return return_type
 
     def _resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:

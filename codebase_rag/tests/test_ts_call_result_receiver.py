@@ -12,11 +12,16 @@ the method's name.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+from evals.cgr_graph import _StatefulIngestor
 
 SOURCE = """\
 import { makeWidget } from './w';
@@ -78,11 +83,34 @@ WIDGET_CLASS = """\
 export class Widget { spin(): number { return 3; } }
 """
 
+USE_WIDGET = """\
+import { makeWidget } from './w';
+
+export function useWidget() { return makeWidget().spin(); }
+"""
+
 JS_SOURCE = """\
 class Gadget { tick() { return 1; } }
 class Gizmo { tick() { return 2; } }
 function makeGadget() { return new Gadget(); }
 function useGadget() { return makeGadget().tick(); }
+"""
+
+
+# `Service` from an unindexed package, beside the project's own `Service`
+# in m.ts: the factory returns the package's class, which is not indexed.
+EXTERNAL = """\
+import { Service } from 'package';
+
+export function makeExternal() { return new Service(); }
+export function makeExternalTyped(): Service { return new Service(); }
+"""
+
+EXTERNAL_USER = """\
+import { makeExternal, makeExternalTyped } from './ext';
+
+export function useExternal() { return makeExternal().handle(); }
+export function useExternalTyped() { return makeExternalTyped().handle(); }
 """
 
 
@@ -93,6 +121,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, "w.ts", WIDGET)
     _write(root, "widget.ts", WIDGET_CLASS)
     _write(root, "g.js", JS_SOURCE)
+    _write(root, "ext.ts", EXTERNAL)
+    _write(root, "x.ts", EXTERNAL_USER)
     return _index(root, MagicMock())
 
 
@@ -150,6 +180,56 @@ def test_a_result_that_is_no_single_instance_binds_no_method(
     graph: RecordedGraph, caller: str, factory: str
 ) -> None:
     assert _callees(graph, "m", caller) == {factory: "exact"}
+
+
+@pytest.mark.parametrize(
+    ("caller", "factory"),
+    [
+        ("useExternal", "ext.makeExternal"),
+        ("useExternalTyped", "ext.makeExternalTyped"),
+    ],
+    ids=["constructed", "annotated"],
+)
+def test_an_unindexed_returned_class_binds_no_same_named_local_class(
+    graph: RecordedGraph, caller: str, factory: str
+) -> None:
+    # The factory's class is the package's `Service`; m.ts's `Service` is
+    # another class that happens to share its name (Greptile, PR #2962).
+    assert _callees(graph, "x", caller) == {factory: "exact"}
+
+
+def test_a_factory_left_unchanged_by_a_reingest_still_types_its_result(
+    tmp_path: Path,
+) -> None:
+    # A scoped re-ingest re-parses the caller alone; the factory's file is
+    # rehydrated from the graph, and its return is still read (CodeRabbit,
+    # PR #2962).
+    root = tmp_path / "rehyd"
+    _write(root, "w.ts", WIDGET)
+    _write(root, "widget.ts", WIDGET_CLASS)
+    _write(root, "use.ts", USE_WIDGET)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+
+    def updater() -> GraphUpdater:
+        return GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="rehyd",
+        )
+
+    updater().run(force=True)
+    _write(root, "use.ts", USE_WIDGET + "\nexport const touched = 1;\n")
+    updater().reingest(["use.ts"])
+
+    callees = {
+        str(edge[4])
+        for edge in store.keyed_edges
+        if edge[2] == cs.RelationshipType.CALLS and edge[1] == "rehyd.use.useWidget"
+    }
+    assert "rehyd.widget.Widget.spin" in callees
 
 
 def test_a_constructed_local_still_binds(graph: RecordedGraph) -> None:
