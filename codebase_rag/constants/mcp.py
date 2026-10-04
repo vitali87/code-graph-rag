@@ -147,6 +147,7 @@ MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
 # Structural delta appended to write tools (issue #1525).
 MCP_DELTA_HEADER = "Structural delta:"
 CONTEXT_DEFAULT_BUDGET = 4000
+MCP_CONTEXT_BUDGET_INVALID = "budget_tokens must be at least 1, got {budget}"
 MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "

@@ -272,6 +272,29 @@ async def test_mcp_context_tool(
     assert payload["used_tokens"] <= 300
 
 
+async def test_mcp_context_tool_rejects_a_budget_below_one(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    root, store, _updater = repo
+    ingestor = MagicMock()
+    ingestor.fetch_all = store.fetch_all
+    ingestor.list_projects.return_value = [PROJECT]
+    registry = MCPToolsRegistry(
+        project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+    )
+    for budget in (0, -5):
+        payload = await registry.context(
+            target=_qn("pkg.util.helper"), budget_tokens=budget, project=PROJECT
+        )
+        assert payload == {
+            cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(budget=budget)
+        }
+
+
 # A broken skip guard is invisible: if `_markdown_unavailable` silently returned
 # a constant, the two tests it gates would SKIP or would run without the grammar,
 # and a skip reads as green in every summary while also being the legitimate

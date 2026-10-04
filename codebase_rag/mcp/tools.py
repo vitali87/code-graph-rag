@@ -2970,6 +2970,15 @@ class MCPToolsRegistry:
         budget_tokens: int = cs.CONTEXT_DEFAULT_BUDGET,
         project: str | None = None,
     ) -> object:
+        # The CLI enforces this with typer's min=1; without the same check an
+        # MCP caller's zero or negative budget returns an empty slice that
+        # reads as success.
+        if budget_tokens < 1:
+            return {
+                cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(
+                    budget=budget_tokens
+                )
+            }
         return await self._graph_query(
             cs.MCPToolName.CONTEXT,
             project,
