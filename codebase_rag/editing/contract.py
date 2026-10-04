@@ -347,6 +347,7 @@ def measure(
     files: Iterable[str],
     reingest: Reingest,
     declared_renames: Iterable[tuple[str, str]] = (),
+    reshaped_renames: Iterable[tuple[str, str]] = (),
 ) -> StructuralDelta:
     """The delta of files an operation just wrote, through the re-ingest.
 
@@ -354,6 +355,8 @@ def measure(
     renames from the snapshots, which cannot be done for an empty container
     (no fingerprint, no members, and the name is what changed), so an
     operation that knows says so rather than leaving it to a guess.
+    `reshaped_renames` are those whose body the operation also rewrote, so
+    the snapshots cannot pair them by shape either.
     """
     paths = sorted(set(files))
     return observe(
@@ -363,4 +366,5 @@ def measure(
         lambda: reingest(paths),
         repo_root=repo_root,
         declared_renames=frozenset(declared_renames),
+        reshaped_renames=frozenset(reshaped_renames),
     )
