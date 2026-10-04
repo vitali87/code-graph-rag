@@ -598,7 +598,13 @@ class TypeInferenceEngine:
                 return None
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
-        return self.method_return_types.get(method_qn)
+        return_type = self.method_return_types.get(method_qn)
+        # Another package's type (`model.Item`) is spelled for the METHOD's
+        # file; a local typed with that spelling resolves to nothing here and
+        # would lose the edge its calls get by name, so it stays untyped.
+        if return_type and cs.SEPARATOR_DOT in return_type:
+            return None
+        return return_type
 
     def drop_go_return_types(self, qns: Collection[str]) -> None:
         """Forget the Go return types recorded under `qns` and drop the index.
