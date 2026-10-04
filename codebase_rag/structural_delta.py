@@ -82,8 +82,6 @@ class CallSite(NamedTuple):
     star_args: bool
     # `**opts` at the site: it may supply any keyword, required ones too.
     star_kwargs: bool = False
-    # How the edge was bound; absent on a legacy edge, which ranks as exact.
-    resolution: str = ""
 
 
 class ImportBinding(NamedTuple):
@@ -323,7 +321,6 @@ def _site(row: ResultRow) -> CallSite:
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
         star_args=row.get(cs.KEY_STAR_ARGS) is True,
         star_kwargs=row.get(cs.KEY_STAR_KWARGS) is True,
-        resolution=_text(row.get(cs.KEY_RESOLUTION)),
     )
 
 
@@ -1795,10 +1792,11 @@ def _site_finding(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> ArityAtSite:
     declared_count, verdict = _arity_verdict(site, definition, repo_root)
-    if site.resolution in cs.DELTA_GUESSED_RESOLUTIONS:
+    if site.resolution in cs.DELTA_GUESSED_RESOLUTIONS and verdict != cs.DELTA_ARITY_OK:
         # The callee is a guess from the name alone, or one of several
-        # same-named candidates: the site may not call it at all, so its
-        # arity says nothing certain (issue #2639).
+        # same-named candidates: the site may not call it at all, so a
+        # failure against it says nothing certain (issue #2639). A count
+        # that fits stays `ok`, as the declared-arity path answers it.
         verdict = cs.DELTA_ARITY_UNKNOWN
     return ArityAtSite(
         caller=site.caller,
