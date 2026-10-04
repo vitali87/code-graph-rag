@@ -301,6 +301,10 @@ def _decide(tmp_path: Path, range_: str) -> dict[str, str]:
     return out
 
 
+def _lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").split() if path.exists() else []
+
+
 def test_every_page_of_the_range_is_read(tmp_path: Path) -> None:
     _commits(tmp_path, {SHA: "feat: x"})
     _decide(tmp_path, f"{SHA}\\n")
@@ -370,10 +374,11 @@ def test_ordinary_range_does_not_ship(tmp_path: Path) -> None:
     assert out["release"] == "false"
 
 
-def test_non_sha_range_entries_never_reach_git(tmp_path: Path) -> None:
+def test_non_sha_range_entries_never_reach_git_or_a_url(tmp_path: Path) -> None:
     _commits(tmp_path, {SHA: "feat: x"})
     out = _decide(tmp_path, f"--output=pwned\\n{SHA}\\n")
     assert not (tmp_path / "pwned").exists()
+    assert _lines(tmp_path / "pulls_calls") == [SHA]
     assert out["security"] == "false"
 
 
@@ -409,10 +414,6 @@ def test_unreadable_commit_message_fails_the_run(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert f"could not read the message of {SHA}" in result.stdout
     assert "release" not in out
-
-
-def _lines(path: Path) -> list[str]:
-    return path.read_text(encoding="utf-8").split() if path.exists() else []
 
 
 BRANCH_COMMITS = [f"{n:040x}" for n in range(1, 51)]
