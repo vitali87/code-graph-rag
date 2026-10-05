@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import uuid
 from pathlib import Path
 from types import ModuleType
 
@@ -104,11 +105,15 @@ def _methods(store: _StatefulIngestor) -> set[str]:
 
 
 def _load(path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(f"_bank_{id(path)}", path)
+    spec = importlib.util.spec_from_file_location(f"_bank_{uuid.uuid4().hex}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        # The module object stays usable; the registry keeps nothing.
+        sys.modules.pop(spec.name, None)
     return module
 
 
@@ -218,6 +223,87 @@ WITH_DELETER = """class Account:
     def balance(self):
         del self._amount
 """
+
+
+# Bot review on PR #2725: a plain `def` of the property's name is not one of
+# its accessors, before or after it, and the renamed accessors take the
+# names the re-index gives them.
+PLAIN_AFTER = """class Account:
+    @property
+    def balance(self):
+        return 1
+
+    @balance.setter
+    def balance(self, v):
+        pass
+
+    def balance(self):
+        return 2
+"""
+
+PLAIN_BEFORE = """class Account:
+    def balance(self):
+        return 2
+
+    @property
+    def balance(self):
+        return 1
+
+    @balance.setter
+    def balance(self, v):
+        pass
+"""
+
+
+def test_a_plain_def_before_the_accessors_is_not_one_of_them(tmp_path: Path) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {"bank.py": PLAIN_BEFORE})
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        f"{PROJECT}.bank.Account.balance@6",
+        "funds",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert set(report.hierarchy) == {
+        f"{PROJECT}.bank.Account.balance@6",
+        f"{PROJECT}.bank.Account.balance@10",
+    }
+    assert report.applied, report.message
+    assert report.verdict is not None and report.verdict.ok, report.verdict
+    text = (root / "bank.py").read_text(encoding="utf-8")
+    assert text == PLAIN_BEFORE.replace("balance", "funds").replace(
+        "def funds(self):\n        return 2", "def balance(self):\n        return 2"
+    )
+    assert {
+        f"{PROJECT}.bank.Account.balance",
+        f"{PROJECT}.bank.Account.funds",
+        f"{PROJECT}.bank.Account.funds@10",
+    } <= _methods(store)
+
+
+def test_a_plain_def_after_the_accessors_refuses_the_rename(tmp_path: Path) -> None:
+    # That `def` replaces the property, and would take its plain name.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {"bank.py": PLAIN_AFTER})
+
+    with pytest.raises(RenameRefused, match="redefined by a plain def on line 10"):
+        rename(
+            root,
+            _query(store),
+            PROJECT,
+            f"{PROJECT}.bank.Account.balance@7",
+            "funds",
+            allow_heuristic=True,
+        )
+
+    assert (root / "bank.py").read_text(encoding="utf-8") == PLAIN_AFTER
 
 
 def test_a_deleter_is_renamed_with_the_property(tmp_path: Path) -> None:
