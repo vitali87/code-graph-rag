@@ -86,6 +86,9 @@ class MockFunctionRegistry:
     def is_abstract(self, qn: QualifiedName) -> bool:
         return qn in self._abstracts
 
+    def is_body_scoped_name(self, qn: QualifiedName) -> bool:
+        return False
+
 
 @pytest.fixture
 def mock_function_registry() -> MockFunctionRegistry:

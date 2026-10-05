@@ -130,6 +130,7 @@ message GraphCodeIndex {
       Parameter parameter = 23;
       Field field = 24;
       EnumVariant enum_variant = 25;
+      Constant constant = 26;
     }
   }
 
@@ -181,6 +182,9 @@ message GraphCodeIndex {
       HAS_FIELD = 34;
       // Enum variants (issue #1807).
       HAS_VARIANT = 35;
+      // Module-level constants (issue #1806). OF_TYPE is shared with
+      // Parameter and Field.
+      DEFINES_CONSTANT = 36;
     }
 
     RelationshipType type = 1;
@@ -401,6 +405,27 @@ message GraphCodeIndex {
     repeated string modifiers = 8;
     bool is_static = 9;
     string docstring = 10;
+  }
+
+  // A named constant a Module declares (issue #1806). Python module scope
+  // only for now: a class-level member is already a Field (#1805), and the
+  // other languages' `const`/`static` forms follow in a later PR.
+  message Constant {
+    // Primary Key: <module qn>.<name>
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+    // 4 was absolute_path. Deliberately not on the wire, like Field and
+    // every other definition label: the canonical export must not differ
+    // per checkout.
+    reserved 4;
+    int32 start_line = 5;
+    int32 start_col = 6;
+    // The annotation as written, "" when there is none.
+    string type_name = 7;
+    // The right-hand side as written, "" when absent or over the cap.
+    string value = 8;
   }
 
   // A variant an Enum declares (issue #1807).

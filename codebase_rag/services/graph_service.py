@@ -31,6 +31,7 @@ from ..constants import (
     KEY_FROM_VAL,
     KEY_NAME,
     KEY_PROJECT_NAME,
+    KEY_PROJECT_NAMES,
     KEY_PROPS,
     KEY_PURGED,
     KEY_TO_MISSING,
@@ -50,6 +51,8 @@ from ..cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
+    CYPHER_EXPORT_PROJECT_NODES,
+    CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
@@ -89,6 +92,20 @@ from .resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
     from .neo4j_driver import Neo4jDriver
+
+# Raised on purpose to end a command with its own exit code once it has told
+# the user why; logging them as a failed write buried that message under a
+# traceback (#2414). typer's are listed beside click's because a typer that
+# vendors click raises its own copies (#1409). Ctrl+C is not here: it stops
+# work that did not choose to stop.
+_DELIBERATE_EXITS: tuple[type[BaseException], ...] = (
+    SystemExit,
+    click.exceptions.Exit,
+    click.exceptions.Abort,
+    click.ClickException,
+    typer.Exit,
+    typer.Abort,
+)
 
 
 def _apply_memory_limit(
@@ -162,9 +179,6 @@ def _missing_endpoints(row: ResultRow) -> str:
         )
         if row.get(key) is True
     )
-
-
-_COMMAND_EXITS = (typer.Exit, click.exceptions.Exit, SystemExit)
 
 
 def _log_failed_relationships(
@@ -288,18 +302,19 @@ class MemgraphIngestor:
 
     def __exit__(
         self,
-        exc_type: type | None,
+        exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         try:
             if exc_type:
-                if issubclass(exc_type, _COMMAND_EXITS):
-                    # A command that chose its exit code (a refused rename, an
-                    # unindexed project) has said why already. `typer.Exit` is
-                    # a RuntimeError with no message, so logging it as an
-                    # error printed "An exception occurred: ." and a traceback.
-                    logger.debug(ls.MG_COMMAND_EXIT)
+                if issubclass(exc_type, _DELIBERATE_EXITS):
+                    # Kept at DEBUG with its traceback: a command may turn a
+                    # real failure into its own message and an exit, and the
+                    # cause should stay one LOGURU_LEVEL away.
+                    logger.opt(exception=exc_val).debug(
+                        ls.MG_DELIBERATE_EXIT.format(kind=exc_type.__name__)
+                    )
                 elif issubclass(exc_type, Exception):
                     logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
                 else:
@@ -333,8 +348,8 @@ class MemgraphIngestor:
 
     async def __aexit__(
         self,
-        exc_type: type | None,
-        exc_val: Exception | None,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         self.__exit__(exc_type, exc_val, exc_tb)
@@ -979,17 +994,31 @@ class MemgraphIngestor:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
         self._execute_query(query, dict(params) if params is not None else None)
 
-    def export_graph_to_dict(self) -> GraphData:
+    def export_graph_to_dict(self, project_names: Sequence[str] = ()) -> GraphData:
+        """The whole shared graph, or what `project_names` own when given.
+
+        A scoped file records its projects in the metadata, so a reader can
+        tell it from a whole-graph export with the same shape.
+        """
         logger.info(ls.MG_EXPORTING)
 
-        nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
-        relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
+        if project_names:
+            params: PropertyParams = {KEY_PROJECT_NAMES: list(project_names)}
+            nodes_data = self.fetch_all(CYPHER_EXPORT_PROJECT_NODES, params)
+            relationships_data = self.fetch_all(
+                CYPHER_EXPORT_PROJECT_RELATIONSHIPS, params
+            )
+        else:
+            nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
+            relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
 
         metadata = GraphMetadata(
             total_nodes=len(nodes_data),
             total_relationships=len(relationships_data),
             exported_at=self._get_current_timestamp(),
         )
+        if project_names:
+            metadata["projects"] = list(project_names)
 
         logger.info(
             ls.MG_EXPORTED.format(nodes=len(nodes_data), rels=len(relationships_data))

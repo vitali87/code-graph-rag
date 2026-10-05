@@ -7,12 +7,17 @@
 # by Jaccard overlap of their statement-level branch fingerprints; candidate
 # pairs come from an inverted index over those branches, so only functions
 # that actually share a branch are ever compared - never O(n^2) over the
-# project.
+# project. The reported groups are disjoint (issue #2473): a fingerprint that
+# links to another forms a `similar` cluster with it, and only a fingerprint
+# linked to none is reported on its own as an `exact` group.
 from __future__ import annotations
 
+import heapq
 import re
+from collections.abc import Iterator
 from fnmatch import fnmatch
 from math import ceil
+from typing import NamedTuple
 
 from loguru import logger
 
@@ -21,6 +26,7 @@ from . import cypher_queries as cq
 from . import logs as ls
 from .types_defs import (
     DuplicateGroup,
+    DuplicateLink,
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
@@ -39,6 +45,14 @@ class _Entry:
         self.node_count = node_count
         self.branches: frozenset[str] = frozenset()
         self.members: list[DuplicateMember] = []
+
+
+class _Cluster(NamedTuple):
+    # Positions into the entry order, and every qualifying (left, right,
+    # score) entry pair that joined them: the group reports those links and
+    # the range of their scores.
+    positions: list[int]
+    links: list[tuple[int, int, float]]
 
 
 def default_duplicates_config(
@@ -83,12 +97,14 @@ def collect_duplicates_with_coverage(
     skipped_rows = ingestor.fetch_all(cq.CYPHER_DUPLICATE_SKIPPED_COUNT, params)
     skipped = int(str(skipped_rows[0].get(cs.KEY_SKIPPED) or 0)) if skipped_rows else 0
 
-    entries = _entries_from_rows(rows, config)
-    groups = _exact_groups(entries)
+    order = list(_entries_from_rows(rows, config).values())
+    clusters: list[_Cluster] = []
     truncated = False
     if not config.exact_only:
-        similar, truncated = _similar_groups(entries, config)
-        groups.extend(similar)
+        clusters, truncated = _similar_clusters(order, config)
+    clustered = {position for cluster in clusters for position in cluster.positions}
+    groups = [_cluster_group(cluster, order) for cluster in clusters]
+    groups.extend(_exact_groups(order, clustered))
     groups.sort(
         key=lambda group: (
             group["kind"] != cs.KIND_EXACT,
@@ -167,20 +183,29 @@ def _member_from_row(row: ResultRow, path: str, start_line: int) -> DuplicateMem
     )
 
 
+def _member_key(member: DuplicateMember) -> tuple[str, int]:
+    return member["path"], member["start_line"]
+
+
 def _sorted_members(members: list[DuplicateMember]) -> list[DuplicateMember]:
-    return sorted(members, key=lambda m: (m["path"], m["start_line"]))
+    return sorted(members, key=_member_key)
 
 
-def _exact_groups(entries: dict[str, _Entry]) -> list[DuplicateGroup]:
+def _exact_groups(order: list[_Entry], clustered: set[int]) -> list[DuplicateGroup]:
+    # A clustered entry's copies are reported inside its cluster; repeating
+    # them here put one function in several groups (issue #2473).
     return [
         DuplicateGroup(
             kind=cs.KIND_EXACT,
             similarity=1.0,
+            max_similarity=1.0,
             node_count=entry.node_count,
             members=_sorted_members(entry.members),
+            exact_subgroups=[],
+            links=[],
         )
-        for entry in entries.values()
-        if len(entry.members) > 1
+        for position, entry in enumerate(order)
+        if len(entry.members) > 1 and position not in clustered
     ]
 
 
@@ -303,207 +328,255 @@ def _only_nested_members(
     )
 
 
-def _drop_contained_members(
-    members: list[DuplicateMember],
-) -> list[DuplicateMember]:
-    """Drop members nested inside another member of the same group.
-
-    Expanding an entry's full member list can seat an enclosing function
-    next to its own nested closure (the closure's fingerprint matching a
-    copy elsewhere keeps the entry edge legitimately alive, and two similar
-    factories can carry their identical closures as one all-nested entry).
-    The nested member is always the redundant one: whenever its entry has
-    more than one member, the Stage-1 exact group already reports the
-    closure clone class, and its container's real partners stay in this
-    group. Nesting requires proper containment or a qualified-name
-    hierarchy on a shared boundary, so two distinct definitions sharing a
-    span (adjacent minified one-liners) both survive.
-    """
-    return [
-        member
-        for member in members
-        if not any(
-            other is not member and _member_nested_in(other, member)
-            for other in members
-        )
-    ]
-
-
 def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     union = len(first | second)
     return len(first & second) / union if union else 0.0
 
 
-def _entry_contains_any(container: _Entry, contained: _Entry) -> bool:
-    return any(
-        _member_nested_in(outer, inner)
-        for outer in container.members
-        for inner in contained.members
-    )
-
-
-def _supplemental_cliques(
-    clique: list[int], order: list[_Entry], kept: list[DuplicateMember]
-) -> list[list[int]]:
-    """Sub-cliques preserving a fully-pruned entry's non-container partners.
-
-    Dropping nested members can erase an ENTIRE entry from a clique (two
-    factories carrying their identical closures). Its relationship to a
-    partner that contains none of its members (a standalone function similar
-    to the closures) is covered by no other group, so each such entry is
-    re-emitted with exactly those partners.
-    """
-    kept_ids = {id(member) for member in kept}
-    pruned = [
-        position
-        for position in clique
-        if not any(id(member) in kept_ids for member in order[position].members)
-    ]
-    subcliques: list[list[int]] = []
-    for position in pruned:
-        partners = [
-            other
-            for other in clique
-            if other != position
-            and not _entry_contains_any(order[other], order[position])
-        ]
-        if partners:
-            subcliques.append(sorted([position, *partners]))
-    return subcliques
-
-
-def _edge_qualifies(left: _Entry, right: _Entry, threshold: float) -> bool:
+def _link_score(left: _Entry, right: _Entry, threshold: float) -> float | None:
+    """The pair's similarity when it qualifies as a link, else None."""
     first, second = left.branches, right.branches
     smaller, larger = min(len(first), len(second)), max(len(first), len(second))
     # Necessary condition for Jaccard >= threshold: even a full subset
     # overlap cannot exceed smaller/larger.
     if larger == 0 or smaller / larger < threshold:
-        return False
-    if _jaccard(first, second) < threshold:
-        return False
-    return not _only_nested_members(left.members, right.members)
+        return None
+    score = _jaccard(first, second)
+    if score < threshold or _only_nested_members(left.members, right.members):
+        return None
+    return score
 
 
-def _threshold_adjacency(
+def _qualifying_links(
     order: list[_Entry], pairs: set[tuple[int, int]], threshold: float
-) -> dict[int, set[int]]:
-    adjacency: dict[int, set[int]] = {}
+) -> list[tuple[int, int, float]]:
+    links: list[tuple[int, int, float]] = []
     for left, right in pairs:
-        if not _edge_qualifies(order[left], order[right], threshold):
-            continue
-        adjacency.setdefault(left, set()).add(right)
-        adjacency.setdefault(right, set()).add(left)
-    return adjacency
+        score = _link_score(order[left], order[right], threshold)
+        if score is not None:
+            links.append((left, right, score))
+    return links
 
 
-def _pruned_members(positions: list[int], order: list[_Entry]) -> list[DuplicateMember]:
-    return _drop_contained_members(
-        [member for position in positions for member in order[position].members]
+def _link_components(links: list[tuple[int, int, float]]) -> list[_Cluster]:
+    # Union-find over the qualifying links: one cluster per connected
+    # component, so no qualifying pair is ever split across groups.
+    parent: dict[int, int] = {}
+
+    def root(position: int) -> int:
+        parent.setdefault(position, position)
+        while parent[position] != position:
+            parent[position] = parent[parent[position]]
+            position = parent[position]
+        return position
+
+    for left, right, _ in links:
+        left_root, right_root = root(left), root(right)
+        if left_root != right_root:
+            parent[left_root] = right_root
+    clusters: dict[int, _Cluster] = {}
+    for link in links:
+        clusters.setdefault(root(link[0]), _Cluster([], [])).links.append(link)
+    for position in sorted(parent):
+        clusters[root(position)].positions.append(position)
+    return list(clusters.values())
+
+
+def _cluster_rank(
+    cluster: _Cluster, order: list[_Entry]
+) -> tuple[int, int, tuple[str, int]]:
+    entries = [order[position] for position in cluster.positions]
+    first = min(_member_key(member) for entry in entries for member in entry.members)
+    return (
+        -sum(len(entry.members) for entry in entries),
+        -max(entry.node_count for entry in entries),
+        first,
     )
 
 
-def _clique_emissions(
-    clique: list[int], order: list[_Entry]
-) -> list[tuple[list[int], list[DuplicateMember]]]:
-    members = _pruned_members(clique, order)
-    emissions = [(clique, members)]
-    emissions.extend(
-        (subclique, _pruned_members(subclique, order))
-        for subclique in _supplemental_cliques(clique, order, members)
-    )
-    return emissions
+def _similar_clusters(
+    order: list[_Entry], config: DuplicatesConfig
+) -> tuple[list[_Cluster], bool]:
+    """Disjoint near-duplicate clusters, largest first, and a truncation flag.
 
-
-def _similar_group(
-    positions: list[int], members: list[DuplicateMember], order: list[_Entry]
-) -> DuplicateGroup:
-    similarity = min(
-        _jaccard(order[left].branches, order[right].branches)
-        for at, left in enumerate(positions)
-        for right in positions[at + 1 :]
-    )
-    return DuplicateGroup(
-        kind=cs.KIND_SIMILAR,
-        similarity=round(similarity, 3),
-        node_count=max(order[position].node_count for position in positions),
-        members=_sorted_members(members),
-    )
-
-
-def _similar_groups(
-    entries: dict[str, _Entry], config: DuplicatesConfig
-) -> tuple[list[DuplicateGroup], bool]:
-    # Pairs already inside a Stage-1 exact group never reach this stage:
-    # entries are keyed by whole fingerprint, so exact copies are one entry.
-    #
-    # A reported group must honour the PAIRWISE invariant (every two members
-    # clear the threshold), and no qualifying pair may be silently dropped:
-    # the groups are the maximal cliques of the threshold graph. Cliques can
-    # overlap - when A duplicates both B and C but B and C are not similar,
-    # A legitimately appears in {A, B} and in {A, C}.
-    threshold, max_groups = config.threshold, config.max_similar_groups
-    order = list(entries.values())
+    Exact copies share one entry (entries are keyed by whole fingerprint),
+    so a cluster's vertices are distinct fingerprints and its links are the
+    pairs clearing the threshold. The groups are the connected components of
+    that graph (issue #2473). Maximal cliques kept every two members above
+    the threshold but seated one function in up to seven overlapping groups
+    on gson, so the group count overstated the duplication; a component
+    reports each function once and still drops no qualifying pair. The price
+    is that two members of one cluster may be linked only through a third,
+    which the group's similarity range (weakest to strongest link) shows.
+    A definition and its own closure still never link (issue #1398); they
+    share a cluster only through an external copy of the closure, which the
+    group then lists among its exact copies.
+    """
+    threshold, cap = config.threshold, config.max_similar_groups
     pairs, pairs_truncated = _candidate_pairs(
         order, threshold, config.max_candidate_pairs
     )
-    adjacency = _threshold_adjacency(order, pairs, threshold)
-    cliques, cliques_truncated = _maximal_cliques(adjacency, max_groups)
-    if cliques_truncated:
-        logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=max_groups))
-    truncated = pairs_truncated or cliques_truncated
-    groups: list[DuplicateGroup] = []
-    seen_member_sets: set[frozenset[str]] = set()
-    for clique in cliques:
-        for group_positions, group_members in _clique_emissions(clique, order):
-            if len(group_members) < 2:
-                continue
-            key = frozenset(m[cs.KEY_QUALIFIED_NAME] for m in group_members)
-            if key in seen_member_sets:
-                continue
-            seen_member_sets.add(key)
-            groups.append(_similar_group(group_positions, group_members, order))
-    return groups, truncated
+    clusters = _link_components(_qualifying_links(order, pairs, threshold))
+    clusters.sort(key=lambda cluster: _cluster_rank(cluster, order))
+    capped = len(clusters) > cap
+    if capped:
+        logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=cap))
+    return clusters[:cap], pairs_truncated or capped
 
 
-def _maximal_cliques(
-    adjacency: dict[int, set[int]], cap: int
-) -> tuple[list[list[int]], bool]:
-    # Bron-Kerbosch with pivoting, deterministic via sorted iteration. The
-    # threshold graph is sparse (edges need Jaccard overlap at or above the
-    # threshold across whole branch sets) and its dense spots are
-    # near-cliques, the cheap case for pivoted Bron-Kerbosch. A pathological
-    # graph still has exponentially many maximal cliques (Moon-Moser), so
-    # enumeration stops once a clique BEYOND the cap materializes: with
-    # pivoting, work between two emitted cliques is polynomial, making the
-    # budget a bound on total work, not just on output size. The overflow
-    # clique is the truncation evidence and is dropped from the result, so a
-    # scan with exactly `cap` cliques completes and is NOT flagged truncated.
-    # Returns (cliques, truncated).
-    budget = cap + 1
-    cliques: list[list[int]] = []
+def _cross_pairs(
+    left: list[DuplicateMember], right: list[DuplicateMember]
+) -> Iterator[tuple[DuplicateMember, DuplicateMember]]:
+    """Path-ordered duplicate pairs across two linked fingerprints.
 
-    def expand(taken: set[int], candidates: set[int], excluded: set[int]) -> bool:
-        if len(cliques) >= budget:
-            return False
-        if not candidates and not excluded:
-            if len(taken) > 1:
-                cliques.append(sorted(taken))
-            return len(cliques) < budget
-        pivot = max(
-            sorted(candidates | excluded),
-            key=lambda vertex: len(adjacency[vertex] & candidates),
+    Every cross pair shares the fingerprints' score, but one that nests a
+    definition in the other is no duplicate (issue #1398), even when a
+    sibling pair keeps the fingerprint link. A generator, because two large
+    clone classes have a cross product far bigger than either class.
+    """
+    for a in left:
+        for b in right:
+            if not (_member_nested_in(a, b) or _member_nested_in(b, a)):
+                first, second = sorted((a, b), key=_member_key)
+                yield first, second
+
+
+def _pair_rank(
+    pair: tuple[float, DuplicateMember, DuplicateMember],
+) -> tuple[float, tuple[str, int], tuple[str, int]]:
+    return -pair[0], _member_key(pair[1]), _member_key(pair[2])
+
+
+def _best_cross_pair(
+    left: list[DuplicateMember], right: list[DuplicateMember]
+) -> tuple[DuplicateMember, DuplicateMember]:
+    """The path-first duplicate pair across two linked fingerprints.
+
+    The path-first member of either side leads it whenever that member has
+    a partner it does not nest with, which is the norm, so the cross product
+    is walked only when nesting rules all of that member's partners out.
+    """
+    ordered_left, ordered_right = _sorted_members(left), _sorted_members(right)
+    if _member_key(ordered_right[0]) < _member_key(ordered_left[0]):
+        ordered_left, ordered_right = ordered_right, ordered_left
+    lead = ordered_left[0]
+    for partner in ordered_right:
+        if not (_member_nested_in(lead, partner) or _member_nested_in(partner, lead)):
+            return lead, partner
+    return min(
+        _cross_pairs(left, right),
+        key=lambda pair: (_member_key(pair[0]), _member_key(pair[1])),
+    )
+
+
+def _cluster_group(cluster: _Cluster, order: list[_Entry]) -> DuplicateGroup:
+    entries = [order[position] for position in cluster.positions]
+    copies = sorted(
+        (_sorted_members(entry.members) for entry in entries if len(entry.members) > 1),
+        key=lambda members: _member_key(members[0]),
+    )
+    scores = [score for _, _, score in cluster.links]
+    # Two exact copies inside the cluster are its strongest possible link.
+    strongest = 1.0 if copies else max(scores)
+    # One link per fingerprint pair, named by its best member pair: two
+    # clone classes of N copies are one link here, not N * N member pairs
+    # (expanded_links generates those for the reports that print them).
+    links = sorted(
+        (
+            (score, *_best_cross_pair(order[left].members, order[right].members))
+            for left, right, score in cluster.links
+        ),
+        key=_pair_rank,
+    )
+    # The table link and --open preview a group's first two members; in a
+    # cluster those two may not be similar to each other at all, so the
+    # strongest qualifying pair leads and the rest follow in path order.
+    _, lead, partner = links[0]
+    rest = [
+        member
+        for member in _sorted_members([m for entry in entries for m in entry.members])
+        if member is not lead and member is not partner
+    ]
+    return DuplicateGroup(
+        kind=cs.KIND_SIMILAR,
+        similarity=round(min(scores), 3),
+        max_similarity=round(strongest, 3),
+        node_count=max(entry.node_count for entry in entries),
+        members=[lead, partner, *rest],
+        exact_subgroups=[
+            [member["qualified_name"] for member in members] for members in copies
+        ],
+        links=[
+            DuplicateLink(
+                first=first["qualified_name"],
+                second=second["qualified_name"],
+                similarity=round(score, 3),
+            )
+            for score, first, second in links
+        ],
+    )
+
+
+def expanded_links(
+    group: DuplicateGroup, limit: int | None = None
+) -> tuple[list[DuplicateLink], bool]:
+    """A group's member-level duplicate pairs, strongest first.
+
+    Each fingerprint link stands for every pair across the exact copies of
+    its two members. Returns at most `limit` pairs (all when None) and
+    whether more existed; only the strongest are ever held, so a pair of
+    large clone classes costs memory in the limit, not in its cross product.
+    An `exact` group has no links: every pair of its members is a duplicate.
+    """
+    if group["kind"] != cs.KIND_SIMILAR:
+        return [], False
+    by_name = {member["qualified_name"]: member for member in group["members"]}
+    copies = {name: names for names in group["exact_subgroups"] for name in names}
+
+    def side(name: str) -> list[DuplicateMember]:
+        return [by_name[copy] for copy in copies.get(name, [name])]
+
+    pairs = (
+        (link["similarity"], first, second)
+        for link in group["links"]
+        for first, second in _cross_pairs(side(link["first"]), side(link["second"]))
+    )
+    if limit is None:
+        kept, truncated = sorted(pairs, key=_pair_rank), False
+    else:
+        kept = heapq.nsmallest(limit + 1, pairs, key=_pair_rank)
+        truncated = len(kept) > limit
+        kept = kept[:limit]
+    return [
+        DuplicateLink(
+            first=first["qualified_name"],
+            second=second["qualified_name"],
+            similarity=score,
         )
-        for vertex in sorted(candidates - adjacency[pivot]):
-            if not expand(
-                taken | {vertex},
-                candidates & adjacency[vertex],
-                excluded & adjacency[vertex],
-            ):
-                return False
-            candidates = candidates - {vertex}
-            excluded = excluded | {vertex}
-        return True
+        for score, first, second in kept
+    ], truncated
 
-    expand(set(), set(adjacency), set())
-    truncated = len(cliques) > cap
-    return sorted(cliques[:cap]), truncated
+
+def reported_groups(
+    groups: list[DuplicateGroup], limit: int
+) -> tuple[list[DuplicateGroup], bool]:
+    """Groups as a JSON report writes them, and whether a link list was cut.
+
+    The collector keeps fingerprint links; a report that prints links lists
+    member pairs, at most `limit` per group. Other groups pass through as
+    they are.
+    """
+    reported: list[DuplicateGroup] = []
+    truncated = False
+    for group in groups:
+        if group["kind"] != cs.KIND_SIMILAR:
+            reported.append(group)
+            continue
+        links, cut = expanded_links(group, limit)
+        expanded = group.copy()
+        expanded["links"] = links
+        reported.append(expanded)
+        truncated = truncated or cut
+    if truncated:
+        logger.warning(ls.DUPLICATES_LINKS_TRUNCATED.format(cap=limit))
+    return reported, truncated

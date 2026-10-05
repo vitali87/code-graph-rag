@@ -8,7 +8,7 @@ import tomli_w
 from pydantic import ValidationError
 
 from ..config import settings
-from ..utils.path_utils import derive_project_name
+from ..utils.path_utils import derive_project_name, project_name_error
 from . import constants as cs
 from .models import WorkspaceConfig, WorkspaceRepo
 
@@ -106,11 +106,25 @@ def add_repo(
     resolved = Path(repo_path).expanduser().resolve()
     if not resolved.exists():
         raise WorkspaceError(cs.ERR_WORKSPACE_REPO_PATH_MISSING.format(path=resolved))
+    if not resolved.is_dir():
+        raise WorkspaceError(
+            cs.ERR_WORKSPACE_REPO_NOT_A_DIRECTORY.format(path=resolved)
+        )
+    if project_name and (error := project_name_error(project_name)) is not None:
+        raise WorkspaceError(error)
     config = load_workspace(name, home=home)
     if config.find_repo(str(resolved)) is not None:
         raise WorkspaceError(
             cs.ERR_WORKSPACE_REPO_DUPLICATE.format(path=resolved, name=name)
         )
+    for member in config.repos:
+        member_path = member.repo_path()
+        if resolved.is_relative_to(member_path) or member_path.is_relative_to(resolved):
+            raise WorkspaceError(
+                cs.ERR_WORKSPACE_REPO_OVERLAPS.format(
+                    path=resolved, member=member_path, name=name
+                )
+            )
     repo = WorkspaceRepo(
         path=str(resolved),
         project_name=(project_name or derive_project_name(resolved)),
