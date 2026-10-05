@@ -9,11 +9,13 @@ findings). A finding also named no callee, so it could not be diagnosed.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -127,3 +129,15 @@ def test_an_exact_site_of_a_changed_signature_keeps_its_verdict(
     (change,) = delta["signature_changes"]
     assert [s["verdict"] for s in change["sites"]] == [cs.DELTA_ARITY_TOO_MANY]
     assert has_findings(delta)
+
+
+def test_the_site_query_names_each_column_once() -> None:
+    # Memgraph refuses a RETURN that names two columns alike, so a second
+    # `r.resolution AS resolution` failed every delta snapshot: `cgr rename`
+    # committed its edit yet never re-ingested it, and the graph kept the old
+    # name (test_edits_undo_graph_e2e). The in-memory store hid it.
+    returned = cq.CYPHER_DELTA_SITES.split("RETURN", 1)[1]
+    aliases = re.findall(r"\bAS\s+(\w+)", returned)
+
+    assert cs.KEY_RESOLUTION in aliases
+    assert len(aliases) == len(set(aliases))
