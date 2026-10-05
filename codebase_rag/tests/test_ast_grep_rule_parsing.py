@@ -89,6 +89,13 @@ def test_a_truthy_name_head_reaches_the_rule() -> None:
     )
 
 
+def test_a_truthy_receiver_child_reaches_the_rule() -> None:
+    # Same for receiver_child (issue #2589).
+    assert _parse({"kind": "k", "receiver_child": "r"}) == _Rule(
+        kind="k", receiver_child="r"
+    )
+
+
 # --- _parse_rules, the caller ------------------------------------------------
 
 
