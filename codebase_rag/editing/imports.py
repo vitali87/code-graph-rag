@@ -529,12 +529,8 @@ class ImportRewriter:
         source = self.patcher.source(path)
         text = source.decode(cs.ENCODING_UTF8)
         offsets: list[tuple[int, int, int]] = []
-        for m in re.finditer(
-            r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]", text, re.S
-        ):
-            for literal in re.finditer(
-                r"""(['"])(?P<name>[A-Za-z_]\w*)\1""", m.group(1)
-            ):
+        for m in re.finditer(cs.PY_DUNDER_ALL_BLOCK_PATTERN, text, re.S):
+            for literal in re.finditer(cs.PY_DUNDER_ALL_ENTRY_PATTERN, m.group(1)):
                 if literal.group("name") != old_name:
                     continue
                 start = m.start(1) + literal.start("name")
