@@ -16,6 +16,10 @@ cgr help start
 cgr help daemon logs
 ```
 
+![cgr help listing commands by workflow, then cgr help daemon logs](../assets/demos/cli-help.gif)
+
+![cgr help start showing the options and examples for cgr start](../assets/demos/cli-help-start.gif)
+
 `cgr COMMAND --help` displays the same command-specific information.
 
 ## Command Overview
@@ -40,8 +44,9 @@ Every top-level command, from the CLI's own help registry:
 | `cgr trace` | Ingest runtime call traces as dynamic CALLS edges |
 | `cgr edits` | Show or undo recorded edit transactions (multi-file edits applied through cgr). |
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
-| `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
+| `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites. |
+| `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
 | `cgr status` | Show stack state and the last sync time for each project |
@@ -61,16 +66,18 @@ Parse a repository and/or start the interactive query CLI.
 cgr start --repo-path /path/to/repo [OPTIONS]
 ```
 
+![cgr start --repo-path . --update-graph indexing the pallets/click repository](../assets/demos/quickstart-update-graph.gif)
+
 | Option | Description |
 |--------|-------------|
 | `--repo-path` | Path to repository (defaults to current directory) |
-| `--update-graph` | Parse and ingest the repository into the knowledge graph |
+| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts). Cannot be combined with `-a`/`--ask-agent`, `--no-sync` or `--projects`. |
 | `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
 | `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
 | `--batch-size` | Override Memgraph flush batch size |
 | `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
 | `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
-| `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
+| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there and the nodes they reach. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
 
 ### `cgr export`
 
@@ -90,6 +97,8 @@ cgr export -o OUTPUT [OPTIONS]
 A name that is not indexed is an error that lists the projects that are. A
 scoped file records its projects under `metadata.projects`. `--batch-size` and
 `--json` are deprecated and ignored with a warning; `--no-json` is an error.
+
+![cgr export writing the whole graph and one project, then refusing a directory as --output and an unindexed project name](../assets/demos/cli-export.gif)
 
 ### `cgr optimize`
 
@@ -125,6 +134,8 @@ cgr stats [OPTIONS]
 
 A name that is not indexed is an error that lists the projects that are.
 
+![cgr stats totals with one line per project, then cgr stats --project-name with a name that is not indexed](../assets/demos/cli-stats.gif)
+
 ### `cgr dead-code`
 
 Report functions and methods unreachable from any entry point (candidates for
@@ -145,6 +156,8 @@ cgr dead-code [OPTIONS]
 | `--format` | Output format: `table` (default) or `json`. |
 | `--output`, `-o` | Write the report to a file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any candidate is found (useful in CI). |
+
+![cgr dead-code --project-name listing unreachable C functions in pallets/markupsafe](../assets/demos/cli-dead-code.gif)
 
 ### `cgr duplicates`
 
@@ -167,6 +180,8 @@ cgr duplicates [OPTIONS]
 | `--output`, `-o` | Write the report to a file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
 
+![cgr duplicates --project-name finding one exact clone group in pallets/itsdangerous](../assets/demos/cli-duplicates.gif)
+
 ### `cgr mcp-server`
 
 Serve cgr tools to MCP clients over stdio or HTTP.
@@ -183,6 +198,8 @@ Index a repository to protobuf for offline use.
 cgr index -o ./index-output --repo-path ./my-project
 ```
 
+![cgr index -o ./index-output --repo-path ./itsdangerous writing a protobuf index and provenance manifest](../assets/demos/cli-index.gif)
+
 ### `cgr doctor`
 
 Check that the services, credentials and tools a session needs are in place.
@@ -190,6 +207,8 @@ Check that the services, credentials and tools a session needs are in place.
 ```bash
 cgr doctor
 ```
+
+![cgr doctor checking Docker, Memgraph, the configured models and ripgrep](../assets/demos/installation-doctor.gif)
 
 It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher models: for a key-based provider, whether its credentials pass the rule `cgr start` applies (reported as "credentials present", with no network call); for a local Ollama model, whether Ollama answers at `OLLAMA_BASE_URL` and has the model pulled (reported as "ready", "not reachable" or "not pulled", with the `ollama pull` command to run); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
 
@@ -201,8 +220,40 @@ Manage language support.
 cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
+cgr language list-languages --verbose
 cgr language remove-language <language-name>
+cgr language cleanup-orphaned-modules
 ```
+
+`list-languages` prints one row per language across all three parsing tiers: its name, file extensions, tier (`tree-sitter`, `ast-grep` or `document`), level of support (`full`, `in development`, `structural` or `headings`) and whether this install can parse it. A language marked `no` needs its extra, which the command names below the table. A second table shows the optional semantic frontends (libclang, go/types, Roslyn, javac, Jedi): whether each toolchain is found, the setting that selects it, and whether indexing will use it. The language name and extensions are never truncated, including in piped output. `--verbose` adds the tree-sitter node types each language maps to functions, classes, modules and calls.
+
+![cgr language list-languages printing the configured languages table](../assets/demos/cli-language.gif)
+
+`add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
+
+### `cgr graph`
+
+Deterministic graph queries, printed as JSON, with no LLM in the path.
+
+```bash
+cgr graph resolve helper
+cgr graph callers myrepo__1a2b3c4d.pkg.util.helper --depth 2
+cgr graph tests-reaching myrepo__1a2b3c4d.pkg.util.helper --project myrepo__1a2b3c4d
+```
+
+The project is `--project`, or else the one `--repo-path` (default `.`) was
+indexed as. The exit status tells an empty answer apart from a question the
+graph cannot answer, and a refusal prints nothing on stdout:
+
+| Status | Meaning |
+|--------|---------|
+| `0` | The JSON answer. `[]` means the name is in the graph and nothing matches it. |
+| `3` | The project is not indexed, or, without `--project`, the directory was never indexed. The message on stderr names close matches. |
+| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold. The message names close matches, or points at `cgr graph resolve`. |
+
+`resolve` answers `[]` when no name matches, and `definition` answers
+`{"found": false, ...}` for a qualified name it does not find; neither exits
+with `4`.
 
 ## Makefile Commands
 

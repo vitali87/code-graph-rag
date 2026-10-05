@@ -38,6 +38,14 @@ TS_LOCALS_PATTERN = """
 # `module.exports.x()`, prototype-pattern `this`): only these bind a dotted call
 # to a same-module free function; `view.render()` is an instance call.
 JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
+# A chained call's receiver written as a construction (`new Box()`,
+# `(new Box())`): only text that reads `new` once these are stripped is
+# looked up in the file's tree to see whether it IS a construction (#2465).
+JS_NEW_KEYWORD = "new"
+JS_RECEIVER_LEADING_CHARS = "( \t\r\n"
+# The directive that makes a script or function strict, where a function
+# declared in a block is scoped to that block (no Annex B hoisting).
+JS_USE_STRICT_DIRECTIVE = "use strict"
 # `this.` receiver prefix of a call name; a prototype-assigned function
 # (`Date.prototype.strftime`) dispatches such calls to a sibling method of
 # the same prototype target before the module-receiver fallback applies.
@@ -278,12 +286,65 @@ TS_ARRAY_GENERIC_NAMES = frozenset(
 )
 JS_LIST_TYPE_PREFIX = "list["
 JS_LIST_TYPE_FORMAT = "list[{element}]"
+# A member call's receiver declaration, read to confirm or rule out a method
+# bound only by name (issue #2609).
+TS_PREDEFINED_TYPE = "predefined_type"
+TS_TUPLE_TYPE = "tuple_type"
+TS_PARENTHESIZED_TYPE = "parenthesized_type"
+TS_FIELD_TYPE_ARGUMENTS = "type_arguments"
+TS_TYPE_DECLARATION_NODES = frozenset(
+    {
+        "class_declaration",
+        "abstract_class_declaration",
+        "interface_declaration",
+        "type_alias_declaration",
+        "enum_declaration",
+    }
+)
+# Utility types whose value has every member of their first type argument.
+TS_MEMBER_PRESERVING_UTILITY_TYPES = frozenset(
+    {"Readonly", "Partial", "Required", "NonNullable"}
+)
+# Utility types computing a type the declaration alone does not pin down:
+# `Pick`/`Omit` keep or drop keys, the rest map or extract. Their result may
+# or may not have a method, so they neither confirm nor rule out a binding.
+TS_UNSETTLED_UTILITY_TYPES = frozenset(
+    {
+        "Pick",
+        "Omit",
+        "Record",
+        "Exclude",
+        "Extract",
+        "ReturnType",
+        "InstanceType",
+        "Awaited",
+        "ThisType",
+        "NoInfer",
+    }
+)
+# `@param {Type} name` and `@param {Type} [name]` in a JSDoc block.
+JSDOC_PARAM_TAG_PATTERN = r"@param\s+\{([^{}]*)\}\s+\[?([A-Za-z_$][\w$]*)"
+JSDOC_TYPE_NAME_PATTERN = r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*"
+# `@template T` and `@template K, V`: the names a JSDoc block declares as
+# type parameters.
+JSDOC_TEMPLATE_TAG_PATTERN = (
+    r"@template\s+(?:\{[^{}]*\}\s+)?([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)"
+)
+# Nullable, non-null and optional marks around a JSDoc type name.
+JSDOC_TYPE_MODIFIER_CHARS = "?!="
+JSDOC_ANY_TYPES = frozenset({"*", "?", "any", "unknown"})
 TS_IMPORT_ALIAS = "import_alias"
 TS_JS_WITH_STATEMENT = "with_statement"
 TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
+# `f(...xs)`: an argument passing as many values as `xs` holds.
+TS_SPREAD_ELEMENT = "spread_element"
+# Bodiless TS declarations: an overload, an interface member, an abstract or
+# ambient one. A call matches one of possibly several such signatures.
+TS_METHOD_SIGNATURE = "method_signature"
+TS_ABSTRACT_METHOD_SIGNATURE = "abstract_method_signature"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"

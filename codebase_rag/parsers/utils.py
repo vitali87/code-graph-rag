@@ -1450,6 +1450,28 @@ def _record_method_overrides(
         )
 
 
+def _method_positional_params_props(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> PropertyDict:
+    """The method's stored positional parameter list, or nothing to store.
+
+    Python's keeps the receiver deliberately: CPython counts the bound `self`
+    in "takes N positional arguments", so a stored list that dropped it would
+    under-count by one on every method (issue #227). The languages that
+    declare optionality store their parameters marked with it (issue #2517);
+    the rest leave the property absent.
+    """
+    if language == cs.SupportedLanguage.PYTHON:
+        return {
+            cs.KEY_POSITIONAL_PARAMS: python_positional_parameter_names(method_node)
+        }
+    # Local import: positional_params imports this module for its decoder.
+    from .positional_params import declared_positional_params
+
+    declared = declared_positional_params(method_node, language)
+    return {} if declared is None else {cs.KEY_POSITIONAL_PARAMS: declared}
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1524,13 +1546,7 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-    # Python only, and the receiver is deliberately kept: CPython counts the
-    # bound `self` in "takes N positional arguments", so a stored list that
-    # dropped it would under-count by one on every method (issue #227).
-    if language == cs.SupportedLanguage.PYTHON:
-        method_props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
-            method_node
-        )
+    method_props.update(_method_positional_params_props(method_node, language))
     # Local import: type_facts imports this module for safe_decode_with_fallback.
     from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 
@@ -1668,6 +1684,13 @@ def module_function_props(
     if file_path is not None and repo_path is not None:
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    # Local import: positional_params imports this module for its decoder.
+    # One reader serves both grammars, whose parameter node types differ.
+    from .positional_params import declared_positional_params
+
+    declared = declared_positional_params(function_node, cs.SupportedLanguage.JS)
+    if declared is not None:
+        props[cs.KEY_POSITIONAL_PARAMS] = declared
     props.update(fingerprint_props(function_node))
     props.update(anchor_hash_props(function_node))
     return props
