@@ -104,27 +104,35 @@ def _generic_get_name(node: Node) -> str | None:
     return None
 
 
-def _sql_get_name(node: Node) -> str | None:
-    # `create_function` names the routine through an `object_reference` child,
-    # not a `name` field, so the generic extractor finds nothing. The schema
-    # qualifier is KEPT: `app.usp_x` and `audit.usp_x` are different routines,
-    # and collapsing both to `usp_x` would register them under one key and fan
-    # a schema-qualified call onto every same-named routine. The registry
-    # indexes the last dotted segment, so an unqualified caller still finds a
-    # qualified definition.
+def sql_object_reference_name(node: Node) -> str | None:
+    """The normalized routine name a node's first `object_reference` spells.
+
+    `create_function` (the routine it defines) and `invocation` (the routine
+    it calls) both name their routine through an unnamed `object_reference`
+    child, not a `name` or `function` field, so the generic extractors find
+    nothing. The schema qualifier is KEPT: `app.usp_x` and `audit.usp_x` are
+    different routines, and collapsing both to `usp_x` would register them
+    under one key and fan a schema-qualified call onto every same-named
+    routine. The registry indexes the last dotted segment, so an unqualified
+    caller still finds a qualified definition.
+    """
     for child in node.named_children:
         if child.type != cs.TS_SQL_OBJECT_REFERENCE:
             continue
         if not child.text:
-            break
+            return None
         reference = decode_node_text(child.text).strip()
         # The shared normalizer applies PostgreSQL's folding rules (unquoted
-        # lowercases, quoted keeps case); the string-call side uses the SAME
-        # one, or a definition and the call naming it would never connect.
-        name = normalize_sql_reference(reference)
-        if name:
-            return name
-        break
+        # lowercases, quoted keeps case); definitions, call sites and the
+        # string-call side all use the SAME one, or a definition and the call
+        # naming it would never connect.
+        return normalize_sql_reference(reference) or None
+    return None
+
+
+def _sql_get_name(node: Node) -> str | None:
+    if name := sql_object_reference_name(node):
+        return name
     # A routine the grammar parsed but could not name: with the upstream
     # grammar's partial PL/pgSQL coverage a low hit rate is usually the
     # grammar, not the schema, and this line is how a user can tell.
@@ -184,6 +192,13 @@ def _c_get_name(node: Node) -> str | None:
             name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
             if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
                 return decode_node_text(name_node.text)
+        # `int CJSON_CDECL main(void)`: recovery moved the name into `type`
+        # (issue #2528). The call pass names the caller through the same
+        # helper, so both passes agree on the node.
+        from .parsers.cpp import utils as cpp_utils
+
+        if split_name := cpp_utils.c_macro_split_function_name(node):
+            return split_name
     return _generic_get_name(node)
 
 

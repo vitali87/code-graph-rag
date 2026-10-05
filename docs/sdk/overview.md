@@ -32,6 +32,8 @@ for fn in functions[:5]:
     print(f"{fn.properties['name']}: {len(rels)} relationships")
 ```
 
+![The Quick Example saved as quick_example.py and run against a graph.json exported with cgr export](../assets/demos/sdk-overview.gif)
+
 ## Available Modules
 
 | Import | Purpose |
