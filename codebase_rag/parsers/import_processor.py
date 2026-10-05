@@ -694,41 +694,77 @@ def _is_type_checking_test(condition: Node | None) -> bool:
 _PY_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
 
 
+_UNBOUND = "<unbound>"
+
+
 def _python_module_bound_at(node: Node, name: str) -> str | None:
-    # The module `name` names at `node`: what the module's last top-level
-    # statement before it binding `name` imported (`import typing as t`,
-    # `import typing`), None when that statement bound something else
-    # (`import settings as t` after it, bot review on PR #2728). A name no
-    # top-level statement binds is taken at its word, as before.
-    root = node
-    while root.parent is not None:
-        root = root.parent
-    bound: str | None = name
-    for stmt in root.named_children:
-        if stmt.start_byte >= node.start_byte:
-            break
-        if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
-            for child in stmt.named_children:
-                if child.type == cs.TS_ALIASED_IMPORT:
-                    module = safe_decode_text(
+    # The module `name` names at `node`: what the last statement before it
+    # binding `name` imported (`import typing as t`, `import typing`), None
+    # when that statement bound something else (`import settings as t`
+    # after it, bot review on PR #2728). The nearest namespace binding the
+    # name decides: the class body the guard runs in, then the module
+    # (bot review on PR #2728). A name nothing binds is taken at its word.
+    scope = node.parent
+    while scope is not None:
+        if scope.type == cs.TS_PY_CLASS_DEFINITION:
+            body = scope.child_by_field_name(cs.FIELD_BODY)
+        elif scope.parent is None:
+            body = scope
+        else:
+            body = None
+        if body is not None:
+            bound = _python_last_binding(body, name, node.start_byte)
+            if bound != _UNBOUND:
+                return bound
+        scope = scope.parent
+    return name
+
+
+def _python_last_binding(body: Node, name: str, before: int) -> str | None:
+    # What the last statement of one namespace's body before `before`
+    # binding `name` bound it to, through `if`/`try`/`with` blocks but not
+    # into a nested function or class; `_UNBOUND` when none does.
+    bound: str | None = _UNBOUND
+    last = -1
+    stack = list(body.named_children)
+    while stack:
+        stmt = stack.pop()
+        if stmt.start_byte >= before or stmt.type in (
+            cs.TS_PY_FUNCTION_DEFINITION,
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_DECORATED_DEFINITION,
+        ):
+            continue
+        found = _python_statement_binding(stmt, name)
+        if found != _UNBOUND and stmt.start_byte > last:
+            bound, last = found, stmt.start_byte
+        stack.extend(stmt.named_children)
+    return bound
+
+
+def _python_statement_binding(stmt: Node, name: str) -> str | None:
+    # The module an import statement binds `name` to, None for a binding of
+    # anything else, `_UNBOUND` when the statement does not bind `name`.
+    if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
+        bound: str | None = _UNBOUND
+        for child in stmt.named_children:
+            if child.type == cs.TS_ALIASED_IMPORT:
+                alias = safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
+                if alias == name:
+                    bound = safe_decode_text(
                         child.child_by_field_name(cs.TS_FIELD_NAME)
                     )
-                    if (
-                        safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
-                        == name
-                    ):
-                        bound = module
-                elif child.type == cs.TS_DOTTED_NAME:
-                    module = safe_decode_text(child)
-                    if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
-                        bound = name
-        elif stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT or (
-            stmt.type == cs.TS_PY_EXPRESSION_STATEMENT
-            and any(c.type == cs.TS_PY_ASSIGNMENT for c in stmt.named_children)
-        ):
-            if name in _bound_identifiers(stmt):
-                bound = None
-    return bound
+            elif child.type == cs.TS_DOTTED_NAME:
+                module = safe_decode_text(child)
+                if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
+                    bound = name
+        return bound
+    if stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT or (
+        stmt.type == cs.TS_PY_EXPRESSION_STATEMENT
+        and any(c.type == cs.TS_PY_ASSIGNMENT for c in stmt.named_children)
+    ):
+        return None if name in _bound_identifiers(stmt) else _UNBOUND
+    return _UNBOUND
 
 
 def _bound_identifiers(stmt: Node) -> set[str]:
