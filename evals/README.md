@@ -1332,3 +1332,25 @@ condition, a Cypher model plus Memgraph up (`cgr daemon up`) with the corpus
 indexed (`--reindex` on first run). Results land in
 `evals/results/agentic_qa.json`. Question generation, grading, and aggregation
 are pinned by `codebase_rag/tests/test_agentic_qa.py`.
+
+## First tool — does the orchestrator ask the graph first?
+
+Recorded interactive sessions showed the orchestrator answering structural
+questions ("what calls X?", "how big is this codebase?", "which classes
+inherit from Y?") with `rg`, `ls` and `wc` while one graph query held the
+answer ([issue #2359](https://github.com/vitali87/code-graph-rag/issues/2359)).
+This eval asks those questions of the orchestrator exactly as `cgr start`
+builds it: the same system prompt, tool names, descriptions and schemas, and
+the configured orchestrator model. Each run stops at the first tool call,
+before the tool runs, so nothing executes, nothing asks for approval, and a
+run costs one model request per question. A question passes when that first
+call is `query_graph` or `semantic_search`; the command exits 1 if any does
+not.
+
+```bash
+uv run python -m evals.first_tool --repo-path . --project-name code-graph-rag
+```
+
+Prerequisites: the repository indexed into a running Memgraph and an
+orchestrator model configured as for `cgr start`. The probe and grading are
+pinned by `codebase_rag/tests/test_first_tool_eval.py`.
