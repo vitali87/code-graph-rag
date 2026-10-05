@@ -253,6 +253,20 @@ def test_waiting_for_a_memgraph_that_never_starts_still_raises(
         mgr.wait_healthy(timeout=NEVER_READY_TIMEOUT_S)
 
 
+@pytest.mark.parametrize(
+    "starting_memgraph",
+    [
+        pytest.param(
+            "reset",
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="mgclient does not always emit stderr for a reset on Windows",
+            ),
+        ),
+        "close",
+    ],
+    indirect=True,
+)
 def test_the_c_library_message_is_kept_at_debug_level(
     starting_memgraph: int, debug_records: list[tuple[str, str]]
 ) -> None:
