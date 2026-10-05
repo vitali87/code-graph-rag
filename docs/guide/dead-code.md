@@ -32,6 +32,14 @@ No unreachable functions or methods found.
 12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
 ```
 
+PHP has no module privacy, so every function declared at file level and every
+non-`private` member of a named class, interface, trait or enum is a public
+root; closures and anonymous-class members are not. A PHP test is recognised
+wherever it lives: a `*Test.php` file, a `Tests/` directory, or a class
+extending PHPUnit's `TestCase` (directly, through a project base class, or
+through a framework base such as Symfony's `KernelTestCase`), together with
+everything declared in it.
+
 ## Prerequisites
 
 Index the repository first, so the graph exists in Memgraph:
@@ -46,6 +54,10 @@ cgr start --repo-path /path/to/your/repo --update-graph --clean
 ```bash
 cgr dead-code
 ```
+
+![cgr dead-code listing the one unreachable method in the requests repository](../assets/demos/dead-code.gif)
+
+*Recorded on psf/requests.*
 
 If a single project is indexed it is used automatically. When several are
 indexed, name one:
@@ -72,6 +84,10 @@ cgr dead-code -e main -e cli.run -e handlers.webhook
 cgr dead-code --decorator-root plugins.register --decorator-root signal_handler
 ```
 
+![cgr dead-code run before and after -e main -e cli.run -e handlers.webhook on a small C plugin, the second run no longer reporting run, webhook and their callees](../assets/demos/dead-code-entry-points.gif)
+
+*Recorded on a small C plugin whose host resolves `run` and `webhook` with `dlsym()`, so no call site reaches them.*
+
 ## Excluding Generated Code
 
 Generated or vendored code (API clients, protobuf stubs) is full of callbacks a
@@ -80,6 +96,8 @@ library invokes and reports noisily. Exclude it by file-path glob:
 ```bash
 cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
 ```
+
+![cgr dead-code with --exclude '*client/core*' --exclude '*.gen.*' dropping the generated client and protobuf files from the report](../assets/demos/dead-code-exclude.gif)
 
 Two rules keep a pattern from silently excluding nothing:
 
@@ -120,6 +138,8 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
   --exclude '*_generated*'
 ```
 
+![cgr dead-code writing a JSON report with --fail-on-found, exiting 1, and jq listing each candidate's path and start line](../assets/demos/dead-code-ci.gif)
+
 Each JSON row carries `label`, `name`, `qualified_name`, `path`, `start_line`
 and `end_line`. `path` is the repo-relative file (the same path `--exclude`
 matches), so an annotation can point at `path:start_line` without guessing
@@ -130,8 +150,9 @@ so no name or path is cut to fit 80 columns.
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
-   decorated handlers, dunder/lifecycle methods, plus any `--entry-point` and
-   `--decorator-root` you add.
+   decorated handlers, dunder/lifecycle methods, program entry points (`main`
+   in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
+   plus any `--entry-point` and `--decorator-root` you add.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class

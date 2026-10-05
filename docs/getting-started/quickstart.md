@@ -14,12 +14,16 @@ Parse and ingest a multi-language repository into the knowledge graph.
 cgr start --repo-path /path/to/repo1 --update-graph
 ```
 
+![cgr start --repo-path . --update-graph indexing the pallets/click repository](../assets/demos/quickstart-update-graph.gif)
+
 **For additional repositories:**
 
 ```bash
 cgr start --repo-path /path/to/repo2 --update-graph
 cgr start --repo-path /path/to/repo3 --update-graph
 ```
+
+![Two more repositories, itsdangerous and markupsafe, synced into the same graph with cgr start --update-graph](../assets/demos/quickstart-more-repos.gif)
 
 The graph is shared across projects, and syncing one leaves the others intact.
 
@@ -33,11 +37,15 @@ cgr start --repo-path /path/to/repo1 --update-graph --clean
 by `--repo-path`. It asks for confirmation when other projects would be lost;
 pass `--yes` to skip that prompt in scripts and CI.
 
+![cgr start --update-graph --clean asking for confirmation before deleting the other indexed project, then rebuilding requests](../assets/demos/quickstart-clean.gif)
+
 **Control Memgraph batch flushing:**
 
 ```bash
 cgr start --repo-path /path/to/repo --update-graph --batch-size 5000
 ```
+
+![cgr start --update-graph --batch-size 5000 indexing pallets/flask with 5000-relationship flushes](../assets/demos/quickstart-batch-size.gif)
 
 The system automatically detects and processes files for all supported languages.
 
@@ -89,6 +97,8 @@ cgr export -o my_graph.json
 cgr export -o my_project.json --project-name my-project
 ```
 
+![cgr start --update-graph -o my_graph.json exporting one project, then cgr export for the whole graph and for one project](../assets/demos/quickstart-export.gif)
+
 **Work with exported data in Python:**
 
 ```python
@@ -104,6 +114,8 @@ for func in functions[:5]:
     relationships = graph.get_relationships_for_node(func.node_id)
     print(f"Function {func.properties['name']} has {len(relationships)} relationships")
 ```
+
+![The graph_loader snippet saved as load.py and run against an exported my_graph.json](../assets/demos/quickstart-graph-loader.gif)
 
 ## What Next?
 

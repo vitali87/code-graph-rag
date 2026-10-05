@@ -221,8 +221,11 @@ def test_overload_rank_treats_an_unknown_argument_as_a_wildcard() -> None:
     # An argument whose type could not be inferred must not exclude a
     # candidate, or an unrelated expression would silently narrow the pick.
     from codebase_rag.parsers.java.method_resolver import _overload_rank
+    from codebase_rag.types_defs import JavaOverloadRank
 
-    assert _overload_rank("C.take(String,int)", (None, "int")) == 0
+    assert _overload_rank("C.take(String,int)", (None, "int")) == JavaOverloadRank(
+        unproven=0, conversions=0, distance=0
+    )
 
 
 def test_overload_rank_rejects_an_unreachable_parameter_type() -> None:
