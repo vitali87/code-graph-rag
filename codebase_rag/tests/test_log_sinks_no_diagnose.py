@@ -8,12 +8,12 @@ an API key or file contents in front of the user, or in an MCP client's log.
 import ast
 import io
 from collections.abc import Generator
+from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from loguru import logger
-from rich.console import Console
 
 from codebase_rag import cli
 from codebase_rag import main as cgr_main
@@ -117,10 +117,10 @@ def test_the_chat_sink_keeps_the_secret_out(
 @pytest.mark.usefixtures("_clean_logger")
 def test_the_quiet_sink_keeps_the_secret_out(monkeypatch: pytest.MonkeyPatch) -> None:
     buffer = io.StringIO()
-    monkeypatch.setattr(cli.app_context, "console", Console(file=buffer, width=200))
     monkeypatch.setattr(cli.settings, "QUIET", cli.settings.QUIET)
-    cli._global_options(
-        SimpleNamespace(invoked_subcommand=None), version=None, quiet=True
-    )
-    _log_a_failure_holding_the_secret()
+    with redirect_stderr(buffer):
+        cli._global_options(
+            SimpleNamespace(invoked_subcommand=None), version=None, quiet=True
+        )
+        _log_a_failure_holding_the_secret()
     _assert_logged_without_the_secret(buffer.getvalue())
