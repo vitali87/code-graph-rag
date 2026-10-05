@@ -32,23 +32,42 @@ if TYPE_CHECKING:
 JAVA_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
-def _capturing_method(scope_node: ASTNode) -> ASTNode | None:
-    """The method whose locals a method of an anonymous or local class
-    captures, or None for a method of a member or top-level class."""
+def _capture_site(scope_node: ASTNode) -> tuple[ASTNode, ASTNode] | None:
+    """For a method of an anonymous or local class: the method whose locals
+    it captures, and the node that creates or declares the class (where the
+    captures are read). None for a method of a member or top-level class."""
     body = scope_node.parent
     if body is None or body.type != cs.TS_CLASS_BODY or body.parent is None:
         return None
     # The class body belongs to `new T() { ... }` or to a class declaration;
     # above either, a method comes before any named type only when the class
     # is declared inside that method.
-    current = body.parent.parent
+    site = body.parent
+    current = site.parent
     while current is not None:
         if current.type in cs.JAVA_METHOD_NODE_TYPES:
-            return current
+            return current, site
         if current.type in cs.JAVA_CLASS_NODE_TYPES:
             return None
         current = current.parent
     return None
+
+
+def _encloses(container: ASTNode, node: ASTNode) -> bool:
+    return (
+        container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
+    )
+
+
+def _nodes_of_type(root: ASTNode, node_type: str) -> list[ASTNode]:
+    found: list[ASTNode] = []
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        if current.type == node_type:
+            found.append(current)
+        pending.extend(reversed(current.children))
+    return found
 
 
 class JavaTypeInferenceEngine(
@@ -192,23 +211,50 @@ class JavaTypeInferenceEngine(
         local_var_types: dict[str, str] = {}
 
         try:
+            # A method of an anonymous or local class sees the parameters and
+            # locals of the method that declares the class (effectively final
+            # captures, so their declared types hold): `codec.encode(in)` in a
+            # `new Handler() { ... }` bound nothing where the same call from a
+            # lambda bound exactly (issue #2937). They are seeded first, so the
+            # method's own locals infer through them (`var alias = codec;`) and
+            # its own names shadow them (bot review on PR #2991).
+            if (capture := _capture_site(scope_node)) is not None:
+                local_var_types.update(self._captures_at(*capture, module_qn))
             self._collect_all_variable_types(scope_node, local_var_types, module_qn)
             logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
 
         except Exception as e:
             logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED, error=e)
 
-        # A method of an anonymous or local class sees the parameters and
-        # locals of the method that declares the class (effectively final
-        # captures, so their declared types hold): `codec.encode(in)` in a
-        # `new Handler() { ... }` bound nothing where the same call from a
-        # lambda bound exactly (issue #2937). Its own names shadow them.
-        if (enclosing := _capturing_method(scope_node)) is not None:
-            local_var_types = {
-                **self.build_variable_type_map(enclosing, module_qn),
-                **local_var_types,
-            }
         return local_var_types
+
+    def _captures_at(
+        self, enclosing: ASTNode, site: ASTNode, module_qn: str
+    ) -> dict[str, str]:
+        """The names of `enclosing` in scope at `site`, with their types.
+
+        Only declarations visible there: the method's parameters, the fields
+        it sees, and a local declared before `site` in a block (or a for
+        loop) that encloses it. A same-named local of a sibling block is
+        another variable (bot review on PR #2991). An enclosing method that
+        is itself in an anonymous class sees its own captures the same way.
+        """
+        types: dict[str, str] = {}
+        if (outer := _capture_site(enclosing)) is not None:
+            types.update(self._captures_at(*outer, module_qn))
+        self._analyze_java_parameters(enclosing, types, module_qn)
+        for decl in _nodes_of_type(enclosing, cs.TS_LOCAL_VARIABLE_DECLARATION):
+            if (
+                decl.parent is not None
+                and decl.start_byte < site.start_byte
+                and _encloses(decl.parent, site)
+            ):
+                self._process_java_variable_declaration(decl, types, module_qn)
+        self._analyze_java_class_fields(enclosing, types, module_qn)
+        for loop in _nodes_of_type(enclosing, cs.TS_ENHANCED_FOR_STATEMENT):
+            if _encloses(loop, site):
+                self._process_enhanced_for_statement(loop, types, module_qn)
+        return types
 
     def resolve_java_method_call(
         self,
