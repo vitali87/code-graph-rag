@@ -39,3 +39,7 @@ A repository with no C/C++ files skips all of this silently; the warnings only f
 ## Staleness
 
 The parser fingerprint records the resolved mode and whether a compile database is discoverable, not just the configured setting: a graph indexed while libclang was missing reads as stale after you install the `cpp` extra, and one indexed before you generated `compile_commands.json` reads as stale after you do, so the next `--update-graph` rebuilds with the hybrid facts included.
+
+![cgr start --update-graph on leethomason/tinyxml2 warning that no compile_commands.json exists, cmake generating one, the next sync re-parsing as stale, and cgr graph resolve then finding the TIXMLASSERT macro Function node](../assets/demos/cpp-semantic-mode.gif)
+
+*Recorded on leethomason/tinyxml2 in the default `hybrid` mode.*

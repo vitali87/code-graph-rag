@@ -103,6 +103,7 @@ def _delta_with_sites(*verdicts: str) -> StructuralDelta:
         StructuralDelta,
         {
             "dangling_callers": [],
+            "dangling_importers": [],
             "signature_changes": [
                 {"sites": [{"verdict": v} for v in verdicts], "remote_callers": []}
             ],
@@ -134,7 +135,13 @@ def test_a_removed_parameter_a_caller_passes_still_fails_the_gate(
 
 @pytest.mark.parametrize(
     "key",
-    ["dangling_callers", "arity_findings", "new_duplicates", "new_import_cycles"],
+    [
+        "dangling_callers",
+        "dangling_importers",
+        "arity_findings",
+        "new_duplicates",
+        "new_import_cycles",
+    ],
 )
 def test_every_other_finding_still_trips_the_gate(key: str) -> None:
     delta = dict(_delta_with_sites(cs.DELTA_ARITY_POSSIBLY_MISSING))

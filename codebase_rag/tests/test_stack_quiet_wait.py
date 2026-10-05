@@ -253,6 +253,20 @@ def test_waiting_for_a_memgraph_that_never_starts_still_raises(
         mgr.wait_healthy(timeout=NEVER_READY_TIMEOUT_S)
 
 
+@pytest.mark.parametrize(
+    "starting_memgraph",
+    [
+        pytest.param(
+            "reset",
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="mgclient does not always emit stderr for a reset on Windows",
+            ),
+        ),
+        "close",
+    ],
+    indirect=True,
+)
 def test_the_c_library_message_is_kept_at_debug_level(
     starting_memgraph: int, debug_records: list[tuple[str, str]]
 ) -> None:
@@ -317,13 +331,28 @@ def test_concurrent_probes_leave_stderr_pointing_at_the_terminal(
     assert capfd.readouterr().err == "after\n"
 
 
-def test_a_process_without_stderr_still_probes() -> None:
-    # A service started with fd 2 closed has nothing to redirect.
+def test_a_process_without_stderr_still_probes(
+    debug_records: list[tuple[str, str]],
+) -> None:
+    # A service started with fd 2 closed: the C library's message still goes
+    # to the debug log, and fd 2 is left closed.
+    runtime = _SeparateCRuntime(stderr=None)
+
+    def connect(**_: object) -> MagicMock:
+        runtime.perror(f"{MGCLIENT_NOISE}_recv: connection closed by server")
+        raise health.mgclient.OperationalError("failed to receive handshake")
+
     with (
-        patch.object(os, "dup", side_effect=OSError(errno.EBADF, "closed")),
-        patch.object(health.mgclient, "connect"),
+        patch.object(health, "_PYTHON_C_RUNTIME", runtime),
+        patch.object(health, "_mgclient_own_c_runtime", return_value=None),
+        patch.object(health.mgclient, "connect", side_effect=connect),
     ):
-        assert health._bolt_reachable(cs.LOOPBACK_HOST, 7687)
+        assert not health._bolt_reachable(cs.LOOPBACK_HOST, 7687)
+
+    assert runtime.fds == {}
+    assert [level for level, text in debug_records if MGCLIENT_NOISE in text] == [
+        "DEBUG"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -382,10 +411,10 @@ class _SeparateCRuntime:
         self.fds: dict[int, int] = {}
         if stderr is not None:
             self.fds[STDERR_FD] = os.dup(stderr)
-        self._numbers = itertools.count(STDERR_FD + 1)
 
     def _add(self, real_fd: int) -> int:
-        fd = next(self._numbers)
+        # The lowest free number, so with fd 2 closed the next one is fd 2.
+        fd = next(n for n in itertools.count(STDERR_FD) if n not in self.fds)
         self.fds[fd] = real_fd
         return fd
 
@@ -475,16 +504,22 @@ def test_an_unexpected_probe_error_restores_both_c_runtimes_stderr(
 
 
 def test_a_c_runtime_without_stderr_still_probes(
+    debug_records: list[tuple[str, str]],
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    # A service started with no stderr: msvcrt.dll has no fd 2 to move, and
-    # Python's fd 2 is still kept clean.
+    # msvcrt.dll with no usable fd 2, as under a test runner whose capture
+    # closed the handle it shared: mgclient's message still reaches the debug
+    # log, and Python's fd 2 is still kept clean.
     runtime = _SeparateCRuntime(stderr=None)
-    failure = health.mgclient.OperationalError("failed to receive handshake")
+
+    def connect(**_: object) -> MagicMock:
+        runtime.perror(f"{MGCLIENT_NOISE}_recv: connection closed by server")
+        os.write(STDERR_FD, f"{MGCLIENT_NOISE}: Connection reset by peer\n".encode())
+        raise health.mgclient.OperationalError("failed to receive handshake")
 
     with (
         patch.object(health, "_mgclient_own_c_runtime", return_value=runtime),
-        patch.object(health.mgclient, "connect", side_effect=_noisy_connect(failure)),
+        patch.object(health.mgclient, "connect", side_effect=connect),
     ):
         assert (
             health.memgraph_anonymous_access(cs.LOOPBACK_HOST, 7687)
@@ -492,7 +527,37 @@ def test_a_c_runtime_without_stderr_still_probes(
         )
 
     assert runtime.fds == {}
+    assert [level for level, text in debug_records if MGCLIENT_NOISE in text] == [
+        "DEBUG"
+    ]
     assert capfd.readouterr().err == ""
+
+
+def test_an_unusable_fd_2_that_refuses_the_capture_is_left_as_it_was(
+    tmp_path: Path,
+) -> None:
+    # msvcrt.dll's fd 2 still taken, but by a handle it can no longer dup:
+    # when it will not take the capture either, the probe still runs and
+    # reports its result, and nothing is closed after.
+    with (tmp_path / "terminal").open("wb") as file:
+        runtime = _SeparateCRuntime(file.fileno())
+    failure = health.mgclient.OperationalError("failed to receive handshake")
+    try:
+        with (
+            patch.object(health, "_mgclient_own_c_runtime", return_value=runtime),
+            patch.object(runtime, "dup", side_effect=OSError(errno.EBADF, "gone")),
+            patch.object(runtime, "dup2", side_effect=OSError(errno.EBADF, "bad")),
+            patch.object(health.mgclient, "connect", side_effect=failure),
+        ):
+            assert (
+                health.memgraph_anonymous_access(cs.LOOPBACK_HOST, 7687)
+                is cs.AnonymousAccess.NO_ANSWER
+            )
+
+        assert set(runtime.fds) == {STDERR_FD}
+    finally:
+        for real_fd in runtime.fds.values():
+            os.close(real_fd)
 
 
 def test_mgclient_has_a_c_runtime_of_its_own_only_on_windows() -> None:
