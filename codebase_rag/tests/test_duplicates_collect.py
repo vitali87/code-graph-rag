@@ -6,7 +6,6 @@ from __future__ import annotations
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.duplicates import (
-    _maximal_cliques,
     collect_duplicates,
     collect_duplicates_with_coverage,
     default_duplicates_config,
@@ -58,6 +57,14 @@ def _row(
 
 
 _CONFIG = default_duplicates_config()
+
+# Two clusters sharing no branch: the shape for the similar-group cap.
+_TWO_CLUSTERS = [
+    _row("proj.a.one", "aaaa", [*(f"b{i}" for i in range(9)), "x1"]),
+    _row("proj.b.two", "bbbb", [*(f"b{i}" for i in range(9)), "x2"]),
+    _row("proj.c.three", "cccc", [*(f"t{i}" for i in range(9)), "y1"]),
+    _row("proj.d.four", "dddd", [*(f"t{i}" for i in range(9)), "y2"]),
+]
 
 
 class TestExactGroups:
@@ -249,11 +256,11 @@ class TestSimilarGroups:
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 3
 
-    def test_below_threshold_pair_is_not_grouped_transitively(self) -> None:
+    def test_chained_pairs_share_one_cluster(self) -> None:
         # A-B = 4/6 ~ 0.667 and B-C = 4/8 = 0.5 qualify at threshold 0.5,
-        # but A-C = 2/8 = 0.25 does not. Connectivity is transitive while
-        # the threshold is pairwise: A and C must never share a group, yet
-        # both qualifying pairs must be reported - two overlapping cliques.
+        # but A-C = 2/8 = 0.25 does not. Groups are disjoint clusters (issue
+        # #2473): A and C meet through B instead of B being reported twice,
+        # and the score range says the members are linked, not all similar.
         config = default_duplicates_config(threshold=0.5)
         ingestor = FakeIngestor(
             [
@@ -263,18 +270,20 @@ class TestSimilarGroups:
             ]
         )
         groups = collect_duplicates(ingestor, "proj", config)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
-        ]
-        assert {"proj.a.one", "proj.b.two"} in member_sets
-        assert {"proj.b.two", "proj.c.three"} in member_sets
-        assert len(groups) == 2
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.a.one",
+            "proj.b.two",
+            "proj.c.three",
+        }
+        assert groups[0]["similarity"] == 0.5
+        assert groups[0]["max_similarity"] == round(4 / 6, 3)
 
-    def test_overlapping_qualifying_pairs_are_both_reported(self) -> None:
+    def test_overlapping_qualifying_pairs_are_both_kept(self) -> None:
         # A-B = 4/6 ~ 0.667 and A-C = 4/7 ~ 0.571 qualify at threshold 0.5;
         # B-C = 4/9 ~ 0.444 does not. First-fit clustering would seat A with
-        # B and silently lose the valid A-C pair; maximal cliques report
-        # both groups, with A in each.
+        # B and silently lose the valid A-C pair; the cluster keeps both
+        # links, and its weakest one is A-C.
         config = default_duplicates_config(threshold=0.5)
         ingestor = FakeIngestor(
             [
@@ -288,45 +297,14 @@ class TestSimilarGroups:
             ]
         )
         groups = collect_duplicates(ingestor, "proj", config)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
-        ]
-        assert {"proj.a.one", "proj.b.two"} in member_sets
-        assert {"proj.a.one", "proj.c.three"} in member_sets
-        assert len(groups) == 2
-        by_members = dict(zip(map(frozenset, member_sets), groups, strict=True))
-        assert by_members[frozenset({"proj.a.one", "proj.b.two"})][
-            "similarity"
-        ] == round(4 / 6, 3)
-        assert by_members[frozenset({"proj.a.one", "proj.c.three"})][
-            "similarity"
-        ] == round(4 / 7, 3)
-
-    def test_clique_enumeration_is_capped_with_truncation_signal(self) -> None:
-        # Moon-Moser K(2,2,2): three partner pairs, every vertex adjacent to
-        # all but its partner -> 2*2*2 = 8 maximal cliques. A pathological
-        # threshold graph grows this exponentially, so enumeration must stop
-        # at the cap and say so instead of materializing everything.
-        partners = {0: 1, 1: 0, 2: 3, 3: 2, 4: 5, 5: 4}
-        adjacency = {
-            vertex: {other for other in range(6) if other not in (vertex, partner)}
-            for vertex, partner in partners.items()
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.a.one",
+            "proj.b.two",
+            "proj.c.three",
         }
-        full, truncated = _maximal_cliques(adjacency, cap=100)
-        assert len(full) == 8
-        assert truncated is False
-
-        capped, truncated = _maximal_cliques(adjacency, cap=3)
-        assert len(capped) == 3
-        assert truncated is True
-        # Deterministic prefix: the capped result is a subset of the full one.
-        assert all(clique in full for clique in capped)
-
-        # A cap exactly equal to the clique count is a COMPLETE scan: the
-        # flag must only fire when a clique beyond the cap materializes.
-        exact, truncated = _maximal_cliques(adjacency, cap=8)
-        assert len(exact) == 8
-        assert truncated is False
+        assert groups[0]["similarity"] == round(4 / 7, 3)
+        assert groups[0]["max_similarity"] == round(4 / 6, 3)
 
     def test_enclosing_function_is_not_similar_to_its_own_closure(self) -> None:
         # A factory's body contains its nested function, so the outer branch
@@ -360,7 +338,7 @@ class TestSimilarGroups:
     def test_nested_pair_with_external_copy_still_groups(self) -> None:
         # The nested-pair exemption is scoped to containment: when the
         # closure's fingerprint ALSO matches a copy elsewhere, the entries
-        # are a real clone pair and the group must survive.
+        # are a real clone pair and the link must survive.
         shared = [f"b{i}" for i in range(9)]
         ingestor = FakeIngestor(
             [
@@ -390,24 +368,26 @@ class TestSimilarGroups:
             ]
         )
         groups = collect_duplicates(ingestor, "proj", _CONFIG)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
+        # One disjoint cluster (issue #2473): the closure and its external
+        # copy nest in it as exact copies instead of a second group that
+        # repeated proj.other.copy. The factory meets its own closure only
+        # through that copy; the factory-closure pair itself never links.
+        assert len(groups) == 1
+        assert groups[0]["kind"] == cs.KIND_SIMILAR
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.m.factory",
+            "proj.m.factory.inner",
+            "proj.other.copy",
+        }
+        assert groups[0]["exact_subgroups"] == [
+            ["proj.m.factory.inner", "proj.other.copy"]
         ]
-        # inner and its external copy share a fingerprint: one exact group.
-        assert {"proj.m.factory.inner", "proj.other.copy"} in member_sets
-        # factory vs the inner-fingerprint entry is a real cross-file clone
-        # relationship, but only via the EXTERNAL copy: the similar group
-        # must seat factory with proj.other.copy alone, never with its own
-        # nested closure (whose exact twin is already reported above).
-        assert {"proj.m.factory", "proj.other.copy"} in member_sets
-        assert len(groups) == 2
 
-    def test_same_line_nested_closure_with_external_copy_is_dropped(self) -> None:
+    def test_same_line_nested_closure_is_not_similar_to_its_factory(self) -> None:
         # Minified one-liners: the factory and its closure share the SAME
         # start and end line, so line spans cannot prove nesting - but the
         # qualified-name hierarchy can (factory.closure sits under factory).
-        # The similar group must still seat the factory with the external
-        # copy only, never with its own closure.
+        # The pair must not link, so no group is reported.
         shared = [f"b{i}" for i in range(9)]
         ingestor = FakeIngestor(
             [
@@ -428,23 +408,9 @@ class TestSimilarGroups:
                     start_col=24,
                     end_line=5,
                 ),
-                _row(
-                    "proj.other.closure_copy",
-                    "bbbb",
-                    shared,
-                    path="proj/other.py",
-                    start_line=3,
-                    end_line=3,
-                ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
-        ]
-        assert {"proj.min.factory.closure", "proj.other.closure_copy"} in member_sets
-        assert {"proj.min.factory", "proj.other.closure_copy"} in member_sets
-        assert len(groups) == 2
+        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
 
     def test_same_line_adjacent_definitions_still_pair(self) -> None:
         # Two DISTINCT minified definitions can share one line span without
@@ -484,13 +450,16 @@ class TestSimilarGroups:
         # one-liner at 5-5 beside a definition spanning 5-9 (or 9-9 closing a
         # 5-9 span). Containment is only proven by STRICT bounds on both
         # sides; a shared boundary defers to the qualified-name hierarchy.
-        shared = [f"b{i}" for i in range(9)]
+        # The two pairs share no branch, so each forms its own group only if
+        # its own link survives.
+        first = [f"b{i}" for i in range(9)]
+        second = [f"t{i}" for i in range(9)]
         ingestor = FakeIngestor(
             [
                 _row(
                     "proj.min.first",
                     "aaaa",
-                    [*shared, "x1"],
+                    [*first, "x1"],
                     path="proj/min.py",
                     start_line=5,
                     end_line=5,
@@ -498,7 +467,7 @@ class TestSimilarGroups:
                 _row(
                     "proj.min.second",
                     "bbbb",
-                    [*shared, "x2"],
+                    [*first, "x2"],
                     path="proj/min.py",
                     start_line=5,
                     start_col=40,
@@ -507,7 +476,7 @@ class TestSimilarGroups:
                 _row(
                     "proj.min.third",
                     "cccc",
-                    [*shared, "x3"],
+                    [*second, "x3"],
                     path="proj/tail.py",
                     start_line=9,
                     end_line=9,
@@ -515,7 +484,7 @@ class TestSimilarGroups:
                 _row(
                     "proj.min.fourth",
                     "dddd",
-                    [*shared, "x4"],
+                    [*second, "x4"],
                     path="proj/tail.py",
                     start_line=5,
                     end_line=9,
@@ -523,22 +492,18 @@ class TestSimilarGroups:
             ]
         )
         groups = collect_duplicates(ingestor, "proj", _CONFIG)
-        # All four are mutually similar: ONE 4-clique. A wrongly dropped
-        # first-second (or third-fourth) edge would split it into two
-        # overlapping 3-cliques instead.
-        assert len(groups) == 1
-        assert {m["qualified_name"] for m in groups[0]["members"]} == {
-            "proj.min.first",
-            "proj.min.second",
-            "proj.min.third",
-            "proj.min.fourth",
-        }
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.min.first", "proj.min.second"} in member_sets
+        assert {"proj.min.third", "proj.min.fourth"} in member_sets
+        assert len(groups) == 2
 
     def test_closure_pair_with_distinct_external_function_is_kept(self) -> None:
         # An external function with a DIFFERENT fingerprint that is similar
-        # to both a factory and its closure: the factory-closure edge is
-        # filtered, so two overlapping cliques emerge, and the closure's own
-        # relationship with the external function must be reported.
+        # to both a factory and its closure: the factory-closure link is
+        # filtered, but the closure's own link with the external function
+        # must still be reported, so all three share one cluster.
         shared = [f"b{i}" for i in range(9)]
         ingestor = FakeIngestor(
             [
@@ -569,18 +534,19 @@ class TestSimilarGroups:
             ]
         )
         groups = collect_duplicates(ingestor, "proj", _CONFIG)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
-        ]
-        assert {"proj.m.factory", "proj.other.cousin"} in member_sets
-        assert {"proj.m.factory.inner", "proj.other.cousin"} in member_sets
-        assert len(groups) == 2
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.m.factory",
+            "proj.m.factory.inner",
+            "proj.other.cousin",
+        }
+        assert groups[0]["exact_subgroups"] == []
 
-    def test_all_nested_closure_entry_is_dropped_from_similar_group(self) -> None:
+    def test_identical_closures_nest_as_exact_copies(self) -> None:
         # Two similar factories each contain an identical closure (one exact
-        # entry, every member nested in a group co-member). The closure clone
-        # class is the Stage-1 exact group; the similar group must pair the
-        # factories alone, never a factory beside its own closure.
+        # entry). Each factory links to the OTHER factory's closure, so all
+        # four form one cluster, and the closure clone class is nested in it
+        # as exact copies rather than repeated as a group of its own.
         shared = [f"b{i}" for i in range(9)]
         closure_branches = shared[:5]
         ingestor = FakeIngestor(
@@ -621,26 +587,18 @@ class TestSimilarGroups:
         )
         config = default_duplicates_config(threshold=0.5)
         groups = collect_duplicates(ingestor, "proj", config)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
+        assert len(groups) == 1
+        assert len(groups[0]["members"]) == 4
+        assert groups[0]["exact_subgroups"] == [
+            ["proj.a.factory_one.helper", "proj.b.factory_two.helper"]
         ]
-        assert {"proj.a.factory_one.helper", "proj.b.factory_two.helper"} in member_sets
-        for members in member_sets:
-            assert not (
-                "proj.a.factory_one" in members
-                and "proj.a.factory_one.helper" in members
-            )
-            assert not (
-                "proj.b.factory_two" in members
-                and "proj.b.factory_two.helper" in members
-            )
+        assert (groups[0]["similarity"], groups[0]["max_similarity"]) == (0.5, 1.0)
 
-    def test_dropped_closure_entry_keeps_standalone_partner_pair(self) -> None:
+    def test_closure_standalone_partner_stays_in_the_cluster(self) -> None:
         # Two similar factories, their identical closures (one exact entry),
-        # and a standalone function similar to everything: one 4-entry
-        # clique. Dropping the nested closures from the main group must not
-        # erase the closure-to-standalone relationship - it is not covered
-        # by any exact group, so a supplemental group carries it.
+        # and a standalone function similar to everything. The cluster holds
+        # all five, so the closure-to-standalone relationship, covered by no
+        # exact group, is never lost.
         closure_branches = [f"b{i}" for i in range(5)]
         factory_a = [f"b{i}" for i in range(9)] + ["x1"]
         factory_b = [f"b{i}" for i in range(9)] + ["x2"]
@@ -691,32 +649,14 @@ class TestSimilarGroups:
         )
         config = default_duplicates_config(threshold=0.5)
         groups = collect_duplicates(ingestor, "proj", config)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
-        ]
-        # Main clique group: factories with the standalone, closures pruned.
-        assert {
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.a.factory_one",
             "proj.b.factory_two",
-            "proj.s.standalone",
-        } in member_sets
-        # Supplemental group: the pruned closure entry with its non-container
-        # partner, so the closure-standalone relationship survives.
-        assert {
             "proj.a.factory_one.helper",
             "proj.b.factory_two.helper",
             "proj.s.standalone",
-        } in member_sets
-        # And never a factory beside its own closure.
-        for members in member_sets:
-            assert not (
-                "proj.a.factory_one" in members
-                and "proj.a.factory_one.helper" in members
-            )
-            assert not (
-                "proj.b.factory_two" in members
-                and "proj.b.factory_two.helper" in members
-            )
+        }
 
     def test_parameterized_qn_still_proves_same_line_nesting(self) -> None:
         # C#/Java qualified names carry a signature (`Run(int)`) that a
@@ -743,23 +683,9 @@ class TestSimilarGroups:
                     start_col=30,
                     end_line=5,
                 ),
-                _row(
-                    "proj.Other.LocalCopy",
-                    "bbbb",
-                    shared,
-                    path="proj/Other.cs",
-                    start_line=3,
-                    end_line=3,
-                ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
-        member_sets = [
-            {m["qualified_name"] for m in group["members"]} for group in groups
-        ]
-        assert {"proj.N.Sample.Run.Local", "proj.Other.LocalCopy"} in member_sets
-        assert {"proj.N.Sample.Run(int)", "proj.Other.LocalCopy"} in member_sets
-        assert len(groups) == 2
+        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
@@ -812,41 +738,23 @@ class TestOrderingAndCoverage:
         assert report.truncated is False
 
     def test_truncation_flag_propagates_to_report(self) -> None:
-        # A-B and A-C qualify at threshold 0.5 (two overlapping cliques);
-        # with the cap at one group the second is cut and the report must
-        # say so instead of passing the partial list off as complete.
-        config = default_duplicates_config(threshold=0.5, max_similar_groups=1)
-        ingestor = FakeIngestor(
-            [
-                _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
-                _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
-                _row(
-                    "proj.c.three",
-                    "cccc",
-                    ["b1", "b2", "b3", "b4", "b7", "b8", "b9"],
-                ),
-            ]
+        # Two disjoint clusters; with the cap at one group the second is cut
+        # and the report must say so instead of passing the partial list off
+        # as complete.
+        config = default_duplicates_config(max_similar_groups=1)
+        report = collect_duplicates_with_coverage(
+            FakeIngestor(_TWO_CLUSTERS), "proj", config
         )
-        report = collect_duplicates_with_coverage(ingestor, "proj", config)
         assert len(report.groups) == 1
         assert report.truncated is True
 
     def test_cap_matching_group_count_is_not_flagged_truncated(self) -> None:
-        # Same two overlapping cliques with the cap at exactly two: the scan
-        # is complete and must not be reported as truncated.
-        config = default_duplicates_config(threshold=0.5, max_similar_groups=2)
-        ingestor = FakeIngestor(
-            [
-                _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
-                _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
-                _row(
-                    "proj.c.three",
-                    "cccc",
-                    ["b1", "b2", "b3", "b4", "b7", "b8", "b9"],
-                ),
-            ]
+        # Same two clusters with the cap at exactly two: the scan is complete
+        # and must not be reported as truncated.
+        config = default_duplicates_config(max_similar_groups=2)
+        report = collect_duplicates_with_coverage(
+            FakeIngestor(_TWO_CLUSTERS), "proj", config
         )
-        report = collect_duplicates_with_coverage(ingestor, "proj", config)
         assert len(report.groups) == 2
         assert report.truncated is False
 
