@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
 from ..utils import qn_markers
+from .records import FramePoint
 
 if TYPE_CHECKING:
-    from .records import FramePoint
+    from collections.abc import Iterable, Mapping
 
 
 def _repo_root_posix(repo_root: Path) -> str:
@@ -46,6 +48,183 @@ def _repo_relative(root_posix: str, frame_path: str) -> str | None:
     if not frame_posix.startswith(root_posix):
         return None
     return frame_posix[len(root_posix) :]
+
+
+def _portable_posix(frame_path: str) -> str:
+    """A frame path in POSIX form, whichever OS recorded it.
+
+    ``Path.as_posix`` converts only the running host's separator, so a
+    Windows traceback read on Linux kept its backslashes and never matched a
+    graph path. No real source path contains a backslash on POSIX, so
+    treating one as a separator loses nothing.
+    """
+    return posixpath.normpath(
+        frame_path.replace(cs.TRACE_WINDOWS_PATH_SEPARATOR, cs.SEPARATOR_SLASH)
+    )
+
+
+def _dir_prefix(path: str) -> str:
+    return path.rstrip(cs.SEPARATOR_SLASH) + cs.SEPARATOR_SLASH
+
+
+def _recorded_on_windows(posix_path: str) -> bool:
+    """Whether a POSIX-form path is rooted at a Windows drive or share."""
+    return PureWindowsPath(posix_path).is_absolute()
+
+
+def _prefix_key(posix_path: str) -> str:
+    """How a POSIX-form path compares as a prefix on the OS that recorded it.
+
+    Windows names one file whatever the case of its path, and a drive letter
+    is written either way (``sys.path`` can hold ``c:\\``), so a Windows path
+    compares without case; a POSIX path keeps it.
+    """
+    if _recorded_on_windows(posix_path):
+        return posix_path.casefold()
+    return posix_path
+
+
+def path_spellings(graph_paths: Iterable[str]) -> dict[str, str]:
+    """Each graph path keyed without case, for frames recorded on Windows.
+
+    A Windows frame can spell an in-repo directory unlike the indexed path
+    (``SHOP\\cli.py`` for ``shop/cli.py``: the script typed on the command
+    line, a tool that normalises case) and still name the same file. Two
+    graph paths differing only in case, which a POSIX checkout can hold, give
+    no one answer, so that key is left out and only an exact spelling matches.
+    """
+    found: dict[str, set[str]] = {}
+    for path in graph_paths:
+        found.setdefault(path.casefold(), set()).add(path)
+    return {key: next(iter(paths)) for key, paths in found.items() if len(paths) == 1}
+
+
+def _below_dir(posix_path: str, dir_prefix: str) -> str | None:
+    """``posix_path`` relative to ``dir_prefix``, or None when not under it."""
+    if not _prefix_key(posix_path).startswith(_prefix_key(dir_prefix)):
+        return None
+    # Sliced by separators, not characters: case folding may change a
+    # string's length but never its separators.
+    depth = dir_prefix.count(cs.SEPARATOR_SLASH)
+    return posix_path.split(cs.SEPARATOR_SLASH, depth)[depth]
+
+
+def is_absolute_on_any_os(frame_path: str) -> bool:
+    """Whether a recorded path is absolute on the OS that recorded it.
+
+    The host's own ``Path.is_absolute`` reads ``C:\\app\\x.py`` as relative
+    on Linux and ``/app/x.py`` as relative on Windows, and a relative frame is
+    joined to the checkout root, which buries the real root inside the path.
+    """
+    return PurePosixPath(frame_path).is_absolute() or (
+        PureWindowsPath(frame_path).is_absolute()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PathRebase:
+    """Moves frames recorded under another checkout root onto this one.
+
+    A traceback or trace names files by the root of the machine that ran the
+    code (a CI runner's workspace, a container's ``/app``, a Windows
+    profile), while graph paths are relative to the indexed checkout. Each
+    rule maps a recorded prefix to a directory of this checkout; the longest
+    matching prefix wins. A frame already under the checkout is never
+    rebased: a recorded root can be an ancestor of the checkout, and
+    re-rooting such a frame would move it to a path that does not exist.
+    A frame recorded on Windows also takes the graph's spelling of its
+    in-repo path (``spellings``), since there one file answers to any case.
+    """
+
+    local_root: str
+    rules: tuple[tuple[str, str], ...] = ()
+    spellings: Mapping[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    @classmethod
+    def from_prefix_map(
+        cls,
+        repo_root: Path,
+        prefix_map: Mapping[str, str],
+        spellings: Mapping[str, str] | None = None,
+    ) -> PathRebase:
+        local_root = _repo_root_posix(repo_root)
+        rules = [
+            (
+                _dir_prefix(_portable_posix(recorded)),
+                # normpath lets ``..`` walk out of the checkout, where the
+                # containment check then reports the frame as outside it.
+                _dir_prefix(
+                    posixpath.normpath(
+                        posixpath.join(local_root, _portable_posix(target))
+                    )
+                ),
+            )
+            for recorded, target in prefix_map.items()
+            if recorded
+        ]
+        rules.sort(key=lambda rule: len(rule[0]), reverse=True)
+        return cls(local_root=local_root, rules=tuple(rules), spellings=spellings or {})
+
+    @classmethod
+    def from_recorded_root(
+        cls,
+        repo_root: Path,
+        recorded_root: str,
+        spellings: Mapping[str, str] | None = None,
+    ) -> PathRebase:
+        """Rebase from the root a trace header says it was recorded under.
+
+        A relative header root names no machine's checkout, so it is not a
+        prefix anything can be stripped by.
+        """
+        if not is_absolute_on_any_os(recorded_root):
+            return cls(
+                local_root=_repo_root_posix(repo_root), spellings=spellings or {}
+            )
+        return cls.from_prefix_map(
+            repo_root, {recorded_root: cs.PATH_CURRENT_DIR}, spellings
+        )
+
+    def matches(self, frame: FramePoint) -> bool:
+        """Whether a rule, rather than the checkout root, anchors the frame."""
+        path = _portable_posix(frame.path)
+        return _below_dir(path, self.local_root) is None and any(
+            _below_dir(path, recorded) is not None for recorded, _ in self.rules
+        )
+
+    def apply(self, frame: FramePoint) -> FramePoint:
+        path = _portable_posix(frame.path)
+        windows = _recorded_on_windows(path)
+        # A Windows frame already under the checkout still goes through the
+        # loop: its in-repo part may be spelled unlike the indexed path.
+        if path.startswith(self.local_root) and not windows:
+            return frame
+        # The checkout root first: a frame under it in another case (Windows)
+        # is re-cased onto it rather than moved by an ancestor's rule.
+        for recorded, local in ((self.local_root, self.local_root), *self.rules):
+            if (rest := _below_dir(path, recorded)) is not None:
+                if windows:
+                    rest = self._indexed_spelling(local, rest)
+                return FramePoint(
+                    path=local + rest,
+                    qualname=frame.qualname,
+                    line=frame.line,
+                )
+        return frame
+
+    def _indexed_spelling(self, local: str, rest: str) -> str:
+        """``rest`` as the graph spells it under ``local``.
+
+        Only the part the recording machine wrote is re-spelled: ``local`` is
+        this checkout's own directory, so a mapped target keeps its case.
+        """
+        base = local.removeprefix(self.local_root)
+        indexed = self.spellings.get((base + rest).casefold())
+        if indexed is None or not indexed.startswith(base):
+            return rest
+        return indexed[len(base) :]
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +275,7 @@ class FrameResolver:
                 self._modules_by_path[node.path] = node
             else:
                 self._callables_by_path.setdefault(node.path, []).append(node)
+        self.path_spellings = path_spellings(node.path for node in nodes)
 
     def resolve(
         self, frame: FramePoint, stats: ResolutionStats
@@ -105,11 +285,7 @@ class FrameResolver:
             stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
             return None
 
-        parts = [
-            p
-            for p in frame.qualname.split(cs.SEPARATOR_DOT)
-            if p != cs.TRACE_QUALNAME_LOCALS
-        ]
+        parts = _runtime_name_parts(frame.qualname)
         if parts == [cs.TRACE_QUALNAME_MODULE]:
             module = self._modules_by_path.get(rel_path)
             if module is None:
@@ -127,12 +303,7 @@ class FrameResolver:
             stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
             return None
 
-        suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
-        by_name = [
-            n
-            for n in candidates
-            if _natural_qualified_name(n.qualified_name).endswith(suffix)
-        ]
+        by_name = _named_by(candidates, parts)
         # Prefer a name match whose span contains the runtime line; among name
         # matches without span data, take the first by qualified name so
         # resolution stays deterministic. Only when no candidate matches by
@@ -152,6 +323,88 @@ class FrameResolver:
         candidates: list[CallableNode], line: int
     ) -> CallableNode | None:
         return _innermost_span_containing_line(candidates, line)
+
+    def infer_recorded_root(self, frames: Iterable[FramePoint]) -> str | None:
+        """The root another checkout recorded these frames under, or None.
+
+        Each frame votes for every prefix whose removal leaves a whole graph
+        path (never a bare basename: ``app/x.py`` and ``lib/x.py`` both end in
+        ``x.py``) AND a node there that the frame's own name picks out. The
+        name is the second witness: without it a different project's
+        ``utils.py`` would be bound by line span to whatever function of ours
+        covers that line. The prefix most frames agree on wins; unrelated
+        prefixes tied for the lead are indistinguishable, so none is chosen.
+        One frame naming both ``pkg/x.py`` and ``x.py`` ties two NESTED
+        prefixes, and the shorter keeps the longer, more specific graph path.
+
+        Installed code never votes: a ``site-packages`` copy of our package is
+        not the checkout, however well its names match. And when any frame is
+        already under the checkout, the traceback came from here, so every
+        other frame is genuinely outside it and nothing is inferred.
+        """
+        # Votes are keyed as the recording OS compares paths: `C:\Work` and
+        # `c:\work` are one Windows root, and counted apart they would tie.
+        # The first spelling seen names the root.
+        votes: Counter[str] = Counter()
+        spelled: dict[str, str] = {}
+        for frame in frames:
+            if frame.path.startswith(cs.TRACE_SYNTHETIC_PREFIX):
+                continue
+            if _repo_relative(self._root_posix, frame.path) is not None:
+                return None
+            for prefix in self._root_votes(frame):
+                key = _prefix_key(prefix)
+                spelled.setdefault(key, prefix)
+                votes[key] += 1
+        if not votes:
+            return None
+        top = max(votes.values())
+        leaders = sorted((p for p, n in votes.items() if n == top), key=len)
+        if all(prefix.startswith(leaders[0]) for prefix in leaders):
+            return spelled[leaders[0]]
+        return None
+
+    def _root_votes(self, frame: FramePoint) -> set[str]:
+        """The roots whose removal leaves a graph path naming ``frame``."""
+        path = _portable_posix(frame.path)
+        parts = path.split(cs.SEPARATOR_SLASH)
+        if not cs.TRACE_INSTALLED_DIR_NAMES.isdisjoint(parts):
+            return set()
+        windows = _recorded_on_windows(path)
+        return {
+            _dir_prefix(cs.SEPARATOR_SLASH.join(parts[:cut]))
+            for cut in range(1, len(parts))
+            if self._names_frame(
+                cs.SEPARATOR_SLASH.join(parts[cut:]), frame.qualname, windows
+            )
+        }
+
+    def _names_frame(self, rel_path: str, qualname: str, windows: bool) -> bool:
+        """Whether a node at ``rel_path`` matches the frame by name alone."""
+        if windows:
+            rel_path = self.path_spellings.get(rel_path.casefold(), rel_path)
+        parts = _runtime_name_parts(qualname)
+        if parts == [cs.TRACE_QUALNAME_MODULE]:
+            return rel_path in self._modules_by_path
+        if any(p.startswith(cs.TRACE_SYNTHETIC_PREFIX) for p in parts):
+            return False
+        return bool(_named_by(self._callables_by_path.get(rel_path, []), parts))
+
+
+def _runtime_name_parts(qualname: str) -> list[str]:
+    """A runtime qualname's scope chain without its ``<locals>`` hops."""
+    return [
+        p for p in qualname.split(cs.SEPARATOR_DOT) if p != cs.TRACE_QUALNAME_LOCALS
+    ]
+
+
+def _named_by(candidates: list[CallableNode], parts: list[str]) -> list[CallableNode]:
+    suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+    return [
+        n
+        for n in candidates
+        if _natural_qualified_name(n.qualified_name).endswith(suffix)
+    ]
 
 
 def _innermost_span_containing_line(
