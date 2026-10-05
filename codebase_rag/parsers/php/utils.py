@@ -33,25 +33,61 @@ def anonymous_class_name(node: Node) -> str | None:
     return _positional_name(node)
 
 
-def anonymous_class_scope_name(node: Node) -> str | None:
-    """The anonymous class's qn segment: its name under the callables it is
-    written in, `add.anonymous_19_25` for one built in `Dispatcher::add`.
-
-    PHP's FQN scopes are types and namespaces only, so without the callables
-    the class would sit directly under `Dispatcher` beside its methods. A
-    closure is registered under the same chain (`Box.run.anonymous_7_13`),
-    and so is a Java anonymous class's method (`Dispatcher.add.handle`).
-    """
-    if (name := anonymous_class_name(node)) is None:
-        return None
-    anchors: list[str] = []
+def _anchor_walk(node: Node) -> tuple[list[Node], Node | None]:
+    # The callables between an anonymous class and its anchor stop, innermost
+    # first, and the stop itself (None only off a detached subtree).
+    callables: list[Node] = []
     current = node.parent
     while current is not None and current.type not in _ANCHOR_STOP_TYPES:
         if current.type in _CALLABLE_TYPES:
-            anchors.append(_callable_name(current))
+            callables.append(current)
         current = current.parent
-    anchors.reverse()
-    return cs.SEPARATOR_DOT.join([*anchors, name])
+    return callables, current
+
+
+def _registered_segments(callables: list[Node]) -> list[str]:
+    # The segments the definition pass registers the innermost of `callables`
+    # under, below the anchor stop. A method or named function registers
+    # under its type scope alone (`Box.inner` for a function declared in
+    # `Box::run`); a closure or arrow fn registers under the NAMED callables
+    # around it, an enclosing closure adding nothing (`Box.run.anonymous_8_21`
+    # inside another closure in `run`).
+    if not callables:
+        return []
+    innermost, *outer = callables
+    if name := _declared_name(innermost):
+        return [name]
+    named = [name for c in reversed(outer) if (name := _declared_name(c))]
+    return [*named, _positional_name(innermost)]
+
+
+def anonymous_class_scope_name(node: Node) -> str | None:
+    """The anonymous class's qn segment: its name under the callable it is
+    written in, `add.anonymous_19_25` for one built in `Dispatcher::add`.
+
+    PHP's FQN scopes are types and namespaces only, so without the callable
+    the class would sit directly under `Dispatcher` beside its methods. The
+    callable's part is spelled as that callable is registered, so the class's
+    qn prefix is the qn of the node that DEFINES it: a class built in a
+    function declared inside `Box::run` is `Box.inner.anonymous_9_23`, not
+    `Box.run.inner.anonymous_9_23` under a parent `Box.inner`.
+    """
+    if (name := anonymous_class_name(node)) is None:
+        return None
+    callables, _stop = _anchor_walk(node)
+    return cs.SEPARATOR_DOT.join([*_registered_segments(callables), name])
+
+
+def anonymous_class_anchor_stop(node: Node) -> Node | None:
+    """The nearest type or namespace above a PHP anonymous class.
+
+    Everything between the class and this node is already spelled by the
+    class's scope name, so a walk naming a closure inside the class resumes
+    here rather than naming those callables a second time, differently.
+    """
+    if node.type != cs.TS_PHP_ANONYMOUS_CLASS:
+        return None
+    return _anchor_walk(node)[1]
 
 
 def anonymous_class_qn(node: Node, module_qn: str) -> str | None:
@@ -68,8 +104,6 @@ def anonymous_class_qn(node: Node, module_qn: str) -> str | None:
     return cs.SEPARATOR_DOT.join([module_qn, *parts])
 
 
-def _callable_name(node: Node) -> str:
+def _declared_name(node: Node) -> str | None:
     name_node = node.child_by_field_name(cs.FIELD_NAME)
-    if name_node is not None and (name := safe_decode_text(name_node)):
-        return name
-    return _positional_name(node)
+    return (safe_decode_text(name_node) or None) if name_node is not None else None

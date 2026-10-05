@@ -25,7 +25,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
 from codebase_rag.services.provenance import head_commit
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -42,7 +42,10 @@ from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
-from codebase_rag.tools.semantic_search import create_get_function_source_tool
+from codebase_rag.tools.semantic_search import (
+    create_get_function_source_tool,
+    semantic_code_search,
+)
 from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 from codebase_rag.tools.structural_editor import create_structural_editor_tool
 from codebase_rag.tools.structural_search import create_structural_search_tool
@@ -62,6 +65,7 @@ from codebase_rag.types_defs import (
     QueryResultDict,
     ReingestReport,
     ReingestToolResult,
+    SemanticSearchResult,
     StructuralReplaceChange,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
@@ -157,6 +161,14 @@ _READS_THE_GRAPH = frozenset(
         # definition with no refusal. Guarded like the readers (#1808).
         cs.MCPToolName.ANNOTATE,
         cs.MCPToolName.GLOSSES,
+        # A pure READER, unlike the edit operations in `_NOT_GRAPH_READERS`:
+        # it ranks and excerpts, and writes nothing. It is routed through
+        # `_graph_query` like the deterministic readers above, so it belongs
+        # here rather than being exempted -- a partial graph would silently
+        # drop callers, callees and reaching tests from the slice, and the
+        # budget would be spent on a context that is quietly incomplete
+        # (issue #1536).
+        cs.MCPToolName.CONTEXT,
     }
 )
 
@@ -222,7 +234,7 @@ class MCPToolsRegistry:
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
-        cypher_gen: CypherGenerator,
+        cypher_gen: CypherQueryGenerator,
         workspace: WorkspaceConfig | None = None,
     ) -> None:
         self.project_root = project_root
@@ -533,6 +545,7 @@ class MCPToolsRegistry:
                 cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
+            cs.MCPToolName.CONTEXT: self._context_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -839,7 +852,14 @@ class MCPToolsRegistry:
                 cs.MCPParamName.TRACEBACK_TEXT: MCPInputSchemaProperty(
                     type=cs.MCPSchemaType.STRING,
                     description=td.MCP_PARAM_TRACEBACK_TEXT,
-                )
+                ),
+                cs.MCPParamName.PATH_PREFIX_MAP: MCPInputSchemaProperty(
+                    type=cs.MCPSchemaType.OBJECT,
+                    description=td.MCP_PARAM_PATH_PREFIX_MAP,
+                    additionalProperties={
+                        cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING
+                    },
+                ),
             },
             required=[cs.MCPParamName.TRACEBACK_TEXT],
         )
@@ -879,10 +899,7 @@ class MCPToolsRegistry:
         if scope_error is None and default is not None:
             indexed = self.ingestor.list_projects()
             if default not in indexed:
-                scope_error = cs.MCP_UNKNOWN_PROJECT.format(
-                    project=default,
-                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(indexed)),
-                )
+                scope_error = self._unknown_project_error(default, sorted(indexed))
                 default = None
         if scope_error is None and default is not None:
             return create_query_tool(
@@ -1095,7 +1112,9 @@ class MCPToolsRegistry:
             "remote_hops": [list(hop) for hop in result.remote_hops],
         }
 
-    async def explain_traceback(self, traceback_text: str) -> dict:
+    async def explain_traceback(
+        self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
+    ) -> dict:
         from codebase_rag.crash_correlation import explain_traceback
 
         project, workspace_refusal = self._fixed_root_project()
@@ -1112,6 +1131,7 @@ class MCPToolsRegistry:
                 project,
                 Path(self.project_root),
                 traceback_text,
+                path_prefix_map,
             )
         return {
             "exception_type": report.exception_type,
@@ -1125,9 +1145,13 @@ class MCPToolsRegistry:
                 "resolved": report.resolution.resolved,
                 "rate": report.resolution.rate,
             },
+            "inferred_checkout_root": report.inferred_root,
+            "note": report.note,
         }
 
-    async def rank_root_causes(self, traceback_text: str) -> dict:
+    async def rank_root_causes(
+        self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
+    ) -> dict:
         from codebase_rag.crash_correlation import rank_root_causes
 
         project, workspace_refusal = self._fixed_root_project()
@@ -1144,6 +1168,7 @@ class MCPToolsRegistry:
                 project,
                 Path(self.project_root),
                 traceback_text,
+                path_prefix_map,
             )
         return {
             "exception_type": report.exception_type,
@@ -1153,6 +1178,13 @@ class MCPToolsRegistry:
             "candidates": [candidate._asdict() for candidate in report.candidates],
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),
+            "resolution": {
+                "total": report.resolution.total,
+                "resolved": report.resolution.resolved,
+                "rate": report.resolution.rate,
+            },
+            "inferred_checkout_root": report.inferred_root,
+            "note": report.note,
         }
 
     async def list_projects(self) -> ListProjectsResult:
@@ -2276,9 +2308,7 @@ class MCPToolsRegistry:
         if project is not None:
             known = await asyncio.to_thread(self.ingestor.list_projects)
             if project not in known:
-                return cs.MCP_UNKNOWN_PROJECT.format(
-                    project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
-                )
+                return self._unknown_project_error(project, known)
         # The vector store is searched first, but the hits are hydrated from
         # the GRAPH, so a partial graph loses matches the embeddings still
         # know about.
@@ -2578,12 +2608,15 @@ class MCPToolsRegistry:
         tool: cs.MCPToolName,
         project: str | None,
         run: Callable[[str], object],
+        target: str | None = None,
     ) -> object:
         # Every path that reads the graph, the project check included, runs
         # under the ingestor lock so an index/update rebuild cannot tear the
         # read (issue #1471). A typo in `project` would otherwise read as a
         # genuine empty result; the default is the project this server's
-        # root derives to.
+        # root derives to. `target` is the qualified name the query walks
+        # from: an empty answer for a name the graph never saw is refused,
+        # not returned as "nothing calls it" (issue #2461).
         try:
             async with self._ingestor_lock:
                 # The workspace allow-list is checked FIRST and narrows only:
@@ -2594,16 +2627,21 @@ class MCPToolsRegistry:
                 project, scope_error = self._workspace_scope(project)
                 if scope_error is not None:
                     return {cs.DICT_KEY_ERROR: scope_error}
-                if project is not None:
-                    known = await asyncio.to_thread(self.ingestor.list_projects)
-                    if project not in known:
-                        return {
-                            cs.DICT_KEY_ERROR: cs.MCP_UNKNOWN_PROJECT.format(
-                                project=project,
-                                known=cs.SEPARATOR_COMMA_SPACE.join(known),
-                            )
-                        }
+                known = await asyncio.to_thread(self.ingestor.list_projects)
+                if project is not None and project not in known:
+                    return {
+                        cs.DICT_KEY_ERROR: self._unknown_project_error(project, known)
+                    }
                 project_name = project or derive_project_name(Path(self.project_root))
+                # The derived default is held to the same check: a server
+                # rooted in a directory that was never indexed answered every
+                # read with nothing (issue #2461).
+                if project_name not in known:
+                    return {
+                        cs.DICT_KEY_ERROR: await asyncio.to_thread(
+                            self._root_not_indexed_error, project_name, known
+                        )
+                    }
                 # A read is as wrong as a reingest when the graph is known
                 # partial: a failed run (or a rollback whose re-ingest
                 # failed) leaves definitions and edges missing, and every
@@ -2632,12 +2670,52 @@ class MCPToolsRegistry:
                     )
                 ):
                     return {cs.DICT_KEY_ERROR: refusal}
-                return await asyncio.to_thread(run, project_name)
+                result = await asyncio.to_thread(run, project_name)
+                if target is not None and result == []:
+                    if unknown := await asyncio.to_thread(
+                        self._unknown_target_error, project_name, target
+                    ):
+                        return {cs.DICT_KEY_ERROR: unknown}
+                return result
         except Exception as e:
             logger.error(lg.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
             return {
                 cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             }
+
+    @staticmethod
+    def _unknown_project_error(project: str, known: list[str]) -> str:
+        # The close matches when there are any; a shared graph lists dozens
+        # of `<dir>__<hash>` names, and the one meant is the one to name.
+        close = graph_query.close_project_names(project, known)
+        if close:
+            return cs.MCP_UNKNOWN_PROJECT_NAMED.format(
+                project=project
+            ) + graph_query.did_you_mean(close)
+        return cs.MCP_UNKNOWN_PROJECT.format(
+            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+        )
+
+    def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
+        root = Path(self.project_root)
+        # A repository indexed under a name of its own is the likeliest
+        # meaning, then names spelled close to the derived one.
+        rooted = graph_query.projects_rooted_at(
+            self.ingestor.list_project_roots(), root
+        )
+        close = graph_query.close_project_names(project_name, known)
+        return cs.MCP_ROOT_NOT_INDEXED.format(
+            path=root.resolve()
+        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+
+    def _unknown_target_error(self, project_name: str, target: str) -> str | None:
+        fetch_all = self.ingestor.fetch_all
+        if graph_query.node_exists(fetch_all, target):
+            return None
+        close = graph_query.similar_targets(fetch_all, project_name, target)
+        return cs.MCP_UNKNOWN_TARGET.format(qualified_name=target) + (
+            graph_query.did_you_mean(close) if close else cs.MCP_UNKNOWN_TARGET_HINT
+        )
 
     @staticmethod
     def _depth(depth: int | None) -> int:
@@ -2782,6 +2860,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.callers(
                 self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
+            target=qualified_name,
         )
 
     async def callees(
@@ -2793,6 +2872,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.callees(
                 self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
+            target=qualified_name,
         )
 
     async def implementors(
@@ -2804,6 +2884,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.implementors(
                 self.ingestor.fetch_all, name, qualified_name
             ),
+            target=qualified_name,
         )
 
     async def overrides(
@@ -2815,6 +2896,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.overrides(
                 self.ingestor.fetch_all, name, qualified_name
             ),
+            target=qualified_name,
         )
 
     async def importers(
@@ -2834,6 +2916,7 @@ class MCPToolsRegistry:
                 if through_reexports
                 else graph_query.importers
             )(self.ingestor.fetch_all, name, module_qualified_name),
+            target=module_qualified_name,
         )
 
     async def tests_reaching(
@@ -2845,6 +2928,7 @@ class MCPToolsRegistry:
             lambda name: graph_query.tests_reaching(
                 self.ingestor.fetch_all, name, qualified_name
             ),
+            target=qualified_name,
         )
 
     # --- graph-driven edit operations (issue #1532) ------------------------------
@@ -2913,6 +2997,75 @@ class MCPToolsRegistry:
             cs.MCPToolName.GLOSSES,
             project,
             lambda name: gloss.glosses_for(self.ingestor.fetch_all, name, target),
+        )
+
+    def _context_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.CONTEXT,
+            description=td.MCP_TOOLS[cs.MCPToolName.CONTEXT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.TARGET: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
+                    ),
+                    cs.MCPParamName.BUDGET_TOKENS: prop(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[cs.MCPParamName.TARGET],
+            ),
+            handler=self.context,
+            returns_json=True,
+        )
+
+    async def context(
+        self,
+        target: str,
+        budget_tokens: int = cs.CONTEXT_DEFAULT_BUDGET,
+        project: str | None = None,
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.CONTEXT,
+            project,
+            lambda name: self._run_context(name, target, budget_tokens),
+        )
+
+    def _run_context(
+        self, project_name: str, target: str, budget_tokens: int
+    ) -> object:
+        from codebase_rag.context_slice import context as build_context
+
+        # The CLI enforces this with typer's min=1; without the same check an
+        # MCP caller's zero or negative budget returns an empty slice that
+        # reads as success. Checked here rather than in `context` so that
+        # handler stays a pure delegation to the locked `_graph_query`.
+        if budget_tokens < 1:
+            return {
+                cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(
+                    budget=budget_tokens
+                )
+            }
+
+        # Scoped to the project `_graph_query` resolved, not the optional
+        # argument: an omitted `project` would otherwise search every project
+        # and resolve to a name the project-scoped reads cannot find.
+        def search(text: str) -> list[SemanticSearchResult]:
+            return semantic_code_search(self.ingestor, text, project=project_name)
+
+        return build_context(
+            self.ingestor.fetch_all,
+            project_name,
+            target,
+            budget_tokens,
+            self._source_root_for(project_name),
+            search=search if self._semantic_search_tool is not None else None,
         )
 
     def _rename_tool(self) -> ToolMetadata:
@@ -3117,6 +3270,7 @@ class MCPToolsRegistry:
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
                 reingest=reingest,
+                heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:
             return {
@@ -3169,15 +3323,12 @@ class MCPToolsRegistry:
             if project is not None:
                 known = await asyncio.to_thread(self.ingestor.list_projects)
                 if project not in known:
+                    unknown = self._unknown_project_error(project, known)
                     return QueryResultDict(
-                        error=cs.MCP_UNKNOWN_PROJECT.format(
-                            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
-                        ),
+                        error=unknown,
                         query_used=cs.QUERY_NOT_AVAILABLE,
                         results=[],
-                        summary=cs.MCP_UNKNOWN_PROJECT.format(
-                            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
-                        ),
+                        summary=unknown,
                     )
             # The same refusal the eight `_graph_query` tools apply. This one
             # does not share that path -- it binds a per-request query tool
@@ -3373,7 +3524,7 @@ class MCPToolsRegistry:
 def create_mcp_tools_registry(
     project_root: str,
     ingestor: MemgraphIngestor,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     workspace: WorkspaceConfig | None = None,
 ) -> MCPToolsRegistry:
     return MCPToolsRegistry(
