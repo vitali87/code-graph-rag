@@ -5,6 +5,35 @@ PROVIDER_REGISTERED = "Registered provider: {name}"
 LOADING_GRAPH = "Loading graph from {path}"
 LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with indexes"
 ENSURING_PROJECT = "Ensuring Project: {name}"
+# A dotted checkout's project from before #2412, whose qualified names alias
+# another project's package; retired once the checkout syncs under its new
+# name (review of PR 2497).
+LEGACY_DOTTED_PROJECT_RETIRED = (
+    "Removed project '{legacy}', which this checkout was indexed under before "
+    "project names could not hold '.'; it is now project '{project}'"
+)
+LEGACY_DOTTED_PROJECT_KEPT = (
+    "Project '{legacy}' is this checkout's graph from before project names "
+    "could not hold '.', and it is now project '{project}'. '{legacy}' is kept "
+    "because its nodes may also belong to project(s) {sharing}; remove it with "
+    "`cgr delete-project -n {legacy}`, then sync {sharing} again"
+)
+LEGACY_DOTTED_PROJECT_KEPT_FOR_DESCENDANTS = (
+    "Project '{legacy}' is this checkout's graph from before project names "
+    "could not hold '.', and it is now project '{project}'. '{legacy}' is kept "
+    "because project(s) {descendants} have names under it and may share its "
+    "nodes; remove it with `cgr delete-project -n {legacy}`, then sync "
+    "{descendants} again"
+)
+LEGACY_DOTTED_PROJECT_RETIRE_FAILED = (
+    "Could not remove project '{legacy}', this checkout's graph from before "
+    "project names could not hold '.': {error}. The next sync tries again"
+)
+LEGACY_DOTTED_PROJECT_VECTORS_KEPT = (
+    "Kept project '{legacy}', this checkout's graph from before project names "
+    "could not hold '.': its vectors could not be deleted, and once its nodes "
+    "are gone nothing could find them. The next sync tries again"
+)
 
 # Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
@@ -294,6 +323,10 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+LANG_LIST_AST_GREP_UNREADABLE = (
+    "Cannot read the ast-grep tier's language configs, so its languages are "
+    "left out of the list: {error}"
+)
 
 # Ignore pattern logs
 CGRIGNORE_LOADED = (
@@ -335,6 +368,25 @@ TRUNCATED_SYMBOL_NAME = (
     "UTF-8; the grammar splits the token at the bad byte, so this symbol is "
     "indexed under a truncated name and its callers will not resolve to it "
     "(issue #1810)"
+)
+# PEP 263 declarations the reader cannot honour (issue #2445). Each keeps the
+# file on its old UTF-8 reading, so the run goes on and says why a non-ASCII
+# name may come out damaged.
+PY_ENCODING_UNKNOWN = (
+    "{path}: the source declares the encoding {codec!r}, which Python does "
+    "not know; reading it as UTF-8"
+)
+PY_ENCODING_UNSUPPORTED = (
+    "{path}: the declared encoding {codec!r} is not an ASCII-compatible text "
+    "encoding, as PEP 263 requires; reading it as UTF-8"
+)
+PY_ENCODING_UNDECODABLE = (
+    "{path}: the source does not decode as its declared encoding {codec!r} "
+    "({error}); reading it as UTF-8"
+)
+PY_ENCODING_BOM_CONFLICT = (
+    "{path}: a UTF-8 byte-order mark overrides the declared encoding "
+    "{codec!r}; reading it as UTF-8"
 )
 REINGEST_UNREADABLE = (
     "Re-ingest could not read {path} after classifying it from disk "
@@ -414,8 +466,10 @@ MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
+MG_DELIBERATE_EXIT = (
+    "Command ended with {kind} inside the graph connection; closing it normally"
+)
 MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
-MG_COMMAND_EXIT = "Command exited. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
@@ -617,6 +671,10 @@ DUPLICATES_GROUPS_TRUNCATED = (
     "Similar-group enumeration stopped at the cap of {cap} groups; the report "
     "is truncated. Raise --threshold or --min-size to narrow the scan."
 )
+DUPLICATES_LINKS_TRUNCATED = (
+    "A duplicate group has more than {cap} linked member pairs; the report "
+    "lists the strongest {cap} of each such group."
+)
 DUPLICATES_PAIRS_TRUNCATED = (
     "Candidate-pair generation stopped at the budget of {cap} pairs; the "
     "report is truncated. Raise --threshold or --min-size to narrow the scan."
@@ -665,6 +723,16 @@ CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
+CALL_RUST_OWNER_UNRESOLVED = (
+    "No method of the type a Rust call names matches: {call_name}"
+)
+CALL_EXTERNAL_MODULE_RECEIVER = (
+    "Call on external module receiver, no first-party target: {call_name} "
+    "(module {target})"
+)
+CALL_AMBIGUOUS_UNTYPED_RECEIVER = (
+    "Untyped receiver with several same-named candidates, not guessed: {call_name}"
+)
 CALL_CHAINED = (
     "Resolved chained call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
 )
@@ -691,6 +759,12 @@ DEP_PARSE_ERROR_GEMFILE = "Error parsing Gemfile {path}: {error}"
 DEP_PARSE_ERROR_COMPOSER = "Error parsing composer.json {path}: {error}"
 DEP_PARSE_ERROR_CSPROJ = "Error parsing .csproj {path}: {error}"
 DEP_PARSE_ERROR_PUBSPEC = "Error parsing pubspec.yaml {path}: {error}"
+DEP_MANIFEST_EMPTY = "Dependency manifest {path} is empty; it declares no dependencies"
+DEP_MANIFEST_UNPARSABLE = "Dependency manifest {path} could not be parsed: {error}"
+DEP_MANIFESTS_UNPARSABLE = (
+    "{count} dependency manifest(s) could not be parsed, so their dependencies "
+    "are not in the graph (first: {path}: {error})"
+)
 
 # Import processor logs
 IMP_TOOL_NOT_AVAILABLE = "External tool '{tool}' not available for stdlib introspection"
@@ -814,6 +888,10 @@ JS_VAR_INFERRED = "Inferred JS variable: {var_name} -> {var_type}"
 JS_VAR_INFER_FAILED = "Could not infer type for variable: {var_name}"
 JS_VAR_TYPE_MAP_BUILT = "Built JS variable type map with {count} variables (found {declarator_count} declarators total)"
 JS_INFER_VALUE_NODE = "Inferring type from value node type: {node_type}"
+JS_CTOR_LOCALLY_BOUND = (
+    "Construction of {class_name} reads a binding of the enclosing callable, "
+    "not the module class; left untyped"
+)
 JS_CALL_EXPR_FUNC_NODE = "Call expression func_node type: {func_type}"
 JS_EXTRACTED_METHOD_CALL = "Extracted method call: {method_call}"
 JS_TYPE_INFERRED = "JS type inference: {method_call}() returns {inferred_type}"
@@ -854,6 +932,7 @@ PY_INSTANCE_VAR_INFERRED = "Inferred instance variable: {attr} -> {type}"
 PY_LOOP_VAR_INFERRED = "Inferred loop variable type: {var} -> {type}"
 PY_TYPE_SIMPLE = "Inferred type (simple): {var} -> {type}"
 PY_TYPE_COMPLEX = "Inferred type (complex): {var} -> {type}"
+PY_TYPE_WITH = "Inferred type (with target): {var} -> {type}"
 PY_TYPE_INFERRED = "Inferred type: {var} -> {type}"
 PY_RECURSION_GUARD = "Recursion guard (method call): skipping {method}"
 PY_RECURSION_GUARD_QN = "Recursion guard: skipping {method_qn}"
@@ -1079,6 +1158,9 @@ HASH_CACHE_ORPHANED = (
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+PREVIOUS_SYNC_UNFINISHED = (
+    "The previous sync of '{project}' did not finish; re-indexing the whole repository."
+)
 HASH_CACHE_DISCARD_FAILED = (
     "Could not discard the orphaned cache file {path} ({error}); this run "
     "ignores it and rebuilds fully, so nothing is lost, but the stale file is "
@@ -1087,8 +1169,9 @@ HASH_CACHE_DISCARD_FAILED = (
 )
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
-    "A parser input changed since this graph was built: parser code, a grammar "
-    "or toolchain version, a frontend mode, or the capture selection. Every "
+    "A parser input changed since this graph was built: parser code, an "
+    "ast-grep rule, a grammar or toolchain version, a frontend mode, or the "
+    "capture selection. Every "
     "eligible file of this repository (excluded and ignored ones aside) is "
     "re-parsed on this run, so what the new inputs "
     "emit is written for files not touched since the last sync too, and the "
