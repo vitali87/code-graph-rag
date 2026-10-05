@@ -138,6 +138,11 @@ class LanguageDescriptor:
     # or it reads as clean inside the branch that guarantees it is the value.
     pattern_test_type: str | None = None
     pattern_declaration_type: str | None = None
+    # The nested_scope_types that are inline callables (an arrow or lambda
+    # passed as an argument, a Go func literal, a Rust closure). One that gets
+    # no caller pass of its own runs as part of the enclosing caller, so its
+    # I/O is credited there, as a Python lambda's is (issue #2772).
+    inline_callable_types: frozenset[str] = frozenset()
     # True when a declarator binds its initialiser as the LAST unfielded named child
     # rather than a `value`/`right` field (C# `variable_declarator` is `name = <expr>`
     # with the expression unfielded). Lets the handle-binding walk read the RHS.
@@ -230,6 +235,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
             cs.TS_METHOD_DEFINITION,
         }
     ),
+    inline_callable_types=frozenset({cs.TS_FUNCTION_EXPRESSION, cs.TS_ARROW_FUNCTION}),
     nested_header_types=frozenset({cs.TS_DECORATOR}),
     identifier_type=cs.TS_PY_IDENTIFIER,
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
@@ -268,6 +274,7 @@ _GO_DESCRIPTOR = LanguageDescriptor(
             cs.TS_GO_FUNC_LITERAL,
         }
     ),
+    inline_callable_types=frozenset({cs.TS_GO_FUNC_LITERAL}),
     # Go local declarations that shadow a package name: `:=` (declarator_type),
     # `var`/`const`/`range` (extra_declarator_types), and parameters. Go DOES allow
     # a local to shadow an imported package, so these must be collected.
@@ -309,6 +316,7 @@ _JAVA_DESCRIPTOR = LanguageDescriptor(
         }
     )
     | cs.JAVA_CLASS_NODE_TYPES,
+    inline_callable_types=frozenset({cs.TS_JAVA_LAMBDA_EXPRESSION}),
     # Java locals that shadow the `System`/`Files` global head: a
     # `variable_declarator` (`Object System = ...`), a `formal_parameter`, an
     # `enhanced_for_statement` (for-each) loop var, and a try-with-resources
@@ -348,6 +356,7 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     string_content_type=cs.TS_RS_STRING_CONTENT,
     keyword_arg_type=None,
     nested_scope_types=frozenset({cs.TS_RS_FUNCTION_ITEM, cs.TS_RS_CLOSURE_EXPRESSION}),
+    inline_callable_types=frozenset({cs.TS_RS_CLOSURE_EXPRESSION}),
     # Rust `let x = ...` binds via a `pattern` field; params via `parameter`'s
     # `pattern` field (handled by _param_names' pattern unwrap). Shadowing is inert
     # for Rust's `::`-path and macro sinks (a local cannot shadow `std::fs::write`
@@ -441,6 +450,7 @@ _CSHARP_DESCRIPTOR = LanguageDescriptor(
             cs.TS_CSHARP_STRUCT_DECLARATION,
         }
     ),
+    inline_callable_types=frozenset({cs.TS_CSHARP_LAMBDA_EXPRESSION}),
     # C# sink heads (System.Console/Environment, System.IO.File) are BCL effective
     # globals never in import_map, so the catalogue is not import-gated. Shadowing an
     # `argument`-wrapped sink head with a local named `System` is pathological, so

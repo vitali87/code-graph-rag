@@ -4274,8 +4274,14 @@ class CallProcessor:
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
+        # A nested inline callback (`items.forEach(x => console.log(x))`) that
+        # gets no caller pass of its own is walked as part of this caller by
+        # the I/O and flow walks, as its CALLS already are (issue #2772).
+        def has_own_pass(node: Node) -> bool:
+            return self._caller_func_name(node, language, module_qn) is not None
+
         self._io_processor.process_io_for_caller(
-            caller_node, caller_spec, module_qn, language
+            caller_node, caller_spec, module_qn, language, has_own_pass=has_own_pass
         )
         self._rpc_exposure.process_caller(caller_node, module_qn, language)
         self._flow_processor.process_flow_for_caller(
@@ -4286,6 +4292,7 @@ class CallProcessor:
             language,
             class_context,
             local_var_types,
+            has_own_pass=has_own_pass,
         )
 
         caller_params = self._record_caller_flow_params(
