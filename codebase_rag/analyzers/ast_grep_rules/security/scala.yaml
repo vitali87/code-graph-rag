@@ -34,5 +34,5 @@ rules:
         - any:
             - kind: val_definition
             - kind: var_definition
-        - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+        - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
         - has: { kind: string, regex: '^.{12,}$' }

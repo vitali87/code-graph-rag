@@ -41,9 +41,9 @@ rules:
       any:
         - kind: initialized_identifier
           all:
-            - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has: { kind: string_literal, regex: '^.{10,}$' }
         - kind: initialized_variable_definition
           all:
-            - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has: { kind: string_literal, regex: '^.{10,}$' }

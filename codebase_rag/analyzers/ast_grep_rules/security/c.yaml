@@ -27,7 +27,7 @@ rules:
     rule:
       kind: init_declarator
       all:
-        - has: { stopBy: end, kind: identifier, regex: '(?i)(password|secret|api_key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+        - has: { stopBy: end, kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
         - has:
             field: value
             all:
