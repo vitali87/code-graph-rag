@@ -263,6 +263,14 @@ MCP_PARAM_TARGET = (
     "A qualified name, a bare name (`helper`, `Store.get`), or `path:line`."
 )
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
+MCP_PARAM_GRAPH_LIMIT = (
+    "Most rows to return, nearest first (default 200). A longer answer comes "
+    "back as {rows, total, truncated, hint} instead of a list."
+)
+MCP_PARAM_MAX_DEPTH = (
+    "Farthest test to report, in hops from the qualified name (optional; "
+    "default: no bound)."
+)
 MCP_ANNOTATE = (
     "Attach a durable note (a Gloss) to one definition in the graph, never to "
     "the source file. `target` names the definition the way `resolve` does, "

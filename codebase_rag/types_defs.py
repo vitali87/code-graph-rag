@@ -441,6 +441,15 @@ class CancelledResult(NamedTuple):
     cancelled: bool
 
 
+class GraphRowsPage[Row](TypedDict):
+    """A graph tool's answer cut to its row cap (issue #2815)."""
+
+    rows: list[Row]
+    total: int
+    truncated: bool
+    hint: str
+
+
 class CgrignorePatterns(NamedTuple):
     exclude: frozenset[str]
     unignore: frozenset[str]

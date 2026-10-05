@@ -609,11 +609,15 @@ class ReachIndex:
                 reverse.setdefault(dst, set()).add(src)
         return cls(nodes, reverse)
 
-    def _walk(self, qualified_name: str) -> tuple[dict[str, int], dict[str, str]]:
+    def _walk(
+        self, qualified_name: str, max_depth: int | None = None
+    ) -> tuple[dict[str, int], dict[str, str]]:
         depth_of: dict[str, int] = {qualified_name: 0}
         through_of: dict[str, str] = {qualified_name: qualified_name}
         frontier = [qualified_name]
-        while frontier:
+        depth = 0
+        while frontier and (max_depth is None or depth < max_depth):
+            depth += 1
             next_frontier: list[str] = []
             for qn in sorted(frontier):
                 for caller in sorted(self._reverse.get(qn, ())):
@@ -625,8 +629,10 @@ class ReachIndex:
             frontier = next_frontier
         return depth_of, through_of
 
-    def tests_reaching(self, qualified_name: str) -> list[TestReachRow]:
-        depth_of, through_of = self._walk(qualified_name)
+    def tests_reaching(
+        self, qualified_name: str, max_depth: int | None = None
+    ) -> list[TestReachRow]:
+        depth_of, through_of = self._walk(qualified_name, max_depth)
         out: list[TestReachRow] = []
         for qn, depth in depth_of.items():
             if qn == qualified_name:
@@ -653,15 +659,19 @@ def tests_reaching(
     fetch_all: QueryFn,
     project_name: str,
     qualified_name: str,
+    max_depth: int | None = None,
 ) -> list[TestReachRow]:
     """Test symbols from which `qualified_name` is reachable, with distance.
 
     Walks CALLS / REFERENCES / INSTANTIATES backwards over the project's
     edges (the dead-code fetch, one query each for nodes and edges) and keeps
     the reached definitions the dead-code root classifier calls tests, so
-    Rust `#[cfg(test)]` modules count exactly as they do there.
+    Rust `#[cfg(test)]` modules count exactly as they do there. `max_depth`
+    stops the walk that many hops out; None walks the whole closure.
     """
-    return ReachIndex.build(fetch_all, project_name).tests_reaching(qualified_name)
+    return ReachIndex.build(fetch_all, project_name).tests_reaching(
+        qualified_name, max_depth
+    )
 
 
 # --- cross-service edges (issue #1603) ---------------------------------------
