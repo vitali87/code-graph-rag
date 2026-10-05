@@ -32,6 +32,14 @@ No unreachable functions or methods found.
 12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
 ```
 
+PHP has no module privacy, so every function declared at file level and every
+non-`private` member of a named class, interface, trait or enum is a public
+root; closures and anonymous-class members are not. A PHP test is recognised
+wherever it lives: a `*Test.php` file, a `Tests/` directory, or a class
+extending PHPUnit's `TestCase` (directly, through a project base class, or
+through a framework base such as Symfony's `KernelTestCase`), together with
+everything declared in it.
+
 ## Prerequisites
 
 Index the repository first, so the graph exists in Memgraph:
@@ -46,6 +54,10 @@ cgr start --repo-path /path/to/your/repo --update-graph --clean
 ```bash
 cgr dead-code
 ```
+
+![cgr dead-code listing the one unreachable method in the requests repository](../assets/demos/dead-code.gif)
+
+*Recorded on psf/requests.*
 
 If a single project is indexed it is used automatically. When several are
 indexed, name one:
@@ -65,9 +77,16 @@ not reported:
 cgr dead-code -e main -e cli.run -e handlers.webhook
 
 # Treat symbols carrying a decorator as roots (extends the built-in set:
-# route, task, fixture, command, ...)
-cgr dead-code --decorator-root celery_app.task --decorator-root my_registry.register
+# route, task, fixture, command, ...). A dotted value matches the decorator's
+# trailing segments: `plugins.register` roots `@plugins.register(...)` and
+# `@app.plugins.register`, not `@other.register`; a bare `register` roots any
+# `@x.register`.
+cgr dead-code --decorator-root plugins.register --decorator-root signal_handler
 ```
+
+![cgr dead-code run before and after -e main -e cli.run -e handlers.webhook on a small C plugin, the second run no longer reporting run, webhook and their callees](../assets/demos/dead-code-entry-points.gif)
+
+*Recorded on a small C plugin whose host resolves `run` and `webhook` with `dlsym()`, so no call site reaches them.*
 
 ## Excluding Generated Code
 
@@ -77,6 +96,8 @@ library invokes and reports noisily. Exclude it by file-path glob:
 ```bash
 cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
 ```
+
+![cgr dead-code with --exclude '*client/core*' --exclude '*.gen.*' dropping the generated client and protobuf files from the report](../assets/demos/dead-code-exclude.gif)
 
 Two rules keep a pattern from silently excluding nothing:
 
@@ -99,7 +120,7 @@ Two rules keep a pattern from silently excluding nothing:
 |--------|-------------|
 | `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
 | `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
-| `--decorator-root` | Treat symbols carrying this decorator as roots. Extends the built-in set. Repeatable. |
+| `--decorator-root` | Treat symbols carrying this decorator as roots: a bare name matches the decorator's last segment, a dotted one (`plugins.register`) its trailing whole segments. Extends the built-in set. Repeatable. |
 | `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots so the production code it exercises is not reported. On by default. |
 | `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
@@ -117,11 +138,21 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
   --exclude '*_generated*'
 ```
 
+![cgr dead-code writing a JSON report with --fail-on-found, exiting 1, and jq listing each candidate's path and start line](../assets/demos/dead-code-ci.gif)
+
+Each JSON row carries `label`, `name`, `qualified_name`, `path`, `start_line`
+and `end_line`. `path` is the repo-relative file (the same path `--exclude`
+matches), so an annotation can point at `path:start_line` without guessing
+the file from the qualified name. The table shows it in its `Path` column.
+A table written with `--output` or to a pipe is as wide as its longest row,
+so no name or path is cut to fit 80 columns.
+
 ## How It Works
 
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
-   decorated handlers, dunder/lifecycle methods, plus any `--entry-point` and
-   `--decorator-root` you add.
+   decorated handlers, dunder/lifecycle methods, program entry points (`main`
+   in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
+   plus any `--entry-point` and `--decorator-root` you add.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class
@@ -129,7 +160,30 @@ cgr dead-code --format json --output dead-code.json --fail-on-found \
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
 
+### What counts as test code
+
+`--include-tests`, `--no-include-tests`, `cgr graph tests-reaching` and
+`cgr check` all classify a symbol as test code the same way. Its file path is
+read as whole words of its directories and file name, never as a substring,
+so `shortest_paths/` and `latest_prices.py` stay production code:
+
+- a snake or kebab-case word, in any case: `test`, `tests`, `unittest`,
+  `unittests` or `conftest` (`tests/`, `Tests/`, `__tests__/`, `test_app.py`,
+  `server_test.go`, `snappy_unittest.cc`, `e2e-tests/`);
+- a CamelCase name ending in `Test` or `Tests`, or starting with `test`
+  followed by a capital (`ParserTests.cs`, `AppTests/`, `src/androidTest/`,
+  `src/integrationTest/`, `src/testFixtures/`);
+- a dotted qualifier `test`, `tests`, `spec` or `specs` (`app.test.ts`,
+  `app.spec.tsx`, `src/Acme.Tests/`, `src/Acme.Specs/`);
+- a `testing/` or `_testing/` directory, and a `spec/` or `specs/` directory
+  at the repository root (RSpec, Jasmine). A nested `spec/` is left alone,
+  since it is often a package such as `java/security/spec/`.
+
+Rust `#[test]` functions and `#[cfg(test)]` modules count as test code too,
+wherever they are.
+
 First-class functions matter for accuracy: a callback stored in an object, an
-inline arrow handed to `useMutation`/`.forEach`/`new Promise`, or a function
-passed as an argument is recorded as a `REFERENCES` edge so it stays reachable
-rather than being reported as dead.
+inline arrow handed to `useMutation`/`.forEach`/`new Promise`, a function
+passed as an argument, or a Java method reference (`Acc::add`, `this::m`,
+`Acc::new`) is recorded as a `REFERENCES` edge so it stays reachable rather
+than being reported as dead.

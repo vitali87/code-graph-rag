@@ -16,8 +16,8 @@ from .config import settings
 from .constants import (
     PAYLOAD_NODE_ID,
     PAYLOAD_QUALIFIED_NAME,
-    QDRANT_DEFAULT_DB_PATH,
     QDRANT_INSECURE_URL_SCHEME,
+    SETTING_QDRANT_DB_PATH,
     VECTOR_DIM_SETTINGS,
     VectorStoreBackend,
 )
@@ -94,7 +94,7 @@ class VectorStore(Protocol):
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
-    ) -> None: ...
+    ) -> bool: ...
 
     def clear_all_embeddings(self) -> None: ...
 
@@ -202,13 +202,15 @@ def _bundled_qdrant_url() -> str | None:
     cwd-relative QDRANT_DB_PATH, so with `cgr daemon up` running the vectors
     went into a hidden folder of the indexed repository and the stack's Qdrant
     stayed empty (issue #2355). A QDRANT_DB_PATH the user set is their choice
-    and is kept, and then the stack is not even probed.
+    and is kept, and then the stack is not even probed. Set is told from the
+    fields a settings source (environment, .env) or the code supplied, not
+    from the value: QDRANT_DB_PATH=./.qdrant_code_embeddings is a choice too.
     """
     global _BUNDLED_QDRANT, _BUNDLED_QDRANT_PROBED
     if (
         settings.QDRANT_URL
         or settings.VECTOR_STORE_BACKEND != VectorStoreBackend.QDRANT
-        or settings.QDRANT_DB_PATH != QDRANT_DEFAULT_DB_PATH
+        or SETTING_QDRANT_DB_PATH in settings.model_fields_set
     ):
         return None
     if not _BUNDLED_QDRANT_PROBED:
@@ -423,11 +425,14 @@ def _delete_scoped_embeddings(
     project_name: str,
     node_ids: Sequence[int],
     delete: Callable[[list[int]], None],
-) -> None:
+) -> bool:
     # Shared by every backend: only the client call differs, so the empty
     # guard, the progress logs, and the swallow-and-warn live here once.
+    # Whether the vectors are gone: most callers carry on either way, but
+    # retiring a project must not delete the node ids they are keyed by while
+    # they are still there (review of PR 2497).
     if not node_ids:
-        return
+        return True
     ids = list(node_ids)
     try:
         logger.info(
@@ -447,6 +452,8 @@ def _delete_scoped_embeddings(
                 backend=backend, project=project_name, error=e
             )
         )
+        return False
+    return True
 
 
 class QdrantVectorStore:
@@ -472,14 +479,14 @@ class QdrantVectorStore:
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
-    ) -> None:
+    ) -> bool:
         def _delete(ids: list[int]) -> None:
             get_qdrant_client().delete(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
                 points_selector=ids,
             )
 
-        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
+        return _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
         # Vectors are keyed by Memgraph-internal node ids, which a clean
@@ -584,14 +591,14 @@ class MilvusVectorStore:
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
-    ) -> None:
+    ) -> bool:
         def _delete(ids: list[int]) -> None:
             get_milvus_client().delete(
                 collection_name=settings.MILVUS_COLLECTION_NAME,
                 ids=ids,
             )
 
-        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
+        return _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
         # Failures propagate, and validation is skipped so a collection of the
@@ -741,11 +748,16 @@ def store_embedding_batch(points: Sequence[tuple[int, list[float], str]]) -> int
     return vector_store.store_embedding_batch(points)
 
 
-def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> None:
+def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> bool:
+    """Delete a project's vectors by node id, and say whether they are gone.
+
+    With no vector store there is nothing to delete: a run without one
+    writes no vectors.
+    """
     vector_store = _get_vector_store()
     if vector_store is None:
-        return
-    vector_store.delete_project_embeddings(project_name, node_ids)
+        return True
+    return vector_store.delete_project_embeddings(project_name, node_ids)
 
 
 def clear_all_embeddings() -> None:
