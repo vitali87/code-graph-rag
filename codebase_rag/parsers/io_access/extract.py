@@ -400,6 +400,10 @@ def head_is_genuine_module(base: str | None, head: str) -> bool:
     # (Go) imports are handled separately by package-name matching.
     if base is None:
         return True
+    # A Dart package's main library under its own prefix (`import
+    # 'package:http/http.dart' as http`) is that package (issue #2761).
+    if base.startswith(cs.DART_SCHEME_PACKAGE):
+        return base == f"{cs.DART_SCHEME_PACKAGE}{head}/{head}{cs.DART_EXT}"
     return base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX) == head
 
 

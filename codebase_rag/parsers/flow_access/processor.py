@@ -14,7 +14,16 @@ from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ..call_resolver import CallResolver
-from ..dart.utils import dart_body_node, dart_call_name, dart_member_read_name
+from ..dart.utils import (
+    dart_arguments,
+    dart_binding_name_and_rhs,
+    dart_body_node,
+    dart_call_name,
+    dart_first_string_arg,
+    dart_member_read_name,
+    dart_named_arg,
+    dart_string_literal,
+)
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
@@ -94,7 +103,6 @@ from .constants import (
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 # The Dart `=` assignment token node type (no dedicated constant); the flow walk
 # splits a Dart binding on it (issue #1173).
-_DART_ASSIGN_OP = "="
 
 
 # The `kind` half of an argument `via` tag (VIA_ARG_FORMAT / VIA_KW_FORMAT),
@@ -2351,38 +2359,10 @@ class FlowProcessor:
                 self._acc_returns_taint = True
                 self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
-    @staticmethod
-    def _dart_binding_name_and_rhs(node: Node) -> tuple[str | None, list[Node]]:
-        # `var k = <rhs...>` / `k = <rhs...>`: the name is the last identifier before
-        # `=` (unwrapping an `assignable_expression` LHS), the RHS is the named
-        # children after `=` (a spread selector chain).
-        eq_index = next(
-            (i for i, c in enumerate(node.children) if c.type == _DART_ASSIGN_OP),
-            None,
-        )
-        if eq_index is None:
-            return None, []
-        name: str | None = None
-        for child in node.children[:eq_index]:
-            target = child
-            if target.type == cs.TS_DART_ASSIGNABLE_EXPRESSION:
-                target = next(
-                    (
-                        c
-                        for c in target.named_children
-                        if c.type == cs.TS_DART_IDENTIFIER
-                    ),
-                    target,
-                )
-            if target.type == cs.TS_DART_IDENTIFIER and target.text is not None:
-                name = target.text.decode(cs.ENCODING_UTF8)
-        rhs = [c for c in node.children[eq_index + 1 :] if c.is_named]
-        return name, rhs
-
     def _dart_bind(
         self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
     ) -> None:
-        name, rhs = self._dart_binding_name_and_rhs(node)
+        name, rhs = dart_binding_name_and_rhs(node)
         if name is None:
             return
         taint, bindings = self._dart_rhs(rhs, tainted, handles, jc)
@@ -2444,12 +2424,12 @@ class FlowProcessor:
     ) -> tuple[Taint | None, frozenset[HandleBinding]]:
         ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
         if ctor is not None and ctor.direction != IODirection.READ:
-            identity = self._dart_first_string_arg(call_sel)
+            identity = dart_first_string_arg(call_sel, DYNAMIC_TARGET)
             return None, frozenset({HandleBinding(ctor.kind, identity)})
         read = self._js_match_sink(raw, jc.flow.read_sinks, jc)
         if read is not None:
             identity = (
-                self._dart_first_string_arg(call_sel)
+                dart_first_string_arg(call_sel, DYNAMIC_TARGET)
                 if read.target_arg == 0
                 else DYNAMIC_TARGET
             )
@@ -2530,7 +2510,7 @@ class FlowProcessor:
         }
         if not origins:
             return
-        arguments = self._dart_arguments(selector)
+        arguments = dart_arguments(selector)
         if arguments is None:
             return
         seed = Taint(frozenset(origins), frozenset())
@@ -2669,7 +2649,7 @@ class FlowProcessor:
             if index_sel is not None:
                 for child in index_sel.named_children:
                     if child.type == cs.TS_DART_STRING_LITERAL:
-                        return self._dart_string_literal(child)
+                        return dart_string_literal(child, DYNAMIC_TARGET)
         return DYNAMIC_TARGET
 
     @staticmethod
@@ -2693,7 +2673,7 @@ class FlowProcessor:
         args = self._dart_arg_taints(selector, tainted, jc)
         if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
             dst = (
-                self._dart_first_string_arg(selector)
+                dart_first_string_arg(selector, DYNAMIC_TARGET)
                 if sink.target_arg == 0
                 else DYNAMIC_TARGET
             )
@@ -2746,41 +2726,6 @@ class FlowProcessor:
         for pname in taint.params:
             self._param_flow_edges.append((jc.flow.caller_qn, pname, callee_qn, via))
 
-    @staticmethod
-    def _dart_arguments(selector: Node) -> Node | None:
-        # The `arguments` node inside a call selector's `argument_part`.
-        argpart = next(
-            (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
-            None,
-        )
-        if argpart is None:
-            return None
-        return next(
-            (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
-        )
-
-    @staticmethod
-    def _dart_named_arg(arg: Node) -> tuple[str | None, list[Node]]:
-        # `named_argument` -> `label`(identifier `:`) + the value CHAIN (which may be
-        # a selector chain such as `message: Platform.environment['K']`).
-        name: str | None = None
-        value: list[Node] = []
-        for child in arg.named_children:
-            if child.type == cs.TS_DART_LABEL:
-                ident = next(
-                    (
-                        c
-                        for c in child.named_children
-                        if c.type == cs.TS_DART_IDENTIFIER
-                    ),
-                    None,
-                )
-                if ident is not None and ident.text is not None:
-                    name = ident.text.decode(cs.ENCODING_UTF8)
-            elif child.type != cs.TS_COMMENT:
-                value.append(child)
-        return name, value
-
     def _dart_arg_taints(
         self, selector: Node, tainted: _TaintMap, jc: _JsCtx
     ) -> list[tuple[str, Taint | None]]:
@@ -2789,7 +2734,7 @@ class FlowProcessor:
         # argument is a full expression CHAIN (a bare identifier, a
         # `Platform.environment['K']` source, or a `src()` call), evaluated via
         # `_dart_rhs` so inline sources reach the sink too (issue #1173).
-        arguments = self._dart_arguments(selector)
+        arguments = dart_arguments(selector)
         if arguments is None:
             return []
         out: list[tuple[str, Taint | None]] = []
@@ -2818,7 +2763,7 @@ class FlowProcessor:
             chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
             return VIA_ARG_FORMAT.format(index=positional), chain
         if arg.type == cs.TS_DART_NAMED_ARGUMENT:
-            name, chain = self._dart_named_arg(arg)
+            name, chain = dart_named_arg(arg)
             if name is None:
                 return None
             return VIA_KW_FORMAT.format(name=name), chain
@@ -2879,32 +2824,6 @@ class FlowProcessor:
                 self._return_param_edges.append(
                     (jc.flow.caller_qn, pname, callee[1], via)
                 )
-
-    def _dart_first_string_arg(self, selector: Node) -> str:
-        arguments = self._dart_arguments(selector)
-        if arguments is None:
-            return DYNAMIC_TARGET
-        for arg in arguments.named_children:
-            if arg.type == cs.TS_DART_ARGUMENT:
-                chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
-            elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
-                _, chain = self._dart_named_arg(arg)
-            else:
-                continue
-            first = chain[0] if chain else None
-            if first is not None and first.type == cs.TS_DART_STRING_LITERAL:
-                return self._dart_string_literal(first)
-        return DYNAMIC_TARGET
-
-    @staticmethod
-    def _dart_string_literal(node: Node) -> str:
-        # A Dart string_literal has no content child; the text (with quotes) is
-        # inline. Interpolation (`'$x'`) collapses to <dynamic>.
-        if node.text is None:
-            return DYNAMIC_TARGET
-        if any(c.type == cs.TS_DART_TEMPLATE_SUBSTITUTION for c in node.named_children):
-            return DYNAMIC_TARGET
-        return node.text.decode(cs.ENCODING_UTF8).strip(cs.DART_QUOTE_CHARS)
 
     def _emit_taint_to_sink(
         self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str
