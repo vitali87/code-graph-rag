@@ -310,6 +310,12 @@ class NodeLabel(StrEnum):
     CONSTANT = "Constant"
 
 
+# Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
+# Kept here rather than with the IO parsers so a graph reader can recognise a
+# resource qn without importing the parser stack, which the CLI defers.
+RESOURCE_QN_FORMAT = "resource::{kind}::{identity}"
+
+
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.PROJECT: UniqueKeyType.NAME,
     NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,

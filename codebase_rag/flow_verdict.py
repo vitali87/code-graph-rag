@@ -9,7 +9,6 @@ from typing import NamedTuple, Protocol
 
 from . import constants as cs
 from .cypher_queries import CYPHER_LIST_PROJECTS
-from .parsers.io_access.constants import RESOURCE_QN_FORMAT
 from .types_defs import PropertyParams, ResultRow
 
 FLOW_VERDICT_FOUND = "FOUND"
@@ -44,7 +43,7 @@ WHERE r.scope STARTS WITH $project_prefix OR r.scope = $project_name
 RETURN r.scope AS source, b.qualified_name AS target, NULL AS scope
 """
 
-_RESOURCE_QN_PREFIX = RESOURCE_QN_FORMAT.partition("{")[0]
+_RESOURCE_QN_PREFIX = cs.RESOURCE_QN_FORMAT.partition("{")[0]
 
 # Inline `mod` blocks mint Module nodes with synthetic inline paths and no
 # coverage property of their own; their coverage IS their file module's, so
