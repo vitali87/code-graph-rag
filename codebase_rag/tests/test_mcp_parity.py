@@ -136,6 +136,26 @@ class TestFindDuplicateCodeIsExposed:
 
 
 class TestGetFunctionSourceIsExposed:
+    @pytest.fixture
+    def mcp_registry(self, temp_project_root: Path) -> MCPToolsRegistry:
+        # get_function_source is advertised only beside semantic_search,
+        # whose results give its node id (issue #2758), so these build the
+        # registry of a semantic install: the base-install job has none.
+        with (
+            patch(
+                "codebase_rag.mcp.tools.has_semantic_dependencies", return_value=True
+            ),
+            patch(
+                "codebase_rag.tools.semantic_search.create_semantic_search_tool",
+                return_value=MagicMock(),
+            ),
+        ):
+            return MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=MagicMock(),
+                cypher_gen=MagicMock(),
+            )
+
     def test_tool_is_advertised(self, mcp_registry: MCPToolsRegistry) -> None:
         """Previously reachable only via ask_agent's toolset, never directly."""
         assert _schema(mcp_registry, cs.MCPToolName.GET_FUNCTION_SOURCE) is not None
