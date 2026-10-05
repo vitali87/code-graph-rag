@@ -124,10 +124,10 @@ jobs:
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    # Slow runners (ubuntu/windows py3.13) can exceed 20 min on the full -n auto
-    # suite and hit the cap as a spurious CANCELLED; 30 min absorbs the variance
-    # while still bounding a genuine hang.
-    timeout-minutes: 30
+    # The full -n auto suite now takes 25-30 min on Windows and on macOS with
+    # coverage, so a 30 min cap cancelled healthy runs mid-suite (a spurious
+    # CANCELLED); 45 min absorbs slow runners while still bounding a hang.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
