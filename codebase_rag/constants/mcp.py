@@ -27,6 +27,7 @@ class MCPToolName(StrEnum):
     REMOTE_DEPENDENCIES = "remote_dependencies"
     # Graph-driven edit operations (issue #1532).
     RENAME = "rename"
+    CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -121,6 +122,7 @@ class MCPParamName(StrEnum):
     MODULE_QN = "module_qualified_name"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    BUDGET_TOKENS = "budget_tokens"
 
 
 # MCP server constants
@@ -144,6 +146,8 @@ MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
 # Structural delta appended to write tools (issue #1525).
 MCP_DELTA_HEADER = "Structural delta:"
+CONTEXT_DEFAULT_BUDGET = 4000
+MCP_CONTEXT_BUDGET_INVALID = "budget_tokens must be at least 1, got {budget}"
 MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
@@ -192,9 +196,6 @@ GRAPH_LOCATION_AMBIGUOUS = (
     "{other_path!r}, and project {project!r} holds both files. Write "
     "'{path}:{line}' for the first or '{other_path}:{other_line}:1' for the second."
 )
-# `cgr graph`'s exit status for those refusals: above click's 1 (error) and
-# 2 (usage), so a script can tell them from a crash or a mistyped command line.
-GRAPH_EXIT_UNKNOWN_FILE = 4
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
@@ -202,6 +203,22 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
+# With a close match the full list is noise: a shared graph holds dozens of
+# `<dir>__<hash>` names, and the one meant is the one to name (issue #2461).
+MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
+MCP_ROOT_NOT_INDEXED = (
+    "No project is indexed for this server's root {path}; run "
+    "index_repository or update_repository first, or pass `project`."
+)
+# An empty answer for a name the graph does not hold read as "nothing calls
+# it" / "no test reaches it" (issue #2461).
+MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
+MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+GRAPH_DID_YOU_MEAN = " Did you mean: {names}?"
+# How many close matches a refusal names, and how close a spelling must be
+# (difflib's ratio) to be offered at all.
+GRAPH_SUGGESTION_LIMIT = 5
+GRAPH_SUGGESTION_CUTOFF = 0.6
 # A workspace narrows the choice to its own projects (issue #1494). This is
 # an allow-list on top of the graph check, never a substitute: a name in the
 # workspace that is not indexed is still refused as unknown.

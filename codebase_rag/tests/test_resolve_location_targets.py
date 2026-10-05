@@ -250,7 +250,7 @@ def test_cli_resolve_accepts_every_spelling_of_the_path(
 def test_cli_resolve_refuses_a_file_the_project_does_not_hold(tmp_path: Path) -> None:
     result = _cli_resolve(Graph(), "src/pkg/nope.py:15", tmp_path)
     assert result.exit_code != 0, result.output
-    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE
+    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_TARGET
     assert result.stdout == ""
     assert "src/pkg/nope.py" in result.stderr
     assert repr(P) in result.stderr
@@ -460,7 +460,7 @@ def test_cli_an_unrelated_repo_path_does_not_lend_its_files(tmp_path: Path) -> N
     # proj was indexed from /srv/proj; --repo-path is some other checkout
     # that happens to have the same relative file.
     result = _cli_resolve(Graph(), f"{tmp_path}/{SESSIONS}:15", tmp_path)
-    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE, result.output
+    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_TARGET, result.output
     assert result.stdout == ""
     assert f"{tmp_path.as_posix()}/{SESSIONS}" in result.stderr
 
@@ -534,7 +534,7 @@ def test_a_column_reading_never_switches_to_another_held_file(
     assert repr(ODD_BASE) in refused[cs.DICT_KEY_ERROR]
     assert repr(ODD) in refused[cs.DICT_KEY_ERROR]
     result = _cli_resolve(graph, target, tmp_path)
-    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_FILE, result.output
+    assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_TARGET, result.output
     assert result.stdout == ""
     one = gloss.resolve_one(graph.fetch_all, P, target)
     assert isinstance(one, dict), one
