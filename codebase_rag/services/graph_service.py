@@ -23,6 +23,7 @@ from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
     CYPHER_EXPLAIN_PREFIX,
+    CYPHER_SHOW_VERSION,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
@@ -37,6 +38,8 @@ from ..constants import (
     KEY_TO_MISSING,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
+    MEMGRAPH_MIN_MAJOR_VERSION,
+    MEMGRAPH_VERSION_SEPARATOR,
     MERGE_KEY_PROPS_BY_REL,
     NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
@@ -120,6 +123,38 @@ def _apply_memory_limit(
     return (dialect or get_dialect(settings.GRAPH_BACKEND)).apply_memory_limit(
         query, mb
     )
+
+
+# Servers already named as unsupported in this process.
+_warned_versions: set[str] = set()
+
+
+def memgraph_version(conn: ConnectionProtocol) -> str | None:
+    """The server's `SHOW VERSION`, or None when it cannot be read."""
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(CYPHER_SHOW_VERSION)
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+    except Exception:
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    first = rows[0]
+    value = first[0] if isinstance(first, tuple) and first else None
+    return value if isinstance(value, str) and value else None
+
+
+def unsupported_memgraph_version(version: str) -> bool:
+    """Whether a version string reads as a major below the supported one.
+
+    Unparseable reads as supported: the check exists to name a known-old
+    server, never to refuse one it cannot read.
+    """
+    major = version.split(MEMGRAPH_VERSION_SEPARATOR, 1)[0]
+    return major.isdigit() and int(major) < MEMGRAPH_MIN_MAJOR_VERSION
 
 
 def _group_by_merge_keys(
@@ -298,7 +333,29 @@ class MemgraphIngestor:
             raise
         self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
         logger.debug(ls.MG_CONNECTED)
+        if self._dialect.name != DIALECT_NEO4J:
+            self._warn_if_unsupported(self.conn)
         return self
+
+    def _warn_if_unsupported(self, conn: ConnectionProtocol) -> None:
+        # Named once per server and process: a Memgraph too old for the
+        # label alternation most read queries use otherwise fails each one
+        # with a bare parser error (issue #2906).
+        version = memgraph_version(conn)
+        if version is None or not unsupported_memgraph_version(version):
+            return
+        endpoint = f"{self._host}:{self._port}:{version}"
+        if endpoint in _warned_versions:
+            return
+        _warned_versions.add(endpoint)
+        logger.warning(
+            ls.MG_UNSUPPORTED_VERSION.format(
+                version=version,
+                host=self._host,
+                port=self._port,
+                major=MEMGRAPH_MIN_MAJOR_VERSION,
+            )
+        )
 
     def __exit__(
         self,
