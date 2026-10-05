@@ -8,10 +8,12 @@ raised only when the agent was built, was never reached (issue #2897).
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
@@ -42,6 +44,32 @@ def test_the_startup_gate_names_the_unknown_provider() -> None:
     assert "Unknown provider 'antropic'" in printed, printed
     assert "Did you mean 'anthropic'?" in printed, printed
     assert "API_KEY" not in printed, printed
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "suggestion"),
+    [
+        ("--orchestrator", "antropic:claude-sonnet-4-5", "anthropic"),
+        ("--cypher", "opnai:gpt-4o", "openai"),
+    ],
+)
+def test_the_start_flag_names_the_unknown_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+    value: str,
+    suggestion: str,
+) -> None:
+    # The issue's reproduction, through the real `start` command.
+    monkeypatch.setattr(settings, "_active_orchestrator", None)
+    monkeypatch.setattr(settings, "_active_cypher", None)
+    args = ["start", "--repo-path", str(tmp_path), "--no-sync", flag, value]
+    result = CliRunner().invoke(cli_module.app, [*args, "-a", "hi"])
+    assert result.exit_code == 1, result.output
+    provider = value.partition(":")[0]
+    assert f"Unknown provider '{provider}'" in result.output, result.output
+    assert f"Did you mean '{suggestion}'?" in result.output, result.output
+    assert "API Key Missing" not in result.output, result.output
 
 
 @pytest.mark.usefixtures("misspelled_orchestrator")

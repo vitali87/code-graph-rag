@@ -32,7 +32,7 @@ LITELLM_NOT_RUNNING = (
     "Make sure LiteLLM proxy is running and API key is valid."
 )
 UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
-UNKNOWN_PROVIDER_SUGGESTION = " Did you mean '{suggestion}'?"
+UNKNOWN_PROVIDER_SUGGESTION = ". Did you mean '{suggestion}'?"
 
 # Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
