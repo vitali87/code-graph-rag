@@ -110,7 +110,12 @@ class EnvAliases:
             if caller_node is not None and member_reads
             else frozenset()
         )
-        self._decided: dict[tuple[int, str], ResourceKind | None] = {}
+        # Per declaration: its kind when it is the mapping, and every
+        # assignment to it with the value it sets.
+        self._declarations: dict[
+            tuple[int, str],
+            tuple[ResourceKind | None, list[tuple[Node, Node | None]]],
+        ] = {}
 
     def kind_of(self, obj: Node) -> ResourceKind | None:
         name = _text(obj)
@@ -125,18 +130,30 @@ class EnvAliases:
             values = _declared_values(scope, name, self._descriptor)
             if values is not None:
                 key = (scope.id, name)
-                if key not in self._decided:
-                    self._decided[key] = self._declaration_kind(scope, name, values)
-                return self._decided[key]
+                if key not in self._declarations:
+                    self._declarations[key] = (
+                        self._kind(values),
+                        _assigned_values(scope, name, self._descriptor),
+                    )
+                kind, assignments = self._declarations[key]
+                if kind is None:
+                    return None
+                # Only a rebinding that can run before this access counts
+                # (bot review on PR #2767): `env.PORT` above `env = {}` still
+                # reads the env.
+                preceding = [
+                    value
+                    for assignment, value in assignments
+                    if _may_run_before(assignment, obj, scope, self._descriptor)
+                ]
+                if preceding and self._kind(preceding) != kind:
+                    return None
+                return kind
             scope = scope.parent
         return None
 
-    def _declaration_kind(
-        self, scope: Node, name: str, values: list[Node | None]
-    ) -> ResourceKind | None:
-        if None in values:
-            return None
-        values = values + _assigned_values(scope, name, self._descriptor)
+    def _kind(self, values: list[Node | None]) -> ResourceKind | None:
+        # The one kind every value is, None when they are not all one mapping.
         kinds = {
             None
             if value is None
@@ -144,6 +161,41 @@ class EnvAliases:
             for value in values
         }
         return kinds.pop() if len(kinds) == 1 else None
+
+
+# Statements that run their body again, so a rebinding later in it can run
+# before an access earlier in it.
+_JS_LOOPS = frozenset(
+    {
+        cs.TS_JS_FOR_STATEMENT,
+        cs.TS_JS_FOR_IN_STATEMENT,
+        cs.TS_JS_WHILE_STATEMENT,
+        cs.TS_DO_STATEMENT,
+    }
+)
+
+
+def _may_run_before(
+    assignment: Node, access: Node, scope: Node, descriptor: LanguageDescriptor
+) -> bool:
+    # Earlier in the source; or later, inside a loop around both, or with
+    # the access or the rebinding in a function nested in the declaring
+    # scope, which may run at any time.
+    if assignment.start_byte < access.start_byte:
+        return True
+    for node in (access, assignment):
+        parent = node.parent
+        while parent is not None and parent.id != scope.id:
+            if parent.type in descriptor.nested_scope_types:
+                return True
+            if (
+                node is access
+                and parent.type in _JS_LOOPS
+                and parent.start_byte <= assignment.start_byte < parent.end_byte
+            ):
+                return True
+            parent = parent.parent
+    return False
 
 
 def _alias_candidates(
@@ -227,12 +279,13 @@ def _declared_values(
 
 def _assigned_values(
     scope: Node, name: str, descriptor: LanguageDescriptor
-) -> list[Node | None]:
-    # What every assignment to the `name` that `scope` declares sets it to:
-    # the right side of a plain assignment, None for a destructuring, an
-    # augmented or update assignment and a loop rebinding. A nested scope
-    # declaring its own `name` is not descended into, a closure is.
-    out: list[Node | None] = []
+) -> list[tuple[Node, Node | None]]:
+    # Every assignment to the `name` that `scope` declares, with what it
+    # sets it to: the right side of a plain assignment, None for a
+    # destructuring, an augmented or update assignment and a loop rebinding.
+    # A nested scope declaring its own `name` is not descended into, a
+    # closure is.
+    out: list[tuple[Node, Node | None]] = []
     stack = list(scope.named_children)
     while stack:
         node = stack.pop()
@@ -243,13 +296,13 @@ def _assigned_values(
             left = node.child_by_field_name(cs.FIELD_LEFT)
             if left is not None and left.type == descriptor.identifier_type:
                 if _text(left) == name:
-                    out.append(node.child_by_field_name(cs.FIELD_RIGHT))
+                    out.append((node, node.child_by_field_name(cs.FIELD_RIGHT)))
             elif (
                 left is not None
                 and left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN)
                 and name in _identifiers(left, descriptor)
             ):
-                out.append(None)
+                out.append((node, None))
             continue
         if node.type == cs.TS_JS_FOR_IN_STATEMENT:
             target = node.child_by_field_name(cs.FIELD_LEFT)
@@ -260,7 +313,7 @@ def _assigned_values(
         else:
             continue
         if target is not None and _text(target) == name:
-            out.append(None)
+            out.append((node, None))
     return out
 
 
