@@ -145,6 +145,25 @@ def extract_constructor_name(new_expr_node: Node) -> str | None:
     return None
 
 
+def construction_at(root: Node, start: int, text: str) -> Node | None:
+    # A call name carries a chain's receiver as text that starts where the
+    # call does. Finding that span in the file's own tree, rather than
+    # parsing the text alone, keeps the scopes around it, so `new Box()`
+    # reads the `Box` bound there. Only a receiver that IS the construction,
+    # under any parentheses, is returned: `(new Box() || other)` can
+    # evaluate to something else.
+    text = text.rstrip()
+    if not text.lstrip(cs.JS_RECEIVER_LEADING_CHARS).startswith(cs.JS_NEW_KEYWORD):
+        return None
+    end = start + len(text.encode(cs.ENCODING_UTF8))
+    node = root.named_descendant_for_byte_range(start, end)
+    if node is None or node.start_byte != start or node.end_byte != end:
+        return None
+    while node.type == cs.TS_PARENTHESIZED_EXPRESSION and node.named_child_count == 1:
+        node = node.named_children[0]
+    return node if node.type == cs.TS_NEW_EXPRESSION else None
+
+
 _BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
 
 

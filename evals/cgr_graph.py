@@ -116,6 +116,22 @@ _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.CONTAINS_SECTION.value,
     cs.RelationshipType.DEFINES_CONSTANT.value,
 }
+# What CYPHER_RETIRE_PROJECT walks: the project's containers, then what the
+# ones carrying its prefix define.
+_PROJECT_CONTAINMENT_RELS = frozenset(
+    {
+        cs.RelationshipType.CONTAINS_PACKAGE.value,
+        cs.RelationshipType.CONTAINS_FOLDER.value,
+        cs.RelationshipType.CONTAINS_FILE.value,
+        cs.RelationshipType.CONTAINS_MODULE.value,
+        cs.RelationshipType.CONTAINS_SECTION.value,
+    }
+)
+_PROJECT_DEFINED_RELS = _DEFINES_RELS | {
+    cs.RelationshipType.HAS_PARAMETER.value,
+    cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
+}
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
     {
@@ -144,8 +160,16 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # answer here, not a silent default. The hash lookup that follows is issued
 # only for notes this read returned, so it is deliberately NOT listed: if a
 # test ever reaches it, the double is missing a real case.
+#
+# `CYPHER_QUERY_PROJECT_NODE_IDS` reads the internal ids a retired project's
+# vectors are keyed by (issue #2412). The double has no internal ids and no
+# vector store, so "no vectors to delete" is its true answer.
 _NOT_MODELLED: frozenset[str] = frozenset(
-    {cs.CYPHER_QUERY_EMBEDDINGS, cq.CYPHER_UNANCHORED_GLOSSES}
+    {
+        cs.CYPHER_QUERY_EMBEDDINGS,
+        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+        cq.CYPHER_UNANCHORED_GLOSSES,
+    }
 )
 _MODULE_QN_LABELS = frozenset(
     {
@@ -471,6 +495,9 @@ class _StatefulIngestor:
                     cs.KEY_REL_TYPE: _result(rel),
                     cs.KEY_TO_QN: _result(tv),
                     cs.KEY_TO_PATH: _result(to_path),
+                    cs.KEY_RESOLUTION: _result(props.get(cs.KEY_RESOLUTION)),
+                    cs.KEY_SPREAD_ARGS: _result(props.get(cs.KEY_SPREAD_ARGS)),
+                    cs.KEY_CALL_QUALIFIER: _result(props.get(cs.KEY_CALL_QUALIFIER)),
                     cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
                     cs.KEY_COL: _result(props.get(cs.KEY_COL)),
                     cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
@@ -627,6 +654,46 @@ class _StatefulIngestor:
                             cs.KEY_TO_QN: _result(tv),
                         }
                     )
+        return rows
+
+    def _delta_named_imports(
+        self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
+        # One row per IMPORTS edge that binds a name, from a project module,
+        # whose importer or target sits at one of `paths` -- the target of
+        # any label, as the real query leaves it unconstrained.
+        module = cs.NodeLabel.MODULE.value
+        rows: list[ResultRow] = []
+        for node_id, props in self.nodes.items():
+            label, uid = node_id
+            source_qn = _str(uid)
+            if (
+                label != module
+                or not source_qn.startswith(prefix)
+                or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
+            ):
+                continue
+            from_path = _str(props.get(cs.KEY_PATH))
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
+                edge_props = self.edge_props.get(edge, {})
+                imported_name = edge_props.get(cs.KEY_IMPORTED_NAME)
+                if rel != cs.RelationshipType.IMPORTS.value or imported_name is None:
+                    continue
+                if from_path not in paths and self._delta_path_of(tl, tv) not in paths:
+                    continue
+                rows.append(
+                    {
+                        cs.KEY_FROM_QN: _result(fv),
+                        cs.KEY_FROM_PATH: _result(from_path),
+                        cs.KEY_TO_QN: _result(tv),
+                        cs.KEY_TO_PATH: _result(self._delta_path_of(tl, tv)),
+                        cs.KEY_IMPORTED_NAME: _result(imported_name),
+                        cs.KEY_ALIAS: _result(edge_props.get(cs.KEY_ALIAS)),
+                        cs.KEY_LINE: _result(edge_props.get(cs.KEY_LINE)),
+                        cs.KEY_COL: _result(edge_props.get(cs.KEY_COL)),
+                    }
+                )
         return rows
 
     # --- deterministic graph queries the edit operations issue (#1523) -------
@@ -1017,6 +1084,8 @@ class _StatefulIngestor:
             return self._delta_sites(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DELTA_MODULE_IMPORTS:
             return self._delta_module_imports(prefix, longer_project_prefixes)
+        if query == cq.CYPHER_DELTA_NAMED_IMPORTS:
+            return self._delta_named_imports(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DEAD_CODE_RELS:
             return [
                 {
@@ -1068,6 +1137,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_DEFINITIONS_BY_QN
                 | cq.CYPHER_DELTA_SITES
                 | cq.CYPHER_DELTA_MODULE_IMPORTS
+                | cq.CYPHER_DELTA_NAMED_IMPORTS
                 | cq.CYPHER_DELTA_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
@@ -1754,6 +1824,11 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_PACKAGE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cq.CYPHER_RETIRE_PROJECT:
+                self._retire_project(
+                    params.get(cs.KEY_PROJECT_NAME) if params else None,
+                    _str(params.get(cs.KEY_PROJECT_PREFIX)) if params else "",
+                )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
             case cs.CYPHER_DELETE_PROJECT_DEPENDENCIES:
@@ -2107,6 +2182,39 @@ class _StatefulIngestor:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)
+        self._detach_delete(doomed)
+
+    def _reachable(self, start: _NodeId, rels: frozenset[str]) -> set[_NodeId]:
+        found: set[_NodeId] = set()
+        frontier = [start]
+        while frontier:
+            node = frontier.pop()
+            for _fl, _fv, rel_type, to_label, to_val, _site in self._out.get(node, ()):
+                child = (to_label, to_val)
+                if rel_type in rels and child not in found:
+                    found.add(child)
+                    frontier.append(child)
+        return found
+
+    def _retire_project(self, project_name: PropertyValue, prefix: str) -> None:
+        # Mirrors CYPHER_RETIRE_PROJECT: the walk may pass through Folder and
+        # File nodes another project shares, but only containers carrying the
+        # retired project's qualified name are deleted, with what they define:
+        # its bare name (a root Package or Module) or anything under it.
+        project = (_PROJECT_LABEL, project_name)
+        if project not in self.nodes:
+            return
+        containers = {
+            node
+            for node in self._reachable(project, _PROJECT_CONTAINMENT_RELS)
+            if isinstance(
+                qn := self.nodes.get(node, {}).get(cs.KEY_QUALIFIED_NAME), str
+            )
+            and (qn == project_name or qn.startswith(prefix))
+        }
+        doomed = {project} | containers
+        for container in containers:
+            doomed |= self._reachable(container, _PROJECT_DEFINED_RELS)
         self._detach_delete(doomed)
 
     def _delete_project_dependencies(self, project_name: PropertyValue) -> None:
