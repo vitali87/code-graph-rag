@@ -64,9 +64,9 @@ KEY_END_LINE = "end_line"
 # matching the node `start_line` / `start_col` convention. Sites are stored as
 # ONE EDGE PER SITE: the site props join the MERGE key (see
 # MERGE_KEY_PROPS_BY_REL), so a caller invoking one callee twice carries two
-# parallel edges. Edges emitted without a site (libclang macro uses, Roslyn
-# facts, dynamic-trace write-back, inferred C# namespace imports) carry none of
-# these keys and keep collapsing on their endpoints.
+# parallel edges. Edges emitted without a site (pure-libclang macro uses,
+# Roslyn facts, dynamic-trace write-back, inferred C# namespace imports) carry
+# none of these keys and keep collapsing on their endpoints.
 KEY_LINE = "line"
 # Fixed-Cypher parameter names for the deterministic graph queries (#1523).
 KEY_QN = "qn"

@@ -921,11 +921,17 @@ class PendingMacroCall(NamedTuple):
 
     The caller is resolvable only after the tree-sitter pass has recorded its
     definition spans; a use outside every span attributes to the fallback
-    Module, mirroring the module-caller rule for ordinary calls.
+    Module, mirroring the module-caller rule for ordinary calls. The site
+    (1-based lines, 0-based columns) is the macro name's span, the same one
+    tree-sitter records for a function-like macro it parses as a call, so the
+    two edges MERGE into one (issue #2944).
     """
 
     rel_path: str
     line: int
+    col: int
+    end_line: int
+    end_col: int
     callee_qn: str
     fallback_module_qn: str
 

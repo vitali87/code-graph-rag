@@ -15,6 +15,7 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ...utils.path_utils import cached_resolve_posix
+from ..cpp.utils import cpp_include_local_name
 from ..definition_docstring import libclang_docstring
 from . import constants as fc
 from .qn import CppQnResolver
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 _NodeKey = tuple[str, str]
 _EdgeKey = tuple[str, str, str, str, str]
 _Scope = tuple[str, str] | None
+# (line, col, end line, end col): 1-based lines, 0-based columns.
+_Span = tuple[int, int, int, int]
 
 _COMPILE_COMMANDS = "compile_commands.json"
 _BUILD_DIR = "build"
@@ -175,11 +178,19 @@ class _Collector:
         # repo. rel_path resolves symlinks (filesystem-touching); headers
         # recur across every TU that includes them, so resolve each once.
         self._include_file_info: dict[str, tuple[str, str] | None] = {}
-        # (use-site rel, use-site line, macro Function qn, use-site absolute
+        # (use-site rel, use-site span, macro Function qn, use-site absolute
         # file): macro cursors are TU-level preprocessing entities, so the
         # enclosing caller is only recoverable by span once ALL definitions are
         # collected; resolved at flush.
-        self._pending_macro_calls: set[tuple[str, int, str, str]] = set()
+        self._pending_macro_calls: set[tuple[str, _Span, str, str]] = set()
+        # {(including file, directive line): (`#` column, written path)} for
+        # the TU being walked: FileInclusion locates the FILENAME token and
+        # knows no spelling, so the IMPORTS site and alias come from the
+        # INCLUSION_DIRECTIVE cursor, matching tree-sitter's (issue #2944).
+        self._include_directives: dict[tuple[str, int], tuple[int, str]] = {}
+        # (including module qn, included module qn, line, col, alias, written
+        # path): one IMPORTS edge per located `#include`.
+        self._include_sites: set[tuple[str, str, int, int, str, str]] = set()
         # {macro qn: identifier tokens in its definition body}: a macro
         # expanded only inside another macro's body is a NESTED expansion the
         # preprocessing record never reports, so the body reference is the only
@@ -260,6 +271,9 @@ class _Collector:
             self._queue_macro_call(cursor)
             if self.hybrid:
                 self._record_instantiation_extent(cursor)
+            return None
+        if cursor.kind.name == fc.KIND_INCLUSION_DIRECTIVE:
+            self._record_include_directive(cursor)
             return None
         if self.hybrid:
             self._process_hybrid(cursor)
@@ -571,7 +585,25 @@ class _Collector:
         rel = self.resolver.rel_path(file_name)
         if rel is None:
             return
-        self._pending_macro_calls.add((rel, cursor.location.line, callee_qn, file_name))
+        # libclang columns are 1-based; edge sites use tree-sitter's 0-based
+        # columns, so a function-like use lands on the same site as the call
+        # tree-sitter parses there.
+        extent = cursor.extent
+        site: _Span = (
+            cursor.location.line,
+            cursor.location.column - 1,
+            extent.end.line,
+            extent.end.column - 1,
+        )
+        self._pending_macro_calls.add((rel, site, callee_qn, file_name))
+
+    def _record_include_directive(self, cursor: Cursor) -> None:
+        if cursor.location.file is None:
+            return
+        self._include_directives[(cursor.location.file.name, cursor.location.line)] = (
+            cursor.location.column - 1,
+            cursor.spelling,
+        )
 
     def _resolve_macro_calls(self) -> None:
         # Attribute each macro use to the tightest enclosing
@@ -593,7 +625,9 @@ class _Collector:
                 and isinstance(end, int)
             ):
                 spans.setdefault(path, []).append((start, end, label, qn))
-        for rel, line, callee_qn, file_name in sorted(self._pending_macro_calls):
+        for rel, (line, _, _, _), callee_qn, file_name in sorted(
+            self._pending_macro_calls
+        ):
             containing = [
                 s
                 for s in spans.get(rel, ())
@@ -637,13 +671,22 @@ class _Collector:
             inc_rel, inc_qn = inc
             self._add_module(src_qn, src_rel, source.name)
             self._add_module(inc_qn, inc_rel, included.name)
-            self._add_edge(
-                cs.RelationshipType.IMPORTS,
-                fc.LABEL_MODULE,
-                src_qn,
-                fc.LABEL_MODULE,
-                inc_qn,
+            line = inclusion.location.line
+            directive = self._include_directives.get((source.name, line))
+            if directive is None:
+                self._add_edge(
+                    cs.RelationshipType.IMPORTS,
+                    fc.LABEL_MODULE,
+                    src_qn,
+                    fc.LABEL_MODULE,
+                    inc_qn,
+                )
+                continue
+            col, written = directive
+            self._include_sites.add(
+                (src_qn, inc_qn, line, col, cpp_include_local_name(written), written)
             )
+        self._include_directives.clear()
 
     def _include_info(self, file_name: str) -> tuple[str, str] | None:
         # Resolve rel + module_qn together, once per file: rel_path is the
@@ -763,11 +806,11 @@ class _Collector:
         # Module fallback pre-resolved. A use site whose file has no
         # module qn (an ignored dir, e.g. build/) can never carry an edge.
         pending: list[PendingMacroCall] = []
-        for rel, line, callee_qn, _file_name in sorted(self._pending_macro_calls):
+        for rel, site, callee_qn, _file_name in sorted(self._pending_macro_calls):
             module_qn = self.resolver.module_qn_for_rel(rel)
             if module_qn is None:
                 continue
-            pending.append(PendingMacroCall(rel, line, callee_qn, module_qn))
+            pending.append(PendingMacroCall(rel, *site, callee_qn, module_qn))
         return pending
 
     def flush(self, ingestor: IngestorProtocol) -> None:
@@ -796,6 +839,21 @@ class _Collector:
                 (from_label, cs.KEY_QUALIFIED_NAME, from_qn),
                 rel_type,
                 (to_label, cs.KEY_QUALIFIED_NAME, to_qn),
+            )
+        # Same site props as tree-sitter's IMPORTS for this `#include`
+        # (line, `#` column, alias): where both passes see the include, the
+        # two MERGE into one edge instead of a located and a site-less one.
+        for src_qn, inc_qn, line, col, alias, written in sorted(self._include_sites):
+            ingestor.ensure_relationship_batch(
+                (fc.LABEL_MODULE, cs.KEY_QUALIFIED_NAME, src_qn),
+                cs.RelationshipType.IMPORTS,
+                (fc.LABEL_MODULE, cs.KEY_QUALIFIED_NAME, inc_qn),
+                {
+                    cs.KEY_LINE: line,
+                    cs.KEY_COL: col,
+                    cs.KEY_ALIAS: alias,
+                    cs.KEY_IMPORTED_NAME: written,
+                },
             )
 
     def _duplicate_prototype_keys(self) -> set[_NodeKey]:

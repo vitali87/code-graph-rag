@@ -11,6 +11,20 @@ def convert_operator_symbol_to_name(symbol: str) -> str:
     )
 
 
+def cpp_include_local_name(include_path: str) -> str:
+    """The name an include binds locally: the header's stem for `.h`/`.hpp`,
+    the bare last path segment otherwise (`<vector>`).
+
+    Shared by the tree-sitter include parser and the libclang frontend, whose
+    IMPORTS edges for one `#include` must carry the same alias to MERGE into
+    one edge (issue #2944).
+    """
+    header_name = include_path.rsplit(cs.SEPARATOR_SLASH, maxsplit=1)[-1]
+    if header_name.endswith(cs.EXT_H) or header_name.endswith(cs.EXT_HPP):
+        return header_name.split(cs.SEPARATOR_DOT)[0]
+    return header_name
+
+
 def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     module_parts = module_qn.split(cs.SEPARATOR_DOT)
 

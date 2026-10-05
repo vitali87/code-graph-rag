@@ -615,3 +615,157 @@ def test_hybrid_incremental_expansion_call_reaches_unchanged_callee_file(
         if rel_type == cs.RelationshipType.CALLS.value
     }
     assert ("hybincexp.drv.driver", "hybincexp.tgt.target") in calls, sorted(calls)
+
+
+# Issue #2944: libclang and tree-sitter BOTH see a function-like macro call
+# and an `#include`. The libclang edge must carry the same site as
+# tree-sitter's so the two MERGE into one located edge, instead of a second,
+# site-less edge beside it. base.h is included from a header, indented, so
+# the site must be the directive's `#`, not the line start or the filename.
+# No base.cpp exists, so base.h claims the plain module qn `base`.
+_DUP_BASE_H = """\
+#ifndef BASE_H
+#define BASE_H
+#define LIMIT 10
+#endif
+"""
+
+_DUP_CALC_H = """\
+#ifndef CALC_H
+#define CALC_H
+  #  include "base.h"
+#define DOUBLE(x) ((x) + (x))
+int twice(int n);
+#endif
+"""
+
+_DUP_CALC_SRC = """\
+#include "calc.h"
+int twice(int n) {
+    return DOUBLE(n);
+}
+int cap(int n) { return n > LIMIT ? LIMIT : n; }
+"""
+
+
+def _write_dup(root: Path) -> None:
+    root.mkdir()
+    (root / "base.h").write_text(_DUP_BASE_H, encoding="utf-8")
+    (root / "calc.h").write_text(_DUP_CALC_H, encoding="utf-8")
+    (root / "calc.cpp").write_text(_DUP_CALC_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+
+
+def _index_dup(
+    root: Path, monkeypatch: pytest.MonkeyPatch, store: _StatefulIngestor
+) -> None:
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    parsers, queries = load_parsers()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=True)
+
+
+def _sites(
+    store: _StatefulIngestor, rel_type: cs.RelationshipType, src: str, dst: str
+) -> list[dict[str, object]]:
+    # One entry per edge the store would hold after MERGE: the site props
+    # are the part of the edge identity beyond its endpoints.
+    return sorted(
+        (
+            dict(site)
+            for _fl, from_val, rel, _tl, to_val, site in store.keyed_edges
+            if rel == rel_type.value and from_val == src and to_val == dst
+        ),
+        key=repr,
+    )
+
+
+def test_hybrid_function_like_macro_call_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybdup"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    sites = _sites(
+        store, cs.RelationshipType.CALLS, "hybdup.calc.twice", "hybdup.calc.h.DOUBLE"
+    )
+    assert sites == [{cs.KEY_LINE: 3, cs.KEY_COL: 11}], sites
+
+
+def test_hybrid_object_like_macro_uses_keep_one_edge_per_site(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Tree-sitter sees LIMIT as a bare identifier, so these edges are
+    # libclang's alone: each use keeps its own located edge, and the two
+    # uses on one line are not collapsed into one.
+    root = temp_repo / "hybdupobj"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    line = _DUP_CALC_SRC.splitlines()[4]
+    first = line.index("LIMIT")
+    second = line.index("LIMIT", first + 1)
+    sites = _sites(
+        store, cs.RelationshipType.CALLS, "hybdupobj.calc.cap", "hybdupobj.base.LIMIT"
+    )
+    assert sites == [
+        {cs.KEY_LINE: 5, cs.KEY_COL: first},
+        {cs.KEY_LINE: 5, cs.KEY_COL: second},
+    ], sites
+    edge = next(
+        e
+        for e in store.keyed_edges
+        if e[1] == "hybdupobj.calc.cap" and dict(e[5]).get(cs.KEY_COL) == first
+    )
+    props = store.edge_props[edge]
+    assert props[cs.KEY_END_LINE] == 5, props
+    assert props[cs.KEY_END_COL] == first + len("LIMIT"), props
+    assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.EXACT, props
+
+
+def test_hybrid_include_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybdupinc"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    calc = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybdupinc.calc", "hybdupinc.calc.h"
+    )
+    assert calc == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "calc"}], calc
+    base = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybdupinc.calc.h", "hybdupinc.base"
+    )
+    assert base == [{cs.KEY_LINE: 3, cs.KEY_COL: 2, cs.KEY_ALIAS: "base"}], base
+
+
+def test_hybrid_incremental_run_keeps_one_edge_for_unchanged_file(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # libclang re-parses calc.cpp on every run, so its include is emitted
+    # again for the unchanged file: it must land on the edge already stored.
+    root = temp_repo / "hybdupincr"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    (root / "other.cpp").write_text("int other_fn() { return 0; }\n", encoding="utf-8")
+    parsers, queries = load_parsers()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=False)
+    imports = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybdupincr.calc", "hybdupincr.calc.h"
+    )
+    assert len(imports) == 1, imports
+    calls = _sites(
+        store,
+        cs.RelationshipType.CALLS,
+        "hybdupincr.calc.twice",
+        "hybdupincr.calc.h.DOUBLE",
+    )
+    assert len(calls) == 1, calls
