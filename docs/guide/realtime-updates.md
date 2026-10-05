@@ -33,6 +33,10 @@ make watch REPO_PATH=/path/to/your/repo
 
 ### With Custom Memgraph Settings
 
+Without `--host`/`--port` (or `HOST=`/`PORT=` for `make watch`), the watcher
+connects where `cgr start` does: `MEMGRAPH_HOST` and `MEMGRAPH_PORT` from the
+environment or `.env`.
+
 ```bash
 python realtime_updater.py /path/to/your/repo \
   --host localhost --port 7687 --batch-size 1000
@@ -62,8 +66,8 @@ cgr start --repo-path ~/my-project
 | Argument | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `repo_path` | Yes | | Path to repository to watch |
-| `--host` | No | `localhost` | Memgraph host |
-| `--port` | No | `7687` | Memgraph port |
+| `--host` | No | `MEMGRAPH_HOST` (`localhost`) | Memgraph host |
+| `--port` | No | `MEMGRAPH_PORT` (`7687`) | Memgraph port |
 | `--batch-size` | No | | Number of buffered nodes/relationships before flushing to Memgraph |
 | `--project-name` | No | Same as `cgr start --repo-path` | Project name to store in the graph; give the one you gave `cgr start --project-name` |
 
