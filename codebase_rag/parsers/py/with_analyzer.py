@@ -268,7 +268,10 @@ class PythonWithBindingMixin(_WithBase):
         import_mapping = self.import_processor.import_mapping
         if cs.SEPARATOR_DOT in type_name:
             qn = follow_reexports(
-                type_name, import_mapping, self.function_registry, python_star=True
+                type_name,
+                import_mapping,
+                self.function_registry,
+                self.import_processor.python_module_all,
             )
             if self.function_registry.get(qn) == NodeType.CLASS:
                 return qn
@@ -287,6 +290,9 @@ class PythonWithBindingMixin(_WithBase):
         if not qn:
             return None
         qn = follow_reexports(
-            qn, import_mapping, self.function_registry, python_star=True
+            qn,
+            import_mapping,
+            self.function_registry,
+            self.import_processor.python_module_all,
         )
         return qn if self.function_registry.get(qn) == NodeType.CLASS else None

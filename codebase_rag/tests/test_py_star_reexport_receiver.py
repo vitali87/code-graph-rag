@@ -113,6 +113,114 @@ def test_a_star_re_exported_receiver_binds_its_methods(
     assert f"{package}.BaseClient.build_request" in callees
 
 
+# Binding order and `__all__` (bot review on PR #2989): Python keeps a name's
+# last binding, star or named, and a star binds only what its module's
+# `__all__` lists when it has one.
+KLASS = "class Client:\n    def send(self, request):\n        return request\n"
+HIDDEN_KLASS = '__all__ = ["Other"]\n\n\nclass Other:\n    pass\n\n\n' + KLASS
+LISTED = '__all__ = ["Client"]\n\n\n' + KLASS
+
+ORDER_APP = """\
+import later_star
+import star_after_named
+import named_after_star
+import excluded
+import excluded_only
+import listed
+
+
+def via_later_star():
+    client = later_star.Client()
+    client.send(1)
+
+
+def via_star_after_named():
+    client = star_after_named.Client()
+    client.send(1)
+
+
+def via_named_after_star():
+    client = named_after_star.Client()
+    client.send(1)
+
+
+def via_excluded():
+    client = excluded.Client()
+    client.send(1)
+
+
+def via_excluded_only():
+    client = excluded_only.Client()
+    client.send(1)
+
+
+def via_listed():
+    client = listed.Client()
+    client.send(1)
+"""
+
+
+@pytest.fixture(scope="module")
+def order_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("starorder") / "starorder"
+    for package in ("later_star", "star_after_named", "named_after_star", "excluded"):
+        _write(root, f"{package}/_a.py", KLASS)
+        _write(root, f"{package}/_b.py", KLASS)
+    _write(root, "later_star/__init__.py", "from ._a import *\nfrom ._b import *\n")
+    _write(
+        root,
+        "star_after_named/__init__.py",
+        "from ._a import Client\nfrom ._b import *\n",
+    )
+    _write(
+        root,
+        "named_after_star/__init__.py",
+        "from ._b import *\nfrom ._a import Client\n",
+    )
+    _write(root, "excluded/_a.py", HIDDEN_KLASS)
+    _write(root, "excluded/__init__.py", "from ._b import *\nfrom ._a import *\n")
+    _write(root, "excluded_only/_a.py", HIDDEN_KLASS)
+    _write(root, "excluded_only/__init__.py", "from ._a import *\n")
+    _write(root, "listed/_impl.py", LISTED)
+    _write(root, "listed/__init__.py", "from ._impl import *\n")
+    _write(root, "app.py", ORDER_APP)
+    return _index(root, MagicMock())
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("via_later_star", "later_star._b.Client.send"),
+        ("via_star_after_named", "star_after_named._b.Client.send"),
+        ("via_named_after_star", "named_after_star._a.Client.send"),
+        ("via_excluded", "excluded._b.Client.send"),
+        ("via_listed", "listed._impl.Client.send"),
+    ],
+    ids=[
+        "the-later-star-wins",
+        "a-star-after-a-named-import-wins",
+        "a-named-import-after-a-star-wins",
+        "a-star-whose-all-leaves-it-out-binds-nothing",
+        "a-star-whose-all-lists-it-binds-it",
+    ],
+)
+def test_the_binding_python_keeps_types_the_receiver(
+    order_graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    callees = _callees(order_graph, caller)
+    assert callees == {callee}, callees
+
+
+def test_a_star_whose_all_leaves_the_name_out_binds_nothing(
+    order_graph: RecordedGraph,
+) -> None:
+    # `excluded_only/__init__.py` stars `_a`, whose `__all__` is ["Other"],
+    # so `excluded_only.Client` is unbound and the receiver stays untyped.
+    assert "excluded_only._a.Client.send" not in _callees(
+        order_graph, "via_excluded_only"
+    )
+
+
 # Negative: what must not change.
 
 

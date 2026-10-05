@@ -915,6 +915,91 @@ def _import_site_props(
     return site
 
 
+def _python_string_literal(node: Node) -> str | None:
+    if node.type != cs.TS_PY_STRING or node.text is None:
+        return None
+    match = re.fullmatch(
+        cs.PY_DUNDER_ALL_ENTRY_PATTERN, node.text.decode(cs.ENCODING_UTF8)
+    )
+    return match.group(cs.KEY_NAME) if match else None
+
+
+def _python_literal_names(node: Node | None) -> list[str] | None:
+    # The names a `__all__` list or tuple literal spells, None for anything
+    # computed (`base.__all__ + [...]`), whose entries cannot be read here.
+    if node is None or node.type not in (cs.TS_PY_LIST, cs.TS_PY_TUPLE):
+        return None
+    names = [_python_string_literal(c) for c in node.named_children]
+    return None if None in names else [n for n in names if n is not None]
+
+
+def _python_dunder_all_part(statement: Node) -> list[str] | None:
+    """What one module-level statement adds to `__all__`: its assignment, an
+    `+=`, an `.extend([...])` or an `.append("x")`. None when it does not
+    touch `__all__`; raises _UnreadableDunderAll when it sets it to something
+    the source does not spell out."""
+    expression = next(iter(statement.named_children), None)
+    if expression is None:
+        return None
+    if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+        left = expression.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is None or left.text != cs.PY_DUNDER_ALL.encode():
+            return None
+        return _readable(
+            _python_literal_names(expression.child_by_field_name(cs.TS_FIELD_RIGHT))
+        )
+    if expression.type != cs.TS_PY_CALL:
+        return None
+    func = expression.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    owner = func.child_by_field_name(cs.FIELD_OBJECT)
+    method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    if owner is None or owner.text != cs.PY_DUNDER_ALL.encode() or method is None:
+        return None
+    args = expression.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    arg = next(iter(args.named_children), None) if args is not None else None
+    if method.text == cs.PY_LIST_APPEND.encode() and arg is not None:
+        name = _python_string_literal(arg)
+        return _readable(None if name is None else [name])
+    if method.text == cs.PY_LIST_EXTEND.encode():
+        return _readable(_python_literal_names(arg))
+    raise _UnreadableDunderAll
+
+
+class _UnreadableDunderAll(Exception):
+    """`__all__` is set in a way the source does not spell out."""
+
+
+def _readable(names: list[str] | None) -> list[str]:
+    if names is None:
+        raise _UnreadableDunderAll
+    return names
+
+
+def _python_dunder_all(root: Node) -> frozenset[str] | None:
+    """The names a Python module's `__all__` lists, read from its literal.
+
+    None when the module sets none at its top level, or builds it in a way
+    the source does not spell out; a star import then binds every public
+    name, as it does for a module without one. An empty `__all__` binds
+    nothing.
+    """
+    names: list[str] = []
+    defined = False
+    try:
+        for statement in root.named_children:
+            if statement.type != cs.TS_PY_EXPRESSION_STATEMENT:
+                continue
+            part = _python_dunder_all_part(statement)
+            if part is not None:
+                defined = True
+                names += part
+    except _UnreadableDunderAll:
+        return None
+    return frozenset(names) if defined else None
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -929,6 +1014,7 @@ class ImportProcessor:
         "commonjs_direct_exports",
         "conditional_imports",
         "python_import_rebinds",
+        "python_module_all",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
@@ -1035,6 +1121,11 @@ class ImportProcessor:
         # module that is external on every path from one a branch binds to
         # first-party code (issue #2360).
         self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
+        # A Python module's literal `__all__`, which is every name a
+        # `from module import *` binds when the module defines one (issue
+        # #2928). A module without one, or with one built at run time, is
+        # absent: its star binds every public name.
+        self.python_module_all: dict[str, frozenset[str]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -1568,6 +1659,11 @@ class ImportProcessor:
         # A re-parse that drops a fallback import must not leave the binding
         # it removed standing beside the one that remains.
         self.python_import_rebinds.pop(module_qn, None)
+        self.python_module_all.pop(module_qn, None)
+        if language == cs.SupportedLanguage.PYTHON and (
+            (exported := _python_dunder_all(root_node)) is not None
+        ):
+            self.python_module_all[module_qn] = exported
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
