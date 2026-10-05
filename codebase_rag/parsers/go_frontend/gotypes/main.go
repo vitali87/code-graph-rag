@@ -47,6 +47,12 @@ type externalFact struct {
 	Line int    `json:"line"`
 	Col  int    `json:"col"`
 	Name string `json:"name"`
+	// Pkg is the callee's import path, empty for a callee with no package.
+	// The tool sees one module at a time, so a sibling module of the same
+	// repository (`replace => ../liba`, `go.work`) is outside it too; the
+	// consumer, which knows every in-repo module, tells the two apart
+	// (issue #2809).
+	Pkg string `json:"pkg,omitempty"`
 }
 
 // implementsFact is a position-join, never a name-map: Go reuses simple type
@@ -235,8 +241,12 @@ func (c *collector) collectCall(call *ast.CallExpr, pkg *packages.Package, fset 
 		return
 	}
 	if fn.Pkg() == nil || !c.mainPaths[fn.Pkg().Path()] {
+		pkgPath := ""
+		if fn.Pkg() != nil {
+			pkgPath = fn.Pkg().Path()
+		}
 		c.out.Externals = append(c.out.Externals, externalFact{
-			File: rel, Line: line, Col: col, Name: name.Name,
+			File: rel, Line: line, Col: col, Name: name.Name, Pkg: pkgPath,
 		})
 		return
 	}
