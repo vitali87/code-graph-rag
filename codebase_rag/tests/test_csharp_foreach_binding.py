@@ -50,9 +50,28 @@ namespace Acme
         public void VarOverCall(string m) { foreach (var sink in Make()) sink.Emit(m); }
         public void VarOverDictionary(string m) { foreach (var pair in _byName) pair.Value.Emit(m); }
         IEnumerable<ISink> Make() { return _sinks; }
+
+        // Bot review on PR #2990: what another binding of the name says.
+        public void UntypedLoopAfterTypedLoop(string m)
+        {
+            foreach (ISink sink in _sinks) { }
+            foreach (var sink in MakeOthers()) sink.Emit(m);
+        }
+        public void LocalHidesField(string m)
+        {
+            var _sinks = MakeOthers();
+            foreach (var sink in _sinks) sink.Emit(m);
+        }
+        public void LocalInAnotherBlock(string m)
+        {
+            { Other[] _sinks = new Other[0]; }
+            foreach (var sink in _sinks) sink.Emit(m);
+        }
+        IEnumerable<Other> MakeOthers() { return new Other[0]; }
     }
 }
 """
+OTHER_EMIT = "src.Sinks.Acme.Other.Emit(string)"
 
 EMIT = "src.Sinks.Acme.ISink.Emit(string)"
 
@@ -90,6 +109,24 @@ def test_a_foreach_binding_is_typed_by_the_collection_element(
     graph: RecordedGraph, caller: str
 ) -> None:
     assert _callees(graph, caller).get(EMIT) == "exact"
+
+
+@pytest.mark.parametrize("caller", ["UntypedLoopAfterTypedLoop", "LocalHidesField"])
+def test_an_unread_binding_of_the_name_is_not_typed_by_another(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # The second loop's `sink`, and the local `_sinks` that hides the field,
+    # are of a type not read here: neither takes the other binding's ISink.
+    assert _callees(graph, caller).get(EMIT) != "exact"
+
+
+def test_a_local_in_another_block_does_not_type_the_loop(
+    graph: RecordedGraph,
+) -> None:
+    # The `Other[]` local is out of scope at the loop, which reads the field.
+    callees = _callees(graph, "LocalInAnotherBlock")
+    assert callees.get(EMIT) == "exact"
+    assert OTHER_EMIT not in callees
 
 
 # Negative: what must not change.

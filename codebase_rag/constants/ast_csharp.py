@@ -121,6 +121,7 @@ CSHARP_OBJECT_VIRTUALS = frozenset(
 )
 TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CSHARP_BLOCK = "block"
+TS_CSHARP_LOCAL_DECLARATION_STATEMENT = "local_declaration_statement"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 

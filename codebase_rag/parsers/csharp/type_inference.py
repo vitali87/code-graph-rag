@@ -209,6 +209,23 @@ def _extension_receiver_matches(
     return not ambiguous_unqualified
 
 
+def _declaration_visible_at(decl: Node, at: Node) -> bool:
+    """Whether the local `decl` declares is in scope at `at`: declared before
+    it, in a block that encloses it. A `for`/`using` declaration is scoped to
+    its own statement."""
+    statement = decl.parent
+    if statement is None:
+        return False
+    container = (
+        statement.parent
+        if statement.type == cs.TS_CSHARP_LOCAL_DECLARATION_STATEMENT
+        else statement
+    )
+    if container is None or decl.start_byte >= at.start_byte:
+        return False
+    return container.start_byte <= at.start_byte and at.end_byte <= container.end_byte
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -408,8 +425,17 @@ class CSharpTypeInferenceEngine:
                 text = safe_decode_text(declared)
             else:
                 text = self._foreach_element_text(loop, scope_node)
-            if name and text:
+            if not name:
+                continue
+            if text:
                 self._record_type(name, annotate_type_ref(text), types, conflicted)
+            else:
+                # The map is per method, so a loop whose element type is not
+                # read must not inherit another binding's type for the name:
+                # `foreach (var sink in MakeOthers())` after a typed `sink`
+                # loop bound to its type (bot review on PR #2990).
+                types.pop(name, None)
+                conflicted.add(name)
 
     def _foreach_element_text(self, loop: Node, scope_node: Node) -> str | None:
         collection = loop.child_by_field_name(cs.FIELD_RIGHT)
@@ -417,14 +443,15 @@ class CSharpTypeInferenceEngine:
             return None
         if collection.type == cs.TS_CSHARP_IDENTIFIER:
             name = safe_decode_text(collection)
-            # A parameter or local of that name shadows the field.
-            declared = (
-                self._parameter_type_text(scope_node, name)
-                or self._local_type_text(scope_node, name)
-                or self._field_type_text(scope_node, name)
-                if name
-                else None
-            )
+            if not name:
+                return None
+            # A parameter or a local in scope of that name shadows the field,
+            # even when its own type is not read (bot review on PR #2990).
+            declared = self._parameter_type_text(scope_node, name)
+            if declared is None:
+                found, declared = self._local_type_text(scope_node, name, loop)
+                if not found:
+                    declared = self._field_type_text(scope_node, name)
         elif (
             collection.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
             and (
@@ -454,9 +481,16 @@ class CSharpTypeInferenceEngine:
                 return safe_decode_text(param.child_by_field_name(cs.FIELD_TYPE))
         return None
 
-    def _local_type_text(self, scope_node: Node, name: str) -> str | None:
-        # The declared type, or for `var` the type the initializer constructs.
+    def _local_type_text(
+        self, scope_node: Node, name: str, at: Node
+    ) -> tuple[bool, str | None]:
+        """Whether a local named `name` is in scope at `at`, and its declared
+        type, or for `var` the type its initializer constructs (None when
+        neither is read). A local in another block, or declared after `at`,
+        is not the one `at` reads (bot review on PR #2990)."""
         for decl in self._local_variable_declarations(scope_node):
+            if not _declaration_visible_at(decl, at):
+                continue
             type_node = decl.child_by_field_name(cs.FIELD_TYPE)
             for declarator in decl.named_children:
                 if (
@@ -468,12 +502,15 @@ class CSharpTypeInferenceEngine:
                 if type_node is not None and type_node.type != (
                     cs.TS_CSHARP_IMPLICIT_TYPE
                 ):
-                    return safe_decode_text(type_node)
+                    return True, safe_decode_text(type_node)
                 for creation in self._descendants_of_type(
                     declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
                 ):
-                    return safe_decode_text(creation.child_by_field_name(cs.FIELD_TYPE))
-        return None
+                    return True, safe_decode_text(
+                        creation.child_by_field_name(cs.FIELD_TYPE)
+                    )
+                return True, None
+        return False, None
 
     @staticmethod
     def _field_type_text(scope_node: Node, name: str) -> str | None:
