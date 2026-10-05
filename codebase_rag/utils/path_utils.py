@@ -13,6 +13,7 @@ from .. import constants as cs
 
 _PROJECT_NAME_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
 _PROJECT_NAME_FALLBACK_BASE = "repo"
+_PROJECT_NAME_SEPARATORS = re.compile(r"\.+")
 
 
 def derive_project_name(repo_path: Path) -> str:
@@ -20,10 +21,51 @@ def derive_project_name(repo_path: Path) -> str:
     digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[
         : cs.PROJECT_NAME_DIGEST_LEN
     ]
-    base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_")
+    # Strip `-` as well as `_`: a name like `мой-repo` would otherwise start
+    # with `-`, and so would every qualified name under it, which Click then
+    # reads as an option wherever a command takes one (issue #2638).
+    base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_-")
     if not base:
         base = _PROJECT_NAME_FALLBACK_BASE
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
+
+
+def default_project_name(repo_path: Path) -> str:
+    """The name a run that names no project writes under.
+
+    The directory name, as before, unless it holds the qualified-name
+    separator: `acme.web/` would write the nodes of project `acme`'s package
+    `web` (#2412). Such a checkout gets the digest-suffixed derived name, not
+    just the `.` dropped, which would give `acme.web/` and `acme_web/` the
+    same project (review of PR 2497).
+    """
+    directory = repo_path.resolve().name
+    if cs.SEPARATOR_DOT not in directory:
+        return directory
+    return derive_project_name(repo_path)
+
+
+def project_name_error(name: str) -> str | None:
+    """Why `name` cannot be stored as a project name, or None if it can.
+
+    Qualified names join the project name and the package path with `.`, and
+    nodes merge on qualified name, so project `acme.web` would write the
+    nodes of project `acme`'s package `web` (issue #2412).
+    """
+    if cs.SEPARATOR_DOT not in name:
+        return None
+    return cs.ERR_PROJECT_NAME_HAS_SEPARATOR.format(
+        name=name, suggestion=separator_free_project_name(name)
+    )
+
+
+def separator_free_project_name(name: str) -> str:
+    if cs.SEPARATOR_DOT not in name:
+        return name
+    return (
+        _PROJECT_NAME_SEPARATORS.sub("_", name.strip(cs.SEPARATOR_DOT))
+        or _PROJECT_NAME_FALLBACK_BASE
+    )
 
 
 def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
@@ -32,6 +74,29 @@ def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
     if target_default and target_default != ".":
         return Path(target_default).resolve()
     return Path.cwd().resolve()
+
+
+def unwritable_output_reason(path: Path) -> str | None:
+    """Why no file can be written at `path`, or None when one can.
+
+    Run before the graph is read or indexed, so a mistyped `-o` fails at once
+    instead of after the work it was meant to save (issue #2410). Missing
+    parent directories are fine: the writer creates them.
+    """
+    if path.is_dir():
+        return cs.CLI_ERR_OUTPUT_IS_DIR.format(path=path)
+    if path.exists():
+        if os.access(path, os.W_OK):
+            return None
+        return cs.CLI_ERR_OUTPUT_NOT_WRITABLE.format(target=path)
+    ancestor = next((parent for parent in path.parents if parent.exists()), None)
+    if ancestor is None:
+        return None
+    if not ancestor.is_dir():
+        return cs.CLI_ERR_OUTPUT_PARENT_NOT_DIR.format(parent=ancestor)
+    if not os.access(ancestor, os.W_OK | os.X_OK):
+        return cs.CLI_ERR_OUTPUT_NOT_WRITABLE.format(target=ancestor)
+    return None
 
 
 @lru_cache(maxsize=4096)
@@ -303,6 +368,11 @@ def module_stem(filename: str) -> str:
     return Path(filename).stem
 
 
+def module_extension(filename: str) -> str:
+    """The extension `module_stem` removes, dot included (`.py`, `.d.ts`)."""
+    return filename[len(module_stem(filename)) :]
+
+
 _DECLARATION_EXTS: tuple[str, ...] = tuple(
     ext
     for ext in _MODULE_EXTS_LONGEST_FIRST
@@ -369,6 +439,46 @@ def has_implementation_sibling(
     return False
 
 
+def python_stub_has_implementation(
+    path: Path,
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Is `path` a `.pyi` stub whose module an indexed `.py` already defines?
+
+    Such a stub is skipped rather than parsed. It strips to the same module qn
+    as its implementation, so parsing it would either overwrite the `.py`'s
+    Module or, disambiguated, add a `proj.x.pyi` twin carrying a second copy
+    of every signature (issue #2445). A stub with NO implementation is kept:
+    for a compiled extension it is the only source the module has.
+
+    The implementation is whatever `import` would load under the same name:
+    `x.py`, or the package `x/__init__.py`, which wins over `x.py` at runtime
+    and so owns `proj.x` in the graph. For `__init__.pyi` it is the
+    `__init__.py` beside it. As with `has_implementation_sibling`, this asks
+    the disk and the walk's own skip predicate, not the parse registry, so the
+    answer does not depend on which file was walked first.
+    """
+    if path.suffix != cs.EXT_PYI:
+        return False
+    if path.name == cs.INIT_PYI:
+        candidates = (path.with_name(cs.INIT_PY),)
+    else:
+        candidates = (path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY)
+    return any(
+        candidate.is_file()
+        and not should_skip_path(
+            candidate,
+            repo_path,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        )
+        for candidate in candidates
+    )
+
+
 def base_module_qn(rel_path: Path, project_name: str) -> str:
     """The module qualified name for a file, BEFORE collision disambiguation.
 
@@ -377,10 +487,10 @@ def base_module_qn(rel_path: Path, project_name: str) -> str:
     byte-for-byte: the whole graph keys on these names, and a disagreement
     silently splits one module into two nodes rather than raising (#1025).
 
-    ``__init__.py`` and ``mod.rs`` name their PACKAGE rather than themselves,
-    so they drop their own filename segment.
+    ``__init__.py`` (and its stub ``__init__.pyi``) and ``mod.rs`` name their
+    PACKAGE rather than themselves, so they drop their own filename segment.
     """
-    if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
+    if rel_path.name in (*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS):
         parts = rel_path.parent.parts
     else:
         parts = (*rel_path.parent.parts, module_stem(rel_path.name))

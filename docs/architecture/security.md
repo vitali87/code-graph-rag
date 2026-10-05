@@ -114,6 +114,8 @@ semantic facts these modes add.
 2. delete the file `~/.cgr/docker-compose.yaml`
 3. `cgr daemon up` to re-render it with the loopback bind
 
+![cgr daemon up, then docker compose ps in ~/.cgr showing every published port bound to 127.0.0.1](../assets/demos/security-loopback.gif)
+
 The order matters: deleting the file while the stack is up achieves nothing, because the running containers keep their old bindings and a later start sees a healthy stack and returns before it would re-render anything. To keep local edits instead, add a `127.0.0.1:` prefix to each published port by hand, then run `cgr daemon down` and `cgr daemon up` to RECREATE the containers. Docker fixes a container's published ports when it is created, so an edited file does not rebind anything until the containers are replaced; `docker restart` is not enough.
 
 Setting `CGR_STACK_BIND_HOST` widens the bind deliberately (for example to `0.0.0.0` to reach the stack from another machine). The bundled Memgraph Bolt, Memgraph Lab, and Qdrant services are UNAUTHENTICATED unless you turn authentication on as described below, so a wider bind, or a stale compose file, exposes the stores without credentials to hosts that can reach those ports. Treat graphs, vectors, exports and backups with the same confidentiality as the code itself. Loopback binding does not prevent access by other local users or processes.
@@ -132,6 +134,12 @@ Before starting the stack, `cgr daemon up` asks `docker compose config` what eac
 - **A compose file rendered before this support.** It lacks the `environment` entries that pass the values through. Re-render it with the same three steps as above, or list `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD` under the `memgraph` service's `environment`, and `QDRANT__SERVICE__API_KEY` under the `qdrant` service's, by hand.
 - **A value written into the compose file.** It takes precedence over the settings.
 - **An `.env` file next to the compose file.** Compose reads it for any of these variables missing from its environment.
+
+#### Vendor telemetry
+
+Both bundled stores report usage to their vendors unless told not to: Memgraph sends the host's CPU and memory profile and the graph's vertex and edge counts, and Qdrant reports to `telemetry.qdrant.io` when it starts. A newly rendered compose file turns both off, with `command: ["--telemetry-enabled=false"]` on the `memgraph` service and `QDRANT__TELEMETRY_DISABLED=true` in the `qdrant` service's `environment` (issue [#2675](https://github.com/vitali87/code-graph-rag/issues/2675)). To share usage data with the vendors, delete the Memgraph line and set the Qdrant variable to `false`.
+
+A compose file rendered before this change keeps telemetry on, like the port bindings above. Re-render it with the same three steps, or add the two settings by hand and recreate the containers with `cgr daemon down` and `cgr daemon up`.
 
 ### External providers and data transmission
 
@@ -184,6 +192,8 @@ binds `127.0.0.1` by default and refuses a non-loopback bind without
 This is a shared bearer credential, not per-user authorization. Authorized
 clients can use privileged tools, including file modification and project
 deletion; treat client access accordingly.
+
+![cgr mcp-server --transport http refusing --host 0.0.0.0 without MCP_HTTP_AUTH_TOKEN, then serving on 127.0.0.1 by default](../assets/demos/security-mcp-bind.gif)
 
 The server's HTTP configuration does not itself enable TLS. For remote access,
 use a trusted TLS-terminating proxy or protected tunnel and restrict direct
