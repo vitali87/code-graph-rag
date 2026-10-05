@@ -250,8 +250,8 @@ WITH p, nested, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS
 
 # Retires a project whose checkout was just re-indexed under another name
 # (issue #2412). Both projects index the same files, so they share every
-# Folder and File node (keyed on absolute path), and the walk above would
-# cross those into the new project's modules. Only containers carrying the
+# Folder and File node (keyed on absolute path), and a walk over every
+# containment path would cross those into the new project's modules. Only containers carrying the
 # old project's qualified name go, with what they define; the shared Folder
 # and File nodes stay with the project that still contains them. A
 # repository-root `__init__.py` makes the root Package and Module's qn the
