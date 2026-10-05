@@ -2779,12 +2779,17 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(
+        # The export walk goes first: a module may publish a name for another
+        # of its bindings (`export { beta as renamed }`, `module.exports = {
+        # renamed: beta }`) beside a local of that name, and the import gets
+        # the published one (bot review on PR #2994). It answers None when
+        # the name leads nowhere else, and the direct import then decides.
+        if result := self._try_resolve_js_reexport(
             call_name, import_map, language, module_qn
         ):
             return result
 
-        if result := self._try_resolve_js_reexport(
+        if result := self._try_resolve_direct_import(
             call_name, import_map, language, module_qn
         ):
             return result

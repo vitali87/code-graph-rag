@@ -4000,13 +4000,21 @@ class ImportProcessor:
                     _is_module_exports(expression.child_by_field_name(cs.TS_FIELD_LEFT))
                 ):
                     continue
+                # Each assignment replaces the whole export object, so only
+                # the last one's names are published: `module.exports = {}`
+                # after `{ renamed: beta }` exports no `renamed` (bot review
+                # on PR #2994).
                 value = expression.child_by_field_name(cs.TS_FIELD_RIGHT)
-                if value is None or value.type != cs.TS_OBJECT:
-                    continue
-                for name, binding in _renamed_object_pairs(value):
-                    exported[name] = JsExport(
-                        f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True
-                    )
+                exported = (
+                    {
+                        name: JsExport(
+                            f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True
+                        )
+                        for name, binding in _renamed_object_pairs(value)
+                    }
+                    if value is not None and value.type == cs.TS_OBJECT
+                    else {}
+                )
         if exported:
             self.js_export_bindings.setdefault(module_qn, {}).update(exported)
 

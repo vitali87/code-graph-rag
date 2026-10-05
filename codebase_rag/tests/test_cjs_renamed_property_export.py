@@ -27,6 +27,35 @@ FILES = {
         "  return alpha() + renamed() + again() + inline();\n"
         "}\n"
     ),
+    # Bot review on PR #2994: a same-named local does not hide the published
+    # binding, and a later whole-object assignment replaces the earlier one.
+    "shadow.js": (
+        "function renamed() { return 1; }\n"
+        "function beta() { return 2; }\n"
+        "module.exports = { renamed: beta };\n"
+    ),
+    "esm_shadow.mjs": (
+        "function renamed() { return 1; }\n"
+        "function beta() { return 2; }\n"
+        "export { beta as renamed };\n"
+    ),
+    "replaced.js": (
+        "function beta() { return 2; }\n"
+        "module.exports = { renamed: beta };\n"
+        "module.exports = {};\n"
+    ),
+    "user.js": (
+        'const { renamed } = require("./shadow");\n'
+        "function viaShadow() {\n  return renamed();\n}\n"
+    ),
+    "replaced_user.js": (
+        'const { renamed } = require("./replaced");\n'
+        "function viaReplaced() {\n  return renamed();\n}\n"
+    ),
+    "esm_user.mjs": (
+        'import { renamed } from "./esm_shadow.mjs";\n'
+        "export function viaEsmShadow() {\n  return renamed();\n}\n"
+    ),
 }
 
 
@@ -51,6 +80,18 @@ def test_a_renamed_property_export_binds_its_function(graph: RecordedGraph) -> N
     assert _callees(graph, "app.run").get("lib.beta") == "exact"
 
 
+@pytest.mark.parametrize(
+    ("caller", "module"),
+    [("user.viaShadow", "shadow"), ("esm_user.viaEsmShadow", "esm_shadow")],
+    ids=["commonjs", "esm"],
+)
+def test_a_same_named_local_does_not_hide_the_published_binding(
+    graph: RecordedGraph, caller: str, module: str
+) -> None:
+    callees = _callees(graph, caller)
+    assert callees == {f"{module}.beta": "exact"}, callees
+
+
 # Negative: what must not change.
 
 
@@ -58,3 +99,9 @@ def test_a_shorthand_and_an_inline_export_still_bind(graph: RecordedGraph) -> No
     callees = _callees(graph, "app.run")
     assert callees.get("lib.alpha") == "exact"
     assert "lib.gamma" not in callees
+
+
+def test_a_replaced_export_object_publishes_nothing_it_dropped(
+    graph: RecordedGraph,
+) -> None:
+    assert "replaced.beta" not in _callees(graph, "replaced_user.viaReplaced")
