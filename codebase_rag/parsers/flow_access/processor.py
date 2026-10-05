@@ -4035,8 +4035,15 @@ class FlowProcessor:
             if dst is None:
                 return
             kind, dst_identity = dst
-            for taint, _via in arg_taints:
-                self._flow_taint_into_sink(taint, kind, dst_identity, ctx)
+            # The stream argument is where the data goes, not data itself.
+            stream_via = (
+                None
+                if sink.stream_kw is None
+                else VIA_KW_FORMAT.format(name=sink.stream_kw)
+            )
+            for taint, via in arg_taints:
+                if via != stream_via:
+                    self._flow_taint_into_sink(taint, kind, dst_identity, ctx)
             return
         callee = self._resolve(
             raw,

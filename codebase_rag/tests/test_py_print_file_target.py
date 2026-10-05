@@ -92,6 +92,11 @@ def leak_to_stderr():
 
 def to_somewhere(stream):
     print(os.getenv("REPORT_TOKEN"), file=stream)
+
+
+def log_started():
+    log = open(os.getenv("LOG_PATH"), "w")
+    print("started", file=log)
 """
 
 
@@ -163,3 +168,5 @@ def test_a_secret_printed_elsewhere_never_reaches_stdout(tmp_path: Path) -> None
     assert (_ENV, _STDERR) in flows, flows
     assert (_ENV, _STDOUT) not in flows, flows
     assert (_ENV, "resource::FILE::/tmp/later.txt") not in flows, flows
+    # The `file=` handle is where the data goes, not data flowing into it.
+    assert not any(src == dst for src, dst in flows), flows
