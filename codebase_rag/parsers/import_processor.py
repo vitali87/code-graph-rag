@@ -676,11 +676,41 @@ def _python_import_scope(import_node: Node) -> cs.ImportScope | None:
 
 
 def _is_type_checking_test(condition: Node | None) -> bool:
+    # `TYPE_CHECKING`, or `typing`'s under any name the module imports it as
+    # (`typing.TYPE_CHECKING`, `t.TYPE_CHECKING` after `import typing as t`).
+    # Another module's `settings.TYPE_CHECKING` may be true at import time
+    # (bot review on PR #2728).
     text = safe_decode_text(condition) if condition is not None else None
-    return text is not None and (
-        text == cs.PY_TYPE_CHECKING
-        or text.endswith(cs.SEPARATOR_DOT + cs.PY_TYPE_CHECKING)
-    )
+    if text is None or condition is None:
+        return False
+    if text == cs.PY_TYPE_CHECKING:
+        return True
+    head, sep, attr = text.rpartition(cs.SEPARATOR_DOT)
+    if not sep or attr != cs.PY_TYPE_CHECKING:
+        return False
+    return head in _PY_TYPING_MODULES or head in _python_typing_aliases(condition)
+
+
+_PY_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
+
+
+def _python_typing_aliases(node: Node) -> set[str]:
+    # The names a module's top-level `import typing as t` binds.
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    aliases: set[str] = set()
+    for stmt in root.named_children:
+        if stmt.type != cs.TS_PY_IMPORT_STATEMENT:
+            continue
+        for child in stmt.named_children:
+            if child.type != cs.TS_ALIASED_IMPORT:
+                continue
+            name = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_NAME))
+            alias = safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
+            if name in _PY_TYPING_MODULES and alias:
+                aliases.add(alias)
+    return aliases
 
 
 def _rust_norm_manifest_path(path: str) -> str:
@@ -993,6 +1023,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_python_displaced_eager_imports",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -1278,6 +1309,12 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # Python import-time imports whose name a deferred import of the same
+        # module rebound: (target, site) pairs that keep their own IMPORTS
+        # edge (bot review on PR #2728).
+        self._python_displaced_eager_imports: dict[
+            str, list[tuple[str, PropertyDict]]
+        ] = {}
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -1537,6 +1574,15 @@ class ImportProcessor:
                     full_name=full_name,
                     language=language,
                     site=sites.get(local_name),
+                )
+            )
+        for full_name, site in self._python_displaced_eager_imports.pop(module_qn, ()):
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=full_name,
+                    language=language,
+                    site=site,
                 )
             )
         # Includes whose local binding a later include took over: the
@@ -2428,8 +2474,10 @@ class ImportProcessor:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )
+        self._python_displaced_eager_imports.pop(module_qn, None)
         for import_node in all_imports:
             before = dict(self.import_mapping[module_qn])
+            sites_before = dict(self._import_sites.get(module_qn, {}))
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
@@ -2441,6 +2489,7 @@ class ImportProcessor:
                         new_names
                     )
             self._mark_import_scope(import_node, module_qn)
+            self._keep_displaced_eager_import(module_qn, before, sites_before)
             self._record_python_rebinds(module_qn, before)
 
     def _mark_import_scope(self, import_node: Node, module_qn: str) -> None:
@@ -2453,6 +2502,31 @@ class ImportProcessor:
         for site in self._import_sites.get(module_qn, {}).values():
             if (site.get(cs.KEY_LINE), site.get(cs.KEY_COL)) == start:
                 site[cs.KEY_IMPORT_SCOPE] = scope.value
+
+    def _keep_displaced_eager_import(
+        self,
+        module_qn: str,
+        before: dict[str, str],
+        sites_before: dict[str, PropertyDict],
+    ) -> None:
+        # A deferred import (in a function, under TYPE_CHECKING) of a name an
+        # import-time import bound takes the name's site, and the module's
+        # IMPORTS edge is the final binding's. The import-time statement still
+        # runs, so it keeps an edge of its own (bot review on PR #2728).
+        sites = self._import_sites.get(module_qn, {})
+        for name, previous in sites_before.items():
+            site = sites.get(name)
+            if (
+                site is None
+                or site is previous
+                or name not in before
+                or previous.get(cs.KEY_IMPORT_SCOPE) is not None
+                or site.get(cs.KEY_IMPORT_SCOPE) is None
+            ):
+                continue
+            self._python_displaced_eager_imports.setdefault(module_qn, []).append(
+                (before[name], previous)
+            )
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]

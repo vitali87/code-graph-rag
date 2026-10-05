@@ -42,6 +42,20 @@ ELSE_BRANCH = (
     "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    pass\nelse:\n"
     "    from app.db import save\n\n" + MODELS
 )
+# Bot review on PR #2728: a deferred import of a name an import-time import
+# also binds keeps the import-time edge, and only `typing`'s TYPE_CHECKING
+# (under any alias) guards an import.
+EAGER_THEN_LAZY = TOP_LEVEL + (
+    "\n    def persist(self):\n        from app.db import save\n        return save(self)\n"
+)
+OTHER_TYPE_CHECKING = (
+    "import settings\n\nif settings.TYPE_CHECKING:\n    from app.db import save\n\n"
+    + MODELS
+)
+ALIASED_TYPING = (
+    "import typing as t\n\nif t.TYPE_CHECKING:\n    from app.db import save\n\n"
+    + MODELS
+)
 CLASS_BODY = "class User:\n    from app.db import save\n\n    def __init__(self, name):\n        self.name = name\n"
 
 
@@ -113,6 +127,11 @@ def repo(tmp_path: Path) -> _Repo:
             cs.ImportScope.TYPE_CHECKING_BLOCK,
             id="typing.type-checking",
         ),
+        pytest.param(
+            ALIASED_TYPING,
+            cs.ImportScope.TYPE_CHECKING_BLOCK,
+            id="aliased-typing.type-checking",
+        ),
     ],
 )
 def test_an_import_that_does_not_run_at_import_time_makes_no_cycle(
@@ -138,6 +157,24 @@ def test_an_import_that_runs_at_import_time_still_makes_a_cycle(
 ) -> None:
     assert repo.edit_models(text) == CYCLE
     assert repo.import_scopes() == {None}
+
+
+@pytest.mark.parametrize(
+    ("text", "scopes"),
+    [
+        pytest.param(
+            EAGER_THEN_LAZY,
+            {None, cs.ImportScope.FUNCTION.value},
+            id="a-lazy-import-of-an-eager-name",
+        ),
+        pytest.param(OTHER_TYPE_CHECKING, {None}, id="another-modules-type-checking"),
+    ],
+)
+def test_an_import_time_import_beside_a_deferred_look_alike_makes_a_cycle(
+    repo: _Repo, text: str, scopes: set[str | None]
+) -> None:
+    assert repo.edit_models(text) == CYCLE
+    assert repo.import_scopes() == scopes
 
 
 def test_a_lazy_import_is_still_an_import_edge(repo: _Repo) -> None:
