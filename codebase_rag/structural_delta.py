@@ -1715,7 +1715,7 @@ def _arity_verdict(
         (
             site.arg_count is not None
             and site.arg_count > len(site.kwarg_names)
-            and _passes_self_explicitly(site, repo_root)
+            and _passes_self_explicitly(site, definition, repo_root)
         )
         or _passes_receiver_by_keyword(site, signature)
     )
