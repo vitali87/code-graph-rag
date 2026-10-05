@@ -58,10 +58,11 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         # calls with no call site in the code (issue #2736): Celery's
         # `@shared_task`, Flask's error handler and request hooks, FastAPI /
         # Starlette's exception handler and middleware, Django's signal
-        # `@receiver`, SQLAlchemy's `@event.listens_for`, and `register`
-        # (`@atexit.register`, `@admin.register`). A singledispatch
-        # implementation's `@generic.register` is not a root: it lives with
-        # its generic (SINGLEDISPATCH_DECORATORS).
+        # `@receiver`, SQLAlchemy's `@event.listens_for`, `@atexit.register`
+        # and Django's `@admin.register`. Those two are dotted, so a bare
+        # `@registry.register` of the project's own is not rooted by default;
+        # a singledispatch implementation's `@generic.register` lives with its
+        # generic (SINGLEDISPATCH_DECORATORS).
         "shared_task",
         "errorhandler",
         "before_request",
@@ -74,7 +75,8 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "middleware",
         "receiver",
         "listens_for",
-        "register",
+        "atexit.register",
+        "admin.register",
     }
 )
 
