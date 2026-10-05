@@ -36,6 +36,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..config import load_ignore_patterns
 from ..utils.path_utils import should_skip_path
+from ..utils.source_encoding import decode_source
 
 
 class VerificationResult(NamedTuple):
@@ -130,10 +131,11 @@ def _repo_lock(root: Path) -> Iterator[None]:
                 _unlock_file(handle)
 
 
-def _decode(data: bytes | None) -> list[str]:
+def _decode(data: bytes | None, path: str) -> list[str]:
     if data is None:
         return []
-    return data.decode(cs.ENCODING_UTF8, errors="replace").splitlines(keepends=True)
+    # A Python file shows in the encoding it declares (issue #2901).
+    return decode_source(data, Path(path)).splitlines(keepends=True)
 
 
 def unified_diff(staged: StagedFile) -> str:
@@ -141,8 +143,8 @@ def unified_diff(staged: StagedFile) -> str:
     from_name = cs.DIFF_DEV_NULL if staged.before is None else f"a/{staged.path}"
     to_name = cs.DIFF_DEV_NULL if staged.after is None else f"b/{staged.path}"
     lines = difflib.unified_diff(
-        _decode(staged.before),
-        _decode(staged.after),
+        _decode(staged.before, staged.path),
+        _decode(staged.after, staged.path),
         fromfile=from_name,
         tofile=to_name,
     )

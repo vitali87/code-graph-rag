@@ -680,6 +680,9 @@ PATCH_IDENTIFIER_MISMATCH = (
 )
 PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_UNENCODABLE = (
+    "{path} declares the {codec} encoding, which cannot hold the new text"
+)
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
 # `parses is None` means no grammar was available, so the patch was checked

@@ -953,7 +953,12 @@ class Renamer:
             if offsets:
                 self._all_rewrites[path] = offsets
         tx = EditTransaction(self.repo_root)
-        results = patcher.stage_into(tx)
+        try:
+            results = patcher.stage_into(tx)
+        except PatcherError as error:
+            # A new name the file's declared encoding cannot hold (#2901).
+            tx.rollback()
+            raise RenameRefused(str(error), [], []) from error
         broken = [key for key, result in results.items() if result.parses is False]
         return tx, dict(results), broken
 

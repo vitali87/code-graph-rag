@@ -8,7 +8,6 @@ from pydantic_ai import Tool
 
 from .. import logs as ls
 from .. import tool_errors as te
-from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME, CYPHER_LIST_PROJECTS
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
@@ -18,6 +17,7 @@ from ..utils.path_utils import (
     locate_node_source,
     project_roots_from_rows,
 )
+from ..utils.source_encoding import source_codec
 from . import tool_descriptions as td
 
 
@@ -120,7 +120,9 @@ class CodeRetriever:
                     error_message=error_message,
                 )
             full_path = located.path
-            with full_path.open("r", encoding=ENCODING_UTF8) as f:
+            # The recorded lines are lines of the text the indexer parsed,
+            # in the encoding a Python file declares (issue #2901).
+            with full_path.open("r", encoding=source_codec(full_path)) as f:
                 all_lines = f.readlines()
 
             if end_line > len(all_lines):
