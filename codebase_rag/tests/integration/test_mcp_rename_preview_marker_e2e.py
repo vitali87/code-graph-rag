@@ -166,6 +166,26 @@ async def test_a_preview_whose_marker_clear_fails_reports_it(
     assert _error(result) == stuck
 
 
+async def test_an_applied_rename_whose_marker_clear_fails_reports_it(
+    indexed: tuple[MCPToolsRegistry, str],
+) -> None:
+    # The re-ingest callback discarded the clear's error after a successful
+    # re-ingest, so the rename read as a clean success over a project left
+    # marked (CodeRabbit, PR #2900).
+    server, project = indexed
+    persist = server._persist_incomplete
+
+    def failing_clear(name: str, incomplete: bool, *, writing: bool = True) -> bool:
+        return False if not incomplete else persist(name, incomplete, writing=writing)
+
+    with patch.object(server, "_persist_incomplete", failing_clear):
+        result = await server.rename(f"{project}.pkg.core.helper", "helper2")
+
+    assert isinstance(result, dict)
+    assert result["applied"] is True, result
+    assert _error(result) == cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project)
+
+
 # Negative: what must not change.
 
 
