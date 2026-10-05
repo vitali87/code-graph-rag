@@ -7,6 +7,7 @@ from loguru import logger
 
 from . import constants as cs
 from . import logs as ls
+from .cli_help import HELP_CAPTURE
 
 # Relationships that are usually meaningless without a companion still
 # enabled. Dropping the companion is obeyed, but warned about.
@@ -78,6 +79,27 @@ def _resolve_token(token: str) -> frozenset[cs.RelationshipType] | None:
         return None
 
 
+def _is_group(name: str) -> bool:
+    return name.lower() in cs.CaptureGroup.__members__.values()
+
+
+def unknown_tokens(tokens: Iterable[str]) -> list[str]:
+    """The tokens that name no group, relationship type, `all` or `none`.
+
+    Checked before any work so a typo is a usage error, not a warning
+    followed by a full re-parse with the defaults (#2439).
+    """
+    unknown: list[str] = []
+    for token in tokens:
+        token = token.strip()
+        if not token or token.lower() in (cs.CAPTURE_TOKEN_NONE, cs.CAPTURE_TOKEN_ALL):
+            continue
+        name = token.lstrip(cs.CAPTURE_DROP_PREFIX + cs.CAPTURE_ADD_PREFIX)
+        if _resolve_token(name) is None:
+            unknown.append(token)
+    return unknown
+
+
 def _base_rels(groups: Iterable[cs.CaptureGroup]) -> set[cs.RelationshipType]:
     enabled: set[cs.RelationshipType] = set()
     for group in groups:
@@ -109,8 +131,16 @@ def resolve_capture(tokens: Iterable[str]) -> CaptureSelection:
             continue
         if drop:
             enabled -= rels
-        else:
-            enabled |= rels
+            continue
+        # A bare group is added to what is already on, so naming a default
+        # group changes nothing; say how to capture only it (#2439).
+        if (
+            not token.startswith(cs.CAPTURE_ADD_PREFIX)
+            and _is_group(name)
+            and rels <= enabled
+        ):
+            logger.warning(ls.CAPTURE_GROUP_ALREADY_ON.format(group=name.lower()))
+        enabled |= rels
 
     return _selection_for(frozenset(enabled))
 
@@ -134,3 +164,66 @@ def default_capture() -> CaptureSelection:
     from .config import settings
 
     return resolve_capture(split_spec(settings.CGR_CAPTURE))
+
+
+# The help and the docs describe the capture model from here, in declaration
+# order, instead of listing groups by hand: `--capture` once named 5 of the 10
+# groups the resolver accepts (#2584).
+def default_groups() -> list[cs.CaptureGroup]:
+    return [group for group in cs.CaptureGroup if group in cs.DEFAULT_CAPTURE_GROUPS]
+
+
+def opt_in_groups() -> list[cs.CaptureGroup]:
+    return [
+        group for group in cs.CaptureGroup if group not in cs.DEFAULT_CAPTURE_GROUPS
+    ]
+
+
+def group_relationships(group: cs.CaptureGroup) -> list[cs.RelationshipType]:
+    rels = cs.CAPTURE_GROUP_RELS[group]
+    return [rel for rel in cs.RelationshipType if rel in rels]
+
+
+def group_node_labels(group: cs.CaptureGroup) -> list[cs.NodeLabel]:
+    labels = cs.CAPTURE_GROUP_NODE_LABELS.get(group, frozenset())
+    return [label for label in cs.NodeLabel if label in labels]
+
+
+def group_summary(group: cs.CaptureGroup) -> str:
+    return cs.CAPTURE_GROUP_SUMMARIES[group]
+
+
+def relationship_group(rel: cs.RelationshipType) -> cs.CaptureGroup:
+    return next(group for group, rels in cs.CAPTURE_GROUP_RELS.items() if rel in rels)
+
+
+def node_label_group(label: cs.NodeLabel) -> cs.CaptureGroup | None:
+    # None for a label no group owns: it is written whatever the selection.
+    return next(
+        (
+            group
+            for group, labels in cs.CAPTURE_GROUP_NODE_LABELS.items()
+            if label in labels
+        ),
+        None,
+    )
+
+
+# The help's example of a relationship-type token. No group shares its name;
+# `CALLS` would read as the `calls` group, which `_resolve_token` tries first.
+_HELP_EXAMPLE_TYPE = cs.RelationshipType.OVERRIDES
+# The help's example of capturing one group alone (`none,structure`).
+_HELP_EXAMPLE_GROUP = cs.CaptureGroup.STRUCTURE
+
+
+def capture_help() -> str:
+    return HELP_CAPTURE.format(
+        default_groups=cs.SEPARATOR_COMMA_SPACE.join(default_groups()),
+        opt_in_groups=cs.SEPARATOR_COMMA_SPACE.join(opt_in_groups()),
+        add=cs.CAPTURE_ADD_PREFIX,
+        drop=cs.CAPTURE_DROP_PREFIX,
+        example_type=_HELP_EXAMPLE_TYPE,
+        example_group=_HELP_EXAMPLE_GROUP,
+        all=cs.CAPTURE_TOKEN_ALL,
+        none=cs.CAPTURE_TOKEN_NONE,
+    )

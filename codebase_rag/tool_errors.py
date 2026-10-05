@@ -3,6 +3,20 @@ from __future__ import annotations
 # Generic error wrapper
 ERROR_WRAPPER = "Error: {message}"
 
+
+class ToolFailure(str):
+    """A tool's failure message. An agent reads it as the text it always
+    was; the MCP server also reports it with `isError: true`, so a client
+    can tell a failed edit from a successful one without parsing prose
+    (issue #2650)."""
+
+    __slots__ = ()
+
+
+def failure(message: str | Exception | None) -> ToolFailure:
+    return ToolFailure(ERROR_WRAPPER.format(message=message))
+
+
 # File operation errors
 FILE_NOT_FOUND = "File not found."
 FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
@@ -42,8 +56,20 @@ NONINTERACTIVE_PATH_ESCAPES = "absolute and parent-traversal paths are not avail
 NONINTERACTIVE_OPTION_CARRIED_INPUT = (
     "options that read file lists or run programs are not available"
 )
+NONINTERACTIVE_UNKNOWN_OPTION = (
+    "'{option}' is not among the options a confined read may use"
+)
 COMMAND_INVALID_SYNTAX = "Invalid command syntax: {segment}"
 COMMAND_SPAWN_FAILED = "Failed to spawn '{segment}' (executable: {executable}): {error}"
+COMMAND_NOT_INSTALLED = (
+    "'{cmd}' is not installed on this machine (not found on PATH), so "
+    "'{segment}' did not run ({error}). Use the graph and file tools instead."
+)
+COMMAND_WINDOWS_NAMESAKE = (
+    "'{cmd}' here is {executable}, the Windows program of that name, not the "
+    "POSIX '{cmd}', so '{segment}' did not run. Git for Windows provides the "
+    "POSIX tools; otherwise use the graph and file tools."
+)
 
 # Code retrieval errors
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
