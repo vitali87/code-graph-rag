@@ -107,7 +107,13 @@ def _normalise(text: str) -> str:
 def _lines(repo_root: Path | None, path: str | None, start: int, end: int) -> str:
     if repo_root is None or not path or start < 1 or end < start:
         return ""
-    return _normalise(extract_source_lines(repo_root / path, start, end) or "")
+    # Same containment as graph_query.definition: an indexed path that is a
+    # symlink out of the project must not leak its target through a fallback.
+    root = repo_root.resolve()
+    candidate = (root / path).resolve()
+    if not candidate.is_relative_to(root):
+        return ""
+    return _normalise(extract_source_lines(candidate, start, end) or "")
 
 
 def _line(repo_root: Path | None, path: str | None, line: int | None) -> str:

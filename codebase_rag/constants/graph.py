@@ -705,6 +705,7 @@ SCHEMA_OPTIONAL_SUFFIX = "?"
 NODE_PROJECT = NodeLabel.PROJECT
 
 KEY_PARAMETERS = "parameters"
+KEY_TYPE_PARAMETERS = "type_parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
@@ -719,11 +720,33 @@ KEY_PARAM_TYPES = "param_types"
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
 # receiver-inclusive because it counts the bound `self`.
 #
+# The languages in `DECLARED_ARITY_LANGUAGES` store every parameter a call
+# fills instead, each marked with the optionality its signature declares, so
+# a signature change there gets a verdict per call site too (issue #2517):
+# `name?` may be left out, `...name` takes any number of trailing arguments,
+# and `self` (Rust) or `this name` (a C# extension method) is a receiver that
+# one call form passes and the other does not.
+#
 # Absent on every other language rather than empty: absent means "kinds
 # unknown", which `diagnose_arity` answers with "cannot corroborate", whereas
 # an empty list would assert "declares zero positional parameters" and produce
 # a false mismatch on correct code.
 KEY_POSITIONAL_PARAMS = "positional_params"
+POSITIONAL_OPTIONAL_SUFFIX = "?"
+POSITIONAL_REST_PREFIX = "..."
+POSITIONAL_RECEIVER_SELF = "self"
+POSITIONAL_RECEIVER_THIS_PREFIX = "this "
+# Call-site flag, present (true) only when a non-Python call passes a number
+# of values its written arguments do not show: a spread (`...xs` in JS/TS,
+# `...$xs` in PHP, `xs...` in Go), a Go call whose lone argument is a call,
+# or a tagged template. `arg_count` keeps what is written, so it proves no
+# fit or miss for such a site (issue #2517).
+KEY_SPREAD_ARGS = "spread_args"
+# Call-site name a Rust or C# call is written through, so a receiver can be
+# counted where the call passes it: `S` in `S::m(s, 1)`, `Util` in C#'s
+# `Util.Ext(s, 1)`, `s` in `s.Ext(1)`; "" through any other value (Rust's
+# `s.m(1)`, `"x".Ext(1)`); absent for a bare call (issue #2517).
+KEY_CALL_QUALIFIER = "call_qualifier"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
 # Rust file, stored on the DECLARING module's node (issue #1010). The
 # ungated counterpart lets a production target's declaration of the SAME

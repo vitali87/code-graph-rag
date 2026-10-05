@@ -140,6 +140,9 @@ def _stamp_belongs_to(
     owner = stored.get("project")
     if _stamp_is_named(stored):
         return owner == project_name
+    # The updater's default is the directory name, or the derived name for a
+    # directory holding `.` (#2412); a stamp written before that still
+    # carries the dotted name verbatim.
     default_names = {derive_project_name(repo_root), repo_root.resolve().name}
     return not explicit and owner in default_names and project_name in default_names
 

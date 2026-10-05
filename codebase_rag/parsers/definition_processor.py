@@ -118,6 +118,10 @@ class DefinitionProcessor(
         # read at call resolution to bind a member call on an undeclared
         # receiver against the type arguments of an EXTERNAL base (#875).
         self.dart_extends_type_args: dict[str, list[str]] = {}
+        # {extension_qn: on_type_as_written} for `extension E on T`; resolved
+        # lazily against E's module, since T may be parsed after E, so a member
+        # call on a T receiver can reach E's members (issue #2482).
+        self.dart_extension_on_types: dict[str, str] = {}
         # Dart constructor qns (default, named, const, factory): a named
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
