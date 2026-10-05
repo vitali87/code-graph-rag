@@ -17,7 +17,7 @@ class GraphCodeIndex(_message.Message):
     def __init__(self, nodes: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., relationships: _Optional[_Iterable[_Union[Relationship, _Mapping]]] = ...) -> None: ...
 
 class Node(_message.Message):
-    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section", "pattern", "code_smell", "security_issue", "gloss", "parameter", "field", "enum_variant")
+    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section", "pattern", "code_smell", "security_issue", "gloss", "parameter", "field", "enum_variant", "constant")
     PROJECT_FIELD_NUMBER: _ClassVar[int]
     PACKAGE_FIELD_NUMBER: _ClassVar[int]
     FOLDER_FIELD_NUMBER: _ClassVar[int]
@@ -43,6 +43,7 @@ class Node(_message.Message):
     PARAMETER_FIELD_NUMBER: _ClassVar[int]
     FIELD_FIELD_NUMBER: _ClassVar[int]
     ENUM_VARIANT_FIELD_NUMBER: _ClassVar[int]
+    CONSTANT_FIELD_NUMBER: _ClassVar[int]
     project: Project
     package: Package
     folder: Folder
@@ -68,7 +69,8 @@ class Node(_message.Message):
     parameter: Parameter
     field: Field
     enum_variant: EnumVariant
-    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ..., pattern: _Optional[_Union[Pattern, _Mapping]] = ..., code_smell: _Optional[_Union[CodeSmell, _Mapping]] = ..., security_issue: _Optional[_Union[SecurityIssue, _Mapping]] = ..., gloss: _Optional[_Union[Gloss, _Mapping]] = ..., parameter: _Optional[_Union[Parameter, _Mapping]] = ..., field: _Optional[_Union[Field, _Mapping]] = ..., enum_variant: _Optional[_Union[EnumVariant, _Mapping]] = ...) -> None: ...
+    constant: Constant
+    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ..., pattern: _Optional[_Union[Pattern, _Mapping]] = ..., code_smell: _Optional[_Union[CodeSmell, _Mapping]] = ..., security_issue: _Optional[_Union[SecurityIssue, _Mapping]] = ..., gloss: _Optional[_Union[Gloss, _Mapping]] = ..., parameter: _Optional[_Union[Parameter, _Mapping]] = ..., field: _Optional[_Union[Field, _Mapping]] = ..., enum_variant: _Optional[_Union[EnumVariant, _Mapping]] = ..., constant: _Optional[_Union[Constant, _Mapping]] = ...) -> None: ...
 
 class Relationship(_message.Message):
     __slots__ = ("type", "source_id", "target_id", "properties", "source_label", "target_label")
@@ -110,6 +112,7 @@ class Relationship(_message.Message):
         OF_TYPE: _ClassVar[Relationship.RelationshipType]
         HAS_FIELD: _ClassVar[Relationship.RelationshipType]
         HAS_VARIANT: _ClassVar[Relationship.RelationshipType]
+        DEFINES_CONSTANT: _ClassVar[Relationship.RelationshipType]
     RELATIONSHIP_TYPE_UNSPECIFIED: Relationship.RelationshipType
     CONTAINS_PACKAGE: Relationship.RelationshipType
     CONTAINS_FOLDER: Relationship.RelationshipType
@@ -146,6 +149,7 @@ class Relationship(_message.Message):
     OF_TYPE: Relationship.RelationshipType
     HAS_FIELD: Relationship.RelationshipType
     HAS_VARIANT: Relationship.RelationshipType
+    DEFINES_CONSTANT: Relationship.RelationshipType
     TYPE_FIELD_NUMBER: _ClassVar[int]
     SOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_ID_FIELD_NUMBER: _ClassVar[int]
@@ -392,6 +396,24 @@ class Field(_message.Message):
     docstring: str
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., modifiers: _Optional[_Iterable[str]] = ..., is_static: bool = ..., docstring: _Optional[str] = ...) -> None: ...
 
+class Constant(_message.Message):
+    __slots__ = ("qualified_name", "name", "path", "start_line", "start_col", "type_name", "value")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    START_COL_FIELD_NUMBER: _ClassVar[int]
+    TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    path: str
+    start_line: int
+    start_col: int
+    type_name: str
+    value: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+
 class EnumVariant(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "start_line", "start_col", "index", "value", "docstring")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -441,7 +463,7 @@ class Section(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., heading_level: _Optional[int] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ...) -> None: ...
 
 class Function(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types", "is_object_member")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
@@ -454,6 +476,7 @@ class Function(_message.Message):
     AST_BRANCH_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     RETURN_TYPE_FIELD_NUMBER: _ClassVar[int]
     PARAM_TYPES_FIELD_NUMBER: _ClassVar[int]
+    IS_OBJECT_MEMBER_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
@@ -466,7 +489,8 @@ class Function(_message.Message):
     ast_branch_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     return_type: str
     param_types: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ...) -> None: ...
+    is_object_member: bool
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ..., is_object_member: bool = ...) -> None: ...
 
 class Method(_message.Message):
     __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types")
