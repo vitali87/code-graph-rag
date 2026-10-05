@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -7,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.agent import AgentRetries, AgentRunResult
+from pydantic_ai.exceptions import ModelAPIError
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -201,6 +203,15 @@ class CypherGenerator:
             _validate_call_procedures(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
+        except ModelAPIError as e:
+            # The request never got an answer: the provider was unreachable,
+            # refused the key, or has no such model. Nothing was translated,
+            # so this is the same refusal as a model that could not be built
+            # (issue #2518), not a translation that went wrong.
+            logger.error(ls.CYPHER_ERROR.format(error=e))
+            raise ex.CypherModelUnavailableError(
+                ex.LLM_CYPHER_UNAVAILABLE.format(error=e)
+            ) from e
         except Exception as e:
             logger.error(ls.CYPHER_ERROR.format(error=e))
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
@@ -209,6 +220,55 @@ class CypherGenerator:
         self, natural_language_query: str, failed_query: str, error: str
     ) -> str:
         """Ask for a new query after the database rejected `failed_query`."""
+        return await self.generate(
+            build_cypher_repair_request(natural_language_query, failed_query, error)
+        )
+
+
+class CypherQueryGenerator(Protocol):
+    """What the graph-query tool needs from a generator, so the MCP server
+    can hand it one that builds its model on first use."""
+
+    async def generate(self, natural_language_query: str) -> str: ...
+
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str: ...
+
+
+class LazyCypherGenerator:
+    """A CypherGenerator built on the first query instead of up front.
+
+    Only natural-language queries need the Cypher model; the MCP server's
+    indexing and deterministic tools do not, and building the model at
+    start-up let an unreachable provider stop the whole server (issue
+    #2518). A failed build is not kept, so a provider started later is
+    picked up on the next query without a restart.
+    """
+
+    __slots__ = ("_active_projects", "_generator")
+
+    def __init__(self, active_projects: list[str] | None = None) -> None:
+        self._active_projects = active_projects
+        self._generator: CypherGenerator | None = None
+
+    async def generate(self, natural_language_query: str) -> str:
+        if self._generator is None:
+            try:
+                # Building probes the provider over the network (Ollama's
+                # health check), which must not stall the server's event loop.
+                self._generator = await asyncio.to_thread(
+                    CypherGenerator, active_projects=self._active_projects
+                )
+            except ex.LLMGenerationError as e:
+                raise ex.CypherModelUnavailableError(
+                    ex.LLM_CYPHER_UNAVAILABLE.format(error=e)
+                ) from e
+        return await self._generator.generate(natural_language_query)
+
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str:
         return await self.generate(
             build_cypher_repair_request(natural_language_query, failed_query, error)
         )

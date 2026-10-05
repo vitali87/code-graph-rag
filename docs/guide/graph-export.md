@@ -4,27 +4,47 @@ description: "Export the Code-Graph-RAG knowledge graph to JSON for programmatic
 
 # Graph Export
 
-Export the entire knowledge graph to JSON for programmatic access and integration with other tools.
+Export the knowledge graph, or chosen projects in it, to JSON for programmatic access and integration with other tools.
 
 ## Export Commands
 
-**Export during graph update:**
+**Export one repository's graph while syncing it:**
 
 ```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
 
-**Export existing graph without updating:**
+![cgr start --repo-path requests --update-graph -o my_graph.json syncing psf/requests and exporting only its project](../assets/demos/graph-export-start.gif)
+
+The file holds only that repository's project, scoped the way
+`cgr export --project-name` scopes it (below), even when the shared graph
+holds other projects.
+
+**Export the whole shared graph (every indexed project):**
 
 ```bash
 cgr export -o my_graph.json
 ```
 
-**Adjust Memgraph batching during export:**
+![cgr export -o my_graph.json exporting the whole shared graph, which holds four projects](../assets/demos/graph-export.gif)
+
+**Export one project, several, or a workspace:**
 
 ```bash
-cgr export -o my_graph.json --batch-size 5000
+cgr export -o my_project.json --project-name my-project
+cgr export -o two.json -n api -n web
+cgr export -o shop.json --workspace shop
 ```
+
+![cgr export scoped to one project, to two projects with -n, and to the shop workspace, with jq printing each file's metadata.projects](../assets/demos/graph-export-projects.gif)
+
+*Real project names carry a path hash; the `shop` workspace holds the `shop` and `myproj` repositories.*
+
+A project's export holds what the project owns (its folders, files, modules
+and definitions), the relationships that start there, and the nodes those
+relationships reach, such as a shared external module, so every relationship
+in the file has both ends in it. The file lists its projects under
+`metadata.projects`.
 
 ## Working with Exported Data
 
@@ -45,11 +65,19 @@ for func in functions[:5]:
     print(f"Function {func.properties['name']} has {len(relationships)} relationships")
 ```
 
+![python analyse.py running the snippet above against an exported graph and printing the totals and five functions](../assets/demos/graph-export-sdk.gif)
+
+*`analyse.py` holds the snippet above, unchanged.*
+
 ## Example Analysis Script
 
 ```bash
 python examples/graph_export_example.py my_graph.json
 ```
+
+![python examples/graph_export_example.py summarising the exported graph: relationship counts, example functions and classes](../assets/demos/graph-export-example.gif)
+
+*Run from the code-graph-rag checkout with `LOGURU_FORMAT='{message}'` set to drop the log prefixes.*
 
 ## Use Cases
 
@@ -87,6 +115,10 @@ cgr verify-index -i ./index-dir
 cgr verify-index -i ./index-dir --trusted-manifest-sha256 <digest>
 ```
 
+![cgr index --repo-path requests -o ./index-dir writing index.bin and manifest.json, jq showing the manifest's source, artifact hash and coverage, and cgr verify-index passing](../assets/demos/graph-export-index.gif)
+
+![cgr verify-index passing with --trusted-manifest-sha256, then failing with an artifact hash mismatch after index.bin is tampered with](../assets/demos/graph-export-verify.gif)
+
 Local verification alone proves internal consistency; a writer who can
 replace both an artifact and its recorded hash defeats it. Passing the
 manifest digest an attestation vouches for anchors the whole chain: manifest
@@ -107,6 +139,10 @@ Compare two canonical snapshots structurally:
 cgr diff-index --old ./snapshot-a --new ./snapshot-b
 cgr diff-index --old ./snapshot-a --new ./snapshot-b --json-out delta.json
 ```
+
+![cgr diff-index reporting two added functions, their DEFINES edges and a new CALLS edge, then writing the same delta with --json-out](../assets/demos/graph-export-diff.gif)
+
+*`snapshot-a` and `snapshot-b` were written with `cgr index` before and after adding two functions to a small repository.*
 
 Nodes match on kind plus identity plus path (path included because a
 qualified name alone is not unique in the Rust cfg-twin cases) and report as

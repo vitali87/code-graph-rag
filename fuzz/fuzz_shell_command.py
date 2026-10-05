@@ -62,13 +62,15 @@ with atheris.instrument_imports():
 
     from codebase_rag.constants import security as cs
     from codebase_rag.tools.shell_command import (
+        _CONFINED_READ_OPTION_KINDS,
         ShellCommander,
         _check_pipeline_patterns,
         _check_segment_patterns,
-        _file_option_values,
         _has_subshell,
         _noninteractive_denial,
         _parse_command,
+        _parse_find_options,
+        _parse_getopt_options,
         _requires_approval,
     )
 
@@ -325,6 +327,24 @@ def _contained(value: str) -> bool:
     except (OSError, ValueError):
         return True
     return resolved == SANDBOX_ROOT or SANDBOX_ROOT in resolved.parents
+
+
+def _file_option_values(argv: list[str]) -> list[str]:
+    """Values of the options in `argv` that name a file the command opens.
+
+    Read with the gate's own option parser, so every spelling it models
+    (`-fF`, `-nfF`, `-f F`, `--file F`) yields the file. ripgrep also reads
+    `-f=F` as F, so a value is checked with and without a leading `=`.
+    """
+    kinds = _CONFINED_READ_OPTION_KINDS.get(argv[0], {})
+    scan = (
+        _parse_find_options if argv[0] == cs.SHELL_CMD_FIND else _parse_getopt_options
+    )
+    values: list[str] = []
+    for option in scan(argv, kinds):
+        if option.kind == cs.ReadOptionKind.PATH:
+            values += [option.value, option.value.removeprefix("=")]
+    return values
 
 
 def _path_values(argv: list[str]) -> list[str]:
