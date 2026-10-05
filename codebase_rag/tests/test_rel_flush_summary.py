@@ -14,7 +14,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.types_defs import RelBatchRow
+from codebase_rag.types_defs import ConnectionProtocol, RelBatchRow
 
 _CALLS = cs.RelationshipType.CALLS.value
 
@@ -55,7 +55,7 @@ def test_rows_of_a_group_that_raised_count_as_failed(
         self: MemgraphIngestor,
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
-        conn: object = None,
+        conn: ConnectionProtocol | None = None,
     ) -> tuple[int, int]:
         if pattern[0] == "Method":
             raise RuntimeError("write failed")
