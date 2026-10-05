@@ -43,7 +43,7 @@ from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
-from .patcher import Patcher, PatcherError, line_col_to_byte
+from .patcher import Patcher, PatcherError, byte_to_line_col, line_col_to_byte
 from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
@@ -271,6 +271,50 @@ def _chain_links(
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
     return sorted(found)
+
+
+def _jsx_closing_token(
+    source: bytes,
+    language: cs.SupportedLanguage | None,
+    token: tuple[int, int],
+) -> tuple[int, int] | None:
+    """(line, col) of the same name in the closing tag of the JSX element
+    whose opening tag holds `token`, or None.
+
+    The graph records one use per element, at its opening tag, so renaming
+    `Frame` left `<Box>{children}</Frame>`, which no compiler accepts
+    (issue #2811). The closing tag repeats the opening tag's name verbatim
+    (`</Ns.Card>` for `<Ns.Card>`), so the token sits at the same offset in
+    it. A self-closing element has no closing tag.
+    """
+    if language not in cs.JS_TS_LANGUAGES:
+        return None
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return None
+    point = (token[0] - 1, token[1])
+    node = parser.parse(source).root_node.descendant_for_point_range(point, point)
+    while node is not None and node.type != cs.TS_JSX_OPENING_ELEMENT:
+        node = node.parent
+    if node is None or node.parent is None or node.parent.type != cs.TS_JSX_ELEMENT:
+        return None
+    opening = node.child_by_field_name(cs.FIELD_NAME)
+    closing_tag = node.parent.child_by_field_name(cs.FIELD_JSX_CLOSE_TAG)
+    closing = (
+        closing_tag.child_by_field_name(cs.FIELD_NAME)
+        if closing_tag is not None
+        else None
+    )
+    offset = line_col_to_byte(source, *token)
+    if (
+        opening is None
+        or closing is None
+        or closing.text != opening.text
+        or not opening.start_byte <= offset < opening.end_byte
+    ):
+        return None
+    return byte_to_line_col(source, closing.start_byte + offset - opening.start_byte)
 
 
 def _chain_link_sites(
@@ -737,6 +781,15 @@ class Renamer:
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
+        closing = _jsx_closing_token(
+            source, get_language_for_extension(Path(path).suffix), token
+        )
+        if closing is not None and not any(
+            (s.path, s.line, s.col) == (path, *closing) for s in sites
+        ):
+            sites.append(
+                RenameSite(kind, path, closing[0], closing[1], owner, resolution_text)
+            )
         if kind == "call":
             sites.extend(
                 _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
