@@ -43,8 +43,17 @@ LIB = (
     "    def m(self, x):\n        return Base.m(self, x)\n\n"
     "    def too_many_unbound(self, x):\n        return Base.m(self, x, x)\n\n"
     "    def too_many_bound(self, x):\n        return self.helper(x, x)\n\n"
-    "    def helper(self, x):\n        return x\n"
+    "    def helper(self, x):\n        return x\n\n\n"
+    # A bound call that also writes `self`: Python passes the receiver AND
+    # it, one too many for `m(self, x)` (Greptile, PR #2946).
+    "class Tool:\n"
+    "    def m(self, x):\n        return x\n\n\n"
+    "def bound_with_self(self, x):\n"
+    "    tool = Tool()\n"
+    "    return tool.m(self, x)\n"
 )
+# A function defined only in a stub, as a typed package ships it.
+STUB = "def variadic(a, *rest): ...\n"
 USE = (
     "from lib import decorated, defaults, kwonly, plain, tupled\n\n\n"
     "def run():\n"
@@ -52,7 +61,10 @@ USE = (
     "    tupled(1, 2, 3, 4)\n"
     "    decorated(1, 2, 3)\n"
     "    plain(1, 2)\n"
-    "    kwonly(1, 2)\n"
+    "    kwonly(1, 2)\n\n\n"
+    "def run_stub():\n"
+    "    from vlib import variadic\n\n"
+    "    variadic(1, 2, 3)\n"
 )
 
 Indexed = tuple[Path, _StatefulIngestor, GraphUpdater]
@@ -71,6 +83,7 @@ def delta(temp_repo: Path) -> StructuralDelta:
     root.mkdir()
     (root / "lib.py").write_text(LIB)
     (root / "use.py").write_text(USE)
+    (root / "vlib.pyi").write_text(STUB)
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
@@ -106,6 +119,7 @@ def _too_many(delta: StructuralDelta) -> set[tuple[str, int]]:
         (("lib.py", 40), "Base.m(self, x)"),
         (("use.py", 5), "defaults(1, 2, 3, 4) against b=dict(), *rest"),
         (("use.py", 6), "tupled(1, 2, 3, 4) against b=(1, 2), *rest"),
+        (("use.py", 15), "variadic(1, 2, 3) against a stub's *rest"),
     ],
 )
 def test_a_call_that_supplies_what_the_callee_takes_is_not_too_many(
@@ -124,6 +138,7 @@ def test_a_call_that_supplies_what_the_callee_takes_is_not_too_many(
         (("use.py", 9), "kwonly(1, 2): a bare `*` takes no positionals"),
         (("lib.py", 43), "Base.m(self, x, x): one too many, written unbound"),
         (("lib.py", 46), "self.helper(x, x): one too many, bound"),
+        (("lib.py", 59), "tool.m(self, x): bound, with self written too"),
     ],
 )
 def test_a_call_that_passes_too_many_is_still_too_many(
