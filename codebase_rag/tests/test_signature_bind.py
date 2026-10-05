@@ -116,8 +116,10 @@ def test_find_definition_matches_name_within_line_window() -> None:
     root, _ = _root("def f():\n    pass\n\nclass C:\n    def f(self):\n        pass\n")
     top = _find_definition(root, "f", 1, 1)
     method = _find_definition(root, "f", 5, 5)
-    assert top is not None and top.start_point[0] == 0
-    assert method is not None and method.start_point[0] == 4
+    assert top is not None
+    assert top.start_point[0] == 0
+    assert method is not None
+    assert method.start_point[0] == 4
     assert _find_definition(root, "f", 2, 3) is None
     assert _find_definition(root, "g", 1, 6) is None
 
@@ -304,8 +306,10 @@ def test_keywords_keep_their_order_and_literals_are_inserted() -> None:
 
 
 def test_missing_value_without_default_is_unmapped() -> None:
+    new = [_p("a"), _p("n")]
+    sources = [_Source(index=0), None]
     with pytest.raises(_Unmapped, match="no value for `n`"):
-        _render("g(1, 2)\n", [_p("a"), _p("n")], [_Source(index=0), None])
+        _render("g(1, 2)\n", new, sources)
 
 
 def test_unchanged_site_renders_no_edit() -> None:
@@ -322,7 +326,8 @@ def test_edit_nested_in_an_argument_is_folded_into_the_site() -> None:
     sources: list[_Source | None] = [_Source(index=1), _Source(index=0)]
     body_rename = _Edit(PATH, (2, 3), "z")
     inner_edit = _render_site(inner, new, sources, [])
-    assert inner_edit is not None and inner_edit.text == "(2, 1)"
+    assert inner_edit is not None
+    assert inner_edit.text == "(2, 1)"
     edits = [body_rename, inner_edit]
     outer_edit = _render_site(outer, new, sources, edits)
     assert outer_edit is not None
@@ -334,8 +339,10 @@ def test_edit_straddling_an_argument_leaves_the_site_unmapped() -> None:
     candidate = _candidate("g(1, 2)\n", OLD)
     straddling = _Edit(PATH, (2, 5), "x")
     edits = [straddling]
+    new = [_p("b"), _p("a")]
+    sources = [_Source(1), _Source(0)]
     with pytest.raises(_Unmapped, match="overlap"):
-        _render_site(candidate, [_p("b"), _p("a")], [_Source(1), _Source(0)], edits)
+        _render_site(candidate, new, sources, edits)
     assert edits == [straddling]
 
 
