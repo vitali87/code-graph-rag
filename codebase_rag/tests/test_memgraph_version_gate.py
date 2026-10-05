@@ -19,19 +19,20 @@ from codebase_rag import constants as cs
 from codebase_rag.services import graph_service
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.types_defs import PropertyDict, ResultValue
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
 
 
 class _Cursor:
-    def __init__(self, version: object) -> None:
+    def __init__(self, version: ResultValue) -> None:
         self._version = version
-        self._rows: list[tuple[object, ...]] = []
+        self._rows: list[tuple[ResultValue, ...]] = []
 
-    def execute(self, query: str, params: object = None) -> None:
+    def execute(self, query: str, params: PropertyDict | None = None) -> None:
         self._rows = [(self._version,)] if "VERSION" in query else [(1,)]
 
-    def fetchall(self) -> list[tuple[object, ...]]:
+    def fetchall(self) -> list[tuple[ResultValue, ...]]:
         return self._rows
 
     def close(self) -> None:
@@ -39,7 +40,7 @@ class _Cursor:
 
 
 class _Connection:
-    def __init__(self, version: object) -> None:
+    def __init__(self, version: ResultValue) -> None:
         self.autocommit = False
         self._version = version
 
@@ -50,12 +51,12 @@ class _Connection:
         return None
 
 
-def _serve(monkeypatch: pytest.MonkeyPatch, version: object) -> None:
+def _serve(monkeypatch: pytest.MonkeyPatch, version: ResultValue) -> None:
     monkeypatch.setattr(mgclient, "connect", lambda **_: _Connection(version))
     monkeypatch.setattr(graph_service, "_warned_versions", set())
 
 
-def _enter(monkeypatch: pytest.MonkeyPatch, version: object) -> list[str]:
+def _enter(monkeypatch: pytest.MonkeyPatch, version: ResultValue) -> list[str]:
     _serve(monkeypatch, version)
     warnings: list[str] = []
     handler = logger.add(lambda m: warnings.append(str(m)), level="WARNING")
@@ -104,7 +105,7 @@ def test_connecting_to_an_unsupported_memgraph_warns_once(
 
 @pytest.mark.parametrize("version", ["3.3.0", None, "", "nightly", 3])
 def test_a_supported_or_unreadable_version_warns_nothing(
-    monkeypatch: pytest.MonkeyPatch, version: object
+    monkeypatch: pytest.MonkeyPatch, version: ResultValue
 ) -> None:
     # Negative: only a version read as below 3.x is reported.
     assert _enter(monkeypatch, version) == []
