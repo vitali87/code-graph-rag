@@ -52,7 +52,10 @@ def _run(
             unavailable=unavailable, filename=filename, source=source, body=body
         )
     )
-    return pytester.runpytest("-p", "no:cacheprovider", "-rs")
+    # A subprocess, so the outer session's own grammar-skip wrapper around
+    # `GraphUpdater.run` is not in the inner one: on a base install it would
+    # skip the full-install case for the real missing grammar.
+    return pytester.runpytest_subprocess("-p", "no:cacheprovider", "-rs")
 
 
 def test_a_module_fixture_over_a_missing_grammar_skips(
