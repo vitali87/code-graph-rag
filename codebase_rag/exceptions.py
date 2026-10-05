@@ -32,6 +32,7 @@ LITELLM_NOT_RUNNING = (
     "Make sure LiteLLM proxy is running and API key is valid."
 )
 UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
+UNKNOWN_PROVIDER_SUGGESTION = " Did you mean '{suggestion}'?"
 
 # Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
@@ -169,6 +170,14 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
 # Exception classes
+class UnknownProviderError(ValueError):
+    """A model role names a provider nothing serves (issue #2897).
+
+    Its own type so a caller that turns a missing key into advice does not
+    turn this into advice about a key no setting can supply.
+    """
+
+
 class LLMGenerationError(Exception):
     pass
 

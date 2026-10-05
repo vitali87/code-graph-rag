@@ -395,15 +395,30 @@ else:
     _litellm_available = False
 
 
+def unknown_provider_message(provider_name: str) -> str | None:
+    """Why `provider_name` cannot be served, or None when it can.
+
+    Looked up as written, as `get_provider` looks it up; the closest
+    registered name, if any is close, is suggested (issue #2897).
+    """
+    if provider_name in PROVIDER_REGISTRY:
+        return None
+    message = ex.UNKNOWN_PROVIDER.format(
+        provider=provider_name, available=", ".join(PROVIDER_REGISTRY.keys())
+    )
+    if close := difflib.get_close_matches(
+        provider_name.lower(), list(PROVIDER_REGISTRY), n=1
+    ):
+        message += ex.UNKNOWN_PROVIDER_SUGGESTION.format(suggestion=close[0])
+    return message
+
+
 def get_provider(
     provider_name: str | cs.Provider, **config: str | int | None
 ) -> ModelProvider:
     provider_key = str(provider_name)
-    if provider_key not in PROVIDER_REGISTRY:
-        available = ", ".join(PROVIDER_REGISTRY.keys())
-        raise ValueError(
-            ex.UNKNOWN_PROVIDER.format(provider=provider_name, available=available)
-        )
+    if (message := unknown_provider_message(provider_key)) is not None:
+        raise ex.UnknownProviderError(message)
 
     provider_class = PROVIDER_REGISTRY[provider_key]
     return provider_class(**config)

@@ -12,6 +12,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import cypher_queries as cq
+from .. import exceptions as ex
 from .. import graph_audit
 from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
 from ..graph_dialects import DIALECT_NEO4J
@@ -268,6 +269,14 @@ class HealthChecker:
         }
         try:
             config.validate_api_key(role)
+        except ex.UnknownProviderError as e:
+            # No key fixes a provider nothing serves (issue #2897).
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
+                passed=False,
+                message=cs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
+                error=str(e),
+            )
         except ValueError:
             role_var = cs.HEALTH_MODEL_ROLE_KEY_VARIABLE.format(role=role.value.upper())
             # The gate accepts a provider-owned variable for some providers;

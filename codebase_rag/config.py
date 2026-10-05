@@ -168,6 +168,13 @@ class ModelConfig:
         return ModelConfigKwargs(**result)
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
+        # A provider nothing serves comes first: no key could satisfy the
+        # check below, and its advice would name a variable nothing reads
+        # (issue #2897). Imported here: the providers import this module.
+        from .providers.base import unknown_provider_message
+
+        if (message := unknown_provider_message(self.provider)) is not None:
+            raise ex.UnknownProviderError(message)
         provider_lower = self.provider.lower()
         env_key = PROVIDER_ENV_KEYS.get(provider_lower)
         if (
