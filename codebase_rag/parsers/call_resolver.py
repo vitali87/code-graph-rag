@@ -2382,8 +2382,12 @@ class CallResolver:
         if binding is None and head in cs.RS_PRELUDE_NAMES:
             return True
         crate = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        # A pathless entry renamed onto a workspace member (`base-alias =
+        # { version = "1", package = "my-base" }`) fetches the crate the repo
+        # holds, so its head is first-party though no lib bears the name.
         return crate in cs.RS_STDLIB_CRATES or (
             not self.import_processor.rust_head_is_repo_crate(crate)
+            and not self.import_processor.rust_head_is_member_dep(crate, module_qn)
             and self.import_processor.rust_head_is_external_dep(crate, module_qn)
         )
 
