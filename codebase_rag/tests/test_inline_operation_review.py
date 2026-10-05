@@ -690,3 +690,58 @@ def test_inline_does_not_read_a_js_name_argument_after_a_call_may_rebind_it(
     assert _node(root, "web/state.js") == before
     # A `const` cannot be rebound, so its read may move past the call.
     assert "console.log((advance() + k));" in (root / "web/state.js").read_text()
+
+
+# --- default imports and type parameters (Greptile, PR #2932) --------------------
+
+_DEFAULT_IMPORT_FILES = {
+    "web/package.json": '{"type": "module"}\n',
+    "web/util.js": (
+        "export default function defaultFn() { return 'd'; }\n"
+        "export function helper(x) { return x + 1; }\n"
+    ),
+    "web/app.js": (
+        "import defaultFn, { helper } from './util.js';\n"
+        "console.log(helper(1), defaultFn());\n"
+    ),
+}
+
+
+def test_inline_keeps_the_default_import_beside_a_removed_named_one(
+    temp_repo: Path,
+) -> None:
+    root, store = _build(temp_repo, _DEFAULT_IMPORT_FILES)
+    before = _node(root, "web/app.js")
+    report = _inline(root, store, "web.util.helper")
+    assert report is not None and report.applied, report
+    text = (root / "web/app.js").read_text()
+    assert text.startswith("import defaultFn from './util.js';\n"), text
+    assert _node(root, "web/app.js") == before
+
+
+_GENERIC_RETURNS = {
+    "ts": (
+        "web/ident.ts",
+        "function identity<T>(x: T): T { return x as T; }\n"
+        "console.log(identity<number>(1));\n",
+        "web.ident.identity",
+    ),
+    "py": (
+        "pkg/ident.py",
+        "def wrap[T](x):\n    return list[T]([x])\n\n\nprint(wrap(1))\n",
+        "pkg.ident.wrap",
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_GENERIC_RETURNS))
+def test_inline_refuses_a_return_naming_the_callee_type_parameter(
+    temp_repo: Path, shape: str
+) -> None:
+    # Copied into a caller, `T` names nothing (TS2304), and an inferred type
+    # argument leaves nothing to put in its place.
+    rel, source, qn = _GENERIC_RETURNS[shape]
+    root, store = _build(temp_repo, {rel: source})
+    with pytest.raises(InlineRefused, match="type parameter `T`"):
+        inline(root, store.fetch_all, PROJECT, _project_qn(qn))
+    assert (root / rel).read_text() == source
