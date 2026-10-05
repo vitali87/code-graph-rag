@@ -13,6 +13,7 @@ Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seaml
 ```bash
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
+  --env CGR_CAPTURE=io \
   --env CYPHER_PROVIDER=openai \
   --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
@@ -26,6 +27,7 @@ claude mcp add --transport stdio code-graph-rag \
 ```bash
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
+  --env CGR_CAPTURE=io \
   --env CYPHER_PROVIDER=openai \
   --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
@@ -39,11 +41,25 @@ cd /path/to/your/project
 
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH="$(pwd)" \
+  --env CGR_CAPTURE=io \
   --env CYPHER_PROVIDER=google \
   --env CYPHER_MODEL=gemini-3.5-flash-lite \
   --env CYPHER_API_KEY=your-google-api-key \
   -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
+
+### Data-flow capture
+
+`CGR_CAPTURE=io` enables the `FLOWS_TO` coverage used by `flow_verdict`,
+`explain_traceback`, and `rank_root_causes`. Without it, `flow_verdict` can
+return `UNKNOWN` with uncovered files, `explain_traceback` has no `FLOWS_TO`
+sources, and `rank_root_causes` falls back to call-graph ranking with
+`flow_used: false`.
+
+The capture group is selected by the MCP server environment;
+`index_repository` and `update_repository` do not accept a capture argument.
+After adding or changing `CGR_CAPTURE`, restart the server and run
+`index_repository` again to rebuild the project with I/O flow coverage.
 
 ## Prerequisites
 
@@ -93,9 +109,9 @@ cgr daemon up
 | `find_duplicate_code` | Finds structurally duplicated functions and methods (copy-pastes, including renamed and lightly edited copies) by comparing AST fingerprints stored in the graph. Returns clone groups with file:line locations, largest first: 'exact' groups are certain copies, 'similar' pairs carry a branch-overlap score. Use it to answer DRY questions ('where is this logic repeated?') and before writing a new helper to check whether an implementation already exists. Tune with 'threshold' (0-1 similarity, default 0.8) and 'min_size' (skeleton nodes, filters trivial getters). |
 | `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyse the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
-| `flow_verdict` | Answer a source-to-sink data-flow reachability question with one of three verdicts: FOUND (a FLOWS_TO path exists, returned as qualified names), NO_FLOW (no path, and every module of the project was inside flow-analysis coverage), or UNKNOWN (no path found, but part of the project sits outside coverage; the uncovered files are named). An absent path must never be read as a verified absence when coverage gaps exist. The path may cross a service boundary: a NETWORK resource that resolves to another project's endpoint continues into that handler, `remote_hops` lists the (from, to) pairs where it does, and the coverage of every project entered counts towards the verdict. A source or sink that is not in the graph, or a source of another project, is refused with an error rather than answered. |
-| `explain_traceback` | Correlate a Python traceback with the code graph: each frame is resolved to its Function/Method/Module node and returned with its graph neighbourhood (callers, callees, and FLOWS_TO sources feeding it). Frames outside the repository or unknown to the graph carry an unresolved reason instead. A traceback from another checkout (a CI runner, a container, a teammate's machine, Windows) is matched by the checkout root its frames share, reported as inferred_checkout_root; pass path_prefix_map when that root cannot be inferred. When nothing resolves, note says why. Use this to ground a failure report in the indexed code before deciding where to look. |
-| `rank_root_causes` | Rank the sites that can explain a Python traceback's failure, best first. The anchor (failing) is the innermost frame the graph resolves; anchor_is_crash_site is false when the actual crash line sits deeper (a library frame, or a frame the graph cannot match), so the ranking reads as relative to the deepest resolvable frame. Candidates score by three additive signals: being a FLOWS_TO source into the failing frame (a possible producer of the failing value), sitting on the crashing stack itself, and reaching the failing frame through CALLS edges (closer callers score higher). Each candidate carries its file, definition line, reasons, and the call path to the failure. When the project has no FLOWS_TO edges the ranking degrades to a CALLS-only walk and flow_used is false; flow_gaps always names the files outside flow-analysis coverage. Frames from another checkout resolve as in explain_traceback, and resolution plus note say why a ranking is empty. |
+| `flow_verdict` | Answer a source-to-sink data-flow reachability question with one of three verdicts: FOUND (a FLOWS_TO path exists, returned as qualified names), NO_FLOW (no path, and every module of the project was inside flow-analysis coverage), or UNKNOWN (no path found, but part of the project sits outside coverage; the uncovered files are named). An absent path must never be read as a verified absence when coverage gaps exist. The path may cross a service boundary: a NETWORK resource that resolves to another project's endpoint continues into that handler, `remote_hops` lists the (from, to) pairs where it does, and the coverage of every project entered counts towards the verdict. A source or sink that is not in the graph, or a source of another project, is refused with an error rather than answered. FLOWS_TO coverage requires indexing with the `io` capture group. For an MCP server, set `CGR_CAPTURE=io` in the server environment before running index_repository or update_repository, then reindex after changing it. |
+| `explain_traceback` | Correlate a Python traceback with the code graph: each frame is resolved to its Function/Method/Module node and returned with its graph neighbourhood (callers, callees, and FLOWS_TO sources feeding it). FLOWS_TO sources require indexing with the `io` capture group. For an MCP server, set `CGR_CAPTURE=io` in the server environment before running index_repository or update_repository, then reindex after changing it. Frames outside the repository or unknown to the graph carry an unresolved reason instead. A traceback from another checkout (a CI runner, a container, a teammate's machine, Windows) is matched by the checkout root its frames share, reported as inferred_checkout_root; pass path_prefix_map when that root cannot be inferred. When nothing resolves, note says why. Use this to ground a failure report in the indexed code before deciding where to look. |
+| `rank_root_causes` | Rank the sites that can explain a Python traceback's failure, best first. The anchor (failing) is the innermost frame the graph resolves; anchor_is_crash_site is false when the actual crash line sits deeper (a library frame, or a frame the graph cannot match), so the ranking reads as relative to the deepest resolvable frame. Candidates score by three additive signals: being a FLOWS_TO source into the failing frame (a possible producer of the failing value), sitting on the crashing stack itself, and reaching the failing frame through CALLS edges (closer callers score higher). Each candidate carries its file, definition line, reasons, and the call path to the failure. When the project has no FLOWS_TO edges the ranking degrades to a CALLS-only walk and flow_used is false; flow_gaps always names the files outside flow-analysis coverage. FLOWS_TO coverage requires indexing with the `io` capture group. For an MCP server, set `CGR_CAPTURE=io` in the server environment before running index_repository or update_repository, then reindex after changing it. Frames from another checkout resolve as in explain_traceback, and resolution plus note say why a ranking is empty. |
 <!-- /SECTION:mcp_tools -->
 
 The graph tools refuse, rather than answer empty, a question the graph cannot

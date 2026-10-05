@@ -466,7 +466,10 @@ MCP_FLOW_VERDICT = (
     "handler, `remote_hops` lists the (from, to) pairs where it does, and "
     "the coverage of every project entered counts towards the verdict. A "
     "source or sink that is not in the graph, or a source of another "
-    "project, is refused with an error rather than answered."
+    "project, is refused with an error rather than answered. FLOWS_TO "
+    "coverage requires indexing with the `io` capture group. For an MCP "
+    "server, set `CGR_CAPTURE=io` in the server environment before running "
+    "index_repository or update_repository, then reindex after changing it."
 )
 
 MCP_PARAM_PROJECT = (
@@ -480,7 +483,11 @@ MCP_EXPLAIN_TRACEBACK = (
     "Correlate a Python traceback with the code graph: each frame is "
     "resolved to its Function/Method/Module node and returned with its "
     "graph neighbourhood (callers, callees, and FLOWS_TO sources feeding "
-    "it). Frames outside the repository or unknown to the graph carry an "
+    "it). FLOWS_TO sources require indexing with the `io` capture group. "
+    "For an MCP server, set `CGR_CAPTURE=io` in the server environment "
+    "before running index_repository or update_repository, then reindex "
+    "after changing it. Frames outside the repository or unknown to the "
+    "graph carry an "
     "unresolved reason instead. A traceback from another checkout (a CI "
     "runner, a container, a teammate's machine, Windows) is matched by the "
     "checkout root its frames share, reported as inferred_checkout_root; "
@@ -502,7 +509,11 @@ MCP_RANK_ROOT_CAUSES = (
     "carries its file, definition line, reasons, and the call path to the "
     "failure. When the project has no FLOWS_TO edges the ranking degrades "
     "to a CALLS-only walk and flow_used is false; flow_gaps always names "
-    "the files outside flow-analysis coverage. Frames from another checkout "
+    "the files outside flow-analysis coverage. FLOWS_TO coverage requires "
+    "indexing with the `io` capture group. For an MCP server, set "
+    "`CGR_CAPTURE=io` in the server environment before running "
+    "index_repository or update_repository, then reindex after changing it. "
+    "Frames from another checkout "
     "resolve as in explain_traceback, and resolution plus note say why a "
     "ranking is empty."
 )
