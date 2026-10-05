@@ -56,6 +56,14 @@ PROJECT_NAME_DIGEST_MARKER = "__"
 # Hex digits after the marker. Shared so `derive_project_name` and the
 # scoping filter that recognises its output cannot drift apart.
 PROJECT_NAME_DIGEST_LEN = 8
+# Qualified names are `<project>.<package path>.<module>.<symbol>` and nodes
+# merge on them, so a `.` in a project name aliases another project's package
+# (issue #2412).
+ERR_PROJECT_NAME_HAS_SEPARATOR = (
+    "Project name '{name}' contains '.', which separates the parts of a "
+    "qualified name: its nodes would merge with those of a package at the "
+    "same path in another project. Use a name without '.', e.g. '{suggestion}'."
+)
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
@@ -134,6 +142,7 @@ CHAR_QUESTION_MARK = "?"
 
 CHAR_SPACE = " "
 SEPARATOR_COMMA_SPACE = ", "
+SEPARATOR_SEMICOLON_SPACE = "; "
 PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
 
 REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
@@ -280,7 +289,9 @@ EDIT_KEY_MODE = "mode"
 # Inputs to the parser fingerprint: everything that changes how source files
 # become graph nodes and edges, plus the installed grammar wheels. Paths are
 # relative to the codebase_rag package root.
-PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
+# `analyzers` holds the ast-grep finding analyzer: it decides which finding
+# nodes a file gets and how they are keyed, exactly as a parser decides edges.
+PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants", "analyzers")
 PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "graph_updater.py",
     "function_registry.py",
@@ -309,6 +320,13 @@ PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
     ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
     ("parsers/java_frontend/javac", ("**/*.java",)),
+    # The ast-grep YAML is data, not code, but it decides what unchanged
+    # sources produce: the finding rules which Pattern/CodeSmell/SecurityIssue
+    # nodes exist, the tier patterns which definitions do. A rule change with
+    # unchanged sources otherwise kept the old rules' findings on the in-sync
+    # fast path (review of #2533).
+    ("analyzers/ast_grep_rules", ("**/*.yaml",)),
+    ("parsers/ast_grep_patterns", ("*.yaml",)),
 )
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"
@@ -334,6 +352,10 @@ JSON_KEY_HAS_ENTITY = "hasEntity"
 JSON_KEY_ENTITY_TYPE = "entityType"
 
 IMPORT_DEFAULT_SUFFIX = ".default"
+# The simple name of a JS/TS module's default export: an unnamed
+# `export default class {...}` registers under it, so the `<module>.default`
+# target a default import is mapped to (IMPORT_DEFAULT_SUFFIX) is a real node.
+JS_DEFAULT_EXPORT_NAME = "default"
 IMPORT_STD_PREFIX = "std."
 CPP_STD_PREFIX = "std"
 IMPORT_MODULE_LABEL = "Module"

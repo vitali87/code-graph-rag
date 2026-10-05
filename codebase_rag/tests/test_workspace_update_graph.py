@@ -24,7 +24,12 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag.cli import _launch_session, _run_graph_sync, app
 from codebase_rag.cli_runtime import app_context
-from codebase_rag.workspaces import add_repo, create_workspace, load_workspace
+from codebase_rag.workspaces import (
+    WorkspaceRepo,
+    add_repo,
+    create_workspace,
+    load_workspace,
+)
 
 runner = CliRunner()
 
@@ -91,6 +96,26 @@ def test_an_unknown_workspace_syncs_nothing(
     )
 
     assert result.exit_code == 1, result.output
+    sync.assert_not_called()
+
+
+def test_a_workspace_holding_a_dotted_project_name_syncs_nothing(
+    sync: MagicMock, tmp_path: Path
+) -> None:
+    # A workspace file written before names were checked (#2412): the
+    # update-graph sync refuses it as the chat's own workspace sync does.
+    repo = tmp_path / "web"
+    repo.mkdir()
+    create_workspace(
+        "legacy", repos=[WorkspaceRepo(path=str(repo), project_name="acme.web")]
+    )
+
+    result = runner.invoke(
+        app, _start(tmp_path, "--workspace", "legacy", "--update-graph")
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "acme_web" in click.unstyle(result.output)
     sync.assert_not_called()
 
 
