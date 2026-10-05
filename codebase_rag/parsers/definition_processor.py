@@ -119,6 +119,10 @@ class DefinitionProcessor(
         # read at call resolution to bind a member call on an undeclared
         # receiver against the type arguments of an EXTERNAL base (#875).
         self.dart_extends_type_args: dict[str, list[str]] = {}
+        # {extension_qn: on_type_as_written} for `extension E on T`; resolved
+        # lazily against E's module, since T may be parsed after E, so a member
+        # call on a T receiver can reach E's members (issue #2482).
+        self.dart_extension_on_types: dict[str, str] = {}
         # Dart constructor qns (default, named, const, factory): a named
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
@@ -533,6 +537,15 @@ class DefinitionProcessor(
             # first-claim guard would block the live registration, filing body
             # `use` imports under the dead qn (issue #1019).
             self.function_locations.drop_module(module_qn)
+            # Before the function pass below, which would otherwise take a
+            # class's plain name first (issue #2621).
+            if language == cs.SupportedLanguage.PYTHON:
+                self._reserve_python_class_qns(
+                    combined_captures,
+                    module_qn,
+                    queries[language][cs.QUERY_CONFIG],
+                    file_path,
+                )
 
             self.import_processor.parse_imports(
                 root_node,
