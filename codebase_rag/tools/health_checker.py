@@ -12,7 +12,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import cypher_queries as cq
-from .. import graph_audit
+from .. import graph_audit, parser_loader
 from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
 from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
@@ -330,6 +330,30 @@ class HealthChecker:
             message=cs.HEALTH_CHECK_OLLAMA_READY_MSG.format(url=base_url),
         )
 
+    def check_tree_sitter_grammars(self) -> HealthCheckResult:
+        """Whether every supported language's grammar is installed (#2905).
+
+        Without one, a sync indexes that language's files as bare File nodes.
+        """
+        count = len(cs.SupportedLanguage)
+        missing = parser_loader.missing_grammars()
+        if not missing:
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_GRAMMARS_INSTALLED.format(count=count),
+                passed=True,
+                message=cs.HEALTH_CHECK_GRAMMARS_INSTALLED.format(count=count),
+            )
+        return HealthCheckResult(
+            name=cs.HEALTH_CHECK_GRAMMARS_MISSING.format(
+                missing=len(missing), count=count
+            ),
+            passed=False,
+            message=cs.HEALTH_CHECK_GRAMMARS_MISSING_MSG,
+            error=cs.HEALTH_CHECK_GRAMMARS_MISSING_ERROR.format(
+                languages=cs.HEALTH_CHECK_GRAMMARS_LIST_SEPARATOR.join(missing)
+            ),
+        )
+
     def check_model_roles(self) -> list[HealthCheckResult]:
         return [self.check_model_role(role) for role in cs.ModelRole]
 
@@ -479,6 +503,7 @@ class HealthChecker:
         self.results.append(self.check_memgraph_connection())
         self.results.extend(self.check_graph_integrity())
         self.results.extend(self.check_model_roles())
+        self.results.append(self.check_tree_sitter_grammars())
         for tool_name, cmd in cs.HEALTH_CHECK_EXTERNAL_TOOLS:
             self.results.append(self.check_external_tool(tool_name, cmd))
         return self.results
