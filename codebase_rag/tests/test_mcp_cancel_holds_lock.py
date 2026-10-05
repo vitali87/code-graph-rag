@@ -96,6 +96,26 @@ async def test_a_delete_after_a_cancelled_index_waits_for_it(
     assert order == ["delete after index finished: True"]
 
 
+async def test_a_cancelled_index_whose_thread_fails_is_still_cancelled(
+    registry: MCPToolsRegistry,
+) -> None:
+    gate = _Gate()
+
+    def failing() -> str:
+        gate()
+        raise RuntimeError("store down")
+
+    with patch.object(registry, "_index_repository_sync", failing):
+        task = asyncio.ensure_future(registry.index_repository())
+        await _cancel_once_running(task, gate)
+        assert registry._ingestor_lock.locked()
+
+        gate.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert not registry._ingestor_lock.locked()
+
+
 # Negative: what must not change.
 
 

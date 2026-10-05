@@ -197,6 +197,13 @@ async def _run_in_thread[**P, T](
                 raise
             cancelled = True
             continue
+        except Exception as exc:
+            if cancelled:
+                # The caller was cancelled and gets its cancellation, not the
+                # failure of work it no longer waits for (bot review on PR
+                # #2987); the failure stays attached as its cause.
+                raise asyncio.CancelledError from exc
+            raise
         break
     if cancelled:
         raise asyncio.CancelledError
