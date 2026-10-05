@@ -80,7 +80,7 @@ def _runtime_data_files() -> list[Path]:
         *ast_grep_tier._PATTERNS_DIR.glob("*.yaml"),
         *ast_grep_analyzer._RULES_DIR.glob("*/*.yaml"),
         *highlights.glob("*.scm"),
-        *trace_agents.AGENT_FILES,
+        *trace_agents.agent_files(),
     ]
     return sorted({path.resolve() for path in files})
 
