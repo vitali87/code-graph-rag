@@ -154,7 +154,8 @@ def _collect_dunder_all(scope: Node, names: set[str], top_level: bool) -> None:
     # `__all__.append(...)` at module level, in order, including inside a
     # top-level `if`/`try`/`with`; a function or class body is not the
     # module's. A plain assignment at the top level always runs and replaces
-    # the list (CodeRabbit, PR #2954); one in a block may not run, so what it
+    # the list (CodeRabbit, PR #2954), unless it reads the list it rebinds
+    # (`__all__ = __all__ + [...]`); one in a block may not run, so what it
     # lists is added to what the list may hold.
     for statement in scope.children:
         if statement.type in cs.PY_MODULE_LEVEL_BLOCKS:
@@ -163,9 +164,27 @@ def _collect_dunder_all(scope: Node, names: set[str], top_level: bool) -> None:
             for expression in statement.named_children:
                 if (listed := _dunder_all_update(expression)) is None:
                     continue
-                if top_level and expression.type == cs.TS_PY_ASSIGNMENT:
+                if (
+                    top_level
+                    and expression.type == cs.TS_PY_ASSIGNMENT
+                    and not _reads_dunder_all(listed)
+                ):
                     names.clear()
                 names.update(_string_values(listed))
+
+
+def _reads_dunder_all(node: Node) -> bool:
+    # Whether an expression reads `__all__` itself, keeping what it held.
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if (
+            current.type == cs.TS_PY_IDENTIFIER
+            and current.text == cs.PY_DUNDER_ALL.encode()
+        ):
+            return True
+        stack.extend(current.children)
+    return False
 
 
 def _dunder_all_update(expression: Node) -> Node | None:

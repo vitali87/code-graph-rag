@@ -103,9 +103,33 @@ def _api():
 """
 
 
+# An assignment that reads the list it rebinds keeps what it held
+# (CodeRabbit, PR #2954).
+EXTENDED = """\
+__all__ = ["_first"]
+__all__ = __all__ + ["_second"]
+__all__ = [*__all__, "_third"]
+
+
+def _first():
+    return 1
+
+
+def _second():
+    return 2
+
+
+def _third():
+    return 3
+"""
+
+
 @pytest.fixture
 def exported(tmp_path: Path) -> dict[str, bool]:
-    return _run(tmp_path, {"lib.py": LIB, "other.py": OTHER, "repl.py": REPLACED})
+    return _run(
+        tmp_path,
+        {"lib.py": LIB, "other.py": OTHER, "repl.py": REPLACED, "ext.py": EXTENDED},
+    )
 
 
 @pytest.mark.parametrize(
@@ -119,6 +143,9 @@ def exported(tmp_path: Path) -> dict[str, bool]:
         "repl._new",
         "repl._foobar",
         "repl._api",
+        "ext._first",
+        "ext._second",
+        "ext._third",
     ],
 )
 def test_an_underscore_name_in_dunder_all_is_exported(
