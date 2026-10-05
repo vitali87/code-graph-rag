@@ -18,6 +18,7 @@ import typer
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, settings
+from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
 
 _ROLE_VARIABLES = (
@@ -131,7 +132,13 @@ class TestSurfaces:
         assert result.error is not None
         assert "ORCHESTRATOR_MODEL is not" in result.error
 
-    def test_doctor_still_checks_the_other_role(self) -> None:
+    def test_doctor_still_checks_the_other_role(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The other role is the Ollama default, which is probed (#2423).
+        monkeypatch.setattr(
+            health_checker, "_ollama_models", lambda _url: [cs.DEFAULT_MODEL]
+        )
         result = HealthChecker().check_model_role(cs.ModelRole.CYPHER)
 
         assert result.passed

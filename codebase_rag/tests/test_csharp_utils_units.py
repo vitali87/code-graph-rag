@@ -1,4 +1,4 @@
-"""Direct pins for two C# member helpers, one branch per test.
+"""Direct pins for a few C# member helpers, one branch per test.
 
 The C# suites drive these through a full ingest. These tests call them
 directly on a parsed node so that every branch has a test naming it, which is
@@ -13,6 +13,7 @@ from tree_sitter import Node
 
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.csharp.utils import (
+    _type_values,
     annotate_type_ref,
     build_field_type_map,
     extract_method_signature,
@@ -215,3 +216,106 @@ def test_an_operator_signature_uses_the_synthesized_name(parse) -> None:  # type
     name, params = extract_method_signature(node)
     assert name == "operator_+"
     assert params == ["C", "C"]
+
+
+# --- _type_values -----------------------------------------------------------
+
+
+def _type(parse, source: str, node_type: str) -> Node:  # type: ignore[no-untyped-def]
+    return _find(parse(source), node_type)
+
+
+class _StubNode:
+    """A node with only the surface `_type_values` reads, for shapes the
+    grammar never parses into: a `parameters` field, a nameless parameter."""
+
+    def __init__(
+        self,
+        node_type: str,
+        children: tuple[_StubNode, ...] = (),
+        fields: dict[str, _StubNode] | None = None,
+        text: bytes | None = None,
+    ) -> None:
+        self.type = node_type
+        self.named_children = list(children)
+        self.text = text
+        self._fields = fields or {}
+
+    def child_by_field_name(self, name: str) -> _StubNode | None:
+        return self._fields.get(name)
+
+
+def _stub_parameter(name: str | None) -> _StubNode:
+    fields = (
+        {} if name is None else {"name": _StubNode("identifier", text=name.encode())}
+    )
+    return _StubNode("parameter", fields=fields)
+
+
+def test_a_type_with_no_parameters_or_body_has_no_values(parse) -> None:  # type: ignore[no-untyped-def]
+    node = _type(parse, "partial class C;", "class_declaration")
+    assert _type_values(node) == frozenset()
+
+
+def test_a_primary_constructor_parameter_list_is_read(parse) -> None:  # type: ignore[no-untyped-def]
+    # The grammar has no `parameters` field here: the list is a plain child.
+    node = _type(parse, "class C(int a, string b) { }", "class_declaration")
+    assert _type_values(node) == frozenset({"a", "b"})
+
+
+def test_record_parameters_and_body_members_are_read_together(parse) -> None:  # type: ignore[no-untyped-def]
+    node = _type(
+        parse, "record R(int a) { public int P { get; } }", "record_declaration"
+    )
+    assert _type_values(node) == frozenset({"a", "P"})
+
+
+def test_a_property_is_a_value(parse) -> None:  # type: ignore[no-untyped-def]
+    node = _type(parse, "interface I { int P { get; } }", "interface_declaration")
+    assert _type_values(node) == frozenset({"P"})
+
+
+def test_every_declarator_of_a_modified_field_is_a_value(parse) -> None:  # type: ignore[no-untyped-def]
+    # The attribute list and modifiers sit beside the variable declaration.
+    node = _type(
+        parse,
+        "class C { [Obsolete] private static int A = 1, B; }",
+        "class_declaration",
+    )
+    assert _type_values(node) == frozenset({"A", "B"})
+
+
+def test_every_declarator_of_an_event_field_is_a_value(parse) -> None:  # type: ignore[no-untyped-def]
+    node = _type(
+        parse, "class C { public event Action Changed, Other; }", "class_declaration"
+    )
+    assert _type_values(node) == frozenset({"Changed", "Other"})
+
+
+def test_methods_and_indexers_are_not_values(parse) -> None:  # type: ignore[no-untyped-def]
+    node = _type(
+        parse,
+        "class C { void M() {} int this[int i] => i; const int K = 1; }",
+        "class_declaration",
+    )
+    assert _type_values(node) == frozenset({"K"})
+
+
+def test_a_declarator_with_a_missing_name_is_skipped(parse) -> None:  # type: ignore[no-untyped-def]
+    # Error recovery: `int ;` keeps a declarator whose name is empty, and the
+    # parameter list holds an ERROR node rather than a parameter.
+    node = _type(parse, "record R(int) { int ; }", "record_declaration")
+    assert _type_values(node) == frozenset()
+
+
+def test_a_parameters_field_is_preferred_to_a_parameter_list_child() -> None:
+    field_list = _StubNode("parameter_list", (_stub_parameter("a"),))
+    child_list = _StubNode("parameter_list", (_stub_parameter("b"),))
+    node = _StubNode("class_declaration", (child_list,), {"parameters": field_list})
+    assert _type_values(node) == frozenset({"a"})  # type: ignore[arg-type]
+
+
+def test_a_nameless_parameter_is_skipped() -> None:
+    params = _StubNode("parameter_list", (_stub_parameter(None), _stub_parameter("a")))
+    node = _StubNode("class_declaration", (params,))
+    assert _type_values(node) == frozenset({"a"})  # type: ignore[arg-type]
