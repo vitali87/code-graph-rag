@@ -49,7 +49,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def no_llm() -> Iterator[None]:
     # The tools under test never generate Cypher; the server only needs a
     # generator object to build its registry.
-    with patch.object(mcp_server, "CypherGenerator", MagicMock()):
+    with patch.object(mcp_server, "LazyCypherGenerator", MagicMock()):
         yield
 
 
