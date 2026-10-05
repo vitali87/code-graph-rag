@@ -66,7 +66,7 @@ def create_file_reader_tool(
         """Read a file, recording its content on success."""
         result = await file_reader.read_file(file_path)
         if result.error_message:
-            return te.ERROR_WRAPPER.format(message=result.error_message)
+            return te.failure(result.error_message)
         content = result.content or ""
         if read_record is not None:
             # Feed the egress taint gate (issue #1128): this content must

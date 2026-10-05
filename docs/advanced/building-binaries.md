@@ -12,6 +12,10 @@ You can build a standalone binary of Code-Graph-RAG using the `build_binary.py` 
 python build_binary.py
 ```
 
+![python build_binary.py building dist/code-graph-rag-linux-amd64 with PyInstaller, then the binary printing its version](../assets/demos/building-binaries-build.gif)
+
+*Recorded in a `uv sync --extra treesitter-full` environment with `pyinstaller` added; playback is sped up 3x.*
+
 The resulting binary will be located in the `dist` directory.
 
 ## Third-party notices
@@ -26,6 +30,8 @@ ship next to the binary:
 python scripts/generate_third_party_notices.py \
   --output dist/code-graph-rag-<platform>-<arch>.THIRD_PARTY_NOTICES.txt
 ```
+
+![generate_third_party_notices.py writing the notices file for linux-amd64, and the start of that file](../assets/demos/building-binaries-notices.gif)
 
 The file lists the runtime dependency closure of the installed `code-graph-rag`
 distribution for the current platform, with each package's licence expression

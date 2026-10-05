@@ -11,6 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 from codebase_rag.language_spec import LanguageSpec
+from codebase_rag.tools import language
 from codebase_rag.tools.language import (
     LanguageInfo,
     NodeCategories,
@@ -30,6 +31,13 @@ from codebase_rag.tools.language import (
     list_languages,
     remove_language,
 )
+
+
+@pytest.fixture(autouse=True)
+def _checkout_in_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests lay a checkout out in the cwd. Without this the commands
+    # would resolve the real checkout the suite runs from and edit it.
+    monkeypatch.setattr(language, "_source_checkout_root", Path.cwd)
 
 
 class TestLanguageInfo:
@@ -347,31 +355,46 @@ def _node_types_payload() -> str:
 
 
 class TestAddGitSubmodule:
-    def test_success(self) -> None:
+    def test_success(self, tmp_path: Path) -> None:
         with patch("codebase_rag.tools.language.subprocess.run") as run:
-            result = _add_git_submodule("https://example.com/repo.git", "grammars/repo")
+            result = _add_git_submodule(
+                "https://example.com/repo.git", "grammars/repo", tmp_path
+            )
 
         assert result == SubmoduleResult(success=True, grammar_path="grammars/repo")
         run.assert_called_once()
+        assert run.call_args.kwargs["cwd"] == tmp_path
 
-    def test_repo_not_found_returns_none(self) -> None:
+    def test_repo_not_found_returns_none(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         with patch(
             "codebase_rag.tools.language.subprocess.run",
             side_effect=_proc_error("fatal: repository does not exist"),
         ):
-            result = _add_git_submodule("https://example.com/repo.git", "grammars/repo")
+            result = _add_git_submodule(
+                "https://example.com/repo.git", "grammars/repo", tmp_path
+            )
 
         assert result is None
+        captured = capsys.readouterr()
+        assert captured.err.count("Repository not found") == 1
+        assert "Error: Error" not in captured.err
 
-    def test_unknown_git_error_reraises(self) -> None:
-        with (
-            patch(
-                "codebase_rag.tools.language.subprocess.run",
-                side_effect=_proc_error("fatal: unexpected breakage"),
-            ),
-            pytest.raises(subprocess.CalledProcessError),
+    def test_unknown_git_error_reported_once_and_returns_none(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(
+            "codebase_rag.tools.language.subprocess.run",
+            side_effect=_proc_error("fatal: unexpected breakage"),
         ):
-            _add_git_submodule("https://example.com/repo.git", "grammars/repo")
+            result = _add_git_submodule(
+                "https://example.com/repo.git", "grammars/repo", tmp_path
+            )
+
+        assert result is None
+        captured = capsys.readouterr()
+        assert (captured.out + captured.err).count("unexpected breakage") == 1
 
     def test_existing_submodule_reinstalls(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -386,12 +409,16 @@ class TestAddGitSubmodule:
                 MagicMock(),
             ],
         ) as run:
-            result = _add_git_submodule("https://example.com/repo.git", "grammars/repo")
+            result = _add_git_submodule(
+                "https://example.com/repo.git", "grammars/repo", tmp_path
+            )
 
-        assert result == SubmoduleResult(success=True, grammar_path="grammars/repo")
+        assert result == SubmoduleResult(
+            success=True, grammar_path="grammars/repo", newly_added=False
+        )
         assert run.call_count == 4
 
-    def test_reinstall_failure_returns_none(self) -> None:
+    def test_reinstall_failure_returns_none(self, tmp_path: Path) -> None:
         with patch(
             "codebase_rag.tools.language.subprocess.run",
             side_effect=[
@@ -399,25 +426,35 @@ class TestAddGitSubmodule:
                 _proc_error("deinit failed"),
             ],
         ):
-            result = _add_git_submodule("https://example.com/repo.git", "grammars/repo")
+            result = _add_git_submodule(
+                "https://example.com/repo.git", "grammars/repo", tmp_path
+            )
 
         assert result is None
 
 
 class TestHandleReinstallFailure:
     def test_called_process_error_uses_stderr(
-        self, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        assert _handle_reinstall_failure(_proc_error("boom"), "grammars/repo") is None
+        assert (
+            _handle_reinstall_failure(_proc_error("boom"), "grammars/repo", tmp_path)
+            is None
+        )
 
-        out = capsys.readouterr().out
-        assert "boom" in out
-        assert "git submodule deinit -f grammars/repo" in out
+        captured = capsys.readouterr()
+        assert "boom" in captured.err
+        assert f"git -C {tmp_path} submodule deinit -f grammars/repo" in captured.out
 
-    def test_os_error_uses_str(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert _handle_reinstall_failure(OSError("disk gone"), "grammars/repo") is None
+    def test_os_error_uses_str(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert (
+            _handle_reinstall_failure(OSError("disk gone"), "grammars/repo", tmp_path)
+            is None
+        )
 
-        assert "disk gone" in capsys.readouterr().out
+        assert "disk gone" in capsys.readouterr().err
 
 
 class TestParseNodeTypesFile:
@@ -519,8 +556,7 @@ class TestUpdateConfigFile:
         config = tmp_path / "language_spec.py"
         config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         assert '"mylang": LanguageSpec(' in content
@@ -535,8 +571,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -553,8 +588,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -576,8 +610,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -592,8 +625,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -608,8 +640,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -624,8 +655,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -641,8 +671,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -665,8 +694,7 @@ class TestUpdateConfigFile:
         config = tmp_path / "language_spec.py"
         config.write_bytes(b"LANGUAGE_SPECS = {\r\n}\r\n")
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         raw = config.read_bytes()
         assert b"\r\n" in raw
@@ -682,8 +710,7 @@ class TestUpdateConfigFile:
             encoding="utf-8",
         )
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is True
+        assert _update_config_file(config, "mylang", _spec("mylang")) is True
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
@@ -694,8 +721,7 @@ class TestUpdateConfigFile:
         config = tmp_path / "language_spec.py"
         config.write_text("LANGUAGE_SPECS = broken\n", encoding="utf-8")
 
-        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
-            assert _update_config_file("mylang", _spec("mylang")) is False
+        assert _update_config_file(config, "mylang", _spec("mylang")) is False
 
 
 class TestAddGrammarCommand:
@@ -732,7 +758,9 @@ class TestAddGrammarCommand:
             ):
                 result = runner.invoke(add_grammar, [], input="mylang\n")
 
-        assert result.exit_code == 0
+            assert not Path("grammars").exists()
+
+        assert result.exit_code == 1
         assert "tree-sitter-mylang" in result.output
 
     def test_custom_url_declined(self) -> None:
@@ -775,14 +803,14 @@ class TestListLanguagesCommand:
         result = CliRunner().invoke(list_languages, [])
 
         assert result.exit_code == 0
-        assert "Configured Languages" in result.output
+        assert "Supported Languages" in result.output
 
 
 class TestRemoveLanguageCommand:
     def test_unknown_language(self) -> None:
         result = CliRunner().invoke(remove_language, ["definitely-not-a-language"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "python" in result.output
 
     def test_removes_entry_keeping_submodule(self) -> None:
@@ -906,7 +934,7 @@ class TestRemoveLanguageCommand:
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Error" in result.output
             assert config.read_text(encoding="utf-8") == original
             run.assert_not_called()
@@ -943,7 +971,7 @@ class TestRemoveLanguageCommand:
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Error" in result.output
             assert config.read_text(encoding="utf-8") == original
             assert list(config.parent.iterdir()) == [config]
@@ -999,7 +1027,7 @@ class TestRemoveLanguageCommand:
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Error" in result.output
             assert config.read_text(encoding="utf-8") == original
             run.assert_not_called()
@@ -1333,7 +1361,7 @@ class TestRemoveLanguageCommand:
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Error" in result.output
             run.assert_not_called()
 
@@ -1384,8 +1412,8 @@ class TestRemoveLanguageCommand:
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
-            assert result.exit_code == 0
-            assert "git submodule deinit -f" in result.output
+            assert result.exit_code == 1
+            assert "submodule deinit -f grammars/tree-sitter-foo" in result.output
 
     def test_no_submodule_directory(self) -> None:
         runner = CliRunner()
@@ -1412,7 +1440,7 @@ class TestRemoveLanguageCommand:
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Error" in result.output
 
 

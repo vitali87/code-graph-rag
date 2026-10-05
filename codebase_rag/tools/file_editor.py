@@ -414,7 +414,9 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
         )
         if result.success:
             return cs.MSG_SURGICAL_SUCCESS.format(path=file_path)
-        return result.error_message or cs.MSG_SURGICAL_FAILED.format(path=file_path)
+        return te.ToolFailure(
+            result.error_message or cs.MSG_SURGICAL_FAILED.format(path=file_path)
+        )
 
     return Tool(
         function=replace_code_surgically,
