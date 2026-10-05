@@ -29,8 +29,8 @@ from .constants import (
 )
 from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .env_bindings import (
+    EnvAliases,
     destructured_pattern,
-    env_aliases,
     env_mapping_kind,
     object_pattern_reads,
 )
@@ -342,10 +342,10 @@ class IOAccessProcessor:
         # when a long-lived processor (realtime updater) re-parses ANY file
         # of the package: a re-parsed file gets a new root id.
         self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
-        # Per-caller: names standing for an env mapping (`const env =
+        # Per-caller: resolves a name standing for an env mapping (`const env =
         # process.env`), so `env.KEY` reads KEY (issue #2753). Reset for each
         # caller by _emit_direct_sinks; the processor walks one caller at a time.
-        self._env_aliases: dict[str, ResourceKind] = {}
+        self._env_aliases: EnvAliases | None = None
 
     def process_io_for_caller(
         self,
@@ -601,7 +601,7 @@ class IOAccessProcessor:
                 import_map.get(head), head
             )
 
-        self._env_aliases = env_aliases(
+        self._env_aliases = EnvAliases(
             caller_node, descriptor, member_reads, head_is_live
         )
         self._emit_param_env_reads(
@@ -1141,7 +1141,10 @@ class IOAccessProcessor:
         if obj is None or obj.text is None:
             return
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
-        if (alias_kind := self._env_aliases.get(obj_text)) is not None:
+        if (
+            self._env_aliases is not None
+            and (alias_kind := self._env_aliases.kind_of(obj)) is not None
+        ):
             # `env.KEY` where `const env = process.env` (issue #2753).
             identity = self._member_identity(node, descriptor)
             for direction in self._member_directions(node, descriptor):

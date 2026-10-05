@@ -19,7 +19,9 @@ _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 STDOUT = "resource::STDOUT::<dynamic>"
 DYNAMIC = "resource::ENV::<dynamic>"
 
-ENV_JS = """function dotted() {
+ENV_JS = """const fs = require("fs");
+
+function dotted() {
   console.log(process.env.JE_DOTTED);
 }
 
@@ -112,6 +114,46 @@ function shadowsModuleAlias(moduleEnv) {
   console.log(moduleEnv.JE_SHADOWED_ALIAS);
 }
 
+// Bot review on PR #2767: an alias resolves by lexical scope at each access.
+function enclosingAlias() {
+  const env = process.env;
+  function inner() {
+    console.log(env.JE_ENCLOSING);
+  }
+  inner();
+}
+
+function blockShadowsModuleAlias() {
+  {
+    const moduleEnv = {};
+    console.log(moduleEnv.JE_BLOCK_INNER);
+  }
+  console.log(moduleEnv.JE_BLOCK_OUTER);
+}
+
+function blockShadowsOwnAlias() {
+  const env = process.env;
+  if (env) {
+    const env = {};
+    console.log(env.JE_OWN_INNER);
+  }
+  console.log(env.JE_OWN_OUTER);
+}
+
+function caught() {
+  try {
+    run();
+  } catch (moduleEnv) {
+    console.log(moduleEnv.JE_CAUGHT);
+  }
+}
+
+function destructureOverHandle() {
+  let stream = fs.createWriteStream("/tmp/je_stream.txt");
+  ({ JE_STREAM: stream } = process.env);
+  stream.write(process.env.JE_SECRET);
+}
+
 module.exports = { dotted };
 """
 
@@ -194,6 +236,9 @@ CASES = [
     ("tsDestructured", "JE_TS_DESTR"),
     ("tsParam", "JE_TS_PARAM"),
     ("tsAliased", "JE_TS_ALIAS"),
+    ("enclosingAlias.inner", "JE_ENCLOSING"),
+    ("blockShadowsModuleAlias", "JE_BLOCK_OUTER"),
+    ("blockShadowsOwnAlias", "JE_OWN_OUTER"),
 ]
 
 
@@ -238,7 +283,17 @@ def test_member_reads_still_read_and_flow(
 
 
 @pytest.mark.parametrize(
-    "key", ["JE_NOT", "JE_SHADOW", "JE_REBOUND", "JE_PARAMENV", "JE_SHADOWED_ALIAS"]
+    "key",
+    [
+        "JE_NOT",
+        "JE_SHADOW",
+        "JE_REBOUND",
+        "JE_PARAMENV",
+        "JE_SHADOWED_ALIAS",
+        "JE_BLOCK_INNER",
+        "JE_OWN_INNER",
+        "JE_CAUGHT",
+    ],
 )
 def test_a_value_that_is_not_the_env_mapping_reads_nothing(
     edges: set[tuple[str, str, str]], key: str
@@ -250,3 +305,15 @@ def test_a_destructured_key_that_is_not_printed_does_not_flow(
     edges: set[tuple[str, str, str]],
 ) -> None:
     assert not _flows(edges, "JE_UNUSED")
+
+
+def test_a_destructured_rebinding_drops_the_handle_the_name_held(
+    edges: set[tuple[str, str, str]],
+) -> None:
+    # `({ JE_STREAM: stream } = process.env)` replaces the file stream, so the
+    # later `stream.write(..)` writes no file (bot review on PR #2767).
+    assert (
+        "resource::ENV::JE_SECRET",
+        cs.RelationshipType.FLOWS_TO.value,
+        "resource::FILE::/tmp/je_stream.txt",
+    ) not in edges
