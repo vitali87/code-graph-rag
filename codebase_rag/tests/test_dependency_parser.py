@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-import toml
+import pytest
+import tomli_w
 
 from codebase_rag.models import Dependency
 from codebase_rag.parsers.dependency_parser import (
@@ -16,6 +17,14 @@ from codebase_rag.parsers.dependency_parser import (
     RequirementsTxtParser,
     _extract_pep508_package_name,
     parse_dependencies,
+)
+
+# Mixed-type arrays became valid in TOML 1.0. A TOML 0.5 reader rejects the
+# whole file on one, so an unrelated tool table cost every dependency.
+_TOML_1_0_MIXED_ARRAYS = pytest.mark.parametrize(
+    "mixed_array",
+    ['args = ["--retries", 3]', 'plugins = ["cov", { name = "xdist" }]'],
+    ids=["mixed-scalars", "strings-and-inline-tables"],
 )
 
 
@@ -95,7 +104,7 @@ class TestPyProjectTomlParser:
     def test_project_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "project": {
                         "name": "my-project",
@@ -114,7 +123,7 @@ class TestPyProjectTomlParser:
     def test_optional_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "project": {
                         "name": "my-project",
@@ -139,7 +148,7 @@ class TestPyProjectTomlParser:
     def test_poetry_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "tool": {
                         "poetry": {
@@ -164,7 +173,7 @@ class TestPyProjectTomlParser:
 
     def test_empty_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(toml.dumps({"project": {"name": "my-project"}}))
+        pyproject.write_text(tomli_w.dumps({"project": {"name": "my-project"}}))
         parser = PyProjectTomlParser()
         deps = parser.parse(pyproject)
 
@@ -178,6 +187,38 @@ class TestPyProjectTomlParser:
 
         assert deps == []
 
+    @_TOML_1_0_MIXED_ARRAYS
+    def test_toml_1_0_mixed_array_keeps_dependencies(
+        self, tmp_path: Path, mixed_array: str
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\n"
+            'name = "my-project"\n'
+            'dependencies = ["requests>=2.28"]\n'
+            "[tool.runner]\n"
+            f"{mixed_array}\n"
+        )
+
+        deps = PyProjectTomlParser().parse(pyproject)
+
+        assert deps == [Dependency("requests", "requests>=2.28")]
+
+    def test_truncated_file_is_rejected_not_guessed(self, tmp_path: Path) -> None:
+        # Negative test. An unterminated array is invalid TOML that pip and uv
+        # refuse; a lenient reader accepted it and clipped the last character,
+        # inventing `request`, a different real PyPI package.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "my-project"\ndependencies = ["requests"\n'
+        )
+
+        manifest = PyProjectTomlParser().read(pyproject)
+
+        assert manifest.dependencies == []
+        # Refused as unparsable, which the run's one WARNING counts (#2568).
+        assert manifest.unparsable is not None
+
     def test_nonexistent_file(self, tmp_path: Path) -> None:
         parser = PyProjectTomlParser()
         deps = parser.parse(tmp_path / "nonexistent.toml")
@@ -187,7 +228,7 @@ class TestPyProjectTomlParser:
     def test_both_project_and_poetry(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "project": {"dependencies": ["click>=8.0"]},
                     "tool": {"poetry": {"dependencies": {"requests": "^2.28"}}},
@@ -354,7 +395,7 @@ class TestCargoTomlParser:
     def test_simple_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "package": {"name": "my-app", "version": "0.1.0"},
                     "dependencies": {"clap": "4.0", "serde": "1.0"},
@@ -371,7 +412,7 @@ class TestCargoTomlParser:
     def test_complex_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dependencies": {
@@ -391,7 +432,7 @@ class TestCargoTomlParser:
     def test_dev_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dev-dependencies": {"criterion": "0.5", "mockall": "0.11"},
@@ -409,7 +450,7 @@ class TestCargoTomlParser:
     def test_both_dep_types(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dependencies": {"clap": "4.0"},
@@ -425,7 +466,7 @@ class TestCargoTomlParser:
     def test_dependency_without_version(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            toml.dumps(
+            tomli_w.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dependencies": {"local-crate": {"path": "../local-crate"}},
@@ -441,7 +482,7 @@ class TestCargoTomlParser:
 
     def test_empty_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
-        cargo.write_text(toml.dumps({"package": {"name": "my-app"}}))
+        cargo.write_text(tomli_w.dumps({"package": {"name": "my-app"}}))
         parser = CargoTomlParser()
         deps = parser.parse(cargo)
 
@@ -454,6 +495,40 @@ class TestCargoTomlParser:
         deps = parser.parse(cargo)
 
         assert deps == []
+
+    @_TOML_1_0_MIXED_ARRAYS
+    def test_toml_1_0_mixed_array_keeps_dependencies(
+        self, tmp_path: Path, mixed_array: str
+    ) -> None:
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            "[package]\n"
+            'name = "my-app"\n'
+            "[package.metadata.runner]\n"
+            f"{mixed_array}\n"
+            "[dependencies]\n"
+            'serde = "1.0"\n'
+        )
+
+        deps = CargoTomlParser().parse(cargo)
+
+        assert deps == [Dependency("serde", "1.0")]
+
+    def test_truncated_file_yields_no_partial_dependencies(
+        self, tmp_path: Path
+    ) -> None:
+        # Negative test. Cargo refuses this manifest outright; a lenient reader
+        # parsed up to the break and still reported the crates before it.
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "my-app"\n[dependencies]\nserde = "1.0"\ntokio = ["full"\n'
+        )
+
+        manifest = CargoTomlParser().read(cargo)
+
+        assert manifest.dependencies == []
+        # Refused as unparsable, which the run's one WARNING counts (#2568).
+        assert manifest.unparsable is not None
 
 
 class TestGoModParser:
@@ -768,11 +843,31 @@ class TestCsprojParser:
 
         assert deps == []
 
+    def test_entity_declarations_are_refused_not_expanded(self, tmp_path: Path) -> None:
+        # Negative test. Entity declarations are where XML expansion bombs and
+        # external-entity reads start, and the stdlib parser resolves internal
+        # ones, so `&pkg;` would surface as a dependency the file never named.
+        csproj = tmp_path / "MyApp.csproj"
+        csproj.write_text(
+            '<!DOCTYPE Project [<!ENTITY pkg "Injected.Package">]>\n'
+            '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>'
+            '<PackageReference Include="&pkg;" Version="1.0.0" />'
+            "</ItemGroup></Project>\n"
+        )
+
+        manifest = CsprojParser().read(csproj)
+
+        assert manifest.dependencies == []
+        # Refused as unparsable, which the run's one WARNING counts (#2568).
+        assert manifest.unparsable is not None
+
 
 class TestParseDependencies:
     def test_pyproject_toml(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(toml.dumps({"project": {"dependencies": ["flask>=2.0"]}}))
+        pyproject.write_text(
+            tomli_w.dumps({"project": {"dependencies": ["flask>=2.0"]}})
+        )
         deps = parse_dependencies(pyproject)
 
         assert len(deps) == 1
@@ -796,7 +891,7 @@ class TestParseDependencies:
 
     def test_cargo_toml(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
-        cargo.write_text(toml.dumps({"dependencies": {"clap": "4.0"}}))
+        cargo.write_text(tomli_w.dumps({"dependencies": {"clap": "4.0"}}))
         deps = parse_dependencies(cargo)
 
         assert len(deps) == 1
@@ -854,7 +949,7 @@ class TestParseDependencies:
 
     def test_cargo_toml_case_insensitive(self, tmp_path: Path) -> None:
         cargo = tmp_path / "CARGO.TOML"
-        cargo.write_text(toml.dumps({"dependencies": {"clap": "4.0"}}))
+        cargo.write_text(tomli_w.dumps({"dependencies": {"clap": "4.0"}}))
         deps = parse_dependencies(cargo)
 
         assert len(deps) == 1

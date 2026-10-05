@@ -1062,3 +1062,32 @@ def test_a_call_refused_for_depth_does_not_take_the_name_based_fallback(
 
     assert at_limit, "the fallback never ran, so the test proves nothing"
     assert not any(at_limit)
+
+
+def test_the_name_based_return_type_fallback_is_not_shadowed(
+    engine: JavaTypeInferenceEngine,
+) -> None:
+    # JavaVariableAnalyzerMixin precedes JavaMethodResolverMixin in the MRO,
+    # so an abstract stub for this method there replaced the real one with a
+    # body that returns None, and the getter heuristics never ran.
+    from codebase_rag import constants as cs
+    from codebase_rag.parsers.java.method_resolver import JavaMethodResolverMixin
+
+    assert (
+        JavaTypeInferenceEngine._resolve_java_method_return_type
+        is JavaMethodResolverMixin._resolve_java_method_return_type
+    )
+    assert (
+        engine._resolve_java_method_return_type("helper.getName", "test_project.A")
+        == cs.JAVA_TYPE_STRING_FQN
+    )
+
+
+def test_an_unrecognised_method_name_has_no_fallback_return_type(
+    engine: JavaTypeInferenceEngine,
+) -> None:
+    # Negative: the fallback types only the names its heuristics know.
+    assert (
+        engine._resolve_java_method_return_type("helper.frobnicate", "test_project.A")
+        is None
+    )

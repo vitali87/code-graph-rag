@@ -314,6 +314,24 @@ class TestEveryPartTypeIsCounted:
             f"{ {n: c for n, c in zero.items() if c == 0} }"
         )
 
+    def test_an_unserialisable_tool_call_is_not_free(self) -> None:
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+        from pydantic_core import PydanticSerializationError
+
+        from codebase_rag.utils.token_utils import (
+            count_tokens,
+            estimate_message_tokens,
+        )
+
+        filler = "token " * 300
+        part = ToolCallPart(tool_name="t", args={"a": filler, "b": object()})
+        with pytest.raises(PydanticSerializationError):
+            part.args_as_json_str()
+
+        counted = estimate_message_tokens([ModelResponse(parts=[part])])
+
+        assert counted >= count_tokens(filler)
+
 
 class TestTheRefreshDoesNotBlockTheEventLoop:
     """The estimate must not freeze the UI while it runs (#1832 review).

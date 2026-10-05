@@ -16,6 +16,7 @@ import re
 from tree_sitter import Node, Parser, Tree
 
 from ... import constants as cs
+from .trailing_annotation import retry_without_trailing_annotations
 
 _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
 # a line holding nothing but an ALL_CAPS identifier: a scope-marker macro
@@ -90,15 +91,22 @@ def _unbalanced_leaf_branches(lines: list[bytes]) -> list[tuple[int, int]]:
         else:
             has_nested, branches, current = stack.pop()
             branches.append((current[0], index - 1))
-            if has_nested[0]:
-                continue
-            for start, end in branches:
-                if start > end:
-                    continue
-                delta = sum(_code_brace_delta(lines[i]) for i in range(start, end + 1))
-                if delta != 0:
-                    candidates.append((start, end))
+            if not has_nested[0]:
+                candidates.extend(_brace_unbalanced(lines, branches))
     return candidates
+
+
+def _brace_unbalanced(
+    lines: list[bytes], branches: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    # The non-empty branches of one leaf conditional whose code braces do not
+    # net to zero.
+    return [
+        (start, end)
+        for start, end in branches
+        if start <= end
+        and sum(_code_brace_delta(lines[i]) for i in range(start, end + 1)) != 0
+    ]
 
 
 def _blank(lines: list[bytes], ranges: list[tuple[int, int]]) -> bytes:
@@ -200,6 +208,17 @@ def _blank_csharp_directives(source_bytes: bytes) -> bytes:
     return _CHAR_NEWLINE.join(lines)
 
 
+def _retry_without_csharp_directives(
+    parser: Parser, tree: Tree, source_bytes: bytes
+) -> Tree:
+    if not tree.root_node.has_error or b"#if" not in source_bytes:
+        return tree
+    retry = parser.parse(_blank_csharp_directives(source_bytes))
+    if _count_error_nodes(retry.root_node) < _count_error_nodes(tree.root_node):
+        return retry
+    return tree
+
+
 def parse_with_preproc_recovery(
     parser: Parser, source_bytes: bytes, language: cs.SupportedLanguage
 ) -> Tree:
@@ -217,15 +236,16 @@ def parse_with_preproc_recovery(
         # the shatter often yields SINGLE-LINE inner ERROR nodes inside a
         # plausibly-shaped wrong declaration (a property named after the
         # directive condition), which a span measure scores as zero.
-        if not tree.root_node.has_error or b"#if" not in source_bytes:
-            return tree
-        retry = parser.parse(_blank_csharp_directives(source_bytes))
-        if _count_error_nodes(retry.root_node) < _count_error_nodes(tree.root_node):
-            return retry
-        return tree
+        return _retry_without_csharp_directives(parser, tree, source_bytes)
     if language not in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.C):
         return tree
     tree, source_bytes = _retry_without_macro_markers(parser, tree, source_bytes)
+    # tree-sitter-c keeps a trailing `LOCKS_REQUIRED(mu)` inside the
+    # function_declarator of a definition; the C++ grammar splits there.
+    if language == cs.SupportedLanguage.CPP:
+        tree, source_bytes = retry_without_trailing_annotations(
+            parser, tree, source_bytes
+        )
     worst = _max_error_span(tree.root_node)
     total_lines = source_bytes.count(_CHAR_NEWLINE) + 1
     # local errors recover fine through query matching; only a collapse

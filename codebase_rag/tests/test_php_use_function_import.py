@@ -1,10 +1,15 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.import_processor import (
+    ImportProcessor,
+    _php_use_clause_binding,
+)
 from evals.cgr_graph import _capture
 
 
@@ -83,3 +88,39 @@ def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
         without_import, "proj.mod", cs.SupportedLanguage.PHP, queries
     )
     assert "enum_value" not in processor.php_function_imports.get("proj.mod", set())
+
+
+def _use_clauses(source: bytes) -> list[Node]:
+    parsers, _ = load_parsers()
+    if cs.SupportedLanguage.PHP not in parsers:
+        pytest.skip("php tree-sitter grammar not installed")
+    tree = parsers[cs.SupportedLanguage.PHP].parse(source)
+    clauses: list[Node] = []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE:
+            clauses.append(node)
+        stack.extend(reversed(node.children))
+    return clauses
+
+
+def test_use_clause_binding_reads_path_and_local_name() -> None:
+    aliased, plain = _use_clauses(b"<?php\nuse A\\B as C;\nuse A\\D;\n")
+    assert _php_use_clause_binding(aliased) == ("A.B", "C")
+    assert _php_use_clause_binding(plain) == ("A.D", "D")
+
+
+def test_use_clause_without_a_qualified_name_binds_nothing() -> None:
+    # `use Foo;` parses to a bare `name`, which the import map has never bound.
+    (clause,) = _use_clauses(b"<?php\nuse Foo;\n")
+    assert _php_use_clause_binding(clause) is None
+
+
+def test_use_clause_with_an_empty_qualified_name_binds_nothing() -> None:
+    qualified_name = MagicMock()
+    qualified_name.type = cs.TS_PHP_QUALIFIED_NAME
+    qualified_name.text = b""
+    clause = MagicMock()
+    clause.named_children = [qualified_name]
+    assert _php_use_clause_binding(clause) is None

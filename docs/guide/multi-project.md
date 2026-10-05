@@ -20,10 +20,14 @@ cgr start --repo-path ~/services/user-service --update-graph
 cgr start --repo-path ~/services/order-service --update-graph
 ```
 
+![cgr start --update-graph indexing user-service and then order-service into the same graph](../assets/demos/multi-project-index.gif)
+
 Project names are derived from the directory name plus a short hash of the
 full path (for example `user-service__a1b2c3d4`), so two checkouts with the
 same folder name never overwrite each other. Pass `--project-name` to choose
-a name yourself.
+a name yourself. A chosen name cannot contain `.`: it separates the parts of
+a qualified name, so a project `acme.web` would share nodes with the `web`
+package of a project `acme`.
 
 Each `Project` node records the repository root it was indexed from
 (`root_path`), and every code node stores the absolute path of its source
@@ -46,9 +50,18 @@ cgr workspace add-repo backend ~/services/order-service
 cgr start --workspace backend
 ```
 
+![cgr workspace create, add-repo and show for the backend workspace, cgr export --workspace backend, and cgr stats --workspace backend counting both projects](../assets/demos/multi-project-workspace.gif)
+
+*`cgr start --workspace backend` opens the LLM chat and is not part of the recording.*
+
 `--projects` overrides `--project-name`; `--workspace` expands to every
 repository saved in the workspace. See `cgr help workspace` for the full
 workspace command set.
+
+A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
+identifier, not a path: it starts with a letter or digit and uses only
+letters, digits, `.`, `_` and `-`. Any other name (empty, `a/b`, `../x`) is
+refused with exit 1 before a file is touched.
 
 ## Semantic search within one project
 
@@ -80,6 +93,8 @@ MATCH (caller)-[:READS_FROM|WRITES_TO]->(:Resource {kind: 'NETWORK'})
       -[:RESOLVES_TO]->(:Resource {kind: 'ENDPOINT'})<-[:EXPOSES]-(handler)
 RETURN caller.qualified_name, handler.qualified_name
 ```
+
+![Both services indexed with --capture io, then the query in mgconsole linking order-service's fetch_user to user-service's get_user handler](../assets/demos/multi-project-tracing.gif)
 
 Matching uses the URL path only: dynamic (non-literal) URLs and requests
 whose paths match no known template stay unlinked.
@@ -115,11 +130,25 @@ stays live through that registration, whatever the switch. On a graph
 holding one project the report reads as "no callers indexed", which the
 command says; index the calling services first.
 
+Two analyses follow the link across the boundary. `flow_verdict` continues
+a `FLOWS_TO` walk from a client's network resource into the handler it
+resolves to (and from an RPC or dispatch resource into its handler), loads
+that handler's project's own flow edges once the walk reaches the hop, and
+reports the pairs where the path crossed into another project as
+`remote_hops` (a service calling itself over HTTP is not a boundary). A
+`NO_FLOW` verdict needs full coverage of every project the walk entered,
+not only the asked one. The structural delta after a write lists, on a
+signature change, the `remote_callers`: call sites in other projects
+reaching the changed handler's endpoint, which no `CALLS` edge would ever
+name.
+
 ## Housekeeping
 
 ```bash
 # Remove one project without touching the others
 cgr delete-project --name user-service__a1b2c3d4
 ```
+
+![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)
 
 Deleting a project also removes its embeddings from the vector store.

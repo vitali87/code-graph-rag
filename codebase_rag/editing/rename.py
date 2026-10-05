@@ -39,11 +39,12 @@ from .. import graph_query
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
-from ..types_defs import PropertyDict, ResultRow
+from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
+from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -53,20 +54,16 @@ from .transaction import (
     undo_transaction,
 )
 
-QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
+QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
-_AMBIGUOUS = frozenset(
-    {
-        cs.EdgeResolution.HEURISTIC.value,
-        cs.EdgeResolution.OVERLOAD.value,
-        cs.EdgeResolution.DYNAMIC.value,
-    }
-)
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
 
 _STRUCTURAL = "structural"
 _SITELESS = "siteless"
+# A call site whose recorded position no longer holds a call: the source
+# changed after indexing, so the site must be refused, not guessed at.
+_STALE_CALL = (-1, -1)
 # A same-named link of a fluent chain the index has no row for.
 _CHAIN = "chain"
 _MEMBER_NAME_TYPES = frozenset(
@@ -77,8 +74,8 @@ _MEMBER_NAME_TYPES = frozenset(
 # The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
 # the restoration check and the rewrite cannot disagree about what an
 # `__all__` entry is (Greptile, PR #1547).
-_ALL_BLOCK = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
-_ALL_ENTRY = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
+_ALL_BLOCK = cs.PY_DUNDER_ALL_BLOCK_PATTERN
+_ALL_ENTRY = cs.PY_DUNDER_ALL_ENTRY_PATTERN
 
 # How far a parenthesised import is followed looking for its closing bracket.
 # Bounded so a file with an unbalanced paren cannot make this walk the rest of
@@ -138,20 +135,6 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
-def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
-    """`qn` plus every method it overrides or is overridden by, transitively."""
-    seen: list[str] = [qn]
-    frontier = [qn]
-    while frontier:
-        current = frontier.pop()
-        for row in graph_query.overrides(fetch_all, project, current):
-            other = row["qualified_name"]
-            if other not in seen:
-                seen.append(other)
-                frontier.append(other)
-    return seen
-
-
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     names = {
@@ -204,39 +187,6 @@ def _name_token(
     return None
 
 
-def _best_call_at(
-    root: Node, line: int, col: int, recorded_end: tuple[int, int] | None
-) -> Node | None:
-    """The call node at (line, col) that the graph site refers to.
-
-    Several calls can share a start point -- `helper(helper(1))`,
-    `helper(2).upper()`, and both links of `obj.helper(1).helper(2)` -- so the
-    right one is the call ending where the site recorded its end, or the
-    outermost when no end was recorded.
-
-    Extracted from `_callee_span` to keep it under the cognitive complexity
-    limit (S3776). This walk is where that complexity lives: a loop with
-    three levels of nested branching, and nesting multiplies the cost.
-    Extracting the straight-line setup around it would not have helped.
-    """
-    best: Node | None = None
-    stack: list[Node] = [root]
-    while stack:
-        node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None:
-                if node.end_point == recorded_end:
-                    return node
-                if best is None or (
-                    best.end_point != recorded_end and node.end_byte > best.end_byte
-                ):
-                    best = node
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
-            stack.extend(node.children)
-    return best
-
-
 def _callee_span(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -264,12 +214,24 @@ def _callee_span(
         if end_line is not None and end_col is not None
         else None
     )
-    best = _best_call_at(root, line, col, recorded_end)
+    best = call_node_at(root, line, col, recorded_end)
     if best is None:
         return None
     func = best.child_by_field_name(cs.FIELD_FUNCTION)
     assert func is not None
     return func.start_byte, func.end_byte
+
+
+def _calls_start_at(
+    source: bytes, language: cs.SupportedLanguage | None, line: int, col: int
+) -> bool:
+    if language is None:
+        return False
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return False
+    return bool(calls_starting_at(parser.parse(source).root_node, line - 1, col))
 
 
 def _chain_links(
@@ -311,14 +273,37 @@ def _chain_links(
     return sorted(found)
 
 
+def _chain_link_sites(
+    kind: str,
+    path: str,
+    source: bytes,
+    line: int,
+    col: int,
+    old_name: str,
+    owner: str,
+    token: tuple[int, int],
+) -> list[RenameSite]:
+    # `obj.helper(1).helper(2)`: a link of the chain the index has no row
+    # for (the receiver's type was not inferred) binds to nobody the graph
+    # knows. It is renamed only as a guess the caller opts into with
+    # allow_heuristic; `plan` drops it where a row covers it.
+    language = get_language_for_extension(Path(path).suffix)
+    return [
+        RenameSite(kind, path, link[0], link[1], owner, _CHAIN)
+        for link in _chain_links(source, language, line, col, old_name)
+        if link != token
+    ]
+
+
 def _last_identifier(
     source: bytes,
     line: int,
     col: int,
-    end_line: int,
-    end_col: int,
+    end_line: int | None,
+    end_col: int | None,
     name: str,
     language: cs.SupportedLanguage | None = None,
+    is_call: bool = False,
 ) -> tuple[int, int] | None:
     """(line, col) of the token to rename inside a site span.
 
@@ -327,8 +312,23 @@ def _last_identifier(
     its arguments; for any other site it is the rightmost `name` in the span.
     """
     start = line_col_to_byte(source, line, col)
-    end = line_col_to_byte(source, end_line, end_col)
+    # A site with no recorded end gets a span that covers the name, for the
+    # text fallback only: handed to the call lookup it would read as a
+    # recorded end that no call matches, and mark a live call stale.
+    end = line_col_to_byte(
+        source,
+        end_line if end_line is not None else line,
+        end_col if end_col is not None else col + len(name),
+    )
     callee = _callee_span(source, language, line, col, end_line, end_col)
+    if callee is None and is_call and _calls_start_at(source, language, line, col):
+        # Calls DO start at the recorded position but none ends where the
+        # site recorded its end: the index is stale here. The no-grammar
+        # fallback below would cut at the last `(` and pick the INNER callee
+        # of `helper(helper(1))` (bot review). A position no call starts at
+        # (a grammar whose call node has no `function` field, such as Java's
+        # method_invocation) keeps the fallback.
+        return _STALE_CALL
     if callee is not None and callee[0] == start:
         start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
@@ -358,6 +358,7 @@ class Renamer:
         verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
+        heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
@@ -368,6 +369,9 @@ class Renamer:
         # (issue #1531): the delta of what it wrote is measured and the
         # transaction undone when the contract fails.
         self.reingest = reingest
+        # How the caller spells the opt-in the heuristic refusal tells the
+        # user to pass: a CLI flag is not an MCP parameter (issue #2886).
+        self.heuristic_opt_in = heuristic_opt_in
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -415,7 +419,153 @@ class Renamer:
             old_name,
             patcher,
         )
+        sites = self._js_import_bound(qn, path, sites, old_name, patcher)
         return sites, unlocatable, old_name, definition["label"]
+
+    def _js_import_bound(
+        self,
+        qn: str,
+        path: str,
+        sites: list[RenameSite],
+        old_name: str,
+        patcher: Patcher,
+    ) -> list[RenameSite]:
+        """The sites, as the JS/TS imports binding each one let it be renamed.
+
+        The graph binds `mul(8, 9)` to `mul` through a default import, and
+        `add(1, 2)` through a barrel's `export *`: the token equals the
+        definition's name either way (issue #2464). A bare use in another
+        file follows the rename only when its file imports the name by the
+        definition's own name, so the import is rewritten with it. One whose
+        file binds a name of its own is left as it is. One whose import goes
+        through an `export *` refuses outright: the rename cannot rewrite that
+        import, so rewriting the use would leave it naming what the barrel no
+        longer exports, whatever leave the caller gives. Any other is a guess.
+        """
+        bindings: tuple[set[str], set[str], dict[str, str]] | None = None
+        kept: list[RenameSite] = []
+        starred: list[RenameSite] = []
+        barrels: set[str] = set()
+        for site in sites:
+            if (
+                site.kind not in ("call", "reference")
+                or site.path == path
+                or get_language_for_extension(Path(site.path).suffix)
+                not in cs.JS_TS_LANGUAGES
+                or self._is_member_token(patcher, site)
+            ):
+                kept.append(site)
+                continue
+            if bindings is None:
+                bindings = self._js_name_bindings(qn, old_name)
+            by_name, aliased, star_bound = bindings
+            if site.path in by_name:
+                kept.append(site)
+            elif (barrel := star_bound.get(site.path)) is not None:
+                starred.append(site._replace(resolution=cs.RENAME_SITE_STAR_REEXPORT))
+                barrels.add(barrel)
+            elif site.path not in aliased:
+                kept.append(site._replace(resolution=cs.EdgeResolution.HEURISTIC.value))
+        if starred:
+            raise RenameRefused(
+                cs.RENAME_STAR_REEXPORT.format(
+                    qn=qn, count=len(starred), barrels=", ".join(sorted(barrels))
+                ),
+                starred,
+                [],
+            )
+        return kept
+
+    @staticmethod
+    def _is_member_token(patcher: Patcher, site: RenameSite) -> bool:
+        # `ns.helper(1)` names the member by its own name whatever binds
+        # `ns`; only a bare `helper(1)` is bound by an import of that name.
+        try:
+            source = patcher.source(site.path)
+            offset = line_col_to_byte(source, site.line, site.col)
+        except PatcherError:
+            return False
+        return source[:offset].rstrip().endswith(b".")
+
+    def _js_name_bindings(
+        self, qn: str, name: str
+    ) -> tuple[set[str], set[str], dict[str, str]]:
+        """(files importing `name` by the definition's own name, files whose
+        `name` is a binding of their own for the definition, files importing
+        it through an `export *` with that barrel's path)."""
+        module_qn, _path = self._module_of(qn)
+        by_name = {
+            site.path
+            for site, _module in self._import_sites(qn, name)
+            if (site.alias or site.imported_name) == name
+        }
+        # `import mul from`, `const mul = require(...)` and a barrel's
+        # `export { default as mul } from` name the binding as the importer
+        # chose, and so does every module importing that `mul` from such a
+        # barrel: the definition's rename changes none of them.
+        aliased: set[str] = set()
+        pending = [(module_qn, False)]
+        seen = {module_qn}
+        while pending:
+            source, chosen = pending.pop()
+            for row in graph_query.importers(self.fetch_all, self.project, source):
+                # The definition's own name is rewritten with its import; a
+                # barrel's chosen name only passes on under that same name.
+                if (
+                    not row["path"]
+                    or row["alias"] != name
+                    or (row["imported_name"] == name) != chosen
+                ):
+                    continue
+                aliased.add(row["path"])
+                if row["module"] not in seen:
+                    seen.add(row["module"])
+                    pending.append((row["module"], True))
+        return by_name, aliased, self._js_star_bound(module_qn, name)
+
+    def _js_star_bound(self, module_qn: str, name: str) -> dict[str, str]:
+        """Files importing `name` through a chain of re-exports that passes
+        an `export *`, each with the path of the first such barrel.
+
+        The chain may name the definition before the star
+        (`export { foo } from "../a"` in `b`, then `export * from "../b"` in
+        `c`): the import walk rewrites `b`, but not the consumer importing
+        `foo` from `c`.
+        """
+        bound: dict[str, str] = {}
+        pending = [(module_qn, "")]
+        seen = {(module_qn, False)}
+        while pending:
+            source, barrel = pending.pop()
+            for row in graph_query.importers(self.fetch_all, self.project, source):
+                following = self._js_star_following(row, name, barrel, bound)
+                if following is None:
+                    continue
+                step = (row["module"], bool(following))
+                if step not in seen:
+                    seen.add(step)
+                    pending.append((row["module"], following))
+        return bound
+
+    @staticmethod
+    def _js_star_following(
+        row: graph_query.ImporterRow, name: str, barrel: str, bound: dict[str, str]
+    ) -> str | None:
+        """The first `export *` barrel on the chain once it passes `row`, empty
+        while there is none, or None when `row` does not pass `name` on. A
+        file binding `name` past such a barrel is recorded in `bound`."""
+        path = row["path"]
+        if not path:
+            return None
+        # `export * from` records `*` and binds no alias.
+        if row["imported_name"] == cs.IMPORTED_NAME_WILDCARD and row["alias"] is None:
+            return barrel or path
+        if row["alias"] != name or row["imported_name"] != name:
+            return None
+        # A consumer, or a barrel passing the name on by name.
+        if barrel:
+            bound.setdefault(path, barrel)
+        return barrel
 
     def _definition_site(
         self,
@@ -563,27 +713,34 @@ class Renamer:
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else line,
-            end_col if isinstance(end_col, int) else col + len(old_name),
+            end_line if isinstance(end_line, int) else None,
+            end_col if isinstance(end_col, int) else None,
             old_name,
             get_language_for_extension(Path(path).suffix),
+            is_call=kind == "call",
         )
+        if token == _STALE_CALL:
+            self._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="stale site",
+                site_resolution=_SITELESS,
+            )
+            return
         if token is None:
             # The site spells the symbol under an alias (`h(1, 2)` for
             # `import helper as h`); the alias keeps binding, so nothing to
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
-        if kind != "call":
-            return
-        # `obj.helper(1).helper(2)`: a link of the chain the index has no
-        # row for (the receiver's type was not inferred) binds to nobody
-        # the graph knows. It is renamed only as a guess the caller opts
-        # into with allow_heuristic; `plan` drops it where a row covers it.
-        language = get_language_for_extension(Path(path).suffix)
-        for link in _chain_links(source, language, line, col, old_name):
-            if link != token:
-                sites.append(RenameSite(kind, path, link[0], link[1], owner, _CHAIN))
+        if kind == "call":
+            sites.extend(
+                _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
+            )
 
     def _import_sites(self, qn: str, old_name: str) -> list[tuple[ImportSite, str]]:
         module_qn, _path = self._module_of(qn)
@@ -656,11 +813,11 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        hierarchy = _hierarchy(self.fetch_all, self.project, qn)
+        members = hierarchy(self.fetch_all, self.project, qn)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
-        for member in hierarchy:
+        for member in members:
             member_sites, member_unlocatable, member_name, _label = self._collect(
                 member
             )
@@ -692,15 +849,17 @@ class Renamer:
                 unlocatable,
             )
         ambiguous = [
-            s for s in sites if s.resolution in _AMBIGUOUS or s.resolution == _CHAIN
+            s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
         if ambiguous and not allow_heuristic:
             raise RenameRefused(
-                cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous)),
+                cs.RENAME_AMBIGUOUS.format(
+                    qn=qn, count=len(ambiguous), option=self.heuristic_opt_in
+                ),
                 ambiguous,
                 unlocatable,
             )
-        for member in hierarchy:
+        for member in members:
             for site, module in self._import_sites(member, old_name):
                 sites.append(
                     RenameSite(
@@ -727,7 +886,7 @@ class Renamer:
             ambiguous=tuple(ambiguous),
             unlocatable=tuple(unlocatable),
             doc_mentions=tuple(self._doc_mentions(old_name)),
-            hierarchy=tuple(hierarchy),
+            hierarchy=tuple(members),
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
@@ -1255,6 +1414,7 @@ def rename(
     verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
     after_apply: Callable[[list[str]], None] | None = None,
     reingest: Reingest | None = None,
+    heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
@@ -1268,6 +1428,7 @@ def rename(
         verify=verify,
         after_apply=after_apply,
         reingest=reingest,
+        heuristic_opt_in=heuristic_opt_in,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)

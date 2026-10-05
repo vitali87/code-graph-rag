@@ -19,6 +19,7 @@ class PhpHandler(BaseLanguageHandler):
             cs.TS_INTERFACE_DECLARATION,
             cs.TS_PHP_TRAIT_DECLARATION,
             cs.TS_ENUM_DECLARATION,
+            cs.TS_PHP_ANONYMOUS_CLASS,
         }
     )
 
@@ -50,13 +51,13 @@ class PhpHandler(BaseLanguageHandler):
         return True
 
     def extract_decorators(self, node: ASTNode) -> list[str]:
-        decorators: list[str] = []
-        for child in node.children:
-            if child.type == cs.TS_PHP_ATTRIBUTE_LIST:
-                for group in child.children:
-                    if group.type == cs.TS_PHP_ATTRIBUTE_GROUP:
-                        for attr in group.children:
-                            if attr.type == cs.TS_PHP_ATTRIBUTE:
-                                if text := safe_decode_text(attr):
-                                    decorators.append(text)
-        return decorators
+        # `#[A, B] #[C]`: attribute_list > attribute_group > attribute.
+        return [
+            text
+            for child in node.children
+            if child.type == cs.TS_PHP_ATTRIBUTE_LIST
+            for group in child.children
+            if group.type == cs.TS_PHP_ATTRIBUTE_GROUP
+            for attr in group.children
+            if attr.type == cs.TS_PHP_ATTRIBUTE and (text := safe_decode_text(attr))
+        ]

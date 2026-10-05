@@ -1040,7 +1040,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         def _fetch_all(
             query: str, params: dict[str, str] | None = None
         ) -> list[dict[str, str]]:
-            if query == cs.CYPHER_ALL_FOLDER_PATHS:
+            if query == cs.CYPHER_REPO_FOLDER_PATHS:
                 return [{cs.KEY_PATH: "gone", "absolute_path": ghost}]
             return []
 

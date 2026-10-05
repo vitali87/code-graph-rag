@@ -30,7 +30,12 @@ EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
     "README.md": frozenset({"latest_news"}),
     "docs/architecture/language-support.md": frozenset({"supported_languages"}),
     "docs/architecture/graph-schema.md": frozenset(
-        {"language_mappings", "node_schemas", "relationship_schemas"}
+        {
+            "language_mappings",
+            "node_schemas",
+            "relationship_schemas",
+            "capture_groups",
+        }
     ),
     "docs/guide/mcp-server.md": frozenset({"mcp_tools"}),
     "docs/guide/interactive-querying.md": frozenset({"agentic_tools"}),

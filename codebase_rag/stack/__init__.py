@@ -1,6 +1,7 @@
 from .manager import (
     StackManager,
     StackStatus,
+    bundled_qdrant_url,
     daemon_down,
     daemon_logs,
     daemon_restart,
@@ -12,6 +13,7 @@ from .manager import (
 __all__ = [
     "StackManager",
     "StackStatus",
+    "bundled_qdrant_url",
     "daemon_down",
     "daemon_logs",
     "daemon_restart",

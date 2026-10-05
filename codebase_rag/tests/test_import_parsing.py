@@ -8,6 +8,7 @@ from tree_sitter import Language, Parser
 
 from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import import_processor as import_processor_module
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.types_defs import NodeType
 
@@ -239,6 +240,16 @@ class TestImportProcessorCacheUtilities:
         self, import_processor: ImportProcessor
     ) -> None:
         ImportProcessor.flush_stdlib_cache()
+
+    def test_del_does_not_raise_when_the_cache_save_fails(
+        self, import_processor: ImportProcessor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fail_save() -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(import_processor_module, "save_persistent_cache", fail_save)
+
+        import_processor.__del__()
 
     def test_cache_stats_after_clear(self, import_processor: ImportProcessor) -> None:
         ImportProcessor.clear_stdlib_cache()

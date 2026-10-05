@@ -21,9 +21,12 @@ from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 
+from loguru import logger
+
 import codec.schema_pb2 as pb
 
 from .. import constants as cs
+from .. import logs as ls
 from ..language_spec import get_language_spec
 
 type JsonDict = dict[str, object]
@@ -56,6 +59,16 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _codec_schema_sha256() -> str | None:
+    if _SCHEMA_FILE.is_file():
+        return _sha256(_SCHEMA_FILE)
+    # The index itself is still sound, so indexing goes on; but diff-index
+    # refuses a manifest without this hash, and saying so only then leaves the
+    # user no clue that the install, not the index, is at fault (#2399).
+    logger.warning(ls.CODEC_SCHEMA_MISSING.format(path=_SCHEMA_FILE))
+    return None
 
 
 def _git_line(repo_path: Path, *args: str) -> str | None:
@@ -176,9 +189,7 @@ def build_manifest(
     return {
         "manifest_version": _MANIFEST_VERSION,
         "analyzer_version": _analyzer_version(),
-        "codec_schema_sha256": (
-            _sha256(_SCHEMA_FILE) if _SCHEMA_FILE.is_file() else None
-        ),
+        "codec_schema_sha256": _codec_schema_sha256(),
         "capture": capture,
         "source": source,
         "artifacts": artifacts,

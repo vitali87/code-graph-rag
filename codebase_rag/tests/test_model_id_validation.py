@@ -90,6 +90,7 @@ class TestValidIdsSurvive:
         "provider,model_id",
         [
             (cs.Provider.ANTHROPIC, "claude-opus-5"),
+            (cs.Provider.ANTHROPIC, "claude-opus-5-5"),
             (cs.Provider.ANTHROPIC, "claude-haiku-4-5"),
             (cs.Provider.OPENAI, "gpt-4o"),
         ],

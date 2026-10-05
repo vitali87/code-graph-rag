@@ -14,7 +14,6 @@ and a ``.proto`` yields operations only from inside a ``service`` block.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from pathlib import Path
@@ -26,6 +25,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import JsonValue
+from ..utils.json_io import loads_json
 from ..utils.path_utils import should_skip_path
 
 
@@ -200,7 +200,7 @@ def _base_path(document: dict[str, JsonValue]) -> str:
 def _parse_document(path: Path, text: str) -> JsonValue:
     if path.suffix.lower() == cs.CONTRACT_JSON_EXTENSION:
         try:
-            return json.loads(text)
+            return loads_json(text)
         except ValueError:
             return None
     try:

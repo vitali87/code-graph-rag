@@ -45,15 +45,23 @@
 Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="demo">
+  <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
+</p>
+<p align="center">
+  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+</p>
+
+<p align="center">
+  <b>2. Ask:</b> <code>cgr start</code> answers questions and edits code, grounded in that graph
+</p>
+<p align="center">
+  <img src="./assets/demo.gif" alt="cgr agent answering questions about the indexed repository">
 </p>
 
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Code Generation**: Split Cypher response cleaning and AST-grep rule validation into smaller, more manageable helpers for improved clarity and maintainability.
-- **Scripting Improvements**: Resolved an issue where closed pull request run associations were incorrectly reported as missing, and improved error reporting in scripts to avoid over-claiming failing checks.
-- **Data Handling**: Enhanced the handling of CONTAINS_SECTION in the double's module subtree and refined snippet lookup to project the matched node's own path.
+- **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -126,6 +134,8 @@ To run code newer than the latest release, install from git:
 uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
+To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.
+
 You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
@@ -147,6 +157,8 @@ shared, and syncing one project leaves the others alone. To start over from an
 empty graph, add `--clean` — it deletes **every** project in the shared graph,
 not just this one, and asks for confirmation first when other
 projects would be destroyed.
+
+A default index leaves out the opt-in [capture groups](docs/architecture/graph-schema.md#capture-groups); add them with `--capture` or `CGR_CAPTURE`.
 
 The [Quick Start](docs/getting-started/quickstart.md) guide walks through parsing, querying, and exporting in five minutes.
 

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
+from mcp.types import ImageContent, TextContent
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import ReingestAborted
@@ -417,8 +418,7 @@ class TestMCPClient:
 
         from codebase_rag.mcp.client import _query_with_errlog
 
-        mock_content = MagicMock()
-        mock_content.text = '{"output": "test answer"}'
+        mock_content = TextContent(type="text", text='{"output": "test answer"}')
         mock_result = MagicMock()
         mock_result.content = [mock_content]
 
@@ -445,8 +445,7 @@ class TestMCPClient:
 
         from codebase_rag.mcp.client import _query_with_errlog
 
-        mock_content = MagicMock()
-        mock_content.text = "plain text response"
+        mock_content = TextContent(type="text", text="plain text response")
         mock_result = MagicMock()
         mock_result.content = [mock_content]
 
@@ -475,6 +474,36 @@ class TestMCPClient:
 
         mock_result = MagicMock()
         mock_result.content = []
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_transport = AsyncMock()
+        mock_transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("codebase_rag.mcp.client.stdio_client", return_value=mock_transport),
+            patch("codebase_rag.mcp.client.ClientSession", return_value=mock_session),
+        ):
+            result = await _query_with_errlog("test", io.StringIO())
+
+        assert result == {"output": "No response from server"}
+
+    async def test_query_with_errlog_non_text_response(self) -> None:
+        # Negative: a tool result whose first item is not text has no answer
+        # to read, and must not crash the client.
+        import io
+
+        from codebase_rag.mcp.client import _query_with_errlog
+
+        mock_result = MagicMock()
+        mock_result.content = [
+            ImageContent(type="image", data="aGk=", mimeType="image/png")
+        ]
 
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()

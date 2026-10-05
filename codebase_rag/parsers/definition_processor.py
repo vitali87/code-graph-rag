@@ -9,6 +9,7 @@ from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..language_spec import has_other_language_sibling, own_extension_module_qn
 from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import (
     ASTNode,
@@ -31,12 +32,13 @@ from ..utils.path_utils import (
     declaration_extension,
     has_implementation_sibling,
 )
+from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
 from .definition_docstring import extract_definition_docstring
-from .dependency_parser import parse_dependencies
+from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
@@ -116,6 +118,10 @@ class DefinitionProcessor(
         # read at call resolution to bind a member call on an undeclared
         # receiver against the type arguments of an EXTERNAL base (#875).
         self.dart_extends_type_args: dict[str, list[str]] = {}
+        # {extension_qn: on_type_as_written} for `extension E on T`; resolved
+        # lazily against E's module, since T may be parsed after E, so a member
+        # call on a T receiver can reach E's members (issue #2482).
+        self.dart_extension_on_types: dict[str, str] = {}
         # Dart constructor qns (default, named, const, factory): a named
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
@@ -335,6 +341,9 @@ class DefinitionProcessor(
         # interface's node write is still in the ingestor's buffer, so it is
         # absent from the rows rehydration fetches.
         self.cpp_interfaces_parsed_this_run: set[str] = set()
+        # {manifest path: why its content could not be parsed}, for the one
+        # WARNING the updater logs per run in place of a line per file.
+        self.unparsable_manifests: dict[Path, str] = {}
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
@@ -386,7 +395,25 @@ class DefinitionProcessor(
         # yielded name is itself a qn like any other and can collide with a
         # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
         # to go through the check below rather than skip it.
-        if (declaration := declaration_extension(file_path.name)) and (
+        #
+        # A stem shared ACROSS language families (`util.py` beside `util.js`)
+        # has no bare name: every file on it takes its extension (issue
+        # #2586). Awarding it by walk order handed it to whichever file sorts
+        # first, so adding `util.js` beside an indexed `util.py` re-pointed
+        # `proj.util.helper`, and everything stored against it, at the JS
+        # function. Names stay a function of the tree (#1569), so one of the
+        # two must lose the name it had alone; retiring it for both is the one
+        # rule under which an addition never hands a name to another file.
+        # Importers still write the bare name and land on their own family's
+        # file (ImportProcessor.point_imports_at_own_language_siblings).
+        if has_other_language_sibling(
+            file_path,
+            self.repo_path,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        ):
+            module_qn = own_extension_module_qn(module_qn, file_path.name)
+        elif (declaration := declaration_extension(file_path.name)) and (
             has_implementation_sibling(
                 file_path,
                 self.repo_path,
@@ -457,7 +484,7 @@ class DefinitionProcessor(
             file_path = Path(file_path)
         relative_path = cached_relative_path(file_path, self.repo_path)
         relative_path_str = relative_path.as_posix()
-        logger.info(
+        logger.debug(
             ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
         )
 
@@ -471,19 +498,12 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
-            if pre_parsed is not None:
-                root_node, pre_combined_captures = pre_parsed
-            else:
-                if source_bytes is None:
-                    source_bytes = file_path.read_bytes()
-                lang_queries = queries[language]
-                parser = lang_queries.get(cs.KEY_PARSER)
-                if not parser:
-                    logger.warning(ls.DEF_NO_PARSER.format(language=language))
-                    return None
-                tree = parse_with_preproc_recovery(parser, source_bytes, language)
-                root_node = tree.root_node
-                pre_combined_captures = None
+            parsed = self._parse_file_root(
+                file_path, language, queries, source_bytes, pre_parsed
+            )
+            if parsed is None:
+                return None
+            root_node, pre_combined_captures = parsed
 
             module_qn = base_module_qn(relative_path, self.project_name)
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
@@ -493,89 +513,18 @@ class DefinitionProcessor(
             ):
                 self.go_package_names[module_qn] = package_name
 
-            module_props: PropertyDict = {
-                cs.KEY_QUALIFIED_NAME: module_qn,
-                cs.KEY_NAME: file_path.name,
-                cs.KEY_PATH: relative_path_str,
-                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
-                cs.KEY_FLOW_COVERED: (
-                    self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
-                ),
-            }
-            if docstring := self._get_module_docstring(root_node, language):
-                module_props[cs.KEY_DOCSTRING] = docstring
-            if self.generated_source_prefixes and (
-                hint := generator_hint(
-                    relative_path_str, self.generated_source_prefixes
-                )
-            ):
-                module_props[cs.KEY_GENERATED] = True
-                module_props[cs.KEY_GENERATOR] = hint
-            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
-
-            parent_rel_path = relative_path.parent
-            parent_container_qn = structural_elements.get(parent_rel_path)
-            parent_label, parent_key, parent_val = (
-                (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-                if parent_container_qn
-                else (
-                    (
-                        cs.NodeLabel.FOLDER,
-                        cs.KEY_ABSOLUTE_PATH,
-                        cached_resolve_posix(self.repo_path / parent_rel_path),
-                    )
-                    if parent_rel_path != Path(".")
-                    else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
-                )
-            )
-            self.ingestor.ensure_relationship_batch(
-                (parent_label, parent_key, parent_val),
-                cs.RelationshipType.CONTAINS_MODULE,
-                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            self._ingest_module_node(
+                file_path,
+                relative_path,
+                module_qn,
+                language,
+                root_node,
+                structural_elements,
             )
 
-            if pre_combined_captures is not None:
-                combined_captures = pre_combined_captures
-            else:
-                combined_captures = None
-                combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
-                if combined_query:
-                    cursor = QueryCursor(combined_query)
-                    combined_captures = sorted_captures(cursor, root_node)
-            # An UNAVAILABLE query is not an empty result. `combined_captures`
-            # stays None when the language has no combined query (or building
-            # it raised), and caching {} for that would tell the call walk
-            # "this file has no functions" when the truth is "nobody looked".
-            # Measured: it attributed a call to the MODULE alongside the
-            # correct function-owned edge, so the graph gained a spurious
-            # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
-            # ...` (Greptile, PR #1833). Absent is the honest state there, and
-            # it is what the reader already falls back on.
-            if self._func_class_captures_cache is not None and (
-                combined_captures is not None
-            ):
-                # Write unconditionally, including the EMPTY entry. The two
-                # truthiness guards this replaces both skipped the write when
-                # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
-                # ENTRY in place -- captures holding nodes from a tree that
-                # has since been discarded.
-                #
-                # A file emptied (or made unparseable) between runs is exactly
-                # that case: its AST cache is correctly refreshed to the empty
-                # tree, but `_process_function_calls` reads these captures, so
-                # it walked the OLD call sites and re-emitted a CALLS edge out
-                # of a function that no longer exists in the source (#1794).
-                # `_load_ast_from_disk` already pops this cache on eviction for
-                # the same reason; the re-parse path has to keep it true too.
-                #
-                # An absent entry and an empty one are not the same thing to
-                # the reader: absent means "not parsed this run, look at the
-                # AST", empty means "parsed, and it has nothing".
-                cache_entry: dict[str, list] = {}
-                for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
-                    if combined_captures and key in combined_captures:
-                        cache_entry[key] = combined_captures[key]
-                self._func_class_captures_cache[file_path] = cache_entry
+            combined_captures = self._file_combined_captures(
+                file_path, root_node, language, pre_combined_captures
+            )
 
             # A reused updater's second run re-parses this module into a map
             # still holding the first run's spans. The key is (module_qn,
@@ -583,6 +532,15 @@ class DefinitionProcessor(
             # first-claim guard would block the live registration, filing body
             # `use` imports under the dead qn (issue #1019).
             self.function_locations.drop_module(module_qn)
+            # Before the function pass below, which would otherwise take a
+            # class's plain name first (issue #2621).
+            if language == cs.SupportedLanguage.PYTHON:
+                self._reserve_python_class_qns(
+                    combined_captures,
+                    module_qn,
+                    queries[language][cs.QUERY_CONFIG],
+                    file_path,
+                )
 
             self.import_processor.parse_imports(
                 root_node,
@@ -633,46 +591,11 @@ class DefinitionProcessor(
                 combined_captures=combined_captures,
             )
             if language == cs.SupportedLanguage.RUST:
-                # The methods above have claimed their names; a body-local item
-                # may now take what is left of the one it shares.
-                self._flush_deferred_rust_body_local()
-                # Function-body uses key on the REGISTERED qn of their
-                # enclosing function, knowable only now that dedup variants
-                # (`natural@<line>`) have been handed out.
-                self.import_processor.finalise_rust_function_scope_uses(
-                    module_qn, self.function_locations
-                )
-                # Block-local items key on their own registered qn, which
-                # the same pass has just handed out.
-                self.import_processor.record_rust_block_items(
-                    module_qn, root_node, self.function_locations
-                )
-                # Inline-mod maps were visible to this file's own impl
-                # ingestion above; retract them until the flush-time
-                # arbitration decides key ownership across all files.
-                self.import_processor.retract_rust_mod_scope_uses(module_qn)
+                self._finalise_rust_file(module_qn, root_node)
             if language in cs.JS_TS_LANGUAGES:
-                self._ingest_object_literal_methods(
+                self._ingest_js_ts_module_extras(
                     root_node, module_qn, language, queries
                 )
-                self._ingest_commonjs_exports(root_node, module_qn, language, queries)
-                self._ingest_es6_exports(root_node, module_qn, language, queries)
-                self._ingest_assignment_arrow_functions(
-                    root_node, module_qn, language, queries
-                )
-                self._ingest_prototype_inheritance(
-                    root_node, module_qn, language, queries
-                )
-                # Named passes above have claimed their function nodes;
-                # only genuinely anonymous spans (callbacks, IIFEs) still
-                # need their held-back registration.
-                self._flush_deferred_js_anonymous()
-                # Direct module.exports functions finalise by SPAN now that
-                # every node's minted qn is recorded.
-                self._finalise_direct_module_exports(
-                    module_qn, self._pending_direct_module_exports
-                )
-                self._pending_direct_module_exports = []
 
             return (root_node, language)
 
@@ -680,11 +603,185 @@ class DefinitionProcessor(
             logger.error(ls.DEF_PARSE_FAILED.format(path=file_path, error=e))
             return None
 
-    def process_dependencies(self, filepath: Path) -> None:
-        logger.info(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
+    def _parse_file_root(
+        self,
+        file_path: Path,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        source_bytes: bytes | None,
+        pre_parsed: tuple[ASTNode, dict[str, list] | None] | None,
+    ) -> tuple[ASTNode, dict[str, list] | None] | None:
+        if pre_parsed is not None:
+            root_node, pre_combined_captures = pre_parsed
+        else:
+            if source_bytes is None:
+                source_bytes = file_path.read_bytes()
+            parser = queries[language].get(cs.KEY_PARSER)
+            if parser is None:
+                logger.warning(ls.DEF_NO_PARSER.format(language=language))
+                return None
+            tree = parse_with_preproc_recovery(
+                parser, grammar_bytes(source_bytes, language, file_path), language
+            )
+            root_node = tree.root_node
+            pre_combined_captures = None
+        return root_node, pre_combined_captures
 
-        dependencies = parse_dependencies(filepath)
-        for dep in dependencies:
+    def _ingest_module_node(
+        self,
+        file_path: Path,
+        relative_path: Path,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        root_node: ASTNode,
+        structural_elements: dict[Path, str | None],
+    ) -> None:
+        relative_path_str = relative_path.as_posix()
+        module_props: PropertyDict = {
+            cs.KEY_QUALIFIED_NAME: module_qn,
+            cs.KEY_NAME: file_path.name,
+            cs.KEY_PATH: relative_path_str,
+            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
+            cs.KEY_FLOW_COVERED: (
+                self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
+            ),
+        }
+        if docstring := self._get_module_docstring(root_node, language):
+            module_props[cs.KEY_DOCSTRING] = docstring
+        if self.generated_source_prefixes and (
+            hint := generator_hint(relative_path_str, self.generated_source_prefixes)
+        ):
+            module_props[cs.KEY_GENERATED] = True
+            module_props[cs.KEY_GENERATOR] = hint
+        self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
+
+        parent_rel_path = relative_path.parent
+        parent_container_qn = structural_elements.get(parent_rel_path)
+        if parent_container_qn:
+            parent_label, parent_key, parent_val = (
+                cs.NodeLabel.PACKAGE,
+                cs.KEY_QUALIFIED_NAME,
+                parent_container_qn,
+            )
+        elif parent_rel_path != Path("."):
+            parent_label, parent_key, parent_val = (
+                cs.NodeLabel.FOLDER,
+                cs.KEY_ABSOLUTE_PATH,
+                cached_resolve_posix(self.repo_path / parent_rel_path),
+            )
+        else:
+            parent_label, parent_key, parent_val = (
+                cs.NodeLabel.PROJECT,
+                cs.KEY_NAME,
+                self.project_name,
+            )
+        self.ingestor.ensure_relationship_batch(
+            (parent_label, parent_key, parent_val),
+            cs.RelationshipType.CONTAINS_MODULE,
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+        )
+
+    def _file_combined_captures(
+        self,
+        file_path: Path,
+        root_node: ASTNode,
+        language: cs.SupportedLanguage,
+        pre_combined_captures: dict[str, list] | None,
+    ) -> dict[str, list] | None:
+        if pre_combined_captures is not None:
+            combined_captures = pre_combined_captures
+        else:
+            combined_captures = None
+            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+            if combined_query:
+                cursor = QueryCursor(combined_query)
+                combined_captures = sorted_captures(cursor, root_node)
+        # An UNAVAILABLE query is not an empty result. `combined_captures`
+        # stays None when the language has no combined query (or building
+        # it raised), and caching {} for that would tell the call walk
+        # "this file has no functions" when the truth is "nobody looked".
+        # Measured: it attributed a call to the MODULE alongside the
+        # correct function-owned edge, so the graph gained a spurious
+        # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
+        # ...` (Greptile, PR #1833). Absent is the honest state there, and
+        # it is what the reader already falls back on.
+        if self._func_class_captures_cache is not None and (
+            combined_captures is not None
+        ):
+            # Write unconditionally, including the EMPTY entry. The two
+            # truthiness guards this replaces both skipped the write when
+            # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
+            # ENTRY in place -- captures holding nodes from a tree that
+            # has since been discarded.
+            #
+            # A file emptied (or made unparseable) between runs is exactly
+            # that case: its AST cache is correctly refreshed to the empty
+            # tree, but `_process_function_calls` reads these captures, so
+            # it walked the OLD call sites and re-emitted a CALLS edge out
+            # of a function that no longer exists in the source (#1794).
+            # `_load_ast_from_disk` already pops this cache on eviction for
+            # the same reason; the re-parse path has to keep it true too.
+            #
+            # An absent entry and an empty one are not the same thing to
+            # the reader: absent means "not parsed this run, look at the
+            # AST", empty means "parsed, and it has nothing".
+            cache_entry: dict[str, list] = {}
+            for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
+                if combined_captures and key in combined_captures:
+                    cache_entry[key] = combined_captures[key]
+            self._func_class_captures_cache[file_path] = cache_entry
+        return combined_captures
+
+    def _finalise_rust_file(self, module_qn: str, root_node: ASTNode) -> None:
+        # The methods above have claimed their names; a body-local item
+        # may now take what is left of the one it shares.
+        self._flush_deferred_rust_body_local()
+        # Function-body uses key on the REGISTERED qn of their
+        # enclosing function, knowable only now that dedup variants
+        # (`natural@<line>`) have been handed out.
+        self.import_processor.finalise_rust_function_scope_uses(
+            module_qn, self.function_locations
+        )
+        # Block-local items key on their own registered qn, which
+        # the same pass has just handed out.
+        self.import_processor.record_rust_block_items(
+            module_qn, root_node, self.function_locations
+        )
+        # Inline-mod maps were visible to this file's own impl
+        # ingestion above; retract them until the flush-time
+        # arbitration decides key ownership across all files.
+        self.import_processor.retract_rust_mod_scope_uses(module_qn)
+
+    def _ingest_js_ts_module_extras(
+        self,
+        root_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        self._ingest_object_literal_methods(root_node, module_qn, language, queries)
+        self._ingest_commonjs_exports(root_node, module_qn, language, queries)
+        self._ingest_es6_exports(root_node, module_qn, language, queries)
+        self._ingest_assignment_arrow_functions(root_node, module_qn, language, queries)
+        self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
+        # Named passes above have claimed their function nodes;
+        # only genuinely anonymous spans (callbacks, IIFEs) still
+        # need their held-back registration.
+        self._flush_deferred_js_anonymous()
+        # Direct module.exports functions finalise by SPAN now that
+        # every node's minted qn is recorded.
+        self._finalise_direct_module_exports(
+            module_qn, self._pending_direct_module_exports
+        )
+        self._pending_direct_module_exports = []
+
+    def process_dependencies(self, filepath: Path) -> None:
+        logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
+
+        manifest = read_manifest(filepath)
+        if manifest.unparsable is not None:
+            self.unparsable_manifests[filepath] = manifest.unparsable
+        for dep in manifest.dependencies:
             self._add_dependency(dep.name, dep.spec, dep.properties)
 
     def _add_dependency(
@@ -693,7 +790,7 @@ class DefinitionProcessor(
         if not dep_name or dep_name.lower() in cs.EXCLUDED_DEPENDENCY_NAMES:
             return
 
-        logger.info(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
+        logger.debug(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
         )

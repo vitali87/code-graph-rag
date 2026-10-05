@@ -485,3 +485,35 @@ def test_same_module_rename_keeps_each_binding_its_own_local_name() -> None:
         _rs_rewrite("use m::{helper, helper as h};", rs)
         == "use m::{renamed as helper, renamed as h};"
     )
+
+
+def test_a_split_import_keeps_its_indentation() -> None:
+    # A nested import that splits in two must indent the new statement like
+    # the original, in every language, or the result stops parsing.
+    from codebase_rag.editing.imports import _js_rewrite, _py_rewrite, _rs_rewrite
+
+    assert _py_rewrite(
+        "    from pkg.util import helper, other",
+        SymbolMove("helper", "pkg.util", "pkg.new"),
+    ) == ("    from pkg.util import other\n    from pkg.new import helper")
+    assert _js_rewrite(
+        "  import { helper, other } from './util';",
+        SymbolMove("helper", "./util", "./new"),
+        "src/app.ts",
+    ) == ("  import { other } from './util';\n  import { helper } from './new';")
+    assert _rs_rewrite(
+        "\tuse pkg::util::{helper, other};",
+        SymbolMove("helper", "pkg::util", "pkg::new"),
+    ) == ("\tuse pkg::util::other;\n\tuse pkg::new::helper;")
+
+
+def test_an_unindented_split_import_gains_no_indentation() -> None:
+    # Negative: a top-level statement must not pick up stray whitespace.
+    from codebase_rag.editing.imports import _py_rewrite
+
+    out = _py_rewrite(
+        "from pkg.util import helper, other",
+        SymbolMove("helper", "pkg.util", "pkg.new"),
+    )
+    assert out is not None
+    assert all(line == line.lstrip() for line in out.splitlines())

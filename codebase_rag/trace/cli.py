@@ -207,12 +207,44 @@ def _download_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes
     Redirects are followed but never carry credentials across them and must stay
     on http(s); the body is read under a size cap. ``urllib.error.URLError`` is
     an ``OSError`` subclass, so one ``except OSError`` covers both.
+
+    ``timeout`` bounds the whole download, not each socket read (#2263): a
+    server that trickles a byte at a time never trips a per-read timeout, in
+    the headers or the body. The fetch runs on a daemon thread that is
+    abandoned at the deadline; the process exit that follows the usage error
+    closes its socket.
     """
+    import threading
     import urllib.parse
-    import urllib.request
 
     if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
         raise _ConvertUsageError(ch.ERR_TRACE_PULL_BAD_URL.format(url=_redact_url(url)))
+
+    # Any exception the fetch raises is re-raised here, so an error is never
+    # mistaken for a timeout or lost on the worker thread.
+    outcome: list[bytes | Exception] = []
+
+    def fetch() -> None:
+        try:
+            outcome.append(_fetch_pprof(url, headers, timeout))
+        except Exception as e:  # noqa: BLE001  # re-raised on the caller
+            outcome.append(e)
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if not outcome:
+        raise _ConvertUsageError(
+            ch.ERR_TRACE_PULL_TIMED_OUT.format(url=_redact_url(url), timeout=timeout)
+        )
+    result = outcome[0]
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
+def _fetch_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes:
+    import urllib.request
 
     request = urllib.request.Request(url)  # noqa: S310 - scheme checked above
     for header in headers:

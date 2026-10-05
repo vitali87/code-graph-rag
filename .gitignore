@@ -24,6 +24,8 @@ PROJECT.md
 .pypi_cache.json
 .omc
 site/
+# Written by the docs workflow before each build; never committed (#2175)
+docs/credits.md
 
 # Eval harness scratch workspace (regenerated each run); result files are committed
 evals/results/l3_workspace/

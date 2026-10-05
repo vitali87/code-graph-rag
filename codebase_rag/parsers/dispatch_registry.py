@@ -163,15 +163,11 @@ class DispatchRegistryProcessor:
         constants = self._module_constants.setdefault(module_qn, {})
         for stmt in root.named_children:
             if stmt.type == cs.TS_PY_EXPRESSION_STATEMENT and stmt.named_children:
-                self._process_module_assignment(
-                    stmt.named_children[0], module_qn, constants
-                )
+                self._process_module_assignment(stmt.named_children[0], constants)
             elif stmt.type == cs.TS_PY_DECORATED_DEFINITION:
                 self._process_decorated(stmt, module_qn)
 
-    def _process_module_assignment(
-        self, node: Node, module_qn: str, constants: dict[str, str]
-    ) -> None:
+    def _process_module_assignment(self, node: Node, constants: dict[str, str]) -> None:
         if node.type != cs.TS_PY_ASSIGNMENT:
             return
         target = node.child_by_field_name(cs.TS_FIELD_LEFT)

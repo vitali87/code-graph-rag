@@ -184,7 +184,11 @@ class EmittingFrontend(Protocol):
     declared run phase (the C++ libclang integration)."""
 
     language: SupportedLanguage
-    phase: FrontendPhase
+
+    # Read-only: the C++ frontend derives it from the configured mode, and
+    # the registry only reads it.
+    @property
+    def phase(self) -> FrontendPhase: ...
 
     def available(self) -> bool: ...
 

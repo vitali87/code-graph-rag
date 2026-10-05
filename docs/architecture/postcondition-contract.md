@@ -14,9 +14,9 @@ transaction landed and answers pass or fail with reasons.
 from codebase_rag.editing import rename_expectation, verify
 
 verdict = verify(rename_expectation([(old_qn, new_qn)], heuristic_allowed=False), delta)
-verdict.ok               # False when any check failed
-verdict.failures         # one reason per failed check
-verdict.affected_tests   # the delta's tests_reaching, for the caller to run
+verdict.ok  # False when any check failed
+verdict.failures  # one reason per failed check
+verdict.affected_tests  # the delta's tests_reaching, for the caller to run
 ```
 
 ## Expectations
@@ -43,6 +43,10 @@ of it, and re-ingests the restored files so the graph follows. The
 given a `reingest` callable; the MCP `rename` tool and `cgr rename` pass the
 live updater's. The verdict rides on the operation's report (`verdict`), so
 an agent sees the reasons and the affected tests in one place.
+
+![cgr rename of helper onto the existing name clamp failing the rename contract with four reasons, rolled back with undone true and a clean working tree](../assets/demos/postcondition-contract.gif)
+
+![cgr rename of helper to assist passing the contract, with no failures and test_run listed as the affected test](../assets/demos/postcondition-contract-pass.gif)
 
 The transaction's own verifier runs before the commit and answers a
 narrower question (does every staged file still parse); the contract runs

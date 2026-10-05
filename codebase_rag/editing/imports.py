@@ -82,6 +82,10 @@ class Rewrite(NamedTuple):
 # --- helpers ------------------------------------------------------------------
 
 
+def _indent_of(text: str) -> str:
+    return text[: len(text) - len(text.lstrip())]
+
+
 def _span_bytes(source: bytes, site: ImportSite) -> tuple[int, int]:
     from .patcher import line_col_to_byte
 
@@ -246,7 +250,7 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
         if not kept:
             return f"{moved_stmt}{tail}"
         kept_stmt = f"{lead}{module}{mid}{open_deco}{', '.join(kept)}{close_deco}"
-        indent = re.match(r"\s*", statement.splitlines()[0]).group(0)  # type: ignore[union-attr]
+        indent = _indent_of(statement.splitlines()[0])
         return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}{tail}"
     if (
         (m := _PY_IMPORT.match(statement))
@@ -314,7 +318,7 @@ def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | N
     keyword = _JS_KEYWORD.match(head)
     moved_head = keyword.group(0) if keyword else head
     moved_stmt = f"{moved_head}{{ {moved_entries} }}{between}{new_spec}{tail}"
-    indent = re.match(r"\s*", statement).group(0)  # type: ignore[union-attr]
+    indent = _indent_of(statement)
     if not kept:
         default_clause = head[len(moved_head) :].rstrip().rstrip(",").rstrip()
         if not default_clause:
@@ -434,7 +438,7 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
         return moved_stmt
     kept_body = kept[0] if len(kept) == 1 else "{" + ", ".join(kept) + "}"
     kept_stmt = f"{lead}{path}::{kept_body}{tail}"
-    indent = re.match(r"\s*", statement).group(0)  # type: ignore[union-attr]
+    indent = _indent_of(statement)
     return f"{kept_stmt.rstrip()}\n{indent}{moved_stmt.lstrip()}"
 
 
@@ -525,12 +529,8 @@ class ImportRewriter:
         source = self.patcher.source(path)
         text = source.decode(cs.ENCODING_UTF8)
         offsets: list[tuple[int, int, int]] = []
-        for m in re.finditer(
-            r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]", text, re.S
-        ):
-            for literal in re.finditer(
-                r"""(['"])(?P<name>[A-Za-z_]\w*)\1""", m.group(1)
-            ):
+        for m in re.finditer(cs.PY_DUNDER_ALL_BLOCK_PATTERN, text, re.S):
+            for literal in re.finditer(cs.PY_DUNDER_ALL_ENTRY_PATTERN, m.group(1)):
                 if literal.group("name") != old_name:
                     continue
                 start = m.start(1) + literal.start("name")

@@ -4,7 +4,8 @@ import atexit
 import time
 from collections.abc import Callable, Iterable, Sequence
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Protocol, cast
+from pathlib import Path
+from typing import Any, Protocol, Required, TypedDict, cast
 from urllib.parse import urlsplit
 
 from loguru import logger
@@ -15,6 +16,8 @@ from .config import settings
 from .constants import (
     PAYLOAD_NODE_ID,
     PAYLOAD_QUALIFIED_NAME,
+    QDRANT_INSECURE_URL_SCHEME,
+    SETTING_QDRANT_DB_PATH,
     VECTOR_DIM_SETTINGS,
     VectorStoreBackend,
 )
@@ -58,6 +61,10 @@ def _search_project_scoped(
 
 _CLIENT: Any | None = None
 _CLIENT_BACKEND: VectorStoreBackend | None = None
+# The bundled stack's Qdrant URL once probed, so the client and the embedding
+# cache agree on where the vectors go and the stack is probed only once.
+_BUNDLED_QDRANT: str | None = None
+_BUNDLED_QDRANT_PROBED = False
 
 # Each name is the real class or None (dependency absent), typed Any via
 # cast so ty does not flag the guarded call sites: the availability gates
@@ -87,7 +94,7 @@ class VectorStore(Protocol):
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
-    ) -> None: ...
+    ) -> bool: ...
 
     def clear_all_embeddings(self) -> None: ...
 
@@ -102,7 +109,8 @@ class VectorStore(Protocol):
 
 
 def close_vector_store_client() -> None:
-    global _CLIENT, _CLIENT_BACKEND
+    global _CLIENT, _CLIENT_BACKEND, _BUNDLED_QDRANT, _BUNDLED_QDRANT_PROBED
+    _BUNDLED_QDRANT, _BUNDLED_QDRANT_PROBED = None, False
     if _CLIENT is not None:
         close = getattr(_CLIENT, "close", None)
         if callable(close):
@@ -161,7 +169,12 @@ def get_qdrant_client(validate: bool = True) -> Any:
     _ensure_client_backend(VectorStoreBackend.QDRANT)
     if _CLIENT is None:
         if settings.QDRANT_URL:
-            client = QdrantClient(url=settings.QDRANT_URL)
+            client = QdrantClient(
+                url=settings.QDRANT_URL, api_key=_qdrant_api_key(settings.QDRANT_URL)
+            )
+        elif (bundled := _bundled_qdrant_url()) is not None:
+            logger.info(ls.QDRANT_USING_BUNDLED.format(url=bundled))
+            client = QdrantClient(url=bundled, api_key=None)
         else:
             try:
                 client = QdrantClient(path=settings.QDRANT_DB_PATH)
@@ -180,6 +193,57 @@ def get_qdrant_client(validate: bool = True) -> Any:
         _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.QDRANT
     return _CLIENT
+
+
+def _bundled_qdrant_url() -> str | None:
+    """The stack's Qdrant, when the embedded store is only the default.
+
+    With QDRANT_URL unset the app always opened the embedded store at the
+    cwd-relative QDRANT_DB_PATH, so with `cgr daemon up` running the vectors
+    went into a hidden folder of the indexed repository and the stack's Qdrant
+    stayed empty (issue #2355). A QDRANT_DB_PATH the user set is their choice
+    and is kept, and then the stack is not even probed. Set is told from the
+    fields a settings source (environment, .env) or the code supplied, not
+    from the value: QDRANT_DB_PATH=./.qdrant_code_embeddings is a choice too.
+    """
+    global _BUNDLED_QDRANT, _BUNDLED_QDRANT_PROBED
+    if (
+        settings.QDRANT_URL
+        or settings.VECTOR_STORE_BACKEND != VectorStoreBackend.QDRANT
+        or SETTING_QDRANT_DB_PATH in settings.model_fields_set
+    ):
+        return None
+    if not _BUNDLED_QDRANT_PROBED:
+        from . import stack
+
+        _BUNDLED_QDRANT = stack.bundled_qdrant_url()
+        _BUNDLED_QDRANT_PROBED = True
+    return _BUNDLED_QDRANT
+
+
+def embedding_cache_dir() -> Path:
+    """The folder the embedding cache is kept in.
+
+    It sits beside the embedded store, as before. When the bundled stack's
+    Qdrant takes the vectors it moves to the stack's folder with them: the
+    cache holds vectors too, and at the cwd-relative default it still put a
+    hidden folder into every indexed repository (issue #2355). Its keys carry
+    the embedding model, so one cache serves every project.
+    """
+    if _bundled_qdrant_url() is not None:
+        return settings.CGR_HOME.expanduser()
+    return Path(settings.QDRANT_DB_PATH)
+
+
+def _qdrant_api_key(url: str) -> str | None:
+    api_key = settings.QDRANT_API_KEY or None
+    if (
+        api_key
+        and urlsplit(url).scheme == QDRANT_INSECURE_URL_SCHEME
+        and not settings.QDRANT_ALLOW_INSECURE_API_KEY
+    ):
+        raise ValueError(ex.QDRANT_API_KEY_OVER_HTTP)
+    return api_key
 
 
 def _ensure_qdrant_collection(client: Any, validate: bool) -> None:
@@ -217,8 +281,16 @@ def _validate_qdrant_collection(client: Any) -> None:
         )
 
 
-def _milvus_client_kwargs() -> dict[str, str]:
-    kwargs = {"uri": settings.MILVUS_URI}
+# Typed per key so the unpacked call is checked against the client's own
+# parameters; a plain dict[str, str] could be any of them, `timeout` included.
+class _MilvusClientKwargs(TypedDict, total=False):
+    uri: Required[str]
+    token: str
+    db_name: str
+
+
+def _milvus_client_kwargs() -> _MilvusClientKwargs:
+    kwargs = _MilvusClientKwargs(uri=settings.MILVUS_URI)
     if settings.MILVUS_TOKEN:
         kwargs["token"] = settings.MILVUS_TOKEN
     if settings.MILVUS_DB_NAME:
@@ -353,11 +425,14 @@ def _delete_scoped_embeddings(
     project_name: str,
     node_ids: Sequence[int],
     delete: Callable[[list[int]], None],
-) -> None:
+) -> bool:
     # Shared by every backend: only the client call differs, so the empty
     # guard, the progress logs, and the swallow-and-warn live here once.
+    # Whether the vectors are gone: most callers carry on either way, but
+    # retiring a project must not delete the node ids they are keyed by while
+    # they are still there (review of PR 2497).
     if not node_ids:
-        return
+        return True
     ids = list(node_ids)
     try:
         logger.info(
@@ -377,6 +452,8 @@ def _delete_scoped_embeddings(
                 backend=backend, project=project_name, error=e
             )
         )
+        return False
+    return True
 
 
 class QdrantVectorStore:
@@ -402,14 +479,14 @@ class QdrantVectorStore:
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
-    ) -> None:
+    ) -> bool:
         def _delete(ids: list[int]) -> None:
             get_qdrant_client().delete(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
                 points_selector=ids,
             )
 
-        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
+        return _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
         # Vectors are keyed by Memgraph-internal node ids, which a clean
@@ -514,14 +591,14 @@ class MilvusVectorStore:
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
-    ) -> None:
+    ) -> bool:
         def _delete(ids: list[int]) -> None:
             get_milvus_client().delete(
                 collection_name=settings.MILVUS_COLLECTION_NAME,
                 ids=ids,
             )
 
-        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
+        return _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
         # Failures propagate, and validation is skipped so a collection of the
@@ -671,11 +748,16 @@ def store_embedding_batch(points: Sequence[tuple[int, list[float], str]]) -> int
     return vector_store.store_embedding_batch(points)
 
 
-def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> None:
+def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> bool:
+    """Delete a project's vectors by node id, and say whether they are gone.
+
+    With no vector store there is nothing to delete: a run without one
+    writes no vectors.
+    """
     vector_store = _get_vector_store()
     if vector_store is None:
-        return
-    vector_store.delete_project_embeddings(project_name, node_ids)
+        return True
+    return vector_store.delete_project_embeddings(project_name, node_ids)
 
 
 def clear_all_embeddings() -> None:

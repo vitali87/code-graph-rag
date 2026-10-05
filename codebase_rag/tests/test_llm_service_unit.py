@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai import DeferredToolRequests
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
@@ -233,8 +234,10 @@ class TestCreateRagOrchestrator:
         tools = [MagicMock(), MagicMock()]
         agent, system_prompt = create_rag_orchestrator(tools)
 
-        mock_agent.assert_called_once()
-        call_kwargs = mock_agent.call_args.kwargs
+        # Built through the specialised class, which a mock answers by item.
+        orchestrator_agent = mock_agent[None, str | DeferredToolRequests]
+        orchestrator_agent.assert_called_once()
+        call_kwargs = orchestrator_agent.call_args.kwargs
         assert call_kwargs["tools"] == tools
         assert agent is not None
         assert system_prompt == "System prompt"

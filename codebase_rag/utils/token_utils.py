@@ -91,7 +91,7 @@ def _part_tokens(part: object) -> int:
     if (as_json := getattr(part, "args_as_json_str", None)) is not None:
         try:
             return count_tokens(as_json())
-        except Exception:
+        except Exception:  # noqa: S110
             # A malformed or unserialisable payload still occupies context;
             # falling through to the fields below beats counting it as zero.
             pass

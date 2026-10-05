@@ -51,8 +51,6 @@ theme:
 
 plugins:
   - search
-  - minify:
-      minify_html: true
 
 markdown_extensions:
   - admonition
@@ -112,6 +110,7 @@ nav:
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md
     - Postcondition Contract: architecture/postcondition-contract.md
+    - Context Slice: architecture/context-slice.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md
@@ -121,14 +120,6 @@ nav:
   - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Credits: credits.md
-
-# Generates credits.md from the third-party notices at build time (#2175).
-hooks:
-  - scripts/mkdocs_credits_hook.py
-
-# Internal analysis artifacts kept in the repo but not published to the doc site nav.
-not_in_nav: |
-  /reports/
 
 extra_css:
   - stylesheets/extra.css

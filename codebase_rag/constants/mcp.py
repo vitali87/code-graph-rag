@@ -27,6 +27,7 @@ class MCPToolName(StrEnum):
     REMOTE_DEPENDENCIES = "remote_dependencies"
     # Graph-driven edit operations (issue #1532).
     RENAME = "rename"
+    CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -106,6 +107,7 @@ class MCPParamName(StrEnum):
     SINK_QN = "sink_qualified_name"
     DRY_RUN = "dry_run"
     TRACEBACK_TEXT = "traceback_text"
+    PATH_PREFIX_MAP = "path_prefix_map"
     NODE_ID = "node_id"
     THRESHOLD = "threshold"
     MIN_SIZE = "min_size"
@@ -120,6 +122,7 @@ class MCPParamName(StrEnum):
     MODULE_QN = "module_qualified_name"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    BUDGET_TOKENS = "budget_tokens"
 
 
 # MCP server constants
@@ -143,6 +146,8 @@ MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
 # Structural delta appended to write tools (issue #1525).
 MCP_DELTA_HEADER = "Structural delta:"
+CONTEXT_DEFAULT_BUDGET = 4000
+MCP_CONTEXT_BUDGET_INVALID = "budget_tokens must be at least 1, got {budget}"
 MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
@@ -180,6 +185,22 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
+# With a close match the full list is noise: a shared graph holds dozens of
+# `<dir>__<hash>` names, and the one meant is the one to name (issue #2461).
+MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
+MCP_ROOT_NOT_INDEXED = (
+    "No project is indexed for this server's root {path}; run "
+    "index_repository or update_repository first, or pass `project`."
+)
+# An empty answer for a name the graph does not hold read as "nothing calls
+# it" / "no test reaches it" (issue #2461).
+MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
+MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+GRAPH_DID_YOU_MEAN = " Did you mean: {names}?"
+# How many close matches a refusal names, and how close a spelling must be
+# (difflib's ratio) to be offered at all.
+GRAPH_SUGGESTION_LIMIT = 5
+GRAPH_SUGGESTION_CUTOFF = 0.6
 # A workspace narrows the choice to its own projects (issue #1494). This is
 # an allow-list on top of the graph check, never a substitute: a name in the
 # workspace that is not indexed is still refused as unknown.
@@ -200,6 +221,22 @@ MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
     "server's directory; pass `project` (one of: {known})"
 )
 MCP_GLOSS_TARGET_NOT_FOUND = "No definition matches {target!r} in project {project!r}."
+# A property's getter, setter and deleter share one qualified name; the
+# registry names the later ones `x@<line>`, which shifts with the file. The
+# descriptor names the member stably (issue #1808).
+GLOSS_DESCRIPTOR_SEPARATOR = "#"
+GLOSS_DESCRIPTORS: dict[str, str] = {
+    "getter": "@property",
+    "setter": ".setter",
+    "deleter": ".deleter",
+}
+MCP_GLOSS_DESCRIPTOR_UNKNOWN = (
+    "{descriptor!r} is not a descriptor; use one of {known} after '#'."
+)
+MCP_GLOSS_DESCRIPTOR_NOT_FOUND = (
+    "{target!r} resolved to {qn!r}, but no definition of that name carries the "
+    "{descriptor} decorator."
+)
 MCP_GLOSS_TARGET_AMBIGUOUS = (
     "{target!r} names {count} definitions; pass one of the qualified names "
     "listed under 'candidates'."

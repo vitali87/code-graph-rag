@@ -5,8 +5,8 @@ name, version, licence, a link to its project and the full licence text.
 The components come from `generate_third_party_notices`, so the page and the
 binary's sidecar cannot drift apart (issue #2175).
 
-Run as a script to write the page; the mkdocs hook in
-`scripts/mkdocs_credits_hook.py` calls `build_page` during every docs build.
+Run as a script to write the page; the docs workflow does so before every
+site build, since Zensical does not run mkdocs.yml hooks.
 """
 
 from __future__ import annotations

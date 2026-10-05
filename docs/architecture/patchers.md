@@ -17,8 +17,8 @@ from codebase_rag.editing import Patcher
 patcher = Patcher(repo_root)
 patcher.replace_span("pkg/a.py", (start_byte, end_byte), "new text")
 patcher.replace_identifier_at("pkg/a.py", line=12, col=4, old="helper", new="assist")
-results = patcher.apply()            # {rel_path: PatchResult}, nothing written
-results = patcher.stage_into(tx)     # or hand the patched files to an EditTransaction
+results = patcher.apply()  # {rel_path: PatchResult}, nothing written
+results = patcher.stage_into(tx)  # or hand the patched files to an EditTransaction
 ```
 
 - Positions follow the graph's convention: 1-based lines, 0-based byte
@@ -78,3 +78,7 @@ namespace, `require`, barrel `export { x } from`), Java (`import a.b.C;`),
 Rust (`use a::b::c`, `use a::b::{c as d, e}`, `pub use`), Go (import path
 strings, grouped specs). Statements that do not import the symbol from the
 old module are reported in `untouched` rather than guessed at.
+
+![cgr rename of compute_vat to vat_amount followed by an identifier-level git diff: only the name spans change, the vat_for alias, the invoicing.tax receiver, aligned spacing and comments are untouched](../assets/demos/patchers.gif)
+
+*`cgr rename` drives the patcher and the import rewriter; `git diff --color-words` shows each replaced span.*

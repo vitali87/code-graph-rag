@@ -205,7 +205,7 @@ def fuzz_shell_command(data: bytes) -> None:
         combined = f"{command} && {suffix}"
         try:
             still_dangerous, _ = _classify(combined)
-        except Exception:  # noqa: BLE001 - reported by property 1 on its own
+        except Exception:  # noqa: BLE001, S112 - reported by property 1 on its own
             continue
         if not still_dangerous:
             raise AssertionError(

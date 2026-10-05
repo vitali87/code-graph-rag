@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -318,3 +319,24 @@ class TestCreateFileEditorTool:
             replacement_code="replacement",
         )
         assert "failed" in result.lower()
+
+    async def test_concurrent_tool_calls_keep_every_edit(
+        self, file_editor: FileEditor, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "concurrent.py"
+        test_file.write_text("a = 1\nb = 2\n", encoding="utf-8")
+        tool = create_file_editor_tool(file_editor)
+        results = await asyncio.gather(
+            tool.function(
+                file_path="concurrent.py",
+                target_code="a = 1",
+                replacement_code="a = 10",
+            ),
+            tool.function(
+                file_path="concurrent.py",
+                target_code="b = 2",
+                replacement_code="b = 20",
+            ),
+        )
+        assert all("success" in r.lower() for r in results)
+        assert test_file.read_text(encoding="utf-8") == "a = 10\nb = 20\n"

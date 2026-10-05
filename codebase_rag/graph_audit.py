@@ -203,6 +203,8 @@ def collect_live_violations(
     """Run the structural audit against a live graph via Cypher (doctor)."""
     violations: list[AuditViolation] = []
     for row in fetch_all(cq.CYPHER_AUDIT_ORPHANS):
+        if row["label"] in cs.AUDIT_BOOKKEEPING_LABELS:
+            continue
         violations.append(
             AuditViolation(
                 cs.AuditCheck.ORPHAN_NODE,
@@ -213,7 +215,10 @@ def collect_live_violations(
         )
     documented_props = documented_node_properties()
     for row in fetch_all(cq.CYPHER_AUDIT_LABELS):
-        if row["label"] not in documented_props:
+        if (
+            row["label"] not in documented_props
+            and row["label"] not in cs.AUDIT_BOOKKEEPING_LABELS
+        ):
             violations.append(
                 AuditViolation(
                     cs.AuditCheck.UNDOCUMENTED_LABEL,
@@ -246,6 +251,15 @@ def collect_live_violations(
                     ),
                 )
             )
+    violations.extend(_missing_required_violations(fetch_all, documented_props))
+    return violations
+
+
+def _missing_required_violations(
+    fetch_all: Callable[[str], Sequence[ResultRow]],
+    documented_props: dict[str, dict[str, bool]],
+) -> list[AuditViolation]:
+    violations: list[AuditViolation] = []
     for label, schema_props in documented_props.items():
         required = [prop for prop, is_required in schema_props.items() if is_required]
         # An all-optional schema would render an empty WHERE clause, which

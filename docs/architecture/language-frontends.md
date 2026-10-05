@@ -174,7 +174,7 @@ under a broken conversion. It has to sit **before the asserted token on the
 same line**:
 
 ```python
-x = café_var.method()   # `method` is at char column 13, byte column 14
+x = café_var.method()  # `method` is at char column 13, byte column 14
 x = plain_var.method()  # both are 14 -- this line proves nothing
 ```
 
@@ -193,6 +193,10 @@ Register a per-language enum following the existing pattern
 register with `parser_fingerprint.py` so that changing mode invalidates the
 incremental graph. A graph built with one frontend and updated with another is
 worse than either.
+
+![PYTHON_FRONTEND=jedi cgr start --update-graph re-parsing pallets/itsdangerous after a heuristic index, and cgr graph callees then listing the extra Signer.unsign call Jedi resolves](../assets/demos/language-frontends.gif)
+
+*Recorded on pallets/itsdangerous: switching `PYTHON_FRONTEND` from the default `heuristic` to `jedi` changes the fingerprint, so the next sync re-parses every file.*
 
 The fingerprint currently records the **resolved mode**, not the external
 tool's version — so upgrading `go`, `javac` or `dotnet` reuses a graph the

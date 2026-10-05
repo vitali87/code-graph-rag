@@ -21,7 +21,9 @@ def determine_node_type(
         ):
             return _go_type_node_type(class_node, class_name, class_qn)
         case cs.TS_INTERFACE_DECLARATION | cs.TS_RS_TRAIT_ITEM:
-            logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
+            logger.debug(
+                logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn)
+            )
             return NodeType.INTERFACE
         case (
             cs.TS_ENUM_DECLARATION
@@ -29,20 +31,20 @@ def determine_node_type(
             | cs.TS_ENUM_CLASS_SPECIFIER
             | cs.TS_RS_ENUM_ITEM
         ):
-            logger.info(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
             return NodeType.ENUM
         case cs.TS_TYPE_ALIAS_DECLARATION | cs.TS_RS_TYPE_ITEM:
-            logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
             return NodeType.TYPE
         case cs.TS_STRUCT_SPECIFIER | cs.TS_RS_STRUCT_ITEM:
-            logger.info(logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn))
             return NodeType.CLASS
         case cs.TS_UNION_SPECIFIER | cs.TS_RS_UNION_ITEM:
-            logger.info(logs.CLASS_FOUND_UNION.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_UNION.format(name=class_name, qn=class_qn))
             return NodeType.UNION
         case cs.CppNodeType.TEMPLATE_DECLARATION:
             node_type = extract_template_class_type(class_node) or NodeType.CLASS
-            logger.info(
+            logger.debug(
                 logs.CLASS_FOUND_TEMPLATE.format(
                     node_type=node_type, name=class_name, qn=class_qn
                 )
@@ -52,7 +54,7 @@ def determine_node_type(
             log_exported_class_type(class_node, class_name, class_qn)
             return NodeType.CLASS
         case _:
-            logger.info(logs.CLASS_FOUND_CLASS.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_CLASS.format(name=class_name, qn=class_qn))
             return NodeType.CLASS
 
 
@@ -62,13 +64,15 @@ def _go_type_node_type(
     underlying = class_node.child_by_field_name(cs.FIELD_TYPE)
     match underlying.type if underlying else None:
         case cs.TS_GO_STRUCT_TYPE:
-            logger.info(logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn))
             return NodeType.CLASS
         case cs.TS_GO_INTERFACE_TYPE:
-            logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
+            logger.debug(
+                logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn)
+            )
             return NodeType.INTERFACE
         case _:
-            logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
+            logger.debug(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
             return NodeType.TYPE
 
 
@@ -78,19 +82,19 @@ def log_exported_class_type(
     node_text = safe_decode_with_fallback(class_node) if class_node.text else ""
     match _detect_export_type(node_text):
         case cs.CPP_EXPORT_STRUCT_PREFIX:
-            logger.info(
+            logger.debug(
                 logs.CLASS_FOUND_EXPORTED_STRUCT.format(name=class_name, qn=class_qn)
             )
         case cs.CPP_EXPORT_UNION_PREFIX:
-            logger.info(
+            logger.debug(
                 logs.CLASS_FOUND_EXPORTED_UNION.format(name=class_name, qn=class_qn)
             )
         case cs.CPP_EXPORT_TEMPLATE_PREFIX:
-            logger.info(
+            logger.debug(
                 logs.CLASS_FOUND_EXPORTED_TEMPLATE.format(name=class_name, qn=class_qn)
             )
         case _:
-            logger.info(
+            logger.debug(
                 logs.CLASS_FOUND_EXPORTED_CLASS.format(name=class_name, qn=class_qn)
             )
 

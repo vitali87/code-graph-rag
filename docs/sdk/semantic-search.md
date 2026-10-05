@@ -14,7 +14,45 @@ Semantic search requires the `semantic` extra:
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store. To use Milvus Lite for semantic vectors,
+Qdrant is the default vector store. Where the vectors go is decided in this
+order:
+
+1. `QDRANT_URL` set: that Qdrant server.
+2. `QDRANT_DB_PATH` set: an embedded, file-based Qdrant in that folder. Set
+   means named in the environment, `.env` or code, even with the default
+   value `./.qdrant_code_embeddings`.
+3. Neither set, and the stack `cgr daemon up` starts is running: its Qdrant,
+   on the address and port `docker compose config` resolves for it (default
+   `127.0.0.1:6333`; `CGR_STACK_BIND_HOST`, `QDRANT_HTTP_PORT`, the `.env`
+   beside the compose file, `COMPOSE_ENV_FILES` and edits to the compose file
+   all count). It is used only while `docker compose ps` reports the stack's
+   own Qdrant container running and that address answers as Qdrant, so a
+   stopped stack never hands the embeddings to another process on its port.
+   No API key is sent to it; a stack Qdrant that requires one is left alone
+   with a warning.
+4. Otherwise: an embedded Qdrant in `./.qdrant_code_embeddings`, relative to
+   the directory cgr runs in. The log says why the stack's Qdrant was not
+   used.
+
+The embedding cache (`.embedding_cache.json`) sits in the embedded store's
+folder, and moves to the stack's folder (`CGR_HOME`, default `~/.cgr`) along
+with the vectors in case 3, so nothing is written into the indexed repository.
+Its keys carry the embedding model, so one cache serves every project.
+
+For a server that requires an API key
+(Qdrant Cloud, or a self-hosted server started with `QDRANT__SERVICE__API_KEY`),
+also set `QDRANT_API_KEY`, over an `https://` URL:
+
+```bash
+export QDRANT_URL="https://your-cluster.cloud.qdrant.io:6333"
+export QDRANT_API_KEY="your-qdrant-api-key"
+```
+
+The key is refused over a plain `http://` URL, where it would travel
+unencrypted. If that connection is protected another way, for example it never
+leaves the machine, set `QDRANT_ALLOW_INSECURE_API_KEY=true`.
+
+To use Milvus Lite for semantic vectors,
 install the `milvus` extra and set:
 
 ```bash
@@ -68,6 +106,8 @@ embedding = embed_code("def authenticate(user, password): ...")
 print(f"Embedding dimension: {len(embedding)}")
 ```
 
+![The embed_code snippet run on CPU, loading UniXcoder and printing a 768-dimensional embedding](../assets/demos/semantic-search-embed.gif)
+
 ### Search by Description
 
 In the interactive CLI, you can search semantically:
@@ -77,6 +117,10 @@ In the interactive CLI, you can search semantically:
 - "database connection setup"
 
 The system returns potential matches with similarity scores.
+
+![The three queries above sent to the MCP semantic_search tool for pallets/itsdangerous, each returning three matches with similarity scores](../assets/demos/semantic-search-query.gif)
+
+*Recorded through the MCP `semantic_search` tool (UniXcoder and Qdrant, no LLM) after indexing pallets/itsdangerous with embeddings.*
 
 ## How It Works
 

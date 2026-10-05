@@ -5,9 +5,9 @@ import platform
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
-import toml
 from loguru import logger
 
 from codebase_rag import constants as cs
@@ -16,7 +16,8 @@ from codebase_rag.constants import PyInstallerPackage
 
 
 def _get_treesitter_packages() -> list[str]:
-    pyproject = toml.load(cs.PYPROJECT_PATH)
+    with open(cs.PYPROJECT_PATH, "rb") as f:
+        pyproject = tomllib.load(f)
     extras = pyproject.get(cs.TOML_KEY_PROJECT, {}).get(cs.TOML_KEY_OPTIONAL_DEPS, {})
     treesitter_deps = extras.get(cs.TREESITTER_EXTRA_KEY, [])
 

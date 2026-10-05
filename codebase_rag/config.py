@@ -9,14 +9,14 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
 from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
-from .types_defs import CgrignorePatterns, ModelConfigKwargs, PropertyValue
+from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 # Load only the configuration file in the invocation directory.  The default
 # python-dotenv discovery walks parent directories, which can silently import
@@ -189,37 +189,18 @@ class AppConfig(BaseSettings):
     All settings are loaded from environment variables or a .env file.
     """
 
+    # `.env` is read from the directory cgr runs in, which is usually the
+    # user's own project, so it routinely holds keys that are not cgr settings
+    # (a provider key the missing-key message asks for, issue #2194, or the
+    # project's own `CRATES_API_TOKEN`). Refusing them made every command fail
+    # at start-up and echoed the secret in the validation error, so undeclared
+    # keys are ignored rather than forbidden.
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _drop_provider_key_inputs(
-        cls, data: dict[str, PropertyValue]
-    ) -> dict[str, PropertyValue]:
-        """Accept a provider key in `.env`, as the missing-key message says.
-
-        `format_missing_api_key_errors` tells the user to put e.g.
-        `ANTHROPIC_API_KEY` in `.env`, and `load_dotenv` above puts it in
-        `os.environ`, where the key gate and the providers read it. It is not
-        a setting of its own, so the `.env` source handed it over as an extra
-        input and every command failed at start-up (issue #2194). Dropped here,
-        before the extra check; a provider variable that IS a declared field
-        (`ORCHESTRATOR_API_KEY`) is kept, and any other undeclared key is
-        still refused.
-        """
-        declared = {name.lower() for name in cls.model_fields}
-        provider_keys = {
-            env_var.lower() for env_var in PROVIDER_ENV_KEYS.values()
-        } - declared
-        return {
-            name: value
-            for name, value in data.items()
-            if name.lower() not in provider_keys
-        }
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
     # so an existing install keeps its behaviour without touching config;
@@ -368,8 +349,16 @@ class AppConfig(BaseSettings):
         }
     )
 
-    QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
+    QDRANT_DB_PATH: str = cs.QDRANT_DEFAULT_DB_PATH
     QDRANT_URL: str | None = None
+    # Sent as the `api-key` header, so only a server (QDRANT_URL) uses it:
+    # Qdrant Cloud always requires one, and a self-hosted server does once
+    # QDRANT__SERVICE__API_KEY is set. qdrant-client never reads it from the
+    # environment, so it must be passed explicitly.
+    QDRANT_API_KEY: str | None = None
+    # Over a plain http:// QDRANT_URL the key would travel unencrypted, so it is
+    # refused unless this is set, for a transport protected some other way.
+    QDRANT_ALLOW_INSECURE_API_KEY: bool = False
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5

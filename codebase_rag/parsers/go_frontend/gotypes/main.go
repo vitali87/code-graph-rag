@@ -213,7 +213,7 @@ func (c *collector) collectImplements() {
 
 // implementsIface is true when t satisfies iface through either its value or
 // its pointer method set (a pointer-receiver method only lands on *T).
-func implementsIface(t *types.Named, ifaceNamed *types.Named) bool {
+func implementsIface(t, ifaceNamed *types.Named) bool {
 	iface, ok := ifaceNamed.Underlying().(*types.Interface)
 	if !ok {
 		return false

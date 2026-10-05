@@ -3,8 +3,27 @@
 from enum import StrEnum
 
 INIT_PY = "__init__.py"
+INIT_PYI = "__init__.pyi"
+# The files that name their PACKAGE rather than themselves: a stub-only
+# package ships `__init__.pyi` in place of `__init__.py` (issue #2445).
+PY_PACKAGE_INIT_FILES: tuple[str, ...] = (INIT_PY, INIT_PYI)
 
 ENCODING_UTF8 = "utf-8"
+ENCODING_UTF8_SIG = "utf-8-sig"
+ENCODING_ASCII = "ascii"
+# Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
+# already reads as they are, so a source declaring one needs no transcoding.
+UTF8_CODEC_NAMES: frozenset[str] = frozenset({ENCODING_UTF8, ENCODING_UTF8_SIG})
+# PEP 263's declaration pattern, over bytes: the declaration is ASCII by
+# definition, and matching bytes lets a line that is not valid UTF-8 still be
+# searched. Only line 1, or line 2 under a blank or comment-only line 1, is
+# read, which is where CPython's tokenizer looks.
+PY_CODING_COOKIE_PATTERN = rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)"
+PY_CODING_BLANK_LINE_PATTERN = rb"^[ \t\f]*(?:[#\r\n]|$)"
+# Every 7-bit byte. PEP 263 admits only encodings that read these as ASCII: a
+# declaration is itself ASCII, so an encoding that reads it differently (UTF-16,
+# EBCDIC) cannot have been what the author meant, and CPython rejects the file.
+ASCII_BYTES = bytes(range(128))
 # Longest UTF-8 sequence, so a window this size either side of a name spans
 # any single character that could legitimately sit next to it.
 UTF8_MAX_SEQUENCE_BYTES = 4
@@ -37,6 +56,14 @@ PROJECT_NAME_DIGEST_MARKER = "__"
 # Hex digits after the marker. Shared so `derive_project_name` and the
 # scoping filter that recognises its output cannot drift apart.
 PROJECT_NAME_DIGEST_LEN = 8
+# Qualified names are `<project>.<package path>.<module>.<symbol>` and nodes
+# merge on them, so a `.` in a project name aliases another project's package
+# (issue #2412).
+ERR_PROJECT_NAME_HAS_SEPARATOR = (
+    "Project name '{name}' contains '.', which separates the parts of a "
+    "qualified name: its nodes would merge with those of a package at the "
+    "same path in another project. Use a name without '.', e.g. '{suggestion}'."
+)
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
@@ -72,6 +99,14 @@ class EventType(StrEnum):
     CREATED = "created"
     DELETED = "deleted"
     MOVED = "moved"
+    CLOSED = "closed"
+
+
+# `opened` and `closed_no_write` are reads, and `closed` only ends a write
+# whose `modified` normally came first, so none of them is re-ingested alone.
+CONTENT_EVENT_TYPES = frozenset(
+    {EventType.MODIFIED, EventType.CREATED, EventType.DELETED}
+)
 
 
 REALTIME_LOGGER_FORMAT = (
@@ -84,6 +119,8 @@ REALTIME_LOGGER_FORMAT = (
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
+ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
+LOGURU_DEFAULT_HANDLER_ID = 0
 
 # Debounce settings for realtime watcher
 DEFAULT_DEBOUNCE_SECONDS = 5
@@ -105,9 +142,15 @@ CHAR_QUESTION_MARK = "?"
 
 CHAR_SPACE = " "
 SEPARATOR_COMMA_SPACE = ", "
+SEPARATOR_SEMICOLON_SPACE = "; "
 PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
 
 REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
+# Receiver chains longer than this many hops stay unresolved. Every call in a
+# chain re-reads its whole receiver, so resolving an n-hop chain cost O(n^2):
+# a 20 KB file of `.m()` hops took minutes and gigabytes (#2262). Hand-written
+# fluent chains are far shorter.
+MAX_RECEIVER_CHAIN_HOPS = 64
 REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 
 DEFAULT_NAME = "Unknown"
@@ -123,6 +166,7 @@ TMP_EXTENSION = ".tmp"
 # manifest rather than the directory, so they are deliberately absent.
 DIRECTORY_MODULE_STEM_BY_EXT: dict[str, str] = {
     ".py": "__init__",
+    ".pyi": "__init__",
     ".rs": "mod",
     ".js": "index",
     ".jsx": "index",
@@ -174,6 +218,9 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 # re-parses it with the delete-before-reparse a KNOWN file gets (issue #1983).
 HASH_CACHE_UNREADABLE = "unreadable"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+# `cgr index` keeps a run's sync state in a throwaway directory with this
+# prefix instead of the repository (issue #2401).
+INDEX_STATE_DIR_PREFIX = "cgr-index-state-"
 # Present while an EXPOSES cleanup the last run skipped (its project registry
 # was unreadable) is still owed; the in-sync fast path refuses until a batch
 # run has done it (issue #2193).
@@ -242,7 +289,9 @@ EDIT_KEY_MODE = "mode"
 # Inputs to the parser fingerprint: everything that changes how source files
 # become graph nodes and edges, plus the installed grammar wheels. Paths are
 # relative to the codebase_rag package root.
-PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
+# `analyzers` holds the ast-grep finding analyzer: it decides which finding
+# nodes a file gets and how they are keyed, exactly as a parser decides edges.
+PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants", "analyzers")
 PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "graph_updater.py",
     "function_registry.py",
@@ -255,6 +304,9 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     # the old identities with no staleness warning, and `utils/` is in neither
     # of the directory globs above (issue #1720 review).
     "utils/path_utils.py",
+    # Decides which bytes the grammar reads for a Python source, so every name
+    # in a declared-encoding file depends on it (issue #2445).
+    "utils/source_encoding.py",
 )
 PY_SOURCE_GLOB = "*.py"
 # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
@@ -268,6 +320,13 @@ PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
     ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
     ("parsers/java_frontend/javac", ("**/*.java",)),
+    # The ast-grep YAML is data, not code, but it decides what unchanged
+    # sources produce: the finding rules which Pattern/CodeSmell/SecurityIssue
+    # nodes exist, the tier patterns which definitions do. A rule change with
+    # unchanged sources otherwise kept the old rules' findings on the in-sync
+    # fast path (review of #2533).
+    ("analyzers/ast_grep_rules", ("**/*.yaml",)),
+    ("parsers/ast_grep_patterns", ("*.yaml",)),
 )
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"
@@ -293,6 +352,10 @@ JSON_KEY_HAS_ENTITY = "hasEntity"
 JSON_KEY_ENTITY_TYPE = "entityType"
 
 IMPORT_DEFAULT_SUFFIX = ".default"
+# The simple name of a JS/TS module's default export: an unnamed
+# `export default class {...}` registers under it, so the `<module>.default`
+# target a default import is mapped to (IMPORT_DEFAULT_SUFFIX) is a real node.
+JS_DEFAULT_EXPORT_NAME = "default"
 IMPORT_STD_PREFIX = "std."
 CPP_STD_PREFIX = "std"
 IMPORT_MODULE_LABEL = "Module"

@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic_ai import DeferredToolRequests
 
 from codebase_rag import config as cgr_config
 from codebase_rag.config import (
@@ -117,7 +118,8 @@ def test_create_rag_orchestrator_reads_project_instructions(
     agent, system_prompt = create_rag_orchestrator(tools=[], project_root=temp_repo)
 
     assert extra in system_prompt
-    assert mock_agent.call_args.kwargs["system_prompt"] == system_prompt
+    orchestrator_agent = mock_agent[None, str | DeferredToolRequests]
+    assert orchestrator_agent.call_args.kwargs["system_prompt"] == system_prompt
 
 
 @patch("codebase_rag.services.llm.settings")

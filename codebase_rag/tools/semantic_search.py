@@ -69,9 +69,14 @@ def semantic_code_search(
             if node_id in results_map:
                 result = results_map[node_id]
                 result_type = result.get("type")
-                type_str = (
+                first_label = (
                     result_type[0]
                     if isinstance(result_type, list) and result_type
+                    else None
+                )
+                type_str = (
+                    first_label
+                    if isinstance(first_label, str)
                     else cs.SEMANTIC_TYPE_UNKNOWN
                 )
                 formatted_results.append(
@@ -127,6 +132,13 @@ def get_function_source_code(
         file_path = result.get("path")
         start_line = result.get("start_line")
         end_line = result.get("end_line")
+        if (
+            not isinstance(file_path, str)
+            or type(start_line) is not int
+            or type(end_line) is not int
+        ):
+            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+            return None
 
         is_valid, file_path_obj = validate_source_location(
             file_path, start_line, end_line
@@ -141,9 +153,10 @@ def get_function_source_code(
         # (issue #425), but must satisfy the same known-project boundary.
         qualified_name = str(result.get("qualified_name", ""))
         project_roots = _resolve_project_roots(ingestor, roots_cache)
+        absolute_path = result.get("absolute_path")
         located = locate_node_source(
             qualified_name,
-            result.get("absolute_path"),
+            absolute_path if isinstance(absolute_path, str) else None,
             file_path_obj,
             project_roots,
             None,

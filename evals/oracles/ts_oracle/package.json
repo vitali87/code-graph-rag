@@ -5,6 +5,6 @@
   "description": "Authoritative TypeScript structure oracle for the cgr eval harness",
   "bin": { "ts_oracle": "ts_ast.js" },
   "dependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   }
 }

@@ -20,7 +20,11 @@ from codebase_rag.crash_correlation import (
     rank_root_causes,
 )
 from codebase_rag.cypher_queries import CYPHER_TRACE_CALLABLES
-from codebase_rag.flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES
+from codebase_rag.flow_verdict import (
+    CYPHER_FLOW_COVERAGE_GAPS,
+    CYPHER_FLOW_EDGES,
+    CYPHER_FLOW_REMOTE_EDGES,
+)
 
 _P = "proj__cafe01"
 
@@ -112,6 +116,8 @@ def _fetch_all_for(
             return [{"source": s, "target": t} for s, t in flow_edges]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
             return [{cs.KEY_PATH: path} for path in gaps or []]
+        if query == CYPHER_FLOW_REMOTE_EDGES:
+            return []
         if query == CYPHER_CRASH_POSITIONAL_PARAMS:
             return [
                 {"qn": qn, "positional_params": declared}

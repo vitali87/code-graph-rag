@@ -24,8 +24,8 @@ become ``<anonymous>``. Traced builds should disable inlining
 
 from __future__ import annotations
 
-import gzip
 import re
+import zlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -204,13 +204,65 @@ def _bare_name(symbol: str) -> str:
 
 
 def _decompress(raw: bytes, profile_path: Path) -> bytes:
-    """Gunzip a gzipped profile; malformed input becomes a TraceFormatError."""
-    if raw[:2] != b"\x1f\x8b":
+    """Gunzip a gzipped profile under a size cap (#2263).
+
+    Malformed input, and output past ``TRACE_MAX_DECOMPRESSED_BYTES``, become a
+    TraceFormatError. Inflating in chunks keeps a decompression bomb from ever
+    being held whole; every gzip member is read, as ``gzip.decompress`` does.
+    """
+    if raw[:2] != cs.TRACE_GZIP_MAGIC:
         return raw
+    bad = TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    view = memoryview(raw)
+    out = bytearray()
+    position = 0
+    members = 0
     try:
-        return gzip.decompress(raw)
-    except (OSError, EOFError) as e:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
+        while position < len(raw):
+            if raw[position] == 0:
+                # Trailing NUL padding after the last member is accepted, as
+                # gzip does; checked once, since it ends the loop either way.
+                if raw.count(0, position) != len(raw) - position:
+                    raise bad
+                break
+            members += 1
+            if members > cs.TRACE_MAX_GZIP_MEMBERS:
+                raise bad
+            position = _inflate_member(view, position, out, profile_path, bad)
+    except zlib.error as e:
+        raise bad from e
+    return bytes(out)
+
+
+def _inflate_member(
+    view: memoryview,
+    position: int,
+    out: bytearray,
+    profile_path: Path,
+    bad: TraceFormatError,
+) -> int:
+    """Inflate the gzip member at `position` into `out`; return where it ends.
+
+    Input goes in bounded slices, so each member costs the slices it spans
+    rather than a copy of everything after it.
+    """
+    limit = cs.TRACE_MAX_DECOMPRESSED_BYTES
+    inflater = zlib.decompressobj(cs.TRACE_GZIP_WBITS)
+    while not inflater.eof:
+        if position >= len(view):
+            raise bad
+        chunk = view[position : position + cs.TRACE_GZIP_INPUT_CHUNK_BYTES]
+        out += inflater.decompress(chunk, limit + 1 - len(out))
+        if len(out) > limit:
+            raise TraceFormatError(
+                cs.TRACE_ERR_PPROF_TOO_LARGE.format(path=profile_path, limit=limit)
+            )
+        # Below the cap the output limit never bound, so the slice was
+        # consumed up to the member's end; what follows it is unused.
+        position += (
+            len(chunk) - len(inflater.unconsumed_tail) - len(inflater.unused_data)
+        )
+    return position
 
 
 def _decode_profile(

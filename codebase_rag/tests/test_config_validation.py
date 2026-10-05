@@ -263,10 +263,43 @@ def test_a_provider_key_in_dotenv_loads_and_satisfies_the_gate(
     assert "loaded" in result.stdout
 
 
-def test_an_unknown_key_in_dotenv_is_still_refused(tmp_path) -> None:
+def test_a_projects_own_dotenv_key_does_not_stop_start_up(tmp_path) -> None:
+    # cgr reads `.env` from the project it is run in, whose own keys are not
+    # cgr settings; a Rust project's `CRATES_API_TOKEN` failed start-up with
+    # `extra_forbidden` and printed the token in the error.
     result = _load_config_from_dotenv(
-        tmp_path, "NOT_A_CGR_SETTING=1", "NOT_A_CGR_SETTING"
+        tmp_path, "CRATES_API_TOKEN=project-secret", "CRATES_API_TOKEN"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "loaded" in result.stdout
+    assert "project-secret" not in result.stderr
+
+
+def test_an_invalid_value_for_a_declared_setting_in_dotenv_is_still_refused(
+    tmp_path,
+) -> None:
+    # Ignoring keys cgr does not own must not loosen the settings it does own.
+    result = _load_config_from_dotenv(
+        tmp_path, "MEMGRAPH_PORT=not-a-port", "MEMGRAPH_PORT"
     )
 
     assert result.returncode != 0
-    assert "extra_forbidden" in result.stderr
+    assert "MEMGRAPH_PORT" in result.stderr
+    assert "int_parsing" in result.stderr
+
+
+def test_an_ignored_dotenv_key_does_not_become_a_setting(tmp_path) -> None:
+    result = _load_config_from_dotenv(
+        tmp_path,
+        "CRATES_API_TOKEN=project-secret",
+        "CRATES_API_TOKEN",
+        check=(
+            "c = AppConfig(); "
+            "assert not hasattr(c, 'CRATES_API_TOKEN'), 'extra kept'; "
+            "assert not c.model_extra, c.model_extra; "
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "loaded" in result.stdout

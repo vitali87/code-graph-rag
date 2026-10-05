@@ -33,6 +33,16 @@ HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG = "No orphans or schema violations"
 HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG = "{count} violation(s) found"
 HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG = "Audit queries failed"
 HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR = "; "
+# An outstanding `:IncompleteRun` marker, reported the way `cgr status`
+# reports it rather than as a schema violation (issue #2394).
+HEALTH_CHECK_INTERRUPTED_SYNC = "Interrupted syncs"
+HEALTH_CHECK_INTERRUPTED_SYNC_MSG = (
+    "{count} project(s) have a sync that was interrupted or is still running"
+)
+HEALTH_CHECK_INTERRUPTED_SYNC_DETAIL = (
+    "project {project}: last sync was interrupted or is still running; re-run "
+    "`cgr start --update-graph` if no sync is active"
+)
 
 # Model credentials are judged by the rule the runtime applies at
 # start-up (`ModelConfig.validate_api_key`), so doctor cannot fail a
@@ -41,6 +51,17 @@ HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR = "; "
 # CYPHER_API_KEY verbatim, failing the default Ollama model that needs no
 # key, and GEMINI_API_KEY, which nothing in the package reads.
 HEALTH_CHECK_MODEL_READY = "{role} model ready ({provider}:{model})"
+HEALTH_CHECK_MODEL_CREDENTIALS = "{role} model credentials present ({provider}:{model})"
+HEALTH_CHECK_MODEL_UNREACHABLE = "{role} model not reachable ({provider}:{model})"
+HEALTH_CHECK_MODEL_NOT_PULLED = "{role} model not pulled ({provider}:{model})"
+HEALTH_CHECK_OLLAMA_READY_MSG = "Ollama at {url} has the model"
+HEALTH_CHECK_OLLAMA_UNREACHABLE_MSG = "Ollama not reachable"
+HEALTH_CHECK_OLLAMA_UNREACHABLE_ERROR = (
+    "Nothing answering as Ollama at {url}. Install and start Ollama, set "
+    "OLLAMA_BASE_URL, or set {role}_PROVIDER and {role}_MODEL to another provider."
+)
+HEALTH_CHECK_OLLAMA_NOT_PULLED_MSG = "Model not pulled"
+HEALTH_CHECK_OLLAMA_NOT_PULLED_ERROR = "Run: ollama pull {model}"
 HEALTH_CHECK_MODEL_NOT_READY = "{role} model not ready ({provider}:{model})"
 HEALTH_CHECK_MODEL_OK_MSG = "Credentials accepted for {provider}"
 HEALTH_CHECK_MODEL_KEY_MISSING_MSG = "API key not set"

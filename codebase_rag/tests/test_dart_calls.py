@@ -132,7 +132,6 @@ def test_static_method_call_via_class_name(
 def test_call_name_shapes() -> None:
     # unit coverage of every chain shape dart_call_name handles, straight
     # off real parse trees
-    import pytest as _pytest
 
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.dart import (
@@ -143,7 +142,7 @@ def test_call_name_shapes() -> None:
 
     parsers, _ = load_parsers()
     if SKIP not in parsers:
-        _pytest.skip("dart parser not available")
+        pytest.skip("dart parser not available")
     dart = parsers[cs.SupportedLanguage.DART]
 
     src = b"""

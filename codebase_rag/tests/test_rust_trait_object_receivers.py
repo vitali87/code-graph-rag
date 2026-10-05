@@ -129,8 +129,8 @@ def test_one_ary_tuple_is_not_grouping_parens() -> None:
     )
     fn_tuple, fn_grouped = parser.parse(src).root_node.children
     engine = rs_ti.RustTypeInferenceEngine()
-    assert "s" not in engine.build_local_variable_type_map(fn_tuple, "proj.m")
+    assert "s" not in engine.build_local_variable_type_map(fn_tuple)
     assert rs_utils.extract_return_type_name(fn_tuple, None) is None
-    grouped = engine.build_local_variable_type_map(fn_grouped, "proj.m")
+    grouped = engine.build_local_variable_type_map(fn_grouped)
     assert grouped.get("s") == "Alpha"
     assert rs_utils.extract_return_type_name(fn_grouped, None) == "Beta"

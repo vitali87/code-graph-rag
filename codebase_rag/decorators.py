@@ -11,6 +11,7 @@ from . import exceptions as ex
 from . import logs as ls
 from .types_defs import (
     LoadableProtocol,
+    PathResultFactory,
     PathValidatorProtocol,
 )
 
@@ -32,7 +33,9 @@ def timing_decorator[**P, T](func: Callable[P, T]) -> Callable[P, T]:
             return func(*args, **kwargs)
         finally:
             elapsed = (time.perf_counter() - start) * 1000
-            logger.info(ls.FUNC_TIMING.format(func=func.__qualname__, time=elapsed))
+            # `wraps` copied the qualified name onto the wrapper; a bare Callable
+            # is not known to carry one.
+            logger.info(ls.FUNC_TIMING.format(func=wrapper.__qualname__, time=elapsed))
 
     return wrapper
 
@@ -47,13 +50,15 @@ def async_timing_decorator[**P, T](
             return await func(*args, **kwargs)
         finally:
             elapsed = (time.perf_counter() - start) * 1000
-            logger.info(ls.FUNC_TIMING.format(func=func.__qualname__, time=elapsed))
+            # `wraps` copied the qualified name onto the wrapper; a bare Callable
+            # is not known to carry one.
+            logger.info(ls.FUNC_TIMING.format(func=wrapper.__qualname__, time=elapsed))
 
     return wrapper
 
 
 def validate_project_path[T](
-    result_factory: type[T],
+    result_factory: PathResultFactory[T],
     path_arg_name: str,
 ) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:

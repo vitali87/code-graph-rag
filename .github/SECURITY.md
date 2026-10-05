@@ -48,11 +48,14 @@ This policy applies to the `code-graph-rag` Python package and its official repo
 - **Dependency scanning**: Dependabot alerts and security updates are enabled, with version updates configured weekly for GitHub Actions, Docker and pip
 - **Secret scanning**: GitHub secret scanning is active on this repository
 - **Push protection**: Secret scanning push protection blocks commits containing supported secrets before they reach the repository
-- **Code scanning**: CodeQL default setup runs weekly across the Actions, C/C++, C#, JavaScript/TypeScript and Python code in this repository
+- **Code scanning**: CodeQL default setup analyses the Actions, C/C++, C#, JavaScript/TypeScript and Python code in this repository on every pull request targeting `main`, on every push to `main` and weekly, and reports findings to the Security tab. The `main` ruleset requires CodeQL results on every pull request and blocks the merge while CodeQL reports any new alert on it
+- **Static analysis gate**: The SonarCloud workflow analyses pushes to `main` and pull requests targeting `main` from a branch of this repository, Dependabot's excepted, and on those pull requests the `All Checks Pass` status check fails while SonarCloud reports any open issue, vulnerabilities included
+- **Python security linting**: Bandit runs as a pre-commit hook, and the `Lint & Format` CI job runs the same hook on every pull request, so a high-severity finding fails `All Checks Pass`. The same job's `ruff check` enforces Ruff's flake8-bandit (`S`) rules outside tests, and `pyproject.toml` records why each rule left off is off
+- **Fuzzing**: [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs the harnesses in `fuzz/` against every pull request targeting `main`, and daily for longer against `main`
 - **Vulnerability scanning**: The [OSV-Scanner](https://google.github.io/osv-scanner/) workflow checks dependencies against the OSV database on pull requests targeting `main`, on pushes to `main` and weekly, and reports findings to the Security tab
 - **Supply chain scorecard**: The [OpenSSF Scorecard](https://github.com/ossf/scorecard) workflow audits the repository's supply chain posture and reports findings to the Security tab
 - **Private vulnerability reporting**: Enabled, so vulnerabilities can be reported privately through the Security tab as described above
-- **Branch protection**: The `main` branch is covered by a ruleset that requires changes to arrive by pull request with the `All Checks Pass` status check green, and blocks branch deletion and force pushes
+- **Branch protection**: The `main` branch is covered by a ruleset that requires changes to arrive by pull request with the `All Checks Pass` status check green and CodeQL results carrying no new alert, and blocks branch deletion and force pushes
 
 ## Preferred Languages
 

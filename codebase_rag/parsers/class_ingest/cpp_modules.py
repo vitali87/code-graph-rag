@@ -108,7 +108,7 @@ def _process_export_module(
         (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
     )
 
-    logger.info(logs.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
+    logger.debug(logs.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
 
 
 def _process_module_implementation(
@@ -151,7 +151,7 @@ def _process_module_implementation(
     interface_qn = f"{project_name}.{module_name}"
     deferred_impls.append((impl_qn, interface_qn))
 
-    logger.info(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
+    logger.debug(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
 
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:
@@ -160,23 +160,30 @@ def find_cpp_exported_classes(root_node: Node) -> list[Node]:
 
     while stack:
         node = stack.pop()
-        if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
-            node_text = decode_node_stripped(node)
-
-            if node_text.startswith(cs.CPP_EXPORT_PREFIXES):
-                found = False
-                for child in node.children:
-                    if child.type == cs.TS_ERROR and child.text:
-                        error_text = safe_decode_text(child)
-                        if error_text in cs.CPP_EXPORTED_CLASS_KEYWORDS:
-                            exported_class_nodes.append(node)
-                            found = True
-                            break
-                if not found and (
-                    cs.CPP_EXPORT_CLASS_PREFIX in node_text
-                    or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
-                ):
-                    exported_class_nodes.append(node)
+        if (
+            node.type == cs.CppNodeType.FUNCTION_DEFINITION
+            and _is_exported_class_definition(node)
+        ):
+            exported_class_nodes.append(node)
         stack.extend(node.children)
 
     return exported_class_nodes
+
+
+def _is_exported_class_definition(node: Node) -> bool:
+    # `export class Foo {...}` mis-parses as a function definition: the
+    # class keyword lands in an ERROR child, or survives only in the text.
+    node_text = decode_node_stripped(node)
+    if not node_text.startswith(cs.CPP_EXPORT_PREFIXES):
+        return False
+    if any(
+        child.type == cs.TS_ERROR
+        and child.text
+        and safe_decode_text(child) in cs.CPP_EXPORTED_CLASS_KEYWORDS
+        for child in node.children
+    ):
+        return True
+    return (
+        cs.CPP_EXPORT_CLASS_PREFIX in node_text
+        or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
+    )

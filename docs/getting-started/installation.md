@@ -86,6 +86,10 @@ Dependencies may still need platform wheels or build tools, such as `cmake` for
 pip install code-graph-rag
 ```
 
+![uv venv --python 3.12 --seed, then pip install code-graph-rag and cgr --version in a fresh virtual environment](../assets/demos/installation-pip.gif)
+
+*PyPI served 0.1.38 when this was recorded; it trails `main` (see [Install from git](#install-from-git)).*
+
 With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lua, PHP, C#, Dart):
 
 ```bash
@@ -117,6 +121,18 @@ The `cpp` extra installs libclang. Semantic C/C++ indexing also needs a `compile
 ```bash
 uv tool install --compile-bytecode "code-graph-rag[treesitter-full,semantic]"
 ```
+
+## Install from git
+
+PyPI and GitHub Releases only receive every 50th version, plus any security fix, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
+
+```bash
+uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
+```
+
+Replace `@main` with a tag such as `@v0.1.8` to pin an exact version.
+
+Use `uv` here: it applies the project's `[tool.uv.sources]`, which build the C and C++ grammars from forks that keep the declarations upstream drops after a `#define` whose value contains a block comment. `pip`, and `pipx` on its pip backend, ignore those sources and install the upstream grammars. Building the forks needs a C compiler on top of the [prerequisites](#prerequisites) (the Xcode Command Line Tools on macOS).
 
 ## Install from Source
 
@@ -151,6 +167,28 @@ make dev
 
 This installs all dependencies and sets up pre-commit hooks automatically.
 
+## Upgrade
+
+`cgr` has no self-update command; upgrade it with the tool that installed it:
+
+| Installed with | Upgrade with |
+|---|---|
+| `uv tool install` (PyPI or git) | `uv tool upgrade code-graph-rag` |
+| `pipx install` from PyPI | `pipx upgrade code-graph-rag` |
+| `pipx install` from git | `pipx reinstall code-graph-rag` |
+| `pip install` | `pip install --upgrade 'code-graph-rag[treesitter-full,semantic]'` |
+| Source checkout | `git pull`, then rerun your `uv sync` command |
+
+The `uv` and `pipx` commands keep the extras you installed with; with `pip`, repeat them. A `uv` git install moves to the newest commit on the branch it was installed from. For a git install, `pipx upgrade` skips any new commit that did not change the version number, so `pipx reinstall` is the reliable choice there. `uv tool upgrade --all` upgrades every tool `uv` manages in one go.
+
+Check the result with:
+
+```bash
+cgr --version
+```
+
+![cgr --version printing the installed code-graph-rag version](../assets/demos/installation-version.gif)
+
 ## Verify Release Artifacts
 
 Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships prebuilt binaries together with Sigstore signatures (`*.sigstore.json`); releases from v0.0.484 onwards also carry a SLSA build provenance attestation (`multiple.intoto.jsonl`). Both are produced by the `build-binaries.yml` GitHub Actions workflow using keyless signing, so there is no maintainer-held key to obtain: verification checks that the artifact was built by this repository's release workflow.
@@ -183,7 +221,11 @@ Substitute the binary name for your platform. Packages installed from PyPI are p
 cgr daemon up
 ```
 
-This starts the packaged Memgraph + Qdrant stack and waits until it is healthy. It works the same whether you installed from PyPI or from source, since the compose file ships inside the package. Memgraph listens on port 7687 and Memgraph Lab on port 3000.
+![cgr daemon up reporting the Memgraph and Qdrant stack as running and reachable](../assets/demos/installation-daemon-up.gif)
+
+*Recorded with the stack already running, so it returns at once.*
+
+This starts the packaged Memgraph + Qdrant stack and waits until it is healthy. It works the same whether you installed from PyPI or from source, since the compose file ships inside the package. Memgraph listens on port 7687 and Memgraph Lab on port 3000. The services are reachable only from this machine and run without authentication by default; to require credentials, see [Turning on authentication](../architecture/security.md#turning-on-authentication).
 
 ## Set Up Environment Variables
 
@@ -200,6 +242,10 @@ See the [Configuration](configuration.md) guide for all available options.
 cgr doctor
 ```
 
+![cgr doctor checking Docker, Memgraph, the configured models and ripgrep](../assets/demos/installation-doctor.gif)
+
+*No Ollama or API key is configured on the recording machine, so the two model checks fail.*
+
 This checks that all required dependencies and services are available.
 
 ## Key Dependencies
@@ -207,12 +253,12 @@ This checks that all required dependencies and services are available.
 <!-- SECTION:dependencies -->
 - **loguru**: Python logging made (stupidly) simple
 - **mcp**: Model Context Protocol SDK
-- **pydantic-ai**: AI Agent Framework, the Pydantic way
+- **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
 - **pydantic-settings**: Settings management using Pydantic
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
-- **toml**: Python Library for Tom's Obvious, Minimal Language
+- **tomli-w**: A lil' TOML writer
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
 - **watchdog**: Filesystem events monitoring

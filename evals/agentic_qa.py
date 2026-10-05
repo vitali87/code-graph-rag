@@ -23,12 +23,19 @@ import time
 from collections import Counter
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, NamedTuple
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 import typer
 from loguru import logger
 from rich.console import Console
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent, Tool
+    from pydantic_ai.agent import AgentRunResult
+
+    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.llm import CypherAgent
 
 from . import constants as ec
 from . import logs as ls
@@ -120,7 +127,7 @@ def build_cases(target: Path, sample: int, seed: int = 0) -> list[QACase]:
         # property names are excluded from the question universe entirely.
         and name not in properties
     ]
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - seeded sampling for reproducible evals
     picked = candidates if len(candidates) <= sample else rng.sample(candidates, sample)
     return [
         QACase(name, QUESTION_TEMPLATE.format(name=name), frozenset(files))
@@ -272,7 +279,7 @@ def build_multihop_cases(target: Path, sample: int, seed: int = 0) -> list[QACas
                 frozenset(expected),
             )
         )
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - seeded sampling for reproducible evals
     picked = candidates if len(candidates) <= sample else rng.sample(candidates, sample)
     return sorted(picked)
 
@@ -326,12 +333,12 @@ class _MeteredAgent:
     # flatter the graph condition.
     __slots__ = ("_inner", "_meter")
 
-    def __init__(self, inner: object, meter: UsageMeter) -> None:
+    def __init__(self, inner: "CypherAgent", meter: UsageMeter) -> None:
         self._inner = inner
         self._meter = meter
 
-    async def run(self, *args: object, **kwargs: object) -> object:
-        result = await self._inner.run(*args, **kwargs)  # type: ignore[attr-defined]
+    async def run(self, user_prompt: str) -> "AgentRunResult[str]":
+        result = await self._inner.run(user_prompt)
         self._meter.add(result.usage)
         return result
 
@@ -339,10 +346,10 @@ class _MeteredAgent:
 def _build_tools(
     condition: Condition,
     root: Path,
-    ingestor: object | None,
+    ingestor: "MemgraphIngestor | None",
     project_name: str,
     cypher_meter: UsageMeter,
-) -> list[object]:
+) -> "list[Tool[None]]":
     from codebase_rag.config import settings
     from codebase_rag.services.llm import CypherGenerator
     from codebase_rag.tools.directory_lister import (
@@ -359,7 +366,7 @@ def _build_tools(
         project_root=str(root),
         timeout=settings.SHELL_COMMAND_TIMEOUT,
     )
-    tools: list[object] = [
+    tools: list[Tool[None]] = [
         # A benchmark run has no operator to approve commands, so anything
         # that would need approval is denied (never yolo-bypassed): the model
         # only needs read-only search commands, and a mutating command would
@@ -368,7 +375,7 @@ def _build_tools(
         create_file_reader_tool(FileReader(project_root=str(root))),
         create_directory_lister_tool(DirectoryLister(project_root=str(root))),
     ]
-    if condition is Condition.GRAPH:
+    if condition is Condition.GRAPH and ingestor is not None:
         from codebase_rag.tools.codebase_query import create_query_tool
         from codebase_rag.tools.semantic_search import (
             create_get_function_source_tool,
@@ -377,12 +384,12 @@ def _build_tools(
         cypher_gen = CypherGenerator(active_projects=[project_name])
         cypher_gen.agent = _MeteredAgent(cypher_gen.agent, cypher_meter)
         quiet = Console(stderr=True, quiet=True)
-        tools.append(create_query_tool(ingestor, cypher_gen, quiet))  # type: ignore[arg-type]
-        tools.append(create_get_function_source_tool(ingestor))  # type: ignore[arg-type]
+        tools.append(create_query_tool(ingestor, cypher_gen, quiet))
+        tools.append(create_get_function_source_tool(ingestor))
     return tools
 
 
-def _build_agent(tools: list[object], root: Path) -> object:
+def _build_agent(tools: "list[Tool[None]]", root: Path) -> "Agent[None, str]":
     from pydantic_ai import Agent
 
     from codebase_rag.config import settings
@@ -390,7 +397,7 @@ def _build_agent(tools: list[object], root: Path) -> object:
 
     config = settings.active_orchestrator_config
     model = get_provider_from_config(config).create_model(config.model_id)
-    return Agent(
+    return Agent[None, str](
         model=model,
         system_prompt=SYSTEM_PROMPT.format(root=root),
         tools=tools,
@@ -403,7 +410,7 @@ async def _run_condition(
     condition: Condition,
     cases: list[QACase],
     root: Path,
-    ingestor: object | None,
+    ingestor: "MemgraphIngestor | None",
     project_name: str,
     records_path: Path | None = None,
 ) -> list[QARecord]:
@@ -419,7 +426,7 @@ async def _run_condition(
         in_tokens = out_tokens = 0
         try:
             result = await asyncio.wait_for(
-                agent.run(case.question, message_history=[]),  # type: ignore[attr-defined]
+                agent.run(case.question, message_history=[]),
                 timeout=ec.AGENTIC_QA_TIMEOUT_S,
             )
             answer = str(result.output)
@@ -583,13 +590,15 @@ def _init_records_file(
     return prior
 
 
-def _reindex_into_memgraph(root: Path, project_name: str, ingestor: object) -> None:
+def _reindex_into_memgraph(
+    root: Path, project_name: str, ingestor: "MemgraphIngestor"
+) -> None:
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
 
     parsers, queries = load_parsers()
     GraphUpdater(
-        ingestor=ingestor,  # type: ignore[arg-type]
+        ingestor=ingestor,
         repo_path=root,
         parsers=parsers,
         queries=queries,

@@ -9,6 +9,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs
 from ..cpp import utils as cpp_utils
+from ..csharp import utils as csharp_utils
 from ..utils import safe_decode_text
 from .utils import find_child_by_type
 
@@ -100,18 +101,36 @@ _CSHARP_BASE_KIND_CLASS = "class"
 _CSHARP_BASE_KIND_INTERFACE = "interface"
 
 
-def split_csharp_bases(
+def _csharp_base_arity(node: Node) -> int:
+    # The written type-argument count of the base's own (last) segment:
+    # `Base<int, string>` -> 2, `Outer<int>.Inner` -> 0. A record positional
+    # base is measured on its type, not on its argument list.
+    if node.type == cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
+        return next(
+            (
+                _csharp_base_arity(child)
+                for child in node.children
+                if _csharp_base_written_name(child)
+            ),
+            0,
+        )
+    text = safe_decode_text(node) if node.text else None
+    return csharp_utils.generic_arity_of_type_text(text) if text else 0
+
+
+def split_csharp_base_refs(
     class_node: Node,
-    module_qn: str,
-    resolve_to_qn: Callable[[str, str], str],
     base_kinds: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    # Return (inherited_qns, implemented_qns). C# folds the base class and all
-    # interfaces into one base_list; the base class, if any, is the FIRST entry
-    # (grammar-enforced) and must not look like an interface. An interface's
-    # bases are all inheritance; a struct/record/class implements the rest.
-    # `base_kinds` (from the Roslyn frontend) maps a base's simple name to its
-    # exact kind; when present it overrides the I-prefix heuristic per base.
+    # Return the (inherited, implemented) bases as written: generic-free,
+    # with the written arity in CLR style (`NotificationHandler`1`), so a
+    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`. C# folds
+    # the base class and all interfaces into one base_list; the base class,
+    # if any, is the FIRST entry (grammar-enforced) and must not look like
+    # an interface. An interface's bases are all inheritance; a
+    # struct/record/class implements the rest. `base_kinds` (from the
+    # Roslyn frontend) maps a base's simple name to its exact kind; when
+    # present it overrides the I-prefix heuristic per base.
     if class_node.type == cs.TS_CSHARP_ENUM_DECLARATION:
         return [], []
     base_list = find_child_by_type(class_node, cs.TS_CSHARP_BASE_LIST)
@@ -119,7 +138,7 @@ def split_csharp_bases(
         return [], []
 
     written = [
-        name
+        (name, csharp_utils.type_ref(name, _csharp_base_arity(child)))
         for child in base_list.children
         if (name := _csharp_base_written_name(child))
     ]
@@ -128,24 +147,44 @@ def split_csharp_bases(
 
     inherited: list[str] = []
     implemented: list[str] = []
-    for index, name in enumerate(written):
-        resolved = resolve_to_qn(name, module_qn)
+    for index, (name, ref) in enumerate(written):
         simple = name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         # An interface's own bases are all INHERITS in cgr's model (interface
         # extends interface), independent of the semantic kind.
         if is_interface:
-            inherited.append(resolved)
+            inherited.append(ref)
             continue
         kind = base_kinds.get(simple) if base_kinds else None
         if kind == _CSHARP_BASE_KIND_INTERFACE:
-            implemented.append(resolved)
+            implemented.append(ref)
         elif kind == _CSHARP_BASE_KIND_CLASS:
-            inherited.append(resolved)
+            inherited.append(ref)
         elif index == 0 and not is_struct and not _csharp_looks_like_interface(simple):
-            inherited.append(resolved)
+            inherited.append(ref)
         else:
-            implemented.append(resolved)
+            implemented.append(ref)
     return inherited, implemented
+
+
+def split_csharp_bases(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+    base_kinds: dict[str, str] | None = None,
+) -> tuple[list[str], list[str]]:
+    # Return (inherited_qns, implemented_qns), in the order and split of
+    # split_csharp_base_refs.
+    inherited, implemented = split_csharp_base_refs(class_node, base_kinds)
+    return (
+        [_resolve_csharp_ref(ref, module_qn, resolve_to_qn) for ref in inherited],
+        [_resolve_csharp_ref(ref, module_qn, resolve_to_qn) for ref in implemented],
+    )
+
+
+def _resolve_csharp_ref(
+    ref: str, module_qn: str, resolve_to_qn: Callable[[str, str], str]
+) -> str:
+    return resolve_to_qn(csharp_utils.split_type_ref(ref)[0], module_qn)
 
 
 def extract_parent_classes(
@@ -198,18 +237,16 @@ def extract_parent_classes(
     # PHP `extends` (a class's superclass or an interface's superinterfaces)
     # is a base_clause listing `name` nodes; both are inheritance.
     if base_clause := find_child_by_type(class_node, cs.TS_PHP_BASE_CLAUSE):
-        for child in base_clause.children:
-            if parent_name := php_base_simple_name(child):
-                parent_classes.append(resolve_to_qn(parent_name, module_qn))
+        parent_classes.extend(
+            resolve_to_qn(parent_name, module_qn)
+            for child in base_clause.children
+            if (parent_name := php_base_simple_name(child))
+        )
 
-    # Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
     if class_node.type == cs.TS_RS_TRAIT_ITEM:
-        if bounds := class_node.child_by_field_name(cs.FIELD_BOUNDS):
-            for child in bounds.children:
-                base = java_base_type_identifier(child)
-                if base is not None and base.text:
-                    if name := safe_decode_text(base):
-                        parent_classes.append(resolve_to_qn(name, module_qn))
+        parent_classes.extend(
+            _rust_supertrait_parents(class_node, module_qn, resolve_to_qn)
+        )
 
     if class_node.type in (
         cs.TS_DART_CLASS_DEFINITION,
@@ -225,6 +262,21 @@ def extract_parent_classes(
         )
 
     return parent_classes
+
+
+def _rust_supertrait_parents(
+    trait_node: Node, module_qn: str, resolve_to_qn: Callable[[str, str], str]
+) -> list[str]:
+    # Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
+    bounds = trait_node.child_by_field_name(cs.FIELD_BOUNDS)
+    if bounds is None:
+        return []
+    parents: list[str] = []
+    for child in bounds.children:
+        base = java_base_type_identifier(child)
+        if base is not None and base.text and (name := safe_decode_text(base)):
+            parents.append(resolve_to_qn(name, module_qn))
+    return parents
 
 
 # Only these wrappers are descended; see the constants module for why
@@ -335,26 +387,29 @@ def extract_dart_parent_classes(
     # the `with` types (a mixin contributes members like a base), and a
     # `mixin M on Base` states a required superclass as a bare type_identifier
     # child. `implements` targets are IMPLEMENTS (extract_implemented_interfaces).
-    parents: list[str] = []
+    names: list[str] = []
     if superclass := find_child_by_type(class_node, cs.TS_DART_SUPERCLASS):
         for child in superclass.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                name := safe_decode_text(child)
-            ):
-                parents.append(resolve_to_qn(name, module_qn))
-            elif child.type == cs.TS_DART_MIXINS:
-                for mixin in child.named_children:
-                    if mixin.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                        mixin_name := safe_decode_text(mixin)
-                    ):
-                        parents.append(resolve_to_qn(mixin_name, module_qn))
+            if child.type == cs.TS_DART_MIXINS:
+                names.extend(_dart_type_identifier_names(child))
+            else:
+                names.extend(_dart_type_identifier_names_of([child]))
     if class_node.type == cs.TS_DART_MIXIN_DECLARATION:
-        for child in class_node.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                on_name := safe_decode_text(child)
-            ):
-                parents.append(resolve_to_qn(on_name, module_qn))
-    return parents
+        names.extend(_dart_type_identifier_names(class_node))
+    return [resolve_to_qn(name, module_qn) for name in names]
+
+
+def _dart_type_identifier_names(node: Node) -> list[str]:
+    return _dart_type_identifier_names_of(node.named_children)
+
+
+def _dart_type_identifier_names_of(nodes: list[Node]) -> list[str]:
+    # The decoded names of the plain `type_identifier` nodes among `nodes`.
+    return [
+        name
+        for node in nodes
+        if node.type == cs.TS_DART_TYPE_IDENTIFIER and (name := safe_decode_text(node))
+    ]
 
 
 def extract_dart_extends_type_args(
@@ -737,30 +792,65 @@ def extract_implemented_interfaces(
 
     # TypeScript `class C implements I, J` lives in class_heritage >
     # implements_clause (no `interfaces` field), holding type_identifiers.
-    if class_heritage := find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
-        if implements_clause := find_child_by_type(
-            class_heritage, cs.TS_IMPLEMENTS_CLAUSE
-        ):
-            for child in implements_clause.children:
-                if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
-                    if name := safe_decode_text(child):
-                        implemented_interfaces.append(resolve_to_qn(name, module_qn))
+    _extend_ts_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
 
     # PHP `class C implements I, J` is a class_interface_clause of `name` nodes.
+    _extend_php_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
+
+    # Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+    _extend_dart_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
+
+    return implemented_interfaces
+
+
+def _extend_ts_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
+    class_heritage = find_child_by_type(class_node, cs.TS_CLASS_HERITAGE)
+    if not class_heritage:
+        return
+    implements_clause = find_child_by_type(class_heritage, cs.TS_IMPLEMENTS_CLAUSE)
+    if not implements_clause:
+        return
+    for child in implements_clause.children:
+        if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
+            if name := safe_decode_text(child):
+                interface_list.append(resolve_to_qn(name, module_qn))
+
+
+def _extend_php_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
     if php_impl := find_child_by_type(class_node, cs.TS_PHP_CLASS_INTERFACE_CLAUSE):
         for child in php_impl.children:
             if name := php_base_simple_name(child):
-                implemented_interfaces.append(resolve_to_qn(name, module_qn))
+                interface_list.append(resolve_to_qn(name, module_qn))
 
-    # Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+
+def _extend_dart_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
     if dart_impl := find_child_by_type(class_node, cs.TS_DART_INTERFACES):
         for child in dart_impl.named_children:
             if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
                 name := safe_decode_text(child)
             ):
-                implemented_interfaces.append(resolve_to_qn(name, module_qn))
-
-    return implemented_interfaces
+                interface_list.append(resolve_to_qn(name, module_qn))
 
 
 def extract_java_interface_names(

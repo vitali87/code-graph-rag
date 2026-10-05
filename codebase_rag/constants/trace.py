@@ -72,11 +72,31 @@ TRACE_DOTNET_NESTED_MARKER = "+"
 
 # Xdebug computerized-trace markers (trace_format=1, file format 4).
 TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
+# A gzipped pprof is inflated in bounded chunks: a few MB of compressed zeros
+# would otherwise expand to gigabytes in memory (#2263). The cap matches the
+# `cgr trace pull` download cap, which counts compressed bytes only.
+TRACE_MAX_DECOMPRESSED_BYTES = 256 * 1024 * 1024
+TRACE_GZIP_MAGIC = b"\x1f\x8b"
+TRACE_GZIP_WBITS = 16 + 15
+# Compressed input is fed in slices of this size, and at most this many gzip
+# members are read: a profile of thousands of empty members would otherwise
+# stay under both byte caps while each member re-read the whole remainder.
+TRACE_GZIP_INPUT_CHUNK_BYTES = 1024 * 1024
+TRACE_MAX_GZIP_MEMBERS = 64
+TRACE_ERR_PPROF_TOO_LARGE = (
+    "{path} decompresses to more than {limit} bytes; refusing to load it."
+)
 TRACE_ERR_BAD_ADDRS = "{path} is not a cgr instrumented address trace."
 TRACE_ERR_NO_SYMBOLIZER = "Neither atos nor addr2line is available to symbolise."
 TRACE_ERR_ADDRS_DROPPED = (
-    "{path} overflowed the shim's edge table: call edges were dropped, so the "
-    "trace is incomplete and cannot honour exact invocation counts."
+    "{path} lost call edges (the shim's edge table filled, calls nested deeper "
+    "than its stack, or a signal handler called in while the shim was busy), "
+    "so the trace is incomplete and cannot honour exact invocation counts."
+)
+TRACE_ERR_ADDRS_UNWOUND = (
+    "{path} left functions without their exit hook (longjmp, or a C++ exception "
+    "under clang++), so some calls may name the wrong caller and the trace "
+    "cannot honour exact invocation counts."
 )
 TRACE_MSG_ADDRS_UNRESOLVED = (
     "{count} of {total} instrumented addresses did not symbolise to a source "
@@ -108,6 +128,14 @@ TRACE_JVM_NESTED_MARKER = "$"
 # separator-delimited fragments, so matching works with both POSIX and Windows
 # separators in co_filename.
 TRACE_EXCLUDED_DIR_NAMES = frozenset({"site-packages", ".venv", "node_modules"})
+# Installed code never counts as evidence of where another machine's checkout
+# lives, even when it is a copy of the indexed package. Debian's system Python
+# installs into dist-packages rather than site-packages.
+TRACE_INSTALLED_DIR_NAMES = TRACE_EXCLUDED_DIR_NAMES | {"dist-packages"}
+
+# Frames recorded on Windows name files with this separator; tracebacks are
+# pasted across OSes, so it is read as a path separator wherever cgr runs.
+TRACE_WINDOWS_PATH_SEPARATOR = "\\"
 
 # Names whose first parameter marks a bound receiver worth sampling.
 TRACE_RECEIVER_PARAMS = ("self", "cls")
@@ -133,6 +161,21 @@ TRACE_PROP_STATIC_MISSED = "static_missed"
 # dynamic_call_count are approximate (a sampled edge that was never sampled is
 # not evidence of dead code); False when the tracer observed every call.
 TRACE_PROP_SAMPLED = "dynamic_sampled"
+# True once an incremental sync re-parsed an endpoint whose definition changed
+# after the trace was ingested (issue #2429): the observation is kept, but it
+# describes code that no longer exists as traced. Only a new ingest clears it.
+TRACE_PROP_STALE = "dynamic_stale"
+# What a re-parse carries of a trace-derived edge: the runtime observation
+# itself. Resolution, `static_missed` and the dispatch-literal site are
+# re-derived against the re-parsed static graph instead, as an ingest would.
+TRACE_CARRIED_PROPS = (
+    TRACE_PROP_DYNAMIC,
+    TRACE_PROP_CALL_COUNT,
+    TRACE_PROP_WORKLOADS,
+    TRACE_PROP_WORKLOAD_COUNT,
+    TRACE_PROP_RECEIVER_TYPES,
+    TRACE_PROP_SAMPLED,
+)
 
 
 class TraceUnresolvedReason(StrEnum):
@@ -144,6 +187,16 @@ class TraceUnresolvedReason(StrEnum):
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
 
+
+# Said instead of handing back an empty result that reads as "the graph does
+# not know this code" when only the paths failed to line up (issue #2587).
+TRACEBACK_NOTE_NOTHING_RESOLVED = (
+    "0 of {total} frames resolved: {outside} lie outside the indexed checkout "
+    "{root}, and no checkout root they share matches a file the graph indexes. "
+    "If the traceback comes from another machine, a container or a CI runner, "
+    "pass {param} to map its checkout root onto the repository, "
+    'e.g. {{"/app": "."}}.'
+)
 
 TRACE_ERR_BAD_HEADER = "Trace file {path} does not start with a valid cgr trace header."
 TRACE_ERR_VERSION = (

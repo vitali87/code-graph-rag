@@ -14,6 +14,10 @@ TS_PHP_NAME = "name"
 TS_PHP_QUALIFIED_NAME = "qualified_name"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
+# `new class (...) extends B implements I { ... }`: a class with no `name`
+# field. It is named after its position, like the closures beside it
+# (issue #2538).
+TS_PHP_ANONYMOUS_CLASS = "anonymous_class"
 TS_PHP_ARROW_FUNCTION = "arrow_function"
 TS_PHP_MEMBER_CALL_EXPRESSION = "member_call_expression"
 TS_PHP_SCOPED_CALL_EXPRESSION = "scoped_call_expression"
@@ -32,6 +36,10 @@ TS_PHP_ATTRIBUTE_LIST = "attribute_list"
 TS_PHP_ATTRIBUTE = "attribute"
 TS_PHP_ATTRIBUTE_GROUP = "attribute_group"
 TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
+# The one visibility keyword that keeps a PHP member out of its type's API:
+# `public`, `protected` and no keyword at all expose it (issue #2472).
+PHP_VISIBILITY_PRIVATE = "private"
+PHP_NAMESPACE_SEPARATOR = "\\"
 TS_PHP_STATIC_MODIFIER = "static_modifier"
 TS_PHP_PROPERTY_DECLARATION = "property_declaration"
 TS_PHP_PROPERTY_ELEMENT = "property_element"
@@ -48,6 +56,8 @@ TS_PHP_COMPOUND_STATEMENT = "compound_statement"
 TS_PHP_FORMAL_PARAMETERS = "formal_parameters"
 TS_PHP_SIMPLE_PARAMETER = "simple_parameter"
 TS_PHP_ARGUMENT = "argument"
+# `f(...$xs)`, inside an `argument`: unpacks an array into the call.
+TS_PHP_VARIADIC_UNPACKING = "variadic_unpacking"
 TS_PHP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
 TS_PHP_SUBSCRIPT_EXPRESSION = "subscript_expression"
 # `echo $a, $b;` (echo_statement) and `print $x` (print_intrinsic) write STDOUT;

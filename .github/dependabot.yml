@@ -12,7 +12,59 @@ updates:
     schedule:
       interval: "weekly"
 
-  - package-ecosystem: "pip"
+  # The stack `cgr daemon up` renders from codebase_rag/docker-compose.yaml:
+  # every image is pinned by digest, so bumps arrive here (issue #2409).
+  - package-ecosystem: "docker-compose"
+    directory: "/codebase_rag"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # The eval oracles and the Go/C# frontend helpers are built from these on
+  # demand rather than installed with the package, so monthly is enough.
+  - package-ecosystem: "npm"
+    directories:
+      - "/evals/oracles/lua_oracle"
+      - "/evals/oracles/php_oracle"
+      - "/evals/oracles/ruby_oracle"
+      - "/evals/oracles/ts_oracle"
+    schedule:
+      interval: "monthly"
+    ignore:
+      # TypeScript 7 is the native port and no longer exports the compiler
+      # API the ts_oracle is built on; 6.x is the last line that does.
+      - dependency-name: "typescript"
+        versions: [">=7"]
+
+  - package-ecosystem: "cargo"
+    directory: "/evals/oracles/rs_oracle"
+    schedule:
+      interval: "monthly"
+
+  - package-ecosystem: "gomod"
+    directory: "/codebase_rag/parsers/go_frontend/gotypes"
+    schedule:
+      interval: "monthly"
+
+  - package-ecosystem: "nuget"
+    directory: "/codebase_rag/parsers/csharp_frontend/roslyn"
+    schedule:
+      interval: "monthly"
+    groups:
+      # Each pins Workspaces.Common to its own exact version, so one bumped
+      # alone cannot restore beside the other.
+      roslyn:
+        patterns:
+          - "Microsoft.CodeAnalysis.*"
+    ignore:
+      # From 5.9 Workspaces.MSBuild ships net10.0 only, and MSBuild 18 is the
+      # .NET 10 SDK's; the frontend targets net8.0 so it builds on the SDK
+      # most users have.
+      - dependency-name: "Microsoft.CodeAnalysis.*"
+        versions: [">=5.9"]
+      - dependency-name: "Microsoft.Build.Framework"
+        versions: [">=18"]
