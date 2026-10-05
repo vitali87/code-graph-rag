@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
-from pathspec import PathSpec
+from pathspec import GitIgnoreSpec, PathSpec
 
 from .. import constants as cs
 
@@ -123,13 +124,55 @@ def cached_file_identity_posix(file_path: Path) -> str:
     return (file_path.parent.resolve() / file_path.name).as_posix()
 
 
+def ordered_ignore_block(lines: Iterable[str]) -> str:
+    """One exclude-set entry that evaluates `lines` in order, as git does.
+
+    A `.gitignore` exclude followed by `!` lines is not a set of independent
+    patterns: the last matching line decides (issue #2835). Patterns cannot
+    hold a line break, so the joined lines are one entry, compiled apart from
+    the rest of the set; a set without such an entry behaves as before.
+    """
+    return cs.IGNORE_BLOCK_SEPARATOR.join(lines)
+
+
+def ordered_block_lines(pattern: str) -> list[str]:
+    return pattern.split(cs.IGNORE_BLOCK_SEPARATOR)
+
+
+class _IgnoreMatcher(NamedTuple):
+    patterns: PathSpec
+    ordered_blocks: tuple[GitIgnoreSpec, ...]
+
+    def match_file(self, rel_path_str: str) -> bool:
+        return self.patterns.match_file(rel_path_str) or any(
+            _git_ignores(block, rel_path_str) for block in self.ordered_blocks
+        )
+
+
+def _git_ignores(block: GitIgnoreSpec, rel_path_str: str) -> bool:
+    # Git cannot re-include a path whose parent directory is excluded, so a
+    # `!gen/keep.py` under `gen/` keeps nothing: test each ancestor first.
+    parts = rel_path_str.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
+    for depth in range(1, len(parts)):
+        ancestor = cs.SEPARATOR_SLASH.join(parts[:depth])
+        if block.match_file(f"{ancestor}{cs.SEPARATOR_SLASH}"):
+            return True
+    return block.match_file(rel_path_str)
+
+
 # #495: .cgrignore lines and --exclude values are interpreted with
 # .gitignore (gitwildmatch) semantics: bare names match at any depth (as
 # before), and globs / anchoring / dir-only trailing slash now work. The
 # spec is compiled once per pattern set (frozensets are hashable).
 @lru_cache(maxsize=64)
-def compiled_ignore_spec(patterns: frozenset[str]) -> PathSpec:
-    return PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns))
+def compiled_ignore_spec(patterns: frozenset[str]) -> _IgnoreMatcher:
+    blocks = {p for p in patterns if cs.IGNORE_BLOCK_SEPARATOR in p}
+    return _IgnoreMatcher(
+        patterns=PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns - blocks)),
+        ordered_blocks=tuple(
+            GitIgnoreSpec.from_lines(ordered_block_lines(b)) for b in sorted(blocks)
+        ),
+    )
 
 
 def matches_ignore_patterns(rel_path_str: str, patterns: frozenset[str]) -> bool:

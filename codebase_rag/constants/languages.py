@@ -537,6 +537,9 @@ UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIX
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
+# Joins a .gitignore exclude and the `!` lines after it into one exclude-set
+# entry evaluated in order (issue #2835); no pattern line can contain it.
+IGNORE_BLOCK_SEPARATOR = "\n"
 
 # JDK binaries the Java frontend probes and runs (issue #1181).
 JAVAC_BIN = "javac"
