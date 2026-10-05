@@ -21,6 +21,8 @@ TS_GO_FIELD_IDENTIFIER = "field_identifier"
 TS_GO_INTERFACE_TYPE = "interface_type"
 TS_GO_PARAMETER_DECLARATION = "parameter_declaration"
 TS_GO_VARIADIC_PARAMETER_DECLARATION = "variadic_parameter_declaration"
+# `f(xs...)`: a slice passed whole to a variadic parameter.
+TS_GO_VARIADIC_ARGUMENT = "variadic_argument"
 TS_GO_FUNC_LITERAL = "func_literal"
 TS_GO_SOURCE_FILE = "source_file"
 TS_GO_FUNCTION_DECLARATION = "function_declaration"
@@ -101,3 +103,26 @@ TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )
 FIELD_OPERAND = "operand"
+# A generic declaration's `[T any]` list (`type_parameter_declaration`s naming
+# the parameters) and a generic receiver's `Box[T]` arguments (`type_elem`s):
+# the names a result type can spell without naming any declared type.
+FIELD_GO_TYPE_PARAMETERS = "type_parameters"
+TS_GO_TYPE_PARAMETER_DECLARATION = "type_parameter_declaration"
+FIELD_GO_TYPE_ARGUMENTS = "type_arguments"
+TS_GO_TYPE_ELEM = "type_elem"
+# Statements that bind the identifiers in their `left` list (`a, b := ...`,
+# `for k, v := range m`, a select arm's `case v := <-ch`), the declarations
+# whose specs bind names, and a `for` clause's `initializer` (`for i := ...`):
+# what makes a bare name inside a function a local rather than the package's.
+TS_GO_LEFT_BINDING_STATEMENTS: frozenset[str] = frozenset(
+    {"short_var_declaration", "range_clause", "receive_statement"}
+)
+TS_GO_SPEC_DECLARATIONS: frozenset[str] = frozenset(
+    {"var_declaration", "const_declaration"}
+)
+TS_GO_BINDING_SPECS: frozenset[str] = frozenset({"var_spec", "const_spec"})
+TS_GO_VAR_SPEC_LIST = "var_spec_list"
+FIELD_GO_INITIALIZER = "initializer"
+TS_GO_FUNCTION_SCOPES: frozenset[str] = frozenset(
+    {"function_declaration", "method_declaration", "func_literal"}
+)

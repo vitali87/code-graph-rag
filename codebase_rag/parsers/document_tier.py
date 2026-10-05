@@ -850,6 +850,11 @@ class DocumentTier:
         )
 
 
+def document_tier_available() -> bool:
+    """Whether the document tier can parse, the same gate `DocumentTier` uses."""
+    return _load_parser() is not None
+
+
 def _load_parser() -> Parser | None:
     """A markdown Parser, or None when the optional grammar is absent.
 
