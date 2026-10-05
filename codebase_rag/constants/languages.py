@@ -54,6 +54,8 @@ EXT_LUA = ".lua"
 EXT_CS = ".cs"
 EXT_DART = ".dart"
 EXT_SQL = ".sql"
+# Data file extensions
+EXT_JSON = ".json"
 
 # File extension tuples by language
 PY_EXTENSIONS = (EXT_PY, EXT_PYI)
@@ -211,8 +213,8 @@ TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
 # Contract files that declare service operations (issue #912): OpenAPI specs
 # in JSON or YAML, and protobuf service definitions. The markers gate parsing
 # so the JSON and YAML a repo is otherwise full of is never read as a spec.
-CONTRACT_JSON_EXTENSION = ".json"
-CONTRACT_SPEC_EXTENSIONS: frozenset[str] = frozenset({".json", ".yaml", ".yml"})
+CONTRACT_JSON_EXTENSION = EXT_JSON
+CONTRACT_SPEC_EXTENSIONS: frozenset[str] = frozenset({EXT_JSON, ".yaml", ".yml"})
 CONTRACT_PROTO_EXTENSION = ".proto"
 CONTRACT_SPEC_VERSION_KEYS: tuple[str, ...] = ("openapi", "swagger")
 CONTRACT_SPEC_MARKERS: tuple[str, ...] = ("openapi", "swagger")
@@ -260,6 +262,8 @@ JS_SOURCE_DIR = "src"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
+TS_EXTENDS_KEY = "extends"
+TSCONFIG_EXTENSION = EXT_JSON
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"
@@ -286,6 +290,27 @@ class SupportedLanguage(StrEnum):
 
 # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
 C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
+
+# Languages whose definitions store `positional_params` with the optionality
+# the signature declares (issue #2517); Python stores CPython's positional
+# names instead. A call into one is judged by the count it passes.
+DECLARED_ARITY_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.GO,
+        SupportedLanguage.RUST,
+        SupportedLanguage.PHP,
+        SupportedLanguage.JAVA,
+        SupportedLanguage.CSHARP,
+    }
+)
+# Where a call passing fewer arguments than the required parameters fails to
+# compile or raises (PHP's ArgumentCountError). JavaScript passes `undefined`.
+ARITY_REJECTS_MISSING = DECLARED_ARITY_LANGUAGES - {SupportedLanguage.JS}
+# Where a surplus argument fails too. PHP and JavaScript drop it at run time.
+ARITY_REJECTS_SURPLUS = ARITY_REJECTS_MISSING - {SupportedLanguage.PHP}
 
 
 class LanguageStatus(StrEnum):

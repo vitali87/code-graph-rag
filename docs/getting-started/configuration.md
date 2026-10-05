@@ -8,6 +8,8 @@ Configuration is managed through environment variables in the `.env` file. The p
 
 Set a role's `*_PROVIDER` and `*_MODEL` together. If neither is set, that role uses the local Ollama default (`llama3.2`). Setting only one of them (for example `ORCHESTRATOR_PROVIDER=anthropic` without `ORCHESTRATOR_MODEL`) is an error: `cgr start` exits with a message naming the missing variable, and `cgr doctor` reports it as a failed check.
 
+![A .env with ORCHESTRATOR_PROVIDER but no ORCHESTRATOR_MODEL: cgr doctor fails the check and cgr start exits naming the missing variable](../assets/demos/configuration-provider-model-pair.gif)
+
 ## Provider Examples
 
 ### All Ollama (Local Models)
@@ -59,6 +61,10 @@ CYPHER_PROVIDER=ollama
 CYPHER_MODEL=qwen2.5-coder
 CYPHER_ENDPOINT=http://localhost:11434/v1
 ```
+
+![cgr doctor reading the mixed-provider .env: Google credentials present, local Ollama not reachable](../assets/demos/configuration-mixed-providers.gif)
+
+*The key is the placeholder above: `cgr doctor` only checks that one is present. No Ollama runs on the recording machine.*
 
 ### MiniMax Models
 
@@ -157,3 +163,5 @@ from cgr import settings
 settings.set_orchestrator("openai", "gpt-5.6-terra", api_key="sk-...")
 settings.set_cypher("google", "gemini-3.5-flash-lite", api_key="your-key")
 ```
+
+![The programmatic configuration snippet run in a Python REPL, showing the active orchestrator and Cypher configs change](../assets/demos/configuration-programmatic.gif)
