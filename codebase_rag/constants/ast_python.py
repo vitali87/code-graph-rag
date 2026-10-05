@@ -15,6 +15,9 @@ TS_PY_TUPLE = "tuple"
 TS_PY_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_PY_EXPRESSION_LIST = "expression_list"
 TS_PY_LIST_COMPREHENSION = "list_comprehension"
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
 TS_PY_FOR_STATEMENT = "for_statement"
 TS_PY_FOR_IN_CLAUSE = "for_in_clause"
 TS_PY_ASSIGNMENT = "assignment"
@@ -40,6 +43,15 @@ TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_PY_WITH_STATEMENT = "with_statement"
 TS_PY_AS_PATTERN = "as_pattern"
 TS_PY_AS_PATTERN_TARGET = "as_pattern_target"
+# The keyword child of an `async with` (and of `async for` / `async def`).
+TS_PY_ASYNC = "async"
+# What a with statement calls on its context manager, whose result its `as`
+# target is bound to: `with` calls `__enter__`, `async with` awaits `__aenter__`.
+PY_DUNDER_ENTER = "__enter__"
+PY_DUNDER_AENTER = "__aenter__"
+# The `if TYPE_CHECKING:` guard (bare or `typing.`-qualified): its body is
+# read by type checkers only and binds nothing at runtime.
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_EXPRESSION_STATEMENT = "expression_statement"
 TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
@@ -50,11 +62,31 @@ TS_PY_DECORATOR = "decorator"
 PY_PROPERTY_ACCESSOR_ATTRS = frozenset({"getter", "setter", "deleter"})
 PY_PROPERTY_DECORATOR = "property"
 TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
+TS_PY_LIST_SPLAT = "list_splat"
+TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
+# A definition's parameter list node, and the splats an argument list can
+# carry (`f(*args)`, `f(**opts)`); the `_pattern` forms above are the
+# definition-side spellings.
+TS_PY_PARAMETERS = "parameters"
+TS_PY_LIST_SPLAT = "list_splat"
+TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
+# Scopes nested in a function body, where a parameter's name may be re-bound
+# rather than read, and the statements that re-bind a name in place.
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
+TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
+# `typing` names a literal-versus-annotation check understands.
+PY_TYPING_OPTIONAL = "Optional"
+PY_TYPING_UNION = "Union"
+# The first parameter of a method that names the instance or class; a
+# signature change keeps it in place and never remaps it.
+PY_RECEIVER_NAMES = frozenset({"self", "cls"})
 TS_PY_SUBSCRIPT = "subscript"
 # The `subscript` node's index field (`os.environ["K"]` -> the `"K"` string).
 TS_PY_FIELD_SUBSCRIPT = "subscript"
@@ -99,6 +131,87 @@ TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
+TS_PY_UNARY_OPERATOR = "unary_operator"
+TS_PY_CONCATENATED_STRING = "concatenated_string"
+TS_PY_AWAIT = "await"
+TS_PY_LIST_SPLAT = "list_splat"
+TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+# The `interpolation` node's value field (`f"{t!r:>8}"` -> `t`).
+TS_PY_FIELD_EXPRESSION = "expression"
+# A dynamic format spec (`f"{t:{fill}>{width}}"`): the interpolation's
+# `format_specifier` field holds a `format_expression` per nested `{...}`,
+# each with its own `expression` field and, nested once more, its own
+# `format_specifier`.
+TS_PY_FIELD_FORMAT_SPECIFIER = "format_specifier"
+TS_PY_FORMAT_SPECIFIER = "format_specifier"
+TS_PY_FORMAT_EXPRESSION = "format_expression"
+
+# The FLOWS_TO walk carries taint through any call it cannot see into, but
+# these results reveal nothing of their input's content (a size, a truth
+# value, an identity or type, a one-way digest), so taint stops at them
+# (issue #2588). Escaping and quoting are deliberately absent: FLOWS_TO
+# tracks where a value came from, and an escaped secret written to stdout
+# still leaks the secret.
+PY_TAINT_CLEARING_CALLS = frozenset(
+    {
+        "len",
+        "bool",
+        "id",
+        "hash",
+        "type",
+        "isinstance",
+        "issubclass",
+        "callable",
+        "hasattr",
+        "any",
+        "all",
+        "hashlib.new",
+        "hashlib.md5",
+        "hashlib.sha1",
+        "hashlib.sha224",
+        "hashlib.sha256",
+        "hashlib.sha384",
+        "hashlib.sha512",
+        "hashlib.sha3_256",
+        "hashlib.sha3_512",
+        "hashlib.blake2b",
+        "hashlib.blake2s",
+        "hashlib.pbkdf2_hmac",
+        "hashlib.scrypt",
+        "hmac.new",
+        "hmac.digest",
+        "hmac.compare_digest",
+        "secrets.compare_digest",
+    }
+)
+# Methods matched by name on any receiver, since the walk has no receiver
+# type: str predicates and position/count lookups return a bool or an int.
+PY_TAINT_CLEARING_METHODS = frozenset(
+    {
+        "startswith",
+        "endswith",
+        "isalnum",
+        "isalpha",
+        "isascii",
+        "isdecimal",
+        "isdigit",
+        "isidentifier",
+        "islower",
+        "isnumeric",
+        "isprintable",
+        "isspace",
+        "istitle",
+        "isupper",
+        "count",
+        "find",
+        "rfind",
+        "index",
+        "rindex",
+    }
+)
 
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
@@ -202,3 +315,17 @@ GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
 # letting a RecursionError discard the whole method's variable types.
 GUARD_JAVA_INFERENCE_DEPTH = "_java_inference_depth_guard"
 JAVA_MAX_INFERENCE_DEPTH = 64
+
+# A Python `__all__` assignment (group 1 is the bracketed body) and one string
+# entry in it. Shared by the rename that rewrites the entries, its rollback
+# check, and the structural delta that reports entries naming a removed symbol
+# (issue #2516), so the three cannot disagree about what an entry is.
+PY_DUNDER_ALL_BLOCK_PATTERN = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
+PY_DUNDER_ALL_ENTRY_PATTERN = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
+# The module attribute `from module import *` reads, its two list methods a
+# module may grow it with, and the prefix that keeps a name out of a wildcard
+# import of a module without one.
+PY_DUNDER_ALL = "__all__"
+PY_LIST_EXTEND = "extend"
+PY_LIST_APPEND = "append"
+PY_PRIVATE_PREFIX = "_"
