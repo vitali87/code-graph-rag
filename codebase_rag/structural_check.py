@@ -354,13 +354,12 @@ def _measure_then_restore(
     """
     store = cast(GraphStore, ingestor)
     guard = IsolationGuard(store, project_name, repo_root)
-    cache = _FileSnapshot(repo_root / cs.HASH_CACHE_FILENAME)
+    # The cache the re-ingest rewrites, in the checkout's state directory
+    # rather than the tree since #2427.
+    cache_path = state_file(repo_root, cs.HASH_CACHE_FILENAME)
+    cache = _FileSnapshot(cache_path)
     if cache.unrestorable:
-        raise CheckError(
-            cs.CHECK_ISOLATED_CACHE_UNREADABLE.format(
-                path=repo_root / cs.HASH_CACHE_FILENAME
-            )
-        )
+        raise CheckError(cs.CHECK_ISOLATED_CACHE_UNREADABLE.format(path=cache_path))
     # The restore deletes before it re-creates, and the store offers no
     # transaction around the two, so a failure between them leaves the graph
     # partial. The persistent incomplete-run marker every mutating path sets
