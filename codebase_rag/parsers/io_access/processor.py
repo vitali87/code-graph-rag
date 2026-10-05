@@ -49,6 +49,11 @@ from .extract import (
     string_literal,
 )
 from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
+from .py_handles import (
+    inherited_python_handles,
+    python_binding_from_node,
+    python_stream_target,
+)
 from .registry import (
     IO_ARG_HANDLE_SINKS,
     IO_CALL_HANDLE_WRAPPERS,
@@ -399,7 +404,7 @@ class IOAccessProcessor:
         # Drop inherited plain names rebound locally; the DFS re-adds them at the
         # assignment, so uses after it still resolve. Attribute keys (self.x) are
         # never locals, so they are unaffected.
-        handles = self._inherited_handles(caller_node, import_map, ctor_by_name)
+        handles = inherited_python_handles(caller_node, import_map, ctor_by_name)
         locally_assigned = self._locally_assigned_names(caller_node)
         for name in locally_assigned:
             if cs.SEPARATOR_DOT not in name:
@@ -410,7 +415,7 @@ class IOAccessProcessor:
             if node.type in PY_SCOPE_BOUNDARIES:
                 stack.extend(reversed(definition_header_nodes(node)))
                 continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
+            bound = python_binding_from_node(node, import_map, ctor_by_name, handles)
             if bound is not None:
                 var, binding = bound
                 handles[var] = binding
@@ -422,133 +427,8 @@ class IOAccessProcessor:
                 )
             stack.extend(reversed(node.children))
 
-    def _binding_from_node(
-        self,
-        node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> tuple[str, HandleBinding] | None:
-        # Both `f = open(...)` (assignment) and `with open(...) as f:` (as_pattern)
-        # bind a handle var to a constructor call.
-        if node.type == cs.TS_PY_ASSIGNMENT:
-            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            call = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-        elif node.type == cs.TS_PY_AS_PATTERN:
-            call = next((c for c in node.children if c.type == cs.TS_PY_CALL), None)
-            alias = next(
-                (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
-                None,
-            )
-            target = alias.children[0] if alias and alias.children else None
-        else:
-            return None
-        # `f = open(...)` binds a plain name; `self.f = open(...)` binds an
-        # attribute: keep the full dotted text ("self.f") as the handle key so a
-        # later `self.f.write(...)` resolves against it.
-        if (
-            target is None
-            or call is None
-            or target.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
-            or call.type != cs.TS_PY_CALL
-            or target.text is None
-        ):
-            return None
-        raw = call_name(call)
-        target_name = target.text.decode(cs.ENCODING_UTF8)
-        ctor = registry_match(ctor_by_name, raw, import_map)
-        if ctor is None:
-            # Derive (`cur = conn.cursor()`, issue #714): a method on a bound
-            # handle that yields a same-resource sub-handle binds the target
-            # to the parent's resource.
-            derived = self._derived_python_binding(raw, handles)
-            return None if derived is None else (target_name, derived)
-        identity = literal_target(call, ctor.target_arg, ctor.target_kw)
-        return target_name, HandleBinding(kind=ctor.kind, identity=identity)
-
-    @staticmethod
-    def _derived_python_binding(
-        raw: str | None, handles: dict[str, HandleBinding]
-    ) -> HandleBinding | None:
-        if raw is None:
-            return None
-        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return None
-        parent = handles.get(receiver)
-        if parent is None or method not in IO_HANDLE_DERIVES.get(
-            parent.kind, frozenset()
-        ):
-            return None
-        return parent
-
-    def _inherited_handles(
-        self,
-        caller_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-    ) -> dict[str, HandleBinding]:
-        # Handle bindings visible from ENCLOSING scopes, walked innermost-first so a
-        # nearer scope shadows a farther one (setdefault keeps the first seen). An
-        # enclosing class contributes its `self.<attr>` handles (set in any method);
-        # an enclosing function/module contributes its top-level local handles.
-        # Nested scopes are pruned; their locals are not visible.
-        handles: dict[str, HandleBinding] = {}
-        class_scanned = False
-        node = caller_node.parent
-        while node is not None:
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                if not class_scanned:
-                    class_scanned = True
-                    self._collect_self_attr_handles(
-                        node, import_map, ctor_by_name, handles
-                    )
-            elif node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_MODULE):
-                self._collect_scope_var_handles(node, import_map, ctor_by_name, handles)
-            node = node.parent
-        return handles
-
     def _locally_assigned_names(self, caller_node: Node) -> set[str]:
         return python_locally_assigned_names(caller_node)
-
-    def _collect_scope_var_handles(
-        self,
-        scope_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> None:
-        # Top-level handle bindings of one scope's OWN body; nested defs/classes are
-        # pruned (their locals belong to their own scope, not this one).
-        stack = list(scope_seed_nodes(scope_node))
-        while stack:
-            node = stack.pop()
-            if node.type in PY_SCOPE_BOUNDARIES:
-                continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
-            if bound is not None:
-                handles.setdefault(bound[0], bound[1])
-            stack.extend(node.children)
-
-    def _collect_self_attr_handles(
-        self,
-        class_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> None:
-        # `self.<attr> = <constructor>()` bindings anywhere in the class body
-        # (descending method bodies, since __init__ is the usual site); nested
-        # classes are skipped because their `self` is a different object.
-        stack = list(scope_seed_nodes(class_node))
-        while stack:
-            node = stack.pop()
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
-            if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
-                handles.setdefault(bound[0], bound[1])
-            stack.extend(node.children)
 
     def _emit_direct_sinks(
         self,
@@ -2067,6 +1947,11 @@ class IOAccessProcessor:
             return
         sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
+            return
+        if sink.stream_kw is not None:
+            stream = python_stream_target(node, sink, import_map, lambda: handles)
+            if stream is not None:
+                self._emit(caller_spec, sink.direction, *stream)
             return
         mode = (
             literal_target(node, sink.mode_arg, sink.mode_kw)

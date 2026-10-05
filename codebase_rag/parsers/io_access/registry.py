@@ -25,7 +25,8 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
         target_arg=0,
         target_kw="key",
     ),
-    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    # `file=` redirects the write: to stderr, or into an open handle (#2776).
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE, stream_kw="file"),
     IOSink("json.load", ResourceKind.FILE, IODirection.READ),
     IOSink("json.dump", ResourceKind.FILE, IODirection.WRITE),
     IOSink(
@@ -440,6 +441,13 @@ LIBC_STD_STREAMS: dict[str, ResourceKind] = {
     "stdin": ResourceKind.STDIN,
     "stdout": ResourceKind.STDOUT,
     "stderr": ResourceKind.STDERR,
+}
+
+# The standard streams a Python `print(file=...)` can name, keyed like a sink
+# registry so an import alias (`from sys import stderr`) normalises onto them.
+PY_STD_STREAMS: dict[str, ResourceKind] = {
+    "sys.stdout": ResourceKind.STDOUT,
+    "sys.stderr": ResourceKind.STDERR,
 }
 
 # Keyed under both the bare (C linkage or `using namespace std`) and `std::`-
