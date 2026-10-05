@@ -21,6 +21,7 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CONTEXT = "context"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -54,10 +55,23 @@ CMD_DELETE_PROJECT = "Delete one project without changing other indexed projects
 CMD_HELP = "Show help for a command"
 
 CMD_LANGUAGE_GROUP = CMD_LANGUAGE
-CMD_LANGUAGE_ADD = "Add and register a Tree-sitter grammar"
-CMD_LANGUAGE_LIST = "List configured languages and their node mappings"
-CMD_LANGUAGE_REMOVE = "Remove a language from cgr configuration"
-CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under .git/modules"
+CMD_LANGUAGE_ADD = "Add a Tree-sitter grammar to a code-graph-rag source checkout"
+CMD_LANGUAGE_LIST = "List supported languages by tier, and the optional frontends"
+CMD_LANGUAGE_REMOVE = "Remove a language from a code-graph-rag source checkout"
+CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under the checkout's .git"
+# add-grammar, remove-language and cleanup-orphaned-modules edit the checkout
+# the running cgr was imported from, never the cwd (issue #2422).
+HELP_LANGUAGE_CONTRIBUTOR_TOOL = (
+    "Contributor tool. It edits codebase_rag/language_spec.py and the grammars/ "
+    "submodules of the code-graph-rag source checkout this cgr runs from, "
+    "whatever the current directory. An installed cgr (pip, pipx, uv tool "
+    "install) has no checkout, so the command refuses and changes nothing."
+)
+CMD_LANGUAGE_ADD_HELP = f"{CMD_LANGUAGE_ADD}.\n\n{HELP_LANGUAGE_CONTRIBUTOR_TOOL}"
+CMD_LANGUAGE_REMOVE_HELP = f"{CMD_LANGUAGE_REMOVE}.\n\n{HELP_LANGUAGE_CONTRIBUTOR_TOOL}"
+CMD_LANGUAGE_CLEANUP_HELP = (
+    f"{CMD_LANGUAGE_CLEANUP}.\n\n{HELP_LANGUAGE_CONTRIBUTOR_TOOL}"
+)
 
 CMD_DAEMON = "Manage the shared Memgraph and Qdrant stack"
 CMD_DAEMON_GROUP = CMD_DAEMON
@@ -122,7 +136,12 @@ CMD_GRAPH_IMPORTERS = (
 CMD_GRAPH_TESTS_REACHING = (
     "Tests from which a qualified name is reachable, with distance."
 )
-EPILOG_GRAPH = "Run 'cgr help graph COMMAND' for command-specific help."
+EPILOG_GRAPH = (
+    "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "Exit status: 0 with the JSON answer, where [] means the name is in the "
+    "graph and nothing matches it; 3 when the project is not indexed; 4 when "
+    "a qualified name is not in the graph."
+)
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
@@ -130,19 +149,20 @@ HELP_GRAPH_REPO_PATH = (
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
 CMD_CHECK = (
     "Report the structural delta of the working tree against a git ref: "
-    "dangling callers, arity findings, new duplicates, new import cycles, "
-    "tests reaching the edited symbols."
+    "dangling callers and importers, arity findings, new duplicates, new "
+    "import cycles, tests reaching the edited symbols."
 )
 EXAMPLES_CHECK = (
     "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
+    "\n  cgr check --base origin/main --isolated --fail-on-found"
 )
 HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
 )
 HELP_CHECK_FAIL_ON_FOUND = (
-    "Exit with status 1 when the delta reports dangling callers, calls with "
-    "too many arguments, new duplicates or new import cycles. A "
-    "possibly_missing site is reported but does not fail the check."
+    "Exit with status 1 when the delta reports dangling callers, dangling "
+    "importers, calls with too many arguments, new duplicates or new import "
+    "cycles. A possibly_missing site is reported but does not fail the check."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
@@ -164,6 +184,16 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CONTEXT = (
+    "Print a graph-ranked context slice for a symbol, location or task within "
+    "a token budget: source, caller lines, callee signatures, types, tests, docs."
+)
+EXAMPLES_CONTEXT = (
+    "Examples:\n  cgr context myproj.pkg.util.helper\n"
+    "  cgr context pkg/util.py:12 --budget 2000"
+)
+HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
+HELP_CONTEXT_BUDGET = "Token budget for the slice."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -203,6 +233,21 @@ EXAMPLES_DUPLICATES = (
     "EXAMPLES\n\n"
     "  cgr duplicates --project-name my-project\n\n"
     "  cgr duplicates --threshold 0.9 --format json --fail-on-found"
+)
+# `cgr duplicates --help` spells out what a group is: its count drives
+# --fail-on-found and trend tracking, so overlap must not be guessed at
+# (issue #2473). The commands table keeps the one-line CMD_DUPLICATES.
+DESC_DUPLICATES = (
+    f"{CMD_DUPLICATES}.\n\n"
+    "Groups are disjoint: each function is reported in at most one group. "
+    "An 'exact' group holds functions with the same structure, renamed copies "
+    "included. A 'similar' group holds near-copies, each linked to another "
+    "member by a pair whose branch overlap reaches --threshold, so two "
+    "members may be linked only through a third.\n\n"
+    "Similarity is a similar group's weakest to strongest link. 100% there "
+    "means every statement shape is shared but the bodies still differ. "
+    "Members of a similar group that are exact copies of each other share a "
+    "number in the Exact column (exact_subgroups in JSON)."
 )
 EXAMPLES_DELETE_PROJECT = "EXAMPLE\n\n  cgr delete-project --name my-project"
 EXAMPLES_HELP = "EXAMPLES\n\n  cgr help start\n\n  cgr help daemon logs"
@@ -410,6 +455,10 @@ HELP_GRAMMAR_URL = (
 HELP_KEEP_SUBMODULE = (
     "Keep the grammar git submodule when removing the language. By default, remove it."
 )
+HELP_LANGUAGE_LIST_VERBOSE = (
+    "Also list the tree-sitter node types each language maps to functions, "
+    "classes, modules and calls."
+)
 
 HELP_PROJECT_NAME = (
     "Project name to store in the graph. Defaults to the directory name plus a "
@@ -548,6 +597,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
