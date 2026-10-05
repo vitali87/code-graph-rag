@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from codebase_rag import constants as cs
 from codebase_rag.tests.test_packaged_data import _BUILD_WHEEL, _copy_project
 from codebase_rag.trace.cli import cli as trace_cli
 
@@ -96,6 +97,7 @@ def test_an_installed_cgr_points_at_its_own_agent(
         check=True,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=300,
     )
     printed = Path(probe.stdout.strip().splitlines()[-1])
@@ -113,7 +115,13 @@ def test_trace_agent_prints_the_path(agent: str, relative: str) -> None:
 
 
 def test_the_guide_locates_every_agent_through_the_command() -> None:
-    text = GUIDE.read_text(encoding="utf-8")
+    # A demo's alt text describes its recording (the JVM one was made with
+    # `make jvm-agent`); only the guide's prose and commands are checked.
+    text = "\n".join(
+        line
+        for line in GUIDE.read_text(encoding="utf-8").splitlines()
+        if not line.startswith("![")
+    )
 
     for agent in AGENTS:
         assert f"cgr trace agent {agent}" in text
