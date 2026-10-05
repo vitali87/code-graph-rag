@@ -2,6 +2,9 @@
 
 TS_GO_PACKAGE_CLAUSE = "package_clause"
 TS_GO_PACKAGE_IDENTIFIER = "package_identifier"
+# The package a Go file declares, read from its text: the first line that is
+# a package clause (build constraints and comments come before it).
+GO_PACKAGE_CLAUSE_PATTERN = r"^\s*package\s+(\w+)"
 TS_GO_TYPE_DECLARATION = "type_declaration"
 TS_GO_TYPE_SPEC = "type_spec"
 TS_GO_TYPE_ALIAS = "type_alias"
