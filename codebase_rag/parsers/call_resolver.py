@@ -2069,12 +2069,34 @@ class CallResolver:
             if class_context in self.function_registry:
                 return frozenset(owners)
             qualifier = class_context.rpartition(cs.SEPARATOR_DOT)[2]
-        type_qn = self._resolve_class_name(qualifier, module_qn)
+        type_qn = self._rust_path_type_qn(
+            object_path, module_qn
+        ) or self._resolve_class_name(qualifier, module_qn)
         if type_qn is not None and self.function_registry.get(type_qn) in (
             _RS_OWNER_NODE_TYPES
         ):
             owners.add(type_qn)
         return frozenset(owners) or None
+
+    def _rust_path_type_qn(self, object_path: list[str], module_qn: str) -> str | None:
+        # A qualifier written with its path (`grep_searcher::BinaryDetection`,
+        # `crate::searcher::BinaryDetection`) names one type, read through the
+        # path as its `use` would be; handing the bare last segment to the
+        # class lookup dropped that, and the lookup declines a name several
+        # types share (issue #2982).
+        if len(object_path) < 2:
+            return None
+        path_qn = self.import_processor.rust_path_qn(
+            cs.SEPARATOR_DOUBLE_COLON.join(object_path), module_qn
+        )
+        if path_qn is None:
+            return None
+        type_qn = self._follow_reexports(path_qn)
+        return (
+            type_qn
+            if self.function_registry.get(type_qn) in (_RS_OWNER_NODE_TYPES)
+            else None
+        )
 
     def _rust_owned_method(
         self,
