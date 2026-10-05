@@ -30,14 +30,41 @@ def _project_names(ingestor: QueryProtocol) -> list[str]:
     ]
 
 
+def _group_heading(number: int, group: DuplicateGroup) -> str:
+    kind = group["kind"]
+    low = cs.MSG_DUPLICATES_GROUP.format(
+        number=number, kind=kind, similarity=group["similarity"]
+    )
+    high = cs.MSG_DUPLICATES_GROUP.format(
+        number=number, kind=kind, similarity=group["max_similarity"]
+    )
+    # A `similar` cluster's members are linked through each other (issue
+    # #2473), so one score would hide how far apart its links are.
+    if low == high:
+        return low
+    return cs.MSG_DUPLICATES_GROUP_RANGE.format(
+        number=number,
+        kind=kind,
+        similarity=group["similarity"],
+        max_similarity=group["max_similarity"],
+    )
+
+
+def _exact_subgroup_lines(group: DuplicateGroup) -> list[str]:
+    if group["kind"] != cs.KIND_SIMILAR:
+        return []
+    return [
+        cs.MSG_DUPLICATES_EXACT_SUBGROUP.format(
+            names=cs.SEPARATOR_COMMA_SPACE.join(names)
+        )
+        for names in group["exact_subgroups"]
+    ]
+
+
 def _format_groups(groups: list[DuplicateGroup], limit: int) -> list[str]:
     lines: list[str] = []
     for number, group in enumerate(groups[:limit], start=1):
-        lines.append(
-            cs.MSG_DUPLICATES_GROUP.format(
-                number=number, kind=group["kind"], similarity=group["similarity"]
-            )
-        )
+        lines.append(_group_heading(number, group))
         lines.extend(
             cs.MSG_DUPLICATES_MEMBER.format(
                 qualified_name=member["qualified_name"],
@@ -47,6 +74,7 @@ def _format_groups(groups: list[DuplicateGroup], limit: int) -> list[str]:
             )
             for member in group["members"]
         )
+        lines.extend(_exact_subgroup_lines(group))
     if len(groups) > limit:
         lines.append(cs.MSG_DUPLICATES_TRUNCATED.format(count=len(groups) - limit))
     return lines
