@@ -861,11 +861,17 @@ async def test_mcp_rename_refusal_is_a_payload_not_an_exception(
     root, graph = py_repo
     ingestor = MagicMock()
     ingestor.fetch_all = graph.fetch_all
+    # The fixture indexes the repo as `graph.project`, not the name its root
+    # derives to, and an unindexed project is refused before the rename runs
+    # (issue #2461), so the call names it.
+    ingestor.list_projects.return_value = [graph.project]
     registry = MCPToolsRegistry(
         project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
     )
     payload = await registry.rename(
-        qualified_name=f"{graph.project}.pkg.util.helper", new_name="not valid"
+        qualified_name=f"{graph.project}.pkg.util.helper",
+        new_name="not valid",
+        project=graph.project,
     )
     assert isinstance(payload, dict)
     assert cs.DICT_KEY_ERROR in payload
