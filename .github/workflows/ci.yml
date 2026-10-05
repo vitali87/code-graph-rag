@@ -485,7 +485,9 @@ jobs:
       && github.event.pull_request.base.ref == 'main'
       && github.event.pull_request.user.login != 'dependabot[bot]'
       && github.event.pull_request.head.repo.full_name == github.repository
-    timeout-minutes: 45
+    # Outlasts the SonarCloud Analysis job's 50 min cap plus the time
+    # SonarCloud takes to publish, so a healthy analysis is never missed.
+    timeout-minutes: 65
     permissions:
       # checks: read backs the check-runs API call that detects a failed
       # SonarCloud Analysis job, so the gate fails fast instead of waiting
@@ -512,7 +514,7 @@ jobs:
           # public projects, so no token is needed. Analysis lands minutes
           # after the SonarCloud Analysis job finishes, so poll until the
           # reported analyzed commit is this exact commit.
-          deadline=$(( $(date +%s) + 2400 ))
+          deadline=$(( $(date +%s) + 3600 ))
           while :; do
             analyzed=$(curl -sf "https://sonarcloud.io/api/project_pull_requests/list?project=$PROJECT_KEY" \
               | jq -r --arg pr "$PR" \
@@ -562,7 +564,7 @@ jobs:
               echo "No SonarCloud analysis of $HEAD_SHA yet (last analyzed: ${analyzed:-none}), waiting ..."
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "❌ No SonarCloud analysis of $HEAD_SHA appeared within 40 minutes."
+              echo "❌ No SonarCloud analysis of $HEAD_SHA appeared within 60 minutes."
               echo "Check the SonarCloud Analysis job, then re-run this job."
               exit 1
             fi
