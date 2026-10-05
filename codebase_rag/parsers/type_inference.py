@@ -26,6 +26,7 @@ from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
+from .utils import follow_reexports
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -89,6 +90,7 @@ class TypeInferenceEngine:
         "_dart_type_inference",
         "dart_extends_type_args",
         "dart_constructor_qns",
+        "dart_extension_on_types",
     )
 
     def __init__(
@@ -132,6 +134,7 @@ class TypeInferenceEngine:
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
         dart_constructor_qns: set[str] | None = None,
+        dart_extension_on_types: dict[str, str] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -228,6 +231,9 @@ class TypeInferenceEngine:
         # Constructor qns, read by the call pass to record a named
         # constructor call as a construction (#2012).
         self.dart_constructor_qns = _shared(dart_constructor_qns, set)
+        # Extension qn -> its `on` type as written, read by the resolver when
+        # a typed receiver's class lacks the member (#2482).
+        self.dart_extension_on_types = _shared(dart_extension_on_types, dict)
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._csharp_type_inference: CSharpTypeInferenceEngine | None = None
@@ -597,7 +603,13 @@ class TypeInferenceEngine:
                 return None
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
-        return self.method_return_types.get(method_qn)
+        return_type = self.method_return_types.get(method_qn)
+        # Another package's type (`model.Item`) is spelled for the METHOD's
+        # file; a local typed with that spelling resolves to nothing here and
+        # would lose the edge its calls get by name, so it stays untyped.
+        if return_type and cs.SEPARATOR_DOT in return_type:
+            return None
+        return return_type
 
     def drop_go_return_types(self, qns: Collection[str]) -> None:
         """Forget the Go return types recorded under `qns` and drop the index.
@@ -774,16 +786,31 @@ class TypeInferenceEngine:
             if current_type in cs.RS_GUARD_WRAPPERS:
                 return None
             class_qn = self._resolve_rust_type_qn(current_type, module_qn)
-            if field_type := self.class_field_types.get(class_qn, {}).get(hop):
-                current_type = field_type
-                guard_inner = self.class_field_guard_inner.get(class_qn, {}).get(hop)
-            elif next_type := self.method_return_types.get(
-                f"{class_qn}{cs.SEPARATOR_DOT}{hop}"
-            ):
-                current_type = next_type
-            elif hop not in cs.RS_IDENTITY_METHODS:
+            step = self._rust_member_hop(current_type, class_qn, hop)
+            if step is None:
                 return None
+            current_type, guard_inner = step
         return current_type
+
+    def _rust_member_hop(
+        self, current_type: str, class_qn: str, hop: str
+    ) -> tuple[str, str | None] | None:
+        # One field-type -> method-return -> identity hop off `class_qn`: the
+        # type it yields, plus the inner type of a guard-wrapped field for a
+        # guard accessor to unwrap next. None when the hop names nothing known.
+        if field_type := self.class_field_types.get(class_qn, {}).get(hop):
+            return field_type, self.class_field_guard_inner.get(class_qn, {}).get(hop)
+        next_type = self.method_return_types.get(f"{class_qn}{cs.SEPARATOR_DOT}{hop}")
+        if next_type:
+            # A method returning its own type (`fn new() -> Get`) keeps the
+            # caller's spelling of it: through `pub use inner::Get as
+            # Fetch;` the caller only has `Fetch` in scope (issue #2542).
+            if next_type == class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]:
+                return current_type, None
+            return next_type, None
+        if hop in cs.RS_IDENTITY_METHODS:
+            return current_type, None
+        return None
 
     def _rust_chain_base_type(
         self,
@@ -816,9 +843,13 @@ class TypeInferenceEngine:
             if cs.SEPARATOR_DOUBLE_COLON in target:
                 return self._resolve_rust_import_path(target)
             # A crate::/super::/self:: use target arrives as an already
-            # resolved project qn; use it when it names a registered type.
-            # Otherwise fall through with require_registered so the SAME
-            # unregistered map value cannot come back verbatim.
+            # resolved project qn; use it when it names a registered type,
+            # after following any `pub use` re-export that qn names (issue
+            # #2542). Otherwise fall through with require_registered so the
+            # SAME unregistered map value cannot come back verbatim.
+            target = follow_reexports(
+                target, self.import_processor.import_mapping, self.function_registry
+            )
             if self.function_registry.get(target) is not None:
                 return target
             return (
