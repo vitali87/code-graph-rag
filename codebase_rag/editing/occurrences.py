@@ -1059,6 +1059,7 @@ def _binds(token: Node) -> bool:
         field in (cs.FIELD_ALIAS, cs.FIELD_PARAMETER)
         or kind == cs.RENAME_AS_TARGET
         or cs.RENAME_PARAMETER_MARKER in kind
+        or _js_import_binding(parent, child, field)
     ):
         return True
     if field in cs.RENAME_DEFINITION_FIELDS and kind.endswith(
@@ -1067,6 +1068,21 @@ def _binds(token: Node) -> bool:
         return True
     return field in cs.RENAME_REBINDING_FIELDS and any(
         marker in kind for marker in cs.RENAME_REBINDING_MARKERS
+    )
+
+
+def _js_import_binding(parent: Node, child: Node, field: str | None) -> bool:
+    """Whether `child` is the local name a JS/TS import gives what it brings
+    in by the importer's own choice: `mul` in `import mul from './mul'`,
+    `import * as mul from` or `import mul = require('./mul')`. It binds the
+    module's default export or the module itself, never the symbol of the
+    name, so a rename of that symbol leaves it and its uses as they are
+    (issue #2464). The value of `import y = a.b` is a use, not a binding."""
+    return (
+        field is None
+        and parent.type in cs.RENAME_JS_IMPORT_BINDINGS
+        and bool(parent.named_children)
+        and parent.named_children[0] == child
     )
 
 

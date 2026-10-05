@@ -193,7 +193,15 @@ import of a module-level target under its own name, from the target's own
 module (`from .widget import Widget as Widget`, the re-export idiom of a
 package's `__init__.py` and its `__init__.pyi`), binds the target itself:
 it hides none of the file's uses, and its alias counts with the imported
-name. Under another name (`as W`) only the imported name counts. An
+name. Under another name (`as W`) only the imported name counts. A JS/TS
+import that names what it brings in by the importer's own choice
+(`import mul from "./mul"`, `import * as mul from "./mul"`,
+`import mul = require("./mul")`) binds a local like an alias does, so
+neither it nor a bare use it binds counts; `mul.mul(2, 3)` through such a
+namespace still does. A file the plan leaves because it binds a name of its
+own for the target (see above: a barrel's `export { default as mul }` and
+the modules importing that `mul`) is left the same way: none of its bare
+uses count. An
 occurrence counts as planned when a site of the plan covers it, or the
 import statement of one (its own span, not its line:
 `from pkg.util import helper; helper(1)` still holds the call), or when the

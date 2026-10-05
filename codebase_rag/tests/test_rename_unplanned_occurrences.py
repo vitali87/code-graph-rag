@@ -3387,3 +3387,120 @@ def test_a_class_through_an_alias_the_config_cannot_resolve_is_uncertain(
         (1, 9, False),
         *((line, col, False) for line, col in TS_CLASS_USES),
     ]
+
+
+# --- a JS/TS import under the importer's own name (#2464) -------------------
+
+TS_MUL = (
+    "export default function mul(a: number, b: number): number {\n  return a * b;\n}\n"
+)
+TS_MUL_QN = f"{PROJECT}.src.mul.mul"
+# Imports binding `mul` as a name the importer chose for the default export
+# or the module: the rename leaves each import and every use behind it.
+OWN_NAME_IMPORTS = {
+    "default": 'import mul from "./mul";\n',
+    "default-as": 'import { default as mul } from "./mul";\n',
+    "namespace": 'import * as mul from "./mul";\n',
+    "import-require": 'import mul = require("./mul");\n',
+}
+OWN_NAME_USES = {
+    "default": "mul(2, 3)",
+    "default-as": "mul(2, 3)",
+    "namespace": "mul.default(2, 3)",
+    "import-require": "mul.default(2, 3)",
+}
+
+
+@pytest.mark.parametrize("graph", ["complete", "unseen"])
+@pytest.mark.parametrize("case", sorted(OWN_NAME_IMPORTS))
+def test_an_importers_own_name_for_the_target_is_not_unplanned(
+    tmp_path: Path, case: str, graph: str
+) -> None:
+    # `import mul from` binds a local the importer named, not the function:
+    # the plan leaves the import and `mul(2, 3)` alone (#2464), so the
+    # cross-check must not hold them to it either. With the importer
+    # unseen by the graph the source alone says so.
+    importer = (
+        f"{OWN_NAME_IMPORTS[case]}\n"
+        f"export function run(): number {{\n  return {OWN_NAME_USES[case]};\n}}\n"
+    )
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, {"src/mul.ts": TS_MUL, "src/app.ts": importer})
+    fetch_all = _query(store) if graph == "complete" else _unseen(store, "src/app.ts")
+
+    report = rename(root, fetch_all, PROJECT, TS_MUL_QN, "product")
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    renamed = (root / "src/mul.ts").read_text()
+    assert renamed.startswith("export default function product(a: number, b: number)")
+    assert (root / "src/app.ts").read_text() == importer
+
+
+PARENT_BARREL = {
+    "src/widget.ts": (
+        "export default class Widget {\n  draw(): number {\n    return 1;\n  }\n}\n"
+    ),
+    "src/index.ts": 'export { default as Widget } from "./widget";\n',
+    "src/app.ts": (
+        'import { Widget } from ".";\n\n'
+        "export function make() {\n  return new Widget();\n}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("graph", ["complete", "calls-missed"])
+def test_a_barrels_own_name_for_a_default_is_not_unplanned(
+    tmp_path: Path, graph: str
+) -> None:
+    # `src/index.ts` names the default `Widget` as the barrel chose, and the
+    # importer binds that name: the plan leaves it (#2464). The barrel sits
+    # above the class, so its import may re-export the class by its own
+    # name as far as the source shows; the graph's imports say it does not.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, PARENT_BARREL)
+    fetch_all = _query(store) if graph == "complete" else _missing(store, "src/app.ts")
+
+    report = rename(root, fetch_all, PROJECT, f"{PROJECT}.src.widget.Widget", "Gadget")
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    renamed = (root / "src/widget.ts").read_text()
+    assert renamed.startswith("export default class Gadget {")
+    for rel in ("src/index.ts", "src/app.ts"):
+        assert (root / rel).read_text() == PARENT_BARREL[rel], rel
+
+
+def test_a_use_through_a_namespace_named_like_the_function_still_counts(
+    tmp_path: Path,
+) -> None:
+    # The namespace `mul` is the importer's own name, but `mul.mul` reads the
+    # function through it: a call the graph missed still refuses.
+    files = {
+        "src/mul.ts": (
+            "export function mul(a: number, b: number): number {\n  return a * b;\n}\n"
+        ),
+        "src/app.ts": (
+            'import * as mul from "./mul";\n\n'
+            "export function run(): number {\n  return mul.mul(2, 3);\n}\n"
+        ),
+    }
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, files)
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            _missing(store, "src/app.ts"),
+            PROJECT,
+            TS_MUL_QN,
+            "product",
+            dry_run=True,
+        )
+
+    assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
+        ("src/app.ts", 4, 13, "unplanned")
+    ]

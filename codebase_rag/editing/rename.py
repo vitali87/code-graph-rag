@@ -1005,6 +1005,11 @@ class Renamer:
         if not leftover:
             return [], ()
         foreign = self._foreign_paths(hierarchy)
+        chosen = (
+            self._chosen_paths(hierarchy, old_name)
+            if language in cs.JS_TS_LANGUAGES and kind is not cs.RenameTargetKind.METHOD
+            else set()
+        )
         namesakes = self._namesakes(old_name, hierarchy, target)
         unplanned = [
             RenameSite(
@@ -1021,6 +1026,7 @@ class Renamer:
             not in namesakes.positions
             and not _inside(occurrence, namesakes.statements)
             and not (occurrence.bare and _inside(occurrence, namesakes.bound))
+            and not (occurrence.bare and occurrence.path in chosen)
         ]
         positions = {(s.path, s.line, s.col) for s in unplanned}
         companions = tuple(
@@ -1049,6 +1055,20 @@ class Renamer:
                 ):
                     rivals.add((name, path))
         return frozenset(rivals)
+
+    def _chosen_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
+        """JS/TS files whose bare `old_name` is a name of their own for the
+        target: a default import (`import mul from`), or a barrel's chosen
+        name for it (`export { default as Widget } from`) imported from
+        that barrel. The plan leaves those files' sites as they are
+        (`_js_import_bound`), so the cross-check leaves their bare
+        occurrences too; a file that also imports the target by its own
+        name is still held to it."""
+        paths: set[str] = set()
+        for member in hierarchy:
+            by_name, aliased, _star_bound = self._js_name_bindings(member, old_name)
+            paths.update(aliased - by_name)
+        return paths
 
     def _foreign_paths(self, hierarchy: list[str]) -> set[str]:
         """Files whose sites the graph gives to a project whose name extends

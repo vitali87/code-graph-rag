@@ -187,6 +187,14 @@ RENAME_JS_FUNCTION_SCOPED = "variable_declaration"
 RENAME_JS_CLASS_BODY = "class_body"
 RENAME_PARAMETER_MARKER = "parameter"
 RENAME_AS_TARGET = "as_pattern_target"
+# The JS/TS imports that bind a name the importer chooses, with no `alias`
+# field to say so: the default import (`import mul from`), a namespace
+# import (`import * as mul from`) and TypeScript's `import mul =
+# require(...)` and `import mul = a.b`. Their first named child is a local
+# of the file, as an alias is, not the exported symbol's own name.
+RENAME_JS_IMPORT_BINDINGS = frozenset(
+    {"import_clause", "namespace_import", "import_require_clause", "import_alias"}
+)
 # A name that labels an argument or a key instead of naming a value.
 RENAME_KEYWORD_ARGUMENT_MARKER = "keyword_argument"
 RENAME_LABEL_TYPES = frozenset({"label", "name_colon"})
