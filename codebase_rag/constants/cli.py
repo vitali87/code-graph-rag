@@ -452,12 +452,6 @@ ASK_AGENT_APPROVAL_DENIED = (
     "Edits and non-read-only commands are disabled in --ask-agent mode; "
     "answer without them. The user can re-run with --no-confirm to allow them."
 )
-# A model that asks again after every answer would otherwise loop forever.
-NONINTERACTIVE_APPROVAL_ROUNDS = 10
-NONINTERACTIVE_APPROVAL_LOOP = (
-    "The agent still requested tool approval after {rounds} rounds of answers; "
-    "stopped without a text answer."
-)
 UI_OPTIMIZATION_START = (
     "[bold green]Starting {language} optimization session...[/bold green]"
 )
