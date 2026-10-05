@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.dead_code import default_dead_code_config
+from codebase_rag.parser_loader import load_parsers
 from evals.dead_code import cgr_dead_code
 
 PROJECT = "jannot"
@@ -83,6 +85,11 @@ def _dead(tmp_path: Path, files: dict[str, str]) -> set[str]:
 
 @pytest.fixture(scope="module")
 def jobs_dead(tmp_path_factory: pytest.TempPathFactory) -> set[str]:
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.JAVA not in parsers:
+        # A module-scoped fixture runs before the per-test grammar skip
+        # hook is installed, so a base install must skip here.
+        pytest.skip("java parser not available")
     return _dead(
         tmp_path_factory.mktemp("jobs"),
         {f"{PKG}/Calc.java": CALC, f"{PKG}/Jobs.java": JOBS},
