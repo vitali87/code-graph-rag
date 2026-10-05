@@ -19,6 +19,8 @@ claude mcp add --transport stdio code-graph-rag \
   -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
+![claude mcp add run from the pallets/itsdangerous checkout with TARGET_REPO_PATH="$(pwd)", then claude mcp list reporting the server Connected](assets/demos/claude-code-setup.gif)
+
 **Replace**:
 - `/absolute/path/to/code-graph-rag` - Where you cloned this repo
 - `your-google-api-key` - Your Google AI API key
@@ -64,11 +66,11 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 > Update the login function to add rate limiting
 ```
 
-**Important**: Only one repository can be indexed at a time. When you index a new repository, the previous repository's data is automatically cleared from the database. If you need to switch between multiple projects, you'll need to re-index when switching.
+The graph is shared: indexing this repository adds (or rebuilds) its own project and leaves any other indexed project alone, so you can register one server per repository against the same Memgraph (see [Multi-Repository Setup](guide/mcp-server.md#multi-repository-setup)).
 
 ## Available Tools
 
-- **index_repository** - Build knowledge graph (clears previous repository data)
+- **index_repository** - Rebuild this repository's project in the graph from scratch
 - **update_repository** - Incrementally refresh the graph for changed files
 - **list_projects / delete_project / wipe_database** - Manage indexed projects
 - **query_code_graph** - Natural language queries
@@ -139,3 +141,5 @@ claude mcp add --transport stdio code-graph-rag-frontend \
 ```bash
 claude mcp remove code-graph-rag
 ```
+
+![claude mcp remove code-graph-rag, then claude mcp list showing no servers configured](assets/demos/claude-code-setup-remove.gif)
