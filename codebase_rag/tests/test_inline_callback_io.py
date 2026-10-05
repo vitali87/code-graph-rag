@@ -132,6 +132,11 @@ fn main() { rust_cb(vec![]); rust_leak(vec![]); }
 @pytest.fixture(scope="module")
 def edges(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str, str]]:
     parsers, queries = load_parsers()
+    # Module scope runs before conftest's autouse grammar skips, so a base
+    # install (Python grammar only) must skip here, not build an empty graph.
+    for lang in ("javascript", "typescript", "go", "java", "c_sharp", "rust"):
+        if lang not in parsers:
+            pytest.skip(f"{lang} parser not available")
     root = tmp_path_factory.mktemp("io2772") / "cb"
     for rel, text in _FILES.items():
         path = root / rel
