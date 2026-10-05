@@ -112,3 +112,69 @@ def test_unknown_token_ignored() -> None:
 def test_split_spec_separators() -> None:
     assert split_spec("calls, io ;structure") == ["calls", "io", "structure"]
     assert split_spec("") == []
+
+
+def test_an_optional_label_is_off_by_default_and_on_with_its_group() -> None:
+    """Every capture-group-owned label, not just the one being added today.
+
+    `_node_labels_for` enables any label NO group claims, which is right for
+    the structural labels (a Class or Module should always exist) and is a
+    trap for the optional ones: dropping such a label from
+    `CAPTURE_GROUP_NODE_LABELS` does not disable it, it enables it
+    unconditionally while its group's relationships stay off -- a node whose
+    edge cannot be written.
+
+    Every test that observes an EMITTER stays green through that, because the
+    emitters are gated separately from the registration. This asserts through
+    `resolve_capture`, which reads the registration itself.
+
+    The list below is written out DELIBERATELY rather than derived from
+    `CAPTURE_GROUP_NODE_LABELS`. Deriving it reproduces the very defect being
+    guarded against: a dropped label vanishes from the iteration, so the guard
+    goes green by having nothing to check (measured -- dropping `Field` from
+    its group left the derived form passing). An explicit list fails loudly
+    instead, and a new optional label is a one-line addition here.
+    """
+    must_be_gated = {
+        NL.CODE_SMELL: cs.CaptureGroup.FINDINGS,
+        NL.CONSTANT: cs.CaptureGroup.CONSTANTS,
+        NL.ENUM_VARIANT: cs.CaptureGroup.ENUM_VARIANTS,
+        NL.FIELD: cs.CaptureGroup.FIELDS,
+        NL.GLOSS: cs.CaptureGroup.GLOSSES,
+        NL.PARAMETER: cs.CaptureGroup.PARAMETERS,
+        NL.PATTERN: cs.CaptureGroup.FINDINGS,
+        NL.RESOURCE: cs.CaptureGroup.IO,
+        NL.SECURITY_ISSUE: cs.CaptureGroup.FINDINGS,
+    }
+    # Flattening to {label: group} is last-entry-wins, so a label owned by TWO
+    # groups compares equal to the expected mapping while `_node_labels_for`
+    # silently honours only the later one. Collect the owners first and reject
+    # a duplicate before flattening (bot review).
+    owners: dict[cs.NodeLabel, list[cs.CaptureGroup]] = {}
+    for group, labels in cs.CAPTURE_GROUP_NODE_LABELS.items():
+        for label in labels:
+            owners.setdefault(label, []).append(group)
+    duplicated = {
+        label.value: [g.value for g in groups]
+        for label, groups in owners.items()
+        if len(groups) > 1
+    }
+    assert not duplicated, f"a label owned by two capture groups: {duplicated}"
+    owner_of = {label: groups[0] for label, groups in owners.items()}
+    # Both directions: nothing expected-optional has lost its group, and
+    # nothing new became optional without being listed here.
+    assert owner_of == must_be_gated
+
+    default = resolve_capture([])
+    for label, group in owner_of.items():
+        assert label not in default.enabled_node_labels, (
+            f"{label.value} is owned by the optional group {group.value} "
+            "but is enabled in the default selection"
+        )
+        enabled = resolve_capture([f"+{group.value}"])
+        assert label in enabled.enabled_node_labels, (
+            f"{label.value} stays disabled with +{group.value}"
+        )
+        assert cs.CAPTURE_GROUP_RELS[group] & enabled.enabled_rels, (
+            f"+{group.value} enables {label.value} but none of its relationships"
+        )

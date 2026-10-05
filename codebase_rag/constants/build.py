@@ -52,7 +52,11 @@ PYINSTALLER_ENTRY_POINT = "main.py"
 # `websockets.cli`), which put `libreadline.so.8` inside the MIT-licensed
 # one-file binary. Every importer guards the import, and interactive input
 # goes through prompt_toolkit, so nothing loses behaviour without it.
-PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline"]
+# `sqlite3` is excluded because filelock (via huggingface-hub and torch)
+# imports it for its read-write locks, which bundled `libsqlite3` with no
+# licence entry. filelock guards that import, and nothing else in the binary
+# uses sqlite3.
+PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline", "sqlite3"]
 
 # Archive entries a release binary must never carry, matched against the last
 # path segment of each TOC name. Checked on the built archive, so a new route
