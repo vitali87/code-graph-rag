@@ -56,7 +56,12 @@ rules:
             - has:
                 field: value
                 all:
-                  - kind: string
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
                   - regex: '^.{10,}$'
                   - not:
                       any:
@@ -75,7 +80,12 @@ rules:
             - has:
                 field: right
                 all:
-                  - kind: string
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
                   - regex: '^.{10,}$'
                   - not:
                       any:
@@ -87,7 +97,12 @@ rules:
             - has:
                 field: value
                 all:
-                  - kind: string
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
                   - regex: '^.{10,}$'
                   - not:
                       any:
@@ -99,7 +114,12 @@ rules:
             - has:
                 field: value
                 all:
-                  - kind: string
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
                   - regex: '^.{10,}$'
                   - not:
                       any:

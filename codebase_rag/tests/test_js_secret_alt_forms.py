@@ -80,3 +80,25 @@ def test_what_is_not_a_secret_stays_clean(tmp_path: Path, file_name: str) -> Non
         'const c = { title: "s3cr3t_value_long" };\n'
     )
     assert _flagged(tmp_path, file_name, src) == []
+
+
+@pytest.mark.parametrize("file_name", _FILES)
+def test_a_template_literal_secret_is_flagged(tmp_path: Path, file_name: str) -> None:
+    # A backtick literal with no substitution is as constant as a quoted one
+    # (`const secret = \`sk_live_...\``); its node is a template_string, which
+    # the rule did not accept (issue #2779).
+    src = (
+        "const secret = `s3cr3t_value_long`;\n"
+        "this.token = `s3cr3t_value_long`;\n"
+        "const c = { password: `s3cr3t_value_long` };\n"
+    )
+    assert _flagged(tmp_path, file_name, src) == [1, 2, 3]
+
+
+@pytest.mark.parametrize("file_name", _FILES)
+def test_a_template_with_a_substitution_is_not_a_secret(
+    tmp_path: Path, file_name: str
+) -> None:
+    # Negative: `${...}` builds the value at run time.
+    src = "const secret = `${prefix}_value_long`;\nthis.token = `Bearer ${jwt}`;\n"
+    assert _flagged(tmp_path, file_name, src) == []
