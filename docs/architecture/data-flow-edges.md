@@ -53,15 +53,23 @@ qualified name has the form `resource::<KIND>::<identity>`:
 | `NETWORK` | A network endpoint / URL | `requests.get` / `.head`, `urllib.request.urlopen`, `httpx.get` (read); `requests.post` / `.put` / `.patch` / `.delete`, `httpx.post` (write); `httpx.Client` / `AsyncClient` and `aiohttp.ClientSession` handle methods | read + write |
 | `DATABASE` | A database connection | `sqlite3.connect(...)` handle methods (`.execute`, `.fetchone`, `.commit`, …) | read + write |
 | `SOCKET` | A network socket | `socket.socket(...)` handle methods (`.recv`, `.send`, …) | read + write |
-| `STDOUT` | Standard output | `print(...)` | write |
+| `STDOUT` | Standard output | `print(...)`, `print(..., file=sys.stdout)` | write |
 | `STDIN` | Standard input | *(defined in the schema; no Python source registered yet)* | — |
-| `STDERR` | Standard error | *(defined in the schema; no Python source registered yet)* | — |
+| `STDERR` | Standard error | `print(..., file=sys.stderr)` | write |
 
 Example: `os.getenv("K")` refers to `resource::ENV::K`; `print(x)` refers to
 `resource::STDOUT::<dynamic>`. The registry is extended in
 `codebase_rag/parsers/io_access/registry.py`. The Python registry does not yet
-register `STDIN` or `STDERR` sources/sinks, but other languages emit them
-(for example C `scanf`, C++ `std::cerr`, Java `System.err`, C# `Console.Error`).
+register `STDIN` sources, but other languages emit them (for example C
+`scanf`).
+
+`print(x, file=...)` writes where its `file=` argument says:
+- `sys.stdout` or `sys.stderr` (also through `from sys import stderr`) is that
+  stream;
+- a name or `self.<attr>` bound to a handle (`f = open("out.txt", "w")`) is
+  that handle's resource, `FILE::out.txt`;
+- any other stream, such as a parameter, records no edge rather than claiming
+  stdout.
 
 ## READS_FROM and WRITES_TO
 
@@ -72,6 +80,7 @@ by the call and (for file handles) its mode:
 |------|------|
 | `os.getenv("K")` | `Function -READS_FROM-> Resource(ENV::K)` |
 | `print(x)` | `Function -WRITES_TO-> Resource(STDOUT::<dynamic>)` |
+| `print(x, file=sys.stderr)` | `Function -WRITES_TO-> Resource(STDERR::<dynamic>)` |
 | `open("out.txt", "w")` | `Function -WRITES_TO-> Resource(FILE::out.txt)` |
 | `open("cfg.yaml")` | `Function -READS_FROM-> Resource(FILE::cfg.yaml)` |
 
