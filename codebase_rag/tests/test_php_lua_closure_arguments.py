@@ -127,8 +127,15 @@ function M.shadow_repeat()
 end
 
 function M.shadow_reassigned_value()
+M.function_then_value()
   local view = "home"
   view = "about"
+  return render(view)
+end
+
+function M.function_then_value()
+  local view = function() return "page" end
+  view = "text"
   return render(view)
 end
 
@@ -149,6 +156,7 @@ M.assigned_from_nil({2, 1})
 M.newer_function_local({2, 1}, 1)
 M.shadow_repeat()
 M.shadow_reassigned_value()
+M.function_then_value()
 
 return M
 """
@@ -303,6 +311,15 @@ def test_a_lua_value_shadowing_a_function_binds_nothing(
     # `render(view)` passes the local/parameter `view`, not the module
     # function `view` it hides.
     assert "app.view" not in _targets(graph, caller)
+
+
+def test_a_function_local_reassigned_a_value_binds_nothing(
+    graph: RecordedGraph,
+) -> None:
+    # `view` holds "text" when it is passed: the last assignment before the
+    # read decides, not the function it first held (CodeRabbit, PR #2974).
+    targets = _targets(graph, "app.M.function_then_value")
+    assert not [t for t in targets if t.endswith(".view")]
 
 
 def test_a_php_string_callable_binds_nothing_first_party(graph: RecordedGraph) -> None:

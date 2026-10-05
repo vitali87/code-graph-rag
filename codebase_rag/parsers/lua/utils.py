@@ -539,41 +539,57 @@ def _local_value_names(declaration: Node) -> set[str]:
     return _paired_names(assignment, function_valued=False)
 
 
-def _assigns_function(node: Node, name: str) -> bool:
-    # `name = function ... end`, or a non-local `function name() ... end`:
-    # either stores a function in the local `name` already names, and the
-    # definition pass registers it under that name.
+def _assigned_kind(node: Node, name: str) -> bool | None:
+    """Whether `node` assigns `name` a function (True), another value
+    (False), or does not assign it at all (None).
+
+    `name = function ... end`, or a non-local `function name() ... end`,
+    stores a function in the local `name` already names, which the
+    definition pass registers under that name; `name = "text"` a value.
+    """
     if node.type == cs.TS_LUA_FUNCTION_DECLARATION:
         first = node.children[0] if node.children else None
         target = node.child_by_field_name(cs.FIELD_NAME)
-        return (
+        if (
             first is not None
             and first.type != cs.TS_LUA_LOCAL_KEYWORD
             and target is not None
             and target.type == cs.TS_LUA_IDENTIFIER
             and safe_decode_text(target) == name
-        )
+        ):
+            return True
+        return None
     parent = node.parent
-    return (
-        node.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
-        and (parent is None or parent.type != cs.TS_LUA_VARIABLE_DECLARATION)
-        and name in _paired_names(node, function_valued=True)
-    )
+    if node.type != cs.TS_LUA_ASSIGNMENT_STATEMENT or (
+        parent is not None and parent.type == cs.TS_LUA_VARIABLE_DECLARATION
+    ):
+        return None
+    if name in _paired_names(node, function_valued=True):
+        return True
+    if name in _paired_names(node, function_valued=False):
+        return False
+    return None
 
 
-def _function_assigned(region: Node, after: int, before: int, name: str) -> bool:
-    """True when `region` assigns a function to `name` between the byte
-    offsets `after` and `before`, so the value bound earlier may no longer
-    be what the read at `before` sees."""
+def _last_assignment(region: Node, after: int, before: int, name: str) -> bool | None:
+    """What the last assignment to `name` in `region` between the byte
+    offsets `after` and `before` stores: True for a function, False for
+    another value, None when there is none. That assignment, not the
+    binding, is what the read at `before` sees."""
+    last: tuple[int, bool] | None = None
     stack = [region]
     while stack:
         node = stack.pop()
         if node.end_byte <= after or node.start_byte >= before:
             continue
-        if node.start_byte >= after and _assigns_function(node, name):
-            return True
+        if (
+            node.start_byte >= after
+            and (kind := _assigned_kind(node, name)) is not None
+        ):
+            if last is None or node.start_byte > last[0]:
+                last = (node.start_byte, kind)
         stack.extend(node.named_children)
-    return False
+    return None if last is None else last[1]
 
 
 def _last_declaration(block: Node, before: int, name: str) -> Node | None:
@@ -625,11 +641,14 @@ def is_local_value(identifier: Node) -> bool:
     while scope is not None:
         binding = _binding_at(scope, child, name)
         if binding is not None:
+            after = binding.end_byte if binding != scope else child.start_byte
+            # The last assignment before the read decides, whatever the
+            # binding first held (CodeRabbit, PR #2974).
+            assigned = _last_assignment(scope, after, identifier.start_byte, name)
+            if assigned is not None:
+                return not assigned
             if binding.type == cs.TS_LUA_FUNCTION_DECLARATION and binding != scope:
                 return False
-            if binding != scope and name not in _local_value_names(binding):
-                return False
-            after = binding.end_byte if binding != scope else child.start_byte
-            return not _function_assigned(scope, after, identifier.start_byte, name)
+            return binding == scope or name in _local_value_names(binding)
         child, scope = scope, scope.parent
     return False
