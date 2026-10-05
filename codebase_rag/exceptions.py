@@ -181,6 +181,15 @@ class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
 
 
+class RepoPathError(ValueError):
+    """The repository root the MCP server was pointed at is missing or no directory.
+
+    A `ValueError` like every other configuration error, so existing handlers
+    still catch it. Its own type is what lets `cgr mcp-server` add the
+    `TARGET_REPO_PATH` hint to this error and no other (issue #2881).
+    """
+
+
 # Sync lock (issue #2441)
 SYNC_IN_PROGRESS = (
     "Another sync of {repo} is running ({holder}). Two syncs of one checkout at "
@@ -208,4 +217,17 @@ class EmbeddingsInterrupted(KeyboardInterrupt):  # NOSONAR
     A `KeyboardInterrupt`, so a caller that does not look for it still stops
     where it would have; one that does can finish its own bookkeeping first,
     because the graph and the hash cache are already saved.
+    """
+
+
+# A `KeyboardInterrupt` for the reason `EmbeddingsInterrupted` is one
+# (python:S5709 accepted), and so the pre-chat sync's worker, which swallows
+# only the interrupt it delivered, still recognises it.
+class SyncInterrupted(KeyboardInterrupt):  # NOSONAR
+    """Ctrl+C stopped a CLI sync part-way through its graph writes.
+
+    Its `:IncompleteRun` marker stays down and its hash cache unpublished, so
+    the graph is incomplete until a sync of the project finishes. Kept apart
+    from a plain interrupt so the command can say so: that would be false of
+    one that landed before the sync wrote anything.
     """

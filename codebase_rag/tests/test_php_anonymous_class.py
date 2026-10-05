@@ -439,7 +439,9 @@ def test_closures_and_arrow_functions_are_unchanged(
 
 
 # --- Dead code: an anonymous class follows the existing override and
-# factory-class rules; its methods are not roots of their own. ---
+# factory-class rules; its methods are not roots of their own. The factories
+# are private: a public method is an API root (issue #2472), which would keep
+# every class it builds alive whatever the rules below say. ---
 
 _DEAD_CODE = """\
 <?php
@@ -462,7 +464,7 @@ class Runner
 
 class Factory
 {
-    public function make(): Handler
+    private function make(): Handler
     {
         return new class implements Handler, Idle {
             public function handle(string $req): string { return $req; }
@@ -471,7 +473,7 @@ class Factory
         };
     }
 
-    public function shape(): Shape
+    private function shape(): Shape
     {
         return new class extends Shape {
             public function area(): float { return 1.0; }
@@ -510,9 +512,9 @@ def test_anonymous_override_of_live_base_method_is_not_dead(tmp_path: Path) -> N
     dead, methods = _dead(tmp_path, _DEAD_CODE)
 
     # shape() is never called, so the class it builds is not reached through
-    # its factory, and no call site names area() on it. Shape::describe calls
-    # Shape::area, and dispatch lands on the override: the override rule
-    # keeps it live.
+    # its factory, and no call site names area() on it. Shape::area is live
+    # (public API, and Shape::describe calls it), and dispatch lands on the
+    # override: the override rule keeps it live.
     assert "php_dead.main.Factory.shape" in dead, sorted(dead)
     assert f"{_SHAPE_ANON}.area" in methods - dead, sorted(dead)
 
@@ -529,13 +531,18 @@ def test_anonymous_override_of_live_interface_method_is_not_dead(
 def test_anonymous_class_methods_are_not_roots_of_their_own(tmp_path: Path) -> None:
     dead, _methods = _dead(tmp_path, _DEAD_CODE)
 
-    # idle() overrides Idle::idle, which nothing calls, and extra() overrides
-    # nothing: with the factory dead too, both are dead code.
-    assert {f"{_MAKE_ANON}.idle", f"{_MAKE_ANON}.extra"} <= dead, sorted(dead)
+    # extra() overrides nothing: with the factory dead too, it is dead code
+    # although it is `public`, since nothing outside can name the class.
+    # idle() overrides the public interface method Idle::idle, an API root,
+    # so the override rule keeps it live.
+    assert f"{_MAKE_ANON}.extra" in dead, sorted(dead)
+    assert f"{_MAKE_ANON}.idle" not in dead, sorted(dead)
 
 
 def test_anonymous_class_methods_live_when_factory_is_live(tmp_path: Path) -> None:
-    dead, methods = _dead(tmp_path, _DEAD_CODE + "(new Factory())->make();\n")
+    # make() turns public so the call below is legal PHP.
+    public_make = _DEAD_CODE.replace("private function make", "public function make")
+    dead, methods = _dead(tmp_path, public_make + "(new Factory())->make();\n")
 
     # The factory-class rule: a class built in a live function escapes it,
     # so every method on it is dispatch surface.

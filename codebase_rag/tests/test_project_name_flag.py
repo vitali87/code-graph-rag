@@ -9,6 +9,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_node_names
+from codebase_rag.utils.path_utils import derive_project_name
 
 
 @pytest.fixture(scope="module")
@@ -168,7 +169,10 @@ class TestEdgeCases:
         )
         assert updater.project_name == "my-library"
         updater_default = _make_updater(ver_dir, mock_ingestor, parsers_and_queries)
-        assert updater_default.project_name == "v1.3.2"
+        # `.` separates qualified-name parts, so a dotted directory gets the
+        # digest-suffixed derived name (#2412).
+        assert updater_default.project_name == derive_project_name(ver_dir)
+        assert updater_default.project_name.startswith("v1_3_2__")
 
     def test_nested_same_name_parent(
         self,

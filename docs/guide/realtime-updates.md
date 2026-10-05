@@ -21,6 +21,10 @@ Run the real-time updater in a separate terminal:
 python realtime_updater.py /path/to/your/repo
 ```
 
+![The real-time updater watching pallets/itsdangerous in one tmux pane while the other appends a function and cgr graph resolve finds it after the re-ingest](../assets/demos/realtime-updates.gif)
+
+*Terminal 2 edits `encoding.py`; the watcher re-ingests it (and its dependents) and the new function is in the graph.*
+
 Or using the Makefile:
 
 ```bash
