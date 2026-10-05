@@ -122,6 +122,9 @@ if sys.platform == "win32":  # pragma: no cover - platform
             _c_runtime_result(self._crt._dup2(fd, fd2))
 
         def close(self, fd: int) -> None:
+            # Closing fd 2 itself would otherwise strand what stderr still
+            # buffers for it.
+            self._crt.fflush(None)
             _c_runtime_result(self._crt._close(fd))
 
         def open_file(self, file: IO[bytes]) -> int:
@@ -155,21 +158,35 @@ def _mgclient_own_c_runtime() -> _CRuntime | None:
 @contextmanager
 def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
     try:
-        saved = runtime.dup(cs.NATIVE_STDERR_FD)
+        saved: int | None = runtime.dup(cs.NATIVE_STDERR_FD)
     except OSError:
-        # With fd 2 closed there is no terminal to keep clean.
-        yield
-        return
+        # fd 2 is closed, or, in msvcrt.dll under a test runner, holds a
+        # handle closed under it once the UCRT's fd 2 was moved. There is no
+        # terminal to put back, but the message still belongs in the capture
+        # rather than nowhere.
+        saved = None
+    redirected = False
     try:
-        target = runtime.open_file(capture)
         try:
-            runtime.dup2(target, cs.NATIVE_STDERR_FD)
-        finally:
-            runtime.close(target)
+            target = runtime.open_file(capture)
+            # With fd 2 free, the capture's descriptor is given that number.
+            if target != cs.NATIVE_STDERR_FD:
+                try:
+                    runtime.dup2(target, cs.NATIVE_STDERR_FD)
+                finally:
+                    runtime.close(target)
+            redirected = True
+        except OSError:
+            # Keeping the terminal clean is best-effort: the probe still runs
+            # and reports its result, its message going where fd 2 points.
+            pass
         yield
     finally:
-        runtime.dup2(saved, cs.NATIVE_STDERR_FD)
-        runtime.close(saved)
+        if saved is not None:
+            runtime.dup2(saved, cs.NATIVE_STDERR_FD)
+            runtime.close(saved)
+        elif redirected:
+            runtime.close(cs.NATIVE_STDERR_FD)
 
 
 @contextmanager

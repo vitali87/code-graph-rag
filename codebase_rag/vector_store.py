@@ -154,7 +154,7 @@ class VectorStore(Protocol):
         project_name: str,
         node_ids: Sequence[int],
         nested_projects: Sequence[str] = (),
-    ) -> None: ...
+    ) -> bool: ...
 
     def delete_stale_embeddings(
         self,
@@ -495,11 +495,14 @@ def _delete_scoped_embeddings(
     project_name: str,
     point_ids: Sequence[PointId],
     delete: Callable[[list[PointId]], None],
-) -> None:
+) -> bool:
     # Shared by every backend: only the client call differs, so the empty
     # guard, the progress logs, and the swallow-and-warn live here once.
+    # Whether the vectors are gone: most callers carry on either way, but
+    # retiring a project must not delete the node ids they are keyed by while
+    # they are still there (review of PR 2497).
     if not point_ids:
-        return
+        return True
     ids = list(point_ids)
     try:
         logger.info(
@@ -519,6 +522,8 @@ def _delete_scoped_embeddings(
                 backend=backend, project=project_name, error=e
             )
         )
+        return False
+    return True
 
 
 def _qdrant_scroll(scroll_filter: Filter, with_payload: list[str]) -> Iterator[Record]:
@@ -624,7 +629,7 @@ class QdrantVectorStore(VectorStore):
         project_name: str,
         node_ids: Sequence[int],
         nested_projects: Sequence[str] = (),
-    ) -> None:
+    ) -> bool:
         # The node ids key only the points written before issue #2447, and
         # only those of nodes the graph still holds; the project's own points
         # are found in the store, whatever node they last named. A project
@@ -645,7 +650,7 @@ class QdrantVectorStore(VectorStore):
                     backend=self.backend, project=project_name, error=e
                 )
             )
-            return
+            return False
         kept: set[PointId] = set()
         for point in legacy:
             if _owned_by(_payload_qualified_name(point), project_name, nested_projects):
@@ -654,7 +659,7 @@ class QdrantVectorStore(VectorStore):
                 kept.add(point.id)
         owned_ids = [node_id for node_id in node_ids if node_id not in kept]
         ids = list(dict.fromkeys([*owned_ids, *found]))
-        _delete_scoped_embeddings(self.backend, project_name, ids, _delete)
+        return _delete_scoped_embeddings(self.backend, project_name, ids, _delete)
 
     def delete_stale_embeddings(
         self,
@@ -850,7 +855,7 @@ class MilvusVectorStore(VectorStore):
         project_name: str,
         node_ids: Sequence[int],
         nested_projects: Sequence[str] = (),
-    ) -> None:
+    ) -> bool:
         # Rows are keyed by node id alone, so the graph's node ids name them.
         # The read is prefix-scoped, so they include a nested project's nodes,
         # whose rows are that project's.
@@ -869,7 +874,7 @@ class MilvusVectorStore(VectorStore):
                 collection_name=settings.MILVUS_COLLECTION_NAME, filter=owned
             )
 
-        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
+        return _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def delete_stale_embeddings(
         self,
@@ -1049,11 +1054,18 @@ def store_embedding_batch(project_name: str, points: Sequence[EmbeddingPoint]) -
 
 def delete_project_embeddings(
     project_name: str, node_ids: Sequence[int], nested_projects: Sequence[str] = ()
-) -> None:
+) -> bool:
+    """Delete a project's vectors, and say whether they are gone.
+
+    With no vector store there is nothing to delete: a run without one
+    writes no vectors.
+    """
     vector_store = _get_vector_store()
     if vector_store is None:
-        return
-    vector_store.delete_project_embeddings(project_name, node_ids, nested_projects)
+        return True
+    return vector_store.delete_project_embeddings(
+        project_name, node_ids, nested_projects
+    )
 
 
 def clear_all_embeddings() -> None:
