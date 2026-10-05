@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
+
 ROOT = Path(__file__).resolve().parents[2]
 FUZZ_DIR = ROOT / "fuzz"
 CFLITE_DIR = ROOT / ".clusterfuzzlite"
@@ -271,6 +273,7 @@ def _run_build(
         },
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=120,
         check=False,
     )
@@ -512,6 +515,7 @@ def _select(tmp_path: Path, run: tuple[str, str], stems: list[str], target: str)
         },
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=60,
         check=False,
     )

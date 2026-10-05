@@ -26,11 +26,17 @@ uv export --frozen --no-dev --no-emit-project --extra treesitter-full \
 # Nothing the harnesses import touches pymgclient -- it is the Memgraph
 # driver -- and a fuzz target gets its instrumentation from atheris, not from
 # these flags. So install dependencies with a clean environment.
+#
+# `--python` gets the interpreter's path, not the name `python3`: given a
+# name, uv looks only for a virtual environment of that version and stops
+# with "No virtual environment found" in this image, which has none. A path
+# names the very interpreter compile_python_fuzzer freezes the targets with.
+TARGET_PYTHON="$(command -v python3)"
 env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
-  uv pip install --python python3 --break-system-packages \
+  uv pip install --python "$TARGET_PYTHON" --break-system-packages \
   -r "$LOCKED_REQUIREMENTS"
 env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
-  uv pip install --python python3 --break-system-packages --no-deps .
+  uv pip install --python "$TARGET_PYTHON" --break-system-packages --no-deps .
 
 # `evals` is NOT part of the installed wheel -- pyproject's package discovery
 # includes only codebase_rag*, codec* and cgr* -- but fuzz_incremental_update

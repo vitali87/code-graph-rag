@@ -114,6 +114,7 @@ def probe(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         ],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         cwd=_REPO,
         timeout=600,
         check=False,
@@ -263,7 +264,10 @@ def test_every_highlights_query_agrees_with_native_evaluation() -> None:
         if ignored != native:
             exercised.add(lang_name)
     assert not mismatched
-    assert {cs.SupportedLanguage.PYTHON, cs.SupportedLanguage.SQL} <= with_match
+    # The grammars known to carry `#match?`, among those installed: the base
+    # install ships Python's alone.
+    known = {cs.SupportedLanguage.PYTHON, cs.SupportedLanguage.SQL}
+    assert known & set(parsers) <= with_match
     assert exercised == with_match, "a grammar's predicate decided nothing here"
 
 
