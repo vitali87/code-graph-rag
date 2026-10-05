@@ -5,6 +5,35 @@ PROVIDER_REGISTERED = "Registered provider: {name}"
 LOADING_GRAPH = "Loading graph from {path}"
 LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with indexes"
 ENSURING_PROJECT = "Ensuring Project: {name}"
+# A dotted checkout's project from before #2412, whose qualified names alias
+# another project's package; retired once the checkout syncs under its new
+# name (review of PR 2497).
+LEGACY_DOTTED_PROJECT_RETIRED = (
+    "Removed project '{legacy}', which this checkout was indexed under before "
+    "project names could not hold '.'; it is now project '{project}'"
+)
+LEGACY_DOTTED_PROJECT_KEPT = (
+    "Project '{legacy}' is this checkout's graph from before project names "
+    "could not hold '.', and it is now project '{project}'. '{legacy}' is kept "
+    "because its nodes may also belong to project(s) {sharing}; remove it with "
+    "`cgr delete-project -n {legacy}`, then sync {sharing} again"
+)
+LEGACY_DOTTED_PROJECT_KEPT_FOR_DESCENDANTS = (
+    "Project '{legacy}' is this checkout's graph from before project names "
+    "could not hold '.', and it is now project '{project}'. '{legacy}' is kept "
+    "because project(s) {descendants} have names under it and may share its "
+    "nodes; remove it with `cgr delete-project -n {legacy}`, then sync "
+    "{descendants} again"
+)
+LEGACY_DOTTED_PROJECT_RETIRE_FAILED = (
+    "Could not remove project '{legacy}', this checkout's graph from before "
+    "project names could not hold '.': {error}. The next sync tries again"
+)
+LEGACY_DOTTED_PROJECT_VECTORS_KEPT = (
+    "Kept project '{legacy}', this checkout's graph from before project names "
+    "could not hold '.': its vectors could not be deleted, and once its nodes "
+    "are gone nothing could find them. The next sync tries again"
+)
 
 # Pass logs
 PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
@@ -294,6 +323,10 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+LANG_LIST_AST_GREP_UNREADABLE = (
+    "Cannot read the ast-grep tier's language configs, so its languages are "
+    "left out of the list: {error}"
+)
 
 # Ignore pattern logs
 CGRIGNORE_LOADED = (
@@ -836,6 +869,10 @@ JS_VAR_INFERRED = "Inferred JS variable: {var_name} -> {var_type}"
 JS_VAR_INFER_FAILED = "Could not infer type for variable: {var_name}"
 JS_VAR_TYPE_MAP_BUILT = "Built JS variable type map with {count} variables (found {declarator_count} declarators total)"
 JS_INFER_VALUE_NODE = "Inferring type from value node type: {node_type}"
+JS_CTOR_LOCALLY_BOUND = (
+    "Construction of {class_name} reads a binding of the enclosing callable, "
+    "not the module class; left untyped"
+)
 JS_CALL_EXPR_FUNC_NODE = "Call expression func_node type: {func_type}"
 JS_EXTRACTED_METHOD_CALL = "Extracted method call: {method_call}"
 JS_TYPE_INFERRED = "JS type inference: {method_call}() returns {inferred_type}"
@@ -1102,6 +1139,9 @@ HASH_CACHE_ORPHANED = (
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+PREVIOUS_SYNC_UNFINISHED = (
+    "The previous sync of '{project}' did not finish; re-indexing the whole repository."
+)
 HASH_CACHE_DISCARD_FAILED = (
     "Could not discard the orphaned cache file {path} ({error}); this run "
     "ignores it and rebuilds fully, so nothing is lost, but the stale file is "
@@ -1110,8 +1150,9 @@ HASH_CACHE_DISCARD_FAILED = (
 )
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
-    "A parser input changed since this graph was built: parser code, a grammar "
-    "or toolchain version, a frontend mode, or the capture selection. Every "
+    "A parser input changed since this graph was built: parser code, an "
+    "ast-grep rule, a grammar or toolchain version, a frontend mode, or the "
+    "capture selection. Every "
     "eligible file of this repository (excluded and ignored ones aside) is "
     "re-parsed on this run, so what the new inputs "
     "emit is written for files not touched since the last sync too, and the "
