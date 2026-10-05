@@ -14,6 +14,7 @@ from ...types_defs import (
     JavaFieldInfo,
     JavaMethodCallInfo,
     JavaMethodInfo,
+    JavaMethodReferenceParts,
 )
 from ..utils import safe_decode_text
 
@@ -144,43 +145,84 @@ def _extract_type_identifier_name(node: ASTNode) -> str | None:
             return None
 
 
+_JAVA_NAMED_TYPE_NODES = (cs.TS_TYPE_IDENTIFIER, cs.TS_SCOPED_TYPE_IDENTIFIER)
+
+
 def _extract_interface_name(type_child: ASTNode) -> str | None:
+    # A scoped name (`Outer.Inner`, `Map.Entry<K, V>`) stays whole, as the
+    # superclass does: its last segment alone may name another type.
     match type_child.type:
-        case cs.TS_TYPE_IDENTIFIER:
+        case cs.TS_TYPE_IDENTIFIER | cs.TS_SCOPED_TYPE_IDENTIFIER:
             return safe_decode_text(type_child)
         case cs.TS_GENERIC_TYPE:
             for sub_child in type_child.children:
-                if sub_child.type == cs.TS_TYPE_IDENTIFIER:
+                if sub_child.type in _JAVA_NAMED_TYPE_NODES:
                     return safe_decode_text(sub_child)
     return None
 
 
-def _extract_interfaces(class_node: ASTNode) -> list[str]:
-    interfaces_node = class_node.child_by_field_name(cs.TS_FIELD_INTERFACES)
-    if not interfaces_node:
+def _clause_types(clause: ASTNode | None) -> list[ASTNode]:
+    # The types an `extends` or `implements` clause writes, one node each;
+    # keywords, commas and comments are none.
+    if clause is None:
         return []
-
-    interfaces: list[str] = []
-    for child in interfaces_node.children:
+    types: list[ASTNode] = []
+    for child in clause.named_children:
         if child.type == cs.TS_TYPE_LIST:
-            for type_child in child.children:
-                if interface_name := _extract_interface_name(type_child):
-                    interfaces.append(interface_name)
-    return interfaces
+            types.extend(entry for entry in child.named_children if not entry.is_extra)
+        elif not child.is_extra:
+            types.append(child)
+    return types
 
 
-def _extract_type_parameters(class_node: ASTNode) -> list[str]:
-    type_params_node = class_node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+def _extract_interfaces(class_node: ASTNode) -> list[str]:
+    return [
+        interface_name
+        for type_child in _clause_types(
+            class_node.child_by_field_name(cs.TS_FIELD_INTERFACES)
+        )
+        if (interface_name := _extract_interface_name(type_child))
+    ]
+
+
+def java_written_supertype_count(declaration: ASTNode) -> int:
+    # Every supertype a type declaration writes, whether or not a reader
+    # names it: its superclass, the interfaces it implements and, for an
+    # interface, the ones it extends.
+    extends_interfaces = next(
+        (
+            child
+            for child in declaration.children
+            if child.type == cs.TS_JAVA_EXTENDS_INTERFACES
+        ),
+        None,
+    )
+    return sum(
+        len(_clause_types(clause))
+        for clause in (
+            declaration.child_by_field_name(cs.TS_FIELD_SUPERCLASS),
+            declaration.child_by_field_name(cs.TS_FIELD_INTERFACES),
+            extends_interfaces,
+        )
+    )
+
+
+def _extract_type_parameters(declaration: ASTNode) -> list[str]:
+    type_params_node = declaration.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
     if not type_params_node:
         return []
 
     type_parameters: list[str] = []
     for child in type_params_node.children:
-        if child.type == cs.TS_TYPE_PARAMETER:
-            if param_name := safe_decode_text(
-                child.child_by_field_name(cs.TS_FIELD_NAME)
-            ):
-                type_parameters.append(param_name)
+        if child.type != cs.TS_TYPE_PARAMETER:
+            continue
+        # The grammar gives a type parameter's name no field: it is the
+        # type_identifier after any annotations, before any bound.
+        name_node = child.child_by_field_name(cs.TS_FIELD_NAME) or next(
+            (c for c in child.children if c.type == cs.TS_TYPE_IDENTIFIER), None
+        )
+        if param_name := safe_decode_text(name_node):
+            type_parameters.append(param_name)
     return type_parameters
 
 
@@ -333,7 +375,7 @@ def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
         return_type=_extract_method_return_type(method_node),
         parameters=_extract_method_parameters(method_node),
         modifiers=mods_and_annots.modifiers,
-        type_parameters=[],
+        type_parameters=_extract_type_parameters(method_node),
         annotations=mods_and_annots.annotations,
     )
 
@@ -411,6 +453,62 @@ def _java_paren_receiver(object_node: ASTNode) -> str | None:
     return None
 
 
+def _receiver_text(object_node: ASTNode) -> str | None:
+    match object_node.type:
+        case cs.TS_THIS:
+            return cs.TS_THIS
+        case cs.TS_SUPER:
+            return cs.TS_SUPER
+        case cs.TS_IDENTIFIER | cs.TS_FIELD_ACCESS:
+            return safe_decode_text(object_node)
+        case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
+            # A cast receiver `((T) x).m()`: the cast's target type is the
+            # receiver type, so m resolves on T. A parenthesised non-cast receiver
+            # `(reader).m()` keeps its inner identifier/field-access receiver.
+            # Without this the call falls to the unqualified path and never finds
+            # a cross-file/sibling T or the variable's type.
+            return _java_cast_target_type(object_node) or _java_paren_receiver(
+                object_node
+            )
+    return None
+
+
+def method_reference_parts(ref_node: ASTNode) -> JavaMethodReferenceParts | None:
+    if ref_node.type != cs.TS_JAVA_METHOD_REFERENCE:
+        return None
+    # Comments are extras the grammar lets sit between any two tokens, so they
+    # are not counted as the receiver or the name.
+    tokens = [
+        c
+        for c in ref_node.children
+        if c.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+    ]
+    if len(tokens) < 3:
+        return None
+    receiver, name_node = tokens[0], tokens[-1]
+    if name_node.type == cs.TS_JAVA_NEW_KEYWORD:
+        return JavaMethodReferenceParts(receiver=receiver, method_name=None)
+    if name_node.type != cs.TS_IDENTIFIER or not (name := safe_decode_text(name_node)):
+        return None
+    return JavaMethodReferenceParts(receiver=receiver, method_name=name)
+
+
+def method_reference_receiver_text(receiver: ASTNode) -> str | None:
+    # A method reference's receiver may also be a TYPE (`List<String>::size`,
+    # `Outer.Inner::new`), which a call's `object` never is; its generic
+    # arguments are dropped as `new T<A>()` drops them. An array type
+    # (`int[]::new`) names no class and yields None.
+    if receiver.type in (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_SCOPED_TYPE_IDENTIFIER,
+        cs.TS_GENERIC_TYPE,
+    ):
+        if not (text := safe_decode_text(receiver)):
+            return None
+        return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip() or None
+    return _receiver_text(receiver)
+
+
 def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     if call_node.type != cs.TS_METHOD_INVOCATION:
         return None
@@ -421,22 +519,7 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
 
     obj: str | None = None
     if object_node := call_node.child_by_field_name(cs.TS_FIELD_OBJECT):
-        match object_node.type:
-            case cs.TS_THIS:
-                obj = cs.TS_THIS
-            case cs.TS_SUPER:
-                obj = cs.TS_SUPER
-            case cs.TS_IDENTIFIER | cs.TS_FIELD_ACCESS:
-                obj = safe_decode_text(object_node)
-            case cs.TS_PARENTHESIZED_EXPRESSION | cs.TS_JAVA_CAST_EXPRESSION:
-                # A cast receiver `((T) x).m()`: the cast's target type is the
-                # receiver type, so m resolves on T. A parenthesised non-cast receiver
-                # `(reader).m()` keeps its inner identifier/field-access receiver.
-                # Without this the call falls to the unqualified path and never finds
-                # a cross-file/sibling T or the variable's type.
-                obj = _java_cast_target_type(object_node) or _java_paren_receiver(
-                    object_node
-                )
+        obj = _receiver_text(object_node)
 
     arguments = 0
     if args_node := call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS):

@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import NamedTuple
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import decode_node_text
+
+
+class DartConstructorDelegation(NamedTuple):
+    """A Dart constructor's `: this(...)` or `: super(...)` clause: the clause
+    node (the edge site), whether it runs a SUPERCLASS constructor, and the
+    named constructor it targets (None for the unnamed one)."""
+
+    site: Node
+    to_super: bool
+    name: str | None
 
 
 def _identifier_texts(node: Node) -> list[bytes]:
@@ -74,11 +85,129 @@ def dart_body_node(node: Node) -> Node | None:
 
 
 def dart_definition_end_byte(node: Node) -> int:
-    """End byte of a captured Dart definition, including its sibling body."""
+    """End byte of a captured Dart definition, including its sibling body.
+
+    A body-less constructor still runs its `: this(...)` / `: super(...)` /
+    field-initializer clauses, so it ends with the last of them; the calls in
+    their arguments belong to it, not to the enclosing module (issue #2482).
+    """
     body = dart_body_node(node)
     if body is not None:
         return body.end_byte
+    if clauses := dart_constructor_clauses(node):
+        return clauses[-1].end_byte
     return node.end_byte
+
+
+def dart_constructor_clauses(node: Node) -> list[Node]:
+    """The `redirection` / `initializers` clauses of a constructor signature.
+
+    They are siblings of the signature inside its `method_signature` (bodied)
+    or `declaration` (body-less) wrapper; any other node has none.
+    """
+    if node.type not in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+        return []
+    wrapper = node.parent
+    if wrapper is None or wrapper.type not in cs.DART_SIGNATURE_WRAPPERS:
+        return []
+    return [
+        child
+        for child in wrapper.named_children
+        if child.type in cs.DART_CONSTRUCTOR_CLAUSE_TYPES
+    ]
+
+
+def dart_constructor_delegations(node: Node) -> list[DartConstructorDelegation]:
+    """The other constructors a constructor signature delegates to.
+
+    `: this(...)` / `: this.named(...)` redirect to a constructor of the same
+    class; a `: super(...)` / `: super.named(...)` initializer entry runs one
+    of the superclass. Field initializers and asserts delegate nothing.
+    """
+    delegations: list[DartConstructorDelegation] = []
+    for clause in dart_constructor_clauses(node):
+        if clause.type == cs.TS_DART_REDIRECTION:
+            entries = [(clause, cs.TS_DART_THIS)]
+        else:
+            entries = [
+                (entry, cs.TS_DART_SUPER)
+                for entry in clause.named_children
+                if entry.type == cs.TS_DART_INITIALIZER_LIST_ENTRY
+            ]
+        for entry, keyword in entries:
+            head = entry.named_children[0] if entry.named_children else None
+            if head is None or head.type != keyword:
+                continue
+            delegations.append(
+                DartConstructorDelegation(
+                    site=entry,
+                    to_super=keyword == cs.TS_DART_SUPER,
+                    name=_first_identifier_text(entry),
+                )
+            )
+    return delegations
+
+
+def _written_type_after(node: Node, keyword: str) -> str | None:
+    """The type named right after the `keyword` token among `node`'s children.
+
+    An import prefix is a flat sibling run (`p` `.` `Point`), so the run is
+    glued back to `p.Point` for the resolver to fold against the declaring
+    library's own `as` imports; type arguments (`List<T>`) end the run.
+    """
+    names: list[str] = []
+    after_keyword = False
+    for child in node.children:
+        if not after_keyword:
+            after_keyword = child.type == keyword
+            continue
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
+            names.append(decode_node_text(child.text))
+        elif child.type != cs.SEPARATOR_DOT:
+            break
+    return cs.SEPARATOR_DOT.join(names) or None
+
+
+def dart_extension_on_type(node: Node) -> str | None:
+    """The type an `extension ... on T` declaration extends, as written
+    (`on p.Point` -> `p.Point`, `on List<T>` -> `List`)."""
+    if node.type != cs.TS_DART_EXTENSION_DECLARATION:
+        return None
+    return _written_type_after(node, cs.DART_EXTENSION_ON_KEYWORD)
+
+
+def dart_superclass_type(node: Node) -> str | None:
+    """The `extends` type, as written, of the class enclosing `node`.
+
+    Only that class declares the constructors a `: super(...)` initializer
+    can run: a `with` mixin declares none, an `implements` interface's are
+    never inherited, and a class with no `extends` delegates to Object.
+    """
+    current = node.parent
+    while current is not None and current.type != cs.TS_DART_CLASS_DEFINITION:
+        current = current.parent
+    if current is None:
+        return None
+    superclass = next(
+        (c for c in current.named_children if c.type == cs.TS_DART_SUPERCLASS),
+        None,
+    )
+    if superclass is None:
+        return None
+    return _written_type_after(superclass, cs.DART_EXTENDS_KEYWORD)
+
+
+def dart_exposes_library(directive: Node) -> bool:
+    """Does this directive hand its target's names to the library's importers?
+
+    `export 'x.dart';` re-exports x, and `part 'x.dart';` makes x part of the
+    library itself; a plain `import` only brings x into this file's scope.
+    """
+    if directive.type == cs.TS_DART_PART_DIRECTIVE:
+        return True
+    return any(
+        child.type == cs.TS_DART_LIBRARY_EXPORT for child in directive.named_children
+    )
 
 
 def _selector_member_name(selector: Node) -> str | None:

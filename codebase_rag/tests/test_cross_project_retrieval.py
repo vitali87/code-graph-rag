@@ -255,7 +255,7 @@ class TestMcpServerProjectScope:
 
         with (
             patch.object(srv, "MemgraphIngestor"),
-            patch.object(srv, "CypherGenerator") as cypher_cls,
+            patch.object(srv, "LazyCypherGenerator") as cypher_cls,
             patch.object(srv, "create_mcp_tools_registry"),
         ):
             srv.create_server()

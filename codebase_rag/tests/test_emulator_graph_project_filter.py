@@ -26,8 +26,9 @@ def _edge(
 
 
 def _names(store: _StatefulIngestor, query: str, qn: str) -> set[str]:
-    rows = store.fetch_all(query, {cs.KEY_QN: qn, cs.KEY_PROJECT_PREFIX: "proj."})
-    return {str(row[_QN]) for row in rows}
+    # `qns` for the reads of a whole level of the call walk (issue #2597).
+    params = {cs.KEY_QN: qn, cs.KEY_QNS: [qn], cs.KEY_PROJECT_PREFIX: "proj."}
+    return {str(row[_QN]) for row in store.fetch_all(query, params)}
 
 
 @pytest.mark.parametrize(
@@ -35,6 +36,8 @@ def _names(store: _StatefulIngestor, query: str, qn: str) -> set[str]:
     [
         (cq.CYPHER_GRAPH_CALLEES, cs.RelationshipType.CALLS.value, True),
         (cq.CYPHER_GRAPH_CALLERS, cs.RelationshipType.CALLS.value, False),
+        (cq.CYPHER_GRAPH_CALLEES_OF, cs.RelationshipType.CALLS.value, True),
+        (cq.CYPHER_GRAPH_CALLERS_OF, cs.RelationshipType.CALLS.value, False),
         (cq.CYPHER_GRAPH_REFERENCES, cs.RelationshipType.REFERENCES.value, False),
         (cq.CYPHER_GRAPH_TYPE_EDGES, cs.RelationshipType.INHERITS.value, False),
         (cq.CYPHER_GRAPH_OVERRIDES, cs.RelationshipType.OVERRIDES.value, True),
