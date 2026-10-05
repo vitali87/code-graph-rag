@@ -93,6 +93,8 @@ class RelBatchRow(TypedDict):
     from_val: PropertyValue
     to_val: PropertyValue
     props: PropertyDict
+    # Set by the flush, which counts written rows by it (issue #2879).
+    row_index: NotRequired[int]
 
 
 BatchParams = NodeBatchRow | RelBatchRow | PropertyDict

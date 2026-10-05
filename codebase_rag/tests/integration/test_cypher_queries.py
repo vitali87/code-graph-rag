@@ -67,7 +67,7 @@ class TestBuildMergeRelationshipQueryUnit:
             "MATCH (a:Module {qualified_name: row.from_val}), "
             "(b:Function {qualified_name: row.to_val})\n"
             "MERGE (a)-[r:DEFINES]->(b)\n"
-            "RETURN count(r) as created"
+            "RETURN count(DISTINCT coalesce(row.row_index, row)) as created"
         )
         assert result == expected
 
@@ -86,7 +86,7 @@ class TestBuildMergeRelationshipQueryUnit:
             "(b:Function {qualified_name: row.to_val})\n"
             "MERGE (a)-[r:CALLS]->(b)\n"
             "SET r += row.props\n"
-            "RETURN count(r) as created"
+            "RETURN count(DISTINCT coalesce(row.row_index, row)) as created"
         )
         assert result == expected
 
@@ -106,7 +106,7 @@ class TestBuildMergeRelationshipQueryUnit:
             "(b:Function {qualified_name: row.to_val})\n"
             "MERGE (a)-[r:FLOWS_TO {via: row.props.via, kind: row.props.kind}]->(b)\n"
             "SET r += row.props\n"
-            "RETURN count(r) as created"
+            "RETURN count(DISTINCT coalesce(row.row_index, row)) as created"
         )
         assert result == expected
 
