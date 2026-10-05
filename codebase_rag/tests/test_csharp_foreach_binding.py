@@ -68,6 +68,12 @@ namespace Acme
             foreach (var sink in _sinks) sink.Emit(m);
         }
         IEnumerable<Other> MakeOthers() { return new Other[0]; }
+        public void LocalFromCallWithCreationArgument(string m)
+        {
+            var items = Wrap(new List<ISink>());
+            foreach (var sink in items) sink.Emit(m);
+        }
+        Other[] Wrap(List<ISink> sinks) { return new Other[0]; }
     }
 }
 """
@@ -111,7 +117,14 @@ def test_a_foreach_binding_is_typed_by_the_collection_element(
     assert _callees(graph, caller).get(EMIT) == "exact"
 
 
-@pytest.mark.parametrize("caller", ["UntypedLoopAfterTypedLoop", "LocalHidesField"])
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "UntypedLoopAfterTypedLoop",
+        "LocalHidesField",
+        "LocalFromCallWithCreationArgument",
+    ],
+)
 def test_an_unread_binding_of_the_name_is_not_typed_by_another(
     graph: RecordedGraph, caller: str
 ) -> None:
@@ -127,6 +140,49 @@ def test_a_local_in_another_block_does_not_type_the_loop(
     callees = _callees(graph, "LocalInAnotherBlock")
     assert callees.get(EMIT) == "exact"
     assert OTHER_EMIT not in callees
+
+
+OWN_LIST = """\
+namespace Mine
+{
+    public interface ISink { void Emit(string message); }
+
+    public class Other { public void Emit(string message) { } }
+
+    // A project type that only shares the BCL collection's name: what it
+    // enumerates is its GetEnumerator's business, not its type argument's.
+    public class List<T>
+    {
+        public System.Collections.Generic.IEnumerator<Other> GetEnumerator() { return null; }
+    }
+
+    public class User
+    {
+        readonly List<ISink> _items;
+        public void Run(string m) { foreach (var sink in _items) sink.Emit(m); }
+    }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def own_list_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("csownlist") / "csownlist"
+    _write(root, "src/Mine.cs", OWN_LIST)
+    return _index(root, MagicMock())
+
+
+def test_a_project_type_named_like_a_collection_is_not_read_as_one(
+    own_list_graph: RecordedGraph,
+) -> None:
+    prefix = f"{own_list_graph.project}."
+    callees = {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in own_list_graph.edges
+        if rel == "CALLS"
+        and src.removeprefix(prefix).startswith("src.Mine.Mine.User.Run(")
+    }
+    assert callees.get("src.Mine.Mine.ISink.Emit(string)") != "exact", callees
 
 
 # Negative: what must not change.

@@ -468,7 +468,21 @@ class CSharpTypeInferenceEngine:
             declared = self._field_type_text(scope_node, name)
         else:
             return None
-        return collection_element_text(declared) if declared else None
+        return self._element_text(declared) if declared else None
+
+    def _element_text(self, declared: str) -> str | None:
+        # A project type named like a known collection (`Acme.List<T>`)
+        # enumerates whatever its own GetEnumerator yields, so only a name no
+        # registered type shares is read as the BCL one (bot review on PR
+        # #2990). An array's element type is the array's own.
+        head, angle, _rest = declared.partition(cs.CHAR_ANGLE_OPEN)
+        simple = head.strip().rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if angle and any(
+            self.function_registry.get(qn) in _TYPE_DECLS
+            for qn in self.simple_name_lookup.get(simple, set())
+        ):
+            return None
+        return collection_element_text(declared)
 
     @staticmethod
     def _parameter_type_text(scope_node: Node, name: str) -> str | None:
@@ -503,11 +517,20 @@ class CSharpTypeInferenceEngine:
                     cs.TS_CSHARP_IMPLICIT_TYPE
                 ):
                     return True, safe_decode_text(type_node)
-                for creation in self._descendants_of_type(
-                    declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
+                # Only a direct `new T(...)`: a creation among a call's
+                # arguments (`Make(new List<ISink>())`) is not what the call
+                # returns (bot review on PR #2990).
+                name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+                value = next(
+                    (c for c in reversed(declarator.named_children) if c != name_node),
+                    None,
+                )
+                if (
+                    value is not None
+                    and value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
                 ):
                     return True, safe_decode_text(
-                        creation.child_by_field_name(cs.FIELD_TYPE)
+                        value.child_by_field_name(cs.FIELD_TYPE)
                     )
                 return True, None
         return False, None
