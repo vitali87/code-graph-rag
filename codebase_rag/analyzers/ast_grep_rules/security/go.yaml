@@ -42,6 +42,10 @@ rules:
               has: { field: operator, regex: '\+', stopBy: end }
               stopBy: end
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. Value must be a non-trivial literal (>=8
     # content chars) that is not a format/message template (a Sprintf {..}
     # placeholder or a printf %s/%d specifier). Braces and % conversions are the
@@ -61,7 +65,7 @@ rules:
       any:
         - kind: short_var_declaration
           all:
-            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 kind: expression_list
@@ -78,7 +82,7 @@ rules:
                           - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: assignment_statement
           all:
-            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 kind: expression_list
@@ -95,7 +99,7 @@ rules:
                           - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: var_spec
           all:
-            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: expression_list
                 has:
@@ -111,7 +115,7 @@ rules:
                           - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: const_spec
           all:
-            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: expression_list
                 has:
