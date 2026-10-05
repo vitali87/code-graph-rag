@@ -1,5 +1,7 @@
 # Add-language grammar tooling messages, prompts, and file names.
 
+from enum import StrEnum
+
 LANG_GRAMMARS_DIR = "grammars"
 LANG_CONFIG_FILE = "codebase_rag/language_spec.py"
 LANG_TREE_SITTER_JSON = "tree-sitter.json"
@@ -157,13 +159,87 @@ LANG_MSG_ROLLING_BACK = (
     "'{name}' was not registered; removing the grammar submodule this run added."
 )
 
-LANG_TABLE_TITLE = "Configured Languages"
+
+# `cgr language list-languages` (issue #2421): every language of every
+# parsing tier, with its support level and whether this install can parse it.
+class LanguageTier(StrEnum):
+    TREE_SITTER = "tree-sitter"
+    AST_GREP = "ast-grep"
+    DOCUMENT = "document"
+
+
+class LanguageSupport(StrEnum):
+    FULL = "full"
+    IN_DEVELOPMENT = "in development"
+    STRUCTURAL = "structural"
+    HEADINGS = "headings"
+
+
+class NodeMappingKind(StrEnum):
+    FUNCTIONS = "functions"
+    CLASSES = "classes"
+    MODULES = "modules"
+    CALLS = "calls"
+
+
+class FrontendName(StrEnum):
+    LIBCLANG = "libclang"
+    GO_TYPES = "go/types"
+    ROSLYN = "Roslyn"
+    JAVAC = "javac"
+    JEDI = "Jedi"
+
+
+# The document tier parses Markdown only (tree-sitter-markdown).
+DOCUMENT_TIER_LANGUAGE = "Markdown"
+
+# The settings (environment variables) that select each frontend's mode.
+SETTING_CPP_FRONTEND = "CPP_FRONTEND"
+SETTING_CSHARP_FRONTEND = "CSHARP_FRONTEND"
+SETTING_GO_FRONTEND = "GO_FRONTEND"
+SETTING_JAVA_FRONTEND = "JAVA_FRONTEND"
+SETTING_PYTHON_FRONTEND = "PYTHON_FRONTEND"
+
+# The extra that installs each tier's grammars.
+TIER_EXTRAS: dict[LanguageTier, str] = {
+    LanguageTier.TREE_SITTER: "treesitter-full",
+    LanguageTier.AST_GREP: "ast-grep",
+    LanguageTier.DOCUMENT: "treesitter-full",
+}
+
+LANG_TABLE_TITLE = "Supported Languages"
 LANG_TABLE_COL_LANGUAGE = "Language"
 LANG_TABLE_COL_EXTENSIONS = "Extensions"
-LANG_TABLE_COL_FUNCTION_TYPES = "Function Types"
-LANG_TABLE_COL_CLASS_TYPES = "Class Types"
-LANG_TABLE_COL_CALL_TYPES = "Call Types"
+LANG_TABLE_COL_TIER = "Tier"
+LANG_TABLE_COL_SUPPORT = "Support"
+LANG_TABLE_COL_INSTALLED = "Installed"
+LANG_TABLE_YES = "yes"
+LANG_TABLE_NO = "no"
 LANG_TABLE_PLACEHOLDER = "—"
+LANG_TABLE_SEPARATOR = ", "
+LANG_SUPPORT_LEGEND = (
+    "full: definitions, calls and types. structural: modules, functions, "
+    "classes and imports, no call graph. headings: Markdown sections and links."
+)
+LANG_INSTALL_HINT = "Not installed ({tier}): pip install 'code-graph-rag[{extra}]'"
+
+LANG_NODE_TABLE_TITLE = "Tree-sitter Node Types"
+LANG_TABLE_COL_NODE_KIND = "Kind"
+LANG_TABLE_COL_NODE_TYPES = "Node Types"
+
+LANG_FRONTEND_TABLE_TITLE = "Optional Semantic Frontends"
+LANG_TABLE_COL_FRONTEND = "Frontend"
+LANG_TABLE_COL_LANGUAGES = "Languages"
+LANG_TABLE_COL_TOOLCHAIN = "Toolchain"
+LANG_TABLE_COL_SETTING = "Setting"
+LANG_TABLE_COL_ACTIVE = "Active"
+LANG_TOOLCHAIN_FOUND = "found"
+LANG_TOOLCHAIN_MISSING = "missing"
+LANG_SETTING_FMT = "{name}={value}"
+LANG_FRONTEND_LEGEND = (
+    "An active frontend adds compiler facts on top of tree-sitter. libclang "
+    "needs a compile_commands.json, go/types a go.mod, Roslyn a .csproj or .sln."
+)
 
 LANG_MSG_AVAILABLE_NODES = "Available nodes for mapping:"
 LANG_ELLIPSIS = "..."

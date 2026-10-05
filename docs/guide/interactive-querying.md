@@ -82,7 +82,7 @@ The interactive agent has access to these tools:
 | `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
 | `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
 | `list_directory` | Lists the contents of a directory to explore the codebase. |
-| `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
+| `execute_shell` | Executes allowlisted shell commands; `grep` is not available, use `rg`. Reads confined to the project (ls, rg, cat, find, wc, head, tail, sort, uniq, cut, with no redirects or paths outside it) run without approval; anything else asks the user first. A fallback: callers, callees, inheritance, counts, package layout and dependencies come from `query_graph`, so ask it before reconstructing them with rg, ls or wc. |
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Pass a project name to restrict matches to a single indexed project. |
 | `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |

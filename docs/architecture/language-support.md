@@ -6,6 +6,8 @@ description: "Supported programming languages and their feature coverage in Code
 
 Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified graph schema across all languages.
 
+Run `cgr language list-languages` to see every language below, its tier, and whether your install can parse it.
+
 ## Support Matrix
 
 <!-- SECTION:supported_languages -->
