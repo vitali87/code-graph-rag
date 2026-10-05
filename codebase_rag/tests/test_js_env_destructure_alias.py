@@ -139,6 +139,15 @@ def edges(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str, str]]
     (root / "env.js").write_text(ENV_JS, encoding="utf-8")
     (root / "env.ts").write_text(ENV_TS, encoding="utf-8")
     parsers, queries = load_parsers()
+    missing = sorted(
+        str(lang.value)
+        for lang in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS)
+        if lang not in parsers
+    )
+    if missing:
+        # A module-scoped fixture runs before the per-test grammar skip
+        # hook is installed, so a base install must skip here.
+        pytest.skip(f"{', '.join(missing)} parser not available")
     mock = MagicMock()
     GraphUpdater(
         ingestor=mock,
