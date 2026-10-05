@@ -16,6 +16,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 FUNCTION = cs.NodeLabel.FUNCTION.value
+METHOD = cs.NodeLabel.METHOD.value
 CLASS = cs.NodeLabel.CLASS.value
 MODULE = cs.NodeLabel.MODULE.value
 EXTERNAL_MODULE = cs.NodeLabel.EXTERNAL_MODULE.value
@@ -93,17 +94,11 @@ fun topLevel(a: Int): Int = a
 def test_kotlin_functions_including_modifiers(tmp_path: Path) -> None:
     # the point of the kind rule: modifiers sit outside any fixed pattern,
     # so `suspend`/`private suspend`/`override` must still be captured.
-    names = _node_names(_run(tmp_path, {"Greeter.kt": KOTLIN}), FUNCTION)
-    assert {
-        "greet",
-        "load",
-        "deep",
-        "run",
-        "build",
-        "speak",
-        "get",
-        "topLevel",
-    } <= names, names
+    # Members are Methods of their type (issue #2589).
+    mock = _run(tmp_path, {"Greeter.kt": KOTLIN})
+    names = _node_names(mock, METHOD)
+    assert {"greet", "load", "deep", "run", "build", "speak", "get"} <= names, names
+    assert "topLevel" in _node_names(mock, FUNCTION)
 
 
 def test_kotlin_classes_interfaces_objects_and_enums(tmp_path: Path) -> None:
@@ -135,10 +130,11 @@ func topLevel(a: Int) -> Int { return a }
 
 
 def test_swift_functions_and_initializers(tmp_path: Path) -> None:
-    names = _node_names(_run(tmp_path, {"Greeter.swift": SWIFT}), FUNCTION)
-    assert {"greet", "build", "init", "mag", "speak", "extra", "topLevel"} <= names, (
-        names
-    )
+    # Members, extension members included, are Methods (issue #2589).
+    mock = _run(tmp_path, {"Greeter.swift": SWIFT})
+    names = _node_names(mock, METHOD)
+    assert {"greet", "build", "init", "mag", "speak", "extra"} <= names, names
+    assert "topLevel" in _node_names(mock, FUNCTION)
 
 
 def test_swift_types(tmp_path: Path) -> None:
@@ -166,7 +162,9 @@ library Math { function add(uint a) internal pure returns (uint) { return a; } }
 
 
 def test_solidity_functions_modifiers_and_constructor(tmp_path: Path) -> None:
-    names = _node_names(_run(tmp_path, {"Token.sol": SOLIDITY}), FUNCTION)
+    # Everything here sits in a contract, interface or library, so each is a
+    # Method of it (issue #2589).
+    names = _node_names(_run(tmp_path, {"Token.sol": SOLIDITY}), METHOD)
     assert {"transfer", "_helper", "doIt", "add", "onlyOwner"} <= names, names
 
 
@@ -492,8 +490,8 @@ def test_kotlin_object_modifier_and_delegation_forms(tmp_path: Path) -> None:
 
 
 def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
-    """Functions declared inside an object are still emitted."""
-    counts = _node_name_counts(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
+    """Functions declared inside an object are still emitted, as its Methods."""
+    counts = _node_name_counts(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), METHOD)
     assert counts == Counter({"a": 1, "b": 1, "c": 1}), counts
 
 
