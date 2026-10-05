@@ -14,11 +14,13 @@ First, export the knowledge graph to JSON:
 cgr export -o my_graph.json
 ```
 
-Or export during graph update:
+Or export one repository's graph while syncing it:
 
 ```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
+
+![cgr export -o my_graph.json exporting the whole graph, then cgr start --update-graph -o my_graph.json syncing and exporting pallets/itsdangerous only](../assets/demos/graph-loader-export.gif)
 
 ## Load and Query
 
@@ -27,6 +29,13 @@ from cgr import load_graph
 
 graph = load_graph("my_graph.json")
 ```
+
+The file must be a JSON object with a `nodes` array (each node has `node_id`,
+`labels` and `properties`) and a `relationships` array (each has `from_id`,
+`to_id`, `type` and `properties`), the shape `cgr export` writes. `metadata` is
+optional: a hand-built or filtered graph without it loads, and its summary
+reports `exported_at` as `unknown`. A file of any other shape raises
+`GraphFileFormatError` (a `ValueError`) naming what is missing.
 
 ### Summary Statistics
 
@@ -52,6 +61,8 @@ for func in functions[:5]:
     print(f"Function {func.properties['name']} has {len(relationships)} relationships")
 ```
 
+![The Load and Query snippets above saved as one script and run against my_graph.json from pallets/itsdangerous](../assets/demos/graph-loader-load.gif)
+
 ## Query Memgraph Directly
 
 For live queries against a running Memgraph instance:
@@ -64,6 +75,8 @@ with MemgraphIngestor(host="localhost", port=7687) as db:
     for row in rows:
         print(row)
 ```
+
+![The MemgraphIngestor snippet run against the Memgraph on localhost:7687, printing ten function names](../assets/demos/graph-loader-memgraph.gif)
 
 ## Use Cases
 

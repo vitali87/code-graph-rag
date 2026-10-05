@@ -359,6 +359,57 @@ def is_macro_invocation_artifact(func_node: Node) -> bool:
     return is_recovery_artifact_shape(func_node) and not has_named_parameter(func_node)
 
 
+def c_macro_split_declaration(func_node: Node) -> Node | None:
+    # tree-sitter-c has no rule for an annotation macro between the return
+    # type and the name. For `int CJSON_CDECL main(void)`, whose parameter
+    # list is one bare identifier (`(void)`, `(int)`), and whose macro is too
+    # long for an ERROR node to be the cheaper repair, recovery closes a
+    # declaration after the macro (`int CJSON_CDECL` + a MISSING `;`) and
+    # reads `main(void) {...}` as a definition whose `type` is the real name
+    # and whose declarator is the parameter list as a parenthesized
+    # declarator. That MISSING `;` is the only thing separating this from a
+    # block macro (`START_TEST(name) {...}`), which yields the same
+    # definition with nothing split off before it, so it is required.
+    if func_node.type != cs.CppNodeType.FUNCTION_DEFINITION:
+        return None
+    name_node = func_node.child_by_field_name(cs.FIELD_TYPE)
+    params = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if (
+        name_node is None
+        or name_node.type != cs.CppNodeType.TYPE_IDENTIFIER
+        or params is None
+        or params.type != cs.CppNodeType.PARENTHESIZED_DECLARATOR
+        # `T (f(void)) {...}` wraps a real declarator that names the function
+        or any(
+            child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+            for child in params.named_children
+        )
+    ):
+        return None
+    split = func_node.prev_sibling
+    if (
+        split is None
+        or split.type != cs.CppNodeType.DECLARATION
+        or split.child_count == 0
+    ):
+        return None
+    terminator = split.children[-1]
+    if not terminator.is_missing or terminator.type != cs.CHAR_SEMICOLON:
+        return None
+    macro = split.child_by_field_name(cs.FIELD_DECLARATOR)
+    while macro is not None and macro.type == cs.CppNodeType.POINTER_DECLARATOR:
+        macro = macro.child_by_field_name(cs.FIELD_DECLARATOR)
+    if macro is None or macro.type != cs.CppNodeType.IDENTIFIER:
+        return None
+    return split
+
+
+def c_macro_split_function_name(func_node: Node) -> str | None:
+    if c_macro_split_declaration(func_node) is None:
+        return None
+    return safe_decode_text(func_node.child_by_field_name(cs.FIELD_TYPE))
+
+
 def extract_function_name(func_node: Node) -> str | None:
     name = _extract_function_name_by_type(func_node)
     # A reserved keyword in declarator position is an error-recovery

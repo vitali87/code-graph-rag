@@ -25,6 +25,10 @@ There is no separate project, and nothing marks those nodes as belonging to
 another repository. Calls, imports and inheritance across the boundary
 resolve as if the submodule's code were first-party.
 
+![cgr start --update-graph on a repository with pallets/markupsafe as a submodule under libs/markupsafe, and cgr graph resolve escape returning the submodule's functions under the parent project](../assets/demos/git-submodules.gif)
+
+*Recorded on a small `webapp` repository with pallets/markupsafe added as a submodule at `libs/markupsafe`.*
+
 The consequence to be aware of: dead-code and duplicate reports cover
 submodule code too, and a `1.0` precision figure measured over such a
 repository was measured over vendored code as well as your own.
@@ -68,12 +72,16 @@ sub/artifacts/
 Both work because the walk treats the submodule as an ordinary subdirectory,
 which is the same reason its own ignore file is skipped.
 
+![A parent .cgrignore excluding libs/markupsafe/, a cgr start --update-graph sync, and cgr graph resolve no longer finding the submodule's escape function while the parent's own code remains](../assets/demos/git-submodules-exclude.gif)
+
 ## Indexing a submodule as its own project
 
 If you want the submodule analysed separately, index it as its own
 repository, pointing at the submodule directory. It is a working tree with
 its own history, so the usual commands apply, and its root `.gitignore` is
 then honoured because it is the root.
+
+![cgr start --update-graph run inside the libs/markupsafe submodule, and cgr graph resolve escape returning it under its own markupsafe project](../assets/demos/git-submodules-own-project.gif)
 
 For querying both together, see [Multi-Project](../guide/multi-project.md).
 
