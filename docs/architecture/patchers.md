@@ -78,3 +78,7 @@ namespace, `require`, barrel `export { x } from`), Java (`import a.b.C;`),
 Rust (`use a::b::c`, `use a::b::{c as d, e}`, `pub use`), Go (import path
 strings, grouped specs). Statements that do not import the symbol from the
 old module are reported in `untouched` rather than guessed at.
+
+![cgr rename of compute_vat to vat_amount followed by an identifier-level git diff: only the name spans change, the vat_for alias, the invoicing.tax receiver, aligned spacing and comments are untouched](../assets/demos/patchers.gif)
+
+*`cgr rename` drives the patcher and the import rewriter; `git diff --color-words` shows each replaced span.*
