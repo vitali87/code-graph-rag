@@ -23,7 +23,7 @@ same report as JSON.
 
 ## What gets rewritten
 
-Sites come from the graph, never from text search:
+Sites come from the graph, never from text search, except the `string` sites described below the table:
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
@@ -31,6 +31,7 @@ Sites come from the graph, never from text search:
 | `call`       | `CALLS` edges into the definition, using the per-site `line`/`col` recorded at ingest (see [graph schema](graph-schema.md#edge-site-properties)). |
 | `reference`  | `REFERENCES` and `INSTANTIATES` edges, the same way.            |
 | `import`     | `IMPORTS` edges whose `imported_name` is the symbol; the statement is retargeted by the [import rewriter](patchers.md#import-rewriting-for-rename-and-move), and an alias (`import helper as h`) is kept, so aliased call sites need no edit. |
+| `string`     | A string that is exactly the Python symbol's import path, `"pkg.core.helper"` or the entry-point form `"pkg.core:main"`, in a `.py`, `.toml`, `.cfg` or `.ini` file (an unquoted `pkg.core:main` in a config file too). This covers `mock.patch(...)`, `monkeypatch.setattr(...)`, `[project.scripts]` and `setup.cfg` entry points. The import path is taken from every import root, so `src/pkg/core.py` matches `pkg.core.helper`. A longer path, another module's path, a bare name, or prose around the path is left as written. |
 
 Python modules that export the symbol through `__all__` (the defining module
 and any package `__init__` importing it) have the entry renamed too. Markdown

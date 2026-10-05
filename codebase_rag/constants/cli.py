@@ -749,6 +749,15 @@ RENAME_AMBIGUOUS = (
     "fan-out, or only by a trace; pass {option} to rewrite through them"
 )
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
+# A rename site inside a string that spells the symbol's import path:
+# `mock.patch("pkg.core.helper")`, an entry point `"pkg.core:main"` (issue
+# #2810). Read in Python sources and in the config files that hold entry
+# points; `setup.cfg` and `.ini` spell an entry point without quotes.
+RENAME_SITE_KIND_STRING = "string"
+RENAME_STRING_SUFFIXES = frozenset({".py", ".toml", ".cfg", ".ini"})
+RENAME_BARE_ENTRY_POINT_SUFFIXES = frozenset({".cfg", ".ini", ".toml"})
+RENAME_ENTRY_POINT_SEPARATOR = ":"
+PY_PACKAGE_INIT = "__init__"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "

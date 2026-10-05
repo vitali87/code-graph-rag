@@ -25,6 +25,7 @@ rewritten: prose is not a graph edge.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -43,7 +44,7 @@ from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
-from .patcher import Patcher, PatcherError, line_col_to_byte
+from .patcher import Patcher, PatcherError, byte_to_line_col, line_col_to_byte
 from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
@@ -271,6 +272,27 @@ def _chain_links(
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
     return sorted(found)
+
+
+def _replace_in_string(
+    patcher: Patcher, site: RenameSite, old_name: str, new_name: str
+) -> None:
+    # Inside a string the name is no identifier node, so the identifier
+    # check cannot vouch for it; the bytes must still spell the old name.
+    source = patcher.source(site.path)
+    start = line_col_to_byte(source, site.line, site.col)
+    end = start + len(old_name.encode(cs.ENCODING_UTF8))
+    if source[start:end] != old_name.encode(cs.ENCODING_UTF8):
+        raise PatcherError(
+            cs.PATCH_IDENTIFIER_MISMATCH.format(
+                path=site.path,
+                line=site.line,
+                col=site.col,
+                expected=old_name,
+                found=source[start:end].decode(cs.ENCODING_UTF8, errors="replace"),
+            )
+        )
+    patcher.replace_span(site.path, (start, end), new_name)
 
 
 def _chain_link_sites(
@@ -859,6 +881,7 @@ class Renamer:
                 ambiguous,
                 unlocatable,
             )
+        sites.extend(self._dotted_path_sites(members, old_name))
         for member in members:
             for site, module in self._import_sites(member, old_name):
                 sites.append(
@@ -891,6 +914,110 @@ class Renamer:
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
 
+    def _dotted_path_sites(self, members: list[str], old_name: str) -> list[RenameSite]:
+        """Strings spelling a member's whole import path, at its name.
+
+        `mock.patch("pkg.core.helper")`, `monkeypatch.setattr("pkg.mod.fn")`
+        and a `[project.scripts]` entry point `"pkg.core:main"` name the
+        definition by path, not by a code reference, so the rename rewrote
+        every code site and left them: the patching test raised
+        `AttributeError` and the console script pointed nowhere (issue
+        #2810). Only a string that IS the path, quoted whole (or an entry
+        point value in a config file), is a site; a longer path, another
+        module's, a bare name or prose around the path stays as written.
+        """
+        spelled: dict[str, str] = {}
+        for member in members:
+            module_qn, module_path = self._module_of(member)
+            inner = member.removeprefix(f"{module_qn}{cs.SEPARATOR_DOT}")
+            if (
+                module_path is None
+                or inner == member
+                or inner.rsplit(cs.SEPARATOR_DOT, 1)[-1] != old_name
+                or get_language_for_extension(Path(module_path).suffix)
+                != cs.SupportedLanguage.PYTHON
+            ):
+                continue
+            for import_path in self._python_import_paths(module_path):
+                spelled[f"{import_path}{cs.SEPARATOR_DOT}{inner}"] = member
+                spelled[f"{import_path}{cs.RENAME_ENTRY_POINT_SEPARATOR}{inner}"] = (
+                    member
+                )
+        if not spelled:
+            return []
+        alternatives = "|".join(
+            re.escape(path) for path in sorted(spelled, key=len, reverse=True)
+        )
+        entry_points = "|".join(
+            re.escape(path)
+            for path in sorted(spelled, key=len, reverse=True)
+            if cs.RENAME_ENTRY_POINT_SEPARATOR in path
+        )
+        quoted = re.compile(rf"""(["'])(?P<path>{alternatives})\1""")
+        bare = re.compile(rf"(?<![\w.:])(?P<path>{entry_points})(?![\w.:])")
+        found: dict[tuple[str, int, int], RenameSite] = {}
+        for file in self._string_site_files():
+            rel = file.relative_to(self.repo_root)
+            try:
+                source = file.read_bytes()
+            except OSError:
+                continue
+            text = source.decode(cs.ENCODING_UTF8, errors="replace")
+            patterns = [quoted]
+            if file.suffix in cs.RENAME_BARE_ENTRY_POINT_SUFFIXES:
+                patterns.append(bare)
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    offset = len(
+                        text[: match.end("path") - len(old_name)].encode(
+                            cs.ENCODING_UTF8
+                        )
+                    )
+                    line, col = byte_to_line_col(source, offset)
+                    found.setdefault(
+                        (rel.as_posix(), line, col),
+                        RenameSite(
+                            cs.RENAME_SITE_KIND_STRING,
+                            rel.as_posix(),
+                            line,
+                            col,
+                            spelled[match.group("path")],
+                            cs.EdgeResolution.EXACT,
+                        ),
+                    )
+        return list(found.values())
+
+    def _string_site_files(self) -> list[Path]:
+        # Pruned while walking: `node_modules` or a virtualenv can hold more
+        # files than the project itself.
+        files: list[Path] = []
+        for directory, dirnames, filenames in os.walk(self.repo_root):
+            dirnames[:] = sorted(d for d in dirnames if d not in cs.IGNORE_PATTERNS)
+            files.extend(
+                Path(directory) / name
+                for name in sorted(filenames)
+                if Path(name).suffix in cs.RENAME_STRING_SUFFIXES
+            )
+        return files
+
+    def _python_import_paths(self, module_path: str) -> list[str]:
+        """The dotted names a Python file imports as, one per import root.
+
+        A root is the repository or a directory that is not itself a package,
+        so `src/pkg/core.py` imports as `pkg.core` (and `src.pkg.core`), and
+        `pkg/core.py` as `pkg.core`.
+        """
+        parts = list(Path(module_path).with_suffix("").parts)
+        if parts and parts[-1] == cs.PY_PACKAGE_INIT:
+            parts.pop()
+        paths: list[str] = []
+        for start in range(len(parts)):
+            root = self.repo_root.joinpath(*parts[:start])
+            if start and (root / f"{cs.PY_PACKAGE_INIT}.py").is_file():
+                continue
+            paths.append(cs.SEPARATOR_DOT.join(parts[start:]))
+        return paths
+
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
         module of each module-level member, plus the modules importing it."""
@@ -921,6 +1048,9 @@ class Renamer:
             if key in done or site.kind in ("unlocatable", "import"):
                 continue
             done.add(key)
+            if site.kind == cs.RENAME_SITE_KIND_STRING:
+                _replace_in_string(patcher, site, old_name, new_name)
+                continue
             patcher.replace_identifier_at(
                 site.path, site.line, site.col, old_name, new_name
             )
