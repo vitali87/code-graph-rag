@@ -11,11 +11,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.cli import app
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import _plain_function
 from codebase_rag.parser_loader import load_parsers
@@ -23,6 +26,7 @@ from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_writer import FileWriter
 from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.workspaces import add_repo, create_workspace
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "proj"
@@ -158,6 +162,51 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
     assert f"{project}.util.log" in _callees(store, f"{project}.plugins._on_start")
 
 
+async def test_a_failed_refresh_is_recovered_by_a_forced_full_sync(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    # A re-ingest that died part way may have deleted definitions it never
+    # rebuilt, under files whose hashes are unchanged: only a forced run
+    # re-parses them (bot review on PR #2986).
+    from codebase_rag.tools.graph_refresh import GraphRefresher
+
+    root, store = indexed
+    refresher = GraphRefresher(store, root, PROJECT)
+    updater = MagicMock()
+    updater.reingest.side_effect = [RuntimeError("store down"), MagicMock()]
+    with patch.object(GraphRefresher, "_session_updater", return_value=updater):
+        assert "NOT updated" in refresher.refresh(["plugins.py"])
+        refresher.refresh(["plugins.py"])
+
+    updater.run.assert_called_once_with(force=True)
+
+
+def test_a_workspace_session_refreshes_the_repos_registered_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The workspace sync indexes the repo under the name it was registered
+    # with, so the session must re-ingest into that project, not the name
+    # derived from the folder (bot review on PR #2986).
+    monkeypatch.setattr(settings, "CGR_HOME", tmp_path / "cgr-home")
+    repo = tmp_path / "repo_a"
+    repo.mkdir()
+    create_workspace("mono")
+    add_repo("mono", str(repo), project_name="custom_a")
+
+    with (
+        patch("codebase_rag.cli._update_and_validate_models"),
+        patch("codebase_rag.cli.main_async", new_callable=AsyncMock) as session,
+    ):
+        result = CliRunner().invoke(
+            app,
+            ["start", "--repo-path", str(repo), "--workspace", "mono", "--no-sync"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert session.call_args.kwargs["project_name"] == "custom_a"
+    assert session.call_args.kwargs["project_named"] is True
+
+
 # Negative: what must not change.
 
 
@@ -183,3 +232,21 @@ async def test_a_failed_replace_leaves_the_graph_alone(
     assert "nope" not in (root / "plugins.py").read_text()
     assert cs.MSG_SURGICAL_SUCCESS.format(path="plugins.py") != result
     assert set(store.keyed_edges) == before
+
+
+def test_a_session_outside_a_workspace_keeps_the_derived_project(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo_b"
+    repo.mkdir()
+    with (
+        patch("codebase_rag.cli._update_and_validate_models"),
+        patch("codebase_rag.cli.main_async", new_callable=AsyncMock) as session,
+    ):
+        result = CliRunner().invoke(
+            app, ["start", "--repo-path", str(repo), "--no-sync"]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert session.call_args.kwargs["project_name"] == derive_project_name(repo)
+    assert session.call_args.kwargs["project_named"] is False

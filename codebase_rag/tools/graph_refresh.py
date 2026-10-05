@@ -68,7 +68,10 @@ class GraphRefresher:
                     return ""
                 updater = self._session_updater()
                 if self._needs_full_sync:
-                    updater.run()
+                    # force: the files a failed re-ingest left without their
+                    # nodes are unchanged on disk, so an incremental run
+                    # would skip exactly them (as `_rebuild_after_failure`).
+                    updater.run(force=True)
                     self._needs_full_sync = False
                 report = updater.reingest(paths)
             except (ValueError, ReingestAborted) as exc:

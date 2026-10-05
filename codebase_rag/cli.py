@@ -410,6 +410,22 @@ def _clean_database_only(
     _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
 
 
+def _session_project(
+    workspace_config: WorkspaceConfig | None,
+    target_repo_path: str,
+    resolved_project_name: str,
+    project_name: str | None,
+) -> tuple[str, bool]:
+    # The project the session's writes re-ingest into: a workspace syncs a
+    # repo under the name it was registered with, whatever --project-name
+    # says, so that name is the one in the graph (bot review on PR #2986).
+    if workspace_config is not None and (
+        repo := workspace_config.find_repo(target_repo_path)
+    ):
+        return repo.project_name, repo.project_named
+    return resolved_project_name, project_name is not None
+
+
 def _start_active_projects(
     workspace_config: WorkspaceConfig | None,
     projects: str | None,
@@ -1086,6 +1102,9 @@ def start(
         workspace_config, projects, resolved_project_name
     )
 
+    session_project, session_named = _session_project(
+        workspace_config, target_repo_path, resolved_project_name, project_name
+    )
     _launch_session(
         target_repo_path,
         effective_batch_size,
@@ -1094,8 +1113,8 @@ def start(
         output_format,
         sync_task,
         sync_message,
-        project_name=resolved_project_name,
-        project_named=project_name is not None,
+        project_name=session_project,
+        project_named=session_named,
     )
 
 
