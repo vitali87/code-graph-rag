@@ -16,7 +16,8 @@ the call; `callee_path` is where the invoked symbol is defined (issue #2460).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import difflib
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TypedDict
 
@@ -30,6 +31,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .types_defs import PropertyDict, PropertyParams, ResultRow
+from .utils.path_utils import project_roots_from_rows
 from .utils.source_extraction import extract_source_lines
 
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
@@ -395,39 +397,68 @@ def _site_sort_key(row: CallSiteRow) -> tuple[int, str, str, int, int]:
     )
 
 
+class _CallReads(TypedDict):
+    # The start's own read (`$qn`), the read of a whole later level (`$qns`),
+    # and that read's column naming the frontier node a row hangs off.
+    start: str
+    level: str
+    through: str
+
+
+_CALLERS_READS = _CallReads(
+    start=cq.CYPHER_GRAPH_CALLERS,
+    level=cq.CYPHER_GRAPH_CALLERS_OF,
+    through=cs.KEY_TO_QN,
+)
+_CALLEES_READS = _CallReads(
+    start=cq.CYPHER_GRAPH_CALLEES,
+    level=cq.CYPHER_GRAPH_CALLEES_OF,
+    through=cs.KEY_FROM_QN,
+)
+
+
 def _walk_sites(
-    fetch_all: QueryFn, project_name: str, query: str, start: str, depth: int
+    fetch_all: QueryFn, project_name: str, reads: _CallReads, start: str, depth: int
 ) -> list[CallSiteRow]:
-    # Breadth-first over endpoints, one query per frontier node; a node's
-    # sites appear at the depth it was first reached and never again, so a
-    # cycle terminates and the output stays a finite, ordered list.
+    # Breadth-first over endpoints, one query per LEVEL: one per frontier
+    # node was 886 round trips for a depth-2 walk on django (issue #2597).
+    # The start is read on its own, so depth 1, the default, is still the one
+    # single-node read. A node's sites appear at the depth it was first
+    # reached and never again, so a cycle terminates and the output stays a
+    # finite, ordered list.
     prefix = _prefix(project_name)
     owns = _owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
     for level in range(1, max(1, depth) + 1):
+        if level == 1:
+            rows = fetch_all(
+                reads["start"], {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: start}
+            )
+            hops = [(start, row) for row in rows]
+        else:
+            rows = fetch_all(
+                reads["level"],
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: sorted(frontier)},
+            )
+            hops = [(str(row.get(reads["through"], "")), row) for row in rows]
         next_frontier: list[str] = []
-        for qn in sorted(frontier):
-            rows = fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: qn})
-            for site in _owned_sites(rows, owns, level, qn):
-                out.append(site)
-                other = site["qualified_name"]
-                if other not in seen:
-                    seen.add(other)
-                    next_frontier.append(other)
+        for through, row in hops:
+            # A foreign row is neither reported nor a hop the walk continues
+            # through (issue #1982).
+            if not owns(_text_qn(row)):
+                continue
+            site = _site_row(row, level, through)
+            out.append(site)
+            other = site["qualified_name"]
+            if other not in seen:
+                seen.add(other)
+                next_frontier.append(other)
         frontier = next_frontier
         if not frontier:
             break
     return sorted(out, key=_site_sort_key)
-
-
-def _owned_sites(
-    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through: str
-) -> list[CallSiteRow]:
-    """The sites among `rows` whose other endpoint this project owns: a
-    foreign row is neither reported nor a hop the walk continues through."""
-    return [_site_row(row, level, through) for row in rows if owns(_text_qn(row))]
 
 
 def callers(
@@ -438,9 +469,7 @@ def callers(
     `depth` > 1 follows the callers' callers; `through` names the callee
     each row's site invokes, so a transitive row is still one exact site.
     """
-    return _walk_sites(
-        fetch_all, project_name, cq.CYPHER_GRAPH_CALLERS, qualified_name, depth
-    )
+    return _walk_sites(fetch_all, project_name, _CALLERS_READS, qualified_name, depth)
 
 
 def callees(
@@ -451,9 +480,7 @@ def callees(
     `path` is `through`'s file, where the site is, not the callee's: that
     one is `callee_path`, so a hop past depth 1 still reads as `path:line`.
     """
-    return _walk_sites(
-        fetch_all, project_name, cq.CYPHER_GRAPH_CALLEES, qualified_name, depth
-    )
+    return _walk_sites(fetch_all, project_name, _CALLEES_READS, qualified_name, depth)
 
 
 # --- implementors / overrides / importers ---------------------------------------
@@ -551,23 +578,16 @@ class ReachIndex:
         self,
         nodes: dict[_NodeId, PropertyDict],
         reverse: dict[str, set[str]],
-        test_patterns: tuple[str, ...],
     ) -> None:
         self._by_qn: dict[str, tuple[str, PropertyDict]] = {
             str(qn): (label, props) for (label, qn), props in nodes.items()
         }
         self._reverse = reverse
-        self._patterns = test_patterns
         self._rust_modules = _rust_test_modules_from_nodes(nodes)
         self._rust_spans = _rust_test_fn_spans(nodes)
 
     @classmethod
-    def build(
-        cls,
-        fetch_all: QueryFn,
-        project_name: str,
-        test_patterns: tuple[str, ...] = cs.TEST_PATH_PATTERNS,
-    ) -> ReachIndex:
+    def build(cls, fetch_all: QueryFn, project_name: str) -> ReachIndex:
         params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
         nodes: dict[_NodeId, PropertyDict] = {}
         owns = _owner_check(fetch_all, project_name)
@@ -587,7 +607,7 @@ class ReachIndex:
             # nor be a hop the walk continues through (issue #1982).
             if src and dst and owns(src) and owns(dst):
                 reverse.setdefault(dst, set()).add(src)
-        return cls(nodes, reverse, test_patterns)
+        return cls(nodes, reverse)
 
     def _walk(self, qualified_name: str) -> tuple[dict[str, int], dict[str, str]]:
         depth_of: dict[str, int] = {qualified_name: 0}
@@ -616,9 +636,7 @@ class ReachIndex:
                 continue
             label, props = entry
             path = str(props.get(cs.KEY_PATH) or "")
-            if _is_test_symbol(
-                props, qn, path, self._patterns, self._rust_modules, self._rust_spans
-            ):
+            if _is_test_symbol(props, qn, path, self._rust_modules, self._rust_spans):
                 out.append(
                     TestReachRow(
                         label=label,
@@ -635,7 +653,6 @@ def tests_reaching(
     fetch_all: QueryFn,
     project_name: str,
     qualified_name: str,
-    test_patterns: tuple[str, ...] = cs.TEST_PATH_PATTERNS,
 ) -> list[TestReachRow]:
     """Test symbols from which `qualified_name` is reachable, with distance.
 
@@ -644,9 +661,7 @@ def tests_reaching(
     the reached definitions the dead-code root classifier calls tests, so
     Rust `#[cfg(test)]` modules count exactly as they do there.
     """
-    return ReachIndex.build(fetch_all, project_name, test_patterns).tests_reaching(
-        qualified_name
-    )
+    return ReachIndex.build(fetch_all, project_name).tests_reaching(qualified_name)
 
 
 # --- cross-service edges (issue #1603) ---------------------------------------
@@ -737,3 +752,101 @@ def remote_dependencies(
         )
         for row in fetch_all(cq.CYPHER_GRAPH_REMOTE_DEPENDENCIES, params)
     ]
+
+
+# --- unknown projects and names (issue #2461) ----------------------------------
+#
+# Every read above is scoped by a project prefix and walks edges from a name,
+# so a project the graph does not hold and a name it never saw both answer
+# with nothing -- the same `[]` a definition nobody calls gets. The CLI and
+# the MCP tools tell them apart with these, and only once an answer is empty.
+
+
+def indexed_projects(fetch_all: QueryFn) -> dict[str, str | None]:
+    """{project name: the root it was indexed from} for every project."""
+    return project_roots_from_rows(fetch_all(cq.CYPHER_LIST_PROJECTS, None))
+
+
+def close_project_names(project_name: str, known: Iterable[str]) -> list[str]:
+    """The indexed projects a mistyped or stale `project_name` most likely
+    means, closest spelling first.
+
+    Names are `<dir>__<hash>`: a close spelling catches a typo in the hash,
+    and the same `<dir>` part catches a bare directory name, a stale hash or
+    another checkout, which a spelling ratio misses once the hash differs.
+    """
+    names = sorted(set(known))
+    close = difflib.get_close_matches(
+        project_name,
+        names,
+        n=cs.GRAPH_SUGGESTION_LIMIT,
+        cutoff=cs.GRAPH_SUGGESTION_CUTOFF,
+    )
+    stem = project_name.split(cs.PROJECT_NAME_DIGEST_MARKER, 1)[0]
+    same_dir = [
+        name
+        for name in names
+        if name.split(cs.PROJECT_NAME_DIGEST_MARKER, 1)[0] == stem
+    ]
+    return list(dict.fromkeys([*close, *same_dir]))[: cs.GRAPH_SUGGESTION_LIMIT]
+
+
+def projects_rooted_at(roots: dict[str, str | None], repo_root: Path) -> list[str]:
+    """The projects indexed from `repo_root`, whatever they were named.
+
+    A repository indexed with a name of its own is not the `<dir>__<hash>`
+    its path derives, so a query run from inside it misses it by name alone.
+    """
+    here = repo_root.resolve()
+    return sorted(
+        name for name, root in roots.items() if root and Path(root).resolve() == here
+    )
+
+
+def node_exists(fetch_all: QueryFn, qualified_name: str) -> bool:
+    """Whether any node, in any project, carries `qualified_name`."""
+    return bool(fetch_all(cq.CYPHER_GRAPH_NODE_EXISTS, {cs.KEY_QN: qualified_name}))
+
+
+def similar_targets(
+    fetch_all: QueryFn, project_name: str, qualified_name: str
+) -> list[str]:
+    """This project's definitions a missing `qualified_name` most likely
+    means: close spellings of its last part under the same parent, then the
+    definitions that carry that last part as their name, wherever they are.
+    """
+    owns = _owner_check(fetch_all, project_name)
+    parent, _, leaf = qualified_name.rpartition(cs.SEPARATOR_DOT)
+    close: list[str] = []
+    # Under the project root itself the pool would be the whole project.
+    if parent.startswith(_prefix(project_name)):
+        under = _prefix(parent)
+        rows = fetch_all(
+            cq.CYPHER_GRAPH_DEFINITIONS_UNDER, {cs.KEY_PROJECT_PREFIX: under}
+        )
+        # Scored on the part after the parent: the shared prefix would make
+        # every sibling look close.
+        by_rest = {qn[len(under) :]: qn for r in rows if owns(qn := _text_qn(r))}
+        close = [
+            by_rest[rest]
+            for rest in difflib.get_close_matches(
+                leaf,
+                sorted(by_rest),
+                n=cs.GRAPH_SUGGESTION_LIMIT,
+                cutoff=cs.GRAPH_SUGGESTION_CUTOFF,
+            )
+        ]
+    same_name = (
+        [s["qualified_name"] for s in resolve(fetch_all, project_name, leaf)]
+        if leaf
+        else []
+    )
+    named = [qn for qn in same_name if qn.rpartition(cs.SEPARATOR_DOT)[2] == leaf]
+    return list(dict.fromkeys([*close, *named]))[: cs.GRAPH_SUGGESTION_LIMIT]
+
+
+def did_you_mean(names: Sequence[str]) -> str:
+    """The " Did you mean: ...?" tail of a refusal, or nothing."""
+    if not names:
+        return ""
+    return cs.GRAPH_DID_YOU_MEAN.format(names=cs.SEPARATOR_COMMA_SPACE.join(names))
