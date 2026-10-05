@@ -215,14 +215,37 @@ def _pair_key_of(
     return None
 
 
+def _definition_name_node(
+    nodes: list[Node], start_line: int, end_line: int, name: str
+) -> Node | None:
+    """The name token among `nodes` that a definition spells: an object
+    pair's key, else a `name` field."""
+    if (key := _pair_key_of(nodes, start_line, end_line, name)) is not None:
+        return key
+    for node in nodes:
+        if (
+            named := _spelling(
+                node.child_by_field_name(cs.FIELD_NAME), name, start_line
+            )
+        ) is not None:
+            return named
+    return None
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
     start_line: int,
     end_line: int,
     name: str,
+    start_col: int | None = None,
 ) -> tuple[int, int] | None:
-    """(line, col) of the definition's own name identifier inside its span."""
+    """(line, col) of the definition's own name identifier inside its span.
+
+    `start_col` is where the definition starts on `start_line`: two can share
+    a line span (`function foo() {}` and `{ foo: () => 1 }` on one line), so
+    the nodes starting exactly there are asked first (bot review on PR
+    #2895)."""
     parser = None
     if language is not None:
         parsers, _queries = load_parsers()
@@ -231,6 +254,15 @@ def _name_token(
         in_span = list(
             _nodes_in_span(parser.parse(source).root_node, start_line, end_line)
         )
+        anchored = [
+            node
+            for node in in_span
+            if start_col is not None and node.start_point == (start_line - 1, start_col)
+        ]
+        if anchored and (
+            token := _definition_name_node(anchored, start_line, end_line, name)
+        ):
+            return token.start_point[0] + 1, token.start_point[1]
         # A function that is a JS/TS object pair's value is the property its
         # key names: the key comes first, though the value may start on the
         # next line (outside the span) or spell the name itself, or declare
@@ -671,7 +703,12 @@ class Renamer:
         start = definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(
-            source, get_language_for_extension(Path(path).suffix), start, end, old_name
+            source,
+            get_language_for_extension(Path(path).suffix),
+            start,
+            end,
+            old_name,
+            definition.get("start_col"),
         )
         if token is None:
             raise RenameRefused(

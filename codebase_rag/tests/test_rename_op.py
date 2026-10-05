@@ -52,6 +52,7 @@ class RecordedGraph:
             cs.KEY_PATH: n.get(cs.KEY_PATH),
             cs.KEY_START_LINE: n.get(cs.KEY_START_LINE),
             cs.KEY_END_LINE: n.get(cs.KEY_END_LINE),
+            cs.KEY_START_COL: n.get(cs.KEY_START_COL),
             cs.KEY_DOCSTRING: n.get(cs.KEY_DOCSTRING),
             cs.KEY_NAME_START_LINE: n.get(cs.KEY_NAME_START_LINE),
             cs.KEY_NAME_START_COL: n.get(cs.KEY_NAME_START_COL),

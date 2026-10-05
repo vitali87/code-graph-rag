@@ -704,6 +704,7 @@ class _StatefulIngestor:
         cs.KEY_PATH,
         cs.KEY_START_LINE,
         cs.KEY_END_LINE,
+        cs.KEY_START_COL,
         cs.KEY_DOCSTRING,
         cs.KEY_NAME_START_LINE,
         cs.KEY_NAME_START_COL,
