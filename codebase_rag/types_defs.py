@@ -13,9 +13,11 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     NamedTuple,
+    NotRequired,
     Protocol,
     TypedDict,
     runtime_checkable,
@@ -167,6 +169,10 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool: ...
 
+    def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None: ...
+
+    def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool: ...
+
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
     ) -> None: ...
@@ -174,6 +180,10 @@ class FunctionRegistryTrieProtocol(Protocol):
     def callable_params(
         self, qualified_name: QualifiedName
     ) -> dict[str, int] | None: ...
+
+    def reserve_qns(
+        self, reservations: dict[QualifiedName, tuple[int, int]]
+    ) -> None: ...
 
 
 class ASTCacheProtocol(Protocol):
@@ -278,6 +288,8 @@ class GraphMetadata(TypedDict):
     total_nodes: int
     total_relationships: int
     exported_at: str
+    # Only on a scoped export (`cgr export -n`, issue #2410).
+    projects: NotRequired[list[str]]
 
 
 class NodeData(TypedDict):
@@ -337,6 +349,50 @@ class JavaClassInfo(TypedDict):
     type_parameters: list[str]
 
 
+class JavaOverloadRank(NamedTuple):
+    """How well one Java overload fits a call's argument types; smaller is
+    better. `unproven` counts the arguments whose conversion could be neither
+    proven nor ruled out, so it decides first; then the summed conversion
+    ranks (JLS 5.3); then the summed distances up the argument types'
+    hierarchies, which make the nearest supertype the most specific."""
+
+    unproven: int
+    conversions: int
+    distance: int
+
+
+class JavaSupertypes(NamedTuple):
+    """What one Java argument type widens to. `depths` maps each supertype
+    found, by simple name, to its distance up the hierarchy; `unreachable`
+    holds the candidates' parameter types it provably cannot reach, because
+    the whole hierarchy is visible or a JDK type cannot extend a project one.
+    Any other parameter type stays possible. `refs` keeps each supertype as
+    the walk resolved it, at its distance, `project` the ones that are
+    project types, and `complete` whether the walk saw every supertype: a
+    parameter sharing a simple name with one counts it only when it names
+    that very type."""
+
+    depths: Mapping[str, int]
+    unreachable: frozenset[str]
+    # The argument's type as the caller's file resolves it, and as written,
+    # when a candidate parameter shares its simple name and that name may
+    # denote another type.
+    qualified: str | None = None
+    written: str | None = None
+    refs: Mapping[str, int] = MappingProxyType({})
+    project: frozenset[str] = frozenset()
+    complete: bool = False
+
+
+class JavaCandidateLookups(NamedTuple):
+    """What ranking reads from a Java overload's declaration, only when a
+    parameter calls for it: the type variables it may name, and the types its
+    parameters name as its own file resolves them (None where unsure)."""
+
+    type_variables: Callable[[str], frozenset[str]]
+    parameter_types: Callable[[str], tuple[str | None, ...]]
+
+
 class JavaMethodInfo(TypedDict):
     name: str | None
     type: str
@@ -363,6 +419,12 @@ class JavaMethodCallInfo(TypedDict):
     name: str | None
     object: str | None
     arguments: int
+
+
+class JavaMethodReferenceParts(NamedTuple):
+    # `method_name` is None for a constructor reference (`Type::new`).
+    receiver: ASTNode
+    method_name: str | None
 
 
 class CSharpCallShape(NamedTuple):
@@ -497,7 +559,7 @@ class FunctionNodeProps(TypedDict, total=False):
 # float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
 # bool is listed for documentation only, being already a subtype of int, and
 # structural_replace's dry_run default has relied on that since it was added.
-MCPToolArguments = dict[str, str | int | float | bool | None]
+MCPToolArguments = dict[str, str | int | float | bool | dict[str, str] | None]
 
 
 class MCPInputSchemaProperty(TypedDict, total=False):
@@ -505,6 +567,8 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     description: str
     default: str | int | float | bool
     items: dict[str, str]
+    # JSON Schema's key for the value type of an object used as a map.
+    additionalProperties: dict[str, str]
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
@@ -545,6 +609,9 @@ class DeadCodeRow(TypedDict):
     label: str
     name: str
     qualified_name: str
+    # Repo-relative, as a duplicates member's: a qualified name cannot be
+    # turned back into a file in general (issue #2561).
+    path: str
     start_line: int
     end_line: int
 
@@ -554,7 +621,6 @@ class DeadCodeConfig(NamedTuple):
     include_classes: bool
     root_decorators: frozenset[str]
     entry_points: tuple[str, ...]
-    test_patterns: tuple[str, ...]
     exclude_patterns: tuple[str, ...] = ()
     # Drop CALLS/REFERENCES edges below this confidence before the walk
     # (issue #1526); None keeps every edge.
@@ -592,11 +658,34 @@ class DuplicateMember(TypedDict):
     end_line: int
 
 
+class DuplicateLink(TypedDict):
+    # Qualified names of two members whose own pair clears the threshold.
+    first: str
+    second: str
+    similarity: float
+
+
 class DuplicateGroup(TypedDict):
     kind: str
+    # Groups are disjoint clusters (issue #2473), so two members of a
+    # `similar` group may be linked only through a third: similarity is its
+    # weakest qualifying link and max_similarity its strongest (1.0 for an
+    # `exact` group, and for a cluster holding exact copies).
     similarity: float
+    max_similarity: float
     node_count: int
     members: list[DuplicateMember]
+    # Qualified names of the members that are exact copies of each other,
+    # one list per shared fingerprint. Always empty for an `exact` group,
+    # which is one such list as a whole.
+    exact_subgroups: list[list[str]]
+    # The qualifying pairs between different fingerprints, strongest first:
+    # with the exact copies, the only member pairs that are duplicates. Empty
+    # for an `exact` group, where every pair is one. Collected groups hold one
+    # link per fingerprint pair, named by its best member pair, since two
+    # clone classes would otherwise cost their cross product; the JSON report
+    # expands each over both sides' exact copies (duplicates.expanded_links).
+    links: list[DuplicateLink]
 
 
 class DuplicatesReport(NamedTuple):
@@ -739,6 +828,21 @@ class FunctionLocation(NamedTuple):
     is_named: bool = True
 
 
+class CppParameterType(NamedTuple):
+    """A C++ parameter's bare type name and its pointer/array depth."""
+
+    type_name: str | None
+    indirection: int
+
+
+class CppOperatorSignature(NamedTuple):
+    """What overload viability reads from a free C++ operator's declaration."""
+
+    module_qn: str
+    parameters: tuple[CppParameterType, ...]
+    template_params: frozenset[str]
+
+
 # The source `dict.update` reads as a mapping: anything with keys() and
 # indexing, which is wider than Mapping.
 class KeysAndGetItem[KT, VT](Protocol):
@@ -873,6 +977,10 @@ class DeferredInherit(NamedTuple):
     registered node: a written path can be exact about where to look and
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
+
+    `written_ref` is a C# base as written (`NotificationHandler`1`): the
+    parse-time qn cannot say which name was written, and C# binds that
+    name by scope (namespace, enclosing namespaces, usings), issue #2534.
     """
 
     rel_type: RelationshipType
@@ -882,6 +990,7 @@ class DeferredInherit(NamedTuple):
     base_index: int
     language: SupportedLanguage
     alt_parent_qn: str | None = None
+    written_ref: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
@@ -1016,6 +1125,13 @@ _ENUM_VARIANT_NODE_PROPS = (
     "start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}"
 )
 
+# A module-level constant (issue #1806). `value` is the right-hand side as
+# written, absent when it is longer than CONSTANT_VALUE_MAX_CHARS.
+_CONSTANT_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, type_name: string?, value: string?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
@@ -1046,7 +1162,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
@@ -1097,6 +1213,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
     NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
     NodeSchema(NodeLabel.ENUM_VARIANT, _ENUM_VARIANT_NODE_PROPS),
+    NodeSchema(NodeLabel.CONSTANT, _CONSTANT_NODE_PROPS),
 )
 
 
@@ -1116,7 +1233,8 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
             RelationshipType.INSTANTIATES,
         ),
         "{line: int?, col: int?, end_line: int?, end_col: int?, "
-        "arg_count: int?, kwarg_names: list[string]?, resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
+        "arg_count: int?, kwarg_names: list[string]?, star_args: boolean?, star_kwargs: boolean?, "
+        "resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
     ),
     RelationshipPropertySchema(
         (RelationshipType.IMPORTS,),
@@ -1354,13 +1472,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
+    # Only a Module declares one today: a class-level member is a Field
+    # (issue #1805), so the two labels never share a qualified name.
     RelationshipSchema(
         (NodeLabel.ENUM,),
         RelationshipType.HAS_VARIANT,
         (NodeLabel.ENUM_VARIANT,),
     ),
     RelationshipSchema(
-        (NodeLabel.PARAMETER, NodeLabel.FIELD),
+        (NodeLabel.MODULE,),
+        RelationshipType.DEFINES_CONSTANT,
+        (NodeLabel.CONSTANT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PARAMETER, NodeLabel.FIELD, NodeLabel.CONSTANT),
         RelationshipType.OF_TYPE,
         _PARAMETER_TYPE_LABELS,
     ),
