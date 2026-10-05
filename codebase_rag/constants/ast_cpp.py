@@ -215,6 +215,8 @@ TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
 TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
+# An optional parameter's default (`int x = 0`).
+TS_CPP_FIELD_DEFAULT_VALUE = "default_value"
 # `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
 # `&fn` / `*p`: the unary address-of or dereference, told apart by its

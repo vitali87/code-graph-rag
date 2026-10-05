@@ -333,3 +333,74 @@ def test_reviewed_private_code_stays_private(
     matches = [qn for qn in reviewed if qn.endswith(f".{symbol}")]
     assert matches, symbol
     assert not any(reviewed[qn] for qn in matches), symbol
+
+
+# Bot review on PR #2952: a `static` declaration gives internal linkage to
+# the definition in its own namespace with its own parameters, and a
+# definition qualified by a namespace is a namespace function.
+LINKAGE_CPP = """\
+namespace N {
+static void helper();
+void helper() {}
+void visible() {}
+}
+
+static void process(int);
+void process(double) {}
+void process(int) {}
+
+namespace Q {
+namespace V {
+void f();
+}
+void V::f() {}
+}
+
+struct Box {
+    int area();
+};
+int Box::area() { return 1; }
+"""
+
+
+@pytest.fixture
+def linkage(tmp_path: Path) -> dict[str, bool]:
+    return _run(tmp_path, {"link2.cpp": LINKAGE_CPP})
+
+
+@pytest.mark.parametrize(
+    ("symbol", "is_exported"),
+    [
+        ("link2.N.helper@3", False),
+        ("link2.process@8", True),
+        ("link2.V.f", True),
+    ],
+    ids=[
+        "static-declared-in-its-namespace",
+        "another-overload-than-the-static-one",
+        "a-function-qualified-by-its-namespace",
+    ],
+)
+def test_cpp_linkage_follows_namespace_and_signature(
+    linkage: dict[str, bool], symbol: str, is_exported: bool
+) -> None:
+    assert _one(linkage, f".{symbol}") is is_exported
+
+
+@pytest.mark.parametrize(
+    ("symbol", "is_exported"),
+    [
+        ("link2.N.visible", True),
+        ("link2.process@9", False),
+        ("link2.Box.area", False),
+    ],
+    ids=[
+        "an-unrelated-namespace-function",
+        "the-overload-declared-static",
+        "an-out-of-line-member-is-left-alone",
+    ],
+)
+def test_cpp_linkage_that_must_not_change(
+    linkage: dict[str, bool], symbol: str, is_exported: bool
+) -> None:
+    assert _one(linkage, f".{symbol}") is is_exported

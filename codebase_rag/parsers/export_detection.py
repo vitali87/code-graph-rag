@@ -716,10 +716,16 @@ def _c_exported(node: Node) -> bool:
     )
 
 
-def _declared_static_before(definition: Node) -> bool:
+def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
+    # A C++ declaration names the same function only in the same namespace
+    # (reopened blocks included) and with the same parameter types: `static
+    # void process(int)` leaves `process(double)` external (bot review on PR
+    # #2952). C has one namespace and no overloads.
     name = _cpp_declared_name(definition)
     if name is None:
         return False
+    namespace = _cpp_namespace_path(definition) if cpp else ()
+    parameters = _cpp_parameter_types(definition) if cpp else ()
     root = definition
     while root.parent is not None:
         root = root.parent
@@ -728,15 +734,69 @@ def _declared_static_before(definition: Node) -> bool:
         node = pending.pop()
         if node.start_byte >= definition.start_byte:
             return False
-        if node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES:
+        if node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES or (
+            cpp and node.type == cs.TS_NAMESPACE_DEFINITION
+        ):
             pending.extend(reversed(node.children))
         elif (
             node.type == cs.TS_CPP_DECLARATION
             and _cpp_static(node)
             and _cpp_declared_name(node) == name
+            and (
+                not cpp
+                or (
+                    _cpp_namespace_path(node) == namespace
+                    and _cpp_parameter_types(node) == parameters
+                )
+            )
         ):
             return True
     return False
+
+
+def _cpp_namespace_path(node: Node) -> tuple[str, ...]:
+    # The names of the namespaces around a node, outermost first.
+    path: list[str] = []
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_NAMESPACE_DEFINITION:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            path[:0] = (named or "").split(cs.SEPARATOR_DOUBLE_COLON)
+        current = current.parent
+    return tuple(path)
+
+
+def _cpp_parameter_types(node: Node) -> tuple[str, ...]:
+    # Each parameter's type as written, without its name or default value,
+    # whitespace dropped; `(void)` is `()`.
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    parameters = (
+        declarator.child_by_field_name(cs.FIELD_PARAMETERS)
+        if declarator is not None
+        else None
+    )
+    if parameters is None:
+        return ()
+    types: list[str] = []
+    for parameter in parameters.named_children:
+        if parameter.text is None or parameter.type == cs.TS_COMMENT:
+            continue
+        text = parameter.text
+        end = len(text)
+        default = parameter.child_by_field_name(cs.TS_CPP_FIELD_DEFAULT_VALUE)
+        if default is not None:
+            end = default.start_byte - parameter.start_byte
+        named = parameter.child_by_field_name(cs.FIELD_DECLARATOR)
+        while named is not None and named.type != cs.TS_CPP_IDENTIFIER:
+            named = named.child_by_field_name(cs.FIELD_DECLARATOR)
+        written = text[:end]
+        if named is not None and named.end_byte - parameter.start_byte <= end:
+            start = named.start_byte - parameter.start_byte
+            written = written[:start] + written[named.end_byte - parameter.start_byte :]
+        types.append("".join(written.decode(cs.ENCODING_UTF8).split()).rstrip("="))
+    return () if types == ["void"] else tuple(types)
 
 
 def _cpp_declared_name(node: Node) -> str | None:
@@ -795,7 +855,7 @@ def _cpp_public_api(node: Node) -> bool:
             cs.TS_CPP_LINKAGE_SPECIFICATION,
         )
         and not _cpp_static(definition)
-        and not _declared_static_before(definition)
+        and not _declared_static_before(definition, cpp=True)
         and not _cpp_defined_out_of_line(definition)
     )
 
@@ -851,6 +911,9 @@ def _cpp_member_access(member: Node, body: Node) -> str:
 
 
 def _cpp_defined_out_of_line(node: Node) -> bool:
+    # `int Box::f() {}` defines a class member outside its class; `void
+    # V::f() {}` with `V` a namespace of the file is a namespace function
+    # and keeps its linkage (bot review on PR #2952).
     declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
     while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
         declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
@@ -859,7 +922,34 @@ def _cpp_defined_out_of_line(node: Node) -> bool:
         if declarator is not None
         else None
     )
-    return name is not None and name.type == cs.TS_CPP_QUALIFIED_IDENTIFIER
+    if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        return False
+    scope = safe_decode_text(name.child_by_field_name(cs.FIELD_SCOPE)) or ""
+    owner = scope.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+    namespaces, classes = _cpp_file_scope_names(node)
+    return not (owner in namespaces and owner not in classes)
+
+
+def _cpp_file_scope_names(node: Node) -> tuple[set[str], set[str]]:
+    # The namespace names and class names a file defines.
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    namespaces: set[str] = set()
+    classes: set[str] = set()
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_NAMESPACE_DEFINITION:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            namespaces.update((named or "").split(cs.SEPARATOR_DOUBLE_COLON))
+        elif current.type in cs.CPP_CLASS_TYPES:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            if named:
+                classes.add(named)
+        if current.type not in (cs.TS_CPP_FUNCTION_DEFINITION,):
+            stack.extend(current.named_children)
+    return namespaces, classes
 
 
 def _scala_exported(node: Node) -> bool:

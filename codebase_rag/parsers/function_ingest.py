@@ -899,6 +899,12 @@ class FunctionIngestMixin:
             cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
             cs.KEY_END_LINE: func_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node, cs.SupportedLanguage.CPP),
+            # `void V::f() {}` with `V` a namespace is a namespace function,
+            # not a member of an unseen class: its linkage decides (bot review
+            # on PR #2952). A real out-of-line member stays unexported.
+            cs.KEY_IS_EXPORTED: export_detection.is_exported(
+                func_node, method_name, cs.SupportedLanguage.CPP
+            ),
         }
         if file_path is not None and self.repo_path is not None:
             props[cs.KEY_PATH] = cached_relative_path(
