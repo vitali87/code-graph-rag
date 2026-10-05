@@ -101,8 +101,16 @@ class TestDeadCodeTable:
 
     @pytest.mark.parametrize("segment", BRACKETED)
     def test_bracketed_segment_survives_in_the_output_file(
-        self, segment: str, app_console: Console, tmp_path: Path
+        self,
+        segment: str,
+        app_console: Console,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # A report file is laid out at its content's width only when no
+        # $COLUMNS is set, and pytest-xdist workers export COLUMNS=80, which
+        # would wrap the name across lines whatever its markup.
+        monkeypatch.delenv(cs.ENV_COLUMNS, raising=False)
         report = tmp_path / "dead.txt"
 
         cli._emit_dead_code(
