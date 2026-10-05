@@ -63,6 +63,9 @@ def updater(events: list[str]) -> MagicMock:
     instance = MagicMock()
     instance.run.side_effect = lambda: events.append("run")
     instance.skipped_because_in_sync = False
+    # A bare MagicMock attribute is truthy, which would read every interrupt
+    # as one that landed after the run committed.
+    instance.committed = False
     return instance
 
 
