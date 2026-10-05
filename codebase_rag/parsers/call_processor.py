@@ -56,6 +56,7 @@ from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import type_inference as java_ti
 from .java import utils as java_utils
+from .java.method_resolver import java_signature_accepts
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .php import utils as php_utils
@@ -2629,6 +2630,52 @@ class CallProcessor:
             self._ingest_java_enum_constant_ctor_calls(
                 module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
             )
+            # `this(...)` runs a sibling constructor and is no call node
+            # either (issue #2703).
+            self._ingest_java_this_ctor_calls(
+                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or []
+            )
+
+    @_site_scoped
+    def _ingest_java_this_ctor_calls(
+        self, module_qn: str, class_nodes: list[Node]
+    ) -> None:
+        # `Range(int only) { this(only, only); }` runs the class's own
+        # constructor that takes two arguments: a CALLS edge from the
+        # delegating constructor to each sibling its argument count admits
+        # (JLS 15.12.2.1), `exact` for one, `overload` for several.
+        for class_node in class_nodes:
+            ctors = java_utils.class_constructors(class_node)
+            for ctor in ctors:
+                invocation = java_utils.this_constructor_invocation(ctor)
+                caller = (
+                    self._recorded_caller(ctor, module_qn)
+                    if invocation is not None
+                    else None
+                )
+                if invocation is None or caller is None:
+                    continue
+                arg_count = java_utils.argument_count(invocation)
+                targets = [
+                    loc
+                    for target in ctors
+                    if target.id != ctor.id
+                    and java_utils.accepts_argument_count(target, arg_count)
+                    and (loc := self._recorded_caller(target, module_qn)) is not None
+                ]
+                self._site_node = invocation
+                self._resolution = (
+                    cs.EdgeResolution.EXACT
+                    if len(targets) == 1
+                    else cs.EdgeResolution.OVERLOAD
+                )
+                for target in targets:
+                    self._emit_rel(
+                        (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
+                        cs.RelationshipType.CALLS,
+                        (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
+                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+                    )
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
@@ -6468,9 +6515,26 @@ class CallProcessor:
             )
             for variant in self._resolver.function_registry.variants(ctor_qn)
         ]
+        site = self._site_node
+        if (
+            ctx.language == cs.SupportedLanguage.JAVA
+            and site is not None
+            and site.type == cs.TS_OBJECT_CREATION_EXPRESSION
+        ):
+            # Only the constructors that take this many arguments can run
+            # (JLS 15.12.2.1): `new Range(5, 1)` never runs `Range(int)`. A
+            # record's implicit canonical constructor has no node, so a
+            # count no declared one admits leaves the INSTANTIATES alone
+            # (issue #2703).
+            arg_count = java_utils.argument_count(site)
+            ctor_edges = [
+                (ctor_type, variant)
+                for ctor_type, variant in ctor_edges
+                if java_signature_accepts(variant, arg_count)
+            ]
         if len(ctor_edges) > 1:
-            # Every declared constructor takes an edge because
-            # argument-type selection is not attempted: one call,
+            # Every declared constructor of a matching arity takes an edge
+            # because argument-type selection is not attempted: one call,
             # several candidates, which is what `overload` means
             # (issue #1526).
             self._resolution = cs.EdgeResolution.OVERLOAD

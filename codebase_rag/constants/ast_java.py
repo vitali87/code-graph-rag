@@ -159,6 +159,11 @@ JAVA_HEURISTIC_ORDER = "Order"
 TS_PACKAGE_DECLARATION = "package_declaration"
 TS_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 TS_CONSTRUCTOR_DECLARATION = "constructor_declaration"
+# A record's compact canonical constructor (`public Range { ... }`): no
+# parameter list of its own, it takes the record header's components.
+TS_COMPACT_CONSTRUCTOR_DECLARATION = "compact_constructor_declaration"
+# `this(...)` / `super(...)` as a constructor's first statement.
+TS_JAVA_EXPLICIT_CONSTRUCTOR_INVOCATION = "explicit_constructor_invocation"
 TS_ANNOTATION = "annotation"
 TS_MARKER_ANNOTATION = "marker_annotation"
 TS_GENERIC_TYPE = "generic_type"
@@ -244,6 +249,7 @@ JAVA_METHOD_NODE_TYPES = frozenset(
     {
         TS_METHOD_DECLARATION,
         TS_CONSTRUCTOR_DECLARATION,
+        TS_COMPACT_CONSTRUCTOR_DECLARATION,
     }
 )
 

@@ -71,6 +71,22 @@ def _java_signature_arity(qn_or_member: str) -> int | None:
     return count
 
 
+def java_signature_accepts(qn: str, arg_count: int) -> bool:
+    """Whether a signatured Java callable takes `arg_count` arguments.
+
+    A fixed arity takes exactly its own; a trailing `T...` takes any count
+    covering the fixed parameters (JLS 15.12.2.1). An unsignatured name is
+    not ruled out.
+    """
+    arity = _java_signature_arity(qn)
+    if arity is None:
+        return True
+    signature = qn[: qn.rfind(cs.CHAR_PAREN_CLOSE)]
+    if signature.endswith(cs.JAVA_VARARGS_SUFFIX):
+        return arg_count >= arity - 1
+    return arg_count == arity
+
+
 def _java_param_type_names(qn: str) -> list[str]:
     # Simple parameter type names from a signatured method qn
     # (`isX(Class<?>,String)` -> ['Class', 'String']): generics and package/scope
@@ -1395,13 +1411,11 @@ class JavaMethodResolverMixin:
         resolved = self._resolve_java_type_name(base, module_qn)
         if self.function_registry.get(resolved) in _JAVA_TYPE_NODE_TYPES:
             return resolved
-        if resolved == base and (
-            sibling := self._same_package_type_qn(base, module_qn)
-        ):
+        if resolved == base and (sibling := self.same_package_type_qn(base, module_qn)):
             return sibling
         return resolved
 
-    def _same_package_type_qn(self, type_name: str, module_qn: str) -> str | None:
+    def same_package_type_qn(self, type_name: str, module_qn: str) -> str | None:
         # A package-private top-level type declared in a sibling file (`class
         # Square` inside Names.java) is visible to its whole package without an
         # import, yet no file is named after it, so the per-file lookups miss
