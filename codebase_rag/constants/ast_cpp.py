@@ -57,7 +57,6 @@ class CppNodeType(StrEnum):
     TYPE_DEFINITION = "type_definition"
     ALIAS_DECLARATION = "alias_declaration"
     TYPE_DESCRIPTOR = "type_descriptor"
-    FIELD_DECLARATION_LIST = "field_declaration_list"
     REF_QUALIFIER = "ref_qualifier"
 
 
