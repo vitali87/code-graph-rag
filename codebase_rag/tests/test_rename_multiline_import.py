@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing.imports import SymbolMove, _py_rewrite
 from codebase_rag.editing.rename import rename
 from codebase_rag.tests.test_rename_op import _index
@@ -145,6 +146,7 @@ def test_the_issue_repo_still_imports_after_the_rename(
         cwd=temp_repo,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     assert result.returncode == 0, result.stderr
