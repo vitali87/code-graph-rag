@@ -56,6 +56,26 @@ FILES = {
         'import { renamed } from "./esm_shadow.mjs";\n'
         "export function viaEsmShadow() {\n  return renamed();\n}\n"
     ),
+    # A published binding the graph cannot resolve (an external package's)
+    # still is not the module's own same-named local.
+    "ext_shadow.js": (
+        'const { beta } = require("left-pad");\n'
+        "function renamed() { return 1; }\n"
+        "module.exports = { renamed: beta };\n"
+    ),
+    "ext_esm_shadow.mjs": (
+        'import { beta } from "left-pad";\n'
+        "function renamed() { return 1; }\n"
+        "export { beta as renamed };\n"
+    ),
+    "ext_user.js": (
+        'const { renamed } = require("./ext_shadow");\n'
+        "function viaExtShadow() {\n  return renamed();\n}\n"
+    ),
+    "ext_esm_user.mjs": (
+        'import { renamed } from "./ext_esm_shadow.mjs";\n'
+        "export function viaExtEsmShadow() {\n  return renamed();\n}\n"
+    ),
 }
 
 
@@ -90,6 +110,18 @@ def test_a_same_named_local_does_not_hide_the_published_binding(
 ) -> None:
     callees = _callees(graph, caller)
     assert callees == {f"{module}.beta": "exact"}, callees
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["ext_user.viaExtShadow", "ext_esm_user.viaExtEsmShadow"],
+    ids=["commonjs", "esm"],
+)
+def test_an_unresolvable_published_binding_is_not_the_same_named_local(
+    graph: RecordedGraph, caller: str
+) -> None:
+    callees = _callees(graph, caller)
+    assert "exact" not in callees.values(), callees
 
 
 # Negative: what must not change.
