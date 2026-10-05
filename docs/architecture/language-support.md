@@ -6,6 +6,8 @@ description: "Supported programming languages and their feature coverage in Code
 
 Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified graph schema across all languages.
 
+Run `cgr language list-languages` to see every language below, its tier, and whether your install can parse it.
+
 ## Support Matrix
 
 <!-- SECTION:supported_languages -->
@@ -71,9 +73,18 @@ single YAML pattern file per language. Which node kinds a language yields
 depends on its config: the `-` entries below mark constructs the language
 does not have (Bash and Nix declare no class-like types).
 
-This is a **basic** tier: names are flat (no nested-namespace qualification)
-and there is **no call-graph (`CALLS`) resolution**, so call-graph analyses
-such as dead-code detection skip these files. It requires the `ast-grep`
+This is a **basic** tier: there is **no call-graph (`CALLS`) resolution**, so
+call-graph analyses such as dead-code detection skip these files.
+
+Kotlin, Swift and Solidity name their members the way the tree-sitter tier
+does: a function in a type is a `Method` `<module>.<Type>.<name>` defined by
+the type, a nested function is `<module>.<outer>.<name>`, and a second
+definition of one name (an overload) gets an `@<line>` suffix, so overloads
+and same-named methods of different types stay distinct nodes. A Swift
+`extension T` and a Kotlin extension function `fun T.f()` add their members to
+`T` rather than declaring a second `T`. The other languages here keep flat
+`<module>.<name>` names: an Elixir multi-clause `def` or a Haskell equation
+per pattern is one function, which a per-line suffix would split. It requires the `ast-grep`
 extra (`pip install 'code-graph-rag[ast-grep]'`).
 
 A module's qualified name carries its extension: `app.rb` becomes
@@ -96,13 +107,17 @@ re-index the others afterwards.
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
 | Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
-| Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members | classes, interfaces, data classes, objects, enums | import |
-| Swift | .swift | functions, initializers, protocol requirements | classes, structs, enums, extensions, protocols | import |
+| Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members, extension functions | classes, interfaces, data classes, objects, enums | import |
+| Swift | .swift | functions, initializers, protocol requirements, extension members | classes, structs, enums, protocols | import |
 | Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
 | Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
 | Solidity | .sol | functions, constructors, modifiers | contracts, interfaces, libraries | import |
 | Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
 | Nix | .nix | lambda bindings | - | import |
+
+![cgr start --update-graph on JakeWharton/timber, and cgr graph resolve plant returning Kotlin methods named Timber_kt.Timber.plant, with @line suffixes on the overloads](../assets/demos/language-support-ast-grep.gif)
+
+*Recorded on JakeWharton/timber (Kotlin, ast-grep tier).*
 
 To add another language, drop a YAML file into
 `codebase_rag/parsers/ast_grep_patterns/`; see the
@@ -174,6 +189,10 @@ DEFINES, so a change that renames nodes still needs the wipe above.
 ## Language-Agnostic Design
 
 All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.
+
+![cgr start --update-graph on GoogleCloudPlatform/microservices-demo loading the Python, Java, C#, Go and JavaScript grammars, then cgr graph resolve main and Check returning definitions from Bash, Go, JavaScript, Java, Python and C# files](../assets/demos/language-support.gif)
+
+*Recorded on GoogleCloudPlatform/microservices-demo; the Go warning appears because the go/types frontend needs Go 1.26 and the recording machine has 1.24.*
 
 ## Adding New Languages
 

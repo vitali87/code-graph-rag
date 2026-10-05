@@ -13,6 +13,7 @@ from .. import constants as cs
 
 _PROJECT_NAME_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
 _PROJECT_NAME_FALLBACK_BASE = "repo"
+_PROJECT_NAME_SEPARATORS = re.compile(r"\.+")
 
 
 def derive_project_name(repo_path: Path) -> str:
@@ -29,11 +30,49 @@ def derive_project_name(repo_path: Path) -> str:
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
 
 
+def default_project_name(repo_path: Path) -> str:
+    """The name a run that names no project writes under.
+
+    The directory name, as before, unless it holds the qualified-name
+    separator: `acme.web/` would write the nodes of project `acme`'s package
+    `web` (#2412). Such a checkout gets the digest-suffixed derived name, not
+    just the `.` dropped, which would give `acme.web/` and `acme_web/` the
+    same project (review of PR 2497).
+    """
+    directory = repo_path.resolve().name
+    if cs.SEPARATOR_DOT not in directory:
+        return directory
+    return derive_project_name(repo_path)
+
+
+def project_name_error(name: str) -> str | None:
+    """Why `name` cannot be stored as a project name, or None if it can.
+
+    Qualified names join the project name and the package path with `.`, and
+    nodes merge on qualified name, so project `acme.web` would write the
+    nodes of project `acme`'s package `web` (issue #2412).
+    """
+    if cs.SEPARATOR_DOT not in name:
+        return None
+    return cs.ERR_PROJECT_NAME_HAS_SEPARATOR.format(
+        name=name, suggestion=separator_free_project_name(name)
+    )
+
+
+def separator_free_project_name(name: str) -> str:
+    if cs.SEPARATOR_DOT not in name:
+        return name
+    return (
+        _PROJECT_NAME_SEPARATORS.sub("_", name.strip(cs.SEPARATOR_DOT))
+        or _PROJECT_NAME_FALLBACK_BASE
+    )
+
+
 def normalize_project_name(project_name: str | None, repo_path: Path) -> str:
     # The name a sync writes its project under. The CLI's ownership check
     # asks about the same name, so a padded one cannot pass the check under
     # one spelling and be written under another (review of PR 2499).
-    return (project_name and project_name.strip()) or repo_path.resolve().name
+    return (project_name and project_name.strip()) or default_project_name(repo_path)
 
 
 def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
