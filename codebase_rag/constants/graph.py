@@ -29,6 +29,7 @@ KEY_IS_PROPERTY = "is_property"
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
@@ -75,6 +76,10 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+# Change-signature report fields (issue #1533); `verdict` is shared
+# with rename.
+KEY_UNMAPPED = "unmapped"
+KEY_VERDICT = "verdict"
 KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
@@ -112,6 +117,11 @@ KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
+# Call-site flags, present (true) only when the argument list unpacks a
+# sequence (`*rest`) or a mapping (`**opts`). Neither is counted in
+# `arg_count`: each passes an unknown number of arguments (issue #2635).
+KEY_STAR_ARGS = "star_args"
+KEY_STAR_KWARGS = "star_kwargs"
 # Call-site rows: where the invoked symbol is defined. `path` on those rows is
 # the file holding the site, which is the caller's (issue #2460).
 KEY_CALLEE_PATH = "callee_path"
@@ -581,6 +591,58 @@ DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
     }
 )
 
+# What each group adds, for the generated Capture Groups table in
+# docs/architecture/graph-schema.md; its labels and relationships come from
+# the maps above. Keyed by group so a new group without a line fails
+# test_capture_groups_docs instead of reaching the docs undescribed (#2584).
+CAPTURE_GROUP_SUMMARIES: dict[CaptureGroup, str] = {
+    CaptureGroup.STRUCTURE: (
+        "The containment tree from the project down to modules and document "
+        "sections, and what each module, class or function defines."
+    ),
+    CaptureGroup.CALLS: (
+        "Call sites, functions and classes used as values, and class instantiations."
+    ),
+    CaptureGroup.TYPES: (
+        "Inheritance, interface and module implementation, method overrides, "
+        "and the project types a signature returns or accepts."
+    ),
+    CaptureGroup.IMPORTS: (
+        "Imports and exports between modules, the project's external package "
+        "dependencies, and document links to files."
+    ),
+    CaptureGroup.IO: (
+        "External resources code reads, writes or exposes (files, environment "
+        "variables, network, databases, endpoints), value flow between them, "
+        "and client calls resolved to the endpoints they reach."
+    ),
+    CaptureGroup.FINDINGS: (
+        "ast-grep findings on each module: design patterns, code smells and "
+        "security issues."
+    ),
+    CaptureGroup.GLOSSES: (
+        "Notes agents write about definitions with the annotate MCP tool, "
+        "rather than anything parsed from source."
+    ),
+    CaptureGroup.PARAMETERS: (
+        "One node per declared parameter of a function or method, and the "
+        "OF_TYPE edge from a parameter or field to the project type its "
+        "annotation names."
+    ),
+    CaptureGroup.FIELDS: (
+        "One node per field of a class, interface, enum, type or union. A "
+        "field's OF_TYPE edge belongs to parameters, so field types need both."
+    ),
+    CaptureGroup.ENUM_VARIANTS: (
+        "One node per enum member, with its position and value."
+    ),
+    CaptureGroup.CONSTANTS: (
+        "One node per module-level constant, with its declared type and value. "
+        "A constant's OF_TYPE edge belongs to parameters, so constant types "
+        "need both."
+    ),
+}
+
 CAPTURE_TOKEN_ALL = "all"
 CAPTURE_TOKEN_NONE = "none"
 CAPTURE_DROP_PREFIX = "-"
@@ -643,6 +705,7 @@ SCHEMA_OPTIONAL_SUFFIX = "?"
 NODE_PROJECT = NodeLabel.PROJECT
 
 KEY_PARAMETERS = "parameters"
+KEY_TYPE_PARAMETERS = "type_parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
@@ -657,11 +720,33 @@ KEY_PARAM_TYPES = "param_types"
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
 # receiver-inclusive because it counts the bound `self`.
 #
+# The languages in `DECLARED_ARITY_LANGUAGES` store every parameter a call
+# fills instead, each marked with the optionality its signature declares, so
+# a signature change there gets a verdict per call site too (issue #2517):
+# `name?` may be left out, `...name` takes any number of trailing arguments,
+# and `self` (Rust) or `this name` (a C# extension method) is a receiver that
+# one call form passes and the other does not.
+#
 # Absent on every other language rather than empty: absent means "kinds
 # unknown", which `diagnose_arity` answers with "cannot corroborate", whereas
 # an empty list would assert "declares zero positional parameters" and produce
 # a false mismatch on correct code.
 KEY_POSITIONAL_PARAMS = "positional_params"
+POSITIONAL_OPTIONAL_SUFFIX = "?"
+POSITIONAL_REST_PREFIX = "..."
+POSITIONAL_RECEIVER_SELF = "self"
+POSITIONAL_RECEIVER_THIS_PREFIX = "this "
+# Call-site flag, present (true) only when a non-Python call passes a number
+# of values its written arguments do not show: a spread (`...xs` in JS/TS,
+# `...$xs` in PHP, `xs...` in Go), a Go call whose lone argument is a call,
+# or a tagged template. `arg_count` keeps what is written, so it proves no
+# fit or miss for such a site (issue #2517).
+KEY_SPREAD_ARGS = "spread_args"
+# Call-site name a Rust or C# call is written through, so a receiver can be
+# counted where the call passes it: `S` in `S::m(s, 1)`, `Util` in C#'s
+# `Util.Ext(s, 1)`, `s` in `s.Ext(1)`; "" through any other value (Rust's
+# `s.m(1)`, `"x".Ext(1)`); absent for a bare call (issue #2517).
+KEY_CALL_QUALIFIER = "call_qualifier"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
 # Rust file, stored on the DECLARING module's node (issue #1010). The
 # ungated counterpart lets a production target's declaration of the SAME
@@ -929,7 +1014,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "OR n:Enum OR n:Type OR n:Union) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
+    "n.is_property AS is_property, n.is_macro AS is_macro, "
+    "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member"
