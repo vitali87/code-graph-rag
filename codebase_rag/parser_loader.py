@@ -1,4 +1,5 @@
 import importlib
+import importlib.machinery
 import subprocess
 import sys
 import threading
@@ -16,45 +17,60 @@ from .language_spec import LANGUAGE_SPECS, LanguageSpec
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
+def _submodule_path(lang_name: str) -> Path:
+    return Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
+
+
+def _submodule_bindings_path(lang_name: str) -> Path:
+    return _submodule_path(lang_name) / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
+
+
 def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
-    submodule_path = Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
-    python_bindings_path = (
-        submodule_path / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
-    )
-
-    if not python_bindings_path.exists():
+    if not _submodule_bindings_path(lang_name).exists():
         return None
+    try:
+        if not _build_submodule(lang_name):
+            return None
+    except Exception as e:
+        logger.debug(ls.SUBMODULE_LOAD_FAILED, lang=lang_name, error=e)
+        return None
+    return _import_submodule(lang_name)
 
-    python_bindings_str = str(python_bindings_path)
+
+def _build_submodule(lang_name: str) -> bool:
+    """Build the submodule's binding in place; False when the build fails."""
+    submodule_path = _submodule_path(lang_name)
+    if not (submodule_path / cs.SETUP_PY).exists():
+        return True
+    logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
+    result = subprocess.run(
+        [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
+        check=False,
+        cwd=str(submodule_path),
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+    )
+    if result.returncode != 0:
+        logger.debug(
+            ls.BUILD_FAILED,
+            lang=lang_name,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        return False
+    logger.debug(ls.BUILD_SUCCESS, lang=lang_name)
+    return True
+
+
+def _import_submodule(lang_name: str) -> LanguageLoader:
+    """The language loader the submodule's built binding exports, or None."""
+    python_bindings_str = str(_submodule_bindings_path(lang_name))
     try:
         if python_bindings_str not in sys.path:
             sys.path.insert(0, python_bindings_str)
-
         try:
             module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
-
-            setup_py_path = submodule_path / cs.SETUP_PY
-            if setup_py_path.exists():
-                logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
-                result = subprocess.run(
-                    [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
-                    check=False,
-                    cwd=str(submodule_path),
-                    capture_output=True,
-                    text=True,
-                    encoding=cs.ENCODING_UTF8,
-                )
-
-                if result.returncode != 0:
-                    logger.debug(
-                        ls.BUILD_FAILED,
-                        lang=lang_name,
-                        stdout=result.stdout,
-                        stderr=result.stderr,
-                    )
-                    return None
-                logger.debug(ls.BUILD_SUCCESS, lang=lang_name)
-
             logger.debug(ls.IMPORTING_MODULE, module=module_name)
             module = importlib.import_module(module_name)
 
@@ -84,18 +100,24 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
     return None
 
 
-def _try_import_language(
-    module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
-) -> LanguageLoader:
+def _import_pip_grammar(module_path: str, attr_name: str) -> LanguageLoader:
     # AttributeError covers a pip package too old to export the requested
-    # grammar variant (tree_sitter_typescript without language_tsx); fall
-    # back rather than crash parser init.
+    # grammar variant (tree_sitter_typescript without language_tsx); report
+    # it missing rather than crash parser init.
     try:
         module = importlib.import_module(module_path)
         loader: LanguageLoader = getattr(module, attr_name)
         return loader
     except (ImportError, AttributeError):
-        return _try_load_from_submodule(lang_name)
+        return None
+
+
+def _try_import_language(
+    module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
+) -> LanguageLoader:
+    return _import_pip_grammar(module_path, attr_name) or _try_load_from_submodule(
+        lang_name
+    )
 
 
 def _language_imports() -> list[LanguageImport]:
@@ -204,6 +226,45 @@ _IMPORT_SPECS: dict[cs.SupportedLanguage, LanguageImport] = {
 }
 
 _loader_cache: dict[cs.SupportedLanguage, LanguageLoader] = {}
+_EXTENSION_SUFFIXES = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+
+
+def grammar_installed(lang_name: str) -> bool:
+    """Whether a grammar for `lang_name` is present, without running any of it.
+
+    Asks the same two sources as `_get_language_library`. A submodule grammar
+    counts only once its binding is BUILT: a bindings directory alone is not
+    enough, as a checkout whose build fails has one and gives no parser. It
+    is never imported or built here: importing runs the checkout's
+    `__init__.py`, and a listing must not execute checkout code or start a
+    compile to answer a yes/no (Greptile reviews of PR 2508). So a binding
+    built once that no longer loads still reads as installed.
+    """
+    lang_import = _IMPORT_SPECS.get(lang_name)
+    if lang_import is None:
+        return _submodule_binding_built(lang_name)
+    if _import_pip_grammar(lang_import.module_path, lang_import.attr_name) is not None:
+        return True
+    return _submodule_binding_built(lang_import.submodule_name)
+
+
+def _submodule_binding_built(lang_name: str) -> bool:
+    # The compiled extension `setup.py build_ext --inplace` leaves in the
+    # module the loader imports: inside its package (tree-sitter grammars
+    # build `_binding.abi3.so` there) or as the module itself. Only the
+    # suffixes this interpreter can load count.
+    bindings = _submodule_bindings_path(lang_name)
+    module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
+    if any(
+        (bindings / f"{module_name}{suffix}").is_file()
+        for suffix in _EXTENSION_SUFFIXES
+    ):
+        return True
+    package = bindings / module_name
+    return package.is_dir() and any(
+        path.is_file() and path.name.endswith(_EXTENSION_SUFFIXES)
+        for path in package.iterdir()
+    )
 
 
 def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:
