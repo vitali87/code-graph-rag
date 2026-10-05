@@ -80,20 +80,24 @@ def _run(ingestor: MagicMock, *args: str) -> Result:
 
 
 def test_the_switch_is_refused_without_endpoint_data() -> None:
-    result = _run(_ingestor(HANDLERS), "--no-endpoint-roots")
+    ingestor = _ingestor(HANDLERS)
+    result = _run(ingestor, "--no-endpoint-roots")
     assert result.exit_code == 1, result.output
     assert "No unreachable" not in result.output, result.output
     assert f"'{PROJECT}'" in result.output, result.output
     assert "--capture io" in result.output, result.output
-    assert "Traceback" not in result.output, result.output
+    # A finding about the project, not a failed session: the connection
+    # closes cleanly, so the service layer logs no traceback for it.
+    assert ingestor.__exit__.call_args.args[0] is None
 
 
 def test_a_json_run_gets_no_empty_payload() -> None:
-    # An empty JSON list would be the same clean bill in another format.
+    # An empty JSON list would be the same clean bill in another format; the
+    # refusal goes to stderr, which a JSON consumer does not parse.
     result = _run(_ingestor(HANDLERS), "--no-endpoint-roots", "--format", "json")
     assert result.exit_code == 1, result.output
-    assert result.stdout.strip() != "[]", result.stdout
-    assert "--capture io" in result.output, result.output
+    assert result.stdout == "", result.stdout
+    assert "--capture io" in result.stderr, result.stderr
 
 
 def test_the_library_refuses_too() -> None:
