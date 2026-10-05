@@ -5598,7 +5598,7 @@ class GraphUpdater:
             scan.changed_entries, is_full_build
         )
         added_keys = [key for key, _b in added_entries]
-        changed_count = len(scan.changed_entries)
+        edited_count = len(scan.changed_entries)
         reindexed_keys = self._queue_affected_callers(
             sorted(
                 {
@@ -5619,7 +5619,7 @@ class GraphUpdater:
             reindexed_keys,
         )
         reindexed_keys = self._queue_callable_flow_passers(
-            changed_count, present, eligible_by_key, scan, reindexed_keys
+            edited_count, present, eligible_by_key, scan, reindexed_keys
         )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
@@ -6212,7 +6212,7 @@ class GraphUpdater:
 
     def _queue_callable_flow_passers(
         self,
-        changed_count: int,
+        edited_count: int,
         present: set[str],
         eligible_by_key: dict[str, Path],
         scan: _FileScan,
@@ -6235,10 +6235,10 @@ class GraphUpdater:
         # flow functions only seed the names a dependent may forward into.
         flow_names = frozenset(
             name
-            for path, _key, _new, data in scan.changed_entries[:changed_count]
+            for path, _key, _new, data in scan.changed_entries[:edited_count]
             for name in self._flow_function_names(path, data, frozenset())
         )
-        frontier = scan.changed_entries[changed_count:]
+        frontier = scan.changed_entries[edited_count:]
         while frontier:
             holders: list[str] = []
             for path, key, _new, data in frontier:
