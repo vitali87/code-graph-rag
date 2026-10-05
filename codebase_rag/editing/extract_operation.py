@@ -170,10 +170,13 @@ class Extractor:
         if is_method and language == cs.SupportedLanguage.PYTHON:
             py_method = _py_method_form(qn, node)
             inputs = [i for i in inputs if i != py_method.receiver]
+        if py_method is None and js_method is None:
+            _refuse_shadowed_helper(node, new_name)
         # Generated text follows the file's newline style, so a CRLF file does
         # not gain LF-only lines (Greptile, PRs #2060 and #2062).
         newline = "\r\n" if b"\r\n" in source else "\n"
         first, last = parts.statements[0], parts.statements[-1]
+        _refuse_shared_lines(source, first, last)
         span_start = source.rfind(b"\n", 0, first.start_byte) + 1
         span_end = source.find(b"\n", last.end_byte)
         span_end = len(source) if span_end < 0 else span_end + 1
@@ -318,6 +321,37 @@ def _python_helper_and_call(
     if outputs:
         call = f"{', '.join(outputs)} = {call}"
     return function_text, f"{body_indent}{call}\n"
+
+
+def _refuse_shadowed_helper(definition: Node, new_name: str) -> None:
+    """The call names the helper bare, so a parameter or local of the same
+    name in the edited function is what it would call (Greptile, PR #2932)."""
+    bound = _parameter_names(definition)
+    single = definition.child_by_field_name(cs.TS_FIELD_PARAMETER)
+    if single is not None:
+        _targets(single, bound)
+    for statement in _body_statements(definition):
+        _binds(statement, bound)
+    if new_name in bound:
+        raise ExtractRefused(cs.EXTRACT_SHADOWED_NAME.format(name=new_name))
+
+
+def _refuse_shared_lines(source: bytes, first: Node, last: Node) -> None:
+    """The span is cut as whole lines, so code sharing a line with it, such
+    as the header of `def emit(n): print(n)` or a one-line body's closing
+    brace, would move into the helper with it (Greptile, PR #2932)."""
+    line_start = source.rfind(b"\n", 0, first.start_byte) + 1
+    if source[line_start : first.start_byte].strip():
+        raise ExtractRefused(
+            cs.EXTRACT_SHARED_LINE.format(line=first.start_point[0] + 1)
+        )
+    after = last.next_sibling
+    while after is not None and after.start_point[0] == last.end_point[0]:
+        if after.type not in (cs.TS_COMMENT, cs.CHAR_SEMICOLON):
+            raise ExtractRefused(
+                cs.EXTRACT_SHARED_LINE.format(line=last.end_point[0] + 1)
+            )
+        after = after.next_sibling
 
 
 class _PyMethod(NamedTuple):

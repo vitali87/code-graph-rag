@@ -945,3 +945,54 @@ def test_extracted_typescript_helper_keeps_its_type_parameters(
             check=False,
         )
         assert done.returncode == 0, done.stdout + done.stderr
+
+
+# --- the helper's own name and line (Greptile, PR #2932) -------------------------
+
+_SHADOWING = {
+    "py-parameter": (
+        "pkg/build.py",
+        "def build(part, n):\n    y = n + 1\n    return y\n",
+        (2, 2),
+    ),
+    "py-local": (
+        "pkg/build.py",
+        "def build(n):\n    y = n + 1\n    part = y * 2\n    return part\n",
+        (2, 2),
+    ),
+    "js-parameter": (
+        "src/build.js",
+        "function build(part, n) {\n  const y = n + 1;\n  return y;\n}\n",
+        (2, 2),
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_SHADOWING))
+def test_extract_refuses_a_helper_name_the_function_binds(
+    temp_repo: Path, shape: str
+) -> None:
+    # The call names the helper bare, so it would call the parameter or the
+    # local of the same name instead.
+    rel, source, span = _SHADOWING[shape]
+    qn = rel.rsplit(".", 1)[0].replace("/", ".") + ".build"
+    message = _refused(temp_repo, rel, source, qn, span)
+    assert "`part`" in message
+
+
+_ONE_LINE = {
+    "py-header": ("pkg/emit.py", "def emit(n): print(n)\n\n\nemit(7)\n"),
+    "js-braces": ("src/emit.js", "function emit(n) { console.log(n); }\n\nemit(7);\n"),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_ONE_LINE))
+def test_extract_refuses_a_body_sharing_a_line_with_its_header(
+    temp_repo: Path, shape: str
+) -> None:
+    # Cutting the whole line would move the header (or the closing brace)
+    # into the helper and leave a call at module level.
+    rel, source = _ONE_LINE[shape]
+    qn = rel.rsplit(".", 1)[0].replace("/", ".") + ".emit"
+    message = _refused(temp_repo, rel, source, qn, (1, 1))
+    assert "shares line 1" in message

@@ -969,6 +969,14 @@ EXTRACT_JS_OUTER_WRITE = (
     "The span writes `{name}`, which the function does not declare; the "
     "extracted function would write a local of its own instead"
 )
+EXTRACT_SHADOWED_NAME = (
+    "The function already binds `{name}`; a call to the extracted function by "
+    "that name would reach that binding instead"
+)
+EXTRACT_SHARED_LINE = (
+    "The span shares line {line} with code outside it; only statements on "
+    "lines of their own can be extracted"
+)
 EXTRACT_STALE_CLOSURE = (
     "A function defined in the span reads `{name}`, which later code rebinds; "
     "moved out, it would keep reading the old value"
@@ -1007,6 +1015,10 @@ INLINE_REFUSED_IMPLICIT = (
 )
 INLINE_REFUSED_DECORATED = (
     "{qn} is decorated; inlining would replace the decorated call with its bare body"
+)
+INLINE_REFUSED_TYPE_PARAMETER = (
+    "{qn} returns an expression naming its type parameter `{name}`, which no "
+    "call site declares"
 )
 INLINE_REFUSED_PARAMETER = "{qn} has a parameter inlining cannot bind: {parameter}"
 # move (issue #1534).
