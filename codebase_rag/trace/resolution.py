@@ -11,7 +11,7 @@ from __future__ import annotations
 import posixpath
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
@@ -242,6 +242,11 @@ class CallableNode:
 class ResolvedFrame:
     label: str
     qualified_name: str
+    # The frame has no node of its own (a lambda body, an anonymous function
+    # or class, a closure) and was folded into the node whose span holds it,
+    # so a call from that node into this frame happens inside one node
+    # (issue #2709). Not part of the frame's identity.
+    folded: bool = field(default=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -316,7 +321,11 @@ class FrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=not by_name,
+        )
 
     @staticmethod
     def _innermost_span_containing_line(
@@ -494,7 +503,11 @@ class JsFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=not by_name,
+        )
 
 
 _DOTNET_ARITY = re.compile(r"`\d+")
@@ -528,9 +541,12 @@ class PhpFrameResolver:
     ) -> ResolvedFrame | None:
         closure = _PHP_CLOSURE.match(frame.qualname)
         if closure:
-            return self._resolve_position(
+            # A closure is named by its own position, never a node of its
+            # own: it folds into the function that defines it.
+            resolved = self._resolve_position(
                 closure.group("path"), int(closure.group("start")), stats
             )
+            return None if resolved is None else replace(resolved, folded=True)
         if frame.path:
             if frame.qualname == cs.TRACE_XDEBUG_MAIN:
                 return self._resolve_module(frame.path, stats)
@@ -638,6 +654,20 @@ def _owner_chain(owner: str) -> tuple[list[str], str | None]:
     return chain, state_machine_method
 
 
+def _dotnet_lambda_body(name: str) -> bool:
+    """Whether a CLR frame is a lambda body, which demangles to its host.
+
+    The body is a ``<Host>b__N_M`` method, usually on a display class
+    (``<>c``, ``<>c__DisplayClass0_0``); a local function keeps a source name
+    of its own and is not one.
+    """
+    owner, _, method = name.rpartition(cs.SEPARATOR_DOT)
+    return bool(_DOTNET_LAMBDA_BODY.match(method)) or any(
+        _DOTNET_DISPLAY_CLASS.match(part)
+        for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER)
+    )
+
+
 def _local_function_target(host: str, local: str) -> str:
     """The dotted name of a C# local function under its host.
 
@@ -724,7 +754,11 @@ class DotnetFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=_dotnet_lambda_body(frame.qualname),
+        )
 
     def _match(self, demangled: str) -> CallableNode | None:
         suffix = cs.SEPARATOR_DOT + demangled
@@ -800,7 +834,11 @@ class JvmFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=not by_name,
+        )
 
     @staticmethod
     def _split_qualname(qualname: str) -> tuple[list[str], str]:

@@ -186,6 +186,9 @@ class TraceUnresolvedReason(StrEnum):
     UNKNOWN_PATH = "unknown_path"
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
+    # A call into a lambda body, anonymous function or closure that resolves to
+    # the node running it (issue #2709).
+    INTRA_NODE = "intra_node"
 
 
 # Said instead of handing back an empty result that reads as "the graph does
