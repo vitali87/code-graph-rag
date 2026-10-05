@@ -8,7 +8,7 @@ import tomli_w
 from pydantic import ValidationError
 
 from ..config import settings
-from ..utils.path_utils import derive_project_name
+from ..utils.path_utils import derive_project_name, project_name_error
 from . import constants as cs
 from .models import WorkspaceConfig, WorkspaceRepo
 
@@ -110,6 +110,8 @@ def add_repo(
         raise WorkspaceError(
             cs.ERR_WORKSPACE_REPO_NOT_A_DIRECTORY.format(path=resolved)
         )
+    if project_name and (error := project_name_error(project_name)) is not None:
+        raise WorkspaceError(error)
     config = load_workspace(name, home=home)
     if config.find_repo(str(resolved)) is not None:
         raise WorkspaceError(

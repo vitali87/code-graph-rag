@@ -13,6 +13,10 @@ cgr rename myproj.pkg.util.helper assist --dry-run   # plan and diff only
 cgr rename myproj.pkg.util.helper assist             # apply
 ```
 
+![cgr rename --dry-run planning the rename of helper to assist: four exact sites, three files, a README mention, and nothing written](../assets/demos/rename-dry-run.gif)
+
+*Real project names carry a path hash, so `myproj` reads `myproj__425345f0`; the JSON report is saved and read with `jq`.*
+
 The MCP tool of the same name takes `qualified_name`, `new_name`, and the
 optional `allow_heuristic`, `dry_run` and `project` fields, and returns the
 same report as JSON.
@@ -38,6 +42,17 @@ becomes `a.b.assist(x)` and the receiver is untouched. Every edit is a
 span-preserving [patcher](patchers.md) edit, so formatting elsewhere in the
 file is not disturbed.
 
+A bare JS/TS call or reference in another file follows the rename only when
+that file imports the name by the definition's own name, so the import is
+rewritten with it. A file that binds a name of its own keeps both its import
+and its uses: `import mul from "./mul"`, `const mul = require("./mul")`, and a
+barrel's `export { default as mul } from "./mul"` together with the modules
+importing that `mul`. A use whose import goes through a barrel's
+`export * from` refuses even with `--allow-heuristic`, naming the barrel: the
+rename cannot rewrite that import, so rewriting the use would leave it naming
+what the barrel no longer exports. Any other use with no such import is
+reported as `heuristic` and refuses like a guessed site (issue #2464).
+
 ## Refusal
 
 The graph tags each call edge with how it was resolved (issue #1526). A
@@ -47,6 +62,8 @@ likely to belong to a different symbol with the same name. Dynamic
 (trace-only) edges without a location are listed as `unlocatable` and also
 refuse. Pass `--allow-heuristic` (`allow_heuristic: true`) to rewrite through
 them anyway.
+
+![cgr rename refusing to rename Store.get because two heuristic sites are really dict .get calls in pkg/app.py and pkg/store.py](../assets/demos/rename-refusal.gif)
 
 A class named by an `INHERITS`, `ACCEPTS` or `RETURNS` edge that carries no
 rewrite site refuses unconditionally: the graph knows the reference exists
@@ -81,6 +98,8 @@ rollback whose re-ingest failed reports `undone: true` and
 `graph_incomplete: true`, so the graph needs rebuilding even though the
 files were restored.
 
+![cgr rename of helper onto the existing name clamp failing its postcondition contract, exiting 1 with applied false and undone true, leaving the tree clean](../assets/demos/postcondition-contract.gif)
+
 ## Atomicity
 
 All edits are staged in one [edit transaction](edit-transactions.md). Every
@@ -113,3 +132,5 @@ history, so `cgr edits undo` reverses them.
 `sites` and `ambiguous` are the located sites, `hierarchy` the definitions
 renamed together, and `diff` the unified diff of what was (or, on
 `--dry-run`, would be) written.
+
+![cgr rename applying helper to assist, exiting 0 with applied true, a transaction id and three rewritten files](../assets/demos/rename.gif)

@@ -132,6 +132,8 @@ FIELD_TRAIT = "trait"
 FIELD_BOUNDS = "bounds"
 TS_RS_TRAIT_BOUNDS = "trait_bounds"
 FIELD_VALUE = "value"
+FIELD_DECLARATION = "declaration"
+FIELD_SOURCE = "source"
 FIELD_LEFT = "left"
 FIELD_RIGHT = "right"
 # A C-style for's post-iteration clause: Java/C++ hold it in an `update`

@@ -9,7 +9,7 @@ from tree_sitter import Language, Node, Parser
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
-from codebase_rag.tests.conftest import create_mock_node
+from codebase_rag.tests.conftest import MockNode, create_mock_node
 
 
 @pytest.fixture
@@ -639,6 +639,72 @@ class TestInferJavaTypeFromExpression:
         result = engine._infer_java_type_from_expression(expr, "com.example")
 
         assert result is None
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            create_mock_node(cs.TS_OBJECT_CREATION_EXPRESSION),
+            create_mock_node(cs.TS_ARRAY_CREATION_EXPRESSION),
+            create_mock_node(
+                cs.TS_ARRAY_CREATION_EXPRESSION,
+                fields={cs.FIELD_TYPE: create_mock_node(cs.TS_TYPE_IDENTIFIER)},
+            ),
+            create_mock_node(cs.TS_JAVA_CAST_EXPRESSION),
+            create_mock_node(
+                cs.TS_PARENTHESIZED_EXPRESSION,
+                children=[create_mock_node("("), create_mock_node(")")],
+            ),
+        ],
+        ids=[
+            "object-creation-without-type",
+            "array-creation-without-type",
+            "array-creation-with-empty-type",
+            "cast-without-type",
+            "parentheses-around-nothing",
+        ],
+    )
+    def test_expression_without_a_type_to_read_is_untyped(
+        self, engine: JavaTypeInferenceEngine, expr: MockNode
+    ) -> None:
+        result = engine._infer_java_type_from_expression(expr, "com.example")
+
+        assert result is None
+
+    def test_identifier_without_text_is_never_looked_up(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        expr = create_mock_node(cs.TS_IDENTIFIER)
+
+        result = engine._infer_java_type_from_expression(
+            expr, "com.example", {"": "Ghost"}
+        )
+
+        assert result is None
+
+    def test_cast_reads_its_target_type(self, engine: JavaTypeInferenceEngine) -> None:
+        expr = create_mock_node(
+            cs.TS_JAVA_CAST_EXPRESSION,
+            fields={cs.FIELD_TYPE: create_mock_node(cs.TS_TYPE_IDENTIFIER, "Square")},
+        )
+
+        result = engine._infer_java_type_from_expression(expr, "com.example")
+
+        assert result == "Square"
+
+    def test_parentheses_type_their_inner_expression(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        inner = create_mock_node(cs.TS_IDENTIFIER, "shape")
+        expr = create_mock_node(
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            children=[create_mock_node("("), inner, create_mock_node(")")],
+        )
+
+        result = engine._infer_java_type_from_expression(
+            expr, "com.example", {"shape": "Square"}
+        )
+
+        assert result == "Square"
 
 
 class TestCollectAllVariableTypes:
