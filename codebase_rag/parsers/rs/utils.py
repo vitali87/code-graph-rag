@@ -90,12 +90,7 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
             if name := safe_decode_text(node):
-                full_path = (
-                    f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{name}"
-                    if base_path
-                    else name
-                )
-                imports[name] = full_path
+                imports[name] = _join_use_path(base_path, name)
 
         case cs.TS_SCOPED_IDENTIFIER | cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
             # Inside a brace list the scoped path is RELATIVE to the
@@ -103,11 +98,9 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             # crate::flags::hiargs::HiArgs); stored bare it can never be
             # followed, and every consumer of the re-export silently
             # loses resolution (ripgrep's HiArgs surface, issue #1039).
-            if full_path := _extract_path_from_node(node):
-                if base_path:
-                    full_path = f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{full_path}"
-                parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
-                imports[parts[-1]] = full_path
+            if path := _extract_path_from_node(node):
+                full_path = _join_use_path(base_path, path)
+                imports[full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1]] = full_path
 
         case cs.TS_RS_USE_AS_CLAUSE:
             _process_use_as_clause(node, base_path, imports)
@@ -124,26 +117,34 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             _process_scoped_use_list(node, base_path, imports)
 
         case cs.KEYWORD_SELF:
-            # `use std::io::{self, Write}` imports the base path ITSELF, in
-            # scope under its own last segment (`io`), which is the name every
-            # later `io::...` spelling in the file is written against. Keyed on
-            # the keyword the binding is unreachable, the real name is absent,
-            # and those spellings resolve by trie luck instead (issue #1054).
-            if base_path:
-                name = base_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, maxsplit=1)[-1]
-                # A relative base (`use super::{self, x}`) leaves a keyword
-                # where the name would be, and rustc rejects that spelling
-                # outright ("imports need to be explicitly named"), so there is
-                # no binding to record.
-                if name not in cs.RS_PATH_KEYWORDS:
-                    # Marked weak: the name comes from the path rather than the
-                    # source, and it must not evict a name another `use` bound
-                    # in the other namespace (see the constant).
-                    imports[f"{cs.RS_SELF_MODULE_PREFIX}{name}"] = base_path
+            _process_use_self(base_path, imports)
 
         case _:
             for child in node.children:
                 _process_use_tree(child, base_path, imports)
+
+
+def _join_use_path(base_path: str, path: str) -> str:
+    return f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{path}" if base_path else path
+
+
+def _process_use_self(base_path: str, imports: dict[str, str]) -> None:
+    # `use std::io::{self, Write}` imports the base path ITSELF, in scope
+    # under its own last segment (`io`), which is the name every later
+    # `io::...` spelling in the file is written against. Keyed on the keyword
+    # the binding is unreachable, the real name is absent, and those
+    # spellings resolve by trie luck instead (issue #1054).
+    if not base_path:
+        return
+    name = base_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, maxsplit=1)[-1]
+    # A relative base (`use super::{self, x}`) leaves a keyword where the name
+    # would be, and rustc rejects that spelling outright ("imports need to be
+    # explicitly named"), so there is no binding to record.
+    if name not in cs.RS_PATH_KEYWORDS:
+        # Marked weak: the name comes from the path rather than the source,
+        # and it must not evict a name another `use` bound in the other
+        # namespace (see the constant).
+        imports[f"{cs.RS_SELF_MODULE_PREFIX}{name}"] = base_path
 
 
 def _process_use_as_clause(node: Node, base_path: str, imports: dict[str, str]) -> None:
@@ -216,24 +217,41 @@ def _process_scoped_use_list(
 
 def _impl_field_type_name(impl_node: Node, field: str) -> str | None:
     for i in range(impl_node.child_count):
-        if impl_node.field_name_for_child(i) == field:
-            type_node = impl_node.child(i)
-            if type_node is None:
-                continue
-            match type_node.type:
-                case cs.TS_GENERIC_TYPE:
-                    for child in type_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            return safe_decode_text(child)
-                case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
-                    return safe_decode_text(type_node)
-                case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
-                    for child in type_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            if name := safe_decode_text(child):
-                                return name
-
+        if impl_node.field_name_for_child(i) != field:
+            continue
+        type_node = impl_node.child(i)
+        if type_node is None:
+            continue
+        found, name = _impl_type_node_name(type_node)
+        if found:
+            return name
     return None
+
+
+def _impl_type_node_name(type_node: Node) -> tuple[bool, str | None]:
+    # (decided, name) for one impl target/trait type node; not decided means
+    # the node carries no name here and the caller keeps scanning.
+    match type_node.type:
+        case cs.TS_GENERIC_TYPE:
+            ident = next(
+                (c for c in type_node.children if c.type == cs.TS_TYPE_IDENTIFIER),
+                None,
+            )
+            return ident is not None, safe_decode_text(ident) if ident else None
+        case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
+            return True, safe_decode_text(type_node)
+        case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+            name = next(
+                (
+                    decoded
+                    for c in type_node.children
+                    if c.type == cs.TS_TYPE_IDENTIFIER
+                    and (decoded := safe_decode_text(c))
+                ),
+                None,
+            )
+            return name is not None, name
+    return False, None
 
 
 def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | None:
@@ -300,6 +318,27 @@ def extract_impl_target(impl_node: Node) -> str | None:
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
     return _impl_field_type_name(impl_node, cs.FIELD_TYPE)
+
+
+def extract_impl_target_path(impl_node: Node) -> str | None:
+    """The impl block's self type as written, generics and references
+    peeled: `std::string::String`, `crate::shadow::String`, `String`, `u8`.
+    Its first segment is what decides which type the block is on."""
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    type_node = impl_node.child_by_field_name(cs.FIELD_TYPE)
+    while type_node is not None and type_node.type in (
+        cs.TS_GENERIC_TYPE,
+        cs.TS_RS_REFERENCE_TYPE,
+    ):
+        type_node = type_node.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.type not in (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_RS_SCOPED_TYPE_IDENTIFIER,
+        cs.TS_RS_PRIMITIVE_TYPE,
+    ):
+        return None
+    return safe_decode_text(type_node) or None
 
 
 def extract_impl_trait(impl_node: Node) -> str | None:
@@ -371,44 +410,61 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     namespace it does not own, so on a key collision the pure writer's
     map wins.
     """
-    nearest = None
-    block = None
-    current = node.parent
-    while current and current.type != cs.TS_RS_SOURCE_FILE:
-        if block is None and current.type == cs.TS_RS_BLOCK:
-            block = current
-        if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
-            return block, None, True
-        if (
-            current.type == cs.TS_RS_FUNCTION_ITEM
-            or current.type in cs.FQN_RS_SCOPE_TYPES
-        ):
-            body = current.child_by_field_name(cs.FIELD_BODY)
-            if (
-                current.type == cs.TS_RS_FUNCTION_ITEM
-                and block is not None
-                and (body is None or block.id != body.id)
-            ):
-                # A use in an INNER block of the fn body is in scope for
-                # that block alone (rustc-verified): store it span-gated
-                # like an initializer-block use, never fn-wide.
-                return block, None, True
-            if current.type in cs.FQN_RS_SCOPE_TYPES and block is not None:
-                # An expression block in a class-body position (enum
-                # discriminant, array length, const-generic default) is
-                # scoped to that block alone, exactly like a const/static
-                # initializer: a class type has no qn a use could key on,
-                # so store it span-gated instead of dropping it (#1016).
-                return block, None, True
-            nearest = current
-            break
-        current = current.parent
+    block_scoped, nearest = _rust_use_nearest_scope(node)
+    if block_scoped:
+        return nearest, None, True
     if nearest is None:
         return None, [], True
     if nearest.type == cs.TS_RS_FUNCTION_ITEM:
         return nearest, None, True
     if nearest.type != cs.TS_RS_MOD_ITEM:
         return None, None, True
+    parts, pure = _rust_mod_chain_parts(node)
+    return None, parts, pure
+
+
+def _rust_use_nearest_scope(node: Node) -> tuple[bool, Node | None]:
+    # (True, block) when the use is scoped to one block alone (a
+    # const/static initializer, an inner fn block, or a class-body
+    # expression); else (False, the nearest fn/class-like/mod scope or None).
+    block = None
+    current = node.parent
+    while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if block is None and current.type == cs.TS_RS_BLOCK:
+            block = current
+        if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
+            return True, block
+        if (
+            current.type == cs.TS_RS_FUNCTION_ITEM
+            or current.type in cs.FQN_RS_SCOPE_TYPES
+        ):
+            return (
+                (True, block)
+                if _rust_use_in_inner_block(current, block)
+                else (False, current)
+            )
+        current = current.parent
+    return False, None
+
+
+def _rust_use_in_inner_block(scope: Node, block: Node | None) -> bool:
+    if block is None:
+        return False
+    if scope.type == cs.TS_RS_FUNCTION_ITEM:
+        # A use in an INNER block of the fn body is in scope for that block
+        # alone (rustc-verified): store it span-gated like an
+        # initializer-block use, never fn-wide.
+        body = scope.child_by_field_name(cs.FIELD_BODY)
+        if body is None or block.id != body.id:
+            return True
+    # An expression block in a class-body position (enum discriminant, array
+    # length, const-generic default) is scoped to that block alone, exactly
+    # like a const/static initializer: a class type has no qn a use could key
+    # on, so store it span-gated instead of dropping it (#1016).
+    return scope.type in cs.FQN_RS_SCOPE_TYPES
+
+
+def _rust_mod_chain_parts(node: Node) -> tuple[list[str], bool]:
     parts: list[str] = []
     pure = True
     current = node.parent
@@ -419,17 +475,23 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
             cs.TS_RS_STATIC_ITEM,
         ):
             pure = False
-        elif current.type == cs.TS_IMPL_ITEM:
-            if target := extract_impl_target(current):
-                parts.append(target)
-        elif current.type in cs.FQN_RS_SCOPE_TYPES:
-            if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                text = name_node.text
-                if text is not None:
-                    parts.append(text.decode(cs.RS_ENCODING_UTF8))
+        elif (segment := _rust_scope_segment(current)) is not None:
+            parts.append(segment)
         current = current.parent
     parts.reverse()
-    return None, parts, pure
+    return parts, pure
+
+
+def _rust_scope_segment(scope: Node) -> str | None:
+    # The qn segment an impl block or class-like/mod scope contributes.
+    if scope.type == cs.TS_IMPL_ITEM:
+        return extract_impl_target(scope) or None
+    if scope.type not in cs.FQN_RS_SCOPE_TYPES:
+        return None
+    name_node = scope.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.text is None:
+        return None
+    return name_node.text.decode(cs.RS_ENCODING_UTF8)
 
 
 def block_item_at(
@@ -457,6 +519,30 @@ def block_item_at(
     return best[1] if best else None
 
 
+def literal_receiver_types(receiver: str) -> frozenset[str] | None:
+    """The primitive types a literal method-call receiver can have.
+
+    None when `receiver` is not a literal at all. A literal's type is a
+    primitive (or an array, which yields the empty set), so only an impl
+    block on that primitive can hold the method it calls (issue #2543).
+    """
+    if cs.RS_BYTE_STRING_LITERAL.match(receiver):
+        return frozenset()
+    if cs.RS_STRING_LITERAL.match(receiver):
+        return frozenset({cs.RS_STR_TYPE})
+    if receiver.startswith(cs.RS_BYTE_LITERAL_PREFIX):
+        return frozenset({cs.RS_BYTE_TYPE})
+    if receiver.startswith(cs.RS_CHAR_LITERAL_PREFIX):
+        return frozenset({cs.RS_CHAR_TYPE})
+    if receiver in cs.RS_BOOL_LITERALS:
+        return frozenset({cs.RS_BOOL_TYPE})
+    if receiver[:1].isdigit():
+        if suffix := cs.RS_NUMERIC_SUFFIX.search(receiver):
+            return frozenset({suffix.group()})
+        return cs.RS_NUMERIC_TYPES
+    return None
+
+
 def is_body_local(node: Node) -> bool:
     """True when *node* sits directly in a function body or an initializer.
 
@@ -474,6 +560,31 @@ def is_body_local(node: Node) -> bool:
             return True
         current = current.parent
     return False
+
+
+def use_visibility_path(node: Node) -> str | None:
+    """The path a declaration's visibility is restricted to, None for `pub`.
+
+    No modifier is private, `self`, as `pub(self)` and `pub(in self)` spell
+    out; `pub(crate)`, `pub(super)` and `pub(in path)` name the module whose
+    subtree sees the item.
+    """
+    modifier = next(
+        (
+            child
+            for child in node.children
+            if child.type == cs.TS_RS_VISIBILITY_MODIFIER
+        ),
+        None,
+    )
+    if modifier is None:
+        return cs.KEYWORD_SELF
+    restriction = [
+        child
+        for child in modifier.children
+        if child.type not in cs.RS_VISIBILITY_SYNTAX_TOKENS
+    ]
+    return safe_decode_text(restriction[0]) if restriction else None
 
 
 def enclosing_mod_names(node: Node) -> frozenset[str]:
@@ -648,6 +759,27 @@ def record_effective_module(
     )
 
 
+def _module_path_segment(
+    node: Node, include_impl_targets: bool, class_types: Sequence[str]
+) -> str | None:
+    # The qn segment an enclosing item contributes: a `mod` name, an `impl`
+    # target when requested, or a class-like item's name when requested.
+    if node.type == cs.TS_RS_MOD_ITEM:
+        return _declared_name_text(node)
+    if node.type == cs.TS_IMPL_ITEM:
+        return (extract_impl_target(node) or None) if include_impl_targets else None
+    if node.type in class_types:
+        return _declared_name_text(node)
+    return None
+
+
+def _declared_name_text(node: Node) -> str | None:
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.text is None:
+        return None
+    return name_node.text.decode(cs.RS_ENCODING_UTF8)
+
+
 def build_module_path(
     node: Node,
     include_impl_targets: bool = False,
@@ -657,28 +789,40 @@ def build_module_path(
     path_parts: list[str] = []
     current = node.parent
 
+    class_types = (class_node_types or ()) if include_classes else ()
     while current and current.type != cs.TS_RS_SOURCE_FILE:
-        match current.type:
-            case cs.TS_RS_MOD_ITEM:
-                if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode(cs.RS_ENCODING_UTF8))
-            case cs.TS_IMPL_ITEM if include_impl_targets:
-                if impl_target := extract_impl_target(current):
-                    path_parts.append(impl_target)
-            case _ if (
-                include_classes
-                and class_node_types
-                and current.type in class_node_types
-            ):
-                if current.type != cs.TS_IMPL_ITEM:
-                    if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                        text = name_node.text
-                        if text is not None:
-                            path_parts.append(text.decode(cs.RS_ENCODING_UTF8))
-
+        segment = _module_path_segment(current, include_impl_targets, class_types)
+        if segment is not None:
+            path_parts.append(segment)
         current = current.parent
 
     path_parts.reverse()
     return path_parts
+
+
+def in_attribute_arguments(token: Node) -> bool:
+    """True when a token sits inside an attribute's `#[...]` arguments.
+
+    tree-sitter-rust gives attribute arguments the same `token_tree` a macro
+    body gets, so `skip(self)` in `#[instrument(skip(self))]` has the shape of
+    a macro-internal call. Only the owner of the enclosing groups tells them
+    apart (issue #2541).
+    """
+    group = token.parent
+    while group is not None and group.type == cs.TS_RS_TOKEN_TREE:
+        if _is_raw_attribute_group(group):
+            return True
+        group = group.parent
+    return group is not None and group.type == cs.TS_RS_ATTRIBUTE
+
+
+def _is_raw_attribute_group(group: Node) -> bool:
+    # A macro body (`macro_rules!` arm, `quote!`) does not parse the attributes
+    # it carries: `#[cfg(not(test))]` there is a `#` token then a `[...]` group.
+    first = group.child(0)
+    if first is None or first.type != cs.TS_RS_TOKEN_BRACKET_OPEN:
+        return False
+    marker = group.prev_sibling
+    if marker is not None and marker.type == cs.TS_RS_TOKEN_BANG:
+        marker = marker.prev_sibling
+    return marker is not None and marker.type == cs.TS_RS_TOKEN_HASH

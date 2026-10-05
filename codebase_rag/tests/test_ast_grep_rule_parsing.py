@@ -15,6 +15,8 @@ some test expects a TRUTHY value for each field, since a slot left at its
 default is invisible to equality. The last two tests exist for that reason.
 """
 
+from pathlib import Path
+
 import pytest
 
 from codebase_rag.parsers.ast_grep_tier import _parse_rule, _parse_rules, _Rule
@@ -87,6 +89,13 @@ def test_a_truthy_name_head_reaches_the_rule() -> None:
     )
 
 
+def test_a_truthy_receiver_child_reaches_the_rule() -> None:
+    # Same for receiver_child (issue #2589).
+    assert _parse({"kind": "k", "receiver_child": "r"}) == _Rule(
+        kind="k", receiver_child="r"
+    )
+
+
 # --- _parse_rules, the caller ------------------------------------------------
 
 
@@ -126,3 +135,17 @@ def test_name_head_is_not_reported_when_the_rule_has_a_pattern() -> None:
 def test_name_head_is_reported_first_on_a_kind_rule() -> None:
     with pytest.raises(ValueError, match="'name_head' applies to 'pattern'"):
         _parse({"kind": "k", "name_head": True, "name_child": "n"})
+
+
+def test_a_rule_without_a_selector_matches_nothing(tmp_path: Path) -> None:
+    # Negative: `_parse_rule` never builds one, but a hand-built rule with
+    # neither selector must not take the whole file down with it.
+    from unittest.mock import MagicMock
+
+    from ast_grep_py import SgRoot
+
+    from codebase_rag.parsers.ast_grep_tier import AstGrepTier
+
+    tier = AstGrepTier(MagicMock(), tmp_path, "proj")
+    root = SgRoot("x = 1", "python").root()
+    assert tier._find_all(root, _Rule(), tmp_path / "x.py") == []

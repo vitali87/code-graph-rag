@@ -1001,16 +1001,3 @@ void demonstrateLambdaInitCaptures() {
     print(
         "✅ C++20 designated initializers, consteval, and lambda init captures validation passed:"
     )
-
-
-def test_comprehensive_modern_cpp_complete() -> None:
-    """Mark comprehensive modern C++ testing as complete."""
-    print("Coverage includes:")
-    print("   - C++20 designated initializers")
-    print("   - C++20 consteval immediate functions")
-    print("   - C++14/17/20 lambda init captures and generalized capture")
-    print("   - Advanced template metaprogramming with consteval")
-    print("   - Real-world usage patterns and integration examples")
-    print("   - RAII patterns with lambda captures")
-    print("   - State machines and factory patterns with modern C++")
-    assert True

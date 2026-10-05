@@ -34,9 +34,13 @@ def _modules_loaded_by(statement: str) -> list[str]:
         f"import sys\n{statement}\n"
         f"print(','.join(m for m in {_HEAVY_PACKAGES!r} if m in sys.modules))"
     )
-    # The child must not inherit a plugin opt-out from this process (importing
-    # codebase_rag sets one), or the logfire checks would pass vacuously.
-    env = {k: v for k, v in os.environ.items() if k != "PYDANTIC_DISABLE_PLUGINS"}
+    # The child must not inherit the CLI defaults from this process (importing
+    # codebase_rag.cli sets them), or the checks on them would pass vacuously.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PYDANTIC_DISABLE_PLUGINS", "PYDANTIC_AI_NO_BANNER")
+    }
     result = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
@@ -100,6 +104,36 @@ def test_importing_the_library_leaves_pydantic_plugins_alone() -> None:
         "import codebase_rag.config\n"
         "assert 'PYDANTIC_DISABLE_PLUGINS' not in os.environ, "
         "os.environ['PYDANTIC_DISABLE_PLUGINS']"
+    )
+    _modules_loaded_by(statement)
+
+
+def test_importing_the_cli_turns_off_the_pydantic_ai_banner() -> None:
+    statement = (
+        "import os\n"
+        "assert 'PYDANTIC_AI_NO_BANNER' not in os.environ\n"
+        "import codebase_rag.cli\n"
+        "assert os.environ['PYDANTIC_AI_NO_BANNER'] == '1'"
+    )
+    _modules_loaded_by(statement)
+
+
+def test_importing_the_cli_keeps_a_user_banner_setting() -> None:
+    statement = (
+        "import os\n"
+        "os.environ['PYDANTIC_AI_NO_BANNER'] = ''\n"
+        "import codebase_rag.cli\n"
+        "assert os.environ['PYDANTIC_AI_NO_BANNER'] == ''"
+    )
+    _modules_loaded_by(statement)
+
+
+def test_importing_the_library_leaves_the_banner_setting_alone() -> None:
+    statement = (
+        "import os\n"
+        "import codebase_rag.config\n"
+        "assert 'PYDANTIC_AI_NO_BANNER' not in os.environ, "
+        "os.environ['PYDANTIC_AI_NO_BANNER']"
     )
     _modules_loaded_by(statement)
 

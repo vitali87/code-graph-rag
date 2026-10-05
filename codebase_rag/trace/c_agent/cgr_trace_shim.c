@@ -24,6 +24,8 @@
 #endif
 
 #include <pthread.h>
+#include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +40,11 @@
 #define CGR_ATTR __attribute__((no_instrument_function))
 
 #define CGR_STACK_MAX 4096
+/* The depth counter saturates here instead of growing without bound: exits
+ * that never run (longjmp, C++ exceptions under clang++) would otherwise
+ * carry a signed int to INT_MAX and past it, and a wrapped negative depth
+ * indexed cgr_stack out of bounds (#2264). */
+#define CGR_DEPTH_CEILING (CGR_STACK_MAX * 2)
 #define CGR_TABLE_BITS 16
 #define CGR_TABLE_SIZE (1u << CGR_TABLE_BITS)
 #define CGR_TABLE_MASK (CGR_TABLE_SIZE - 1u)
@@ -51,13 +58,34 @@ typedef struct {
 static cgr_edge cgr_table[CGR_TABLE_SIZE];
 static pthread_mutex_t cgr_lock = PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local void *cgr_stack[CGR_STACK_MAX];
+/* The shim's own frame address at each enter. The stack grows down, so a
+ * live caller's entry lies at or above every callee's: above for a real
+ * call, level for a call the compiler inlined (its hooks still run, from the
+ * caller's own frame). An entry strictly below a new call is one a longjmp
+ * or exception already left. Equal addresses stay ambiguous, so they are
+ * never taken as proof. */
+static _Thread_local uintptr_t cgr_frames[CGR_STACK_MAX];
 static _Thread_local int cgr_depth = 0;
-static int cgr_dropped = 0;
+/* Set while this thread is inside the shim. A signal handler that is itself
+ * instrumented would otherwise re-enter cgr_record on a thread that already
+ * holds cgr_lock and deadlock; such a nested call is skipped instead. */
+static _Thread_local volatile sig_atomic_t cgr_busy = 0;
+/* Lock-free flags, so a re-entrant call can set them from a signal handler
+ * where taking cgr_lock could deadlock. `dropped`: edges were lost (table
+ * full, stack too deep, a nested call skipped). `unwound`: a frame was left
+ * without its exit hook, so a later call may have been given a stale caller
+ * (#2264). Either makes the converter refuse the trace as inexact. */
+static atomic_int cgr_dropped = 0;
+static atomic_int cgr_unwound = 0;
 
 CGR_ATTR static uint64_t cgr_hash(void *caller, void *callee) {
   uint64_t h = (uint64_t)(uintptr_t)caller * 0x9E3779B97F4A7C15ull;
   h ^= (uint64_t)(uintptr_t)callee + 0x517CC1B727220A95ull + (h << 6) + (h >> 2);
   return h;
+}
+
+CGR_ATTR static void cgr_mark(atomic_int *flag) {
+  atomic_store_explicit(flag, 1, memory_order_relaxed);
 }
 
 CGR_ATTR static void cgr_record(void *caller, void *callee) {
@@ -78,7 +106,7 @@ CGR_ATTR static void cgr_record(void *caller, void *callee) {
       return;
     }
   }
-  cgr_dropped = 1; /* table full: stop distinguishing, keep running */
+  cgr_mark(&cgr_dropped); /* table full: stop distinguishing, keep running */
   pthread_mutex_unlock(&cgr_lock);
 }
 
@@ -141,8 +169,11 @@ CGR_ATTR static void cgr_write(void) {
   /* Serialize under the same lock cgr_record takes, so a thread still running
    * at exit cannot mutate the table or dropped flag mid-write. */
   pthread_mutex_lock(&cgr_lock);
-  if (cgr_dropped) {
+  if (atomic_load_explicit(&cgr_dropped, memory_order_relaxed)) {
     fprintf(out, "dropped 1\n");
+  }
+  if (atomic_load_explicit(&cgr_unwound, memory_order_relaxed)) {
+    fprintf(out, "unwound 1\n");
   }
   for (uint32_t index = 0; index < CGR_TABLE_SIZE; index++) {
     if (cgr_table[index].count != 0) {
@@ -173,20 +204,67 @@ CGR_ATTR static void cgr_register_atexit(void) { atexit(cgr_write); }
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
   (void)call_site;
+  if (cgr_busy) {
+    /* An instrumented signal handler interrupted the shim on this thread:
+     * its call goes unrecorded, so the counts are incomplete. */
+    cgr_mark(&cgr_dropped);
+    return;
+  }
+  cgr_busy = 1;
   pthread_once(&cgr_once, cgr_register_atexit);
+  uintptr_t frame = (uintptr_t)__builtin_frame_address(0);
   if (cgr_depth > 0 && cgr_depth <= CGR_STACK_MAX) {
+    if (frame > cgr_frames[cgr_depth - 1]) {
+      /* The recorded caller lies below this call: it is a frame a longjmp or
+       * exception skipped, and the edge below names it wrongly. */
+      cgr_mark(&cgr_unwound);
+    }
     cgr_record(cgr_stack[cgr_depth - 1], this_fn);
   }
   if (cgr_depth < CGR_STACK_MAX) {
     cgr_stack[cgr_depth] = this_fn;
+    cgr_frames[cgr_depth] = frame;
+  } else {
+    /* Deeper than the stack holds: this frame's callees have no known
+     * caller and go unrecorded, so the counts are no longer exact. */
+    cgr_mark(&cgr_dropped);
   }
-  cgr_depth++;
+  if (cgr_depth < CGR_DEPTH_CEILING) {
+    cgr_depth++;
+  }
+  cgr_busy = 0;
 }
 
 void __cyg_profile_func_exit(void *this_fn, void *call_site) {
-  (void)this_fn;
   (void)call_site;
-  if (cgr_depth > 0) {
-    cgr_depth--;
+  if (cgr_busy) {
+    return; /* its enter was skipped too, and marked the trace */
   }
+  cgr_busy = 1;
+  uintptr_t frame = (uintptr_t)__builtin_frame_address(0);
+  if (cgr_depth > CGR_STACK_MAX) {
+    cgr_depth--; /* beyond the stored frames; already marked dropped */
+  } else if (cgr_depth > 0 && cgr_stack[cgr_depth - 1] == this_fn) {
+    if (frame > cgr_frames[cgr_depth - 1]) {
+      /* Same function, different invocation: an exit above the top entry's
+       * frame belongs to an outer frame of this function, and the top is a
+       * recursive frame a jump skipped. */
+      cgr_mark(&cgr_unwound);
+    }
+    cgr_depth--;
+  } else if (cgr_depth > 0) {
+    /* Not the top: a longjmp or exception skipped the exits above it. Calls
+     * made since may have named a skipped frame as their caller, and a
+     * recursive function's frames cannot be told apart by address, so the
+     * trace is marked. The depth is still resynchronised to the nearest
+     * frame of this function, so it cannot grow without bound. */
+    cgr_mark(&cgr_unwound);
+    for (int index = cgr_depth - 1; index >= 0; index--) {
+      if (cgr_stack[index] == this_fn) {
+        cgr_depth = index;
+        break;
+      }
+    }
+  }
+  cgr_busy = 0;
 }

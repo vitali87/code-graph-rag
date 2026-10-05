@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.1.0"
+version = "0.1.59"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -36,15 +36,20 @@ keywords = [
 ]
 dependencies = [
     "loguru>=0.7.3",
-    "mcp>=1.28.1",
-    "pydantic-ai>=2.0.0",
+    # mcp 2.x removed the Server.list_tools()/call_tool() decorators that
+    # codebase_rag/mcp/server.py registers its handlers with, and every
+    # documented install resolves this range rather than uv.lock (#2519).
+    "mcp>=1.28.1,<2",
+    # Only the providers codebase_rag/providers imports. The `pydantic-ai`
+    # meta-package also installs logfire, evals, a CLI and a web UI, none used.
+    "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
     "pymgclient>=1.5.1",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
-    "toml>=0.10.2",
+    "tomli-w>=1.2.0",
     "tree-sitter-python>=0.25.0",
-    "tree-sitter==0.25.2",
+    "tree-sitter==0.26.0",
     "watchdog>=6.0.0",
     "typer>=0.21.1",
     "rich>=14.2.0",
@@ -67,6 +72,10 @@ cgr_trace = "codebase_rag.trace.pytest_plugin"
 
 [tool.uv]
 package = true
+# semgrep (dev group) pins pyjwt~=2.13.0, which holds the single locked PyJWT
+# below the 2.14.0 fix for GHSA-ffc3-869f-jxw9 and its sibling advisories.
+# Drop this once a semgrep release accepts pyjwt>=2.14.0.
+override-dependencies = ["pyjwt[crypto]>=2.14.0"]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
@@ -92,6 +101,10 @@ codebase_rag = [
     "analyzers/ast_grep_rules/*/*.yaml",
     "queries/highlights/*.scm",
 ]
+# The provenance manifest hashes this file to stamp each index with its codec
+# schema; without it every installed build writes a null hash and
+# `cgr diff-index` refuses its indexes (issue #2399).
+codec = ["schema.proto"]
 
 [project.optional-dependencies]
 test = [
@@ -130,7 +143,9 @@ treesitter-full = [
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
-    "tree-sitter-dart>=0.1.0",
+    # Exact pin: PyPI's tree-sitter-dart is a single-maintainer repackaging of
+    # a fork, so a new release is a new publisher decision, not a grammar fix.
+    "tree-sitter-dart==0.1.0",
     "tree-sitter-sql>=0.3.11",
     "tree-sitter-markdown>=0.5.1",
 ]
@@ -138,7 +153,7 @@ treesitter-full = [
 semantic = [
     "qdrant-client>=1.9.0",
     "torch>=2.6.0",
-    "transformers>=4.0.0",
+    "transformers>=5.0.0",
 ]
 
 milvus = [
@@ -159,7 +174,7 @@ target-version = "py312"
 exclude = ["codec/", "benchmarks/", "optimize/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "PL", "T201"]
+select = ["E", "F", "W", "I", "UP", "PL", "T201", "S"]
 ignore = [
     "E501",     # line too long
     "PLR2004",  # magic value comparison (too noisy)
@@ -171,10 +186,17 @@ ignore = [
     "PLR0915",  # too many statements
     "PLW2901",  # loop variable overwritten (intentional for .strip())
     "PLW0603",  # global statement (singleton pattern)
+    "S101",     # assert (Bandit skips B101 too)
+    "S105",     # password-by-name heuristic: fires on *_TOKEN / PASS_* constants; secret scanning covers real secrets
+    "S106",     # same heuristic for keyword arguments
+    "S107",     # same heuristic for argument defaults
+    "S603",     # any subprocess call with an argv list; the shell=True rules (S602, S604, S605) stay on
+    "S607",     # toolchains resolve from PATH by design; shutil.which reads the same PATH
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["T201"]
+# Tests are outside Bandit's and SonarCloud's security scope too.
+"**/tests/**" = ["T201", "S"]
 "benchmarks/**" = ["T201"]
 "evals/flows_corpus/**" = ["T201"]
 # The corpus builder is a CLI script; its output is the point.
@@ -239,21 +261,16 @@ dev = [
     "coverage>=7.13.0",
     "pre-commit>=4.2.0",
     "pyinstaller>=6.14.1",
-    "pylint>=4.0.4",
     "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
-    "radon>=6.0.1",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",
     "ty>=0.0.7",
     "types-protobuf>=5.0.0",
-    "types-toml>=0.10.8.20240310",
-    "vulture>=2.14",
 ]
 docs = [
-    "mkdocs>=1.6.1,<2",
-    "mkdocs-material>=9.7.3",
-    "mkdocs-minify-plugin>=0.8.0",
+    # Exact pin while Zensical is pre-1.0.
+    "zensical==0.0.65",
 ]
 fuzz = [
     "atheris>=2.3.0",

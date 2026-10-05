@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from abc import abstractmethod
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -13,15 +13,18 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
+from .with_analyzer import WithTarget
 
 _PY_SCOPE_TYPES = frozenset(
     {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_MODULE}
 )
 
+_WITH_STMT_CAPTURE = "with_stmt"
 _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_ASSIGNMENT}) @assignment "
     f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
     f"({cs.TS_PY_FOR_STATEMENT}) @for_stmt "
+    f"({cs.TS_PY_WITH_STATEMENT}) @{_WITH_STMT_CAPTURE} "
     f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
 )
 
@@ -98,6 +101,34 @@ def _with_aliases(statement: Node) -> Iterator[Node]:
             alias = value.child_by_field_name(cs.FIELD_ALIAS)
             if alias is not None:
                 yield alias
+
+
+def _with_items(statement: Node) -> Iterator[WithTarget]:
+    """The items of a with statement whose `as` target is one plain name.
+
+    A destructuring target (`as (a, b)`) or an attribute (`as self.conn`)
+    binds no single local to the entered value, so neither is yielded.
+    """
+    is_async = any(child.type == cs.TS_PY_ASYNC for child in statement.children)
+    for clause in statement.named_children:
+        for item in clause.named_children:
+            value = item.child_by_field_name(cs.FIELD_VALUE)
+            if value is None or value.type != cs.TS_PY_AS_PATTERN:
+                continue
+            alias = value.child_by_field_name(cs.FIELD_ALIAS)
+            if (
+                alias is None
+                or alias.named_child_count != 1
+                or not value.named_children
+            ):
+                continue
+            target = alias.named_children[0]
+            if target.type == cs.TS_PY_IDENTIFIER and (
+                name := safe_decode_text(target)
+            ):
+                yield WithTarget(
+                    name, value.named_children[0], is_async, target.start_byte
+                )
 
 
 def _except_aliases(clause: Node) -> Iterator[Node]:
@@ -337,6 +368,79 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     return frozenset(names)
 
 
+# A comprehension is a scope of its own; a lambda is one too, but unlike a
+# def its calls are the enclosing function's (issue #2666).
+_PY_COMPREHENSION_TYPES = frozenset(
+    {
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+    }
+)
+
+
+def _inner_scope_bindings(scope: Node) -> set[str]:
+    """The names a comprehension's `for` targets or a lambda's parameters
+    bind."""
+    if scope.type == cs.TS_PY_LAMBDA:
+        return set(_parameter_names(scope))
+    names: set[str] = set()
+    for clause in scope.named_children:
+        if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+            continue
+        if (target := clause.child_by_field_name(cs.TS_FIELD_LEFT)) is not None:
+            names.update(
+                name
+                for identifier in _identifiers_in(target)
+                if (name := safe_decode_text(identifier))
+            )
+    return names
+
+
+def _is_name_read(identifier: Node) -> bool:
+    """Whether an identifier reads a variable: not the attribute of `x.name`
+    and not the keyword of `f(name=...)`."""
+    parent = identifier.parent
+    if parent is None:
+        return True
+    if parent.type == cs.TS_PY_ATTRIBUTE:
+        attribute = parent.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        return attribute is None or attribute.id != identifier.id
+    if parent.type == cs.TS_PY_KEYWORD_ARGUMENT:
+        keyword = parent.child_by_field_name(cs.TS_FIELD_NAME)
+        return keyword is None or keyword.id != identifier.id
+    return True
+
+
+def _inner_scope_only_names(caller: Node) -> frozenset[str]:
+    """Names a comprehension or lambda inside the caller binds, kept only
+    when every read of the name in the caller sits inside a scope that binds
+    it. `[Item(c) for c in values]` makes `c` the comprehension's own, but a
+    comprehension variable does not leak in Python 3, so a `key(...)` after
+    `[key for key in items]` still reads the module's `key`. Checking every
+    read keeps the answer free of call positions, which the resolver does
+    not have on every path."""
+    bound: set[str] = set()
+    read_outside: set[str] = set()
+    stack: list[tuple[Node, frozenset[str]]] = [
+        (child, frozenset()) for child in caller.children
+    ]
+    while stack:
+        node, enclosing = stack.pop()
+        if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
+            continue
+        if node.type in _PY_COMPREHENSION_TYPES or node.type == cs.TS_PY_LAMBDA:
+            own = _inner_scope_bindings(node)
+            bound.update(own)
+            enclosing = enclosing | own
+        elif node.type == cs.TS_PY_IDENTIFIER and _is_name_read(node):
+            if (name := safe_decode_text(node)) and name not in enclosing:
+                read_outside.add(name)
+        stack.extend((child, enclosing) for child in node.children)
+    return frozenset(bound - read_outside)
+
+
 def _call_bound_by(binder: Node) -> Node | None:
     """The call a plain `p = call()` binds to its WHOLE target, else None:
     `p, q = fw()`, `p += x`, `for p in xs`, `with cm as p`, `(p := x)` and
@@ -572,6 +676,76 @@ def _own_bound_names(scope: Node) -> frozenset[str]:
     return frozenset(names)
 
 
+def _is_type_checking_guard(condition: Node | None) -> bool:
+    """Whether an `if` condition is the `TYPE_CHECKING` flag itself, bare or
+    qualified (`typing.TYPE_CHECKING`). `not typing.TYPE_CHECKING` guards
+    the code that runs (Greptile, #2582), so any other expression is not."""
+    if condition is not None and condition.type == cs.TS_PY_ATTRIBUTE:
+        condition = condition.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    return (
+        condition is not None
+        and condition.type == cs.TS_PY_IDENTIFIER
+        and safe_decode_text(condition) == cs.PY_TYPE_CHECKING
+    )
+
+
+def _under_type_checking(node: Node) -> bool:
+    """Whether `node` sits in the body of an `if TYPE_CHECKING:` block."""
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_PY_IF_STATEMENT and _is_type_checking_guard(
+            current.child_by_field_name(cs.TS_FIELD_CONDITION)
+        ):
+            body = current.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+            if body is not None and body.start_byte <= node.start_byte < body.end_byte:
+                return True
+        current = current.parent
+    return False
+
+
+def _function_binds(scope: Node, name: str) -> bool:
+    """Whether a def enclosing `scope` (or `scope` itself) binds `name`, an
+    import included: Python skips class bodies, as `_locally_bound_names`
+    does."""
+    current: Node | None = scope
+    while current is not None:
+        if current.type == cs.TS_PY_FUNCTION_DEFINITION and (
+            name in _parameter_names(current)
+            or any(
+                safe_decode_text(identifier) == name
+                for _binder, identifier in _bindings_in(current)
+            )
+        ):
+            return True
+        current = current.parent
+    return False
+
+
+def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
+    """The with targets `scope`'s own body binds, each only where no later
+    binding in that body rebinds the name.
+
+    The type map is flat per body, so it holds one type per name. A later
+    `v = Other()` (or another `with ... as v`) describes the value from
+    there on and keeps its type; the with target must not overwrite it,
+    whichever pass happens to run first. An earlier binding is superseded by
+    the with target, which is written over it.
+    """
+    targets = [
+        target
+        for statement in statements
+        if _scope_of(statement) == scope.id
+        for target in _with_items(statement)
+    ]
+    if not targets:
+        return []
+    last: dict[str, int] = {}
+    for _binder, identifier in _bindings_in(scope):
+        if name := safe_decode_text(identifier):
+            last[name] = max(last.get(name, -1), identifier.start_byte)
+    return [target for target in targets if last.get(target.name) == target.binds_at]
+
+
 def _comprehension_names(comprehension: Node) -> frozenset[str]:
     """The names a comprehension's `for ... in` clauses bind."""
     names: set[str] = set()
@@ -612,14 +786,17 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
-    class _AstAnalyzerDeps(Protocol):
+    # A plain class, not a Protocol: a protocol's stub methods count as
+    # abstract, and this base sits ahead of the mixins that implement them in
+    # the engine's MRO. It exists for the checker only.
+    class _AstAnalyzerDeps:
         import_processor: ImportProcessor
 
         def build_local_variable_type_map(
             self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
 
-        def _extract_full_method_call(self, node: Node) -> str | None: ...
+        def _extract_full_method_call(self, attr_node: Node) -> str | None: ...
 
         def _resolve_method_qualified_name(
             self,
@@ -629,11 +806,11 @@ if TYPE_CHECKING:
         ) -> str | None: ...
 
         def _analyze_comprehension(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
+            self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
 
         def _analyze_for_loop(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
+            self, for_node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
 
         def _infer_instance_variable_types_from_assignments(
@@ -643,13 +820,75 @@ if TYPE_CHECKING:
             module_qn: str,
         ) -> None: ...
 
+        def _type_with_targets(
+            self,
+            targets: list[WithTarget],
+            local_var_types: dict[str, str],
+            module_qn: str,
+        ) -> list[WithTarget]: ...
+
     _AstBase: type = _AstAnalyzerDeps
 else:
     _AstBase = object
 
 
+def _node_name(node: Node) -> str | None:
+    # The decoded `name` field of a definition, or None when it has no text.
+    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+    if not name_node or name_node.text is None:
+        return None
+    return safe_decode_text(name_node)
+
+
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
+
+    def locally_bound_names(self, caller: Node, module_qn: str) -> frozenset[str]:
+        """Every name a function's body reads as its own rather than the
+        module's or the class's: parameters, what its statements bind, what
+        an enclosing def binds, and what only its comprehensions and lambdas
+        bind. `apply(key, item)` calling `key(item)` calls the argument, not
+        a module function named `key` (issue #2666)."""
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        return _locally_bound_names(caller, import_map) | _inner_scope_only_names(
+            caller
+        )
+
+    def own_class_rebinds_import(
+        self, module_qn: str, name: str, scope: Node | None = None
+    ) -> bool:
+        """Whether the module's own `class name` rebinds an imported `name`.
+
+        Module-level code has run by the time a function reads the name, so
+        the binding written last is the one it sees: a class defined after
+        `import pkg` makes `pkg.Client` the class's attribute, an import
+        written after the class makes it the package's again. A class under
+        `if TYPE_CHECKING:` never runs, so it rebinds nothing. A function
+        around `scope` that binds the name itself (`import pkg` again, a
+        parameter) reads its own binding, never the module's. Read only when
+        the module both imports the name and defines a class of it.
+        """
+        own_class = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (
+            name not in import_map
+            or self.function_registry.get(own_class) != NodeType.CLASS
+        ):
+            return False
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
+            return False
+        if scope is not None and _function_binds(scope, name):
+            return False
+        last: tuple[int, str] | None = None
+        for binder, identifier in _bindings_in(entry[0]):
+            if (
+                safe_decode_text(identifier) == name
+                and not _under_type_checking(binder)
+                and (last is None or identifier.start_byte > last[0])
+            ):
+                last = (identifier.start_byte, binder.type)
+        return last is not None and last[1] == cs.TS_PY_CLASS_DEFINITION
 
     def shadowed_import_names(self, caller: Node, module_qn: str) -> frozenset[str]:
         """The import-map names the caller's body binds as locals.
@@ -674,7 +913,9 @@ class PythonAstAnalyzerMixin(_AstBase):
     _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
 
     @abstractmethod
-    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None: ...
+    def _infer_type_from_expression(
+        self, node: Node, module_qn: str, scope: Node | None = None
+    ) -> str | None: ...
 
     @abstractmethod
     def _infer_type_from_expression_simple(
@@ -707,39 +948,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         """Types locals in one traversal; returns (comprehensions, for
         statements) so the coordinator can re-run loop inference after the
         attribute passes populate ``self.x`` types."""
-        assignments: list[Node] = []
-        comprehensions: list[Node] = []
-        for_statements: list[Node] = []
-
-        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
-        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
-        if py_lang_obj is not None:
-            try:
-                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
-                cursor = QueryCursor(q)
-                captures = cursor.captures(node)
-                assignments = captures.get("assignment", [])
-                comprehensions = captures.get("comprehension", [])
-                for_statements = captures.get("for_stmt", [])
-                if return_stmts := captures.get("return_stmt"):
-                    self._return_stmt_cache[node] = return_stmts
-            except Exception:
-                py_lang_obj = None
-
-        if py_lang_obj is None:
-            stack: list[Node] = [node]
-            while stack:
-                current = stack.pop()
-                node_type = current.type
-
-                if node_type == cs.TS_PY_ASSIGNMENT:
-                    assignments.append(current)
-                elif node_type == cs.TS_PY_LIST_COMPREHENSION:
-                    comprehensions.append(current)
-                elif node_type == cs.TS_PY_FOR_STATEMENT:
-                    for_statements.append(current)
-
-                stack.extend(reversed(current.children))
+        assignments, comprehensions, for_statements, with_statements = (
+            self._collect_traverse_nodes(node)
+        )
 
         # Only what THIS body binds. The captures above walk the whole
         # subtree, so a name bound inside a nested def or class body would
@@ -770,8 +981,29 @@ class PythonAstAnalyzerMixin(_AstBase):
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
 
+        # Between the two assignment passes: a with target types from its
+        # manager, which the simple pass may have typed, and the complex pass
+        # types `r = conn.send()` from the target. A manager only the complex
+        # pass types is retried after it.
+        with_targets = _with_targets(node, with_statements)
+        pending = self._type_with_targets(with_targets, local_var_types, module_qn)
+
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
+        # The complex pass went by an assignment reading a target typed only
+        # by the retry (`forked = session.fork()`), so it runs again whenever
+        # a retry types a manager; it types only names still untyped. Each
+        # round types at least one more manager, so the loop ends.
+        while pending:
+            retried = self._type_with_targets(pending, local_var_types, module_qn)
+            if len(retried) == len(pending):
+                break
+            typed_now = [target for target in pending if target not in retried]
+            pending = retried
+            for assignment in assignments:
+                self._retype_after_with_targets(
+                    assignment, typed_now, local_var_types, module_qn
+                )
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
@@ -790,6 +1022,75 @@ class PythonAstAnalyzerMixin(_AstBase):
             assignments, local_var_types, module_qn
         )
         return comprehensions, for_statements
+
+    def _retype_after_with_targets(
+        self,
+        assignment: Node,
+        typed_now: list[WithTarget],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """Re-run the complex pass on one assignment once a retry has typed
+        `typed_now`, without the targets bound only after it: an assignment
+        before `with pool as session` read the earlier `session`, not the
+        entered value."""
+        later = {
+            target.name: local_var_types.pop(target.name)
+            for target in typed_now
+            if target.binds_at > assignment.start_byte
+            and target.name in local_var_types
+        }
+        try:
+            self._process_assignment_complex(assignment, local_var_types, module_qn)
+        finally:
+            local_var_types.update(later)
+
+    def _collect_traverse_nodes(
+        self, node: Node
+    ) -> tuple[list[Node], list[Node], list[Node], list[Node]]:
+        """(assignments, comprehensions, for statements, with statements) under `node`.
+
+        Uses the cached query when the Python grammar is loaded, and falls
+        back to a plain tree walk when it is not or the query fails.
+        """
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                if return_stmts := captures.get("return_stmt"):
+                    self._return_stmt_cache[node] = return_stmts
+                return (
+                    captures.get("assignment", []),
+                    captures.get("comprehension", []),
+                    captures.get("for_stmt", []),
+                    captures.get(_WITH_STMT_CAPTURE, []),
+                )
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
+                pass
+
+        assignments: list[Node] = []
+        comprehensions: list[Node] = []
+        for_statements: list[Node] = []
+        with_statements: list[Node] = []
+        stack: list[Node] = [node]
+        while stack:
+            current = stack.pop()
+            node_type = current.type
+
+            if node_type == cs.TS_PY_ASSIGNMENT:
+                assignments.append(current)
+            elif node_type == cs.TS_PY_LIST_COMPREHENSION:
+                comprehensions.append(current)
+            elif node_type == cs.TS_PY_FOR_STATEMENT:
+                for_statements.append(current)
+            elif node_type == cs.TS_PY_WITH_STATEMENT:
+                with_statements.append(current)
+
+            stack.extend(reversed(current.children))
+        return assignments, comprehensions, for_statements, with_statements
 
     def analyze_scoped_comprehensions(
         self,
@@ -1005,10 +1306,8 @@ class PythonAstAnalyzerMixin(_AstBase):
             name = (
                 safe_decode_text(target) if target.type == cs.TS_PY_IDENTIFIER else None
             )
-            if not name or (nested and name not in declared):
-                continue
-            if name not in local_var_types:
-                local_var_types[name] = element
+            if name and (not nested or name in declared):
+                local_var_types.setdefault(name, element)
 
     def _unpacked_elements(
         self,
@@ -1319,32 +1618,17 @@ class PythonAstAnalyzerMixin(_AstBase):
             return None
 
         for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
-            if not isinstance(class_node, Node):
+            if not isinstance(class_node, Node) or _node_name(class_node) != class_name:
                 continue
-
-            name_node = class_node.child_by_field_name(cs.TS_FIELD_NAME)
-            if not name_node or name_node.text is None:
-                continue
-
-            if safe_decode_text(name_node) != class_name:
-                continue
-
             body_node = class_node.child_by_field_name(cs.TS_FIELD_BODY)
             if not body_node:
                 continue
-
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-
+            method_captures = sorted_captures(QueryCursor(method_query), body_node)
             for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
-                if not isinstance(method_node, Node):
-                    continue
-
-                method_name_node = method_node.child_by_field_name(cs.TS_FIELD_NAME)
-                if not method_name_node or method_name_node.text is None:
-                    continue
-
-                if safe_decode_text(method_name_node) == method_name:
+                if (
+                    isinstance(method_node, Node)
+                    and _node_name(method_node) == method_name
+                ):
                     return method_node
 
         return None
@@ -1460,7 +1744,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 captures = cursor.captures(node)
                 return_nodes.extend(captures.get("return_stmt", []))
                 return
-            except Exception:
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
         stack: list[Node] = [node]
         while stack:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node
@@ -10,9 +10,10 @@ from ... import constants as cs
 from ... import logs as lg
 from ...decorators import recursion_guard
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType, SimpleNameLookup
+from ...utils import qn_markers
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
-from .utils import resolve_class_name
+from .utils import resolve_class_name, resolve_dotted_class
 
 # An inline receiver is handed to the expression rules only when its text can
 # be one: an operator, `or`/`and`, or a conditional. Everything else keeps the
@@ -38,7 +39,10 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
     from .variable_analyzer import _Alias
 
-    class _ExpressionAnalyzerDeps(Protocol):
+    # A plain class, not a Protocol: a protocol's stub methods count as
+    # abstract, and this base sits ahead of the mixins that implement them in
+    # the engine's MRO. It exists for the checker only.
+    class _ExpressionAnalyzerDeps:
         def _analyze_self_assignments(
             self, node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
@@ -50,6 +54,14 @@ if TYPE_CHECKING:
         def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
 
         def _find_function_ast_node(self, fn_qn: str) -> Node | None: ...
+
+        def shadowed_import_names(
+            self, caller: Node, module_qn: str
+        ) -> frozenset[str]: ...
+
+        def own_class_rebinds_import(
+            self, module_qn: str, name: str, scope: Node | None = None
+        ) -> bool: ...
 
         def _analyze_method_return_statements(
             self, method_node: Node, method_qn: str, module_qn: str | None = None
@@ -77,16 +89,22 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     _method_return_type_cache: dict[str, str | None]
     _self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None]
 
-    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
+    def _infer_type_from_expression(
+        self, node: Node, module_qn: str, scope: Node | None = None
+    ) -> str | None:
+        # `scope`: where the expression is read, whose enclosing defs decide
+        # which names are locals rather than the module's imports.
         if node.type == cs.TS_PY_CALL:
-            return self._infer_call_expression_type(node, module_qn)
+            return self._infer_call_expression_type(node, module_qn, scope)
         if node.type == cs.TS_PY_LIST_COMPREHENSION and (
             body_node := node.child_by_field_name(cs.TS_FIELD_BODY)
         ):
-            return self._infer_type_from_expression(body_node, module_qn)
+            return self._infer_type_from_expression(body_node, module_qn, scope)
         return None
 
-    def _infer_call_expression_type(self, node: Node, module_qn: str) -> str | None:
+    def _infer_call_expression_type(
+        self, node: Node, module_qn: str, scope: Node | None = None
+    ) -> str | None:
         func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if (
             func_node
@@ -94,7 +112,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             and func_node.text is not None
             and (callee := safe_decode_text(func_node))
         ):
-            if callee[0].isupper():
+            if self._names_a_lone_class(callee, module_qn):
                 return callee
             # A lowercase callee is a free-function factory: type from its
             # return (annotation first), so `self.widgets = load_widgets()`
@@ -110,19 +128,49 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 method_call_text, module_qn, None
             ):
                 return inferred
-            return self._attribute_constructor_type(method_call_text)
+            return self._attribute_constructor_type(
+                method_call_text, module_qn, scope=scope
+            )
         return None
 
-    def _attribute_constructor_type(self, method_call_text: str) -> str | None:
+    def _attribute_constructor_type(
+        self,
+        method_call_text: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+        scope: Node | None = None,
+    ) -> str | None:
         # alias.ClassName(...) is an attribute CONSTRUCTOR (pd.DataFrame,
         # genai.Client), not a method call: the variable's type is the dotted class
         # itself. Without this the receiver stays untyped, known-external suppression
         # cannot fire, and a later member call (df.apply) rebinds by bare name to an
         # unrelated first-party method. Mirrors the bare `ClassName(...)` heuristic.
         simple_name = method_call_text.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if simple_name and simple_name[0].isupper():
+        if not simple_name or not simple_name[0].isupper():
+            return None
+        # A first-party class is stored by its qn: the raw `pkg.Client` names
+        # no registry entry, so the receiver read as external and its calls
+        # got no edge, and `pkg._client.Client` lacked the project prefix and
+        # fell to the name-only fallback (issue #2558). A head the body binds
+        # itself is a local, not the import, and keeps the text as written.
+        head = method_call_text.partition(cs.SEPARATOR_DOT)[0]
+        if (local_var_types and head in local_var_types) or not (
+            class_qn := resolve_dotted_class(
+                method_call_text,
+                module_qn,
+                self.import_processor,
+                self.function_registry,
+                self.own_class_rebinds_import(module_qn, head, scope),
+            )
+        ):
             return method_call_text
-        return None
+        # A local the type map holds no type for (an untyped parameter, a
+        # self-assignment read without the map) is still not the import: the
+        # defs enclosing `scope` say which heads are locals. Asked only once a
+        # class resolved: walking their bindings for every call is costly.
+        if scope is not None and head in self.shadowed_import_names(scope, module_qn):
+            return method_call_text
+        return class_qn
 
     def _infer_type_from_expression_simple(
         self, node: Node, module_qn: str
@@ -134,7 +182,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and func_node.type == cs.TS_PY_IDENTIFIER
                 and func_node.text is not None
                 and (class_name := safe_decode_text(func_node))
-                and class_name[0].isupper()
+                and self._names_a_lone_class(class_name, module_qn)
             ):
                 return class_name
 
@@ -158,7 +206,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     method_call_text, module_qn, local_var_types
                 ):
                     return inferred
-                return self._attribute_constructor_type(method_call_text)
+                return self._attribute_constructor_type(
+                    method_call_text, module_qn, local_var_types, scope=node
+                )
 
             if (
                 func_node
@@ -226,6 +276,8 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 )
             )
         for qn in candidates:
+            if (kinds := self._class_and_def_twins(qn)) is not None:
+                return self._live_binding_type(qn, kinds)
             match self.function_registry.get(qn):
                 case NodeType.CLASS:
                     return qn
@@ -235,16 +287,105 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     continue
         return None
 
+    def _names_a_lone_class(self, callee: str, module_qn: str) -> bool:
+        # A capitalised callee is taken for a class, unless a same-named def
+        # may be what runs instead; the twin path then decides (issue #2621).
+        return callee[0].isupper() and (
+            self._class_and_def_twins(f"{module_qn}{cs.SEPARATOR_DOT}{callee}") is None
+        )
+
+    def _class_and_def_twins(self, qn: str) -> dict[str, NodeType | None] | None:
+        """The kind of each variant when a class and a def share `qn`."""
+        variants = self.function_registry.variants(qn)
+        if len(variants) < 2:
+            return None
+        kinds = {variant: self.function_registry.get(variant) for variant in variants}
+        if NodeType.CLASS in kinds.values() and NodeType.FUNCTION in kinds.values():
+            return kinds
+        return None
+
+    def _live_binding_type(
+        self, qn: str, kinds: dict[str, NodeType | None]
+    ) -> str | None:
+        """The one type `name()` has under every binding a caller may see.
+
+        A caller runs whichever definition the module bound last: the last
+        unconditional one, or a conditional one written after it. Those must
+        agree. A shim that returns the class it wraps types as nothing and
+        does not disagree (issue #2621), but a def returning another class
+        does, and picking either side bound `factory().m()` to a method that
+        never runs (PR #2789 review). Disagreement leaves the receiver
+        untyped rather than exactly wrong.
+        """
+        module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)
+        definitions = self._module_level_definitions(module_qn, name)
+        unconditional = [
+            index
+            for index, (_, conditional) in enumerate(definitions)
+            if not conditional
+        ]
+        live = definitions[unconditional[-1] :] if unconditional else definitions
+        types: set[str] = set()
+        for node, _ in live:
+            if (variant := _variant_at(node, kinds)) is None:
+                continue
+            if kinds[variant] == NodeType.CLASS:
+                types.add(variant)
+            elif kinds[variant] == NodeType.FUNCTION and (
+                returned := self._get_function_return_type_from_ast(variant, node)
+            ):
+                types.add(returned)
+        return types.pop() if len(types) == 1 else None
+
+    def _module_level_definitions(
+        self, module_qn: str, name: str
+    ) -> list[tuple[Node, bool]]:
+        """Module-scope `class name` / `def name` nodes in source order, each
+        with whether a branch, loop, `try` or `with` encloses it."""
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if not file_path or not (entry := self.ast_cache.load(file_path)):
+            return []
+        root_node, language = entry
+        if language != cs.SupportedLanguage.PYTHON:
+            return []
+        found: list[tuple[Node, bool]] = []
+        stack = [(child, False) for child in reversed(root_node.children)]
+        while stack:
+            node, conditional = stack.pop()
+            definition = (
+                node.child_by_field_name(cs.FIELD_DEFINITION)
+                if node.type == cs.TS_PY_DECORATED_DEFINITION
+                else node
+            )
+            if definition is not None and definition.type in (
+                cs.TS_PY_CLASS_DEFINITION,
+                cs.TS_PY_FUNCTION_DEFINITION,
+            ):
+                # A body is another scope: its definitions bind no module name.
+                if (
+                    safe_decode_text(definition.child_by_field_name(cs.FIELD_NAME))
+                    == name
+                ):
+                    found.append((definition, conditional))
+                continue
+            stack.extend((child, True) for child in reversed(node.children))
+        return found
+
     @recursion_guard(
-        key_func=lambda self, fn_qn: fn_qn,
+        key_func=lambda self, fn_qn, fn_node=None: fn_qn,
         guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
     )
-    def _get_function_return_type_from_ast(self, fn_qn: str) -> str | None:
+    def _get_function_return_type_from_ast(
+        self, fn_qn: str, fn_node: Node | None = None
+    ) -> str | None:
+        # `fn_node` is passed for an `@line` variant, whose qn names no
+        # definition the by-name lookup can find.
         if fn_qn in self._method_return_type_cache:
             return self._method_return_type_cache[fn_qn]
 
         fn_module_qn = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        fn_node = self._find_function_ast_node(fn_qn)
+        if fn_node is None:
+            fn_node = self._find_function_ast_node(fn_qn)
         result = (
             self._analyze_method_return_statements(fn_node, fn_qn, fn_module_qn)
             if fn_node
@@ -570,3 +711,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+
+
+def _variant_at(node: Node, kinds: dict[str, NodeType | None]) -> str | None:
+    # A twin registered after the first carries its start line as `@line`;
+    # the definition holding the plain name is the one no marker names.
+    line = node.start_point[0] + 1
+    plain = None
+    for variant in kinds:
+        marked = qn_markers.marker_line(variant)
+        if marked == line:
+            return variant
+        if marked is None:
+            plain = variant
+    return plain

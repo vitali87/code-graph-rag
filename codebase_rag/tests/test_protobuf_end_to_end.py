@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 import codec.schema_pb2 as pb
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -66,13 +64,8 @@ def test_comprehensive_pipeline_produces_valid_artifact_joint(tmp_path: Path) ->
     assert output_file.stat().st_size > 100, "index.bin is suspiciously small or empty."
 
     deserialized_index = pb.GraphCodeIndex()
-    try:
-        with open(output_file, "rb") as f:
-            deserialized_index.ParseFromString(f.read())
-    except Exception as e:
-        pytest.fail(
-            f"The output file is not a valid Protobuf message. Deserialization failed with: {e}"
-        )
+    with open(output_file, "rb") as f:
+        deserialized_index.ParseFromString(f.read())
 
     assert len(deserialized_index.nodes) > 5, (
         "The serialized graph contains too few nodes."

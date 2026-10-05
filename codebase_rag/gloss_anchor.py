@@ -29,13 +29,14 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 
 from tree_sitter import Node, Parser, Tree
 
 from . import constants as cs
 from .language_spec import get_language_for_extension
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+from .types_defs import ResultValue
 
 
 class ParsedSource(NamedTuple):
@@ -200,7 +201,7 @@ def text_anchor(
     )
 
 
-def is_comparable_quote(value: object) -> bool:
+def is_comparable_quote(value: ResultValue | None) -> TypeGuard[str]:
     return isinstance(value, str) and value.startswith(cs.ANCHOR_QUOTE_VERSION)
 
 

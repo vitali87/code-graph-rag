@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -192,19 +192,7 @@ def extract_modifiers_and_decorators(
 
     query_nodes = [target_node]
     curr_sibling = target_node.prev_named_sibling
-    while curr_sibling and (
-        curr_sibling.type == cs.TS_RS_ATTRIBUTE_ITEM
-        or (
-            target_node.type == cs.TS_METHOD_DEFINITION
-            and curr_sibling.type == cs.TS_DECORATOR
-        )
-        # Dart metadata precedes the signature as annotation siblings.
-        or (
-            target_node.type
-            in (cs.TS_DART_METHOD_SIGNATURE, cs.TS_DART_FUNCTION_SIGNATURE)
-            and curr_sibling.type == cs.TS_DART_ANNOTATION
-        )
-    ):
+    while curr_sibling and _is_leading_annotation(target_node, curr_sibling):
         query_nodes.insert(0, curr_sibling)
         curr_sibling = curr_sibling.prev_named_sibling
 
@@ -212,34 +200,49 @@ def extract_modifiers_and_decorators(
     decorators: list[str] = []
 
     for q_node in query_nodes:
-        if q_node == target_node:
-            cursor.set_byte_range(q_node.start_byte, header_end_byte)
-        else:
-            cursor.set_byte_range(q_node.start_byte, q_node.end_byte)
-
-        captures = sorted_captures(cursor, q_node)
-        for name, nodes in captures.items():
-            if (
-                name.startswith(cs.CAPTURE_KEYWORD_MODIFIER)
-                or name == cs.CAPTURE_KEYWORD
-            ):
-                for n in nodes:
-                    text = safe_decode_text(n)
-                    if (
-                        text
-                        and text not in modifiers
-                        and text not in cs.EXCLUDED_KEYWORDS
-                    ):
-                        modifiers.append(text)
-            elif name.startswith(cs.CAPTURE_ATTRIBUTE) or name.startswith(
-                cs.CAPTURE_FUNCTION_DECORATOR
-            ):
-                for n in nodes:
-                    text = safe_decode_text(n)
-                    if text and text not in decorators:
-                        decorators.append(text)
+        end_byte = header_end_byte if q_node == target_node else q_node.end_byte
+        cursor.set_byte_range(q_node.start_byte, end_byte)
+        _collect_modifier_captures(
+            sorted_captures(cursor, q_node), modifiers, decorators
+        )
 
     return modifiers, decorators
+
+
+def _is_leading_annotation(target_node: ASTNode, sibling: ASTNode) -> bool:
+    # Rust attributes, TS method decorators and Dart metadata precede the
+    # definition as siblings rather than children.
+    if sibling.type == cs.TS_RS_ATTRIBUTE_ITEM:
+        return True
+    if target_node.type == cs.TS_METHOD_DEFINITION:
+        return sibling.type == cs.TS_DECORATOR
+    return (
+        target_node.type in (cs.TS_DART_METHOD_SIGNATURE, cs.TS_DART_FUNCTION_SIGNATURE)
+        and sibling.type == cs.TS_DART_ANNOTATION
+    )
+
+
+def _collect_modifier_captures(
+    captures: dict[str, list[ASTNode]],
+    modifiers: list[str],
+    decorators: list[str],
+) -> None:
+    for name, nodes in captures.items():
+        if name.startswith(cs.CAPTURE_KEYWORD_MODIFIER) or name == cs.CAPTURE_KEYWORD:
+            _append_unique_texts(nodes, modifiers, cs.EXCLUDED_KEYWORDS)
+        elif name.startswith(cs.CAPTURE_ATTRIBUTE) or name.startswith(
+            cs.CAPTURE_FUNCTION_DECORATOR
+        ):
+            _append_unique_texts(nodes, decorators, frozenset())
+
+
+def _append_unique_texts(
+    nodes: list[ASTNode], out: list[str], excluded: Collection[str]
+) -> None:
+    for n in nodes:
+        text = safe_decode_text(n)
+        if text and text not in out and text not in excluded:
+            out.append(text)
 
 
 @lru_cache(maxsize=50000)
@@ -533,23 +536,25 @@ def js_ts_parameter_names(func_node: Node) -> list[str]:
     params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is not None:
         for child in params.named_children:
-            if child.type == cs.TS_IDENTIFIER:
-                if name := safe_decode_text(child):
-                    names.append(name)
-            elif child.type in _JS_TS_TYPED_PARAMETERS:
-                pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
-                if (
-                    pattern is not None
-                    and pattern.type == cs.TS_IDENTIFIER
-                    and (name := safe_decode_text(pattern))
-                ):
-                    names.append(name)
+            if name := _js_ts_parameter_name(child):
+                names.append(name)
         return names
     single = func_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
     if single is not None and single.type == cs.TS_IDENTIFIER:
         if name := safe_decode_text(single):
             names.append(name)
     return names
+
+
+def _js_ts_parameter_name(param: Node) -> str | None:
+    # A bare identifier, or the identifier `pattern` of a TS typed parameter.
+    if param.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(param)
+    if param.type in _JS_TS_TYPED_PARAMETERS:
+        pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if pattern is not None and pattern.type == cs.TS_IDENTIFIER:
+            return safe_decode_text(pattern)
+    return None
 
 
 def _scan_invoked_parameters(
@@ -571,14 +576,9 @@ def _scan_invoked_parameters(
     while stack:
         node = stack.pop()
         for child in node.children:
-            if child.type == config.call_type:
-                fn = child.child_by_field_name(cs.FIELD_FUNCTION)
-                if (
-                    fn is not None
-                    and fn.type == config.identifier_type
-                    and (name := safe_decode_text(fn)) in candidates
-                ):
-                    invoked.add(name)
+            name = _bare_call_name(child, config)
+            if name is not None and name in candidates:
+                invoked.add(name)
             if child.type in config.closure_types:
                 inner = candidates - bound_names(child)
                 _scan_invoked_parameters(child, inner, invoked, config, bound_names)
@@ -586,6 +586,16 @@ def _scan_invoked_parameters(
             if child.type in config.opaque_types:
                 continue
             stack.append(child)
+
+
+def _bare_call_name(node: Node, config: _CallableScanConfig) -> str | None:
+    # The callee name of a call by bare identifier (`cb()`), else None.
+    if node.type != config.call_type:
+        return None
+    fn = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if fn is None or fn.type != config.identifier_type:
+        return None
+    return safe_decode_text(fn)
 
 
 def _go_scope_bound_names(scope_node: Node) -> set[str]:
@@ -615,50 +625,54 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
     while stack:
         current = stack.pop()
         for child in current.children:
-            child_type = child.type
-            if child_type in _PY_SCOPE_BOUNDARIES:
+            if child.type in _PY_SCOPE_BOUNDARIES:
                 # A nested def/class NAME binds here, but its body has its own
-                # scope; record the name and do not descend. A decorated_definition
-                # has no `name` field of its own, since the name is on the inner
-                # function/class definition it wraps.
-                named = child
-                if child_type == cs.TS_PY_DECORATED_DEFINITION:
-                    named = next(
-                        (
-                            c
-                            for c in child.children
-                            if c.type
-                            in (
-                                cs.TS_PY_FUNCTION_DEFINITION,
-                                cs.TS_PY_CLASS_DEFINITION,
-                            )
-                        ),
-                        child,
-                    )
-                name_node = named.child_by_field_name(cs.FIELD_NAME)
-                if name_node is not None and (name := safe_decode_text(name_node)):
+                # scope; record the name and do not descend.
+                if name := _python_scope_boundary_name(child):
                     out.add(name)
                 continue
-            if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
-                # Both bind whatever their `left` names.
-                left = child.child_by_field_name(cs.TS_FIELD_LEFT)
-                if left is not None:
-                    _python_collect_target_identifiers(left, out)
-            elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
-                # `with ... as x` and `except ... as x` bind x here.
-                _python_collect_target_identifiers(child, out)
-            elif child_type in _PY_IMPORT_STATEMENTS:
-                _python_collect_import_bound_names(child, out)
-            elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
-                # `global x` rebinds x to module scope: it is not a capture of the
-                # enclosing function, so exclude it like a local binding.
-                for c in child.named_children:
-                    if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
-                        out.add(name)
-            elif child_type == cs.TS_PY_CASE_PATTERN:
-                # A `match` case binds only its CAPTURE names, not value patterns.
-                _python_collect_case_pattern_bindings(child, out)
+            _python_collect_direct_bindings(child, out)
             stack.append(child)
+
+
+def _python_scope_boundary_name(child: Node) -> str | None:
+    # A decorated_definition has no `name` field of its own, since the name is
+    # on the inner function/class definition it wraps.
+    named = child
+    if child.type == cs.TS_PY_DECORATED_DEFINITION:
+        named = next(
+            (
+                c
+                for c in child.children
+                if c.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+            ),
+            child,
+        )
+    name_node = named.child_by_field_name(cs.FIELD_NAME)
+    return safe_decode_text(name_node) if name_node is not None else None
+
+
+def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
+    child_type = child.type
+    if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+        # Both bind whatever their `left` names.
+        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None:
+            _python_collect_target_identifiers(left, out)
+    elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
+        # `with ... as x` and `except ... as x` bind x here.
+        _python_collect_target_identifiers(child, out)
+    elif child_type in _PY_IMPORT_STATEMENTS:
+        _python_collect_import_bound_names(child, out)
+    elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
+        # `global x` rebinds x to module scope: it is not a capture of the
+        # enclosing function, so exclude it like a local binding.
+        for c in child.named_children:
+            if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
+                out.add(name)
+    elif child_type == cs.TS_PY_CASE_PATTERN:
+        # A `match` case binds only its CAPTURE names, not value patterns.
+        _python_collect_case_pattern_bindings(child, out)
 
 
 def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
@@ -702,17 +716,21 @@ def _python_collect_import_bound_names(node: Node, out: set[str]) -> None:
     # `name` field; the from-module (`module_name` field) is the source, not a
     # local binding, so it is skipped by keying off `name` only.
     for item in node.children_by_field_name(cs.FIELD_NAME):
-        if item.type == cs.TS_ALIASED_IMPORT:
-            alias = item.child_by_field_name(cs.FIELD_ALIAS)
-            if alias is not None and (name := safe_decode_text(alias)):
-                out.add(name)
-        elif item.type == cs.TS_PY_DOTTED_NAME:
-            first = next(
-                (c for c in item.named_children if c.type == cs.TS_PY_IDENTIFIER),
-                None,
-            )
-            if first is not None and (name := safe_decode_text(first)):
-                out.add(name)
+        if name := _python_import_item_bound_name(item):
+            out.add(name)
+
+
+def _python_import_item_bound_name(item: Node) -> str | None:
+    if item.type == cs.TS_ALIASED_IMPORT:
+        alias = item.child_by_field_name(cs.FIELD_ALIAS)
+        return safe_decode_text(alias) if alias is not None else None
+    if item.type == cs.TS_PY_DOTTED_NAME:
+        first = next(
+            (c for c in item.named_children if c.type == cs.TS_PY_IDENTIFIER),
+            None,
+        )
+        return safe_decode_text(first) if first is not None else None
+    return None
 
 
 def _python_collect_identifier_reads(node: Node, out: set[str]) -> None:
@@ -847,28 +865,35 @@ def go_positional_parameter_slots(
     variadic_index: int | None = None
     for declaration in params.named_children:
         if declaration.type == cs.TS_GO_PARAMETER_DECLARATION:
-            # Go groups names sharing a type (`a, b int`) into one declaration
-            # with several identifiers; each identifier is its own slot. A
-            # type-only declaration (`func f(int)`) has no identifier child and
-            # is a single unnamed slot.
-            idents = [
-                safe_decode_text(child)
-                for child in declaration.children
-                if child.type == cs.TS_IDENTIFIER
-            ]
-            if idents:
-                names.extend(idents)
-            else:
-                names.append(None)
+            names.extend(_go_declaration_slots(declaration))
         elif declaration.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
             if variadic_index is None:
                 variadic_index = len(names)
-            ident = next(
-                (c for c in declaration.children if c.type == cs.TS_IDENTIFIER),
-                None,
-            )
-            names.append(safe_decode_text(ident) if ident is not None else None)
+            names.append(_go_variadic_slot_name(declaration))
     return names, variadic_index
+
+
+def _go_declaration_slots(declaration: Node) -> list[str | None]:
+    # Go groups names sharing a type (`a, b int`) into one declaration
+    # with several identifiers; each identifier is its own slot. A
+    # type-only declaration (`func f(int)`) has no identifier child and
+    # is a single unnamed slot.
+    idents = [
+        safe_decode_text(child)
+        for child in declaration.children
+        if child.type == cs.TS_IDENTIFIER
+    ]
+    if idents:
+        return idents
+    return [None]
+
+
+def _go_variadic_slot_name(declaration: Node) -> str | None:
+    ident = next(
+        (c for c in declaration.children if c.type == cs.TS_IDENTIFIER),
+        None,
+    )
+    return safe_decode_text(ident) if ident is not None else None
 
 
 def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
@@ -889,16 +914,22 @@ def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
             return None, False
         return _js_ts_parameter_slot(pattern)
     if node_type == cs.TS_ASSIGNMENT_PATTERN:
-        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
-        if left is not None and left.type == cs.TS_IDENTIFIER:
-            return safe_decode_text(left), False
-        return None, False
+        return _js_ts_assignment_slot_name(child), False
     if node_type == cs.TS_REST_PATTERN:
-        ident = next(
-            (c for c in child.named_children if c.type == cs.TS_IDENTIFIER), None
-        )
-        return (safe_decode_text(ident) if ident is not None else None), True
+        return _js_ts_rest_slot_name(child), True
     return None, False
+
+
+def _js_ts_assignment_slot_name(child: Node) -> str | None:
+    left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+    if left is not None and left.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(left)
+    return None
+
+
+def _js_ts_rest_slot_name(child: Node) -> str | None:
+    ident = next((c for c in child.named_children if c.type == cs.TS_IDENTIFIER), None)
+    return safe_decode_text(ident) if ident is not None else None
 
 
 def js_ts_positional_parameter_slots(
@@ -964,21 +995,21 @@ def java_positional_parameter_slots(
         elif param.type == cs.TS_SPREAD_PARAMETER:
             if variadic_index is None:
                 variadic_index = len(names)
-            declarator = next(
-                (
-                    c
-                    for c in param.named_children
-                    if c.type == cs.TS_VARIABLE_DECLARATOR
-                ),
-                None,
-            )
-            name = (
-                declarator.child_by_field_name(cs.FIELD_NAME)
-                if declarator is not None
-                else None
-            )
-            names.append(safe_decode_text(name) if name is not None else None)
+            names.append(_java_spread_parameter_name(param))
     return names, variadic_index
+
+
+def _java_spread_parameter_name(param: Node) -> str | None:
+    declarator = next(
+        (c for c in param.named_children if c.type == cs.TS_VARIABLE_DECLARATOR),
+        None,
+    )
+    name = (
+        declarator.child_by_field_name(cs.FIELD_NAME)
+        if declarator is not None
+        else None
+    )
+    return safe_decode_text(name) if name is not None else None
 
 
 def csharp_positional_parameter_slots(
@@ -1232,6 +1263,157 @@ def _method_end_line(node: ASTNode, language: cs.SupportedLanguage | None) -> in
     return node.end_point[0] + 1
 
 
+def _resolve_method_name(
+    method_node: ASTNode, language: cs.SupportedLanguage, skip_cpp_artifact_check: bool
+) -> str | None:
+    if language == cs.SupportedLanguage.CPP:
+        from .cpp import utils as cpp_utils
+
+        # Inside an intact class body a macro invocation parsed as a type-less
+        # member (`FMT_CATCH(...) {}`) can never be a ctor of another class, so
+        # the shape check alone is decisive here. skip_cpp_artifact_check: the
+        # orphan-ctor flush already ran the class-registry tiebreak (a zero-param
+        # orphan ctor SHARES the artifact shape and must not be re-dropped here).
+        if not skip_cpp_artifact_check and cpp_utils.is_macro_invocation_artifact(
+            method_node
+        ):
+            return None
+        return cpp_utils.extract_function_name(method_node) or None
+    if language == cs.SupportedLanguage.CSHARP:
+        # Operators expose no `name` field (they would be dropped) and a
+        # destructor's `name` field collides with the constructor; synthesize
+        # the leaf so both register with the same name the FQN walk uses.
+        from .csharp import utils as csharp_utils
+
+        return csharp_utils.synthesize_method_name(method_node) or None
+    if language == cs.SupportedLanguage.DART:
+        # Constructors/factories expose no `name` field; take the last bare
+        # identifier (`factory C.empty` -> `empty`) so they are not dropped.
+        from .dart import dart_get_name
+
+        return dart_get_name(method_node) or None
+    if (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
+        # A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
+        # field on the function node; take the binding name from the enclosing
+        # field definition so it is modelled as a member instead of dropped.
+        return _js_ts_field_member_name(method_node, language) or None
+    if (text := method_name_node.text) is None:
+        return None
+    return text.decode(cs.ENCODING_UTF8)
+
+
+def _method_start_point(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> tuple[int, int]:
+    if language == cs.SupportedLanguage.CSHARP:
+        # Skip a leading `#if [Attr] #endif` directive so the start line is the
+        # conditional attribute, not the `#if` line (matches Roslyn's span).
+        from .csharp import utils as csharp_utils
+
+        return csharp_utils.definition_start_point(method_node)
+    return method_node.start_point[0] + 1, method_node.start_point[1]
+
+
+def _method_is_property(
+    method_node: ASTNode, language: cs.SupportedLanguage, decorators: list[str]
+) -> bool:
+    # Persist @property status on the node so an incremental rebuild can restore
+    # the registry's property-name set for unchanged files (it re-marks from this
+    # flag rather than re-parsing decorators); property-dispatch call resolution
+    # depends on it, so without persistence those edges drop (issue #532 parity).
+    # A C# property_declaration IS a property by grammar (no decorator to
+    # inspect); marking it lets the C# member-read pass find it, exactly as
+    # Python's @property marking feeds its attribute-access pass. A Dart
+    # getter_signature is the same shape (issue #869): its accesses are
+    # attribute reads the Dart getter-read pass resolves through this flag.
+    # A JS/TS getter is a `method_definition` carrying the `get` keyword; its
+    # reads are member accesses (`obj.thing`), so mark it like the other
+    # languages' properties to feed the JS/TS getter-read pass. The keyword is a
+    # direct child but not always the first (`static get x()` leads with
+    # `static`); a method named `get` carries a property_identifier, not a `get`
+    # keyword node, so scanning direct children stays exact.
+    is_js_ts_getter = (
+        language in cs.JS_TS_LANGUAGES
+        and method_node.type == cs.TS_METHOD_DEFINITION
+        and any(
+            child.type == cs.TS_GET_ACCESSOR_KEYWORD for child in method_node.children
+        )
+    )
+    return (
+        _is_property_decorator(decorators)
+        or is_js_ts_getter
+        or method_node.type
+        in (
+            cs.TS_CSHARP_PROPERTY_DECLARATION,
+            cs.TS_DART_GETTER_SIGNATURE,
+        )
+    )
+
+
+def _method_container_label(
+    function_registry: FunctionRegistryTrieProtocol,
+    container_qn: str,
+    container_type: cs.NodeLabel,
+) -> cs.NodeLabel:
+    # The DEFINES_METHOD parent is matched by LABEL + qualified_name, so it must
+    # carry the container's real node label. Callers pass Class by default, but a
+    # trait/interface (Interface) or enum (Enum) container would then never match
+    # and drop the containment edge. Prefer the label it was registered with.
+    container_label = container_type
+    registered = function_registry.get(container_qn)
+    if registered is not None and registered != NodeType.METHOD:
+        container_label = cs.NodeLabel(registered.value)
+    return container_label
+
+
+def _record_method_overrides(
+    method_props: PropertyDict,
+    method_qn: str,
+    method_name: str,
+    container_qn: str,
+    decorators: list[str],
+    external_override_names: frozenset[str],
+    annotated_override_sink: dict[str, list[tuple[str, str]]] | None,
+) -> None:
+    # Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
+    # subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
+    # it, so the dead-code surfaces root this property.
+    if method_name in external_override_names:
+        method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
+    # A Dart @override is only an EXTERNAL override if the resolved ancestry
+    # says so, which is unknowable until every class is registered: record it
+    # for resolve_deferred_inherits to judge.
+    if (
+        annotated_override_sink is not None
+        and cs.DART_OVERRIDE_ANNOTATION in decorators
+    ):
+        annotated_override_sink.setdefault(container_qn, []).append(
+            (method_qn, method_name)
+        )
+
+
+def _method_positional_params_props(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> PropertyDict:
+    """The method's stored positional parameter list, or nothing to store.
+
+    Python's keeps the receiver deliberately: CPython counts the bound `self`
+    in "takes N positional arguments", so a stored list that dropped it would
+    under-count by one on every method (issue #227). The languages that
+    declare optionality store their parameters marked with it (issue #2517);
+    the rest leave the property absent.
+    """
+    if language == cs.SupportedLanguage.PYTHON:
+        return {
+            cs.KEY_POSITIONAL_PARAMS: python_positional_parameter_names(method_node)
+        }
+    # Local import: positional_params imports this module for its decoder.
+    from .positional_params import declared_positional_params
+
+    declared = declared_positional_params(method_node, language)
+    return {} if declared is None else {cs.KEY_POSITIONAL_PARAMS: declared}
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1258,59 +1440,10 @@ def ingest_method(
     # @line dedup suffix) so a caller can wire further edges to the exact node,
     # e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
     # None only when the method has no resolvable name and nothing was registered.
-    if language == cs.SupportedLanguage.CPP:
-        from .cpp import utils as cpp_utils
-
-        # Inside an intact class body a macro invocation parsed as a type-less
-        # member (`FMT_CATCH(...) {}`) can never be a ctor of another class, so
-        # the shape check alone is decisive here. skip_cpp_artifact_check: the
-        # orphan-ctor flush already ran the class-registry tiebreak (a zero-param
-        # orphan ctor SHARES the artifact shape and must not be re-dropped here).
-        if not skip_cpp_artifact_check and cpp_utils.is_macro_invocation_artifact(
-            method_node
-        ):
-            return None
-        method_name = cpp_utils.extract_function_name(method_node)
-        if not method_name:
-            return None
-    elif language == cs.SupportedLanguage.CSHARP:
-        # Operators expose no `name` field (they would be dropped) and a
-        # destructor's `name` field collides with the constructor; synthesize
-        # the leaf so both register with the same name the FQN walk uses.
-        from .csharp import utils as csharp_utils
-
-        method_name = csharp_utils.synthesize_method_name(method_node)
-        if not method_name:
-            return None
-    elif language == cs.SupportedLanguage.DART:
-        # Constructors/factories expose no `name` field; take the last bare
-        # identifier (`factory C.empty` -> `empty`) so they are not dropped.
-        from .dart import dart_get_name
-
-        if not (method_name := dart_get_name(method_node)):
-            return None
-    elif (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
-        # A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
-        # field on the function node; take the binding name from the enclosing
-        # field definition so it is modelled as a member instead of dropped.
-        if not (method_name := _js_ts_field_member_name(method_node, language)):
-            return None
-    elif (text := method_name_node.text) is None:
+    method_name = _resolve_method_name(method_node, language, skip_cpp_artifact_check)
+    if method_name is None:
         return None
-    else:
-        method_name = text.decode(cs.ENCODING_UTF8)
-
-    if language == cs.SupportedLanguage.CSHARP:
-        # Skip a leading `#if [Attr] #endif` directive so the start line is the
-        # conditional attribute, not the `#if` line (matches Roslyn's span).
-        from .csharp import utils as csharp_utils
-
-        method_start_line, method_start_col = csharp_utils.definition_start_point(
-            method_node
-        )
-    else:
-        method_start_line = method_node.start_point[0] + 1
-        method_start_col = method_node.start_point[1]
+    method_start_line, method_start_col = _method_start_point(method_node, language)
 
     # Every language's method branch converges here, so this is the one place
     # that sees a method name whatever route produced it (issue #1810). The
@@ -1355,13 +1488,7 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-    # Python only, and the receiver is deliberately kept: CPython counts the
-    # bound `self` in "takes N positional arguments", so a stored list that
-    # dropped it would under-count by one on every method (issue #227).
-    if language == cs.SupportedLanguage.PYTHON:
-        method_props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
-            method_node
-        )
+    method_props.update(_method_positional_params_props(method_node, language))
     # Local import: type_facts imports this module for safe_decode_with_fallback.
     from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 
@@ -1379,57 +1506,21 @@ def ingest_method(
     method_props.update(fingerprint_props(method_node))
     method_props.update(anchor_hash_props(method_node, decorators))
 
-    # Persist @property status on the node so an incremental rebuild can restore
-    # the registry's property-name set for unchanged files (it re-marks from this
-    # flag rather than re-parsing decorators); property-dispatch call resolution
-    # depends on it, so without persistence those edges drop (issue #532 parity).
-    # A C# property_declaration IS a property by grammar (no decorator to
-    # inspect); marking it lets the C# member-read pass find it, exactly as
-    # Python's @property marking feeds its attribute-access pass. A Dart
-    # getter_signature is the same shape (issue #869): its accesses are
-    # attribute reads the Dart getter-read pass resolves through this flag.
-    # A JS/TS getter is a `method_definition` carrying the `get` keyword; its
-    # reads are member accesses (`obj.thing`), so mark it like the other
-    # languages' properties to feed the JS/TS getter-read pass. The keyword is a
-    # direct child but not always the first (`static get x()` leads with
-    # `static`); a method named `get` carries a property_identifier, not a `get`
-    # keyword node, so scanning direct children stays exact.
-    is_js_ts_getter = (
-        language in cs.JS_TS_LANGUAGES
-        and method_node.type == cs.TS_METHOD_DEFINITION
-        and any(
-            child.type == cs.TS_GET_ACCESSOR_KEYWORD for child in method_node.children
-        )
-    )
-    is_property = (
-        _is_property_decorator(decorators)
-        or is_js_ts_getter
-        or method_node.type
-        in (
-            cs.TS_CSHARP_PROPERTY_DECLARATION,
-            cs.TS_DART_GETTER_SIGNATURE,
-        )
-    )
+    is_property = _method_is_property(method_node, language, decorators)
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
 
-    # Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
-    # subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
-    # it, so the dead-code surfaces root this property.
-    if method_name in external_override_names:
-        method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
-    # A Dart @override is only an EXTERNAL override if the resolved ancestry
-    # says so, which is unknowable until every class is registered: record it
-    # for resolve_deferred_inherits to judge.
-    if (
-        annotated_override_sink is not None
-        and cs.DART_OVERRIDE_ANNOTATION in decorators
-    ):
-        annotated_override_sink.setdefault(container_qn, []).append(
-            (method_qn, method_name)
-        )
+    _record_method_overrides(
+        method_props,
+        method_qn,
+        method_name,
+        container_qn,
+        decorators,
+        external_override_names,
+        annotated_override_sink,
+    )
 
-    logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
+    logger.debug(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     # AFTER the Method node is queued: a batch flush writes nodes before
     # relationships, and a HAS_PARAMETER whose owner is still pending would
@@ -1490,14 +1581,9 @@ def ingest_method(
         )
         return method_qn
 
-    # The DEFINES_METHOD parent is matched by LABEL + qualified_name, so it must
-    # carry the container's real node label. Callers pass Class by default, but a
-    # trait/interface (Interface) or enum (Enum) container would then never match
-    # and drop the containment edge. Prefer the label it was registered with.
-    container_label = container_type
-    registered = function_registry.get(container_qn)
-    if registered is not None and registered != NodeType.METHOD:
-        container_label = cs.NodeLabel(registered.value)
+    container_label = _method_container_label(
+        function_registry, container_qn, container_type
+    )
 
     ingestor.ensure_relationship_batch(
         (container_label, cs.KEY_QUALIFIED_NAME, container_qn),
@@ -1540,6 +1626,13 @@ def module_function_props(
     if file_path is not None and repo_path is not None:
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    # Local import: positional_params imports this module for its decoder.
+    # One reader serves both grammars, whose parameter node types differ.
+    from .positional_params import declared_positional_params
+
+    declared = declared_positional_params(function_node, cs.SupportedLanguage.JS)
+    if declared is not None:
+        props[cs.KEY_POSITIONAL_PARAMS] = declared
     props.update(fingerprint_props(function_node))
     props.update(anchor_hash_props(function_node))
     return props
@@ -1598,7 +1691,7 @@ def ingest_exported_function(
     )
     function_props[cs.KEY_IS_EXPORTED] = True
 
-    logger.info(
+    logger.debug(
         logs.EXPORT_FOUND.format(
             export_type=export_type, name=function_name, qn=function_qn
         )

@@ -5,10 +5,15 @@
 # mark such methods `overrides_external`; the dead-code surfaces root it.
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
+from codebase_rag.parsers.py import external_stdlib_base_method_names
 from codebase_rag.tests.conftest import create_and_run_updater
 
 
@@ -40,3 +45,20 @@ def test_stdlib_base_override_is_flagged(
     other = next(v for k, v in props.items() if k.endswith(".not_on_base"))
     assert wrap.get(cs.KEY_OVERRIDES_EXTERNAL) is True, wrap
     assert not other.get(cs.KEY_OVERRIDES_EXTERNAL), other
+
+
+def test_stdlib_base_that_fails_to_import_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import_module = importlib.import_module
+
+    def import_module(name: str, package: str | None = None) -> ModuleType:
+        if name == "curses":
+            raise ImportError(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+
+    names = external_stdlib_base_method_names(["curses.window", "textwrap.TextWrapper"])
+
+    assert "_wrap_chunks" in names

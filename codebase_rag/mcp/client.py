@@ -7,6 +7,7 @@ import sys
 import typer
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.types import TextContent
 
 from codebase_rag import constants as cs
 
@@ -27,8 +28,11 @@ async def _query_with_errlog(question: str, errlog: io.TextIOWrapper) -> dict[st
                 {cs.MCPParamName.QUESTION: question},
             )
 
-            if result.content:
-                response_text = result.content[0].text
+            first = result.content[0] if result.content else None
+            # Only a text item carries an answer; an image or resource first
+            # item is treated like an empty result.
+            if isinstance(first, TextContent):
+                response_text = first.text
                 try:
                     parsed = json.loads(response_text)
                     if isinstance(parsed, dict):

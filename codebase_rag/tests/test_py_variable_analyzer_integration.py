@@ -8,10 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.py import ast_analyzer, variable_analyzer
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
 
 if TYPE_CHECKING:
-    from tree_sitter import Parser
+    from tree_sitter import Language, Parser, Query
 
 try:
     import tree_sitter_python as tspython
@@ -681,3 +682,42 @@ def get_value(x: int) -> int:
         return_nodes: list = []
         engine_with_queries._find_return_statements(func_node, return_nodes)
         assert len(return_nodes) >= 1
+
+    def test_failing_queries_fall_back_to_the_same_answer(
+        self,
+        python_parser: Parser,
+        engine_with_queries: PythonTypeInferenceEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        python_code = b"""
+class Service:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def run(self, count: int) -> str:
+        items = [i for i in range(count)]
+        for item in items:
+            label = str(item)
+        return self.name
+"""
+
+        def infer() -> tuple[dict[str, str], int]:
+            tree = python_parser.parse(python_code)
+            run_node = _find_func_node(tree.root_node, "run")
+            assert run_node is not None
+            types = engine_with_queries.build_local_variable_type_map(
+                run_node, "test.module"
+            )
+            return_nodes: list = []
+            engine_with_queries._find_return_statements(run_node, return_nodes)
+            return types, len(return_nodes)
+
+        def refuse(language_obj: Language, query_text: str) -> Query:
+            raise RuntimeError(query_text)
+
+        with_queries = infer()
+        monkeypatch.setattr(ast_analyzer, "get_cached_query", refuse)
+        monkeypatch.setattr(variable_analyzer, "get_cached_query", refuse)
+
+        assert with_queries[0]["self.name"] == "str"
+        assert infer() == with_queries

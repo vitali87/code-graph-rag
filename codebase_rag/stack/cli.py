@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 
 import click
-from loguru import logger
 
 from .. import cli_help as ch
 from .manager import StackError, StackManager
@@ -16,6 +15,7 @@ from .manager import StackError, StackManager
     no_args_is_help=True,
 )
 def cli() -> None:
+    # A click group: the subcommands registered on it do the work.
     pass
 
 
@@ -38,7 +38,8 @@ def up_cmd() -> None:
         mgr.ensure_running()
         _print_status(mgr)
     except StackError as e:
-        logger.error(str(e))
+        # Echoed once: logged as well, it printed the whole block twice
+        # (issue #2407).
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
 
@@ -50,7 +51,8 @@ def down_cmd() -> None:
         mgr.down()
         click.echo("stopped")
     except StackError as e:
-        logger.error(str(e))
+        # Echoed once: logged as well, it printed the whole block twice
+        # (issue #2407).
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
 
@@ -72,7 +74,8 @@ def restart_cmd() -> None:
         mgr.wait_healthy()
         _print_status(mgr)
     except StackError as e:
-        logger.error(str(e))
+        # Echoed once: logged as well, it printed the whole block twice
+        # (issue #2407).
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
 
@@ -87,6 +90,7 @@ def logs_cmd(follow: bool, service: str | None) -> None:
         if rc != 0:
             sys.exit(rc)
     except StackError as e:
-        logger.error(str(e))
+        # Echoed once: logged as well, it printed the whole block twice
+        # (issue #2407).
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)

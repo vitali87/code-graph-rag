@@ -179,6 +179,9 @@ class TestValidateNoUnboundedPaths:
             "MATCH (a)-[*1..3]->(b) RETURN a, b;",
             "MATCH (a)-[:CALLS*2..2]->(b) RETURN a, b;",
             "MATCH (a)-[:CALLS*1..6 {weight: 1}]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*3 {weight: 1}]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*1..2]->(b) WHERE b.name IN ['*'] RETURN a;",
+            "MATCH (a)-[:CALLS]->(b) RETURN [x IN a.xs | x * a.k];",
         ],
     )
     def test_bounded_or_no_varlen_passes(self, query: str) -> None:
@@ -193,6 +196,11 @@ class TestValidateNoUnboundedPaths:
             "MATCH (a)-[*]->(b) RETURN a, b;",
             "MATCH (a)-[r:CALLS*]->(b) RETURN r;",
             "MATCH (a)-[:CALLS*10..]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS* {weight: 1}]->(b) RETURN a, b;",
+            'MATCH (a)-[:CALLS* {x: "*"}]->(b) RETURN a;',
+            "MATCH (a)-[:CALLS*{x: '1..3'}]->(b) RETURN a;",
+            "MATCH (a)-[:CALLS*1.. {weight: 1}]->(b) RETURN a, b;",
+            "MATCH (a) - [:CALLS*] -> (b) RETURN a, b;",
         ],
     )
     def test_unbounded_varlen_rejected(self, query: str) -> None:

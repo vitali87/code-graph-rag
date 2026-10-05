@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import cli_help as ch
+from codebase_rag import readme_sections
 from codebase_rag.readme_sections import format_cli_commands_table, format_latest_news
 from scripts import generate_readme
 from scripts.generate_readme import (
@@ -284,3 +285,68 @@ class TestEveryGeneratedSectionReachesAMarker:
         assert raised.value.code == 1
         # The consumed section was still written before the failure.
         assert "new" in page.read_text(encoding="utf-8")
+
+
+class TestDependencySummaryFallback:
+    """An unreachable PyPI must not blank the committed summaries: the
+    Windows unit-test job reported installation.md as stale when its
+    per-package fetches timed out (seen on #2311)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_cache_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(readme_sections, "_load_pypi_cache", dict)
+        monkeypatch.setattr(readme_sections, "_save_pypi_cache", lambda _cache: None)
+
+    def test_committed_summaries_are_parsed_from_the_doc(self, tmp_path: Path) -> None:
+        doc = tmp_path / "installation.md"
+        doc.write_text(
+            "- **cmake** (required for building)\n"
+            "- **loguru**: Python logging made (stupidly) simple\n"
+            "- **typer**: Build great CLIs\n",
+            encoding="utf-8",
+        )
+        assert readme_sections.committed_dependency_summaries(doc) == {
+            "loguru": "Python logging made (stupidly) simple",
+            "typer": "Build great CLIs",
+        }
+
+    def test_a_missing_doc_has_no_summaries(self, tmp_path: Path) -> None:
+        missing = tmp_path / "absent.md"
+        assert readme_sections.committed_dependency_summaries(missing) == {}
+
+    def test_a_failed_fetch_keeps_the_committed_summary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            readme_sections, "fetch_pypi_summary", lambda _name, _cache: ""
+        )
+        rendered = readme_sections.format_dependencies(
+            ["loguru", "typer"], {"loguru": "Python logging"}
+        )
+        assert rendered == "- **loguru**: Python logging\n- **typer**"
+
+    def test_a_fetched_summary_wins_over_the_committed_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            readme_sections, "fetch_pypi_summary", lambda _name, _cache: "Fresh"
+        )
+        rendered = readme_sections.format_dependencies(["loguru"], {"loguru": "Old"})
+        assert rendered == "- **loguru**: Fresh"
+
+    def test_the_committed_doc_regenerates_offline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With every fetch failing, the section rebuilt from the committed
+        # summaries is exactly the committed section.
+        monkeypatch.setattr(
+            readme_sections, "fetch_pypi_summary", lambda _name, _cache: ""
+        )
+        committed = (PROJECT_ROOT / readme_sections.DEPENDENCIES_DOC).read_text(
+            encoding="utf-8"
+        )
+        sections = readme_sections.generate_all_sections(PROJECT_ROOT)
+        assert (
+            replace_sections(committed, {"dependencies": sections["dependencies"]})
+            == committed
+        )

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
+from codebase_rag import logs as ls
 from codebase_rag.constants import NODE_NAME_INDEXES, NODE_UNIQUE_CONSTRAINTS
 from codebase_rag.cypher_queries import (
     build_create_node_query,
@@ -150,6 +153,42 @@ class TestContextManager:
 
             mock_flush.assert_called_once()
             mock_conn.close.assert_called_once()
+
+    @staticmethod
+    def _exit_log(exc: BaseException) -> tuple[list[tuple[str, str]], MagicMock]:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.conn = MagicMock()
+        records: list[tuple[str, str]] = []
+        sink = logger.add(
+            lambda message: records.append(
+                (message.record["level"].name, message.record["message"])
+            )
+        )
+        try:
+            with patch.object(MemgraphIngestor, "flush_all") as flush:
+                ingestor.__exit__(type(exc), exc, None)
+        finally:
+            logger.remove(sink)
+        return records, flush
+
+    @pytest.mark.parametrize("stop", [KeyboardInterrupt, asyncio.CancelledError])
+    def test_exit_on_an_interrupt_logs_no_error(
+        self, stop: type[BaseException]
+    ) -> None:
+        # Ctrl+C is the user stopping the run; an ERROR with a traceback read
+        # as a crash.
+        records, flush = self._exit_log(stop())
+
+        assert "ERROR" not in {level for level, _message in records}
+        assert ("WARNING", ls.MG_INTERRUPTED) in records
+        flush.assert_called_once_with()
+
+    def test_exit_on_an_error_still_logs_it_as_one(self) -> None:
+        records, flush = self._exit_log(ValueError("boom"))
+
+        assert ("ERROR", ls.MG_EXCEPTION.format(error="boom")) in records
+        assert "WARNING" not in {level for level, _message in records}
+        flush.assert_called_once_with()
 
     def test_exit_logs_error_on_exception(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
@@ -389,6 +428,27 @@ class TestEnsureConstraints:
         ):
             ingestor.ensure_constraints()
 
+        for label in NODE_NAME_INDEXES:
+            assert f"CREATE INDEX ON :{label}(name);" in executed_queries
+
+    def test_continues_on_unique_key_index_error(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+        first_label, first_prop = next(iter(NODE_UNIQUE_CONSTRAINTS.items()))
+
+        def fail_first_key_index(query: str) -> list[dict]:
+            executed_queries.append(query)
+            if query == f"CREATE INDEX ON :{first_label}({first_prop});":
+                raise RuntimeError("Index already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=fail_first_key_index
+        ):
+            ingestor.ensure_constraints()
+
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            assert f"CREATE INDEX ON :{label}({prop});" in executed_queries
         for label in NODE_NAME_INDEXES:
             assert f"CREATE INDEX ON :{label}(name);" in executed_queries
 

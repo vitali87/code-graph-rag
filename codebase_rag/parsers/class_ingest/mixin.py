@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -39,6 +40,7 @@ from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
+from ..php import namespaces as php_namespaces
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -52,6 +54,7 @@ from ..utils import (
     sorted_captures,
     written_simple_name,
 )
+from . import base_targets as bt
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -156,6 +159,155 @@ class _DeferredForwardDecl(NamedTuple):
     func_node_starts: list[int] | None
 
 
+class RustImplScope(NamedTuple):
+    class_qn: str
+    module_qn: str
+    owner_module_qn: str
+    impl_target: str
+
+
+def _impl_body_method_nodes(
+    body_node: Node,
+    lang_queries: LanguageQueries,
+    sorted_func_nodes: list[Node] | None,
+    func_node_starts: list[int] | None,
+) -> list[Node] | None:
+    # The function nodes inside an impl body: sliced from the pre-sorted
+    # capture list when the caller has one, else queried directly. None when
+    # the language has no function query at all.
+    if sorted_func_nodes is not None and func_node_starts is not None:
+        body_end = body_node.end_byte
+        lo = bisect_left(func_node_starts, body_node.start_byte)
+        hi = bisect_right(func_node_starts, body_end)
+        return [n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end]
+    method_query = lang_queries[cs.QUERY_FUNCTIONS]
+    if not method_query:
+        return None
+    method_captures = sorted_captures(QueryCursor(method_query), body_node)
+    return method_captures.get(cs.CAPTURE_FUNCTION, [])
+
+
+def _is_cpp_template_inner_specifier(
+    class_node: Node, language: cs.SupportedLanguage
+) -> bool:
+    return (
+        language == cs.SupportedLanguage.CPP
+        and class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+        and class_node.parent is not None
+        and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
+    )
+
+
+def _is_elaborated_type_use(class_node: Node, language: cs.SupportedLanguage) -> bool:
+    # `struct Table *metatable;`, `f(struct stat *st)`, `sizeof(struct node)`:
+    # a bodyless tag written as the type of something only names a type
+    # declared elsewhere. Indexing it minted a Class nested under whatever
+    # held the use (`Udata.Table`, `node.node`, libc's `stat`), and that
+    # phantom could even win the field's OF_TYPE edge (issue #2615). A forward
+    # declaration has no declarator and stays on the deferred path, as does a
+    # bodyless typedef: `typedef struct lua_State lua_State;` is C's
+    # opaque-handle idiom and may be the only declaration the type has.
+    if (
+        language not in cs.C_FAMILY_LANGUAGES
+        or class_node.type not in cs.C_ELABORATED_TYPE_NODE_TYPES
+        or class_node.child_by_field_name(cs.FIELD_BODY) is not None
+        or (parent := class_node.parent) is None
+        or parent.type == cs.CppNodeType.TYPE_DEFINITION
+        or (written := parent.child_by_field_name(cs.FIELD_TYPE)) is None
+        or written.id != class_node.id
+    ):
+        return False
+    return (
+        parent.type not in cs.C_FORWARD_DECLARING_NODE_TYPES
+        or parent.child_by_field_name(cs.FIELD_DECLARATOR) is not None
+    )
+
+
+def _cpp_type_spec(class_node: Node) -> Node | None:
+    if class_node.type != cs.CppNodeType.TEMPLATE_DECLARATION:
+        return class_node
+    return next(
+        (
+            child
+            for child in class_node.children
+            if child.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+        ),
+        None,
+    )
+
+
+def _class_start_point(
+    class_node: Node, language: cs.SupportedLanguage
+) -> tuple[int, int]:
+    if language == cs.SupportedLanguage.CSHARP:
+        # Skip a leading `#if [Attr] #endif` directive so the start line is
+        # the conditional attribute, not the `#if` line (matches Roslyn).
+        from ..csharp import utils as csharp_utils
+
+        return csharp_utils.definition_start_point(class_node)
+    return class_node.start_point[0] + 1, class_node.start_point[1]
+
+
+def _csharp_record_parameter_types(
+    member_node: Node, field_types: dict[str, str]
+) -> None:
+    # A record's positional parameters ARE public properties of
+    # the record type; record them as members so receiver typing
+    # and the delegate-invoke gate see them (`Callback();` on a
+    # record param is Action.Invoke, not a first-party call).
+    for pl in member_node.children:
+        if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
+            continue
+        for prm in pl.children:
+            if prm.type != cs.TS_CSHARP_PARAMETER:
+                continue
+            pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
+            ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
+            if pname and ptype:
+                field_types.setdefault(pname, csharp_utils.annotate_type_ref(ptype))
+
+
+def _enclosing_rust_mod(module_node: Node) -> Node | None:
+    enclosing_module_node = module_node.parent
+    while (
+        enclosing_module_node is not None
+        and enclosing_module_node.type != cs.TS_RS_MOD_ITEM
+    ):
+        enclosing_module_node = enclosing_module_node.parent
+    return enclosing_module_node
+
+
+def _signatured_method_qn(
+    method_node: Node, class_qn: str, language: cs.SupportedLanguage
+) -> str | None:
+    if language == cs.SupportedLanguage.JAVA:
+        method_info = java_utils.extract_method_info(method_node)
+        if method_name := method_info.get(cs.KEY_NAME):
+            parameters = method_info.get(cs.KEY_PARAMETERS, [])
+            param_sig = f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
+            return f"{class_qn}.{method_name}{param_sig}"
+    elif language == cs.SupportedLanguage.CSHARP:
+        # Give C# methods/constructors a parameter signature so
+        # overloads and overloaded constructors stay distinct nodes
+        # (without it two `Widget(...)` ctors collide and the second
+        # gets an `@line` suffix). Zero-arg members stay bare so their
+        # qn is stable and matches an unsignatured call site.
+        cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
+        if cs_name and cs_params:
+            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
+            return f"{class_qn}.{cs_name}({param_sig})"
+    return None
+
+
+class _MethodScope(NamedTuple):
+    # The per-class context every method of one class body is ingested under.
+    class_node: Node
+    class_qn: str
+    language: cs.SupportedLanguage
+    file_path: Path | None
+    module_qn: str | None
+
+
 class ClassIngestMixin:
     # No __slots__: this mixin lazily creates _deferred_* registries on the
     # host instance, which requires the host to provide a __dict__.
@@ -172,6 +324,7 @@ class ClassIngestMixin:
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
     dart_constructor_qns: set[str]
+    dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -270,8 +423,28 @@ class ClassIngestMixin:
         self, class_name: str, module_qn: str, exclude_qn: str | None = None
     ) -> tuple[str, bool]: ...
 
-    def _resolve_to_qn(self, name: str, module_qn: str) -> str:
-        return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
+    def _resolve_to_qn(
+        self,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str:
+        # Parse time sees a partial registry, so the C# declared-form tier of
+        # _resolve_class_name (a uniqueness test) is left to the deferred pass.
+        return (
+            self._resolve_base_name(name, module_qn, language) or f"{module_qn}.{name}"
+        )
+
+    def _resolve_base_name(
+        self, name: str, module_qn: str, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        return resolve_class_name(
+            name,
+            module_qn,
+            self.import_processor,
+            self.function_registry,
+            kinds=bt.base_target_kinds(language),
+        )
 
     def _resolve_rust_trait_qn(
         self, path: str, name: str, module_qn: str
@@ -291,7 +464,7 @@ class ClassIngestMixin:
         module while the trait registers where it is declared.
         """
         head, _, tail = path.partition(cs.SEPARATOR_DOUBLE_COLON)
-        anchored = self._resolve_to_qn(name, module_qn)
+        anchored = self._resolve_to_qn(name, module_qn, cs.SupportedLanguage.RUST)
         if not tail:
             return anchored, None
         if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
@@ -420,6 +593,42 @@ class ClassIngestMixin:
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
+    def _reserve_python_class_qns(
+        self,
+        combined_captures: dict[str, list] | None,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> None:
+        # A file's functions and methods register before its classes, so a
+        # `def Tool` shim written below `class Tool` took the plain name the
+        # class is owed as the first definition (issue #2621). Only a class
+        # sharing its name with a def can lose it, which spares every other
+        # class a second identity pass (and a second truncated-name warning).
+        reservations: dict[str, tuple[int, int]] = {}
+        captures = combined_captures or {}
+        def_names = {
+            safe_decode_text(func_node.child_by_field_name(cs.FIELD_NAME))
+            for func_node in captures.get(cs.CAPTURE_FUNCTION, [])
+        }
+        for class_node in captures.get(cs.CAPTURE_CLASS, []):
+            name = safe_decode_text(class_node.child_by_field_name(cs.FIELD_NAME))
+            if name is None or name not in def_names:
+                continue
+            identity = id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                cs.SupportedLanguage.PYTHON,
+                lang_config,
+                file_path,
+            )
+            if identity is None:
+                continue
+            class_qn = identity[0]
+            start = _class_start_point(class_node, cs.SupportedLanguage.PYTHON)
+            reservations[class_qn] = min(reservations.get(class_qn, start), start)
+        self.function_registry.reserve_qns(reservations)
+
     def resolve_deferred_forward_declarations(self) -> int:
         # Run after every file's definitions are registered. A deferred forward
         # declaration whose class name already produced a real node is a phantom
@@ -528,7 +737,10 @@ class ClassIngestMixin:
         emits no edge, because the module-anchored guess is a phantom endpoint
         the database silently drops anyway. Resolved base qns replace the
         guesses in class_inheritance in place so Pass-3 method resolution and
-        override detection walk the real hierarchy.
+        override detection walk the real hierarchy. A C# base is looked up by
+        scope first (its namespace, the enclosing ones, then `using`s); one no
+        scope reaches falls to the name search and its edge is marked
+        heuristic (issue #2534).
         """
         deferred = self._deferred_inherits
         self._deferred_inherits = []
@@ -541,7 +753,12 @@ class ClassIngestMixin:
             child_type = self.function_registry.get(entry.child_qn)
             if child_type is None:
                 continue
-            resolved = self._resolve_deferred_parent_qn(entry)
+            scoped = self._resolve_csharp_scoped_base(entry)
+            resolved = (
+                (scoped, False)
+                if scoped is not None
+                else self._resolve_deferred_parent_qn(entry)
+            )
             is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None or resolved[1]:
                 # Resolved nowhere, or to a node outside the index: the file
@@ -551,57 +768,14 @@ class ClassIngestMixin:
                 )
             if resolved is None:
                 continue
-            parent_qn, is_external = resolved
-            if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
-                # A resolved first-party base pins the C# namespace import to
-                # the module defining it (issue #1347).
-                target_module = module_qn_for_entity(
-                    parent_qn, self.module_qn_to_file_path
-                )
-                if target_module is not None and target_module != entry.module_qn:
-                    self.import_processor.record_resolved_cross_module_use(
-                        entry.module_qn, target_module
-                    )
-            external_label: str | None = None
-            if is_external:
-                # The import pass mints the same node for IMPORTS edges, so
-                # this MERGEs idempotently when the base was imported.
-                self.import_processor.ensure_external_module_node(parent_qn)
-                external_label = cs.NodeLabel.EXTERNAL_MODULE.value
-            if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
-                # Dart has no `interface` keyword: `implements X` targets a
-                # concrete class, so a hardcoded Interface label would dangle.
-                # Resolve the target's real registered label (Interface for a
-                # true interface, Class/Enum for a Dart type); external stays
-                # EXTERNAL_MODULE.
-                interface_label = external_label or rel.get_node_type_for_inheritance(
-                    parent_qn, self.function_registry
-                )
-                rel.create_implements_relationship(
-                    str(child_type),
-                    entry.child_qn,
-                    parent_qn,
-                    self.ingestor,
-                    interface_label=interface_label,
-                )
-                self.interface_implementers.setdefault(parent_qn, set()).add(
-                    entry.child_qn
-                )
-                if is_dart and not is_external:
-                    dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
-            else:
-                bases = self.class_inheritance.get(entry.child_qn)
-                if bases is not None and entry.base_index < len(bases):
-                    bases[entry.base_index] = parent_qn
-                rel.create_inheritance_relationship(
-                    str(child_type),
-                    entry.child_qn,
-                    parent_qn,
-                    self.function_registry,
-                    self.ingestor,
-                    entry.base_index,
-                    parent_label=external_label,
-                )
+            # A C# base no scope or `using` reaches, bound anyway by a
+            # project-wide name match, is a guess; say so on the edge.
+            heuristic = (
+                scoped is None and entry.written_ref is not None and not resolved[1]
+            )
+            self._emit_resolved_inherit(
+                entry, str(child_type), resolved, is_dart, dart_implements, heuristic
+            )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
         self._flag_rust_external_trait_overrides()
@@ -746,6 +920,22 @@ class ClassIngestMixin:
             stack.extend(implements_map.get(ancestor, []))
         return False
 
+    def _resolve_csharp_scoped_base(self, entry: DeferredInherit) -> str | None:
+        if entry.written_ref is None:
+            return None
+        return bt.resolve_csharp_scoped_base(
+            entry.written_ref,
+            entry.child_qn,
+            self.csharp_class_namespaced.get(entry.child_qn),
+            self.import_processor.import_mapping.get(entry.module_qn, {}),
+            bt.CSharpTypeIndex(
+                self.function_registry,
+                self.csharp_namespaced_qns,
+                self.csharp_class_generic_arity,
+                self.csharp_partial_groups,
+            ),
+        )
+
     def _rust_reexport_target(self, entry: DeferredInherit) -> str | None:
         """Where a `pub use` in the named module declares the parent.
 
@@ -779,7 +969,7 @@ class ClassIngestMixin:
                 # Two modules re-exporting each other's name never declare it.
                 return None
             seen.add(qn)
-            if self.function_registry.get(qn) is not None:
+            if self.function_registry.get(qn) in bt.base_target_kinds(entry.language):
                 return qn
 
     def _resolve_deferred_parent_qn(
@@ -799,25 +989,11 @@ class ClassIngestMixin:
         fact the source declares.
         """
         if entry.parent_qn == entry.child_qn:
-            # Parse-time resolution can land on the child ITSELF. A
-            # self-edge is never real. In C# the written base can be an
-            # ARITY sibling (`class Foo : Foo<object>`, a different type
-            # sharing the simple name); recover it before falling back.
-            # Otherwise the written base must refer to a SHADOWED outer name
-            # (thrift's `pub enum Error` implementing the std `Error` trait):
-            # when the module-anchored remainder is a bare single segment it
-            # IS the written name and externalizes. A dotted remainder (a
-            # nested child like SimpleHashMap.Entry) was never written as
-            # such; derivation would be a lie, so no edge.
-            if (sibling := self._csharp_arity_sibling(entry)) is not None:
-                return sibling, False
-            self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
-            if entry.parent_qn.startswith(self_prefix):
-                raw = entry.parent_qn[len(self_prefix) :]
-                if raw and cs.SEPARATOR_DOT not in raw:
-                    return self._externalize_written_base(raw, entry.language)
-            return None
-        if self.function_registry.get(entry.parent_qn) is not None:
+            return self._resolve_self_edge_parent(entry)
+        # Only a type declaration is a base: a registered member of the same
+        # name (a C# property, a method) is not, however it was reached.
+        target_kinds = bt.base_target_kinds(entry.language)
+        if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
             return followed, False
@@ -837,50 +1013,7 @@ class ClassIngestMixin:
             return external, True
         prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(prefix):
-            # Project-prefixed but not module-anchored: an import-mapped
-            # qn whose written path skips real directories (thrift's
-            # setup.py maps lib/py/src -> package `thrift`, so the import
-            # says thrift.Thrift while the class qn says
-            # thrift.src.Thrift). A UNIQUE whole-segment suffix match
-            # recovers the real node; ambiguity means no edge.
-            tail = entry.parent_qn[len(project_prefix) :]
-            simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-            suffix = f"{cs.SEPARATOR_DOT}{tail}"
-            candidates = self.function_registry.find_ending_with(simple)
-            matches = {
-                qn for qn in candidates if qn.endswith(suffix) and qn != entry.child_qn
-            }
-            if len(matches) == 1:
-                return matches.pop(), False
-            # A base written as a PACKAGE attribute (`forms.ModelForm` via
-            # `from django import forms`) names the re-exporting package, not
-            # the defining module (django.forms.models.ModelForm behind the
-            # package __init__'s star import), so the suffix match cannot
-            # bridge the missing segment. A UNIQUE same-named class UNDER the
-            # written package path is that re-export; ambiguity means no edge.
-            package_prefix = (
-                entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
-            )
-            # The registry also holds functions/methods with the same simple
-            # name; only a TYPE declaration is a valid inheritance target, so
-            # filter before the uniqueness check (a same-named factory function
-            # under the package must not corrupt the class hierarchy). The
-            # package must also EXPOSE the name (its __init__ imports it
-            # explicitly or star-imports the defining module); a same-named
-            # internal class the package never re-exports is not the referent.
-            type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
-            package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
-            package_matches = {
-                qn
-                for qn in candidates
-                if qn.startswith(package_prefix)
-                and qn != entry.child_qn
-                and self.function_registry.get(qn) in type_decls
-                and self._package_exposes(package_qn, simple, qn)
-            }
-            if len(package_matches) == 1:
-                return package_matches.pop(), False
-            return None
+            return self._resolve_unanchored_project_parent(entry, project_prefix)
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
@@ -890,10 +1023,85 @@ class ClassIngestMixin:
             # A simple-name sweep can land on the child itself; a
             # self-INHERITS is never real.
             and resolved != entry.child_qn
-            and self.function_registry.get(resolved) is not None
+            and self.function_registry.get(resolved) in target_kinds
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _resolve_self_edge_parent(
+        self, entry: DeferredInherit
+    ) -> tuple[str, bool] | None:
+        # Parse-time resolution can land on the child ITSELF. A
+        # self-edge is never real. In C# the written base can be an
+        # ARITY sibling (`class Foo : Foo<object>`, a different type
+        # sharing the simple name); recover it before falling back.
+        # Otherwise the written base must refer to a SHADOWED outer name
+        # (thrift's `pub enum Error` implementing the std `Error` trait):
+        # when the module-anchored remainder is a bare single segment it
+        # IS the written name and externalizes. A dotted remainder (a
+        # nested child like SimpleHashMap.Entry) was never written as
+        # such; derivation would be a lie, so no edge.
+        if (sibling := self._csharp_arity_sibling(entry)) is not None:
+            return sibling, False
+        self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+        if entry.parent_qn.startswith(self_prefix):
+            raw = entry.parent_qn[len(self_prefix) :]
+            if raw and cs.SEPARATOR_DOT not in raw:
+                return self._externalize_written_base(raw, entry.language)
+        return None
+
+    def _resolve_unanchored_project_parent(
+        self, entry: DeferredInherit, project_prefix: str
+    ) -> tuple[str, bool] | None:
+        # Project-prefixed but not module-anchored: an import-mapped
+        # qn whose written path skips real directories (thrift's
+        # setup.py maps lib/py/src -> package `thrift`, so the import
+        # says thrift.Thrift while the class qn says
+        # thrift.src.Thrift). A UNIQUE whole-segment suffix match
+        # recovers the real node; ambiguity means no edge.
+        tail = entry.parent_qn[len(project_prefix) :]
+        simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{tail}"
+        candidates = self.function_registry.find_ending_with(simple)
+        target_kinds = bt.base_target_kinds(entry.language)
+        matches = {
+            qn
+            for qn in candidates
+            if qn.endswith(suffix)
+            and qn != entry.child_qn
+            and self.function_registry.get(qn) in target_kinds
+        }
+        if len(matches) == 1:
+            return matches.pop(), False
+        # A base written as a PACKAGE attribute (`forms.ModelForm` via
+        # `from django import forms`) names the re-exporting package, not
+        # the defining module (django.forms.models.ModelForm behind the
+        # package __init__'s star import), so the suffix match cannot
+        # bridge the missing segment. A UNIQUE same-named class UNDER the
+        # written package path is that re-export; ambiguity means no edge.
+        package_prefix = (
+            entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
+        )
+        # The registry also holds functions/methods with the same simple
+        # name; only a TYPE declaration is a valid inheritance target, so
+        # filter before the uniqueness check (a same-named factory function
+        # under the package must not corrupt the class hierarchy). The
+        # package must also EXPOSE the name (its __init__ imports it
+        # explicitly or star-imports the defining module); a same-named
+        # internal class the package never re-exports is not the referent.
+        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
+        package_matches = {
+            qn
+            for qn in candidates
+            if qn.startswith(package_prefix)
+            and qn != entry.child_qn
+            and self.function_registry.get(qn) in type_decls
+            and self._package_exposes(package_qn, simple, qn)
+        }
+        if len(package_matches) == 1:
+            return package_matches.pop(), False
+        return None
 
     def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
         # Only C# overloads type names by generic arity, so only there can a
@@ -937,22 +1145,24 @@ class ClassIngestMixin:
         if len(in_package) == 1:
             return in_package.pop()
         if in_package:
-            # Multiple same-package candidates can still be ONE type: a
-            # `partial` sibling split across files (Polly's PredicateBuilder,
-            # issue #764 shape 3). When every candidate sits in a single
-            # partial group, pick the deterministic representative; genuine
-            # distinct types keep the no-edge answer.
-            groups = {
-                frozenset(self.csharp_partial_groups.get(qn, (qn,)))
-                for qn in in_package
-            }
-            if len(groups) == 1:
-                return min(in_package)
-            return None
+            return self._csharp_single_partial_representative(in_package)
         # No same-package sibling: the pair can span projects (Polly's
         # legacy BrokenCircuitException<TResult> : the Polly.Core
         # non-generic), so fall back to a project-wide unique declaration.
         return candidates.pop() if len(candidates) == 1 else None
+
+    def _csharp_single_partial_representative(self, in_package: set[str]) -> str | None:
+        # Multiple same-package candidates can still be ONE type: a
+        # `partial` sibling split across files (Polly's PredicateBuilder,
+        # issue #764 shape 3). When every candidate sits in a single
+        # partial group, pick the deterministic representative; genuine
+        # distinct types keep the no-edge answer.
+        groups = {
+            frozenset(self.csharp_partial_groups.get(qn, (qn,))) for qn in in_package
+        }
+        if len(groups) == 1:
+            return min(in_package)
+        return None
 
     def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
         # True when the package __init__ makes `simple` an attribute of the
@@ -1029,49 +1239,29 @@ class ClassIngestMixin:
         # so the class registers exactly once. Registering both suffixes the second
         # `@line`, splitting members (which attach to the bodied specifier) away
         # from the natural qn that callers reference, orphaning the whole class.
-        if (
-            language == cs.SupportedLanguage.CPP
-            and class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
-            and class_node.parent is not None
-            and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
-        ):
+        if _is_cpp_template_inner_specifier(class_node, language):
+            return
+        if _is_elaborated_type_use(class_node, language):
             return
 
-        type_spec = class_node
-        if class_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
-            type_spec = next(
-                (
-                    child
-                    for child in class_node.children
-                    if child.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
-                ),
-                None,
-            )
+        type_spec = _cpp_type_spec(class_node)
         if (
             type_spec is not None
             and type_spec.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
             and type_spec.child_by_field_name(cs.FIELD_BODY) is None
+            and allow_defer
         ):
-            if allow_defer:
-                deferred_identity = id_.resolve_class_identity(
-                    class_node, module_qn, language, lang_config, file_path
-                )
-                if deferred_identity:
-                    self._deferred_forward_decls.append(
-                        _DeferredForwardDecl(
-                            class_node,
-                            deferred_identity[1],
-                            self._namespace_qn(deferred_identity[0], module_qn),
-                            module_qn,
-                            language,
-                            lang_queries,
-                            lang_config,
-                            file_path,
-                            sorted_func_nodes,
-                            func_node_starts,
-                        )
-                    )
-                return
+            self._defer_forward_declaration(
+                class_node,
+                module_qn,
+                language,
+                lang_queries,
+                lang_config,
+                file_path,
+                sorted_func_nodes,
+                func_node_starts,
+            )
+            return
 
         identity = id_.resolve_class_identity(
             class_node,
@@ -1084,17 +1274,7 @@ class ClassIngestMixin:
             return
 
         class_qn, class_name, is_exported = identity
-        if language == cs.SupportedLanguage.CSHARP:
-            # Skip a leading `#if [Attr] #endif` directive so the start line is
-            # the conditional attribute, not the `#if` line (matches Roslyn).
-            from ..csharp import utils as csharp_utils
-
-            class_start_line, class_start_col = csharp_utils.definition_start_point(
-                class_node
-            )
-        else:
-            class_start_line = class_node.start_point[0] + 1
-            class_start_col = class_node.start_point[1]
+        class_start_line, class_start_col = _class_start_point(class_node, language)
         class_qn = self.function_registry.register_unique_qn(
             class_qn, class_start_line, class_start_col
         )
@@ -1120,6 +1300,8 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        if language == cs.SupportedLanguage.PHP:
+            self._record_php_namespace(class_node, class_props)
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
         # a member edit is a change under it. It makes a class note gradable
@@ -1127,25 +1309,11 @@ class ClassIngestMixin:
         # move, which refuses a hash-less candidate (issue #1808).
         class_props.update(anchor_hash_props(class_node, decorators))
         if language == cs.SupportedLanguage.CSHARP:
-            # The declared namespace is the type's own property, whether or
-            # not the qn repeats it (issue #1629).
-            if namespace := csharp_utils.declared_namespace(class_node):
-                class_props[cs.KEY_NAMESPACE] = namespace
-            if namespaced := csharp_utils.namespace_qualified_name(class_node):
-                self.csharp_class_namespaced[class_qn] = namespaced
-                self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
+            self._record_csharp_namespace(class_node, class_qn, class_props)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
-            self.simple_name_lookup[class_name].add(class_qn)
-            # An out-of-class nested definition (`class Outer::Inner {}`)
-            # carries the qualifier in its extracted name. Index the leaf
-            # too, or an out-of-line method (`bool Inner::m()`, often via a
-            # `using Inner = Outer::Inner;` alias) can never resolve the
-            # class and binds to a phantom fallback qn.
-            if cs.SEPARATOR_DOUBLE_COLON in class_name:
-                leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
-                self.simple_name_lookup[leaf].add(class_qn)
+            self._index_class_simple_name(class_name, class_qn)
 
         # The declaring module, for the class-keyed maps' prune (#1772).
         # Recorded here rather than in the per-language field-type branches
@@ -1206,6 +1374,132 @@ class ClassIngestMixin:
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
         # for non-C# types or when the frontend is off -> heuristic stands.
+        csharp_base_kinds = self._record_type_location(
+            class_qn,
+            node_type,
+            language,
+            file_path,
+            class_start_line,
+            class_start_col,
+        )
+        rel.create_class_relationships(
+            member_node,
+            class_qn,
+            module_qn,
+            node_type,
+            is_exported,
+            language,
+            self.class_inheritance,
+            self.ingestor,
+            self.import_processor,
+            partial(self._resolve_to_qn, language=language),
+            self.function_registry,
+            self.interface_implementers,
+            defer_cpp_inherits=self._deferred_cpp_inherits,
+            defer_inherits=self._deferred_inherits,
+            csharp_base_kinds=csharp_base_kinds,
+        )
+        if language == cs.SupportedLanguage.DART and (
+            type_args := pe.extract_dart_extends_type_args(
+                member_node, module_qn, partial(self._resolve_to_qn, language=language)
+            )
+        ):
+            self.dart_extends_type_args[class_qn] = type_args
+        if language == cs.SupportedLanguage.DART and (
+            on_type := dart_utils.dart_extension_on_type(member_node)
+        ):
+            self.dart_extension_on_types[class_qn] = on_type
+        self._record_class_field_types(
+            class_node,
+            member_node,
+            class_qn,
+            module_qn,
+            language,
+            modifiers,
+            file_path,
+        )
+        self._ingest_class_methods(
+            member_node,
+            class_qn,
+            language,
+            lang_queries,
+            file_path,
+            sorted_func_nodes=sorted_func_nodes,
+            func_node_starts=func_node_starts,
+            module_qn=module_qn,
+        )
+
+    def _defer_forward_declaration(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+        sorted_func_nodes: list[Node] | None,
+        func_node_starts: list[int] | None,
+    ) -> None:
+        deferred_identity = id_.resolve_class_identity(
+            class_node, module_qn, language, lang_config, file_path
+        )
+        if deferred_identity:
+            self._deferred_forward_decls.append(
+                _DeferredForwardDecl(
+                    class_node,
+                    deferred_identity[1],
+                    self._namespace_qn(deferred_identity[0], module_qn),
+                    module_qn,
+                    language,
+                    lang_queries,
+                    lang_config,
+                    file_path,
+                    sorted_func_nodes,
+                    func_node_starts,
+                )
+            )
+
+    def _record_php_namespace(
+        self, class_node: Node, class_props: PropertyDict
+    ) -> None:
+        # A PHP class's qn follows its path, but other files `use` it by the
+        # namespace around its declaration; the dead-code walk needs that name
+        # to tell an imported project base from a vendor class of the same
+        # name (issue #2472).
+        if namespace := php_namespaces.enclosing_namespace(class_node):
+            class_props[cs.KEY_NAMESPACE] = namespace
+
+    def _record_csharp_namespace(
+        self, class_node: Node, class_qn: str, class_props: PropertyDict
+    ) -> None:
+        # The declared namespace is the type's own property, whether or
+        # not the qn repeats it (issue #1629).
+        if namespace := csharp_utils.declared_namespace(class_node):
+            class_props[cs.KEY_NAMESPACE] = namespace
+        if namespaced := csharp_utils.namespace_qualified_name(class_node):
+            self.csharp_class_namespaced[class_qn] = namespaced
+            self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
+
+    def _index_class_simple_name(self, class_name: str, class_qn: str) -> None:
+        self.simple_name_lookup[class_name].add(class_qn)
+        # An out-of-class nested definition (`class Outer::Inner {}`)
+        # carries the qualifier in its extracted name. Index the leaf
+        # too, or an out-of-line method (`bool Inner::m()`, often via a
+        # `using Inner = Outer::Inner;` alias) can never resolve the
+        # class and binds to a phantom fallback qn.
+        if cs.SEPARATOR_DOUBLE_COLON in class_name:
+            leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+            self.simple_name_lookup[leaf].add(class_qn)
+
+    def _record_type_location(
+        self,
+        class_qn: str,
+        node_type: NodeType,
+        language: cs.SupportedLanguage,
+        file_path: Path | None,
+        class_start_line: int,
+        class_start_col: int,
+    ) -> dict[str, str] | None:
         csharp_base_kinds: dict[str, str] | None = None
         if language == cs.SupportedLanguage.CSHARP and file_path is not None:
             rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
@@ -1228,29 +1522,18 @@ class ClassIngestMixin:
                 class_qn,
                 str(node_type),
             )
-        rel.create_class_relationships(
-            member_node,
-            class_qn,
-            module_qn,
-            node_type,
-            is_exported,
-            language,
-            self.class_inheritance,
-            self.ingestor,
-            self.import_processor,
-            self._resolve_to_qn,
-            self.function_registry,
-            self.interface_implementers,
-            defer_cpp_inherits=self._deferred_cpp_inherits,
-            defer_inherits=self._deferred_inherits,
-            csharp_base_kinds=csharp_base_kinds,
-        )
-        if language == cs.SupportedLanguage.DART and (
-            type_args := pe.extract_dart_extends_type_args(
-                member_node, module_qn, self._resolve_to_qn
-            )
-        ):
-            self.dart_extends_type_args[class_qn] = type_args
+        return csharp_base_kinds
+
+    def _record_class_field_types(
+        self,
+        class_node: Node,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        modifiers: list[str],
+        file_path: Path | None,
+    ) -> None:
         if language == cs.SupportedLanguage.CPP:
             # Record this class's member-field types now (from the class body,
             # usually a header) so out-of-line method bodies in other files can
@@ -1266,17 +1549,7 @@ class ClassIngestMixin:
             if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.RUST:
-            # Record Rust struct field types so a field-hop receiver
-            # (`self.shutdown.is_shutdown()`) resolves through the field's type,
-            # plus guard-container inner types (`state: Mutex<State>` -> State),
-            # applied only at a lock/read/borrow hop.
-            rust_engine = RustTypeInferenceEngine()
-            if field_types := rust_engine.build_field_type_map(class_node):
-                self.class_field_types[class_qn] = field_types
-            if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
-                self.class_field_guard_inner[class_qn] = guard_inner
-            if elements := rust_engine.build_field_element_map(class_node):
-                self.class_field_element_types[class_qn] = elements
+            self._record_rust_class_field_types(class_node, class_qn)
         elif language == cs.SupportedLanguage.DART:
             # Record Dart field types (`Greeter buddy;`) so a field-typed
             # receiver (`buddy.greet()`, `this.buddy.hail()`) resolves
@@ -1286,83 +1559,149 @@ class ClassIngestMixin:
             ):
                 self.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.CSHARP:
-            # Record C# field/property types so a field-typed receiver
-            # (`_w.M()`, `this._w.M()`) resolves, including a field inherited
-            # from a base class in another file (the resolver walks
-            # class_inheritance over these per-class maps).
-            field_types = csharp_utils.build_field_type_map(member_node) or {}
-            # A record's positional parameters ARE public properties of
-            # the record type; record them as members so receiver typing
-            # and the delegate-invoke gate see them (`Callback();` on a
-            # record param is Action.Invoke, not a first-party call).
-            if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
-                for pl in member_node.children:
-                    if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
-                        continue
-                    for prm in pl.children:
-                        if prm.type != cs.TS_CSHARP_PARAMETER:
-                            continue
-                        pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
-                        ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
-                        if pname and ptype:
-                            field_types.setdefault(
-                                pname, csharp_utils.annotate_type_ref(ptype)
-                            )
-            if field_types:
-                self.class_field_types[class_qn] = field_types
-            # Declared type-parameter count: `Builder<TResult>` -> 1;
-            # unrecorded means 0, so only generics are stored. A class
-            # node's type_parameter_list carries NO field name (unlike a
-            # method's), so scan the children.
-            for child in member_node.children:
-                if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
-                    self.csharp_class_generic_arity[class_qn] = len(
-                        child.named_children
-                    )
-                    # The declaring module, recorded because the class qn
-                    # cannot yield it: a namespace pushes the qn under a
-                    # sibling module's qn (#1769 review).
-                    self.csharp_class_owner_module[class_qn] = module_qn
-                    break
-            # A `partial` type is split across files into N path-distinct
-            # nodes; group the parts into one shared list so a typed receiver
-            # resolves members and bases from any part. The key is the
-            # declaring DIRECTORY (module_qn minus the file stem) plus the
-            # namespace-qualified name, NOT the bare namespace name: two
-            # independent projects that both declare `N.Widget` live in
-            # different directories and must not be merged across assembly
-            # boundaries. Parts in different directories of one project fall
-            # back to generic resolution (safe under-merge) rather than risk a
-            # cross-project wrong edge.
-            # The directory comes from the file's own segment by name: a part
-            # with a dotted stem (`Widget.Designer.cs`) split from its sibling
-            # under a last-dot rule, and once base resolution refused any
-            # ambiguity that is not one partial group, the split lost the
-            # `: N.Widget` edge (bot review on #1999).
-            if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
-                directory = module_directory_qn(module_qn, file_path) or module_qn
-                # A second same-name part in ONE file registers under a
-                # duplicate-suffixed qn (`Bench@24`); the marker is a
-                # registration artefact, not part of the declared name, so
-                # strip it or the two parts never share a group (issue #2014).
-                # The tail below the module, so only its END can carry the
-                # marker a registration appended; a verbatim identifier
-                # (`@event`) opens with the same character and is kept.
-                declared = qn_markers.strip_dup_marker(class_qn[len(module_qn) + 1 :])
-                key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
-                group = self._csharp_partial_index.setdefault(key, [])
-                group.append(class_qn)
-                self.csharp_partial_groups[class_qn] = group
-        self._ingest_class_methods(
-            member_node,
-            class_qn,
-            language,
-            lang_queries,
-            file_path,
-            sorted_func_nodes=sorted_func_nodes,
-            func_node_starts=func_node_starts,
-            module_qn=module_qn,
+            self._record_csharp_class_members(
+                member_node, class_qn, module_qn, modifiers, file_path
+            )
+
+    def _record_rust_class_field_types(self, class_node: Node, class_qn: str) -> None:
+        # Record Rust struct field types so a field-hop receiver
+        # (`self.shutdown.is_shutdown()`) resolves through the field's type,
+        # plus guard-container inner types (`state: Mutex<State>` -> State),
+        # applied only at a lock/read/borrow hop.
+        rust_engine = RustTypeInferenceEngine()
+        if field_types := rust_engine.build_field_type_map(class_node):
+            self.class_field_types[class_qn] = field_types
+        if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
+            self.class_field_guard_inner[class_qn] = guard_inner
+        if elements := rust_engine.build_field_element_map(class_node):
+            self.class_field_element_types[class_qn] = elements
+
+    def _record_csharp_class_members(
+        self,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        modifiers: list[str],
+        file_path: Path | None,
+    ) -> None:
+        # Record C# field/property types so a field-typed receiver
+        # (`_w.M()`, `this._w.M()`) resolves, including a field inherited
+        # from a base class in another file (the resolver walks
+        # class_inheritance over these per-class maps).
+        field_types = csharp_utils.build_field_type_map(member_node) or {}
+        if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
+            _csharp_record_parameter_types(member_node, field_types)
+        if field_types:
+            self.class_field_types[class_qn] = field_types
+        # Declared type-parameter count: `Builder<TResult>` -> 1;
+        # unrecorded means 0, so only generics are stored. A class
+        # node's type_parameter_list carries NO field name (unlike a
+        # method's), so scan the children.
+        for child in member_node.children:
+            if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
+                self.csharp_class_generic_arity[class_qn] = len(child.named_children)
+                # The declaring module, recorded because the class qn
+                # cannot yield it: a namespace pushes the qn under a
+                # sibling module's qn (#1769 review).
+                self.csharp_class_owner_module[class_qn] = module_qn
+                break
+        # A `partial` type is split across files into N path-distinct
+        # nodes; group the parts into one shared list so a typed receiver
+        # resolves members and bases from any part. The key is the
+        # declaring DIRECTORY (module_qn minus the file stem) plus the
+        # namespace-qualified name, NOT the bare namespace name: two
+        # independent projects that both declare `N.Widget` live in
+        # different directories and must not be merged across assembly
+        # boundaries. Parts in different directories of one project fall
+        # back to generic resolution (safe under-merge) rather than risk a
+        # cross-project wrong edge.
+        # The directory comes from the file's own segment by name: a part
+        # with a dotted stem (`Widget.Designer.cs`) split from its sibling
+        # under a last-dot rule, and once base resolution refused any
+        # ambiguity that is not one partial group, the split lost the
+        # `: N.Widget` edge (bot review on #1999).
+        if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
+            self._group_csharp_partial(class_qn, module_qn, file_path)
+
+    def _group_csharp_partial(
+        self, class_qn: str, module_qn: str, file_path: Path | None
+    ) -> None:
+        directory = module_directory_qn(module_qn, file_path) or module_qn
+        # A second same-name part in ONE file registers under a
+        # duplicate-suffixed qn (`Bench@24`); the marker is a
+        # registration artefact, not part of the declared name, so
+        # strip it or the two parts never share a group (issue #2014).
+        # The tail below the module, so only its END can carry the
+        # marker a registration appended; a verbatim identifier
+        # (`@event`) opens with the same character and is kept.
+        declared = qn_markers.strip_dup_marker(class_qn[len(module_qn) + 1 :])
+        key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
+        group = self._csharp_partial_index.setdefault(key, [])
+        group.append(class_qn)
+        self.csharp_partial_groups[class_qn] = group
+
+    def _emit_resolved_inherit(
+        self,
+        entry: DeferredInherit,
+        child_type: str,
+        resolved: tuple[str, bool],
+        is_dart: bool,
+        dart_implements: dict[str, list[str]],
+        heuristic: bool = False,
+    ) -> None:
+        parent_qn, is_external = resolved
+        resolution = cs.EdgeResolution.HEURISTIC if heuristic else None
+        if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
+            self._pin_csharp_base_module(entry, parent_qn)
+        external_label: str | None = None
+        if is_external:
+            # The import pass mints the same node for IMPORTS edges, so
+            # this MERGEs idempotently when the base was imported.
+            self.import_processor.ensure_external_module_node(parent_qn)
+            external_label = cs.NodeLabel.EXTERNAL_MODULE.value
+        if entry.rel_type != cs.RelationshipType.IMPLEMENTS:
+            bases = self.class_inheritance.get(entry.child_qn)
+            if bases is not None and entry.base_index < len(bases):
+                bases[entry.base_index] = parent_qn
+            rel.create_inheritance_relationship(
+                child_type,
+                entry.child_qn,
+                parent_qn,
+                self.function_registry,
+                self.ingestor,
+                entry.base_index,
+                parent_label=external_label,
+                resolution=resolution,
+            )
+            return
+        # Dart has no `interface` keyword: `implements X` targets a
+        # concrete class, so a hardcoded Interface label would dangle.
+        # Resolve the target's real registered label (Interface for a
+        # true interface, Class/Enum for a Dart type); external stays
+        # EXTERNAL_MODULE.
+        interface_label = external_label or rel.get_node_type_for_inheritance(
+            parent_qn, self.function_registry
         )
+        rel.create_implements_relationship(
+            child_type,
+            entry.child_qn,
+            parent_qn,
+            self.ingestor,
+            interface_label=interface_label,
+            resolution=resolution,
+        )
+        self.interface_implementers.setdefault(parent_qn, set()).add(entry.child_qn)
+        if is_dart and not is_external:
+            dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
+
+    def _pin_csharp_base_module(self, entry: DeferredInherit, parent_qn: str) -> None:
+        # A resolved first-party base pins the C# namespace import to the
+        # module defining it (issue #1347).
+        target_module = module_qn_for_entity(parent_qn, self.module_qn_to_file_path)
+        if target_module is not None and target_module != entry.module_qn:
+            self.import_processor.record_resolved_cross_module_use(
+                entry.module_qn, target_module
+            )
 
     def _ingest_rust_impl_methods(
         self,
@@ -1387,6 +1726,11 @@ class ClassIngestMixin:
             else module_qn
         )
         class_qn = f"{owner_module_qn}.{impl_target}"
+        written_path = rs_utils.extract_impl_target_path(class_node)
+        if written_path:
+            self.import_processor.record_rust_impl_self_path(
+                module_qn, class_qn, written_path
+            )
 
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source
@@ -1395,57 +1739,11 @@ class ClassIngestMixin:
         # which the override pass has to be TOLD, or it reads their absence
         # from the trait map as no information and guesses (issue #1078).
         impl_method_qns: list[str] = []
-        trait_impl_method_qns: list[str] | None = None
         trait_unrepresentable = False
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
-                rs_utils.extract_impl_trait_path(class_node) or trait_name,
-                trait_name,
-                owner_module_qn,
+            trait_unrepresentable = not self._defer_rust_impl_trait(
+                class_node, trait_name, class_qn, owner_module_qn, impl_method_qns
             )
-            if trait_qn != cs.RUST_UNRESOLVABLE_QN:
-                # The trait (or the impl target) may live in a file not yet
-                # parsed; hold the IMPLEMENTS edge back for
-                # resolve_deferred_inherits so an unresolvable trait
-                # (std::fmt::Display) emits no phantom edge. A trait path
-                # through an unrepresentable #[path] module has no referent at
-                # all, so it is skipped entirely rather than bound to a
-                # name-derived shadow trait (issue #1082).
-                trait_entry = DeferredInherit(
-                    rel_type=cs.RelationshipType.IMPLEMENTS,
-                    child_qn=class_qn,
-                    parent_qn=trait_qn,
-                    module_qn=owner_module_qn,
-                    base_index=0,
-                    language=cs.SupportedLanguage.RUST,
-                    alt_parent_qn=alt_trait_qn,
-                )
-                self._deferred_inherits.append(trait_entry)
-                # Collect this block's methods against the trait AS WRITTEN: if
-                # the trait belongs to another crate, its dispatch is the only
-                # caller they can ever have (issue #1048). The decision waits
-                # for resolve_deferred_inherits, when every first-party trait
-                # is registered.
-                trait_impl_method_qns = impl_method_qns
-                self._rust_trait_impls.append(
-                    RustTraitImpl(
-                        entry=trait_entry,
-                        spelling=(
-                            rs_utils.extract_impl_trait_path(class_node) or trait_name
-                        ),
-                        method_qns=trait_impl_method_qns,
-                    )
-                )
-                # Record the implementer so a Rust trait call to the sole
-                # concrete impl redirects, matching the class-declaration
-                # IMPLEMENTS path.
-                self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
-            else:
-                # The trait path has no referent, so no OVERRIDES target is
-                # knowable: classify these methods as inherent (below) so the
-                # generic override pass never matches them by name against a
-                # DIFFERENT same-named trait the type also implements (#1082).
-                trait_unrepresentable = True
 
         body_node = class_node.child_by_field_name("body")
 
@@ -1455,21 +1753,11 @@ class ClassIngestMixin:
         file_path = self.module_qn_to_file_path.get(module_qn)
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
 
-        if sorted_func_nodes is not None and func_node_starts is not None:
-            body_start = body_node.start_byte
-            body_end = body_node.end_byte
-            lo = bisect_left(func_node_starts, body_start)
-            hi = bisect_right(func_node_starts, body_end)
-            method_nodes = [
-                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
-            ]
-        else:
-            method_query = lang_queries[cs.QUERY_FUNCTIONS]
-            if not method_query:
-                return
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        method_nodes = _impl_body_method_nodes(
+            body_node, lang_queries, sorted_func_nodes, func_node_starts
+        )
+        if method_nodes is None:
+            return
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
@@ -1495,39 +1783,26 @@ class ClassIngestMixin:
                 type_fact_sink=self.pending_type_facts,
                 parameter_type_sink=self.pending_parameter_types,
             )
-            # Record where this method landed, same as the generic method
-            # path: the registered qn (a collision deduplicates it to
-            # `natural@<line>`) is recoverable afterwards only by span.
-            # First claim wins: a fn nested in a mod inside a const
-            # initializer is already claimed by the function pass under
-            # its own qn, and overwriting the record would re-attribute
-            # its calls to this pass's twin.
-            if ingested_qn is not None:
-                impl_method_qns.append(ingested_qn)
-                # An impl block is no module, so the method's `super::` counts
-                # from the impl's own enclosing module -- the file module unless
-                # the block sits in an inline `mod` (issue #1086).
-                self.rust_function_modules[ingested_qn] = owner_module_qn
-                span = function_span_key(module_qn, method_node)
-                if span not in self.function_locations:
-                    self.function_locations[span] = FunctionLocation(
-                        label=cs.NodeLabel.METHOD.value,
-                        qualified_name=ingested_qn,
-                        container_qn=class_qn,
-                    )
-            # Record the method's return type (Self -> impl target) so a chained
-            # call (`Ping::new(msg).into_frame()`) and a call-bound local
-            # (`let cmd = Command::from_frame(f)`) can resolve the next hop.
-            name_node = method_node.child_by_field_name(cs.FIELD_NAME)
-            method_name = safe_decode_text(name_node) if name_node else None
-            if method_name and (
-                return_type := rs_utils.extract_return_type_name(
-                    method_node, impl_target
+            self._record_rust_impl_method(
+                method_node,
+                ingested_qn,
+                RustImplScope(
+                    class_qn=class_qn,
+                    module_qn=module_qn,
+                    owner_module_qn=owner_module_qn,
+                    impl_target=impl_target,
+                ),
+                impl_method_qns,
+            )
+
+        # Two blocks of one module can share `class_qn` while naming
+        # different types (the crate's `String` and `std::string::String`),
+        # so each method keeps its own block's self type (#2595 review).
+        if written_path:
+            for method_qn in impl_method_qns:
+                self.import_processor.record_rust_impl_self_path(
+                    module_qn, method_qn, written_path
                 )
-            ):
-                self.method_return_types[
-                    f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-                ] = return_type
 
         # The PATH decides, not the name: `extract_impl_trait` reads no name
         # off `impl std::ops::Add<u32> for S`, and calling that inherent would
@@ -1537,6 +1812,107 @@ class ClassIngestMixin:
             or trait_unrepresentable
         ):
             self.rust_inherent_impl_methods.update(impl_method_qns)
+
+    def _defer_rust_impl_trait(
+        self,
+        class_node: Node,
+        trait_name: str,
+        class_qn: str,
+        owner_module_qn: str,
+        impl_method_qns: list[str],
+    ) -> bool:
+        # `impl Trait for Type`: defer the IMPLEMENTS edge and register the
+        # trait impl. False when the trait path is unrepresentable.
+        trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
+            rs_utils.extract_impl_trait_path(class_node) or trait_name,
+            trait_name,
+            owner_module_qn,
+        )
+        if trait_qn != cs.RUST_UNRESOLVABLE_QN:
+            # The trait (or the impl target) may live in a file not yet
+            # parsed; hold the IMPLEMENTS edge back for
+            # resolve_deferred_inherits so an unresolvable trait
+            # (std::fmt::Display) emits no phantom edge. A trait path
+            # through an unrepresentable #[path] module has no referent at
+            # all, so it is skipped entirely rather than bound to a
+            # name-derived shadow trait (issue #1082).
+            trait_entry = DeferredInherit(
+                rel_type=cs.RelationshipType.IMPLEMENTS,
+                child_qn=class_qn,
+                parent_qn=trait_qn,
+                module_qn=owner_module_qn,
+                base_index=0,
+                language=cs.SupportedLanguage.RUST,
+                alt_parent_qn=alt_trait_qn,
+            )
+            self._deferred_inherits.append(trait_entry)
+            # Collect this block's methods against the trait AS WRITTEN: if
+            # the trait belongs to another crate, its dispatch is the only
+            # caller they can ever have (issue #1048). The decision waits
+            # for resolve_deferred_inherits, when every first-party trait
+            # is registered.
+            self._rust_trait_impls.append(
+                RustTraitImpl(
+                    entry=trait_entry,
+                    spelling=(
+                        rs_utils.extract_impl_trait_path(class_node) or trait_name
+                    ),
+                    method_qns=impl_method_qns,
+                )
+            )
+            # Record the implementer so a Rust trait call to the sole
+            # concrete impl redirects, matching the class-declaration
+            # IMPLEMENTS path.
+            self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
+            return True
+        # The trait path has no referent, so no OVERRIDES target is
+        # knowable: the caller classifies these methods as inherent so the
+        # generic override pass never matches them by name against a
+        # DIFFERENT same-named trait the type also implements (#1082).
+        return False
+
+    def _record_rust_impl_method(
+        self,
+        method_node: Node,
+        ingested_qn: str | None,
+        scope: RustImplScope,
+        impl_method_qns: list[str],
+    ) -> None:
+        class_qn = scope.class_qn
+        module_qn = scope.module_qn
+        owner_module_qn = scope.owner_module_qn
+        impl_target = scope.impl_target
+        # Record where this method landed, same as the generic method
+        # path: the registered qn (a collision deduplicates it to
+        # `natural@<line>`) is recoverable afterwards only by span.
+        # First claim wins: a fn nested in a mod inside a const
+        # initializer is already claimed by the function pass under
+        # its own qn, and overwriting the record would re-attribute
+        # its calls to this pass's twin.
+        if ingested_qn is not None:
+            impl_method_qns.append(ingested_qn)
+            # An impl block is no module, so the method's `super::` counts
+            # from the impl's own enclosing module -- the file module unless
+            # the block sits in an inline `mod` (issue #1086).
+            self.rust_function_modules[ingested_qn] = owner_module_qn
+            span = function_span_key(module_qn, method_node)
+            if span not in self.function_locations:
+                self.function_locations[span] = FunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=ingested_qn,
+                    container_qn=class_qn,
+                )
+        # Record the method's return type (Self -> impl target) so a chained
+        # call (`Ping::new(msg).into_frame()`) and a call-bound local
+        # (`let cmd = Command::from_frame(f)`) can resolve the next hop.
+        name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+        method_name = safe_decode_text(name_node) if name_node else None
+        if method_name and (
+            return_type := rs_utils.extract_return_type_name(method_node, impl_target)
+        ):
+            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
+                return_type
+            )
 
     def _ingest_class_methods(
         self,
@@ -1560,22 +1936,53 @@ class ClassIngestMixin:
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
 
-        if sorted_func_nodes is not None and func_node_starts is not None:
-            body_start = body_node.start_byte
-            body_end = body_node.end_byte
-            lo = bisect_left(func_node_starts, body_start)
-            hi = bisect_right(func_node_starts, body_end)
-            method_nodes = [
-                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
-            ]
-        else:
-            method_query = lang_queries[cs.QUERY_FUNCTIONS]
-            if not method_query:
-                return
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        method_nodes = _impl_body_method_nodes(
+            body_node, lang_queries, sorted_func_nodes, func_node_starts
+        )
+        if method_nodes is None:
+            return
 
+        external_override_names, annotated_override_sink = (
+            self._method_override_context(class_qn, language)
+        )
+        scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
+
+        for method_node in method_nodes:
+            if _skip_method(method_node, class_node, body_node, lang_config):
+                continue
+
+            method_qualified_name = _signatured_method_qn(
+                method_node, class_qn, language
+            )
+
+            ingested_qn = ingest_method(
+                method_node,
+                class_qn,
+                cs.NodeLabel.CLASS,
+                self.ingestor,
+                self.function_registry,
+                self.simple_name_lookup,
+                self._get_docstring,
+                language,
+                lang_queries=lang_queries,
+                method_qualified_name=method_qualified_name,
+                file_path=file_path,
+                repo_path=self.repo_path,
+                module_qn=module_qn,
+                external_override_names=external_override_names,
+                annotated_override_sink=annotated_override_sink,
+                pending_endpoints=self.pending_endpoints,
+                type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
+            )
+            if ingested_qn is not None:
+                self._record_ingested_method(scope, method_node, ingested_qn)
+            if language == cs.SupportedLanguage.CPP:
+                self._record_cpp_method_return_type(method_node, class_qn)
+
+    def _method_override_context(
+        self, class_qn: str, language: cs.SupportedLanguage
+    ) -> tuple[frozenset[str], dict[str, list[tuple[str, str]]] | None]:
         # Names defined by an EXTERNAL stdlib base of this class (click's
         # `class TextWrapper(textwrap.TextWrapper)`): a method matching one
         # overrides the base and is invoked by its machinery, so mark it for
@@ -1601,187 +2008,158 @@ class ClassIngestMixin:
             # RECORD the annotated methods; resolve_deferred_inherits decides
             # once every class is registered.
             annotated_override_sink = self.dart_annotated_overrides
+        return external_override_names, annotated_override_sink
 
-        for method_node in method_nodes:
-            if _skip_method(method_node, class_node, body_node, lang_config):
-                continue
-
-            method_qualified_name = None
-            if language == cs.SupportedLanguage.JAVA:
-                method_info = java_utils.extract_method_info(method_node)
-                if method_name := method_info.get(cs.KEY_NAME):
-                    parameters = method_info.get(cs.KEY_PARAMETERS, [])
-                    param_sig = (
-                        f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
-                    )
-                    method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
-            elif language == cs.SupportedLanguage.CSHARP:
-                # Give C# methods/constructors a parameter signature so
-                # overloads and overloaded constructors stay distinct nodes
-                # (without it two `Widget(...)` ctors collide and the second
-                # gets an `@line` suffix). Zero-arg members stay bare so their
-                # qn is stable and matches an unsignatured call site.
-                cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
-                if cs_name and cs_params:
-                    param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
-                    method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
-
-            ingested_qn = ingest_method(
-                method_node,
-                class_qn,
-                cs.NodeLabel.CLASS,
-                self.ingestor,
-                self.function_registry,
-                self.simple_name_lookup,
-                self._get_docstring,
-                language,
-                lang_queries=lang_queries,
-                method_qualified_name=method_qualified_name,
-                file_path=file_path,
-                repo_path=self.repo_path,
-                module_qn=module_qn,
-                external_override_names=external_override_names,
-                annotated_override_sink=annotated_override_sink,
-                pending_endpoints=self.pending_endpoints,
-                type_fact_sink=self.pending_type_facts,
-                parameter_type_sink=self.pending_parameter_types,
-            )
-            if ingested_qn is not None and language == cs.SupportedLanguage.CSHARP:
-                self.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
-                if (
-                    method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
-                    is not None
-                ):
-                    self.csharp_generic_methods.add(ingested_qn)
-            # Record Dart return types (a constructor "returns" its class)
-            # so a local bound from a static factory or named constructor
-            # (`var s = Greeter.create()`) types from the RECORDED return
-            # instead of guessing the class from the call's base name.
+    def _record_ingested_method(
+        self, scope: _MethodScope, method_node: Node, ingested_qn: str
+    ) -> None:
+        language = scope.language
+        module_qn = scope.module_qn
+        if language == cs.SupportedLanguage.CSHARP:
+            self.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
             if (
-                ingested_qn is not None
-                and language == cs.SupportedLanguage.DART
-                and (dart_return := dart_utils.dart_return_type_name(method_node))
-            ):
-                self.method_return_types[ingested_qn] = dart_return
-                if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
-                    self.dart_constructor_qns.add(ingested_qn)
-            if ingested_qn is not None:
-                # Rust trait bodies reach here rather than the impl path above;
-                # a trait is no module either (issue #1086).
-                rs_utils.record_effective_module(
-                    self.rust_function_modules,
-                    ingested_qn,
-                    method_node,
-                    module_qn,
-                    language,
-                )
-                record_cpp_definition_span(
-                    self.cpp_definition_spans,
-                    language,
-                    file_path,
-                    self.repo_path,
-                    method_node,
-                    cs.NodeLabel.METHOD.value,
-                    ingested_qn,
-                )
-            # Track C# methods (and the `override`-modified subset) so the
-            # override walk gates class-parent matches: an implicit hide or a
-            # `new` shadow is not an override, unlike an interface impl.
-            if language == cs.SupportedLanguage.CSHARP and ingested_qn is not None:
-                if module_qn is not None:
-                    # Record where this member landed so the Roslyn frontend's
-                    # declaration-location facts (call targets, query callers)
-                    # resolve to the exact registered qn and label.
-                    self.function_locations[
-                        function_span_key(module_qn, method_node)
-                    ] = FunctionLocation(
-                        label=cs.NodeLabel.METHOD.value,
-                        qualified_name=ingested_qn,
-                        container_qn=class_qn,
-                    )
-                self.csharp_methods.add(ingested_qn)
-                if csharp_has_override_modifier(method_node):
-                    self.csharp_override_methods.add(ingested_qn)
-                # Index extension methods by simple name + receiver type so a
-                # `recv.Ext()` call binds to the static method even though it
-                # lives on an unrelated static class (not in recv's hierarchy).
-                csharp_utils.index_extension_method(
-                    self.csharp_extension_methods, ingested_qn, method_node
-                )
-            # A Java method declared inside an anonymous class body
-            # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
-            # class but really overrides the anon class's base type. Record it so a
-            # deferred pass emits the OVERRIDES edge once the base is registered;
-            # with override-reachability that keeps the dispatch-only override live.
-            if (
-                language == cs.SupportedLanguage.JAVA
-                and ingested_qn is not None
-                and module_qn is not None
-                and (base := _java_anonymous_base_type(method_node, class_node))
-            ):
-                method_name = ingested_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
-                    cs.CHAR_PAREN_OPEN, 1
-                )[0]
-                self.java_anon_overrides.append(
-                    (ingested_qn, method_name, base, module_qn)
-                )
-            # Record where this method landed so Pass-3 call attribution
-            # reuses the registered qn/label instead of re-deriving them.
-            # The walks diverge on preprocessor-distorted C++ class bodies
-            # and on TS declaration merging, where the member registers
-            # under the namespace's duplicate-suffixed qn (issue #652).
-            # For Rust, first claim wins: a fn in a mod inside a trait
-            # const default is already claimed by the function pass under
-            # its own qn, and overwriting would re-attribute its calls to
-            # this pass's twin.
-            if ingested_qn is not None and module_qn is not None:
-                span = function_span_key(module_qn, method_node)
-                location = FunctionLocation(
-                    label=cs.NodeLabel.METHOD.value,
-                    qualified_name=ingested_qn,
-                    container_qn=class_qn,
-                )
-                if (
-                    language != cs.SupportedLanguage.RUST
-                    or span not in self.function_locations
-                ):
-                    self.function_locations[span] = location
-                if language == cs.SupportedLanguage.JAVA:
-                    self._register_java_name_alias(module_qn, method_node, location)
-            if (
-                language == cs.SupportedLanguage.CSHARP
-                and ingested_qn is not None
-                and (
-                    rt_node := method_node.child_by_field_name(
-                        cs.TS_CSHARP_FIELD_RETURNS
-                    )
-                    # property_declaration exposes its type via `type`,
-                    # not `returns`; recording it lets chained typing and
-                    # the external-member gate see through properties.
-                    or method_node.child_by_field_name(cs.FIELD_TYPE)
-                )
+                method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
                 is not None
             ):
-                # Record a C# method's return type so a chained call
-                # (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
-                # fluent surface) can type the receiver for the next hop.
-                if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
-                    raw = csharp_utils.safe_decode_text(rt_node) or rt_text
-                    self.csharp_method_return_types[ingested_qn] = (
-                        rt_text,
-                        csharp_utils.generic_arity_of_type_text(raw),
-                    )
-            if language == cs.SupportedLanguage.CPP:
-                # Record a C++ method's return type so a chained call off a
-                # static factory method (`parser(...).parse(...)`, nlohmann's
-                # basic_json) can type the receiver and resolve the next hop.
-                method_name = cpp_utils.extract_function_name(method_node)
-                if method_name and (
-                    return_type := cpp_utils.extract_return_type_name(method_node)
-                ):
-                    self.method_return_types[
-                        f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-                    ] = return_type
+                self.csharp_generic_methods.add(ingested_qn)
+        # Record Dart return types (a constructor "returns" its class)
+        # so a local bound from a static factory or named constructor
+        # (`var s = Greeter.create()`) types from the RECORDED return
+        # instead of guessing the class from the call's base name.
+        if language == cs.SupportedLanguage.DART and (
+            dart_return := dart_utils.dart_return_type_name(method_node)
+        ):
+            self.method_return_types[ingested_qn] = dart_return
+            if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+                self.dart_constructor_qns.add(ingested_qn)
+        # Rust trait bodies reach here rather than the impl path above;
+        # a trait is no module either (issue #1086).
+        rs_utils.record_effective_module(
+            self.rust_function_modules,
+            ingested_qn,
+            method_node,
+            module_qn,
+            language,
+        )
+        record_cpp_definition_span(
+            self.cpp_definition_spans,
+            language,
+            scope.file_path,
+            self.repo_path,
+            method_node,
+            cs.NodeLabel.METHOD.value,
+            ingested_qn,
+        )
+        # Track C# methods (and the `override`-modified subset) so the
+        # override walk gates class-parent matches: an implicit hide or a
+        # `new` shadow is not an override, unlike an interface impl.
+        if language == cs.SupportedLanguage.CSHARP:
+            self._track_csharp_method(scope, method_node, ingested_qn)
+        # A Java method declared inside an anonymous class body
+        # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
+        # class but really overrides the anon class's base type. Record it so a
+        # deferred pass emits the OVERRIDES edge once the base is registered;
+        # with override-reachability that keeps the dispatch-only override live.
+        if (
+            language == cs.SupportedLanguage.JAVA
+            and module_qn is not None
+            and (base := _java_anonymous_base_type(method_node, scope.class_node))
+        ):
+            method_name = ingested_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
+                cs.CHAR_PAREN_OPEN, 1
+            )[0]
+            self.java_anon_overrides.append((ingested_qn, method_name, base, module_qn))
+        # Record where this method landed so Pass-3 call attribution
+        # reuses the registered qn/label instead of re-deriving them.
+        # The walks diverge on preprocessor-distorted C++ class bodies
+        # and on TS declaration merging, where the member registers
+        # under the namespace's duplicate-suffixed qn (issue #652).
+        # For Rust, first claim wins: a fn in a mod inside a trait
+        # const default is already claimed by the function pass under
+        # its own qn, and overwriting would re-attribute its calls to
+        # this pass's twin.
+        if module_qn is not None:
+            self._record_method_location(scope, module_qn, method_node, ingested_qn)
+        if language == cs.SupportedLanguage.CSHARP:
+            self._record_csharp_method_return_type(method_node, ingested_qn)
+
+    def _track_csharp_method(
+        self, scope: _MethodScope, method_node: Node, ingested_qn: str
+    ) -> None:
+        if scope.module_qn is not None:
+            # Record where this member landed so the Roslyn frontend's
+            # declaration-location facts (call targets, query callers)
+            # resolve to the exact registered qn and label.
+            self.function_locations[function_span_key(scope.module_qn, method_node)] = (
+                FunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=ingested_qn,
+                    container_qn=scope.class_qn,
+                )
+            )
+        self.csharp_methods.add(ingested_qn)
+        if csharp_has_override_modifier(method_node):
+            self.csharp_override_methods.add(ingested_qn)
+        # Index extension methods by simple name + receiver type so a
+        # `recv.Ext()` call binds to the static method even though it
+        # lives on an unrelated static class (not in recv's hierarchy).
+        csharp_utils.index_extension_method(
+            self.csharp_extension_methods, ingested_qn, method_node
+        )
+
+    def _record_method_location(
+        self,
+        scope: _MethodScope,
+        module_qn: str,
+        method_node: Node,
+        ingested_qn: str,
+    ) -> None:
+        span = function_span_key(module_qn, method_node)
+        location = FunctionLocation(
+            label=cs.NodeLabel.METHOD.value,
+            qualified_name=ingested_qn,
+            container_qn=scope.class_qn,
+        )
+        if (
+            scope.language != cs.SupportedLanguage.RUST
+            or span not in self.function_locations
+        ):
+            self.function_locations[span] = location
+        if scope.language == cs.SupportedLanguage.JAVA:
+            self._register_java_name_alias(module_qn, method_node, location)
+
+    def _record_csharp_method_return_type(
+        self, method_node: Node, ingested_qn: str
+    ) -> None:
+        if (
+            rt_node := method_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+            # property_declaration exposes its type via `type`,
+            # not `returns`; recording it lets chained typing and
+            # the external-member gate see through properties.
+            or method_node.child_by_field_name(cs.FIELD_TYPE)
+        ) is None:
+            return
+        # Record a C# method's return type so a chained call
+        # (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
+        # fluent surface) can type the receiver for the next hop.
+        if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
+            raw = csharp_utils.safe_decode_text(rt_node) or rt_text
+            self.csharp_method_return_types[ingested_qn] = (
+                rt_text,
+                csharp_utils.generic_arity_of_type_text(raw),
+            )
+
+    def _record_cpp_method_return_type(self, method_node: Node, class_qn: str) -> None:
+        # Record a C++ method's return type so a chained call off a
+        # static factory method (`parser(...).parse(...)`, nlohmann's
+        # basic_json) can type the receiver and resolve the next hop.
+        method_name = cpp_utils.extract_function_name(method_node)
+        if method_name and (
+            return_type := cpp_utils.extract_return_type_name(method_node)
+        ):
+            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
+                return_type
+            )
 
     def _register_java_name_alias(
         self, module_qn: str, method_node: Node, location: FunctionLocation
@@ -1848,100 +2226,118 @@ class ClassIngestMixin:
                 (gated_targets if gated else ungated_targets).update(candidates)
                 continue
 
-            module_name = safe_decode_text(module_name_node)
-            nested_qn = id_.build_nested_qualified_name_for_class(
-                module_node,
+            self._ingest_bodied_inline_module(
+                module_node, module_name_node, module_qn, lang_config, decorators
+            )
+        if gated_targets or ungated_targets:
+            self._record_rust_mod_declarations(
+                module_qn, gated_targets, ungated_targets
+            )
+
+    def _ingest_bodied_inline_module(
+        self,
+        module_node: Node,
+        module_name_node: Node,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        decorators: list[str],
+    ) -> None:
+        module_name = safe_decode_text(module_name_node)
+        nested_qn = id_.build_nested_qualified_name_for_class(
+            module_node,
+            module_qn,
+            module_name or "",
+            lang_config,
+            include_impl_targets=True,
+        )
+        inline_module_qn = nested_qn or f"{module_qn}.{module_name}"
+
+        module_props: PropertyDict = {
+            cs.KEY_QUALIFIED_NAME: inline_module_qn,
+            cs.KEY_NAME: module_name,
+            cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}{module_name}",
+            cs.KEY_START_LINE: module_node.start_point[0] + 1,
+            cs.KEY_END_LINE: module_node.end_point[0] + 1,
+            # An inline mod's coverage is its FILE's: this producer is
+            # the Rust bodied-mod path and Rust sits in the source/sink
+            # registry, so only the capture toggle decides — a missing
+            # property would read as a spurious coverage gap under the
+            # file's real path (issue #1050 review).
+            cs.KEY_FLOW_COVERED: self.flow_capture_enabled,
+        }
+        if decorators:
+            module_props[cs.KEY_DECORATORS] = decorators
+        # A bodied inline module is physically located in this file; give
+        # it the real path so it joins containment on (file, line).
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is not None:
+            module_props[cs.KEY_PATH] = cached_relative_path(
+                file_path, self.repo_path
+            ).as_posix()
+            module_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        logger.debug(
+            logs.CLASS_FOUND_INLINE_MODULE.format(name=module_name, qn=inline_module_qn)
+        )
+        # Same-qn bodied twins (mutually-exclusive cfg mods, or two impls
+        # each declaring a method-local mod) upsert this ONE node: Module
+        # identity is the global qualified_name, so the last twin's
+        # properties win. Accepted representational merge (#1164); call
+        # resolution stays per-twin through each mod body's own uses
+        # (#1163), so only the node's location properties are lossy.
+        self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
+        # Record the inline module qn so deferred import verification
+        # counts it as a real internal target.
+        self.declared_module_qns.add(inline_module_qn)
+
+        # Link the inline module into the containment tree: its enclosing
+        # module (file module, or an outer mod) DEFINES it. Without this the
+        # inline Module node is an orphan defining nothing. The parent is
+        # the nearest enclosing MODULE node, whose qn is rebuilt with the
+        # same scoped construction used to register it. Neither the qn's
+        # rsplit prefix nor a mods-only re-walk works: under a trait/impl
+        # body a mod keeps the class scope in its qn (foo.T.outer), so the
+        # prefix foo.T is the TRAIT node (not a module), and a mods-only
+        # walk drops that scope to foo.outer (which does not exist) — either
+        # way the Module->Module DEFINES dangles (issues #1018, nested #1166).
+        parent_module_qn = self._inline_module_parent_qn(
+            module_node, module_qn, lang_config
+        )
+        if parent_module_qn and parent_module_qn != inline_module_qn:
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, parent_module_qn),
+                cs.RelationshipType.DEFINES,
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
+            )
+
+    def _inline_module_parent_qn(
+        self, module_node: Node, module_qn: str, lang_config: LanguageSpec
+    ) -> str:
+        enclosing_module_node = _enclosing_rust_mod(module_node)
+        if enclosing_module_node is None:
+            return module_qn
+        enclosing_name = safe_decode_text(
+            enclosing_module_node.child_by_field_name(cs.FIELD_NAME)
+        )
+        return (
+            id_.build_nested_qualified_name_for_class(
+                enclosing_module_node,
                 module_qn,
-                module_name or "",
+                enclosing_name or "",
                 lang_config,
                 include_impl_targets=True,
             )
-            inline_module_qn = nested_qn or f"{module_qn}.{module_name}"
+            or f"{module_qn}{cs.SEPARATOR_DOT}{enclosing_name}"
+        )
 
-            module_props: PropertyDict = {
-                cs.KEY_QUALIFIED_NAME: inline_module_qn,
-                cs.KEY_NAME: module_name,
-                cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}{module_name}",
-                cs.KEY_START_LINE: module_node.start_point[0] + 1,
-                cs.KEY_END_LINE: module_node.end_point[0] + 1,
-                # An inline mod's coverage is its FILE's: this producer is
-                # the Rust bodied-mod path and Rust sits in the source/sink
-                # registry, so only the capture toggle decides — a missing
-                # property would read as a spurious coverage gap under the
-                # file's real path (issue #1050 review).
-                cs.KEY_FLOW_COVERED: self.flow_capture_enabled,
-            }
-            if decorators:
-                module_props[cs.KEY_DECORATORS] = decorators
-            # A bodied inline module is physically located in this file; give
-            # it the real path so it joins containment on (file, line).
-            file_path = self.module_qn_to_file_path.get(module_qn)
-            if file_path is not None:
-                module_props[cs.KEY_PATH] = cached_relative_path(
-                    file_path, self.repo_path
-                ).as_posix()
-                module_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-            logger.info(
-                logs.CLASS_FOUND_INLINE_MODULE.format(
-                    name=module_name, qn=inline_module_qn
-                )
-            )
-            # Same-qn bodied twins (mutually-exclusive cfg mods, or two impls
-            # each declaring a method-local mod) upsert this ONE node: Module
-            # identity is the global qualified_name, so the last twin's
-            # properties win. Accepted representational merge (#1164); call
-            # resolution stays per-twin through each mod body's own uses
-            # (#1163), so only the node's location properties are lossy.
-            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
-            # Record the inline module qn so deferred import verification
-            # counts it as a real internal target.
-            self.declared_module_qns.add(inline_module_qn)
-
-            # Link the inline module into the containment tree: its enclosing
-            # module (file module, or an outer mod) DEFINES it. Without this the
-            # inline Module node is an orphan defining nothing. The parent is
-            # the nearest enclosing MODULE node, whose qn is rebuilt with the
-            # same scoped construction used to register it. Neither the qn's
-            # rsplit prefix nor a mods-only re-walk works: under a trait/impl
-            # body a mod keeps the class scope in its qn (foo.T.outer), so the
-            # prefix foo.T is the TRAIT node (not a module), and a mods-only
-            # walk drops that scope to foo.outer (which does not exist) — either
-            # way the Module->Module DEFINES dangles (issues #1018, nested #1166).
-            enclosing_module_node = module_node.parent
-            while (
-                enclosing_module_node is not None
-                and enclosing_module_node.type != cs.TS_RS_MOD_ITEM
-            ):
-                enclosing_module_node = enclosing_module_node.parent
-            if enclosing_module_node is not None:
-                enclosing_name = safe_decode_text(
-                    enclosing_module_node.child_by_field_name(cs.FIELD_NAME)
-                )
-                parent_module_qn = (
-                    id_.build_nested_qualified_name_for_class(
-                        enclosing_module_node,
-                        module_qn,
-                        enclosing_name or "",
-                        lang_config,
-                        include_impl_targets=True,
-                    )
-                    or f"{module_qn}{cs.SEPARATOR_DOT}{enclosing_name}"
-                )
-            else:
-                parent_module_qn = module_qn
-            if parent_module_qn and parent_module_qn != inline_module_qn:
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, parent_module_qn),
-                    cs.RelationshipType.DEFINES,
-                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
-                )
-        if gated_targets or ungated_targets:
-            decl_props: PropertyDict = {cs.KEY_QUALIFIED_NAME: module_qn}
-            if gated_targets:
-                decl_props[cs.KEY_RUST_CFG_TEST_MODS] = sorted(gated_targets)
-            if ungated_targets:
-                decl_props[cs.KEY_RUST_UNGATED_MODS] = sorted(ungated_targets)
-            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
+    def _record_rust_mod_declarations(
+        self, module_qn: str, gated_targets: set[str], ungated_targets: set[str]
+    ) -> None:
+        decl_props: PropertyDict = {cs.KEY_QUALIFIED_NAME: module_qn}
+        if gated_targets:
+            decl_props[cs.KEY_RUST_CFG_TEST_MODS] = sorted(gated_targets)
+        if ungated_targets:
+            decl_props[cs.KEY_RUST_UNGATED_MODS] = sorted(ungated_targets)
+        self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
 
     def _rust_cfg_test_candidates(
         self,
@@ -2092,9 +2488,7 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage | None = None,
     ) -> str | None:
-        resolved = resolve_class_name(
-            class_name, module_qn, self.import_processor, self.function_registry
-        )
+        resolved = self._resolve_base_name(class_name, module_qn, language)
         if resolved is not None or language != cs.SupportedLanguage.CSHARP:
             return resolved
         # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to

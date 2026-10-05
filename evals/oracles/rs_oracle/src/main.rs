@@ -413,7 +413,7 @@ fn process_edges(
                 let owner = impl_target_name(&im.self_ty)
                     .and_then(|name| resolve_type(modpath, &name, table));
                 // `impl Trait for Type` -> Type IMPLEMENTS Trait.
-                if let (Some((kind, tline)), Some((_, path, _))) = (&owner, &im.trait_) {
+                if let (Some((kind, tline)), Some((path, _))) = (&owner, &im.trait_) {
                     if let Some(name) = trait_path_name(path) {
                         name_edges.push(name_edge_json(
                             REL_IMPLEMENTS, file, kind, *tline, &name,

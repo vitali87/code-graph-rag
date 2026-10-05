@@ -44,31 +44,29 @@ def extract_namespace_path(node: Node) -> list[str]:
     current = node.parent
 
     while current and current.type != cs.CppNodeType.TRANSLATION_UNIT:
-        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION:
-            namespace_name = None
-            name_node = current.child_by_field_name(cs.KEY_NAME)
-            if name_node and name_node.text:
-                namespace_name = safe_decode_text(name_node)
-            else:
-                for child in current.children:
-                    if (
-                        child.type
-                        in (
-                            cs.CppNodeType.NAMESPACE_IDENTIFIER,
-                            cs.CppNodeType.IDENTIFIER,
-                        )
-                        and child.text
-                    ):
-                        namespace_name = safe_decode_text(child)
-                        break
-            if namespace_name:
-                path_parts.extend(
-                    reversed(namespace_name.split(cs.SEPARATOR_DOUBLE_COLON))
-                )
+        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION and (
+            namespace_name := _namespace_name(current)
+        ):
+            path_parts.extend(reversed(namespace_name.split(cs.SEPARATOR_DOUBLE_COLON)))
         current = current.parent
 
     path_parts.reverse()
     return path_parts
+
+
+def _namespace_name(namespace: Node) -> str | None:
+    # The `name` field, else the first identifier child (older grammars).
+    name_node = namespace.child_by_field_name(cs.KEY_NAME)
+    if name_node and name_node.text:
+        return safe_decode_text(name_node)
+    for child in namespace.children:
+        if (
+            child.type
+            in (cs.CppNodeType.NAMESPACE_IDENTIFIER, cs.CppNodeType.IDENTIFIER)
+            and child.text
+        ):
+            return safe_decode_text(child)
+    return None
 
 
 _EXPORT_CANDIDATE_TYPES = frozenset(
@@ -94,7 +92,7 @@ _EXPORT_STOP_TYPES = frozenset(
 def is_exported(node: Node) -> bool:
     current = node
     export_text = cs.CppNodeType.EXPORT
-    while current and current.parent:
+    while current.parent:
         parent = current.parent
 
         for child in parent.children:
@@ -287,27 +285,6 @@ def _has_named_parameter(declarator: Node) -> bool:
     params = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
         return False
-
-    def declares_identifier(node: Node) -> bool:
-        # Follow only the declarator-field spine (plus the two wrapper nodes
-        # holding their declarator as a bare child): identifiers reachable
-        # ONLY off that path are array bounds (`int[MAX_SIZE]`) or an inner
-        # fn-ptr's parameter names (`void (*)(int x)`), not names of THIS
-        # parameter.
-        if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
-            return True
-        inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
-        if inner is not None:
-            return declares_identifier(inner)
-        if node.type in (
-            cs.CppNodeType.REFERENCE_DECLARATOR,
-            cs.CppNodeType.PARENTHESIZED_DECLARATOR,
-        ):
-            return any(
-                declares_identifier(child) for child in node.children if child.is_named
-            )
-        return False
-
     for param in params.children:
         if param.type not in (
             cs.CppNodeType.PARAMETER_DECLARATION,
@@ -315,8 +292,31 @@ def _has_named_parameter(declarator: Node) -> bool:
         ):
             continue
         inner = param.child_by_field_name(cs.FIELD_DECLARATOR)
-        if inner is not None and declares_identifier(inner):
+        if inner is not None and _declarator_declares_identifier(inner):
             return True
+    return False
+
+
+def _declarator_declares_identifier(node: Node) -> bool:
+    # Follow only the declarator-field spine (plus the two wrapper nodes
+    # holding their declarator as a bare child): identifiers reachable
+    # ONLY off that path are array bounds (`int[MAX_SIZE]`) or an inner
+    # fn-ptr's parameter names (`void (*)(int x)`), not names of THIS
+    # parameter.
+    if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
+        return True
+    inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if inner is not None:
+        return _declarator_declares_identifier(inner)
+    if node.type in (
+        cs.CppNodeType.REFERENCE_DECLARATOR,
+        cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+    ):
+        return any(
+            _declarator_declares_identifier(child)
+            for child in node.children
+            if child.is_named
+        )
     return False
 
 
@@ -357,6 +357,57 @@ def is_macro_invocation_artifact(func_node: Node) -> bool:
     # definition; without one, only a registered class bearing the name (an
     # orphaned zero-param ctor) saves the node from being dropped.
     return is_recovery_artifact_shape(func_node) and not has_named_parameter(func_node)
+
+
+def c_macro_split_declaration(func_node: Node) -> Node | None:
+    # tree-sitter-c has no rule for an annotation macro between the return
+    # type and the name. For `int CJSON_CDECL main(void)`, whose parameter
+    # list is one bare identifier (`(void)`, `(int)`), and whose macro is too
+    # long for an ERROR node to be the cheaper repair, recovery closes a
+    # declaration after the macro (`int CJSON_CDECL` + a MISSING `;`) and
+    # reads `main(void) {...}` as a definition whose `type` is the real name
+    # and whose declarator is the parameter list as a parenthesized
+    # declarator. That MISSING `;` is the only thing separating this from a
+    # block macro (`START_TEST(name) {...}`), which yields the same
+    # definition with nothing split off before it, so it is required.
+    if func_node.type != cs.CppNodeType.FUNCTION_DEFINITION:
+        return None
+    name_node = func_node.child_by_field_name(cs.FIELD_TYPE)
+    params = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if (
+        name_node is None
+        or name_node.type != cs.CppNodeType.TYPE_IDENTIFIER
+        or params is None
+        or params.type != cs.CppNodeType.PARENTHESIZED_DECLARATOR
+        # `T (f(void)) {...}` wraps a real declarator that names the function
+        or any(
+            child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+            for child in params.named_children
+        )
+    ):
+        return None
+    split = func_node.prev_sibling
+    if (
+        split is None
+        or split.type != cs.CppNodeType.DECLARATION
+        or split.child_count == 0
+    ):
+        return None
+    terminator = split.children[-1]
+    if not terminator.is_missing or terminator.type != cs.CHAR_SEMICOLON:
+        return None
+    macro = split.child_by_field_name(cs.FIELD_DECLARATOR)
+    while macro is not None and macro.type == cs.CppNodeType.POINTER_DECLARATOR:
+        macro = macro.child_by_field_name(cs.FIELD_DECLARATOR)
+    if macro is None or macro.type != cs.CppNodeType.IDENTIFIER:
+        return None
+    return split
+
+
+def c_macro_split_function_name(func_node: Node) -> str | None:
+    if c_macro_split_declaration(func_node) is None:
+        return None
+    return safe_decode_text(func_node.child_by_field_name(cs.FIELD_TYPE))
 
 
 def extract_function_name(func_node: Node) -> str | None:
@@ -536,13 +587,16 @@ def extract_class_name_from_out_of_class_method(func_node: Node) -> str | None:
     for child in qualified_id.children:
         if child.type == cs.TS_TEMPLATE_TYPE:
             return _extract_class_name_from_template_type(child)
-        if child.type in (
-            cs.CppNodeType.NAMESPACE_IDENTIFIER,
-            cs.CppNodeType.IDENTIFIER,
-            cs.TS_TYPE_IDENTIFIER,
+        if (
+            child.type
+            in (
+                cs.CppNodeType.NAMESPACE_IDENTIFIER,
+                cs.CppNodeType.IDENTIFIER,
+                cs.TS_TYPE_IDENTIFIER,
+            )
+            and child.text
         ):
-            if child.text:
-                return safe_decode_text(child)
+            return safe_decode_text(child)
 
     return None
 
@@ -699,22 +753,28 @@ def _lambda_captures_by_default(lambda_node: Node, names: set[str]) -> bool:
         if child.type != cs.TS_CPP_LAMBDA_CAPTURE_SPECIFIER:
             continue
         for cap in child.children:
-            if cap.type == cs.CppNodeType.IDENTIFIER:
-                if name := safe_decode_text(cap):
-                    names.add(name)
-            elif cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
-                # `[project = expr]` binds its LEADING identifier.
-                for part in cap.children:
-                    if cap_name := (
-                        safe_decode_text(part)
-                        if part.type == cs.CppNodeType.IDENTIFIER
-                        else None
-                    ):
-                        names.add(cap_name)
-                        break
-            elif cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
+            if cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
                 has_default = True
+            elif name := _lambda_capture_name(cap):
+                names.add(name)
     return has_default
+
+
+def _lambda_capture_name(cap: Node) -> str | None:
+    if cap.type == cs.CppNodeType.IDENTIFIER:
+        return safe_decode_text(cap) or None
+    if cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
+        # `[project = expr]` binds its LEADING identifier.
+        return next(
+            (
+                name
+                for part in cap.children
+                if part.type == cs.CppNodeType.IDENTIFIER
+                and (name := safe_decode_text(part))
+            ),
+            None,
+        )
+    return None
 
 
 def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:

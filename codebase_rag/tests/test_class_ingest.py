@@ -689,7 +689,7 @@ def test_method_override_chain(
 
     if derived_method_a_overrides:
         parent_qn = derived_method_a_overrides[0].args[2][2]
-        assert f"{project_name}.base.MiddleClass.method_a" == parent_qn, (
+        assert parent_qn == f"{project_name}.base.MiddleClass.method_a", (
             f"Should override MiddleClass.method_a, not {parent_qn}"
         )
 

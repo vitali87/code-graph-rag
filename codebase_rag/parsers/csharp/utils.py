@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from functools import lru_cache
+from types import MappingProxyType
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -109,6 +113,15 @@ def generic_arity_of_type_text(text: str) -> int:
     # Number of top-level type arguments in a type reference:
     # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
     # disambiguate same-simple-name generic/non-generic type declarations.
+    open_idx = text.find(cs.CHAR_ANGLE_OPEN, _type_leaf_start(text))
+    if open_idx < 0:
+        return 0
+    return _count_top_level_type_args(text[open_idx + 1 :])
+
+
+def _type_leaf_start(text: str) -> int:
+    # Index where the last top-level `.`/`::`-separated segment begins, so
+    # `Outer<A>.Inner<B, C>` counts Inner's arguments, not Outer's.
     leaf_start = 0
     depth = 0
     index = 0
@@ -125,13 +138,15 @@ def generic_arity_of_type_text(text: str) -> int:
             elif char == cs.SEPARATOR_DOT:
                 leaf_start = index + 1
         index += 1
+    return leaf_start
 
-    open_idx = text.find(cs.CHAR_ANGLE_OPEN, leaf_start)
-    if open_idx < 0:
-        return 0
+
+def _count_top_level_type_args(args_text: str) -> int:
+    # Comma-separated arguments up to the `>` closing the list `args_text`
+    # opens after; nested `<>`, `()` and `[]` commas are not counted.
     depth = 0
     count = 1
-    for ch in text[open_idx + 1 :]:
+    for ch in args_text:
         if ch in "<([":
             depth += 1
         elif ch in ")]":
@@ -153,9 +168,11 @@ def annotate_type_ref(text: str) -> str:
     # style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
     # name always means arity 0, so simple-name twins stay distinguishable
     # through every stored type map without touching method signatures.
-    base = _normalize_type_name(text)
-    arity = generic_arity_of_type_text(text)
-    return f"{base}{GENERIC_ARITY_MARKER}{arity}" if arity else base
+    return type_ref(_normalize_type_name(text), generic_arity_of_type_text(text))
+
+
+def type_ref(name: str, arity: int) -> str:
+    return f"{name}{GENERIC_ARITY_MARKER}{arity}" if arity else name
 
 
 def split_type_ref(name: str) -> tuple[str, int]:
@@ -463,3 +480,220 @@ def extract_method_signature(method_node: Node) -> tuple[str | None, list[str]]:
     return synthesize_method_name(method_node), extract_parameter_type_names(
         method_node
     )
+
+
+# --- value names at a call site --------------------------------------------
+#
+# Whether a C# name at a call site can name a value (issue #2517).
+#
+# `Util.Ext(s, 1)` calls an extension method through its class and passes the
+# receiver as an argument; `Util.Ext(1, 2)` with a local `string Util` takes
+# the receiver from the left of the dot. Only the bindings around the call
+# tell the two apart, so the structural delta never counts the receiver
+# twice, or not at all, on a valid call.
+#
+# Read syntactically, and per scope once: the parameters, locals, pattern,
+# `foreach`, `catch`, lambda and query variables of the type member holding
+# the call, and the fields, properties and primary-constructor parameters of
+# every enclosing type. A binder counts only at a call its scope holds, so a
+# local in a sibling block leaves `Util` naming the class. An inherited
+# member or one in another partial part does not count either, and the
+# caller reads that name as undecided rather than as a class.
+
+# Nodes whose `name` child binds a value.
+_NAME_BINDERS = frozenset(
+    {
+        cs.TS_CSHARP_VARIABLE_DECLARATOR,
+        cs.TS_CSHARP_PARAMETER,
+        cs.TS_CSHARP_DECLARATION_PATTERN,
+        cs.TS_CSHARP_DECLARATION_EXPRESSION,
+        cs.TS_CSHARP_CATCH_DECLARATION,
+        cs.TS_CSHARP_PROPERTY_DECLARATION,
+        cs.TS_CSHARP_FROM_CLAUSE,
+        cs.TS_CSHARP_TUPLE_PATTERN,
+    }
+)
+_TYPE_DECLARATIONS = frozenset(
+    {
+        cs.TS_CSHARP_CLASS_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+_FIELD_DECLARATIONS = frozenset(
+    {cs.TS_CSHARP_FIELD_DECLARATION, cs.TS_CSHARP_EVENT_FIELD_DECLARATION}
+)
+# Nodes that bound the scope of the names bound inside them, after the local
+# variable declaration spaces of ECMA-334 §7.3: a block, switch block,
+# catch clause, iteration statement and `using` statement each make one. A
+# binder under none is in scope across its member. An `if` or a `lock` is
+# not one: `if (o is not string s) return;` keeps `s` in scope in the
+# enclosing block. A switch section's statements share its switch body's
+# scope.
+_VALUE_SCOPES = frozenset(
+    {
+        cs.TS_CSHARP_BLOCK,
+        cs.TS_CSHARP_FOR_STATEMENT,
+        cs.TS_CSHARP_FOREACH_STATEMENT,
+        cs.TS_CSHARP_USING_STATEMENT,
+        cs.TS_CSHARP_CATCH_CLAUSE,
+        cs.TS_CSHARP_WHILE_STATEMENT,
+        cs.TS_CSHARP_DO_STATEMENT,
+        cs.TS_CSHARP_FIXED_STATEMENT,
+        cs.TS_CSHARP_SWITCH_BODY,
+        cs.TS_CSHARP_SWITCH_EXPRESSION_ARM,
+        cs.TS_CSHARP_QUERY_EXPRESSION,
+        *cs.TS_CSHARP_NESTED_SCOPE_TYPES,
+    }
+)
+# Statements whose embedded statement, not being part of a statement list,
+# is a scope of its own (§7.3): `if (c) M(o is string s);` binds `s` there.
+_EMBEDDING_STATEMENTS = frozenset(
+    {cs.TS_CSHARP_IF_STATEMENT, cs.TS_CSHARP_LOCK_STATEMENT}
+)
+# The scans hold a few trees' nodes at most: one file is parsed at a time.
+_SCOPE_CACHE_SIZE = 64
+
+
+def _text(node: Node | None) -> str | None:
+    return safe_decode_text(node) if node is not None else None
+
+
+def _binding(node: Node) -> str | None:
+    """The name `node` binds as a value, if it is a binding position."""
+    if node.type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
+        return _text(node)
+    parent = node.parent
+    if node.type != cs.TS_CSHARP_IDENTIFIER or parent is None:
+        return None
+    if parent.type in _NAME_BINDERS:
+        return (
+            _text(node) if node == parent.child_by_field_name(cs.FIELD_NAME) else None
+        )
+    if parent.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+        return (
+            _text(node) if node == parent.child_by_field_name(cs.FIELD_LEFT) else None
+        )
+    if parent.type == cs.TS_CSHARP_LET_CLAUSE:
+        first = next(
+            (c for c in parent.named_children if c.type == cs.TS_CSHARP_IDENTIFIER),
+            None,
+        )
+        return _text(node) if node == first else None
+    return None
+
+
+@lru_cache(maxsize=_SCOPE_CACHE_SIZE)
+def _member_values(member: Node) -> Mapping[str, tuple[Node, ...]]:
+    """Every value name bound inside one type member, nested types aside,
+    with the nodes it is in scope over: the scope nearest each binder."""
+    scopes: dict[str, list[Node]] = {}
+    stack = [(member, member)]
+    while stack:
+        node, scope = stack.pop()
+        if (name := _binding(node)) is not None:
+            scopes.setdefault(name, []).append(scope)
+        inner = node if node.type in _VALUE_SCOPES else scope
+        stack.extend(
+            (child, _child_scope(node, child, inner))
+            for child in node.named_children
+            if child.type not in _TYPE_DECLARATIONS
+        )
+    return MappingProxyType({name: tuple(nodes) for name, nodes in scopes.items()})
+
+
+def _child_scope(node: Node, child: Node, inner: Node) -> Node:
+    """The scope `child` binds into, `inner` being the one inside `node`.
+
+    An embedded statement of an `if` or a `lock` is its own. A case label's
+    pattern and `when` guard bind into their switch section alone, while
+    the section's statements bind into the switch body (§7.3).
+    """
+    if node.type in _EMBEDDING_STATEMENTS and (
+        child.type == cs.TS_CSHARP_BLOCK
+        or child.type.endswith(cs.CSHARP_STATEMENT_SUFFIX)
+    ):
+        return child
+    if node.type == cs.TS_CSHARP_SWITCH_SECTION and (
+        child.type == cs.TS_CSHARP_WHEN_CLAUSE
+        or child.type.endswith(cs.CSHARP_PATTERN_SUFFIX)
+    ):
+        return node
+    return inner
+
+
+def _member_binds(member: Node, name: str, site: Node) -> bool:
+    """Whether a binder of `name` in `member` is in scope at `site`."""
+    return any(
+        scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
+        for scope in _member_values(member).get(name, ())
+    )
+
+
+def _first_named_child(node: Node, node_type: str) -> Node | None:
+    return next((c for c in node.named_children if c.type == node_type), None)
+
+
+def _primary_parameters(type_node: Node) -> Node | None:
+    """A type's primary-constructor parameter list, if it declares one."""
+    params = type_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        params = _first_named_child(type_node, cs.TS_CSHARP_PARAMETER_LIST)
+    return params
+
+
+def _declarator_names(field: Node) -> Iterator[str | None]:
+    """The name of each declarator of a field or event field declaration."""
+    for declaration in field.named_children:
+        if declaration.type == cs.TS_CSHARP_VARIABLE_DECLARATION:
+            yield from (
+                _text(declarator.child_by_field_name(cs.FIELD_NAME))
+                for declarator in declaration.named_children
+                if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+            )
+
+
+def _value_names(member: Node) -> Iterator[str | None]:
+    """The value names a primary-constructor parameter or type member declares."""
+    if member.type in (cs.TS_CSHARP_PARAMETER, cs.TS_CSHARP_PROPERTY_DECLARATION):
+        yield _text(member.child_by_field_name(cs.FIELD_NAME))
+    elif member.type in _FIELD_DECLARATIONS:
+        yield from _declarator_names(member)
+
+
+@lru_cache(maxsize=_SCOPE_CACHE_SIZE)
+def _type_values(type_node: Node) -> frozenset[str]:
+    """The fields, properties and primary-constructor parameters of a type."""
+    params = _primary_parameters(type_node)
+    members = _first_named_child(type_node, cs.TS_CSHARP_DECLARATION_LIST)
+    candidates = [
+        *(params.named_children if params is not None else ()),
+        *(members.named_children if members is not None else ()),
+    ]
+    return frozenset(
+        name for member in candidates for name in _value_names(member) if name
+    )
+
+
+def binds_value(site: Node, name: str) -> bool:
+    """Whether `name` at `site` may name a parameter, local or member value."""
+    child: Node = site
+    current = site.parent
+    top_level = False
+    while current is not None:
+        if current.type in _TYPE_DECLARATIONS:
+            if name in _type_values(current):
+                return True
+        elif (
+            current.type == cs.TS_CSHARP_DECLARATION_LIST
+            and child.type not in _TYPE_DECLARATIONS
+            and current.parent is not None
+            and current.parent.type in _TYPE_DECLARATIONS
+            and _member_binds(child, name, site)
+        ):
+            return True
+        top_level = top_level or current.type == cs.TS_CSHARP_GLOBAL_STATEMENT
+        child, current = current, current.parent
+    # Top-level statements share their outermost locals across the file.
+    return top_level and _member_binds(child, name, site)

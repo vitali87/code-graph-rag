@@ -20,6 +20,31 @@ def test_check_memgraph_connection_returns_failure_when_down(
     assert result.passed is False
 
 
+def test_check_memgraph_connection_logs_in_with_configured_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Without the login, a Memgraph with a user refuses the probe and `cgr
+    # health` reports a healthy authenticated server as down.
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "MEMGRAPH_USERNAME", "cgr")
+    monkeypatch.setattr(settings, "MEMGRAPH_PASSWORD", "s3cret")
+    logins: list[tuple[str | None, str | None]] = []
+
+    def record_connect(
+        host: str, port: int, username: str | None = None, password: str | None = None
+    ) -> _FakeConnection:
+        logins.append((username, password))
+        return _FakeConnection(_FakeCursor({}, []))
+
+    monkeypatch.setattr(mgclient, "connect", record_connect)
+
+    result = HealthChecker().check_memgraph_connection()
+
+    assert result.passed is True
+    assert logins == [("cgr", "s3cret")]
+
+
 class _FakeColumn:
     # Mirrors mgclient.Column: exposes .name and is NOT subscriptable.
     __slots__ = ("name",)

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.agent import AgentRetries
+from pydantic_ai.agent import AgentRetries, AgentRunResult
+from pydantic_ai.exceptions import ModelAPIError
 
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, load_cgr_instructions, settings
 from ..prompts import (
+    build_cypher_repair_request,
     build_cypher_system_prompt,
     build_local_cypher_system_prompt,
     build_rag_orchestrator_prompt,
@@ -105,7 +108,11 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
+# A relationship bracket (`-[...]`) holding a variable-length `*`; group 1
+# is everything after the first `*`, which may carry a properties map after
+# the bounds (`*1..3 {w: 1}`), so only its leading bounds are inspected.
+_VARLEN_PATTERN = re.compile(r"-\s*\[[^\]*]*\*([^\]]*)\]")
+_VARLEN_BOUNDS = re.compile(r"\s*(\d*)\s*(\.\.\s*(\d*))?")
 # Runs on masked text, where comments are spaces and backtick identifiers
 # are bare, so `CALL /*x*/ `mg.x`()` is seen as `CALL mg.x()`. Whitespace
 # around the dots is legal Cypher and removed before the allowlist check.
@@ -123,14 +130,16 @@ def _validate_cypher_read_only(query: str) -> None:
 
 
 def _validate_no_unbounded_paths(query: str) -> None:
-    for match in _VARLEN_PATTERN.finditer(query):
-        spec = match.group(1).strip()
-        if not spec:
+    # Masked text, so a `*` inside a string literal is never read as the
+    # operator. A bare `*`, an open range (`*1..`, `*..`) or a `*` followed
+    # only by a properties map (`*{w: 1}`) is unbounded; a lone hop count
+    # (`*5`) or a range with an upper bound (`*1..3`, `*..3`) is not.
+    for match in _VARLEN_PATTERN.finditer(mask_literals_and_comments(query)):
+        bounds = _VARLEN_BOUNDS.match(match.group(1))
+        if bounds is None or not (
+            bounds.group(3) if bounds.group(2) else bounds.group(1)
+        ):
             raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
-        if ".." in spec:
-            upper = spec.split("..", 1)[1].lstrip()
-            if not upper or not upper[0].isdigit():
-                raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
 
 
 def _validate_call_procedures(query: str) -> None:
@@ -140,6 +149,13 @@ def _validate_call_procedures(query: str) -> None:
             raise ex.LLMGenerationError(
                 ex.LLM_DISALLOWED_PROCEDURE.format(name=name, query=query)
             )
+
+
+class CypherAgent(Protocol):
+    """The one call CypherGenerator makes on its agent, so a wrapper can
+    stand in for it (the agentic QA eval meters its token spend)."""
+
+    async def run(self, user_prompt: str) -> AgentRunResult[str]: ...
 
 
 class CypherGenerator:
@@ -157,7 +173,7 @@ class CypherGenerator:
                 else build_cypher_system_prompt(active_projects)
             )
 
-            self.agent = Agent(
+            self.agent: CypherAgent = Agent(
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
@@ -185,9 +201,75 @@ class CypherGenerator:
             _validate_call_procedures(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
+        except ModelAPIError as e:
+            # The request never got an answer: the provider was unreachable,
+            # refused the key, or has no such model. Nothing was translated,
+            # so this is the same refusal as a model that could not be built
+            # (issue #2518), not a translation that went wrong.
+            logger.error(ls.CYPHER_ERROR.format(error=e))
+            raise ex.CypherModelUnavailableError(
+                ex.LLM_CYPHER_UNAVAILABLE.format(error=e)
+            ) from e
         except Exception as e:
             logger.error(ls.CYPHER_ERROR.format(error=e))
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
+
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str:
+        """Ask for a new query after the database rejected `failed_query`."""
+        return await self.generate(
+            build_cypher_repair_request(natural_language_query, failed_query, error)
+        )
+
+
+class CypherQueryGenerator(Protocol):
+    """What the graph-query tool needs from a generator, so the MCP server
+    can hand it one that builds its model on first use."""
+
+    async def generate(self, natural_language_query: str) -> str: ...
+
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str: ...
+
+
+class LazyCypherGenerator:
+    """A CypherGenerator built on the first query instead of up front.
+
+    Only natural-language queries need the Cypher model; the MCP server's
+    indexing and deterministic tools do not, and building the model at
+    start-up let an unreachable provider stop the whole server (issue
+    #2518). A failed build is not kept, so a provider started later is
+    picked up on the next query without a restart.
+    """
+
+    __slots__ = ("_active_projects", "_generator")
+
+    def __init__(self, active_projects: list[str] | None = None) -> None:
+        self._active_projects = active_projects
+        self._generator: CypherGenerator | None = None
+
+    async def generate(self, natural_language_query: str) -> str:
+        if self._generator is None:
+            try:
+                # Building probes the provider over the network (Ollama's
+                # health check), which must not stall the server's event loop.
+                self._generator = await asyncio.to_thread(
+                    CypherGenerator, active_projects=self._active_projects
+                )
+            except ex.LLMGenerationError as e:
+                raise ex.CypherModelUnavailableError(
+                    ex.LLM_CYPHER_UNAVAILABLE.format(error=e)
+                ) from e
+        return await self._generator.generate(natural_language_query)
+
+    async def repair(
+        self, natural_language_query: str, failed_query: str, error: str
+    ) -> str:
+        return await self.generate(
+            build_cypher_repair_request(natural_language_query, failed_query, error)
+        )
 
 
 def create_research_agent(tools: list[Tool]) -> Agent:
@@ -214,12 +296,12 @@ def create_research_agent(tools: list[Tool]) -> Agent:
 
 
 def create_rag_orchestrator(
-    tools: list[Tool],
+    tools: list[Tool[None]],
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
     backend: str | None = None,
-) -> tuple[Agent, str]:
+) -> tuple[Agent[None, str | DeferredToolRequests], str]:
     """Build the main agent and return it with its system prompt."""
     try:
         config = settings.active_orchestrator_config
@@ -235,7 +317,9 @@ def create_rag_orchestrator(
             backend=backend,
         )
 
-        agent = Agent(
+        # Specialised explicitly: the checker cannot infer the output type
+        # from a list of output types.
+        agent = Agent[None, str | DeferredToolRequests](
             model=llm,
             system_prompt=system_prompt,
             tools=tools,

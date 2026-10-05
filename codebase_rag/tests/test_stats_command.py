@@ -136,3 +136,19 @@ class TestStatsCommand:
 
         assert result.exit_code == 0
         assert "Unknown" in result.output
+
+    def test_stats_handles_null_labels(
+        self,
+        runner: CliRunner,
+        mock_rel_results: list[ResultRow],
+    ) -> None:
+        # Negative: a row whose labels are not a list must not fail the table.
+        node_results: list[ResultRow] = [
+            {"labels": None, "count": 5},
+        ]
+        mock_ingestor = _make_mock_ingestor(node_results, mock_rel_results)
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["stats"])
+
+        assert result.exit_code == 0
+        assert "Unknown" in result.output

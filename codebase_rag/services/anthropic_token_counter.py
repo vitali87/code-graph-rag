@@ -8,7 +8,9 @@ from pydantic_ai import BinaryContent
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -61,61 +63,80 @@ def _tool_return_content(value: object) -> str | list[dict[str, Any]]:
     return str(value)
 
 
+def _request_part_blocks(
+    part: ModelRequestPart, system_parts: list[str]
+) -> list[dict[str, Any]]:
+    # The user-turn content blocks one request part contributes; a system
+    # prompt part contributes none and is collected into `system_parts`.
+    if isinstance(part, SystemPromptPart):
+        system_parts.append(part.content)
+        return []
+    if isinstance(part, UserPromptPart):
+        return _user_part_to_blocks(part)
+    if isinstance(part, ToolReturnPart):
+        return [
+            {
+                "type": "tool_result",
+                "tool_use_id": part.tool_call_id,
+                "content": _tool_return_content(part.content),
+            }
+        ]
+    if isinstance(part, RetryPromptPart):
+        if part.tool_name is None:
+            return [{"type": "text", "text": part.model_response()}]
+        return [
+            {
+                "type": "tool_result",
+                "tool_use_id": part.tool_call_id,
+                "content": part.model_response(),
+                "is_error": True,
+            }
+        ]
+    return []
+
+
+def _response_part_block(part: ModelResponsePart) -> dict[str, Any] | None:
+    if isinstance(part, TextPart):
+        return {"type": "text", "text": part.content} if part.content else None
+    if isinstance(part, ToolCallPart):
+        return {
+            "type": "tool_use",
+            "id": part.tool_call_id,
+            "name": part.tool_name,
+            "input": part.args_as_dict() or {},
+        }
+    return None
+
+
 def _to_anthropic_payload(
     messages: list[ModelMessage],
 ) -> tuple[str, list[dict[str, Any]]]:
     system_parts: list[str] = []
     out: list[dict[str, Any]] = []
     for m in messages:
-        if isinstance(m, ModelRequest):
-            user_content: list[dict[str, Any]] = []
-            for part in m.parts:
-                if isinstance(part, SystemPromptPart):
-                    system_parts.append(part.content)
-                elif isinstance(part, UserPromptPart):
-                    user_content.extend(_user_part_to_blocks(part))
-                elif isinstance(part, ToolReturnPart):
-                    user_content.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": part.tool_call_id,
-                            "content": _tool_return_content(part.content),
-                        }
-                    )
-                elif isinstance(part, RetryPromptPart):
-                    if part.tool_name is None:
-                        user_content.append(
-                            {"type": "text", "text": part.model_response()}
-                        )
-                    else:
-                        user_content.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": part.tool_call_id,
-                                "content": part.model_response(),
-                                "is_error": True,
-                            }
-                        )
-            if user_content:
-                out.append({"role": "user", "content": user_content})
-        elif isinstance(m, ModelResponse):
-            assistant_content: list[dict[str, Any]] = []
-            for part in m.parts:
-                if isinstance(part, TextPart):
-                    if part.content:
-                        assistant_content.append({"type": "text", "text": part.content})
-                elif isinstance(part, ToolCallPart):
-                    assistant_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": part.tool_call_id,
-                            "name": part.tool_name,
-                            "input": part.args_as_dict() or {},
-                        }
-                    )
-            if assistant_content:
-                out.append({"role": "assistant", "content": assistant_content})
+        turn = (
+            _user_turn(m, system_parts)
+            if isinstance(m, ModelRequest)
+            else _assistant_turn(m)
+        )
+        if turn is not None:
+            out.append(turn)
     return "\n".join(system_parts), out
+
+
+def _user_turn(request: ModelRequest, system_parts: list[str]) -> dict[str, Any] | None:
+    content: list[dict[str, Any]] = []
+    for part in request.parts:
+        content.extend(_request_part_blocks(part, system_parts))
+    return {"role": "user", "content": content} if content else None
+
+
+def _assistant_turn(response: ModelResponse) -> dict[str, Any] | None:
+    content: list[dict[str, Any]] = []
+    for part in response.parts:
+        if (block := _response_part_block(part)) is not None:
+            content.append(block)
+    return {"role": "assistant", "content": content} if content else None
 
 
 class TokenCountError(Exception):

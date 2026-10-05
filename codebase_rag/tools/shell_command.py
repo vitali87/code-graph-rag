@@ -7,7 +7,8 @@ import shlex
 import shutil
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
@@ -68,65 +69,85 @@ class CommandGroup:
         self.operator = operator
 
 
-def _parse_command(command: str) -> list[CommandGroup]:
-    groups: list[CommandGroup] = []
-    current_pipeline: list[str] = []
-    current_segment: list[str] = []
-    in_single = False
-    in_double = False
+@dataclass
+class _CommandParser:
+    """Character-level state of `_parse_command` while it walks a command."""
+
+    command: str
+    groups: list[CommandGroup] = field(default_factory=list)
+    current_pipeline: list[str] = field(default_factory=list)
+    current_segment: list[str] = field(default_factory=list)
+    in_single: bool = False
+    in_double: bool = False
     pending_operator: str | None = None
-    i = 0
 
-    def finalize_segment() -> None:
-        seg = "".join(current_segment).strip()
+    def finalize_segment(self) -> None:
+        seg = "".join(self.current_segment).strip()
         if seg:
-            current_pipeline.append(seg)
-        current_segment.clear()
+            self.current_pipeline.append(seg)
+        self.current_segment.clear()
 
-    def finalize_group(new_operator: str) -> None:
-        nonlocal pending_operator
-        finalize_segment()
-        if current_pipeline:
-            groups.append(CommandGroup(list(current_pipeline), pending_operator))
-        current_pipeline.clear()
-        pending_operator = new_operator
+    def finalize_group(self, new_operator: str) -> None:
+        self.finalize_segment()
+        if self.current_pipeline:
+            self.groups.append(
+                CommandGroup(list(self.current_pipeline), self.pending_operator)
+            )
+        self.current_pipeline.clear()
+        self.pending_operator = new_operator
 
-    while i < len(command):
+    def step(self, i: int) -> int:
+        """Consume the character at `i` and return the index of the next one."""
+        command = self.command
         char = command[i]
         if char == "\\" and i + 1 < len(command):
-            current_segment.append(char)
-            current_segment.append(command[i + 1])
-            i += 2
-            continue
-        if char == "'" and not in_double:
-            in_single = not in_single
-            current_segment.append(char)
-        elif char == '"' and not in_single:
-            in_double = not in_double
-            current_segment.append(char)
-        elif char == "|" and not in_single and not in_double:
-            if i + 1 < len(command) and command[i + 1] == "|":
-                finalize_group("||")
-                i += 2
-                continue
-            finalize_segment()
-        elif char == "&" and not in_single and not in_double:
-            if i + 1 < len(command) and command[i + 1] == "&":
-                finalize_group("&&")
-                i += 2
-                continue
-            current_segment.append(char)
-        elif char == ";" and not in_single and not in_double:
-            finalize_group(";")
+            self.current_segment.append(char)
+            self.current_segment.append(command[i + 1])
+            return i + 2
+        if char == "'" and not self.in_double:
+            self.in_single = not self.in_single
+            self.current_segment.append(char)
+        elif char == '"' and not self.in_single:
+            self.in_double = not self.in_double
+            self.current_segment.append(char)
+        elif char in ("|", "&", ";") and not self.in_single and not self.in_double:
+            return self._operator_step(i)
         else:
-            current_segment.append(char)
-        i += 1
+            self.current_segment.append(char)
+        return i + 1
 
-    finalize_segment()
-    if current_pipeline:
-        groups.append(CommandGroup(list(current_pipeline), pending_operator))
+    def _operator_step(self, i: int) -> int:
+        """Handle an unquoted `|`, `&` or `;` at `i`; return the next index."""
+        command = self.command
+        char = command[i]
+        if char == ";":
+            self.finalize_group(";")
+        elif char == "|":
+            if i + 1 < len(command) and command[i + 1] == "|":
+                self.finalize_group("||")
+                return i + 2
+            self.finalize_segment()
+        else:
+            if i + 1 < len(command) and command[i + 1] == "&":
+                self.finalize_group("&&")
+                return i + 2
+            self.current_segment.append(char)
+        return i + 1
 
-    return groups
+
+def _parse_command(command: str) -> list[CommandGroup]:
+    parser = _CommandParser(command)
+    i = 0
+    while i < len(command):
+        i = parser.step(i)
+
+    parser.finalize_segment()
+    if parser.current_pipeline:
+        parser.groups.append(
+            CommandGroup(list(parser.current_pipeline), parser.pending_operator)
+        )
+
+    return parser.groups
 
 
 def _is_blocked_command(cmd: str) -> bool:
@@ -187,30 +208,36 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
     for path_arg in _rm_operands(cmd_parts[1:]):
-        if path_arg in ("*", ".", ".."):
-            return True, f"rm targeting dangerous path: {path_arg}"
-        # Joining onto the root is the platform's own absoluteness test: an
-        # absolute target replaces the root outright, a relative one lands
-        # under it. A `startswith("/")` check is POSIX-only: on Windows a
-        # rooted, drive-less target such as `/x` would resolve on the Python
-        # process's drive rather than the root's, the drive rm runs on.
-        try:
-            resolved = (project_root / path_arg).resolve()
-        except (OSError, ValueError):
-            return True, f"rm with invalid path: {path_arg}"
-        if resolved == project_root:
-            return True, "rm targeting the project root"
-        resolved_str = str(resolved)
-        if resolved == resolved.parent:
-            return True, "rm targeting root directory"
-        try:
-            resolved.relative_to(project_root)
-        except ValueError:
-            parts = resolved.parts
-            if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
-                return True, f"rm targeting system directory: {resolved_str}"
-            return True, f"rm targeting path outside project: {resolved_str}"
+        if (reason := _dangerous_rm_target(path_arg, project_root)) is not None:
+            return True, reason
     return False, ""
+
+
+def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
+    if path_arg in ("*", ".", ".."):
+        return f"rm targeting dangerous path: {path_arg}"
+    # Joining onto the root is the platform's own absoluteness test: an
+    # absolute target replaces the root outright, a relative one lands under
+    # it. A `startswith("/")` check is POSIX-only: on Windows a rooted,
+    # drive-less target such as `/x` would resolve on the Python process's
+    # drive rather than the root's, the drive rm runs on.
+    try:
+        resolved = (project_root / path_arg).resolve()
+    except (OSError, ValueError):
+        return f"rm with invalid path: {path_arg}"
+    if resolved == project_root:
+        return "rm targeting the project root"
+    resolved_str = str(resolved)
+    if resolved == resolved.parent:
+        return "rm targeting root directory"
+    try:
+        resolved.relative_to(project_root)
+    except ValueError:
+        parts = resolved.parts
+        if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
+            return f"rm targeting system directory: {resolved_str}"
+        return f"rm targeting path outside project: {resolved_str}"
+    return None
 
 
 def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
@@ -244,27 +271,30 @@ def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool
             index += 1
             continue
 
-        if not target:
-            continue
-        # Joining onto the root is the platform's own absoluteness test: an
-        # absolute target replaces the root outright, a relative one lands
-        # under it. A `startswith("/")` check is POSIX-only: on Windows a
-        # rooted, drive-less target such as `/x` would resolve on the Python
-        # process's drive rather than the root's, which is the drive git
-        # itself runs on (its cwd is the root).
-        try:
-            resolved = (project_root / target).resolve()
-        except (OSError, ValueError):
-            return True, f"git pointed at an unresolvable path: {target}"
-
-        try:
-            resolved.relative_to(project_root)
-        except ValueError:
-            return True, (
-                f"git pointed outside the project at {resolved}, whose config "
-                "git would execute"
-            )
+        if target and (reason := _git_target_escape(target, project_root)):
+            return True, reason
     return False, ""
+
+
+def _git_target_escape(target: str, project_root: Path) -> str | None:
+    # Joining onto the root is the platform's own absoluteness test: an
+    # absolute target replaces the root outright, a relative one lands under
+    # it. A `startswith("/")` check is POSIX-only: on Windows a rooted,
+    # drive-less target such as `/x` would resolve on the Python process's
+    # drive rather than the root's, which is the drive git itself runs on
+    # (its cwd is the root).
+    try:
+        resolved = (project_root / target).resolve()
+    except (OSError, ValueError):
+        return f"git pointed at an unresolvable path: {target}"
+    try:
+        resolved.relative_to(project_root)
+    except ValueError:
+        return (
+            f"git pointed outside the project at {resolved}, whose config "
+            "git would execute"
+        )
+    return None
 
 
 def _check_pipeline_patterns(full_command: str) -> str | None:
@@ -325,17 +355,7 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
         if not arg.startswith("-"):
             return None
 
-        key: str | None = None
-        separated = arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(
-            cmd_parts
-        )
-        if separated:
-            key = cmd_parts[index + 1]
-        elif arg.startswith("-c") and len(arg) > 2:
-            key = arg[2:]
-        elif arg.startswith("--config-env="):
-            key = arg[len("--config-env=") :]
-
+        key = _git_inline_config_key(cmd_parts, index)
         if key and _is_git_config_exec_key(key.split("=", 1)[0]):
             return key.split("=", 1)[0]
 
@@ -347,6 +367,22 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
         else:
             index += 1
 
+    return None
+
+
+def _git_inline_config_key(cmd_parts: list[str], index: int) -> str | None:
+    """The `key=value` a git global option at `index` sets inline, if any.
+
+    Covers the separated `-c key=value`, the attached `-ckey=value`, and
+    `--config-env=key=ENVVAR`.
+    """
+    arg = cmd_parts[index]
+    if arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(cmd_parts):
+        return cmd_parts[index + 1]
+    if arg.startswith("-c") and len(arg) > 2:
+        return arg[2:]
+    if arg.startswith("--config-env="):
+        return arg[len("--config-env=") :]
     return None
 
 
@@ -448,28 +484,29 @@ def _xargs_launched_index(cmd_parts: list[str]) -> int | None:
         if arg == "--":
             return index + 2 if index + 1 < len(args) else None
 
-        flag = _flag_name(arg)
-        if flag in cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS:
-            index += 1
-            continue
-        if flag in cs.SHELL_XARGS_VALUE_FLAGS:
-            if "=" in arg:
-                index += 1
-            else:
-                bundled = len(arg) > 2 and not arg.startswith("--")
-                index += 1 if bundled else 2
-            continue
-        if flag in cs.SHELL_XARGS_BOOLEAN_FLAGS:
-            index += 1
-            continue
+        consumed = _xargs_option_width(arg)
+        if consumed is None:
+            return -1
+        index += consumed
 
-        if len(arg) > 2 and not arg.startswith("--"):
-            consumed = _xargs_short_cluster(arg)
-            if consumed is not None:
-                index += consumed
-                continue
+    return None
 
-        return -1
+
+def _xargs_option_width(arg: str) -> int | None:
+    """Tokens an xargs option consumes, or None if it is unrecognised."""
+    flag = _flag_name(arg)
+    if flag in cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS:
+        return 1
+    if flag in cs.SHELL_XARGS_VALUE_FLAGS:
+        if "=" in arg:
+            return 1
+        bundled = len(arg) > 2 and not arg.startswith("--")
+        return 1 if bundled else 2
+    if flag in cs.SHELL_XARGS_BOOLEAN_FLAGS:
+        return 1
+
+    if len(arg) > 2 and not arg.startswith("--"):
+        return _xargs_short_cluster(arg)
 
     return None
 
@@ -503,11 +540,7 @@ def _awk_program_skeleton(program: str) -> str:
     while index < len(program):
         char = program[index]
         if char == '"':
-            end = index + 1
-            while end < len(program) and program[end] != '"':
-                if program[end] == "\\":
-                    end += 1
-                end += 1
+            end = _delimited_end(program, index + 1, '"')
             if end >= len(program):
                 return cs.SHELL_AWK_UNPARSEABLE
             out.append('""')
@@ -521,17 +554,27 @@ def _awk_program_skeleton(program: str) -> str:
                 return cs.SHELL_AWK_UNPARSEABLE
             # A /regex/ literal is user text too: `/a|b/` is alternation, not
             # a pipe to a command, and gsub(/x|y/,...) is everyday awk.
-            end = index + 1
-            while end < len(program) and program[end] != "/":
-                if program[end] == "\\":
-                    end += 1
-                end += 1
+            end = _delimited_end(program, index + 1, "/")
             out.append("//")
             index = min(end + 1, len(program))
             continue
         out.append(char)
         index += 1
     return "".join(out)
+
+
+def _delimited_end(text: str, start: int, delim: str) -> int:
+    """Index of the first unescaped `delim` at or after `start`.
+
+    A backslash escapes the character after it. Returns `len(text)` or past it
+    when the literal is unterminated, so callers compare against the length.
+    """
+    end = start
+    while end < len(text) and text[end] != delim:
+        if text[end] == "\\":
+            end += 1
+        end += 1
+    return end
 
 
 def _awk_regex_starts_here(program: str, index: int) -> bool:
@@ -588,15 +631,7 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
 
     # A program given with -f lives in a file this validator cannot read, so
     # its contents are unknowable and it is refused outright.
-    # `-f x`, `-fx` (attached) and `--file=x` all name a program file. Matching
-    # only the exact token `-f` let the attached spellings through.
-    if any(
-        a == "-f"
-        or (a.startswith("-f") and len(a) > 2)
-        or _flag_name(a) in cs.SHELL_AWK_PROGRAM_FILE_FLAGS
-        for a in cmd_parts[1:]
-        if a.startswith("-")
-    ):
+    if _awk_names_program_file(cmd_parts):
         return "a program file this validator cannot inspect"
 
     index = 1
@@ -611,30 +646,56 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
                 arg in cs.SHELL_AWK_VALUE_FLAGS
                 and arg not in cs.SHELL_AWK_OPTIONAL_ARG_FLAGS
             ):
-                # The operand is the flag's value under gawk, but a program
-                # under any implementation lacking the flag, so scan BOTH
-                # readings rather than pick one -- the same rule sed's -i and
-                # -l need. Picking gawk's alone stepped over the program.
-                candidate = cmd_parts[index + 1 : index + 2]
-                if candidate and not candidate[0].startswith("-"):
-                    for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
-                        if re.search(pattern, candidate[0]):
-                            return reason
+                if (
+                    reason := _awk_flag_operand_construct(cmd_parts, index)
+                ) is not None:
+                    return reason
                 index += 2
             else:
                 index += 1
             continue
-        skeleton = _awk_program_skeleton(arg)
-        if skeleton == cs.SHELL_AWK_UNPARSEABLE:
-            return "a program with an unterminated string or regex"
-        if _awk_redirects_output(arg):
-            return "redirect to a file"
-        for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
-            if re.search(pattern, skeleton):
-                return reason
         # Only the first non-flag argument is the program; the rest are files.
-        break
+        return _awk_program_construct(arg)
 
+    return None
+
+
+def _awk_names_program_file(cmd_parts: list[str]) -> bool:
+    # `-f x`, `-fx` (attached) and `--file=x` all name a program file. Matching
+    # only the exact token `-f` let the attached spellings through.
+    return any(
+        a == "-f"
+        or (a.startswith("-f") and len(a) > 2)
+        or _flag_name(a) in cs.SHELL_AWK_PROGRAM_FILE_FLAGS
+        for a in cmd_parts[1:]
+        if a.startswith("-")
+    )
+
+
+def _awk_flag_operand_construct(cmd_parts: list[str], index: int) -> str | None:
+    # The operand is the flag's value under gawk, but a program
+    # under any implementation lacking the flag, so scan BOTH
+    # readings rather than pick one -- the same rule sed's -i and
+    # -l need. Picking gawk's alone stepped over the program.
+    candidate = cmd_parts[index + 1 : index + 2]
+    if candidate and not candidate[0].startswith("-"):
+        return _awk_exec_token(candidate[0])
+    return None
+
+
+def _awk_program_construct(program: str) -> str | None:
+    skeleton = _awk_program_skeleton(program)
+    if skeleton == cs.SHELL_AWK_UNPARSEABLE:
+        return "a program with an unterminated string or regex"
+    if _awk_redirects_output(program):
+        return "redirect to a file"
+    return _awk_exec_token(skeleton)
+
+
+def _awk_exec_token(text: str) -> str | None:
+    for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
+        if re.search(pattern, text):
+            return reason
     return None
 
 
@@ -819,31 +880,17 @@ def _sed_script_skeleton(script: str) -> str:
     index = 0
     while index < len(script):
         char = script[index]
-        if char in "sy" and index + 1 < len(script):
-            delim = script[index + 1]
-            if not delim.isalnum() and delim not in " \t\n;{}":
-                end = index + 2
-                fields = 0
-                while end < len(script) and fields < 2:
-                    if script[end] == "\\":
-                        end += 2
-                        continue
-                    if script[end] == delim:
-                        fields += 1
-                    end += 1
-                out.append(char)
-                out.append(" " * (end - index - 1))
-                index = end
-                continue
+        end = _sed_substitution_end(script, index)
+        if end is not None:
+            out.append(char)
+            out.append(" " * (end - index - 1))
+            index = end
+            continue
         if char == "/":
             # A /regex/ address body is user text too, and a letter inside it
             # sits immediately before the command position. Blank it, keeping
             # the delimiters so the address still anchors the command.
-            end = index + 1
-            while end < len(script) and script[end] != "/":
-                if script[end] == "\\":
-                    end += 1
-                end += 1
+            end = _delimited_end(script, index + 1, "/")
             if end < len(script):
                 out.append("/")
                 out.append(" " * (end - index - 1))
@@ -853,6 +900,25 @@ def _sed_script_skeleton(script: str) -> str:
         out.append(char)
         index += 1
     return "".join(out)
+
+
+def _sed_substitution_end(script: str, index: int) -> int | None:
+    """End of the s/// or y/// body starting at `index`, or None if none does."""
+    if script[index] not in "sy" or index + 1 >= len(script):
+        return None
+    delim = script[index + 1]
+    if delim.isalnum() or delim in " \t\n;{}":
+        return None
+    end = index + 2
+    fields = 0
+    while end < len(script) and fields < 2:
+        if script[end] == "\\":
+            end += 2
+            continue
+        if script[end] == delim:
+            fields += 1
+        end += 1
+    return end
 
 
 def _sed_cluster_tail(arg: str) -> str | None:
@@ -880,32 +946,40 @@ def _sed_cluster_tail(arg: str) -> str | None:
             # cluster is its attached value and belongs to it either way.
             return short if position == len(arg) - 1 else ""
         if short in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
-            # In TAIL position this behaves like a standalone `-i`: BSD sed
-            # takes the next token as the suffix, which pushes the script into
-            # the slot after it. Returning "" here read the cluster as
-            # script-free, so nothing was collected and the payload two slots
-            # along was never scanned -- `sed -ni bak 'w FILE' in.txt` wrote
-            # outside the project root with rc=0 while `sed -n -i bak ...`,
-            # the same command unbundled, was correctly refused.
-            if position == len(arg) - 1:
-                return short
-            if short in ("-l", "--line-length"):
-                # Mid-cluster `-l` reads two ways and only one of them ends
-                # the cluster. GNU takes the remainder as its line length;
-                # BSD treats `-l` as a pure boolean (it sits inside the
-                # [-EHalnru] cluster in BSD's own synopsis) and keeps
-                # parsing, so a trailing `i` is a real `-i` that consumes the
-                # next token as its suffix and puts the script two slots on.
-                # Stopping here took the GNU half alone and missed the BSD
-                # reading entirely: `sed -li bak 'w FILE' in.txt` wrote
-                # outside the project root with rc=0. Keep scanning, which is
-                # the reading that can still find a script.
-                continue
-            # Any other optional-arg flag is attached-only mid-cluster, so the
-            # remainder is its value.
-            return ""
+            tail = _sed_optional_flag_tail(short, position == len(arg) - 1)
+            if tail is not None:
+                return tail
+            continue
         if short not in cs.SHELL_SED_KNOWN_FLAGS:
             return None
+    return ""
+
+
+def _sed_optional_flag_tail(short: str, at_end: bool) -> str | None:
+    """`_sed_cluster_tail`'s answer at an optional-arg letter, or None to scan on."""
+    # In TAIL position this behaves like a standalone `-i`: BSD sed
+    # takes the next token as the suffix, which pushes the script into
+    # the slot after it. Returning "" here read the cluster as
+    # script-free, so nothing was collected and the payload two slots
+    # along was never scanned -- `sed -ni bak 'w FILE' in.txt` wrote
+    # outside the project root with rc=0 while `sed -n -i bak ...`,
+    # the same command unbundled, was correctly refused.
+    if at_end:
+        return short
+    if short in ("-l", "--line-length"):
+        # Mid-cluster `-l` reads two ways and only one of them ends
+        # the cluster. GNU takes the remainder as its line length;
+        # BSD treats `-l` as a pure boolean (it sits inside the
+        # [-EHalnru] cluster in BSD's own synopsis) and keeps
+        # parsing, so a trailing `i` is a real `-i` that consumes the
+        # next token as its suffix and puts the script two slots on.
+        # Stopping here took the GNU half alone and missed the BSD
+        # reading entirely: `sed -li bak 'w FILE' in.txt` wrote
+        # outside the project root with rc=0. Keep scanning, which is
+        # the reading that can still find a script.
+        return None
+    # Any other optional-arg flag is attached-only mid-cluster, so the
+    # remainder is its value.
     return ""
 
 
@@ -923,15 +997,24 @@ def _sed_names_script_file(cmd_parts: list[str]) -> bool:
             return True
         if _flag_name(arg) == "--file":
             return True
-        if not arg.startswith("--") and len(arg) > 2:
-            for letter in arg[1:]:
-                short = f"-{letter}"
-                if short == "-f":
-                    return True
-                if short in cs.SHELL_SED_OPTIONAL_ARG_FLAGS or short == "-e":
-                    # These consume the cluster remainder, so a later `f` in
-                    # it is their value rather than a flag of its own.
-                    break
+        if (
+            not arg.startswith("--")
+            and len(arg) > 2
+            and _sed_cluster_names_script_file(arg)
+        ):
+            return True
+    return False
+
+
+def _sed_cluster_names_script_file(arg: str) -> bool:
+    for letter in arg[1:]:
+        short = f"-{letter}"
+        if short == "-f":
+            return True
+        if short in cs.SHELL_SED_OPTIONAL_ARG_FLAGS or short == "-e":
+            # These consume the cluster remainder, so a later `f` in
+            # it is their value rather than a flag of its own.
+            break
     return False
 
 
@@ -967,8 +1050,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     #    otherwise trip the [wWrR] anchor on "RE".
     #  * The one exception is a script ending in a bare file command, where
     #    the operand is genuinely the next argv entry (`sed -ew /tmp/p`).
-    scripts: list[str] = []
-    ambiguous_slots: list[int] = []
+    collector = _SedScriptCollector(cmd_parts)
     # Every candidate is scanned, including the -i operand slots. Those slots
     # are genuinely ambiguous: `sed -i ext wout1 in.txt` treats `wout1` as a
     # SCRIPT under BSD -- verified, it wrote `out1` -- and as a FILENAME under
@@ -978,41 +1060,72 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     # `sed -i SUFFIX FILE` spelling when the FILENAME contains r/w/e; GNU
     # users write `sed -i.bak` or `sed -i`, which have no such slot. A rare
     # over-block is the right side of a verified write primitive.
+    if (refusal := collector.collect()) is not None:
+        return refusal
 
-    def add(position: int) -> None:
+    for position, arg in enumerate(collector.scripts):
+        construct = _sed_script_construct(arg, position in collector.ambiguous_slots)
+        if construct is not None:
+            return construct
+
+    return None
+
+
+@dataclass
+class _SedScriptCollector:
+    """Every token of a sed command line that could be script text."""
+
+    cmd_parts: list[str]
+    scripts: list[str] = field(default_factory=list)
+    ambiguous_slots: list[int] = field(default_factory=list)
+
+    def add(self, position: int) -> None:
+        cmd_parts = self.cmd_parts
         if not 0 < position < len(cmd_parts):
             return
         script = cmd_parts[position]
         if _sed_awaits_operand(script) and position + 1 < len(cmd_parts):
             script = f"{script} {cmd_parts[position + 1]}"
-        scripts.append(script)
+        self.scripts.append(script)
 
-    index = 1
-    while index < len(cmd_parts):
-        arg = cmd_parts[index]
+    def collect(self) -> str | None:
+        """Collect the candidates; return a refusal if the line is unreadable."""
+        cmd_parts = self.cmd_parts
+        index = 1
+        while index < len(cmd_parts):
+            arg = cmd_parts[index]
 
-        if arg == "--":
-            # End of options: the next token is the script unless a -e/-f has
-            # already given one. A preceding -i contributes only AMBIGUOUS
-            # candidates, so it must not suppress this.
-            if not scripts:
-                add(index + 1)
-            break
+            if arg == "--":
+                # End of options: the next token is the script unless a -e/-f has
+                # already given one. A preceding -i contributes only AMBIGUOUS
+                # candidates, so it must not suppress this.
+                if not self.scripts:
+                    self.add(index + 1)
+                break
 
-        if not arg.startswith("-"):
-            # Once -e or -f has supplied a script, every bare token is an
-            # input FILE. Treating one as a script scanned filenames, and
-            # `sed -e 's/a/b/' README.md` tripped the anchor on "RE".
-            if not scripts:
-                add(index)
-            break
+            if not arg.startswith("-"):
+                # Once -e or -f has supplied a script, every bare token is an
+                # input FILE. Treating one as a script scanned filenames, and
+                # `sed -e 's/a/b/' README.md` tripped the anchor on "RE".
+                if not self.scripts:
+                    self.add(index)
+                break
+
+            step = self._collect_option(index)
+            if isinstance(step, str):
+                return step
+            index = step
+        return None
+
+    def _collect_option(self, index: int) -> int | str:
+        """Collect from the option at `index`; return the next index or a refusal."""
+        arg = self.cmd_parts[index]
 
         if _flag_name(arg) in cs.SHELL_SED_OPTIONAL_ARG_FLAGS and "=" in arg:
             # `--in-place=.bak`: the attached value is a SUFFIX, not script
             # text, so the script is the next token.
-            add(index + 1)
-            index += 1
-            continue
+            self.add(index + 1)
+            return index + 1
 
         if (
             arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS
@@ -1023,84 +1136,86 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # the same both-readings scan. Matching only the standalone form
             # let `sed -ni bak 'w FILE' in.txt` through while refusing the
             # identical `sed -n -i bak 'w FILE' in.txt`.
-            # The operand is a suffix under one implementation and the script
-            # under the other, so scan BOTH -- unconditionally. Gating the
-            # second reading on the operand's SHAPE was a bypass: a suffix of
-            # nine characters, or one containing a slash, failed the guess and
-            # the real script was never looked at.
-            operand = cmd_parts[index + 1 : index + 2]
-            if operand and not operand[0].startswith("-"):
-                # Only a non-flag token can be the script or a suffix; `--`
-                # and a following flag belong to the branches below.
-                # GNU: this is the script. BSD: a suffix, and the next
-                # token is the script. Scan both; the BSD-suffix reading of
-                # the SECOND token is the only slot where GNU would have put
-                # an input filename, so that one is position-excluded.
-                # Both operands are ambiguous, and in opposite directions:
-                # under GNU the first is the script and the second an input
-                # file; under BSD the first is a suffix and the second the
-                # script.
-                #
-                # Both slots are scanned. Five attempts to decide which
-                # reading applies by inspecting a token all became bypasses:
-                # the operand's shape, its whitespace, its position, and
-                # classifying it as script-or-suffix from either direction.
-                # BSD takes the first operand as a backup suffix whatever it
-                # looks like -- a suffix named `1d` left the payload
-                # unscanned, verified overwriting a file -- and `README.md`
-                # is itself a valid sed `R` command, so the bytes genuinely
-                # underdetermine the meaning.
-                #
-                # Scanning both slots alone would refuse
-                # `sed -i 's/a/b/' README.md`, since the filename sits in the
-                # second slot (index+2, not index+3). So that slot carries a
-                # NARROWER anchor instead: a write leaving the working
-                # directory needs a separator or a path form before its
-                # target (`w /tmp/x`, `w/tmp/x`, `w../x`, `w~/x`), while an
-                # input filename is one unbroken token. That is a property of
-                # the write rather than of the token's identity.
-                #
-                # A bare single-token target with no slash (`wout1`) is
-                # still not caught there. The earlier justification -- "it
-                # writes only inside the working directory, which tee and cp
-                # already permit" -- was WRONG in general: the working
-                # directory contains `.git/`, and `w.git/hooks/pre-commit`
-                # installs a hook that git then executes. Verified. Any
-                # target containing a slash is now caught, which covers that
-                # and every dotdir case; what remains is a write to a plain
-                # filename in the CWD, with no path component at all.
-                add(index + 1)
-                ambiguous_slots.append(len(scripts))
-                add(index + 2)
-                index += 1
-            index += 1
-            continue
+            return self._collect_operand_readings(index)
 
         if any(
             arg.startswith(flag) and len(arg) > len(flag)
             for flag in cs.SHELL_SED_OPTIONAL_ARG_FLAGS
             if not flag.startswith("--")
         ):
-            index += 1
-            continue
+            return index + 1
 
-        known = _flag_name(arg) in cs.SHELL_SED_KNOWN_FLAGS
-        if not known and not arg.startswith("--") and len(arg) > 2:
-            # Short flags bundle (`-an`, `-nE`): known when every letter is.
-            known = all(f"-{letter}" in cs.SHELL_SED_KNOWN_FLAGS for letter in arg[1:])
-        if not known and "=" not in arg:
+        if not _sed_flag_known(arg) and "=" not in arg:
             # An unclassifiable option may or may not consume the next token,
             # so the script's position is unknown. Refuse rather than guess.
             return "an option this validator cannot interpret"
 
+        return self._collect_option_script(index)
+
+    def _collect_operand_readings(self, index: int) -> int:
+        # The operand is a suffix under one implementation and the script
+        # under the other, so scan BOTH -- unconditionally. Gating the
+        # second reading on the operand's SHAPE was a bypass: a suffix of
+        # nine characters, or one containing a slash, failed the guess and
+        # the real script was never looked at.
+        operand = self.cmd_parts[index + 1 : index + 2]
+        if operand and not operand[0].startswith("-"):
+            # Only a non-flag token can be the script or a suffix; `--`
+            # and a following flag belong to the branches below.
+            # GNU: this is the script. BSD: a suffix, and the next
+            # token is the script. Scan both; the BSD-suffix reading of
+            # the SECOND token is the only slot where GNU would have put
+            # an input filename, so that one is position-excluded.
+            # Both operands are ambiguous, and in opposite directions:
+            # under GNU the first is the script and the second an input
+            # file; under BSD the first is a suffix and the second the
+            # script.
+            #
+            # Both slots are scanned. Five attempts to decide which
+            # reading applies by inspecting a token all became bypasses:
+            # the operand's shape, its whitespace, its position, and
+            # classifying it as script-or-suffix from either direction.
+            # BSD takes the first operand as a backup suffix whatever it
+            # looks like -- a suffix named `1d` left the payload
+            # unscanned, verified overwriting a file -- and `README.md`
+            # is itself a valid sed `R` command, so the bytes genuinely
+            # underdetermine the meaning.
+            #
+            # Scanning both slots alone would refuse
+            # `sed -i 's/a/b/' README.md`, since the filename sits in the
+            # second slot (index+2, not index+3). So that slot carries a
+            # NARROWER anchor instead: a write leaving the working
+            # directory needs a separator or a path form before its
+            # target (`w /tmp/x`, `w/tmp/x`, `w../x`, `w~/x`), while an
+            # input filename is one unbroken token. That is a property of
+            # the write rather than of the token's identity.
+            #
+            # A bare single-token target with no slash (`wout1`) is
+            # still not caught there. The earlier justification -- "it
+            # writes only inside the working directory, which tee and cp
+            # already permit" -- was WRONG in general: the working
+            # directory contains `.git/`, and `w.git/hooks/pre-commit`
+            # installs a hook that git then executes. Verified. Any
+            # target containing a slash is now caught, which covers that
+            # and every dotdir case; what remains is a write to a plain
+            # filename in the CWD, with no path component at all.
+            self.add(index + 1)
+            self.ambiguous_slots.append(len(self.scripts))
+            self.add(index + 2)
+            index += 1
+        return index + 1
+
+    def _collect_option_script(self, index: int) -> int:
+        cmd_parts = self.cmd_parts
+        arg = cmd_parts[index]
         if "=" in arg:
-            scripts.append(arg.split("=", 1)[1])
+            self.scripts.append(arg.split("=", 1)[1])
         elif arg in ("-e", "--expression") or _sed_cluster_tail(arg) == "-e":
             # A standalone `-e`, or a bundled cluster ending in a bare `-e`
             # (`-ne`, `-nEe`): the script is the NEXT token in both cases.
             # Reading the cluster's own tail letter as the script -- `arg[2:]`
             # of `-ne` is `e` -- left the following `-e 'w FILE'` uncollected.
-            add(index + 1)
+            self.add(index + 1)
             index += 1
         elif arg.startswith("-e") and len(arg) > 2:
             # `-eSCRIPT`, and the bundled `-neSCRIPT` where the `-e` is not
@@ -1108,53 +1223,67 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             attached = arg[2:]
             if _sed_awaits_operand(attached) and index + 1 < len(cmd_parts):
                 attached = f"{attached} {cmd_parts[index + 1]}"
-            scripts.append(attached)
+            self.scripts.append(attached)
 
-        index += 1
+        return index + 1
 
-    for position, arg in enumerate(scripts):
-        skeleton = _sed_script_skeleton(arg)
-        for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
-            # The s///e and s///w patterns need the real text; the command
-            # anchors run on the skeleton so a letter inside a replacement
-            # cannot look like a command.
-            # Only the s/// forms need the real text (the skeleton blanks
-            # the very bodies they match inside); every other anchor runs on
-            # the skeleton so user text cannot look like a command.
-            if (
-                position in ambiguous_slots
-                and reason in cs.SHELL_SED_FILENAME_AMBIGUOUS_REASONS
-            ):
-                # This slot holds a script only under the BSD reading of
-                # `-i SUFFIX FILE`; under GNU it is an input FILENAME. The
-                # exec anchors cannot survive that ambiguity: `e` matches
-                # after any `/`, so `sed -i 's/a/b/' codebase_rag/embedder.py`
-                # -- an ordinary in-place edit, verified confined on GNU sed
-                # 4.9 -- was refused "via e command", along with 10.7% of this
-                # repo's own slash-bearing paths. An exec command cannot
-                # appear in a filename slot without a preceding real command,
-                # so only the file anchors are meaningful here.
-                continue
-            if position in ambiguous_slots and reason == cs.SHELL_SED_FILE_REASON:
-                # In this slot the token may be an input filename, so the
-                # file command must show a separated or path-like target...
-                if re.search(cs.SHELL_SED_FILE_ESCAPING, skeleton):
-                    return reason
-                # ...but a bare `w<name>` is a write to <name> even with no
-                # slash in it. BSD sed reads the token AS a script here, so
-                # `sed -i bak wMakefile` truncates `Makefile` and
-                # `sed -i bak w.gitignore` truncates `.gitignore` -- both
-                # verified emptying the file, rc=1 only AFTER the truncation.
-                # GNU reads the operands the other way round and is unharmed,
-                # but the policy must deny whichever binary is present.
-                if re.match(cs.SHELL_SED_BARE_WRITE_TOKEN, skeleton):
-                    return reason
-                continue
-            target = arg if reason.startswith("s///") else skeleton
-            if re.search(pattern, target):
+
+def _sed_flag_known(arg: str) -> bool:
+    known = _flag_name(arg) in cs.SHELL_SED_KNOWN_FLAGS
+    if not known and not arg.startswith("--") and len(arg) > 2:
+        # Short flags bundle (`-an`, `-nE`): known when every letter is.
+        known = all(f"-{letter}" in cs.SHELL_SED_KNOWN_FLAGS for letter in arg[1:])
+    return known
+
+
+def _sed_script_construct(arg: str, ambiguous: bool) -> str | None:
+    """The exec or write construct in one collected script, if any.
+
+    `ambiguous` marks the slot that holds a script only under the BSD reading
+    of `-i SUFFIX FILE`.
+    """
+    skeleton = _sed_script_skeleton(arg)
+    for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
+        # The s///e and s///w patterns need the real text; the command
+        # anchors run on the skeleton so a letter inside a replacement
+        # cannot look like a command.
+        # Only the s/// forms need the real text (the skeleton blanks
+        # the very bodies they match inside); every other anchor runs on
+        # the skeleton so user text cannot look like a command.
+        if ambiguous and reason in cs.SHELL_SED_FILENAME_AMBIGUOUS_REASONS:
+            # This slot holds a script only under the BSD reading of
+            # `-i SUFFIX FILE`; under GNU it is an input FILENAME. The
+            # exec anchors cannot survive that ambiguity: `e` matches
+            # after any `/`, so `sed -i 's/a/b/' codebase_rag/embedder.py`
+            # -- an ordinary in-place edit, verified confined on GNU sed
+            # 4.9 -- was refused "via e command", along with 10.7% of this
+            # repo's own slash-bearing paths. An exec command cannot
+            # appear in a filename slot without a preceding real command,
+            # so only the file anchors are meaningful here.
+            continue
+        if ambiguous and reason == cs.SHELL_SED_FILE_REASON:
+            if _sed_ambiguous_slot_writes(skeleton):
                 return reason
-
+            continue
+        target = arg if reason.startswith("s///") else skeleton
+        if re.search(pattern, target):
+            return reason
     return None
+
+
+def _sed_ambiguous_slot_writes(skeleton: str) -> bool:
+    # In this slot the token may be an input filename, so the
+    # file command must show a separated or path-like target...
+    if re.search(cs.SHELL_SED_FILE_ESCAPING, skeleton):
+        return True
+    # ...but a bare `w<name>` is a write to <name> even with no
+    # slash in it. BSD sed reads the token AS a script here, so
+    # `sed -i bak wMakefile` truncates `Makefile` and
+    # `sed -i bak w.gitignore` truncates `.gitignore` -- both
+    # verified emptying the file, rc=1 only AFTER the truncation.
+    # GNU reads the operands the other way round and is unharmed,
+    # but the policy must deny whichever binary is present.
+    return re.match(cs.SHELL_SED_BARE_WRITE_TOKEN, skeleton) is not None
 
 
 def _program_naming_flag(cmd_parts: list[str], known: frozenset[str]) -> str | None:
@@ -1205,43 +1334,8 @@ def _is_dangerous_command(
     if _is_dangerous_rm(cmd_parts):
         return True, "rm with dangerous flags"
 
-    if bypass_allowlist and base_cmd in cs.SHELL_LAUNCHER_COMMANDS:
-        # Two launchers state what they will run and can be vetted even here;
-        # the rest take no inspectable argument and are blocked outright.
-        # `find` launches a program only via a mutating action, so read-only
-        # find stays usable under yolo -- the point of yolo is unattended work.
-        if base_cmd == cs.SHELL_CMD_XARGS:
-            index = _xargs_launched_index(cmd_parts)
-            if index is None:
-                # Bare xargs defaults to echo and launches nothing of its own.
-                confined = True
-            elif index < 0:
-                confined = False
-            else:
-                # Vet the launched command as a segment in its own right.
-                # Allowlist membership alone is not safety: every launcher is
-                # itself allowlisted, so `xargs uv run python -c ...` would
-                # otherwise pass the check that blocks `uv run python -c ...`.
-                launched_parts = cmd_parts[index:]
-                nested_dangerous, _ = _is_dangerous_command(
-                    launched_parts,
-                    " ".join(launched_parts),
-                    bypass_allowlist,
-                )
-                confined = (
-                    launched_parts[0] in settings.SHELL_COMMAND_ALLOWLIST
-                    and not nested_dangerous
-                )
-        elif base_cmd == cs.SHELL_CMD_FIND:
-            confined = not _find_requires_approval(cmd_parts)
-        else:
-            confined = False
-
-        if not confined:
-            return True, (
-                f"{base_cmd} launches arbitrary programs; blocked when the "
-                "allowlist is bypassed"
-            )
+    if reason := _unconfined_launcher_reason(cmd_parts, bypass_allowlist):
+        return True, reason
 
     if flag := _git_exec_flag(cmd_parts):
         return True, f"git {flag} names a program git will run"
@@ -1268,6 +1362,54 @@ def _is_dangerous_command(
         return True, reason
 
     return False, ""
+
+
+def _unconfined_launcher_reason(
+    cmd_parts: list[str], bypass_allowlist: bool
+) -> str | None:
+    base_cmd = cmd_parts[0]
+    if not bypass_allowlist or base_cmd not in cs.SHELL_LAUNCHER_COMMANDS:
+        return None
+
+    # Two launchers state what they will run and can be vetted even here;
+    # the rest take no inspectable argument and are blocked outright.
+    # `find` launches a program only via a mutating action, so read-only
+    # find stays usable under yolo -- the point of yolo is unattended work.
+    if base_cmd == cs.SHELL_CMD_XARGS:
+        confined = _xargs_launch_confined(cmd_parts, bypass_allowlist)
+    elif base_cmd == cs.SHELL_CMD_FIND:
+        confined = not _find_requires_approval(cmd_parts)
+    else:
+        confined = False
+
+    if not confined:
+        return (
+            f"{base_cmd} launches arbitrary programs; blocked when the "
+            "allowlist is bypassed"
+        )
+    return None
+
+
+def _xargs_launch_confined(cmd_parts: list[str], bypass_allowlist: bool) -> bool:
+    index = _xargs_launched_index(cmd_parts)
+    if index is None:
+        # Bare xargs defaults to echo and launches nothing of its own.
+        return True
+    if index < 0:
+        return False
+    # Vet the launched command as a segment in its own right.
+    # Allowlist membership alone is not safety: every launcher is
+    # itself allowlisted, so `xargs uv run python -c ...` would
+    # otherwise pass the check that blocks `uv run python -c ...`.
+    launched_parts = cmd_parts[index:]
+    nested_dangerous, _ = _is_dangerous_command(
+        launched_parts,
+        " ".join(launched_parts),
+        bypass_allowlist,
+    )
+    return (
+        launched_parts[0] in settings.SHELL_COMMAND_ALLOWLIST and not nested_dangerous
+    )
 
 
 def _validate_segment(
@@ -1319,35 +1461,10 @@ def _validate_segment(
             cmd=base_cmd, suggestion=suggestion, available=available_commands
         )
 
-    launched_index = _xargs_launched_index(cmd_parts)
-    if launched_index is not None:
-        if launched_index < 0:
-            return te.COMMAND_DANGEROUS_BLOCKED.format(
-                cmd=base_cmd,
-                reason=(
-                    "xargs carries a flag this validator cannot interpret, so "
-                    "the program it would launch cannot be checked"
-                ),
-            )
-        # Validate the launched command as a segment in its own right, in BOTH
-        # modes. Checking only its name lets a launcher through, since every
-        # launcher is itself allowlisted -- and nesting hides `git -c`, the
-        # unknown-flag sentinel, and a further xargs from every check below,
-        # because those all inspect cmd_parts[0] only (GHSA rounds 4 and 5).
-        # shlex.join, not " ".join: a bare join drops the quoting shlex.split
-        # removed, so a token containing whitespace is re-split into two by the
-        # nested parse. `git -c 'a b' -c core.pager=x log` then presents `b` as
-        # the first non-flag token, which stops _git_dash_c_exec_key's scan
-        # before the real -c behind it -- nesting weakening the decision, the
-        # very thing this recursion exists to prevent.
-        if nested := _validate_segment(
-            shlex.join(cmd_parts[launched_index:]),
-            available_commands,
-            bypass_allowlist,
-            _depth + 1,
-            project_root,
-        ):
-            return nested
+    if refusal := _validate_xargs_launch(
+        cmd_parts, available_commands, bypass_allowlist, _depth, project_root
+    ):
+        return refusal
 
     is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
     if is_dangerous:
@@ -1365,6 +1482,44 @@ def _validate_segment(
             return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 
     return None
+
+
+def _validate_xargs_launch(
+    cmd_parts: list[str],
+    available_commands: str,
+    bypass_allowlist: bool,
+    depth: int,
+    project_root: Path | None,
+) -> str | None:
+    launched_index = _xargs_launched_index(cmd_parts)
+    if launched_index is None:
+        return None
+    if launched_index < 0:
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=cmd_parts[0],
+            reason=(
+                "xargs carries a flag this validator cannot interpret, so "
+                "the program it would launch cannot be checked"
+            ),
+        )
+    # Validate the launched command as a segment in its own right, in BOTH
+    # modes. Checking only its name lets a launcher through, since every
+    # launcher is itself allowlisted -- and nesting hides `git -c`, the
+    # unknown-flag sentinel, and a further xargs from every check below,
+    # because those all inspect cmd_parts[0] only (GHSA rounds 4 and 5).
+    # shlex.join, not " ".join: a bare join drops the quoting shlex.split
+    # removed, so a token containing whitespace is re-split into two by the
+    # nested parse. `git -c 'a b' -c core.pager=x log` then presents `b` as
+    # the first non-flag token, which stops _git_dash_c_exec_key's scan
+    # before the real -c behind it -- nesting weakening the decision, the
+    # very thing this recursion exists to prevent.
+    return _validate_segment(
+        shlex.join(cmd_parts[launched_index:]),
+        available_commands,
+        bypass_allowlist,
+        depth + 1,
+        project_root,
+    )
 
 
 def _has_redirect_operators(parts: list[str]) -> bool:
@@ -1387,34 +1542,82 @@ def _requires_approval(command: str) -> bool:
     has_commands = False
     for group in groups:
         for segment in group.commands:
-            segment = segment.strip()
-            if not segment:
+            needs_approval = _segment_requires_approval(segment)
+            if needs_approval is None:
                 continue
-            try:
-                parts = shlex.split(segment)
-            except ValueError:
+            if needs_approval:
                 return True
-
-            if not parts:
-                continue
-
-            if _has_redirect_operators(parts):
-                return True
-
             has_commands = True
-            base_cmd = parts[0]
-            if base_cmd == "find" and _find_requires_approval(parts):
-                return True
-            if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
-                continue
-
-            if base_cmd == cs.SHELL_CMD_GIT and len(parts) > 1:
-                if parts[1] in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
-                    continue
-
-            return True
 
     return not has_commands
+
+
+def _segment_requires_approval(segment: str) -> bool | None:
+    """Whether one segment needs approval, or None when it holds no command."""
+    segment = segment.strip()
+    if not segment:
+        return None
+    try:
+        parts = shlex.split(segment)
+    except ValueError:
+        return True
+
+    if not parts:
+        return None
+
+    if _has_redirect_operators(parts):
+        return True
+
+    base_cmd = parts[0]
+    if base_cmd == "find" and _find_requires_approval(parts):
+        return True
+    if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
+        return False
+
+    if base_cmd == cs.SHELL_CMD_GIT and len(parts) > 1:
+        if parts[1] in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
+            return False
+
+    return True
+
+
+def _pipeline_env() -> dict[str, str]:
+    env = os.environ.copy()
+    git_bin = cs.SHELL_WINDOWS_GIT_USR_BIN
+    if sys.platform == "win32" and os.path.isdir(git_bin):
+        # First, not merely present: System32 usually precedes Git's usr\bin
+        # on PATH, and its find.exe and sort.exe answer to the POSIX names
+        # (issue #2359, the Windows runner).
+        wanted = os.path.normcase(os.path.normpath(git_bin))
+        others = [
+            entry
+            for entry in env["PATH"].split(os.pathsep)
+            if os.path.normcase(os.path.normpath(entry)) != wanted
+        ]
+        env["PATH"] = os.pathsep.join([git_bin, *others])
+    return env
+
+
+def _is_windows_namesake(cmd: str, executable: str) -> bool:
+    """Whether `executable` is Windows' own program of a POSIX tool's name.
+
+    Running it for the POSIX tool the agent meant fails in a way nothing
+    explains (`find pkg -name '*.py'` gave `File not found - *.py`), so the
+    executor names the clash instead (issue #2359). Read from os.environ,
+    whose lookups ignore case on Windows, unlike a copy of it.
+    """
+    system_root = os.environ.get(cs.SHELL_WINDOWS_SYSTEM_ROOT_ENV)
+    if cmd not in cs.SHELL_WINDOWS_NAMESAKES or not system_root:
+        return False
+    return Path(executable).resolve().is_relative_to(Path(system_root).resolve())
+
+
+def _group_should_run(operator: str | None, last_return_code: int) -> bool:
+    if operator == "&&":
+        return last_return_code == 0
+    if operator == "||":
+        return last_return_code != 0
+    return True
 
 
 class ShellCommander:
@@ -1431,17 +1634,52 @@ class ShellCommander:
         self.is_yolo = is_yolo or (lambda: False)
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
+    async def _spawn_segment(
+        self, segment: str, env: dict[str, str], pipe_stdin: bool
+    ) -> asyncio.subprocess.Process:
+        cmd_parts = shlex.split(segment)
+        resolved = shutil.which(cmd_parts[0], path=env["PATH"])
+        if resolved and _is_windows_namesake(cmd_parts[0], resolved):
+            raise RuntimeError(
+                te.COMMAND_WINDOWS_NAMESAKE.format(
+                    cmd=cmd_parts[0], executable=resolved, segment=segment
+                )
+            )
+        executable = resolved or cmd_parts[0]
+
+        try:
+            return await asyncio.create_subprocess_exec(
+                executable,
+                *cmd_parts[1:],
+                stdin=asyncio.subprocess.PIPE if pipe_stdin else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.project_root,
+                env=env,
+            )
+        except OSError as e:
+            # A bare str(OSError) hides WHICH segment failed to spawn, so
+            # an intermittent runner failure surfaces as an opaque -1
+            # (issue #902). Name the segment and the resolved executable.
+            template = te.COMMAND_SPAWN_FAILED
+            if resolved is None and isinstance(e, FileNotFoundError):
+                # Nothing on PATH answers to the name. The description
+                # steers the agent to `rg`, which many hosts lack, so say
+                # it is missing rather than that a spawn failed (#2359).
+                template = te.COMMAND_NOT_INSTALLED
+            raise RuntimeError(
+                template.format(
+                    cmd=cmd_parts[0], segment=segment, executable=executable, error=e
+                )
+            ) from e
+
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
         start_time = time.monotonic()
         input_data: bytes | None = None
         all_stderr: list[bytes] = []
         last_return_code = 0
 
-        env = os.environ.copy()
-        if sys.platform == "win32":
-            git_bin = r"C:\Program Files\Git\usr\bin"
-            if os.path.isdir(git_bin) and git_bin not in env["PATH"]:
-                env["PATH"] = f"{git_bin};{env['PATH']}"
+        env = _pipeline_env()
 
         for segment in segments:
             elapsed = time.monotonic() - start_time
@@ -1449,30 +1687,7 @@ class ShellCommander:
             if remaining_timeout <= 0:
                 raise TimeoutError
 
-            cmd_parts = shlex.split(segment)
-            executable = shutil.which(cmd_parts[0], path=env["PATH"])
-            if not executable:
-                executable = cmd_parts[0]
-
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    executable,
-                    *cmd_parts[1:],
-                    stdin=asyncio.subprocess.PIPE if input_data is not None else None,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=self.project_root,
-                    env=env,
-                )
-            except OSError as e:
-                # A bare str(OSError) hides WHICH segment failed to spawn, so
-                # an intermittent runner failure surfaces as an opaque -1
-                # (issue #902). Name the segment and the resolved executable.
-                raise RuntimeError(
-                    te.COMMAND_SPAWN_FAILED.format(
-                        segment=segment, executable=executable, error=e
-                    )
-                ) from e
+            proc = await self._spawn_segment(segment, env, input_data is not None)
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=input_data), timeout=remaining_timeout
@@ -1494,100 +1709,86 @@ class ShellCommander:
 
         return last_return_code, input_data or b"", b"".join(all_stderr)
 
+    def _validation_error(self, groups: list[CommandGroup]) -> str | None:
+        """The refusal for the first segment that fails a safety check."""
+        available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        bypass_allowlist = self.is_yolo()
+        for group in groups:
+            for segment in group.commands:
+                if err_msg := _validate_segment(
+                    segment,
+                    available_commands,
+                    bypass_allowlist=bypass_allowlist,
+                    project_root=self.project_root,
+                ):
+                    return err_msg
+                try:
+                    cmd_parts = shlex.split(segment)
+                except ValueError:
+                    continue
+                is_dangerous, reason = _is_dangerous_rm_path(
+                    cmd_parts, self.project_root
+                )
+                if is_dangerous:
+                    return te.COMMAND_DANGEROUS_BLOCKED.format(
+                        cmd=cmd_parts[0], reason=reason
+                    )
+        return None
+
+    async def _run_groups(self, groups: list[CommandGroup]) -> tuple[int, str, str]:
+        """Run the groups honouring `&&`/`||`; return code, stdout and stderr."""
+        all_stdout: list[str] = []
+        all_stderr: list[str] = []
+        last_return_code = 0
+
+        for group in groups:
+            if not _group_should_run(group.operator, last_return_code):
+                continue
+
+            return_code, stdout, stderr = await self._execute_pipeline(group.commands)
+            last_return_code = return_code
+
+            stdout_str = stdout.decode(cs.ENCODING_UTF8, errors="replace").strip()
+            stderr_str = stderr.decode(cs.ENCODING_UTF8, errors="replace").strip()
+
+            if stdout_str:
+                all_stdout.append(stdout_str)
+            if stderr_str:
+                all_stderr.append(stderr_str)
+
+        return last_return_code, "\n".join(all_stdout), "\n".join(all_stderr)
+
+    def refusal(self, command: str) -> str | None:
+        """Why the safety checks refuse `command`, or None when it may run.
+
+        The tool asks this BEFORE any approval prompt: a command the allowlist
+        or a danger check rejects is refused whatever the user answers, so
+        prompting for it only interrupts them (issue #2359, comment).
+        """
+        if subshell_pattern := _has_subshell(command):
+            return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern)
+        if pattern_reason := _check_pipeline_patterns(command):
+            return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
+        groups = _parse_command(command)
+        if not groups:
+            return te.COMMAND_EMPTY
+        return self._validation_error(groups)
+
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
-            if subshell_pattern := _has_subshell(command):
-                err_msg = te.COMMAND_SUBSHELL_NOT_ALLOWED.format(
-                    pattern=subshell_pattern
-                )
+            if err_msg := self.refusal(command):
                 logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
-
-            if pattern_reason := _check_pipeline_patterns(command):
-                err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=err_msg,
-                )
-
             groups = _parse_command(command)
-            if not groups:
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=te.COMMAND_EMPTY,
-                )
 
-            available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
-            bypass_allowlist = self.is_yolo()
-            for group in groups:
-                for segment in group.commands:
-                    if err_msg := _validate_segment(
-                        segment,
-                        available_commands,
-                        bypass_allowlist=bypass_allowlist,
-                        project_root=self.project_root,
-                    ):
-                        logger.error(err_msg)
-                        return ShellCommandResult(
-                            return_code=cs.SHELL_RETURN_CODE_ERROR,
-                            stdout="",
-                            stderr=err_msg,
-                        )
-                    try:
-                        cmd_parts = shlex.split(segment)
-                    except ValueError:
-                        continue
-                    is_dangerous, reason = _is_dangerous_rm_path(
-                        cmd_parts, self.project_root
-                    )
-                    if is_dangerous:
-                        err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
-                            cmd=cmd_parts[0], reason=reason
-                        )
-                        logger.error(err_msg)
-                        return ShellCommandResult(
-                            return_code=cs.SHELL_RETURN_CODE_ERROR,
-                            stdout="",
-                            stderr=err_msg,
-                        )
-
-            all_stdout: list[str] = []
-            all_stderr: list[str] = []
-            last_return_code = 0
-
-            for group in groups:
-                should_run = True
-                if group.operator == "&&":
-                    should_run = last_return_code == 0
-                elif group.operator == "||":
-                    should_run = last_return_code != 0
-
-                if not should_run:
-                    continue
-
-                return_code, stdout, stderr = await self._execute_pipeline(
-                    group.commands
-                )
-                last_return_code = return_code
-
-                stdout_str = stdout.decode(cs.ENCODING_UTF8, errors="replace").strip()
-                stderr_str = stderr.decode(cs.ENCODING_UTF8, errors="replace").strip()
-
-                if stdout_str:
-                    all_stdout.append(stdout_str)
-                if stderr_str:
-                    all_stderr.append(stderr_str)
-
-            final_stdout = "\n".join(all_stdout)
-            final_stderr = "\n".join(all_stderr)
+            last_return_code, final_stdout, final_stderr = await self._run_groups(
+                groups
+            )
 
             logger.info(ls.TOOL_SHELL_RETURN.format(code=last_return_code))
             if final_stdout:
@@ -1613,9 +1814,34 @@ class ShellCommander:
             )
 
 
+def _refusal_or_none(shell_commander: ShellCommander, command: str) -> str | None:
+    # A command that cannot even be parsed is the executor's to report, with
+    # the same message it always gave.
+    try:
+        return shell_commander.refusal(command)
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_confined_read(command: str, project_root: Path) -> bool:
+    """Whether every segment is a read the non-interactive rules allow.
+
+    Those rules already let an operator-less run read with `ls`, `rg`, `cat`,
+    `find`, `wc`, `head`, `tail`, `sort`, `uniq` and `cut`: no write forms,
+    redirects, symlink following, option-carried inputs, or paths outside
+    the project root. Such a read shows the agent nothing the file reader
+    tool does not, which never asks, and its output still feeds the egress
+    taint gate (issue #1128). Prompting for it in interactive mode only
+    interrupted the user and pushed the agent further from the graph
+    (issue #2359). Git stays behind approval: `-C` and `--git-dir` reach
+    outside the root in ways these rules do not model.
+    """
+    return _noninteractive_denial(command, project_root) is None
+
+
 def create_shell_command_tool(
     shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
-) -> Tool:
+) -> Tool[None]:
     """Build the `execute_shell_command` tool, recording stdout and stderr in
     `read_record` so they feed the egress taint gate (issue #1128)."""
 
@@ -1623,9 +1849,15 @@ def create_shell_command_tool(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
         """Run a shell command, recording both output streams."""
+        if err_msg := _refusal_or_none(shell_commander, command):
+            logger.error(err_msg)
+            return ShellCommandResult(
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+            )
         if (
             not shell_commander.is_yolo()
             and _requires_approval(command)
+            and not _is_confined_read(command, shell_commander.project_root)
             and not ctx.tool_call_approved
         ):
             raise ApprovalRequired(metadata={"command": command})
@@ -1640,7 +1872,7 @@ def create_shell_command_tool(
             read_record.record(result.stderr)
         return result
 
-    return Tool(
+    return Tool[None](
         function=run_shell_command,
         name=td.AgenticToolName.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,
@@ -1668,37 +1900,51 @@ def _noninteractive_write_form(parts: list[str]) -> bool:
     # output file -- counted through `--`, after which every argument is an
     # operand (CodeRabbit and Greptile reviews on PR #1388).
     if parts[0] == "sort":
-        for arg in parts[1:]:
-            if arg == "--":
-                break
-            if arg.startswith("--"):
-                if _long_option_matches(arg, "--output"):
-                    return True
-                continue
-            if not arg.startswith("-") or len(arg) < 2:
-                continue
-            # Walk the short-option cluster: `-ro` hides the output option
-            # behind other flags, and `-rT` hides the temp-dir option
-            # (Greptile review on PR #1388). A value-taking option (-k, -t,
-            # -S) consumes the rest of the cluster as its value, so an `o`
-            # after one is data, not a flag.
-            for ch in arg[1:]:
-                if ch in "oT":
-                    return True
-                if ch in "ktS":
-                    break
-        return False
+        return _sort_writes_output(parts)
     if parts[0] == "uniq":
-        operands = 0
-        operands_only = False
-        for arg in parts[1:]:
-            if not operands_only and arg == "--":
-                operands_only = True
-                continue
-            if operands_only or not arg.startswith("-"):
-                operands += 1
-        return operands > 1
+        return _uniq_writes_output(parts)
     return False
+
+
+def _sort_writes_output(parts: list[str]) -> bool:
+    for arg in parts[1:]:
+        if arg == "--":
+            break
+        if arg.startswith("--"):
+            if _long_option_matches(arg, "--output"):
+                return True
+            continue
+        if not arg.startswith("-") or len(arg) < 2:
+            continue
+        if _sort_cluster_writes(arg):
+            return True
+    return False
+
+
+def _sort_cluster_writes(arg: str) -> bool:
+    # Walk the short-option cluster: `-ro` hides the output option
+    # behind other flags, and `-rT` hides the temp-dir option
+    # (Greptile review on PR #1388). A value-taking option (-k, -t,
+    # -S) consumes the rest of the cluster as its value, so an `o`
+    # after one is data, not a flag.
+    for ch in arg[1:]:
+        if ch in "oT":
+            return True
+        if ch in "ktS":
+            break
+    return False
+
+
+def _uniq_writes_output(parts: list[str]) -> bool:
+    operands = 0
+    operands_only = False
+    for arg in parts[1:]:
+        if not operands_only and arg == "--":
+            operands_only = True
+            continue
+        if operands_only or not arg.startswith("-"):
+            operands += 1
+    return operands > 1
 
 
 _FOLLOW_LONG_FLAGS = ("--follow", "--dereference")
@@ -1751,6 +1997,131 @@ def _option_carries_file_input(parts: list[str]) -> bool:
     return False
 
 
+_CONFINED_READ_OPTION_KINDS: dict[str, dict[str, cs.ReadOptionKind]] = {
+    command: {
+        option: kind for kind, options in table.items() for option in options.split()
+    }
+    for command, table in cs.SHELL_CONFINED_READ_OPTIONS.items()
+}
+_FIND_NEWER_XY = re.compile(cs.SHELL_FIND_NEWER_XY)
+_VALUED_OPTION_KINDS = (cs.ReadOptionKind.VALUE, cs.ReadOptionKind.PATH)
+
+
+class _ReadOption(NamedTuple):
+    name: str
+    # None when SHELL_CONFINED_READ_OPTIONS does not list the option.
+    kind: cs.ReadOptionKind | None
+    value: str
+
+
+def _confined_option_denial(parts: list[str], root: Path) -> str | None:
+    """Why an option of this read is refused, or None when every one may run.
+
+    An allowlist (SHELL_CONFINED_READ_OPTIONS): an option it does not list is
+    refused, and a file-naming option's value is confined like an operand in
+    every spelling (`-f F`, `-fF`, `-nfF`, `--file F`, `--file=F`). Only the
+    `=` spelling was checked before, so `rg -f/outside/patterns inside.txt`
+    read an outside file without a prompt and quoted it in stderr (Greptile
+    security review on PR #2485).
+    """
+    kinds = _CONFINED_READ_OPTION_KINDS.get(parts[0], {})
+    scan = (
+        _parse_find_options if parts[0] == cs.SHELL_CMD_FIND else _parse_getopt_options
+    )
+    for option in scan(parts, kinds):
+        if option.kind is None:
+            return te.NONINTERACTIVE_UNKNOWN_OPTION.format(option=option.name)
+        if option.kind == cs.ReadOptionKind.PATH and _path_value_escapes(
+            option.value, root
+        ):
+            return te.NONINTERACTIVE_PATH_ESCAPES
+    return None
+
+
+def _parse_getopt_options(
+    parts: list[str], kinds: dict[str, cs.ReadOptionKind]
+) -> Iterator[_ReadOption]:
+    # GNU getopt and ripgrep alike: options may follow operands, `--` ends
+    # them, short options cluster (`-nf`), and a value-taking one takes the
+    # rest of its cluster or else the next argument.
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "--":
+            return
+        if arg == "-" or not arg.startswith("-"):
+            continue
+        if arg.startswith("--"):
+            yield _parse_long_option(parts[0], arg, kinds, rest)
+        elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
+            yield from _parse_short_option_cluster(arg, kinds, rest)
+
+
+def _parse_long_option(
+    command: str,
+    arg: str,
+    kinds: dict[str, cs.ReadOptionKind],
+    rest: Iterator[str],
+) -> _ReadOption:
+    name, attached, value = arg.partition("=")
+    kind = kinds.get(name)
+    if (
+        kind is None
+        and command in cs.SHELL_NEGATABLE_READS
+        and name.startswith(cs.SHELL_NEGATION_PREFIX)
+    ):
+        kind = cs.ReadOptionKind.FLAG
+    if kind == cs.ReadOptionKind.FLAG and attached:
+        # A switch given a value is a spelling these rules do not model.
+        kind = None
+    elif kind in _VALUED_OPTION_KINDS and not attached:
+        value = next(rest, "")
+    return _ReadOption(name, kind, value)
+
+
+def _parse_short_option_cluster(
+    arg: str, kinds: dict[str, cs.ReadOptionKind], rest: Iterator[str]
+) -> Iterator[_ReadOption]:
+    for offset in range(1, len(arg)):
+        name = f"-{arg[offset]}"
+        kind = kinds.get(name)
+        if kind in _VALUED_OPTION_KINDS:
+            yield _ReadOption(name, kind, arg[offset + 1 :] or next(rest, ""))
+            return
+        yield _ReadOption(name, kind, "")
+
+
+def _parse_find_options(
+    parts: list[str], kinds: dict[str, cs.ReadOptionKind]
+) -> Iterator[_ReadOption]:
+    # find's options are whole words, and each takes the next argument as
+    # its value even when that starts with a dash (`-size -10k`).
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "-" or not arg.startswith("-"):
+            continue
+        kind = kinds.get(arg)
+        if kind is None and _FIND_NEWER_XY.fullmatch(arg):
+            kind = cs.ReadOptionKind.PATH
+        value = next(rest, "") if kind in _VALUED_OPTION_KINDS else ""
+        yield _ReadOption(arg, kind, value)
+
+
+def _path_value_escapes(value: str, root: Path) -> bool:
+    # ripgrep drops an `=` between a short option and its value (`-f=F`
+    # reads F) where GNU getopt keeps it, so both readings are confined.
+    return any(
+        _path_escapes_root(candidate, root)
+        for candidate in (value, value.removeprefix("="))
+        if candidate
+    )
+
+
+def _path_escapes_root(path: str, root: Path) -> bool:
+    if _ESCAPING_PATH_ARG.search(path) or ".." in path.split("/"):
+        return True
+    return _escapes_root(root / path, root)
+
+
 def _noninteractive_denial(command: str, project_root: Path) -> str | None:
     # The denial reason for an operator-less run, or None when every segment
     # is a confined read: a read-only command in a non-writing form, no
@@ -1772,75 +2143,91 @@ def _noninteractive_denial(command: str, project_root: Path) -> str | None:
         for segment in group.commands:
             if not (segment := segment.strip()):
                 continue
-            try:
-                parts = shlex.split(segment)
-            except ValueError:
-                return te.COMMAND_INVALID_SYNTAX.format(segment=segment)
-            if not parts:
-                continue
-            if parts[0] not in read_only:
-                return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                    command=segment, reason=te.NONINTERACTIVE_NOT_READ_ONLY
-                )
-            if _noninteractive_write_form(parts):
-                return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                    command=segment, reason=te.NONINTERACTIVE_WRITE_FORM
-                )
-            if _follows_symlinks(parts):
-                return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                    command=segment, reason=te.NONINTERACTIVE_FOLLOW_SYMLINKS
-                )
-            if _option_carries_file_input(parts):
-                return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                    command=segment, reason=te.NONINTERACTIVE_OPTION_CARRIED_INPUT
-                )
-            if _has_redirect_operators(parts):
-                return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                    command=segment, reason=te.NONINTERACTIVE_REDIRECT
-                )
-            if parts[0] == "find" and _find_requires_approval(parts):
-                return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                    command=segment, reason=te.NONINTERACTIVE_FIND_MUTATES
-                )
-            operands_only = False
-            for arg in parts[1:]:
-                if not operands_only and arg == "--":
-                    # After `--` every argument is an operand, even one that
-                    # starts with `-` (CodeRabbit review on PR #1388).
-                    operands_only = True
-                    continue
-                if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):
-                    return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                        command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
-                    )
-                if not operands_only and arg.startswith("-"):
-                    # An `=`-attached option value (`--file=linked_pats`) is a
-                    # path the operand check below never sees, so it gets the
-                    # same traversal and symlink containment (Greptile review
-                    # on PR #1388).
-                    value = arg.partition("=")[2]
-                    if value and (
-                        ".." in value.split("/")
-                        or (
-                            os.path.lexists(candidate := root / value)
-                            and not candidate.resolve().is_relative_to(root)
-                        )
-                    ):
-                        return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                            command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
-                        )
-                    continue
-                candidate = root / arg
-                if os.path.lexists(
-                    candidate
-                ) and not candidate.resolve().is_relative_to(root):
-                    return te.COMMAND_NONINTERACTIVE_DENIED.format(
-                        command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
-                    )
+            denial = _noninteractive_segment_denial(segment, read_only, root)
+            if denial is not None:
+                return denial
     return None
 
 
-def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+def _noninteractive_segment_denial(
+    segment: str, read_only: frozenset[str], root: Path
+) -> str | None:
+    try:
+        parts = shlex.split(segment)
+    except ValueError:
+        return te.COMMAND_INVALID_SYNTAX.format(segment=segment)
+    if not parts:
+        return None
+    if parts[0] not in read_only:
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_NOT_READ_ONLY
+        )
+    if _noninteractive_write_form(parts):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_WRITE_FORM
+        )
+    if _follows_symlinks(parts):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_FOLLOW_SYMLINKS
+        )
+    if _option_carries_file_input(parts):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_OPTION_CARRIED_INPUT
+        )
+    if _has_redirect_operators(parts):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_REDIRECT
+        )
+    if parts[0] == "find" and _find_requires_approval(parts):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_FIND_MUTATES
+        )
+    if _noninteractive_path_escapes(parts, root):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+        )
+    if reason := _confined_option_denial(parts, root):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(command=segment, reason=reason)
+    return None
+
+
+def _noninteractive_path_escapes(parts: list[str], root: Path) -> bool:
+    operands_only = False
+    for arg in parts[1:]:
+        if not operands_only and arg == "--":
+            # After `--` every argument is an operand, even one that
+            # starts with `-` (CodeRabbit review on PR #1388).
+            operands_only = True
+            continue
+        if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):
+            return True
+        if not operands_only and arg.startswith("-"):
+            # An `=`-attached option value (`--file=linked_pats`) is a
+            # path the operand check below never sees, so it gets the
+            # same traversal and symlink containment (Greptile review
+            # on PR #1388).
+            if _option_value_escapes(arg, root):
+                return True
+            continue
+        if _escapes_root(root / arg, root):
+            return True
+    return False
+
+
+def _option_value_escapes(arg: str, root: Path) -> bool:
+    value = arg.partition("=")[2]
+    if not value:
+        return False
+    return ".." in value.split("/") or _escapes_root(root / value, root)
+
+
+def _escapes_root(candidate: Path, root: Path) -> bool:
+    return os.path.lexists(candidate) and not candidate.resolve().is_relative_to(root)
+
+
+def create_noninteractive_shell_command_tool(
+    shell_commander: ShellCommander,
+) -> Tool[None]:
     # For operator-less runs (benchmarks, batch jobs): a command that would
     # need interactive approval is DENIED instead of yolo-bypassed, and the
     # allowlist stays enforced, so a model-selected command can never mutate
@@ -1857,7 +2244,7 @@ def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) ->
             )
         return await shell_commander.execute(command)
 
-    return Tool(
+    return Tool[None](
         function=run_shell_command,
         name=td.AgenticToolName.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,

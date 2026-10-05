@@ -11,10 +11,16 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
+<!-- latest-release-end -->
+- **Vector Store Improvements**: Enhanced handling of Milvus collection sizes and embedding size checks to prevent errors.
+- **Provider Configuration**: Improved default endpoint handling for providers when configuration is not explicitly set.
+- **Project Scope**: Increased project-level scoping for exclusions, module deletions, and other operations.
+- **CLI Enhancements**: Added a Credits page to the documentation and improved the status reporting for CLI syncs.
+- **Dependency Updates**: Updated several dependencies including transformers, actions, and SonarSource tools.
 - **Code Generation**: Split Cypher response cleaning and AST-grep rule validation into smaller, more manageable helpers for improved clarity and maintainability.
 - **Scripting Improvements**: Resolved an issue where closed pull request run associations were incorrectly reported as missing, and improved error reporting in scripts to avoid over-claiming failing checks.
 - **Data Handling**: Enhanced the handling of CONTAINS_SECTION in the double's module subtree and refined snippet lookup to project the matched node's own path.
-<!-- latest-release-end -->
 - **Cross-Service Consumers**: `endpoints`, `endpoint_callers` and `remote_dependencies` MCP tools read the EXPOSES / RESOLVES_TO edges, and `cgr dead-code --no-endpoint-roots` reports an endpoint no indexed call site reaches.
 - **UTF-8 Handling**: Improved handling of invalid UTF-8 bytes prevents file definitions from being dropped.
 - **Neo4j Backend Support**: Added support for Neo4j as a graph backend through a pluggable dialect seam.

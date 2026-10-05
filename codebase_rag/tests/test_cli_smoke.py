@@ -62,12 +62,9 @@ def test_help_command_works() -> None:
 
 
 def test_import_cli_module() -> None:
-    try:
-        from codebase_rag import cli
+    from codebase_rag import cli
 
-        assert hasattr(cli, "app"), "CLI module missing app attribute"
-    except ImportError as e:
-        pytest.fail(f"Failed to import cli module: {e}")
+    assert hasattr(cli, "app"), "CLI module missing app attribute"
 
 
 def test_version_flag() -> None:

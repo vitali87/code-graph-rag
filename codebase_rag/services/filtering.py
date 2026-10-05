@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..capture import CaptureSelection
 from ..constants import NodeLabel, RelationshipType
-from ..types_defs import PropertyDict, PropertyValue, ResultRow
+from ..types_defs import PropertyDict, PropertyParams, PropertyValue, ResultRow
 from . import IngestorProtocol, QueryProtocol
 
 
@@ -42,12 +42,12 @@ class FilteringIngestor:
         return self._selection.rel_enabled(rel_type)
 
     def fetch_all(
-        self, query: str, params: PropertyDict | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]:
         if isinstance(self._inner, QueryProtocol):
             return self._inner.fetch_all(query, params)
         return []
 
-    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+    def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         if isinstance(self._inner, QueryProtocol):
             self._inner.execute_write(query, params)

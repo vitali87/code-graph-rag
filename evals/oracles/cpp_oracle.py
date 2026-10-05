@@ -83,7 +83,7 @@ def _ensure_libclang() -> None:
             try:
                 Config.set_library_file(candidate)
                 return
-            except Exception:
+            except Exception:  # noqa: S112
                 # libclang loading raises a wide, unpredictable range of errors
                 # (arch mismatch, format errors, an already-loaded library); on
                 # any, fall through to the next candidate, else the bundled

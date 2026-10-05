@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from google.protobuf.message import Message
 from loguru import logger
 
 import codec.schema_pb2 as pb
@@ -36,6 +37,7 @@ LABEL_TO_ONEOF_FIELD: dict[cs.NodeLabel, str] = {
     cs.NodeLabel.PARAMETER: cs.ONEOF_PARAMETER,
     cs.NodeLabel.FIELD: cs.ONEOF_FIELD,
     cs.NodeLabel.ENUM_VARIANT: cs.ONEOF_ENUM_VARIANT,
+    cs.NodeLabel.CONSTANT: cs.ONEOF_CONSTANT,
 }
 
 ONEOF_FIELD_TO_LABEL: dict[str, cs.NodeLabel] = {
@@ -54,6 +56,13 @@ _REL_TYPE_CACHE: dict = {}
 _MSG_CLASS_CACHE: dict[str, type | None] = {}
 
 
+def _message_class_for(label: str) -> type | None:
+    # The generated protobuf message class for a node label, memoised.
+    if label not in _MSG_CLASS_CACHE:
+        _MSG_CLASS_CACHE[label] = getattr(pb, label, None)
+    return _MSG_CLASS_CACHE[label]
+
+
 class ProtobufFileIngestor:
     __slots__ = (
         "output_dir",
@@ -61,6 +70,7 @@ class ProtobufFileIngestor:
         "_relationships",
         "split_index",
         "_repo_prefix",
+        "_unflushed",
     )
 
     def __init__(
@@ -86,6 +96,12 @@ class ProtobufFileIngestor:
             if repo_path
             else None
         )
+        # The updater flushes more than once per run and the artifact is
+        # rewritten whole each time, so a flush with nothing new since the
+        # last one rewrote the same bytes and reported the write again
+        # (issue #2401). True until the first write, so an empty index is
+        # still written.
+        self._unflushed = True
         logger.info(ls.PROTOBUF_INIT.format(path=self.output_dir))
 
     def _canonical_ref(self, value: str) -> str:
@@ -112,6 +128,7 @@ class ProtobufFileIngestor:
         return str(properties.get(cs.KEY_QUALIFIED_NAME, ""))
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        self._unflushed = True
         node_label = cs.NodeLabel(label)
         node_id = self._get_node_id(node_label, properties)
         if not node_id:
@@ -134,12 +151,7 @@ class ProtobufFileIngestor:
         if (existing := self._nodes.get(node_key)) is not None:
             payload_message = getattr(existing, payload_field_name)
         else:
-            if label in _MSG_CLASS_CACHE:
-                payload_message_class = _MSG_CLASS_CACHE[label]
-            else:
-                payload_message_class = getattr(pb, label, None)
-                _MSG_CLASS_CACHE[label] = payload_message_class
-            if not payload_message_class:
+            if not _message_class_for(label):
                 logger.warning(ls.PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
                 return
             node = pb.Node()
@@ -147,21 +159,24 @@ class ProtobufFileIngestor:
             self._nodes[node_key] = node
 
         for key, value in properties.items():
-            if hasattr(payload_message, key):
-                if value is None:
-                    continue
-                if key == cs.KEY_PATH and isinstance(value, str):
-                    # The payload path must match the node's canonical id:
-                    # writers already emit repo-relative paths here, but the
-                    # export enforces it so an absolute writer path can never
-                    # make the artifact checkout-specific.
-                    value = self._canonical_ref(value)
-                destination_attribute = getattr(payload_message, key)
-                if hasattr(destination_attribute, "extend") and isinstance(value, list):
-                    del destination_attribute[:]
-                    destination_attribute.extend(value)
-                else:
-                    setattr(payload_message, key, value)
+            if value is not None and hasattr(payload_message, key):
+                self._assign_payload_field(payload_message, key, value)
+
+    def _assign_payload_field(
+        self, payload_message: Message, key: str, value: PropertyValue
+    ) -> None:
+        if key == cs.KEY_PATH and isinstance(value, str):
+            # The payload path must match the node's canonical id: writers
+            # already emit repo-relative paths here, but the export enforces it
+            # so an absolute writer path can never make the artifact
+            # checkout-specific.
+            value = self._canonical_ref(value)
+        destination_attribute = getattr(payload_message, key)
+        if hasattr(destination_attribute, "extend") and isinstance(value, list):
+            del destination_attribute[:]
+            destination_attribute.extend(value)
+        else:
+            setattr(payload_message, key, value)
 
     def ensure_relationship_batch(
         self,
@@ -170,6 +185,7 @@ class ProtobufFileIngestor:
         to_spec: tuple[str, str, PropertyValue],
         properties: PropertyDict | None = None,
     ) -> None:
+        self._unflushed = True
         if rel_type in _REL_TYPE_CACHE:
             rel_type_enum = _REL_TYPE_CACHE[rel_type]
         else:
@@ -281,6 +297,9 @@ class ProtobufFileIngestor:
         )
 
     def flush_all(self) -> None:
+        if not self._unflushed:
+            logger.debug(ls.PROTOBUF_FLUSH_UNCHANGED.format(path=self.output_dir))
+            return
         logger.info(ls.PROTOBUF_FLUSHING.format(path=self.output_dir))
-
-        return self._flush_split() if self.split_index else self._flush_joint()
+        self._flush_split() if self.split_index else self._flush_joint()
+        self._unflushed = False

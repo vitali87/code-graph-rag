@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import posixpath
 from pathlib import Path, PurePosixPath
@@ -11,6 +10,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import JsonValue
+from ...utils.json_io import loads_json
 
 
 class _ManifestTargets(NamedTuple):
@@ -39,7 +39,7 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
         package_dir = Path(directory)
         manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
         try:
-            manifest_data = json.loads(manifest.read_text(encoding=cs.ENCODING_UTF8))
+            manifest_data = loads_json(manifest.read_text(encoding=cs.ENCODING_UTF8))
         except (OSError, ValueError):
             continue
         if not isinstance(manifest_data, dict):
@@ -109,7 +109,7 @@ def _package_module(
 
 def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
     try:
-        data = json.loads(
+        data = loads_json(
             (package_dir / cs.DEP_FILE_PACKAGE_JSON).read_text(
                 encoding=cs.ENCODING_UTF8
             )

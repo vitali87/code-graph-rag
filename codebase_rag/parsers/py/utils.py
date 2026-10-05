@@ -1,12 +1,68 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from ...constants import SEPARATOR_DOT
-from ...types_defs import FunctionRegistryTrieProtocol
+from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..utils import follow_reexports
 
 if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
+
+
+def resolve_dotted_class(
+    path: str,
+    module_qn: str,
+    import_processor: ImportProcessor,
+    function_registry: FunctionRegistryTrieProtocol,
+    own_class_rebinds: bool = False,
+) -> str | None:
+    """The indexed class a dotted path names from `module_qn`, else None.
+
+    `pkg.Client`, `pkg._client.Client` and `Outer.Inner` start with a name
+    the module binds (an import, or a class of its own); the rest is looked
+    up under what that name refers to, following the package's re-exports
+    (`pkg/__init__.py`'s `from ._client import Client`). A path into a module
+    outside the project (`pd.DataFrame`) names no indexed class.
+    `own_class_rebinds`: the module's own class of that name is defined
+    after the import and rebinds it, so only the class is looked in.
+    """
+    head, _, rest = path.partition(SEPARATOR_DOT)
+    if not rest:
+        return None
+    import_mapping = import_processor.import_mapping
+    own_class = f"{module_qn}{SEPARATOR_DOT}{head}"
+    bases = (
+        [own_class]
+        if own_class_rebinds
+        else _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
+    )
+    for base in bases:
+        qn = follow_reexports(
+            f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
+        )
+        if function_registry.get(qn) == NodeType.CLASS:
+            return qn
+    return None
+
+
+def _dotted_head_bases(
+    head: str, module_qn: str, import_map: dict[str, str]
+) -> Iterator[str]:
+    """What the first name of a dotted path can refer to, most specific first.
+
+    `import pkg._client` binds `pkg` but is recorded as `pkg ->
+    <project>.pkg._client`, so besides the recorded target the package
+    itself is tried: the target cut after its `pkg` segment.
+    """
+    if target := import_map.get(head):
+        yield target
+        parts = target.split(SEPARATOR_DOT)
+        for end in range(len(parts) - 1, 0, -1):
+            if parts[end - 1] == head:
+                yield SEPARATOR_DOT.join(parts[:end])
+    yield f"{module_qn}{SEPARATOR_DOT}{head}"
 
 
 def resolve_class_name(
@@ -15,9 +71,15 @@ def resolve_class_name(
     import_processor: ImportProcessor,
     function_registry: FunctionRegistryTrieProtocol,
     require_registered: bool = False,
+    kinds: frozenset[NodeType] | None = None,
 ) -> str | None:
     """The class qn `class_name` names from `module_qn`: import map first, then
-    the module and its enclosing packages, then the registry's name search."""
+    the module and its enclosing packages, then the registry's name search.
+
+    `kinds` limits the two registry tiers to those node kinds. The name
+    search matches any registered node whose last segment is the name, so
+    without it a same-named method or property answers for a type.
+    """
     # `is not None`, not truthiness: an import-map entry can be the empty
     # string (a relative JS specifier that climbs to the root), and the
     # original returned it as the answer rather than falling through.
@@ -27,8 +89,18 @@ def resolve_class_name(
     if mapped is not None:
         return mapped
     return _class_in_module_or_enclosing_package(
-        class_name, module_qn, function_registry
-    ) or _class_by_simple_name(class_name, module_qn, function_registry)
+        class_name, module_qn, function_registry, kinds
+    ) or _class_by_simple_name(class_name, module_qn, function_registry, kinds)
+
+
+def _is_wanted_kind(
+    qualified_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    kinds: frozenset[NodeType] | None,
+) -> bool:
+    if kinds is None:
+        return qualified_name in function_registry
+    return function_registry.get(qualified_name) in kinds
 
 
 def _import_mapped_class(
@@ -54,24 +126,34 @@ def _import_mapped_class(
 
 
 def _class_in_module_or_enclosing_package(
-    class_name: str, module_qn: str, function_registry: FunctionRegistryTrieProtocol
+    class_name: str,
+    module_qn: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    kinds: frozenset[NodeType] | None = None,
 ) -> str | None:
     same_module_qn = f"{module_qn}.{class_name}"
-    if same_module_qn in function_registry:
+    if _is_wanted_kind(same_module_qn, function_registry, kinds):
         return same_module_qn
     module_parts = module_qn.split(SEPARATOR_DOT)
     for i in range(len(module_parts) - 1, 0, -1):
         parent_module = SEPARATOR_DOT.join(module_parts[:i])
         potential_qn = f"{parent_module}.{class_name}"
-        if potential_qn in function_registry:
+        if _is_wanted_kind(potential_qn, function_registry, kinds):
             return potential_qn
     return None
 
 
 def _class_by_simple_name(
-    class_name: str, module_qn: str, function_registry: FunctionRegistryTrieProtocol
+    class_name: str,
+    module_qn: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    kinds: frozenset[NodeType] | None = None,
 ) -> str | None:
-    matches = function_registry.find_ending_with(class_name)
+    matches = [
+        match
+        for match in function_registry.find_ending_with(class_name)
+        if kinds is None or function_registry.get(match) in kinds
+    ]
     # Among same-named candidates in different files (gson's per-factory nested
     # `Adapter`), prefer one nested in the CURRENT module: a sibling/enclosing
     # nested class shadows a same-named class elsewhere, so `class Sub extends
@@ -124,7 +206,7 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         try:
             module = importlib.import_module(module_path)
             base = getattr(module, class_name, None)
-        except Exception:
+        except Exception:  # noqa: S112
             # Broad on purpose: importing a stdlib module executes its
             # module-level code, which can raise arbitrary platform-specific
             # errors; the parser must degrade to "no external base info"

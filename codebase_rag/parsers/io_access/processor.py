@@ -81,6 +81,36 @@ _LEAN_ASSIGNMENT_TYPES = frozenset(
 )
 
 
+def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
+    # The sub-targets a non-identifier binding pattern delegates to.
+    node_type = node.type
+    if node_type == cs.TS_PAIR_PATTERN:
+        # `{ key: local }` binds the VALUE (local), not the property key.
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        return [value] if value is not None else []
+    if node_type in (cs.TS_GO_PARAMETER_DECLARATION, cs.TS_FORMAL_PARAMETER):
+        # Go `func f(os Config)` / Java `void f(Object System)`: the `name`
+        # field(s) are the bound locals.
+        return list(node.children_by_field_name(cs.TS_FIELD_NAME))
+    if node_type == cs.TS_SPREAD_PARAMETER:
+        # Java varargs `void f(Object... System)`: the type is a sibling and the
+        # bound name lives in a `variable_declarator` child (its `name` field).
+        return [
+            name
+            for child in node.named_children
+            if child.type == descriptor.declarator_type
+            for name in child.children_by_field_name(cs.TS_FIELD_NAME)
+        ]
+    if node_type in (
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_GO_EXPRESSION_LIST,
+    ):
+        return list(node.named_children)
+    return []
+
+
 class _LeanHandles(NamedTuple):
     # Per-caller handle state for the lean non-Python walk (issue #714): the
     # per-language constructor/wrapper/method tables plus the mutable
@@ -1147,37 +1177,15 @@ class IOAccessProcessor:
     def _pattern_names(
         self, node: Node, descriptor: LanguageDescriptor, out: set[str]
     ) -> None:
-        node_type = node.type
-        if node_type in (
+        if node.type in (
             descriptor.identifier_type,
             cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
         ):
             if node.text:
                 out.add(node.text.decode(cs.ENCODING_UTF8))
-        elif node_type == cs.TS_PAIR_PATTERN:
-            # `{ key: local }` binds the VALUE (local), not the property key.
-            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
-                self._pattern_names(value, descriptor, out)
-        elif node_type in (cs.TS_GO_PARAMETER_DECLARATION, cs.TS_FORMAL_PARAMETER):
-            # Go `func f(os Config)` / Java `void f(Object System)`: the `name`
-            # field(s) are the bound locals.
-            for child in node.children_by_field_name(cs.TS_FIELD_NAME):
-                self._pattern_names(child, descriptor, out)
-        elif node_type == cs.TS_SPREAD_PARAMETER:
-            # Java varargs `void f(Object... System)`: the type is a sibling and the
-            # bound name lives in a `variable_declarator` child (its `name` field).
-            for child in node.named_children:
-                if child.type == descriptor.declarator_type:
-                    for name in child.children_by_field_name(cs.TS_FIELD_NAME):
-                        self._pattern_names(name, descriptor, out)
-        elif node_type in (
-            cs.TS_OBJECT_PATTERN,
-            cs.TS_ARRAY_PATTERN,
-            cs.TS_REST_PATTERN,
-            cs.TS_GO_EXPRESSION_LIST,
-        ):
-            for child in node.named_children:
-                self._pattern_names(child, descriptor, out)
+            return
+        for child in _pattern_children(node, descriptor):
+            self._pattern_names(child, descriptor, out)
 
     def _param_names(
         self, caller_node: Node, descriptor: LanguageDescriptor
@@ -2218,10 +2226,10 @@ class IOAccessProcessor:
             )
 
     @staticmethod
-    def _rels(direction: IODirection) -> tuple[cs.RelationshipType, ...]:
+    def _rels(direction: IODirection) -> list[cs.RelationshipType]:
         if direction == IODirection.READ_WRITE:
-            return (
+            return [
                 cs.RelationshipType.READS_FROM,
                 cs.RelationshipType.WRITES_TO,
-            )
-        return (_DIRECTION_REL[direction],)
+            ]
+        return [_DIRECTION_REL[direction]]

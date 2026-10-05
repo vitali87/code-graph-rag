@@ -43,6 +43,8 @@ from .parameter_nodes import (
     csharp_call_shape,
     emit_declared_parameters,
 )
+from .php import utils as php_utils
+from .positional_params import declared_positional_params
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -315,188 +317,237 @@ class FunctionIngestMixin:
         for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
             if has_classes and self._is_method(func_node, lang_config):
                 continue
-
-            # A C# local function whose name is a reserved keyword is a
-            # parse-recovery artifact: a `#if` splitting an if/else chain
-            # mid-method makes tree-sitter parse the trailing `else if` as a
-            # local_function_statement named `if`. Drop it rather than emit a
-            # bogus (or anonymised) Function node.
-            if (
-                language == cs.SupportedLanguage.CSHARP
-                and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
-            ):
-                name_node = func_node.child_by_field_name(cs.FIELD_NAME)
-                if (
-                    name_node
-                    and name_node.text
-                    and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
-                ):
-                    continue
-
-            # A C# member declaration (method/property/operator/ctor) that a
-            # `#if`-truncated class node detached into the namespace's
-            # declaration_list reaches here with no class ancestor. It is a real
-            # class member by grammar invariant, so recover its class and emit a
-            # Method rather than mislabelling it a module Function.
-            if (
-                language == cs.SupportedLanguage.CSHARP
-                and self._recover_csharp_orphan_method(
-                    func_node, module_qn, lang_config, lang_queries, file_path
-                )
-            ):
-                continue
-
-            if language == cs.SupportedLanguage.CPP:
-                if self._handle_cpp_out_of_class_method(
-                    func_node, module_qn, lang_queries
-                ):
-                    continue
-                # The query captures a templated function twice: the
-                # template_declaration wrapper AND its inner definition.
-                # The wrapper is the canonical node (mirroring the class
-                # rule); registering the inner too mints a `qn@line`
-                # duplicate that call attribution can bind to (issue #652).
-                if (
-                    func_node.type == cs.CppNodeType.FUNCTION_DEFINITION
-                    and func_node.parent is not None
-                    and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
-                ):
-                    continue
-                # A macro invocation parsed as a type-less definition
-                # (`FMT_CATCH(...) {}`) must not mint a phantom Function, and a
-                # recovery-orphaned ctor of the same shape must register as a
-                # METHOD of its class, not a module Function that steals the
-                # class's qn. Same-file classes register after this pass, so EVERY
-                # artifact-shaped node (named-param or not) is deferred; the flush
-                # applies the class-registry tiebreak and named-param evidence.
-                if cpp_utils.is_recovery_artifact_shape(func_node):
-                    self._deferred_cpp_artifacts.append(
-                        _DeferredCppArtifact(
-                            func_node, module_qn, lang_config, lang_queries
-                        )
-                    )
-                    continue
-                # A most-vexing-parse misparse (`FlutterWindow window(project);`
-                # inside a function body, issue #871) is a stack-object
-                # construction, not a function declaration: minting it would
-                # create a phantom Function the call pass can bind to (and
-                # deferring it as a prototype would resurrect it at flush).
-                # The construction edges are emitted by the per-caller
-                # declaration pass instead.
-                if cpp_utils.is_cpp_vexing_parse_construction(func_node):
-                    continue
-                # A free-function PROTOTYPE (a declaration with a
-                # function_declarator) may duplicate a bodied definition in
-                # another file; hold it back so resolve_deferred_cpp_prototypes
-                # can drop it when the definition registers (issue #893). A
-                # prototype with INTERNAL linkage (`static`, or inside an
-                # anonymous namespace) is TU-local, so no cross-module
-                # definition can be its definition: it registers inline as
-                # before.
-                if (
-                    func_node.type == cs.CppNodeType.DECLARATION
-                    and any(
-                        child.type == cs.CppNodeType.FUNCTION_DECLARATOR
-                        for child in func_node.children
-                    )
-                    and not cpp_utils.cpp_declaration_has_internal_linkage(func_node)
-                ):
-                    self._deferred_cpp_prototypes.append(
-                        _DeferredCppPrototype(
-                            func_node, module_qn, lang_config, lang_queries
-                        )
-                    )
-                    continue
-
-            if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
-                func_node, module_qn, lang_queries
+            if self._skip_language_function(
+                func_node, module_qn, language, lang_config, lang_queries, file_path
             ):
                 continue
 
             resolution = self._resolve_function_identity(
                 func_node, module_qn, language, lang_config, file_path
             )
-            if not resolution:
-                continue
-
-            # A nameless JS/TS function expression may be one a NAMED pass
-            # (object literal, export, assignment, prototype) registers under its
-            # real name; those passes run after this one, so hold the anonymous
-            # registration back and flush only unclaimed spans (each eager
-            # registration was a duplicate node).
-            if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
-                self._deferred_js_anonymous.append(
-                    _DeferredRegistration(
-                        func_node,
-                        resolution,
-                        module_qn,
-                        language,
-                        lang_config,
-                        lang_queries,
-                    )
-                )
-                continue
-
-            # A Rust item written inside a function body, a closure or a
-            # const/static initializer is reachable by path from nowhere, yet it
-            # registers in the qn space of the module or impl target that
-            # encloses it. Registering it here would let it take the natural qn
-            # of the method or module item of that name, which does own it and
-            # whose callers then resolve to this one; hold it back until those
-            # have claimed their names (issue #1037).
-            if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
-                func_node
+            if not resolution or self._defer_function_registration(
+                func_node, resolution, module_qn, language, lang_config, lang_queries
             ):
-                self._deferred_rust_body_local.append(
-                    _DeferredRegistration(
-                        func_node,
-                        resolution,
-                        module_qn,
-                        language,
-                        lang_config,
-                        lang_queries,
-                    )
-                )
                 continue
 
             self._register_function(
                 func_node, resolution, module_qn, language, lang_config, lang_queries
             )
+            self._record_free_function_return_type(
+                func_node, language, resolution.qualified_name
+            )
 
-            # Record a free C++ function's return type so a chained call off a
-            # factory (`make().run()`) can type the receiver and resolve the next
-            # hop. Runs here, not in the CPP resolver, because the unified-FQN path
-            # wins for C++ and would otherwise bypass the recording.
-            if language == cs.SupportedLanguage.CPP and (
-                return_type := cpp_utils.extract_return_type_name(func_node)
-            ):
-                self.method_return_types[resolution.qualified_name] = return_type
+    def _skip_language_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        match language:
+            case cs.SupportedLanguage.CSHARP:
+                return self._skip_csharp_function(
+                    func_node, module_qn, lang_config, lang_queries, file_path
+                )
+            case cs.SupportedLanguage.CPP:
+                return self._skip_cpp_function(
+                    func_node, module_qn, lang_config, lang_queries
+                )
+            case cs.SupportedLanguage.GO:
+                return self._defer_go_receiver_method(func_node, module_qn)
+            case _:
+                return False
 
-            # Same for a free Rust fn (impl methods are recorded in class
-            # ingest): a call-bound local (`let s = make()`) types from
-            # this map. No impl target here, so a `Self` return stays None.
-            if language == cs.SupportedLanguage.RUST and (
-                return_type := rs_utils.extract_return_type_name(func_node, None)
+    def _skip_csharp_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        # A C# local function whose name is a reserved keyword is a
+        # parse-recovery artifact: a `#if` splitting an if/else chain
+        # mid-method makes tree-sitter parse the trailing `else if` as a
+        # local_function_statement named `if`. Drop it rather than emit a
+        # bogus (or anonymised) Function node.
+        if func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT:
+            name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+            if (
+                name_node
+                and name_node.text
+                and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
             ):
-                self.method_return_types[resolution.qualified_name] = return_type
+                return True
 
-            # Same for a Dart free function: a call-bound local
-            # (`var g = makeIt()` via the enrichment pass) types from
-            # this map.
-            if language == cs.SupportedLanguage.DART and (
-                return_type := dart_return_type_name(func_node)
-            ):
-                self.method_return_types[resolution.qualified_name] = return_type
+        # A C# member declaration (method/property/operator/ctor) that a
+        # `#if`-truncated class node detached into the namespace's
+        # declaration_list reaches here with no class ancestor. It is a real
+        # class member by grammar invariant, so recover its class and emit a
+        # Method rather than mislabelling it a module Function.
+        return self._recover_csharp_orphan_method(
+            func_node, module_qn, lang_config, lang_queries, file_path
+        )
 
-            # Go free functions record their FIRST return type in a
-            # dedicated map so `cm, err := getManager()` types cm under the
-            # (T, error) idiom (viper's false Get->Get self edge). Not
-            # method_return_types: chaining must keep skipping uncallable
-            # multi-return callees.
-            if language == cs.SupportedLanguage.GO and (
-                return_type := go_utils.extract_first_return_type_name(func_node)
-            ):
-                self.go_function_return_types[resolution.qualified_name] = return_type
+    def _skip_cpp_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+    ) -> bool:
+        if self._handle_cpp_out_of_class_method(func_node, module_qn, lang_queries):
+            return True
+        # The query captures a templated function twice: the
+        # template_declaration wrapper AND its inner definition.
+        # The wrapper is the canonical node (mirroring the class
+        # rule); registering the inner too mints a `qn@line`
+        # duplicate that call attribution can bind to (issue #652).
+        if (
+            func_node.type == cs.CppNodeType.FUNCTION_DEFINITION
+            and func_node.parent is not None
+            and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
+        ):
+            return True
+        # A macro invocation parsed as a type-less definition
+        # (`FMT_CATCH(...) {}`) must not mint a phantom Function, and a
+        # recovery-orphaned ctor of the same shape must register as a
+        # METHOD of its class, not a module Function that steals the
+        # class's qn. Same-file classes register after this pass, so EVERY
+        # artifact-shaped node (named-param or not) is deferred; the flush
+        # applies the class-registry tiebreak and named-param evidence.
+        if cpp_utils.is_recovery_artifact_shape(func_node):
+            self._deferred_cpp_artifacts.append(
+                _DeferredCppArtifact(func_node, module_qn, lang_config, lang_queries)
+            )
+            return True
+        # A most-vexing-parse misparse (`FlutterWindow window(project);`
+        # inside a function body, issue #871) is a stack-object
+        # construction, not a function declaration: minting it would
+        # create a phantom Function the call pass can bind to (and
+        # deferring it as a prototype would resurrect it at flush).
+        # The construction edges are emitted by the per-caller
+        # declaration pass instead.
+        if cpp_utils.is_cpp_vexing_parse_construction(func_node):
+            return True
+        # A free-function PROTOTYPE (a declaration with a
+        # function_declarator) may duplicate a bodied definition in
+        # another file; hold it back so resolve_deferred_cpp_prototypes
+        # can drop it when the definition registers (issue #893). A
+        # prototype with INTERNAL linkage (`static`, or inside an
+        # anonymous namespace) is TU-local, so no cross-module
+        # definition can be its definition: it registers inline as
+        # before.
+        if (
+            func_node.type == cs.CppNodeType.DECLARATION
+            and any(
+                child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+                for child in func_node.children
+            )
+            and not cpp_utils.cpp_declaration_has_internal_linkage(func_node)
+        ):
+            self._deferred_cpp_prototypes.append(
+                _DeferredCppPrototype(func_node, module_qn, lang_config, lang_queries)
+            )
+            return True
+        return False
+
+    def _defer_function_registration(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+    ) -> bool:
+        # A nameless JS/TS function expression may be one a NAMED pass
+        # (object literal, export, assignment, prototype) registers under its
+        # real name; those passes run after this one, so hold the anonymous
+        # registration back and flush only unclaimed spans (each eager
+        # registration was a duplicate node).
+        if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
+            self._deferred_js_anonymous.append(
+                _DeferredRegistration(
+                    func_node,
+                    resolution,
+                    module_qn,
+                    language,
+                    lang_config,
+                    lang_queries,
+                )
+            )
+            return True
+
+        # A Rust item written inside a function body, a closure or a
+        # const/static initializer is reachable by path from nowhere, yet it
+        # registers in the qn space of the module or impl target that
+        # encloses it. Registering it here would let it take the natural qn
+        # of the method or module item of that name, which does own it and
+        # whose callers then resolve to this one; hold it back until those
+        # have claimed their names (issue #1037).
+        if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(func_node):
+            self._deferred_rust_body_local.append(
+                _DeferredRegistration(
+                    func_node,
+                    resolution,
+                    module_qn,
+                    language,
+                    lang_config,
+                    lang_queries,
+                )
+            )
+            return True
+        return False
+
+    def _record_free_function_return_type(
+        self, func_node: Node, language: cs.SupportedLanguage, qualified_name: str
+    ) -> None:
+        # Record a free C++ function's return type so a chained call off a
+        # factory (`make().run()`) can type the receiver and resolve the next
+        # hop. Runs here, not in the CPP resolver, because the unified-FQN path
+        # wins for C++ and would otherwise bypass the recording.
+        if language == cs.SupportedLanguage.CPP and (
+            return_type := cpp_utils.extract_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
+        # Same for a free Rust fn (impl methods are recorded in class
+        # ingest): a call-bound local (`let s = make()`) types from
+        # this map. No impl target here, so a `Self` return stays None.
+        if language == cs.SupportedLanguage.RUST and (
+            return_type := rs_utils.extract_return_type_name(func_node, None)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
+        # Same for a Dart free function: a call-bound local
+        # (`var g = makeIt()` via the enrichment pass) types from
+        # this map.
+        if language == cs.SupportedLanguage.DART and (
+            return_type := dart_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
+        # Go free functions record their FIRST return type in a
+        # dedicated map so `cm, err := getManager()` types cm under the
+        # (T, error) idiom (viper's false Get->Get self edge). Not
+        # method_return_types: chaining must keep skipping uncallable
+        # multi-return callees.
+        if language == cs.SupportedLanguage.GO and (
+            return_type := go_utils.extract_first_return_type_name(func_node)
+        ):
+            self.go_function_return_types[qualified_name] = return_type
+
+        # Its SINGLE result does go there, as a Go method's does, so that
+        # `NewBox().Bump()` types its receiver the way `c.Root().Run()`
+        # does (issue #2467). Same extractor as the methods: a multi-value
+        # or container result records nothing, so the skip above holds.
+        if language == cs.SupportedLanguage.GO and (
+            return_type := go_utils.extract_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # A span is claimed when a pass recorded THIS function node's location;
@@ -718,15 +769,9 @@ class FunctionIngestMixin:
         namespace_path = cs.SEPARATOR_DOT.join(
             cpp_utils.extract_namespace_path(func_node)
         )
-        candidates = [class_name]
-        if namespace_path:
-            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{class_name}")
-        resolved = False
-        class_qn = ""
-        for candidate in candidates:
-            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
-            if resolved:
-                break
+        class_qn, resolved = self._resolve_cpp_scoped_class(
+            class_name, namespace_path, module_qn
+        )
         file_path = self.module_qn_to_file_path.get(module_qn)
         # The out-of-class DEFINITION carries the return type; record it here (keyed
         # by the method qn) so a factory chain `parser(1).parse()` can type the
@@ -736,101 +781,144 @@ class FunctionIngestMixin:
         return_type = cpp_utils.extract_return_type_name(func_node)
 
         if resolved:
-            ingest_method(
-                method_node=func_node,
-                container_qn=class_qn,
-                container_type=cs.NodeLabel.CLASS,
-                ingestor=self.ingestor,
-                function_registry=self.function_registry,
-                simple_name_lookup=self.simple_name_lookup,
-                get_docstring_func=self._get_docstring,
-                language=cs.SupportedLanguage.CPP,
-                lang_queries=lang_queries,
-                file_path=file_path,
-                repo_path=self.repo_path,
+            self._ingest_resolved_cpp_out_of_class(
+                func_node, module_qn, class_qn, file_path, return_type, lang_queries
             )
-            if bound_name := cpp_utils.extract_function_name(func_node):
-                # Record the binding so Pass-3 call attribution reuses this exact
-                # decision rather than re-resolve and diverge.
-                bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
-                self.cpp_out_of_class_methods[
-                    (module_qn, func_node.start_point[0] + 1)
-                ] = (bound_qn, class_qn)
-                self.function_locations[function_span_key(module_qn, func_node)] = (
-                    FunctionLocation(
-                        label=cs.NodeLabel.METHOD.value,
-                        qualified_name=bound_qn,
-                        container_qn=class_qn,
-                    )
-                )
-                record_cpp_definition_span(
-                    self.cpp_definition_spans,
-                    cs.SupportedLanguage.CPP,
-                    file_path,
-                    self.repo_path,
-                    func_node,
-                    cs.NodeLabel.METHOD.value,
-                    bound_qn,
-                )
-            if return_type and (
-                method_name := cpp_utils.extract_function_name(func_node)
-            ):
-                self.method_return_types[
-                    f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-                ] = return_type
         else:
-            method_name = cpp_utils.extract_function_name(func_node)
-            if not method_name:
-                return True
-            decorators = []
-            modifiers = []
-            if lang_queries:
-                modifiers, decorators = extract_modifiers_and_decorators(
-                    func_node, lang_queries
+            self._defer_cpp_out_of_class(
+                func_node,
+                module_qn,
+                class_name,
+                class_qn,
+                file_path,
+                return_type,
+                lang_queries,
+            )
+        return True
+
+    def _resolve_cpp_scoped_class(
+        self, class_name: str, namespace_path: str, module_qn: str
+    ) -> tuple[str, bool]:
+        candidates = [class_name]
+        if namespace_path:
+            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{class_name}")
+        resolved = False
+        class_qn = ""
+        for candidate in candidates:
+            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
+            if resolved:
+                break
+        return class_qn, resolved
+
+    def _ingest_resolved_cpp_out_of_class(
+        self,
+        func_node: Node,
+        module_qn: str,
+        class_qn: str,
+        file_path: Path | None,
+        return_type: str | None,
+        lang_queries: LanguageQueries | None,
+    ) -> None:
+        ingest_method(
+            method_node=func_node,
+            container_qn=class_qn,
+            container_type=cs.NodeLabel.CLASS,
+            ingestor=self.ingestor,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            get_docstring_func=self._get_docstring,
+            language=cs.SupportedLanguage.CPP,
+            lang_queries=lang_queries,
+            file_path=file_path,
+            repo_path=self.repo_path,
+        )
+        if bound_name := cpp_utils.extract_function_name(func_node):
+            # Record the binding so Pass-3 call attribution reuses this exact
+            # decision rather than re-resolve and diverge.
+            bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
+            self.cpp_out_of_class_methods[(module_qn, func_node.start_point[0] + 1)] = (
+                bound_qn,
+                class_qn,
+            )
+            self.function_locations[function_span_key(module_qn, func_node)] = (
+                FunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=bound_qn,
+                    container_qn=class_qn,
                 )
-            props: PropertyDict = {
-                cs.KEY_NAME: method_name,
-                cs.KEY_MODIFIERS: modifiers,
-                cs.KEY_DECORATORS: decorators,
-                cs.KEY_START_LINE: func_node.start_point[0] + 1,
-                cs.KEY_START_COL: func_node.start_point[1],
-                cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
-                cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
-                cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                cs.KEY_DOCSTRING: self._get_docstring(
-                    func_node, cs.SupportedLanguage.CPP
-                ),
-            }
-            if file_path is not None and self.repo_path is not None:
-                props[cs.KEY_PATH] = cached_relative_path(
-                    file_path, self.repo_path
-                ).as_posix()
-                props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-            # Computed here, not at flush: the tree (and this node) is gone by
-            # the time deferred methods are written out.
-            props.update(fingerprint_props(func_node))
-            props.update(anchor_hash_props(func_node, decorators))
-            if not hasattr(self, "_deferred_cpp_methods"):
-                self._deferred_cpp_methods = []
-            self._deferred_cpp_methods.append(
-                _DeferredMethod(
-                    method_name=method_name,
-                    class_name=class_name,
-                    fallback_class_qn=class_qn,
-                    method_props=props,
-                    return_type=return_type,
-                    module_qn=module_qn,
-                    namespace_path=cs.SEPARATOR_DOT.join(
-                        cpp_utils.extract_namespace_path(func_node)
-                    ),
-                    start_line=func_node.start_point[0] + 1,
-                    start_col=func_node.start_point[1],
-                    end_line=func_node.end_point[0] + 1,
-                    lang_queries=lang_queries,
-                )
+            )
+            record_cpp_definition_span(
+                self.cpp_definition_spans,
+                cs.SupportedLanguage.CPP,
+                file_path,
+                self.repo_path,
+                func_node,
+                cs.NodeLabel.METHOD.value,
+                bound_qn,
+            )
+        if return_type and (method_name := cpp_utils.extract_function_name(func_node)):
+            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
+                return_type
             )
 
-        return True
+    def _defer_cpp_out_of_class(
+        self,
+        func_node: Node,
+        module_qn: str,
+        class_name: str,
+        class_qn: str,
+        file_path: Path | None,
+        return_type: str | None,
+        lang_queries: LanguageQueries | None,
+    ) -> None:
+        method_name = cpp_utils.extract_function_name(func_node)
+        if not method_name:
+            return
+        decorators = []
+        modifiers = []
+        if lang_queries:
+            modifiers, decorators = extract_modifiers_and_decorators(
+                func_node, lang_queries
+            )
+        props: PropertyDict = {
+            cs.KEY_NAME: method_name,
+            cs.KEY_MODIFIERS: modifiers,
+            cs.KEY_DECORATORS: decorators,
+            cs.KEY_START_LINE: func_node.start_point[0] + 1,
+            cs.KEY_START_COL: func_node.start_point[1],
+            cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
+            cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
+            cs.KEY_END_LINE: func_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(func_node, cs.SupportedLanguage.CPP),
+        }
+        if file_path is not None and self.repo_path is not None:
+            props[cs.KEY_PATH] = cached_relative_path(
+                file_path, self.repo_path
+            ).as_posix()
+            props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        # Computed here, not at flush: the tree (and this node) is gone by
+        # the time deferred methods are written out.
+        props.update(fingerprint_props(func_node))
+        props.update(anchor_hash_props(func_node, decorators))
+        if not hasattr(self, "_deferred_cpp_methods"):
+            self._deferred_cpp_methods = []
+        self._deferred_cpp_methods.append(
+            _DeferredMethod(
+                method_name=method_name,
+                class_name=class_name,
+                fallback_class_qn=class_qn,
+                method_props=props,
+                return_type=return_type,
+                module_qn=module_qn,
+                namespace_path=cs.SEPARATOR_DOT.join(
+                    cpp_utils.extract_namespace_path(func_node)
+                ),
+                start_line=func_node.start_point[0] + 1,
+                start_col=func_node.start_point[1],
+                end_line=func_node.end_point[0] + 1,
+                lang_queries=lang_queries,
+            )
+        )
 
     def resolve_deferred_cpp_methods(self) -> int:
         """Ingest deferred out-of-class C++ methods now that all classes are known.
@@ -845,21 +933,7 @@ class FunctionIngestMixin:
 
         ingested = 0
         for entry in deferred:
-            # Scope-first: the namespace-qualified name distinguishes same-leaf
-            # classes (ast::Type vs ast::analysis::Type); the raw written qualifier
-            # is the fallback for other scopes.
-            candidates = [entry.class_name]
-            if entry.namespace_path:
-                candidates.insert(
-                    0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
-                )
-            resolved = False
-            real_class_qn = entry.fallback_class_qn
-            for candidate in candidates:
-                real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
-                if resolved:
-                    break
-            class_qn = real_class_qn if resolved else entry.fallback_class_qn
+            class_qn, resolved = self._resolve_deferred_cpp_class(entry)
             method_qn = f"{class_qn}.{entry.method_name}"
             # Record the binding so Pass-3 call attribution reuses this exact
             # decision rather than re-resolve and diverge.
@@ -887,7 +961,7 @@ class FunctionIngestMixin:
                     )
                 )
 
-            logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
+            logger.debug(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
             self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
             emit_endpoints(
                 self.ingestor,
@@ -921,12 +995,22 @@ class FunctionIngestMixin:
         self._deferred_cpp_methods = []
         return ingested
 
-    def _defer_go_receiver_method(
-        self,
-        func_node: Node,
-        module_qn: str,
-        lang_queries: LanguageQueries | None = None,
-    ) -> bool:
+    def _resolve_deferred_cpp_class(self, entry: _DeferredMethod) -> tuple[str, bool]:
+        # Scope-first: the namespace-qualified name distinguishes same-leaf
+        # classes (ast::Type vs ast::analysis::Type); the raw written qualifier
+        # is the fallback for other scopes.
+        candidates = [entry.class_name]
+        if entry.namespace_path:
+            candidates.insert(
+                0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
+            )
+        for candidate in candidates:
+            real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+            if resolved:
+                return real_class_qn, True
+        return entry.fallback_class_qn, False
+
+    def _defer_go_receiver_method(self, func_node: Node, module_qn: str) -> bool:
         if not go_utils.is_receiver_method(func_node):
             return False
         receiver_type = go_utils.extract_receiver_type_name(func_node)
@@ -1274,7 +1358,7 @@ class FunctionIngestMixin:
 
         is_anonymous = not func_name
         if not func_name:
-            func_name = self._generate_anonymous_function_name(func_node, module_qn)
+            func_name = self._generate_anonymous_function_name(func_node)
 
         func_qn = self._build_function_qn(
             func_node, module_qn, func_name, language, lang_config
@@ -1322,6 +1406,10 @@ class FunctionIngestMixin:
         func_props = self._build_function_props(
             func_node, resolution, module_qn, lang_queries, language
         )
+        if language in cs.JS_TS_LANGUAGES:
+            self._mark_js_ts_name_scope(
+                func_node, resolution.qualified_name, func_props
+            )
         is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
         if is_macro:
             # Rust macros live in a separate namespace from functions; Pass-3 gates
@@ -1329,7 +1417,7 @@ class FunctionIngestMixin:
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).
             func_props[cs.KEY_IS_MACRO] = True
-        logger.info(
+        logger.debug(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
@@ -1402,16 +1490,9 @@ class FunctionIngestMixin:
             language == cs.SupportedLanguage.CSHARP
             and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
         ):
-            host = func_node.parent
-            while host is not None and host.type not in cs.CSHARP_LOCAL_FN_HOST_TYPES:
-                host = host.parent
-            if host is not None:
-                from .csharp import utils as csharp_utils
-
-                self.csharp_local_functions[resolution.qualified_name] = (
-                    function_span_key(module_qn, host),
-                    len(csharp_utils.extract_parameter_type_names(func_node)),
-                )
+            self._record_csharp_local_function(
+                func_node, resolution.qualified_name, module_qn
+            )
         record_cpp_definition_span(
             self.cpp_definition_spans,
             language,
@@ -1432,22 +1513,61 @@ class FunctionIngestMixin:
         # pass emits an OVERRIDES edge to Base.m, keeping the dispatch-only override
         # live (field-initialiser anon overrides are recorded in the class-method
         # pass).
-        if (
-            language == cs.SupportedLanguage.JAVA
-            and resolution.name
-            and (
-                base := _java_anon_base_for_function(
-                    func_node, frozenset(lang_config.class_node_types)
-                )
-            )
-        ):
-            self.java_anon_overrides.append(
-                (resolution.qualified_name, resolution.name, base, module_qn)
+        if language == cs.SupportedLanguage.JAVA and resolution.name:
+            self._record_java_anon_override(
+                func_node, resolution, module_qn, lang_config
             )
 
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
+
+    def _mark_js_ts_name_scope(
+        self, func_node: Node, qualified_name: str, func_props: PropertyDict
+    ) -> None:
+        if js_ts_utils.is_object_literal_method(func_node):
+            # `{delay () {...}}` registers here, under its key, before the
+            # object-literal pass would; only its object reaches it (issue
+            # #2435), and the persisted mark keeps that across incremental runs.
+            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
+            self.function_registry.mark_object_member(qualified_name)
+        # A JS/TS function expression whose name only its own body can call:
+        # bare-name resolution skips it everywhere else (issue #2402), and the
+        # persisted property lets an incremental run's rehydrated registry
+        # skip it too (the is_macro pattern).
+        if js_ts_utils.name_is_body_scoped(func_node):
+            func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
+            self.function_registry.mark_body_scoped_name(qualified_name)
+
+    def _record_csharp_local_function(
+        self, func_node: Node, qualified_name: str, module_qn: str
+    ) -> None:
+        host = func_node.parent
+        while host is not None and host.type not in cs.CSHARP_LOCAL_FN_HOST_TYPES:
+            host = host.parent
+        if host is None:
+            return
+        from .csharp import utils as csharp_utils
+
+        self.csharp_local_functions[qualified_name] = (
+            function_span_key(module_qn, host),
+            len(csharp_utils.extract_parameter_type_names(func_node)),
+        )
+
+    def _record_java_anon_override(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        lang_config: LanguageSpec,
+    ) -> None:
+        base = _java_anon_base_for_function(
+            func_node, frozenset(lang_config.class_node_types)
+        )
+        if base and resolution.name:
+            self.java_anon_overrides.append(
+                (resolution.qualified_name, resolution.name, base, module_qn)
+            )
 
     def _record_cpp_template_child_location(
         self, func_node: Node, module_qn: str, location: FunctionLocation
@@ -1493,13 +1613,16 @@ class FunctionIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        # Python only: the other frontends have no positional/keyword-only
-        # distinction extracted, and an absent property reads as "kinds
-        # unknown" downstream rather than as "zero positional parameters".
+        # Python's list is CPython's positional names; the languages that
+        # declare optionality store every parameter marked with it (issue
+        # #2517). The rest stay absent, which reads as "kinds unknown"
+        # downstream rather than as "zero positional parameters".
         if language == cs.SupportedLanguage.PYTHON:
             props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
                 func_node
             )
+        elif (declared := declared_positional_params(func_node, language)) is not None:
+            props[cs.KEY_POSITIONAL_PARAMS] = declared
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
@@ -1578,7 +1701,7 @@ class FunctionIngestMixin:
         # passes' naming identical.
         return js_ts_utils.arrow_binding_name(func_node)
 
-    def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
+    def _generate_anonymous_function_name(self, func_node: Node) -> str:
         parent = func_node.parent
         if parent and parent.type == cs.TS_PARENTHESIZED_EXPRESSION:
             grandparent = parent.parent
@@ -1606,7 +1729,7 @@ class FunctionIngestMixin:
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         return lua_utils.extract_assigned_name(
             func_node,
-            accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
+            accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS,
         )
 
     def _extract_lua_field_function_name(
@@ -1662,7 +1785,15 @@ class FunctionIngestMixin:
                 return None
             if result is not None:
                 path_parts.append(result)
-            current = current.parent
+            # A PHP anonymous class's part already spells the callable it is
+            # written in, as that callable is registered; naming the
+            # callables around it again here would put the closure under a
+            # different path than the class's own methods (issue #2538).
+            current = (
+                php_utils.anonymous_class_anchor_stop(current)
+                if result is not None and current.type == cs.TS_PHP_ANONYMOUS_CLASS
+                else current.parent
+            )
 
         path_parts.reverse()
         return path_parts
@@ -1710,6 +1841,10 @@ class FunctionIngestMixin:
         # closure is orphaned and reports as dead.
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
             if name := self._extract_node_name(class_node):
+                return name
+            # A PHP anonymous class is named as the definition pass names it,
+            # under the callable it is written in (issue #2538).
+            if name := php_utils.anonymous_class_scope_name(class_node):
                 return name
             # An anonymous class expression (`static Proxy = class {...}`) has no
             # `name` field; recover its binding name so a closure nested in its
@@ -2111,6 +2246,92 @@ class FunctionIngestMixin:
         self._deferred_cpp_containment = []
         return emitted
 
+    def _enclosing_function_parent(
+        self,
+        current: Node,
+        func_qn: str,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        language: cs.SupportedLanguage | None,
+        file_path: Path | None,
+    ) -> tuple[str, str, FunctionSpanKey | None] | None:
+        # The parent a function nested in `current` (an enclosing function)
+        # binds to; None when no distinct parent qn can be derived.
+        parent_label = (
+            cs.NodeLabel.METHOD
+            if self._is_method(current, lang_config)
+            else cs.NodeLabel.FUNCTION
+        )
+        # Bind to the enclosing function's OWN qn, recomputed from its node.
+        # A function nested in an anonymous callback otherwise loses that
+        # callback: anonymous scopes contribute no segment to the child qn,
+        # so trimming would skip the callback and hoist the child to the
+        # nearest named ancestor.
+        # A Go receiver method's node lives under its receiver type
+        # (module.Type.Method); identity resolution alone gives the
+        # receiver-dropping module.Method, a phantom, so a local type
+        # declared in the method body would fall back to the module instead
+        # of its true lexical parent.
+        if (
+            language == cs.SupportedLanguage.GO
+            and go_utils.is_receiver_method(current)
+            and (name_node := current.child_by_field_name(cs.FIELD_NAME)) is not None
+            and (method_name := safe_decode_text(name_node))
+            and (receiver_type := go_utils.extract_receiver_type_name(current))
+        ):
+            container_qn = self._resolve_go_container_qn(module_qn, receiver_type)
+            return (
+                cs.NodeLabel.METHOD,
+                f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
+                None,
+            )
+        # Reuse the enclosing function's REGISTERED identity when its span is
+        # claimed: structural re-derivation produces the pre-claim qn (an
+        # anonymous name whose node no longer exists for
+        # `exports.f = function`, or the FIRST `t` for the second same-name
+        # fn expr registered as `t@line`), hoisting the child to the module
+        # or the wrong function.
+        if language in cs.JS_TS_LANGUAGES:
+            recorded = self.function_locations.get(
+                function_span_key(module_qn, current)
+            )
+            if (
+                recorded is not None
+                and recorded.qualified_name != func_qn
+                and recorded.qualified_name in self.function_registry
+            ):
+                return (
+                    cs.NodeLabel(recorded.label),
+                    recorded.qualified_name,
+                    None,
+                )
+        resolution = (
+            self._resolve_function_identity(
+                current, module_qn, language, lang_config, file_path
+            )
+            if language is not None
+            else None
+        )
+        parent_qn = (
+            resolution.qualified_name
+            if resolution
+            else func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        )
+        if not parent_qn or parent_qn == func_qn:
+            return None
+        # A C# method registers signature-suffixed (`Run(int)`), a shape
+        # structural re-derivation cannot reproduce, and its parameterless
+        # overload sibling exactly SHADOWS the guess. Methods register in
+        # the class pass after this one, so the guess carries the parent
+        # NODE's span for the deferred resolver to swap in the recorded
+        # identity.
+        span = (
+            function_span_key(module_qn, current)
+            if language == cs.SupportedLanguage.CSHARP
+            else None
+        )
+        return parent_label, parent_qn, span
+
     def _determine_function_parent(
         self,
         func_node: Node,
@@ -2126,83 +2347,12 @@ class FunctionIngestMixin:
         file_path = self.module_qn_to_file_path.get(module_qn)
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                parent_label = (
-                    cs.NodeLabel.METHOD
-                    if self._is_method(current, lang_config)
-                    else cs.NodeLabel.FUNCTION
+                parent = self._enclosing_function_parent(
+                    current, func_qn, module_qn, lang_config, language, file_path
                 )
-                # Bind to the enclosing function's OWN qn, recomputed from its node.
-                # A function nested in an anonymous callback otherwise loses that
-                # callback: anonymous scopes contribute no segment to the child qn,
-                # so trimming would skip the callback and hoist the child to the
-                # nearest named ancestor.
-                # A Go receiver method's node lives under its receiver type
-                # (module.Type.Method); identity resolution alone gives the
-                # receiver-dropping module.Method, a phantom, so a local type
-                # declared in the method body would fall back to the module instead
-                # of its true lexical parent.
-                if (
-                    language == cs.SupportedLanguage.GO
-                    and go_utils.is_receiver_method(current)
-                    and (name_node := current.child_by_field_name(cs.FIELD_NAME))
-                    is not None
-                    and (method_name := safe_decode_text(name_node))
-                    and (receiver_type := go_utils.extract_receiver_type_name(current))
-                ):
-                    container_qn = self._resolve_go_container_qn(
-                        module_qn, receiver_type
-                    )
-                    return (
-                        cs.NodeLabel.METHOD,
-                        f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
-                        None,
-                    )
-                # Reuse the enclosing function's REGISTERED identity when its span is
-                # claimed: structural re-derivation produces the pre-claim qn (an
-                # anonymous name whose node no longer exists for
-                # `exports.f = function`, or the FIRST `t` for the second same-name
-                # fn expr registered as `t@line`), hoisting the child to the module
-                # or the wrong function.
-                if language in cs.JS_TS_LANGUAGES:
-                    recorded = self.function_locations.get(
-                        function_span_key(module_qn, current)
-                    )
-                    if (
-                        recorded is not None
-                        and recorded.qualified_name != func_qn
-                        and recorded.qualified_name in self.function_registry
-                    ):
-                        return (
-                            cs.NodeLabel(recorded.label),
-                            recorded.qualified_name,
-                            None,
-                        )
-                resolution = (
-                    self._resolve_function_identity(
-                        current, module_qn, language, lang_config, file_path
-                    )
-                    if language is not None
-                    else None
-                )
-                parent_qn = (
-                    resolution.qualified_name
-                    if resolution
-                    else func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                )
-                if not parent_qn or parent_qn == func_qn:
+                if parent is None:
                     break
-                # A C# method registers signature-suffixed (`Run(int)`), a shape
-                # structural re-derivation cannot reproduce, and its parameterless
-                # overload sibling exactly SHADOWS the guess. Methods register in
-                # the class pass after this one, so the guess carries the parent
-                # NODE's span for the deferred resolver to swap in the recorded
-                # identity.
-                span = (
-                    function_span_key(module_qn, current)
-                    if language == cs.SupportedLanguage.CSHARP
-                    else None
-                )
-                return parent_label, parent_qn, span
+                return parent
 
             current = current.parent
 

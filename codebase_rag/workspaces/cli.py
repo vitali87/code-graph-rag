@@ -18,6 +18,7 @@ from .storage import WorkspaceError
     no_args_is_help=True,
 )
 def cli() -> None:
+    # A click group: the subcommands registered on it do the work.
     pass
 
 
@@ -39,7 +40,7 @@ def create_cmd(name: str, description: str, force: bool) -> None:
     try:
         _, path = st.create_workspace(name, description=description, overwrite=force)
     except WorkspaceError as e:
-        logger.error(str(e))
+        logger.debug(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
     click.echo(wcs.MSG_WORKSPACE_CREATED.format(name=name, path=path))
@@ -51,7 +52,7 @@ def delete_cmd(name: str) -> None:
     try:
         path = st.delete_workspace(name)
     except WorkspaceError as e:
-        logger.error(str(e))
+        logger.debug(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
     click.echo(wcs.MSG_WORKSPACE_DELETED.format(name=name, path=path))
@@ -63,7 +64,7 @@ def show_cmd(name: str) -> None:
     try:
         config = st.load_workspace(name)
     except WorkspaceError as e:
-        logger.error(str(e))
+        logger.debug(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
     click.echo(f"name:        {config.name}")
@@ -88,7 +89,7 @@ def add_repo_cmd(name: str, repo_path: str, project_name: str | None) -> None:
     try:
         _, repo = st.add_repo(name, repo_path, project_name=project_name)
     except WorkspaceError as e:
-        logger.error(str(e))
+        logger.debug(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
     click.echo(
@@ -109,7 +110,7 @@ def remove_repo_cmd(name: str, repo_path: str) -> None:
     try:
         _, repo = st.remove_repo(name, repo_path)
     except WorkspaceError as e:
-        logger.error(str(e))
+        logger.debug(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
     click.echo(wcs.MSG_WORKSPACE_REMOVED_REPO.format(path=repo.path))

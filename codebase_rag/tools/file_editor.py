@@ -14,10 +14,99 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..language_spec import get_language_for_extension, get_language_spec
+from ..models import LanguageSpec
 from ..parser_loader import load_parsers
 from ..schemas import EditResult
 from ..types_defs import FunctionMatch
 from . import tool_descriptions as td
+
+
+def _node_source(node: Node) -> str | None:
+    return node.text.decode(cs.ENCODING_UTF8) if node.text is not None else None
+
+
+def _node_name(node: Node) -> str | None:
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node and name_node.text:
+        return name_node.text.decode(cs.ENCODING_UTF8)
+    return None
+
+
+def _collect_function_matches(
+    node: Node,
+    parent_class: str | None,
+    lang_config: LanguageSpec,
+    function_name: str,
+    out: list[FunctionMatch],
+) -> None:
+    # Every function whose simple or class-qualified name is `function_name`.
+    # A named function is a leaf: nested functions are not searched.
+    if node.type in lang_config.function_node_types and (func_name := _node_name(node)):
+        qualified_name = f"{parent_class}.{func_name}" if parent_class else func_name
+        if function_name in (func_name, qualified_name):
+            out.append(
+                {
+                    "node": node,
+                    "simple_name": func_name,
+                    "qualified_name": qualified_name,
+                    "parent_class": parent_class,
+                    "line_number": node.start_point[0] + 1,
+                }
+            )
+        return
+    current_class = parent_class
+    if node.type in lang_config.class_node_types:
+        current_class = _node_name(node) or parent_class
+    for child in node.children:
+        _collect_function_matches(child, current_class, lang_config, function_name, out)
+
+
+def _match_at_line(
+    matches: list[FunctionMatch], function_name: str, line_number: int
+) -> FunctionMatch | None:
+    found = next((m for m in matches if m["line_number"] == line_number), None)
+    if found is None:
+        logger.warning(
+            ls.EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
+                name=function_name, line=line_number
+            )
+        )
+    return found
+
+
+def _match_by_qualified_name(
+    matches: list[FunctionMatch], function_name: str
+) -> FunctionMatch | None:
+    found = next((m for m in matches if m["qualified_name"] == function_name), None)
+    if found is None:
+        logger.warning(ls.EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
+    return found
+
+
+def _select_function_match(
+    matches: list[FunctionMatch],
+    function_name: str,
+    line_number: int | None,
+    file_path: str,
+) -> FunctionMatch | None:
+    # One match wins outright; several are disambiguated by line, then by a
+    # qualified name, else the first is used with an ambiguity warning.
+    if len(matches) <= 1:
+        return matches[0] if matches else None
+    if line_number is not None:
+        return _match_at_line(matches, function_name, line_number)
+    if cs.SEPARATOR_DOT in function_name:
+        return _match_by_qualified_name(matches, function_name)
+    details = [f"'{m['qualified_name']}' at line {m['line_number']}" for m in matches]
+    logger.warning(
+        ls.EDITOR_AMBIGUOUS.format(
+            name=function_name,
+            path=file_path,
+            count=len(matches),
+            details=", ".join(details),
+        )
+    )
+    return matches[0]
 
 
 class FileEditor:
@@ -75,90 +164,13 @@ class FileEditor:
             return None
 
         matching_functions: list[FunctionMatch] = []
-
-        def find_function_nodes(node: Node, parent_class: str | None = None) -> None:
-            if node.type in lang_config.function_node_types:
-                name_node = node.child_by_field_name("name")
-                if name_node and name_node.text:
-                    func_name = name_node.text.decode(cs.ENCODING_UTF8)
-
-                    qualified_name = (
-                        f"{parent_class}.{func_name}" if parent_class else func_name
-                    )
-
-                    if function_name in (func_name, qualified_name):
-                        matching_functions.append(
-                            {
-                                "node": node,
-                                "simple_name": func_name,
-                                "qualified_name": qualified_name,
-                                "parent_class": parent_class,
-                                "line_number": node.start_point[0] + 1,
-                            }
-                        )
-
-                    return
-
-            current_class = parent_class
-            if node.type in lang_config.class_node_types:
-                name_node = node.child_by_field_name("name")
-                if name_node and name_node.text:
-                    current_class = name_node.text.decode(cs.ENCODING_UTF8)
-
-            for child in node.children:
-                find_function_nodes(child, current_class)
-
-        find_function_nodes(root_node)
-
-        if not matching_functions:
-            return None
-        if len(matching_functions) == 1:
-            node_text = matching_functions[0]["node"].text
-            if node_text is None:
-                return None
-            return str(node_text.decode(cs.ENCODING_UTF8))
-        if line_number is not None:
-            for func in matching_functions:
-                if func["line_number"] == line_number:
-                    node_text = func["node"].text
-                    if node_text is None:
-                        return None
-                    return str(node_text.decode(cs.ENCODING_UTF8))
-            logger.warning(
-                ls.EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
-                    name=function_name, line=line_number
-                )
-            )
-            return None
-
-        if cs.SEPARATOR_DOT in function_name:
-            for func in matching_functions:
-                if func["qualified_name"] == function_name:
-                    node_text = func["node"].text
-                    if node_text is None:
-                        return None
-                    return str(node_text.decode(cs.ENCODING_UTF8))
-            logger.warning(ls.EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
-            return None
-
-        function_details = []
-        for func in matching_functions:
-            details = f"'{func['qualified_name']}' at line {func['line_number']}"
-            function_details.append(details)
-
-        logger.warning(
-            ls.EDITOR_AMBIGUOUS.format(
-                name=function_name,
-                path=file_path,
-                count=len(matching_functions),
-                details=", ".join(function_details),
-            )
+        _collect_function_matches(
+            root_node, None, lang_config, function_name, matching_functions
         )
-
-        node_text = matching_functions[0]["node"].text
-        if node_text is None:
-            return None
-        return str(node_text.decode(cs.ENCODING_UTF8))
+        match = _select_function_match(
+            matching_functions, function_name, line_number, file_path
+        )
+        return _node_source(match["node"]) if match is not None else None
 
     def get_diff(
         self,
@@ -258,6 +270,14 @@ class FileEditor:
             logger.error(ls.EDITOR_SURGICAL_ERROR.format(error=e))
             return False
 
+    async def replace_code_block_async(
+        self, file_path: str, target_block: str, replacement_block: str
+    ) -> bool:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self.replace_code_block, file_path, target_block, replacement_block
+            )
+
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
         logger.info(ls.TOOL_FILE_EDIT.format(path=file_path))
         return await self._edit_validated(file_path, new_content)
@@ -288,12 +308,12 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
     async def replace_code_surgically(
         file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        success = file_editor.replace_code_block(
+        success = await file_editor.replace_code_block_async(
             file_path, target_code, replacement_code
         )
         if success:
             return cs.MSG_SURGICAL_SUCCESS.format(path=file_path)
-        return cs.MSG_SURGICAL_FAILED.format(path=file_path)
+        return te.ToolFailure(cs.MSG_SURGICAL_FAILED.format(path=file_path))
 
     return Tool(
         function=replace_code_surgically,

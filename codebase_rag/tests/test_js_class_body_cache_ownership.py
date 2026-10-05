@@ -35,7 +35,7 @@ def test_owner_is_held_by_reference_not_recycled_id() -> None:
     assert js_utils._CLASS_BODY_CACHE_OWNER == root_a
 
 
-def test_fresh_wrapper_over_the_same_tree_keeps_the_cache(tmp_path=None) -> None:
+def test_fresh_wrapper_over_the_same_tree_keeps_the_cache() -> None:
     # Each `tree.root_node` access mints a NEW wrapper object; a same-tree
     # lookup through a fresh wrapper must hit the cache, not reset it.
     tree = _parse("class Box { open () { return 1 } }")

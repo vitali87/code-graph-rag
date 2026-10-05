@@ -91,9 +91,10 @@ class CodeRetriever:
             # the property (issue #425), but must stay inside the node's
             # known project root too: a missing foreign source is not local.
             project_roots = await self._get_project_roots()
+            absolute_path = res.get("absolute_path")
             located = locate_node_source(
                 qualified_name,
-                res.get("absolute_path"),
+                absolute_path if isinstance(absolute_path, str) else None,
                 file_path_str,
                 project_roots,
                 self.project_root,
@@ -135,6 +136,7 @@ class CodeRetriever:
 
             snippet_lines = all_lines[start_line - 1 : end_line]
             source_code = "".join(snippet_lines)
+            docstring = res.get("docstring")
 
             return CodeSnippet(
                 qualified_name=qualified_name,
@@ -142,7 +144,7 @@ class CodeRetriever:
                 file_path=file_path_str,
                 line_start=start_line,
                 line_end=end_line,
-                docstring=res.get("docstring"),
+                docstring=docstring if isinstance(docstring, str) else None,
             )
         except Exception as e:
             logger.exception(ls.CODE_RETRIEVER_ERROR.format(error=e))

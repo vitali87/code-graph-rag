@@ -16,8 +16,9 @@ from codebase_rag.workspaces import (
     list_workspaces,
     load_workspace,
     remove_repo,
+    save_workspace,
 )
-from codebase_rag.workspaces.models import WorkspaceConfig
+from codebase_rag.workspaces.models import WorkspaceConfig, WorkspaceRepo
 
 runner = CliRunner()
 
@@ -38,6 +39,20 @@ class TestStorage:
         assert loaded.name == "alpha"
         assert loaded.description == "testing"
         assert loaded.repos == []
+
+    @pytest.mark.parametrize(
+        "repo_path",
+        [r"C:\src\x64\build", r"C:\Users\dev\xylophone", r"C:\Users\dev\repo"],
+    )
+    def test_windows_repo_path_round_trips(
+        self, _temp_home: Path, repo_path: str
+    ) -> None:
+        # A TOML 0.5 writer left `\x` unescaped. That is not a TOML escape, so a
+        # workspace holding such a path saved without error and then never loaded.
+        repo = WorkspaceRepo(path=repo_path, project_name="build")
+        save_workspace(WorkspaceConfig(name="win", repos=[repo]))
+
+        assert load_workspace("win").repos == [repo]
 
     def test_create_duplicate_raises(self, _temp_home: Path) -> None:
         create_workspace("dup")

@@ -88,7 +88,94 @@ def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
             mock_client_cls.return_value = instance
             vs.get_qdrant_client()
 
-    mock_client_cls.assert_called_once_with(url="http://localhost:6333")
+    mock_client_cls.assert_called_once_with(url="http://localhost:6333", api_key=None)
+
+
+def test_get_qdrant_client_passes_api_key_to_server(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", "https://qdrant.example:6333"),
+        patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(
+        url="https://qdrant.example:6333", api_key="secret-key"
+    )
+
+
+def test_get_qdrant_client_refuses_api_key_over_http(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", "http://qdrant.example:6333"),
+        patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
+        patch.object(vs.settings, "QDRANT_ALLOW_INSECURE_API_KEY", False),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        with pytest.raises(ValueError, match="QDRANT_ALLOW_INSECURE_API_KEY"):
+            vs.get_qdrant_client()
+
+    mock_client_cls.assert_not_called()
+
+
+def test_get_qdrant_client_sends_api_key_over_http_when_allowed(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"),
+        patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
+        patch.object(vs.settings, "QDRANT_ALLOW_INSECURE_API_KEY", True),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(
+        url="http://localhost:6333", api_key="secret-key"
+    )
+
+
+def test_get_qdrant_client_treats_blank_api_key_as_unset(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"),
+        patch.object(vs.settings, "QDRANT_API_KEY", ""),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(url="http://localhost:6333", api_key=None)
+
+
+def test_get_qdrant_client_ignores_api_key_in_local_mode(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", None),
+        patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd"),
+        patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(path="/tmp/qd")
 
 
 def test_get_qdrant_client_uses_path_when_url_unset(
@@ -428,6 +515,19 @@ def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> N
         token="root:Milvus",
         db_name="default",
     )
+
+
+def test_milvus_client_omits_unset_credentials() -> None:
+    # Negative: an unset token or database must not reach the client at all,
+    # so the client's own defaults stay in force.
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", "http://localhost:19530"),
+        patch.object(vs.settings, "MILVUS_TOKEN", None),
+        patch.object(vs.settings, "MILVUS_DB_NAME", None),
+    ):
+        assert vs._milvus_client_kwargs() == {"uri": "http://localhost:19530"}
 
 
 def test_milvus_empty_search_response_returns_empty_list() -> None:

@@ -1,6 +1,6 @@
 from typing import Protocol, runtime_checkable
 
-from ..types_defs import PropertyDict, PropertyValue, ResultRow
+from ..types_defs import PropertyDict, PropertyParams, PropertyValue, ResultRow
 
 
 @runtime_checkable
@@ -21,10 +21,12 @@ class IngestorProtocol(Protocol):
 @runtime_checkable
 class QueryProtocol(Protocol):
     def fetch_all(
-        self, query: str, params: PropertyDict | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]: ...
 
-    def execute_write(self, query: str, params: PropertyDict | None = None) -> None: ...
+    def execute_write(
+        self, query: str, params: PropertyParams | None = None
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -34,10 +36,16 @@ class ReadOnlyQueryProtocol(QueryProtocol, Protocol):
     def fetch_read_only(self, query: str) -> list[ResultRow]: ...
 
 
+@runtime_checkable
+class QueryingIngestorProtocol(IngestorProtocol, QueryProtocol, Protocol):
+    """A sink that can also read back what it wrote."""
+
+
 from .filtering import FilteringIngestor  # noqa: E402
 
 __all__ = [
     "IngestorProtocol",
+    "QueryingIngestorProtocol",
     "QueryProtocol",
     "ReadOnlyQueryProtocol",
     "FilteringIngestor",

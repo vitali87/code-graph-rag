@@ -39,4 +39,4 @@
 - [ ] All pre-commit checks pass (`make pre-commit`)
 - [ ] No hardcoded strings in non-config/non-constants files
 - [ ] No `# type: ignore`, `cast()`, `Any`, or `object` type hints
-- [ ] No new comments or docstrings (code should be self-documenting)
+- [ ] New comments and docstrings explain *why*, not *what* (see [Comment Policy](https://github.com/vitali87/code-graph-rag/blob/main/CONTRIBUTING.md#comment-policy))

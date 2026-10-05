@@ -174,7 +174,7 @@ module com.example.service {
 
     run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
-    assert True
+    assert mock_ingestor.ensure_node_batch.called
 
 
 def test_service_provider_interface(

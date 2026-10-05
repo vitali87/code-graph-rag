@@ -1,5 +1,7 @@
 # Dangerous shell command and Cypher query guard tables.
 
+from enum import StrEnum
+
 # Cypher response cleaning
 CYPHER_PREFIX = "cypher"
 CYPHER_SEMICOLON = ";"
@@ -153,8 +155,10 @@ NEO4J_PLAN_CHILDREN = "children"
 # The optional `neo4j` package, imported by name (issue #2191): its typed
 # surface declares every statement `LiteralString`, which a runtime-built
 # statement can never be, so `services.neo4j_driver` types what it uses
-# with its own protocols instead.
-NEO4J_MODULE = "neo4j"
+# with its own protocols instead. Declared `str` rather than left a literal,
+# which a checker would resolve to the package itself.
+NEO4J_MODULE: str = "neo4j"
+NEO4J_EXCEPTIONS_MODULE: str = "neo4j.exceptions"
 # An untrusted query is planned with EXPLAIN and runs only if every plan
 # operator is known to read. An allowlist, not a list of writes, so an
 # operator this list has never seen (a new write, or a write under a new
@@ -308,6 +312,15 @@ SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
 
 SHELL_CMD_XARGS = "xargs"
 SHELL_CMD_FIND = "find"
+
+# Git for Windows keeps the POSIX tools the allowlist names (find, sort, ls,
+# head, ...) here; the executor puts it first on a Windows PATH.
+SHELL_WINDOWS_GIT_USR_BIN = r"C:\Program Files\Git\usr\bin"
+# POSIX tool names Windows ships a DIFFERENT program under, in its own system
+# directory: find.exe searches text for a string and sort.exe takes /-flags.
+# Neither understands the POSIX invocation the agent writes (issue #2359).
+SHELL_WINDOWS_NAMESAKES = frozenset({"find", "sort"})
+SHELL_WINDOWS_SYSTEM_ROOT_ENV = "SystemRoot"
 
 # Allowlisted commands that are general-purpose program launchers: each can be
 # steered into running a program the allowlist never vetted. Under `--yolo` the
@@ -675,6 +688,172 @@ SHELL_NONINTERACTIVE_DENIED_OPTIONS: dict[str, tuple[str, ...]] = {
     "rg": tuple(sorted(SHELL_RG_EXEC_FLAGS)),
 }
 
+
+class ReadOptionKind(StrEnum):
+    # What an option of a confined read does with the argument after it.
+    FLAG = "flag"
+    # GNU `--color[=WHEN]`: a value only in the `=`-attached spelling.
+    OPTIONAL = "optional"
+    # Data the command never opens: a pattern, count, glob or separator.
+    VALUE = "value"
+    # A file the command opens, so it is confined like an operand.
+    PATH = "path"
+
+
+# Every option a read may pass and still count as confined to the project
+# (non-interactive runs, and interactive reads that skip the prompt). An
+# ALLOWLIST: an option missing here needs approval or is denied, because a
+# value attached to an option nobody modelled is a path nobody checked
+# (`rg -f/outside` read an outside file unprompted -- Greptile security
+# review on PR #2485). Long options must be spelled in full: GNU's
+# abbreviations are not resolved, so `--out` is unknown rather than guessed.
+# Symlink following (-L), writes (-o, -T) and option-carried inputs
+# (--files0-from, --pre) are absent, so they stay refused here too. Values
+# are space-separated option names, grouped by ReadOptionKind.
+SHELL_CONFINED_READ_OPTIONS: dict[str, dict[ReadOptionKind, str]] = {
+    "rg": {
+        ReadOptionKind.FLAG: (
+            "-z -s -F -i -v -x -U -P -S -a -w -. -u -b -h -n -N -0 -o -p -q -H"
+            " -I -c -l -V --search-zip --case-sensitive --crlf --fixed-strings"
+            " --ignore-case --invert-match --line-regexp --mmap --multiline"
+            " --multiline-dotall --null-data --pcre2 --smart-case"
+            " --stop-on-nonmatch --text --word-regexp --auto-hybrid-regex"
+            " --binary --glob-case-insensitive --hidden"
+            " --ignore-file-case-insensitive --one-file-system --unrestricted"
+            " --block-buffered --byte-offset --column --heading --help"
+            " --include-zero --line-buffered --line-number"
+            " --max-columns-preview --null --only-matching --passthru --pretty"
+            " --quiet --trim --vimgrep --with-filename --sort-files --count"
+            " --count-matches --files-with-matches --files-without-match"
+            " --json --debug --stats --trace --files --pcre2-version"
+            " --type-list --version"
+        ),
+        ReadOptionKind.VALUE: (
+            "-e -E -m -j -g -d -t -T -A -B -C -M -r --regexp --dfa-size-limit"
+            " --encoding --engine --max-count --regex-size-limit --threads"
+            " --glob --iglob --max-depth --max-filesize --type --type-not"
+            " --type-add --type-clear --after-context --before-context --color"
+            " --colors --context --context-separator --field-context-separator"
+            " --field-match-separator --hyperlink-format --max-columns"
+            " --path-separator --replace --sort --sortr --generate --pre-glob"
+        ),
+        ReadOptionKind.PATH: "-f --file --ignore-file",
+    },
+    "cat": {
+        ReadOptionKind.FLAG: (
+            "-A -b -e -E -n -s -t -T -u -v --show-all --number-nonblank"
+            " --show-ends --number --squeeze-blank --show-tabs"
+            " --show-nonprinting --help --version"
+        ),
+    },
+    "head": {
+        ReadOptionKind.FLAG: (
+            "-q -v -z --quiet --silent --verbose --zero-terminated --help --version"
+        ),
+        ReadOptionKind.VALUE: "-c -n --bytes --lines",
+    },
+    "tail": {
+        ReadOptionKind.FLAG: (
+            "-f -F -q -v -z --retry --quiet --silent --verbose --zero-terminated"
+            " --help --version"
+        ),
+        ReadOptionKind.OPTIONAL: "--follow",
+        ReadOptionKind.VALUE: (
+            "-c -n -s --bytes --lines --max-unchanged-stats --pid --sleep-interval"
+        ),
+    },
+    "wc": {
+        ReadOptionKind.FLAG: (
+            "-c -m -l -L -w --bytes --chars --lines --max-line-length --words"
+            " --help --version"
+        ),
+        ReadOptionKind.VALUE: "--total",
+    },
+    "sort": {
+        ReadOptionKind.FLAG: (
+            "-b -d -f -g -i -M -h -n -R -r -V -c -C -m -s -u -z"
+            " --ignore-leading-blanks --dictionary-order --ignore-case"
+            " --general-numeric-sort --ignore-nonprinting --month-sort"
+            " --human-numeric-sort --numeric-sort --random-sort --reverse"
+            " --version-sort --merge --stable --unique --zero-terminated --debug"
+            " --help --version"
+        ),
+        ReadOptionKind.OPTIONAL: "--check",
+        ReadOptionKind.VALUE: (
+            "-k -t -S --sort --key --field-separator --buffer-size --batch-size"
+            " --parallel"
+        ),
+    },
+    "uniq": {
+        ReadOptionKind.FLAG: (
+            "-c -d -D -i -u -z --count --repeated --ignore-case --unique"
+            " --zero-terminated --help --version"
+        ),
+        ReadOptionKind.OPTIONAL: "--all-repeated --group",
+        ReadOptionKind.VALUE: "-f -s -w --skip-fields --skip-chars --check-chars",
+    },
+    "cut": {
+        ReadOptionKind.FLAG: (
+            "-n -s -z --complement --only-delimited --zero-terminated --help --version"
+        ),
+        ReadOptionKind.VALUE: (
+            "-b -c -d -f --bytes --characters --delimiter --fields --output-delimiter"
+        ),
+    },
+    "ls": {
+        ReadOptionKind.FLAG: (
+            "-a -A -b -B -c -C -d -D -f -F -g -G -h -H -i -k -l -m -n -N -o -p"
+            " -q -Q -r -R -s -S -t -u -U -v -x -X -Z -1 --all --almost-all"
+            " --author --escape --ignore-backups --directory --dired --file-type"
+            " --full-time --group-directories-first --no-group --human-readable"
+            " --si --dereference-command-line"
+            " --dereference-command-line-symlink-to-dir --inode --kibibytes"
+            " --numeric-uid-gid --literal --hide-control-chars"
+            " --show-control-chars --quote-name --reverse --recursive --size"
+            " --context --zero --help --version"
+        ),
+        ReadOptionKind.OPTIONAL: "--color --classify --hyperlink",
+        ReadOptionKind.VALUE: (
+            "-I -T -w --block-size --format --hide --indicator-style --ignore"
+            " --quoting-style --sort --time --time-style --tabsize --width"
+        ),
+    },
+    # find's options are whole words (`-name`, never a cluster), each value
+    # the next argument; -newerXY is matched by SHELL_FIND_NEWER_XY.
+    "find": {
+        ReadOptionKind.FLAG: (
+            "-H -P -daystart -nowarn -warn -depth -mount -noleaf -xdev"
+            " -ignore_readdir_race -noignore_readdir_race -empty -false -true"
+            " -nouser -nogroup -readable -writable -executable -print -print0"
+            " -prune -quit -ls -not -and -or -a -o"
+        ),
+        ReadOptionKind.VALUE: (
+            "-maxdepth -mindepth -regextype -amin -atime -cmin -ctime -mmin"
+            " -mtime -used -fstype -gid -uid -group -user -ilname -lname -iname"
+            " -name -inum -iwholename -wholename -ipath -path -iregex -regex"
+            " -links -perm -size -type -xtype -printf -context"
+        ),
+        ReadOptionKind.PATH: "-newer -anewer -cnewer -samefile",
+    },
+    "pwd": {ReadOptionKind.FLAG: "-L -P --logical --physical --help --version"},
+    "echo": {ReadOptionKind.FLAG: "-n -e -E"},
+    "tr": {
+        ReadOptionKind.FLAG: (
+            "-c -C -d -s -t --complement --delete --squeeze-repeats"
+            " --truncate-set1 --help --version"
+        ),
+    },
+}
+# `-newermt DATE` compares to a date, the other -newerXY forms to a file;
+# all are confined as paths, which a date string never escapes.
+SHELL_FIND_NEWER_XY = r"-newer[aBcm][aBcmt]"
+# ripgrep pairs each switch with a `--no-` form that only turns it off.
+SHELL_NEGATABLE_READS = frozenset({"rg"})
+SHELL_NEGATION_PREFIX = "--no-"
+# The obsolete `head -20` / `tail -5` spelling of a line count.
+SHELL_NUMERIC_COUNT_READS = frozenset({"head", "tail"})
+
+
 # git subcommands that run a caller-supplied command. `filter-branch
 # --tree-filter 'cmd'` was verified executing in a scratch repo; `bisect run`
 # and `submodule foreach` are documented executors that need a bisect in
@@ -859,22 +1038,24 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "protocol.ext.allow",
     }
 )
+GIT_CONFIG_KEY_PREFIX_FILTER = "filter."
+GIT_CONFIG_KEY_SUFFIX_COMMAND = ".command"
 # (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,
 # `filter.<name>.clean`, and `alias.<name>` whose values git also runs.
 SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
     ("credential.", ".helper"),
-    ("filter.", ".clean"),
-    ("filter.", ".smudge"),
-    ("filter.", ".process"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".clean"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".smudge"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".process"),
     ("difftool.", ".cmd"),
     ("mergetool.", ".cmd"),
     ("alias.", ""),
     ("diff.", ".textconv"),
-    ("diff.", ".command"),
+    ("diff.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
     ("merge.", ".driver"),
-    ("trailer.", ".command"),
+    ("trailer.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
     ("pager.", ""),
-    ("protocol.", ".command"),
+    ("protocol.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
 )
 
 # Enumerating key NAMES cannot be complete: git's own config documentation
@@ -887,7 +1068,7 @@ SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
 # suffix does not follow the convention (core.pager, core.editor).
 SHELL_GIT_CONFIG_EXEC_KEY_SUFFIXES = (
     ".cmd",
-    ".command",
+    GIT_CONFIG_KEY_SUFFIX_COMMAND,
     ".helper",
     ".program",
     ".driver",

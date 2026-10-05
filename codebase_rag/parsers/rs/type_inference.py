@@ -7,6 +7,17 @@ from ..utils import safe_decode_text
 from .utils import tuple_group_inner
 
 
+def _scoped_chain_segments(node: Node) -> list[str] | None:
+    # `Type::assoc`: keep the FULL base path (`crate::cmd::Command`) so a
+    # fully-qualified inline call disambiguates by path in the return-type
+    # lookup.
+    path = node.child_by_field_name(cs.TS_RS_FIELD_PATH)
+    name = node.child_by_field_name(cs.FIELD_NAME)
+    base = safe_decode_text(path) if path else None
+    leaf = safe_decode_text(name) if name else None
+    return [base, leaf] if base and leaf else None
+
+
 class RustTypeInferenceEngine:
     # Maps local names (parameters, `let` bindings, enum-match variant bindings)
     # to their bare Rust type within a function/method body, so the resolver binds
@@ -16,9 +27,7 @@ class RustTypeInferenceEngine:
     # engine (which has the return-type map).
     __slots__ = ()
 
-    def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
-    ) -> dict[str, str]:
+    def build_local_variable_type_map(self, caller_node: Node) -> dict[str, str]:
         var_types: dict[str, str] = {}
         self._collect_parameters(caller_node, var_types)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
@@ -682,24 +691,22 @@ class RustTypeInferenceEngine:
             func = node.child_by_field_name(cs.FIELD_FUNCTION)
             return self._callee_chain_segments(func) if func is not None else None
         if node.type == cs.TS_RS_FIELD_EXPRESSION:
-            receiver = node.child_by_field_name(cs.FIELD_VALUE)
-            field = node.child_by_field_name(cs.FIELD_FIELD)
-            field_name = safe_decode_text(field) if field else None
-            if receiver is None or not field_name:
-                return None
-            if base := self._callee_chain_segments(receiver):
-                return [*base, field_name]
-            return None
+            return self._field_chain_segments(node)
         if node.type == cs.TS_SCOPED_IDENTIFIER:
-            path = node.child_by_field_name(cs.TS_RS_FIELD_PATH)
-            name = node.child_by_field_name(cs.FIELD_NAME)
-            # Keep the FULL base path (`crate::cmd::Command`) so a fully-qualified
-            # inline call disambiguates by path in the return-type lookup.
-            base = safe_decode_text(path) if path else None
-            leaf = safe_decode_text(name) if name else None
-            return [base, leaf] if base and leaf else None
+            return _scoped_chain_segments(node)
         if node.type in cs.RS_IDENT_OR_SELF:
             return [text] if (text := safe_decode_text(node)) else None
+        return None
+
+    def _field_chain_segments(self, node: Node) -> list[str] | None:
+        # `receiver.field`: the receiver's chain plus the field.
+        receiver = node.child_by_field_name(cs.FIELD_VALUE)
+        field = node.child_by_field_name(cs.FIELD_FIELD)
+        field_name = safe_decode_text(field) if field else None
+        if receiver is None or not field_name:
+            return None
+        if base := self._callee_chain_segments(receiver):
+            return [*base, field_name]
         return None
 
     def _unwrap_try(self, node: Node) -> Node:

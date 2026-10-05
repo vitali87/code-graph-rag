@@ -13,6 +13,8 @@ KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
 KEY_METADATA = "metadata"
+# Shown for a graph file whose informational metadata has no timestamp.
+GRAPH_EXPORTED_AT_UNKNOWN = "unknown"
 KEY_TOTAL_NODES = "total_nodes"
 KEY_TOTAL_RELATIONSHIPS = "total_relationships"
 KEY_NODE_LABELS = "node_labels"
@@ -23,7 +25,11 @@ KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+# A JS/TS function that is an object literal's property value, reached only
+# through its object (issue #2435).
+KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
@@ -40,6 +46,14 @@ KEY_TYPE_NAME = "type_name"
 KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
 KEY_HAS_DEFAULT = "has_default"
+# Constant node properties (issue #1806).
+KEY_VALUE = "value"
+# The right-hand side is recorded as written, for the constants whose POINT
+# is their value (a version string, a limit, a table name). A generated
+# lookup table can be megabytes on one line, so anything longer is recorded
+# as absent rather than truncated: a truncated literal reads as a valid one
+# and would be wrong in the reassuring direction.
+CONSTANT_VALUE_MAX_CHARS = 200
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
@@ -62,6 +76,10 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+# Change-signature report fields (issue #1533); `verdict` is shared
+# with rename.
+KEY_UNMAPPED = "unmapped"
+KEY_VERDICT = "verdict"
 KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
@@ -94,10 +112,19 @@ RESOLUTION_RANK: dict[str, int] = {
     EdgeResolution.TRACE_CONFIRMED: 4,
 }
 KEY_SUFFIX = "suffix"
+KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
+# Call-site flags, present (true) only when the argument list unpacks a
+# sequence (`*rest`) or a mapping (`**opts`). Neither is counted in
+# `arg_count`: each passes an unknown number of arguments (issue #2635).
+KEY_STAR_ARGS = "star_args"
+KEY_STAR_KWARGS = "star_kwargs"
+# Call-site rows: where the invoked symbol is defined. `path` on those rows is
+# the file holding the site, which is the caller's (issue #2460).
+KEY_CALLEE_PATH = "callee_path"
 # IMPORTS only: the name the statement binds in the importing scope (the
 # `as` name when renamed, else the imported/module name) and, for
 # symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
@@ -130,9 +157,17 @@ KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
 KEY_PROPS = "props"
+# The `$id` a per-node query addresses its node by.
+KEY_ID = "id"
+# A shared node's inbound-edge count in the isolated check's snapshot.
+KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+# Columns of the endpoint lookup a relationship flush runs when rows were lost:
+# whether each failed row's source/target node was absent (issue #2438).
+KEY_FROM_MISSING = "from_missing"
+KEY_TO_MISSING = "to_missing"
 KEY_FROM_LABEL = "from_label"
 KEY_FROM_QN = "from_qn"
 KEY_REL_TYPE = "rel_type"
@@ -142,6 +177,13 @@ KEY_TO_QN = "to_qn"
 KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
+# Trace-edge carry rows and parameters (issue #2429): each endpoint's
+# `anchor_hash` when the edge was read, and the qualified names whose static
+# edges are looked up after the re-parse.
+KEY_FROM_HASH = "from_hash"
+KEY_TO_HASH = "to_hash"
+KEY_FROM_QNS = "from_qns"
+KEY_TO_QNS = "to_qns"
 KEY_PROJECT_PREFIX = "project_prefix"
 KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
@@ -174,6 +216,16 @@ PROTOBUF_PAYLOAD_ONEOF = "payload"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
 
+DIFF_ERR_NO_MANIFEST = (
+    "schema metadata missing: no readable manifest in {path}; "
+    "re-export with a manifest before diffing"
+)
+DIFF_ERR_NO_SCHEMA_HASH = (
+    "schema metadata missing: {manifest} records no codec_schema_sha256 because "
+    "the cgr that wrote it could not find codec/schema.proto; "
+    "upgrade code-graph-rag and re-index before diffing"
+)
+
 ONEOF_PROJECT = "project"
 ONEOF_PACKAGE = "package"
 ONEOF_FOLDER = "folder"
@@ -202,6 +254,7 @@ ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
 ONEOF_FIELD = "field"
 ONEOF_ENUM_VARIANT = "enum_variant"
+ONEOF_CONSTANT = "constant"
 
 
 class UniqueKeyType(StrEnum):
@@ -252,6 +305,9 @@ class NodeLabel(StrEnum):
     FIELD = "Field"
     # A variant an Enum declares (issue #1807).
     ENUM_VARIANT = "EnumVariant"
+    # A named constant a Module declares (issue #1806). Python module
+    # scope only for now; a class-level member is a Field (#1805).
+    CONSTANT = "Constant"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -290,6 +346,9 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.ENUM_VARIANT: UniqueKeyType.QUALIFIED_NAME,
+    # <module qn>.<NAME>: a rename is a new constant, not an update of
+    # this one, the same as every other qualified-name-keyed label.
+    NodeLabel.CONSTANT: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -350,6 +409,10 @@ class RelationshipType(StrEnum):
     HAS_VARIANT = "HAS_VARIANT"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
+    # Module -> Constant (issue #1806). Named for the declaring side like
+    # DEFINES / DEFINES_METHOD, because a module DEFINES its constants;
+    # HAS_FIELD reads from the owner's side because a field is part of it.
+    DEFINES_CONSTANT = "DEFINES_CONSTANT"
 
 
 class CaptureGroup(StrEnum):
@@ -367,6 +430,7 @@ class CaptureGroup(StrEnum):
     PARAMETERS = "parameters"
     FIELDS = "fields"
     ENUM_VARIANTS = "enum_variants"
+    CONSTANTS = "constants"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -449,6 +513,13 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
     CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
     # Opt-in like fields (issue #1807).
     CaptureGroup.ENUM_VARIANTS: frozenset({RelationshipType.HAS_VARIANT}),
+    # Opt-in (issue #1806), like parameters and fields. OF_TYPE is NOT
+    # listed here for the same reason it is not under `fields`: every
+    # relationship belongs to exactly one group, and OF_TYPE is already
+    # under `parameters`. So a constant's type edge is captured whenever
+    # `parameters` is on, and `constants` alone yields Constant nodes and
+    # DEFINES_CONSTANT only.
+    CaptureGroup.CONSTANTS: frozenset({RelationshipType.DEFINES_CONSTANT}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -507,6 +578,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
     CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
     CaptureGroup.ENUM_VARIANTS: frozenset({NodeLabel.ENUM_VARIANT}),
+    CaptureGroup.CONSTANTS: frozenset({NodeLabel.CONSTANT}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -518,6 +590,58 @@ DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
         CaptureGroup.IMPORTS,
     }
 )
+
+# What each group adds, for the generated Capture Groups table in
+# docs/architecture/graph-schema.md; its labels and relationships come from
+# the maps above. Keyed by group so a new group without a line fails
+# test_capture_groups_docs instead of reaching the docs undescribed (#2584).
+CAPTURE_GROUP_SUMMARIES: dict[CaptureGroup, str] = {
+    CaptureGroup.STRUCTURE: (
+        "The containment tree from the project down to modules and document "
+        "sections, and what each module, class or function defines."
+    ),
+    CaptureGroup.CALLS: (
+        "Call sites, functions and classes used as values, and class instantiations."
+    ),
+    CaptureGroup.TYPES: (
+        "Inheritance, interface and module implementation, method overrides, "
+        "and the project types a signature returns or accepts."
+    ),
+    CaptureGroup.IMPORTS: (
+        "Imports and exports between modules, the project's external package "
+        "dependencies, and document links to files."
+    ),
+    CaptureGroup.IO: (
+        "External resources code reads, writes or exposes (files, environment "
+        "variables, network, databases, endpoints), value flow between them, "
+        "and client calls resolved to the endpoints they reach."
+    ),
+    CaptureGroup.FINDINGS: (
+        "ast-grep findings on each module: design patterns, code smells and "
+        "security issues."
+    ),
+    CaptureGroup.GLOSSES: (
+        "Notes agents write about definitions with the annotate MCP tool, "
+        "rather than anything parsed from source."
+    ),
+    CaptureGroup.PARAMETERS: (
+        "One node per declared parameter of a function or method, and the "
+        "OF_TYPE edge from a parameter or field to the project type its "
+        "annotation names."
+    ),
+    CaptureGroup.FIELDS: (
+        "One node per field of a class, interface, enum, type or union. A "
+        "field's OF_TYPE edge belongs to parameters, so field types need both."
+    ),
+    CaptureGroup.ENUM_VARIANTS: (
+        "One node per enum member, with its position and value."
+    ),
+    CaptureGroup.CONSTANTS: (
+        "One node per module-level constant, with its declared type and value. "
+        "A constant's OF_TYPE edge belongs to parameters, so constant types "
+        "need both."
+    ),
+}
 
 CAPTURE_TOKEN_ALL = "all"
 CAPTURE_TOKEN_NONE = "none"
@@ -542,6 +666,12 @@ class AuditCheck(StrEnum):
     UNDOCUMENTED_RELATIONSHIP = "undocumented_relationship"
     DANGLING_RELATIONSHIP = "dangling_relationship"
 
+
+# Labels cgr writes for its own bookkeeping rather than as part of the code
+# graph: not in NODE_SCHEMAS (the Cypher prompt is built from it), and not
+# graded by the structural audit. `IncompleteRun` is the sync marker, which
+# doctor reports as an interrupted sync instead (issue #2394).
+AUDIT_BOOKKEEPING_LABELS = frozenset({"IncompleteRun"})
 
 # Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
@@ -575,6 +705,7 @@ SCHEMA_OPTIONAL_SUFFIX = "?"
 NODE_PROJECT = NodeLabel.PROJECT
 
 KEY_PARAMETERS = "parameters"
+KEY_TYPE_PARAMETERS = "type_parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
@@ -589,11 +720,33 @@ KEY_PARAM_TYPES = "param_types"
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
 # receiver-inclusive because it counts the bound `self`.
 #
+# The languages in `DECLARED_ARITY_LANGUAGES` store every parameter a call
+# fills instead, each marked with the optionality its signature declares, so
+# a signature change there gets a verdict per call site too (issue #2517):
+# `name?` may be left out, `...name` takes any number of trailing arguments,
+# and `self` (Rust) or `this name` (a C# extension method) is a receiver that
+# one call form passes and the other does not.
+#
 # Absent on every other language rather than empty: absent means "kinds
 # unknown", which `diagnose_arity` answers with "cannot corroborate", whereas
 # an empty list would assert "declares zero positional parameters" and produce
 # a false mismatch on correct code.
 KEY_POSITIONAL_PARAMS = "positional_params"
+POSITIONAL_OPTIONAL_SUFFIX = "?"
+POSITIONAL_REST_PREFIX = "..."
+POSITIONAL_RECEIVER_SELF = "self"
+POSITIONAL_RECEIVER_THIS_PREFIX = "this "
+# Call-site flag, present (true) only when a non-Python call passes a number
+# of values its written arguments do not show: a spread (`...xs` in JS/TS,
+# `...$xs` in PHP, `xs...` in Go), a Go call whose lone argument is a call,
+# or a tagged template. `arg_count` keeps what is written, so it proves no
+# fit or miss for such a site (issue #2517).
+KEY_SPREAD_ARGS = "spread_args"
+# Call-site name a Rust or C# call is written through, so a receiver can be
+# counted where the call passes it: `S` in `S::m(s, 1)`, `Util` in C#'s
+# `Util.Ext(s, 1)`, `s` in `s.Ext(1)`; "" through any other value (Rust's
+# `s.m(1)`, `"x".Ext(1)`); absent for a bare call (issue #2517).
+KEY_CALL_QUALIFIER = "call_qualifier"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
 # Rust file, stored on the DECLARING module's node (issue #1010). The
 # ungated counterpart lets a production target's declaration of the SAME
@@ -690,7 +843,8 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*0..]->(c) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -720,6 +874,22 @@ CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "WHERE inbound = 0 "
     "DETACH DELETE m"
 )
+# A manifest re-parse only MERGEs the dependencies it still names, and an edge
+# does not record which manifest declared it, so the project's edges are
+# dropped and rebuilt from every manifest whenever one changes (issue #2396).
+CYPHER_DELETE_PROJECT_DEPENDENCIES = (
+    "MATCH (:Project {name: $project_name})-[r:DEPENDS_ON_EXTERNAL]->(:ExternalPackage) "
+    "DELETE r"
+)
+# ExternalPackage nodes are shared by name across projects, so only a package
+# no project depends on any more goes.
+CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES = (
+    "MATCH (e:ExternalPackage) "
+    "OPTIONAL MATCH (x)-->(e) "
+    "WITH e, count(x) AS inbound "
+    "WHERE inbound = 0 "
+    "DETACH DELETE e"
+)
 CYPHER_PROJECT_MODULE_PATHS = (
     # The bare-name alternative covers the repository-root __init__.py,
     # whose module qn is the project name itself.
@@ -737,13 +907,59 @@ CYPHER_COUNT_PROJECT_MODULES = (
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
-# Containers of one File key, for legacy-identity sweep attribution: File
+# Containers of the legacy-identity sweep's File keys, for attribution: File
 # nodes MERGE globally on absolute_path, so a key can be shared with another
-# project and must not be deleted from under it (issue #1156).
+# project and must not be deleted from under it (issue #1156). One query for
+# every candidate: asked per key, a sync paid a round trip per File of every
+# other project in the shared graph (issue #2405).
 CYPHER_FILE_CONTAINERS = (
-    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: $path}) "
-    "RETURN labels(p) AS labels, p.name AS name, "
+    "UNWIND $paths AS file_key "
+    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: file_key}) "
+    "RETURN file_key, labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
+)
+KEY_FILE_KEY = "file_key"
+KEY_REPO_ROOT = "repo_root"
+KEY_REPO_PREFIX = "repo_prefix"
+# The orphan prune's reads, scoped to this repository or project. Unscoped,
+# every sync with changes read every File, Folder, Module and Package of
+# every project in the shared graph, so its cost grew with the graph, not
+# the repository (issue #2405). A key outside the repository was skipped by
+# the prune anyway; the legacy-identity sweep finds its own candidates below.
+CYPHER_REPO_FILE_PATHS = (
+    "MATCH (f:File) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_REPO_FOLDER_PATHS = (
+    "MATCH (f:Folder) WHERE f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_PROJECT_PACKAGE_PATHS = (
+    "MATCH (p:Package) WHERE p.qualified_name = $project_name "
+    "OR p.qualified_name STARTS WITH $project_prefix "
+    "RETURN p.path AS path, p.absolute_path AS absolute_path, "
+    "p.qualified_name AS qualified_name"
+)
+# Modules the prune can act on: this project's, with a path to test.
+CYPHER_PROJECT_PRUNABLE_MODULES = (
+    "MATCH (m:Module) WHERE m.path IS NOT NULL "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+)
+# The legacy-identity sweep's only possible candidates: out-of-repo File keys
+# this project's own containers (its Project node, or a Folder or Package in
+# the repository) hold. Every other project's Files used to be candidates,
+# each one vetoed after its own containers query (issue #2405).
+CYPHER_PROJECT_OUTSIDE_FILE_KEYS = (
+    "MATCH (c)-[:CONTAINS_FILE]->(f:File) "
+    "WHERE ((c:Project AND c.name = $project_name) "
+    "OR c.absolute_path = $repo_root OR c.absolute_path STARTS WITH $repo_prefix) "
+    "AND NOT (f.absolute_path = $repo_root "
+    "OR f.absolute_path STARTS WITH $repo_prefix) "
+    "RETURN DISTINCT f.path AS path, f.absolute_path AS absolute_path"
 )
 # The module names a project records, by file path, for the incremental
 # requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
@@ -784,15 +1000,25 @@ CYPHER_PROJECT_FIELD_TYPES = (
     "RETURN f.qualified_name AS qualified_name, f.type_name AS type_name, "
     "f.path AS path"
 )
+# The Constant counterpart (issue #1806): an annotated module-level
+# constant carries OF_TYPE the same way, so the incremental requeue needs
+# the same read-back for files a run does not re-parse.
+CYPHER_PROJECT_CONSTANT_TYPES = (
+    "MATCH (c:Constant) WHERE c.qualified_name STARTS WITH $project_prefix "
+    "AND c.type_name IS NOT NULL "
+    "RETURN c.qualified_name AS qualified_name, c.type_name AS type_name, "
+    "c.path AS path"
+)
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
+    "n.is_property AS is_property, n.is_macro AS is_macro, "
+    "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1001,6 +1227,19 @@ KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"
+# Isolated check capture rows (issue #1718): the far end of an edge touching
+# the scope carries its own label, key fields and (for the labels the check
+# can prune or re-grade) properties, prefixed so they sit beside the near
+# end's in one row.
+KEY_OUTGOING = "outgoing"
+FAR_END_PREFIX = "far_"
+KEY_FAR_LABEL = FAR_END_PREFIX + KEY_LABEL
+KEY_FAR_PROPS = FAR_END_PREFIX + KEY_PROPS
+CYPHER_PARAM_ABSOLUTE_PATHS = "absolute_paths"
+CYPHER_PARAM_KEEP = "keep"
+# The isolated check's created shared nodes, as parallel label / name lists.
+CYPHER_PARAM_LABELS = "labels"
+CYPHER_PARAM_QUALIFIED_NAMES = "qualified_names"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
 
@@ -1035,6 +1274,7 @@ KEY_MOVED_FROM = "moved_from"
 # off `target_qn`; a note written before this property existed falls back to
 # the longest registered project name that prefixes its `target_qn`.
 KEY_PROJECT = "project"
+KEY_PROJECT_NAMES = "project_names"
 KEY_CANDIDATE_QNS = "candidate_qns"
 KEY_HASHES = "hashes"
 # Prefix on every anchor hash. A Gloss written before this format existed
@@ -1092,6 +1332,12 @@ class GlossAnchorState(StrEnum):
 
 
 REL_TYPE_CALLS = "CALLS"
+# How many lost rows of one flushed relationship batch the warning names, and
+# the words it names their missing endpoints with (issue #2438).
+FAILED_REL_ROWS_SHOWN = 10
+REL_ENDPOINT_SOURCE = "source"
+REL_ENDPOINT_TARGET = "target"
+REL_ENDPOINT_JOINER = " and "
 
 # Rel types where multiple semantically-distinct edges may exist between the
 # same node pair; these props join the MERGE key so parallel edges are not

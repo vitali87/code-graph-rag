@@ -613,7 +613,8 @@ class TestAFunctionValuedBindingOwnsItsDoc:
     """
 
     @pytest.fixture(scope="class")
-    def parsers(self) -> dict:
+    @staticmethod
+    def parsers() -> dict:
         loaded, _ = load_parsers()
         return loaded
 

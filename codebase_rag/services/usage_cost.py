@@ -27,6 +27,6 @@ def price_run(usage: RunUsage, provider: str, model_id: str) -> Decimal | None:
             from genai_prices import calc_price
 
             return calc_price(usage, model_ref, provider_id=provider_id).total_price
-        except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+        except Exception:  # noqa: BLE001, S112  # pricing is display-only, never fatal
             continue
     return None

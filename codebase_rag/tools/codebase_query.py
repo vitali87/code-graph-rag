@@ -9,6 +9,7 @@ from pydantic_ai import Tool
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -16,6 +17,8 @@ from .. import logs as ls
 from ..config import settings
 from ..console_marks import status_mark
 from ..constants import (
+    QUERY_CELL_CONTROL_CHARS,
+    QUERY_CELL_CONTROL_ESCAPE,
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
     QUERY_SUMMARY_DB_ERROR,
@@ -26,8 +29,10 @@ from ..constants import (
 )
 from ..schemas import QueryGraphData
 from ..services import ReadOnlyQueryProtocol
-from ..services.llm import CypherGenerator
+from ..services.graph_service import is_query_rejection
+from ..services.llm import CypherQueryGenerator
 from ..types_defs import ResultRow
+from ..utils.terminal_console import terminal_aware_console
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
@@ -762,54 +767,164 @@ def _names_another_project(value: object, prefix: str) -> bool:
     return True
 
 
+_CONTROL_CHARS = re.compile(QUERY_CELL_CONTROL_CHARS)
+
+
+def _plain_cell(value: str) -> Text:
+    """A result cell that prints exactly what the graph holds (#2260).
+
+    Values come from the indexed code and from MCP `annotate` glosses, so
+    neither Rich markup (`list[int]` lost its subscript, `[/]` raised, a
+    `[link=...]` became a live hyperlink) nor terminal control sequences
+    may take effect. `Text` is never parsed as markup; control characters
+    are shown as `\\xNN` escapes.
+    """
+    return Text(
+        _CONTROL_CHARS.sub(
+            lambda m: QUERY_CELL_CONTROL_ESCAPE.format(code=ord(m.group())), value
+        )
+    )
+
+
+def _row_cells(row: ResultRow, encoding: str) -> list[Text]:
+    cells: list[Text] = []
+    for value in row.values():
+        if value is None:
+            cells.append(Text())
+        elif isinstance(value, bool):
+            cells.append(Text(status_mark(value, encoding)))
+        else:
+            cells.append(_plain_cell(str(value)))
+    return cells
+
+
+def _print_results_table(results: list[ResultRow], console: Console) -> None:
+    table = Table(
+        show_header=True,
+        header_style="bold magenta",
+    )
+    for header in results[0].keys():
+        table.add_column(_plain_cell(str(header)))
+    for row in results:
+        table.add_row(*_row_cells(row, console.encoding))
+    console.print(
+        Panel(
+            table,
+            title=QUERY_RESULTS_PANEL_TITLE,
+            expand=False,
+        )
+    )
+
+
+def _query_summary(
+    results: list[ResultRow],
+    total_count: int,
+    tokens_used: int,
+    *,
+    was_truncated: bool,
+) -> str:
+    if was_truncated or total_count > len(results):
+        return QUERY_SUMMARY_TRUNCATED.format(
+            kept=len(results),
+            total=total_count,
+            tokens=tokens_used,
+            max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
+        )
+    return QUERY_SUMMARY_SUCCESS.format(count=len(results))
+
+
+def _scope_refusal(
+    cypher_query: str, project_name: str | None
+) -> QueryGraphData | None:
+    # BEFORE execution. A query returning no qualified name yields rows the
+    # filter cannot attribute, so it keeps them, and answering a SCOPED
+    # request with those would ignore the scope silently. The guard reads
+    # only the generated Cypher, so nothing required it to wait for results
+    # -- and running first meant an unscopable request still performed a
+    # cross-project read against the shared graph. The rows never reached
+    # the caller, but the database served them, which is the part a caller
+    # can neither see nor undo.
+    if project_name is None or (
+        evidence := requires_project_evidence(cypher_query, project_name)
+    ):
+        return None
+    message = unscopeable_message(evidence, project_name)
+    # `error` as well as `summary`: MCP callers distinguish a refusal from a
+    # genuine empty result by the error key.
+    return QueryGraphData(
+        query_used=cypher_query,
+        results=[],
+        summary=message,
+        error=message,
+    )
+
+
+async def _fetch(ingestor: ReadOnlyQueryProtocol, cypher_query: str) -> list[ResultRow]:
+    return await asyncio.wait_for(
+        asyncio.to_thread(ingestor.fetch_read_only, cypher_query),
+        timeout=settings.QUERY_TIMEOUT_S,
+    )
+
+
+@dataclass
+class _QueryAttempt:
+    """The query currently being tried, for the caller's error reports."""
+
+    query: str = QUERY_NOT_AVAILABLE
+
+
+async def _run_query(
+    ingestor: ReadOnlyQueryProtocol,
+    cypher_gen: CypherQueryGenerator,
+    question: str,
+    project_name: str | None,
+    attempt: _QueryAttempt,
+) -> list[ResultRow] | QueryGraphData:
+    attempt.query = await cypher_gen.generate(question)
+    if refusal := _scope_refusal(attempt.query, project_name):
+        return refusal
+    try:
+        return await _fetch(ingestor, attempt.query)
+    except Exception as e:
+        # One regeneration, fed the engine's own error, for a query the
+        # engine refused (issue #2361). Anything else, such as a timeout or
+        # a lost connection, is not the query's fault.
+        if not is_query_rejection(e):
+            raise
+        rejection = str(e)
+    logger.warning(ls.TOOL_QUERY_REPAIRING.format(error=rejection))
+    attempt.query = await cypher_gen.repair(question, attempt.query, rejection)
+    if refusal := _scope_refusal(attempt.query, project_name):
+        return refusal
+    return await _fetch(ingestor, attempt.query)
+
+
 def create_query_tool(
     ingestor: ReadOnlyQueryProtocol,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     console: Console | None = None,
     project_name: str | None = None,
 ) -> Tool:
     if console is None:
-        console = Console(width=None, stderr=True, force_terminal=True)
+        console = terminal_aware_console(stderr=True)
 
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
     ) -> QueryGraphData:
         logger.info(ls.TOOL_QUERY_RECEIVED.format(query=natural_language_query))
-        cypher_query = QUERY_NOT_AVAILABLE
+        attempt = _QueryAttempt()
         try:
-            cypher_query = await cypher_gen.generate(natural_language_query)
-
-            # BEFORE execution. A query returning no qualified name yields
-            # rows the filter cannot attribute, so it keeps them, and
-            # answering a SCOPED request with those would ignore the scope
-            # silently. The guard reads only the generated Cypher, so
-            # nothing required it to wait for results -- and running first
-            # meant an unscopable request still performed a cross-project
-            # read against the shared graph. The rows never reached the
-            # caller, but the database served them, which is the part a
-            # caller can neither see nor undo.
-            if project_name is not None and not (
-                evidence := requires_project_evidence(cypher_query, project_name)
-            ):
-                message = unscopeable_message(evidence, project_name)
-                # `error` as well as `summary`: MCP callers distinguish a
-                # refusal from a genuine empty result by the error key.
-                return QueryGraphData(
-                    query_used=cypher_query,
-                    results=[],
-                    summary=message,
-                    error=message,
-                )
-
-            results = await asyncio.wait_for(
-                asyncio.to_thread(ingestor.fetch_read_only, cypher_query),
-                timeout=settings.QUERY_TIMEOUT_S,
+            outcome = await _run_query(
+                ingestor, cypher_gen, natural_language_query, project_name, attempt
             )
+            if isinstance(outcome, QueryGraphData):
+                return outcome
+            cypher_query = attempt.query
 
             # Before the row cap and the token truncation, so a scoped query
             # spends its budget on rows the caller can actually use rather
             # than on another project's rows that are about to be dropped.
-            results = scope_rows_to_project(results, project_name)
+            results = scope_rows_to_project(outcome, project_name)
 
             total_count = len(results)
             if total_count > settings.QUERY_RESULT_ROW_CAP:
@@ -822,48 +937,24 @@ def create_query_tool(
             )
 
             if results:
-                table = Table(
-                    show_header=True,
-                    header_style="bold magenta",
-                )
-                headers = results[0].keys()
-                for header in headers:
-                    table.add_column(header)
+                _print_results_table(results, console)
 
-                for row in results:
-                    renderable_values = []
-                    for value in row.values():
-                        if value is None:
-                            renderable_values.append("")
-                        elif isinstance(value, bool):
-                            renderable_values.append(
-                                status_mark(value, console.encoding)
-                            )
-                        elif isinstance(value, int | float):
-                            renderable_values.append(str(value))
-                        else:
-                            renderable_values.append(str(value))
-                    table.add_row(*renderable_values)
-
-                console.print(
-                    Panel(
-                        table,
-                        title=QUERY_RESULTS_PANEL_TITLE,
-                        expand=False,
-                    )
-                )
-
-            if was_truncated or total_count > len(results):
-                summary = QUERY_SUMMARY_TRUNCATED.format(
-                    kept=len(results),
-                    total=total_count,
-                    tokens=tokens_used,
-                    max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
-                )
-            else:
-                summary = QUERY_SUMMARY_SUCCESS.format(count=len(results))
+            summary = _query_summary(
+                results, total_count, tokens_used, was_truncated=was_truncated
+            )
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
+            )
+        except ex.CypherModelUnavailableError as e:
+            # Not a translation that went wrong: the request could not be
+            # served at all, which a caller must be able to tell from an
+            # empty answer, so it carries `error` like a scope refusal.
+            message = str(e)
+            return QueryGraphData(
+                query_used=QUERY_NOT_AVAILABLE,
+                results=[],
+                summary=message,
+                error=message,
             )
         except ex.LLMGenerationError as e:
             return QueryGraphData(
@@ -874,18 +965,18 @@ def create_query_tool(
         except TimeoutError:
             logger.warning(
                 ls.TOOL_QUERY_TIMEOUT.format(
-                    timeout=settings.QUERY_TIMEOUT_S, query=cypher_query
+                    timeout=settings.QUERY_TIMEOUT_S, query=attempt.query
                 )
             )
             return QueryGraphData(
-                query_used=cypher_query,
+                query_used=attempt.query,
                 results=[],
                 summary=QUERY_SUMMARY_TIMEOUT.format(timeout=settings.QUERY_TIMEOUT_S),
             )
         except Exception as e:
             logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))
             return QueryGraphData(
-                query_used=cypher_query,
+                query_used=attempt.query,
                 results=[],
                 summary=QUERY_SUMMARY_DB_ERROR.format(error=e),
             )
