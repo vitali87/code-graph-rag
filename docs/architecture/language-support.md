@@ -6,6 +6,8 @@ description: "Supported programming languages and their feature coverage in Code
 
 Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified graph schema across all languages.
 
+Run `cgr language list-languages` to see every language below, its tier, and whether your install can parse it.
+
 ## Support Matrix
 
 <!-- SECTION:supported_languages -->
@@ -113,6 +115,10 @@ re-index the others afterwards.
 | Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
 | Nix | .nix | lambda bindings | - | import |
 
+![cgr start --update-graph on JakeWharton/timber, and cgr graph resolve plant returning Kotlin methods named Timber_kt.Timber.plant, with @line suffixes on the overloads](../assets/demos/language-support-ast-grep.gif)
+
+*Recorded on JakeWharton/timber (Kotlin, ast-grep tier).*
+
 To add another language, drop a YAML file into
 `codebase_rag/parsers/ast_grep_patterns/`; see the
 [README](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/parsers/ast_grep_patterns/README.md)
@@ -183,6 +189,10 @@ DEFINES, so a change that renames nodes still needs the wipe above.
 ## Language-Agnostic Design
 
 All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.
+
+![cgr start --update-graph on GoogleCloudPlatform/microservices-demo loading the Python, Java, C#, Go and JavaScript grammars, then cgr graph resolve main and Check returning definitions from Bash, Go, JavaScript, Java, Python and C# files](../assets/demos/language-support.gif)
+
+*Recorded on GoogleCloudPlatform/microservices-demo; the Go warning appears because the go/types frontend needs Go 1.26 and the recording machine has 1.24.*
 
 ## Adding New Languages
 
