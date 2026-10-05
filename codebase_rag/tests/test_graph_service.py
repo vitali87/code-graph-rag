@@ -462,6 +462,44 @@ class TestEnsureConstraints:
         for label in NODE_NAME_INDEXES:
             assert f"CREATE INDEX ON :{label}(name);" in executed_queries
 
+    def test_creates_path_index_for_each_path_read_label(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+
+        def capture_query(query: str) -> list[dict]:
+            executed_queries.append(query)
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
+            ingestor.ensure_constraints()
+
+        assert "CREATE INDEX ON :Module(path);" in executed_queries
+
+    def test_continues_on_path_index_error(self) -> None:
+        # A failing path-index CREATE (e.g. the index already exists) must not
+        # stop ingestion: ensure_constraints returns and every path index is
+        # still attempted.
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        path_index_queries = {
+            f"CREATE INDEX ON :{label}(path);" for label in NODE_PATH_INDEXES
+        }
+        executed_queries: list[str] = []
+
+        def fail_path_indexes(query: str) -> list[dict]:
+            executed_queries.append(query)
+            if query in path_index_queries:
+                raise RuntimeError("Index already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=fail_path_indexes
+        ):
+            ingestor.ensure_constraints()
+
+        assert path_index_queries <= set(executed_queries)
+
 
 class TestLegacyPathKeyMigration:
     """Superseded Folder/File relative-path keys must migrate safely (#897)."""
