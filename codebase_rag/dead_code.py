@@ -432,6 +432,79 @@ def _is_csharp_operator_or_finalizer_root(name: str, path: str) -> bool:
     )
 
 
+_CSHARP_TYPE_QUALIFIER_RE = re.compile(cs.CSHARP_TYPE_QUALIFIER_PATTERN)
+
+
+def _is_csharp_entry_point_root(
+    name: str, is_method: bool, path: str, props: PropertyDict
+) -> bool:
+    # The runtime invokes `static Main` with no call site the graph sees, and
+    # the compiler accepts it whatever its accessibility. Most programs
+    # declare it without `public`, so the exported rule missed it and Main
+    # was reported dead with its whole call tree (issue #2471). The
+    # compiler's own signature test decides, so an instance `Main`, a
+    # `ValueTask Main` or a `Main(string)` stays ordinary code.
+    if not (
+        is_method and name == cs.CSHARP_ENTRY_METHOD_NAME and path.endswith(cs.EXT_CS)
+    ):
+        return False
+    params = _str_items(props.get(cs.KEY_PARAM_TYPES))
+    return (
+        cs.TS_CSHARP_MODIFIER_STATIC in _str_items(props.get(cs.KEY_MODIFIERS))
+        and _is_csharp_entry_return(str(props.get(cs.KEY_RETURN_TYPE) or ""))
+        and (
+            not params
+            or (
+                len(params) == 1
+                and _csharp_args_type(params[0]) in cs.CSHARP_ENTRY_ARGS_TYPES
+            )
+        )
+    )
+
+
+def _csharp_type_name(type_text: str) -> str:
+    # Spelling must not decide: `Task < int >` and
+    # `global::System.Threading.Tasks.Task<System.Int32>` are one type.
+    return _CSHARP_TYPE_QUALIFIER_RE.sub("", "".join(type_text.split()))
+
+
+def _csharp_args_type(param_type: str) -> str:
+    return _csharp_type_name(param_type.removeprefix(cs.CSHARP_PARAMS_PREFIX)).replace(
+        cs.CSHARP_NULLABLE_MARKER, ""
+    )
+
+
+def _is_csharp_entry_return(type_text: str) -> bool:
+    # `Task?` only annotates a reference type, which leaves it a Task the
+    # compiler accepts; `int?` is Nullable<int>, a different type it rejects.
+    name = _csharp_type_name(type_text)
+    if name.endswith(cs.CSHARP_NULLABLE_MARKER):
+        return (
+            name.removesuffix(cs.CSHARP_NULLABLE_MARKER)
+            in cs.CSHARP_ENTRY_TASK_RETURN_TYPES
+        )
+    return name in cs.CSHARP_ENTRY_RETURN_TYPES
+
+
+def _strip_param_list(qn: str) -> str:
+    """`p.A.Main(System.String[])` -> `p.A.Main`: the trailing parameter list,
+    found by matching its closing parenthesis back to the opener, so dots,
+    commas and nested parentheses inside it (or a `(` in a folder name before
+    it) do not decide. A qn without a balanced trailing list is returned
+    unchanged."""
+    if not qn.endswith(cs.CHAR_PAREN_CLOSE):
+        return qn
+    depth = 0
+    for index in range(len(qn) - 1, -1, -1):
+        if qn[index] == cs.CHAR_PAREN_CLOSE:
+            depth += 1
+        elif qn[index] == cs.CHAR_PAREN_OPEN:
+            depth -= 1
+            if depth == 0:
+                return qn[:index]
+    return qn
+
+
 _WELL_KNOWN_SYMBOL_KEY_RE = re.compile(r"\[Symbol\.(?P<name>[A-Za-z_$][\w$]*)\]$")
 
 
@@ -596,8 +669,12 @@ def _is_root(
     # The duplicate-qn marker (`init@51`, a SECOND Go init() in one file)
     # is a registration artifact, never part of the written name; strip it
     # so every name-scoped root rule sees the real leaf (kubernetes
-    # pkg.apis.abac register.init@51 reported dead).
-    leaf = qn_markers.strip_dup_marker(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    # pkg.apis.abac register.init@51 reported dead). The parameter list goes
+    # before the last dot is found: it spells types as written, so the last
+    # dot of `Main(System.String[])` left the leaf `String[])` (#2471).
+    leaf = _strip_param_list(qn_markers.strip_dup_marker(qn)).rsplit(
+        cs.SEPARATOR_DOT, 1
+    )[-1]
     path = str(props.get(cs.KEY_PATH, ""))
     is_method = qn in method_qns
     bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -670,6 +747,7 @@ def _is_root(
         lambda: _is_csharp_attribute_root(props, path),
         lambda: _is_csharp_dispose_root(bare_leaf, is_method, path),
         lambda: _is_csharp_operator_or_finalizer_root(leaf, path),
+        lambda: _is_csharp_entry_point_root(bare_leaf, is_method, path, props),
         lambda: _is_nest_root(
             qn,
             bare_leaf,
@@ -1224,6 +1302,10 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_END_LINE: _as_line(row.get(cs.KEY_END_LINE)),
         cs.KEY_RUST_CFG_TEST_MODS: _as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
         cs.KEY_RUST_UNGATED_MODS: _as_str_list(row.get(cs.KEY_RUST_UNGATED_MODS)),
+        # The signature the C# entry-point rule checks (issue #2471).
+        cs.KEY_MODIFIERS: _as_str_list(row.get(cs.KEY_MODIFIERS)),
+        cs.KEY_RETURN_TYPE: str(row.get(cs.KEY_RETURN_TYPE) or ""),
+        cs.KEY_PARAM_TYPES: _as_str_list(row.get(cs.KEY_PARAM_TYPES)),
     }
 
 
