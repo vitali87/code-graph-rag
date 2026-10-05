@@ -24,8 +24,16 @@ def python_literal_type(
     """The builtin a literal node evaluates to, or None for any other node.
 
     A string is `bytes` when its prefix says so (`b"x"`, `rb'x'`); a
-    concatenation takes its first part's.
+    concatenation takes its first part's. Parentheses and a sign on a number
+    keep its type (`(1)`, `-1`, `(-1)`; bot review on PR #2912).
     """
+    if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        inner = node.named_children
+        return python_literal_type(inner[0], types) if len(inner) == 1 else None
+    if node.type == cs.TS_PY_UNARY_OPERATOR:
+        operand = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        builtin = None if operand is None else python_literal_type(operand, types)
+        return builtin if builtin in (cs.PY_TYPE_INT, cs.PY_TYPE_FLOAT) else None
     builtin = types.get(node.type)
     if builtin != cs.PY_TYPE_STR:
         return builtin

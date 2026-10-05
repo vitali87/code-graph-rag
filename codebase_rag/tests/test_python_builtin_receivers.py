@@ -22,7 +22,8 @@ LIB = (
     "    def append(self, x):\n        return x\n\n"
     "    def update(self, x):\n        return x\n\n"
     "    def strip(self):\n        return 1\n\n"
-    "    def count(self, x):\n        return x\n"
+    "    def count(self, x):\n        return x\n\n\n"
+    "class Number:\n    def bit_length(self):\n        return 1\n"
 )
 
 APP = (
@@ -67,7 +68,14 @@ APP = (
     "        self.seq: None | list = []\n\n"
     "    def lookup(self, k):\n        return self.cache.get(k)\n\n"
     "    def lookup_legacy(self, k):\n        return self.legacy.get(k)\n\n"
-    "    def count_seq(self, x):\n        return self.seq.count(x)\n"
+    "    def count_seq(self, x):\n        return self.seq.count(x)\n\n\n"
+    # Bot review on PR #2912: an int literal receiver is written in
+    # parentheses, often signed.
+    "def paren_int():\n    return (1).bit_length()\n\n\n"
+    "def neg_int():\n    return (-1).bit_length()\n\n\n"
+    "def local_neg():\n    n = -1\n    return n.bit_length()\n\n\n"
+    "def local_paren():\n    n = (2)\n    return n.bit_length()\n\n\n"
+    "def local_neg_name(x):\n    n = -x\n    return n.bit_length()\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = "from lib import Bag as dict\n\n\ndef fetch(x: dict):\n    return x.get(1)\n"
@@ -111,6 +119,10 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         "OptionalStore.lookup",
         "OptionalStore.lookup_legacy",
         "OptionalStore.count_seq",
+        "paren_int",
+        "neg_int",
+        "local_neg",
+        "local_paren",
     ],
 )
 def test_a_call_on_a_builtin_value_binds_no_first_party_method(
@@ -153,6 +165,13 @@ def test_an_unknown_receiver_keeps_the_name_fallback(
     graph: RecordedGraph, caller: str
 ) -> None:
     assert _callees(graph, caller) == {"lib.Bag.get": "heuristic"}
+
+
+def test_a_signed_unknown_value_keeps_the_name_fallback(
+    graph: RecordedGraph,
+) -> None:
+    # Only a sign on a numeric literal is a literal; `-x` is whatever `x` is.
+    assert _callees(graph, "local_neg_name") == {"lib.Number.bit_length": "heuristic"}
 
 
 @pytest.mark.parametrize("caller", ["no_counterpart", "tuple_count", "annotated"])
