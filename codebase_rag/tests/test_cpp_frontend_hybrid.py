@@ -14,6 +14,7 @@ from codebase_rag.parsers.cpp_frontend import (
     run_cpp_frontend_hybrid,
 )
 from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.types_defs import PropertyDict
 from evals.cgr_graph import _StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
@@ -670,7 +671,7 @@ def _index_dup(
 
 def _sites(
     store: _StatefulIngestor, rel_type: cs.RelationshipType, src: str, dst: str
-) -> list[dict[str, object]]:
+) -> list[PropertyDict]:
     # One entry per edge the store would hold after MERGE: the site props
     # are the part of the edge identity beyond its endpoints.
     return sorted(
