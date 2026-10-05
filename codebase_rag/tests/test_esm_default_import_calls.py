@@ -53,6 +53,15 @@ def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     parsers, queries = load_parsers()
+    missing = sorted(
+        str(lang.value)
+        for lang in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS)
+        if lang not in parsers
+    )
+    if missing:
+        # A module-scoped fixture runs before the per-test grammar skip
+        # hook is installed, so a base install must skip here.
+        pytest.skip(f"{', '.join(missing)} parser not available")
     store = _StatefulIngestor()
     GraphUpdater(
         ingestor=store,
