@@ -122,6 +122,7 @@ _SPREADS = frozenset(
 # Bindings the callee body gets from how it is called, not from its
 # parameters: copied into a caller they bind to the caller's receiver.
 _IMPLICIT_TYPES = frozenset({cs.TS_THIS, cs.TS_SUPER})
+_TYPE_NAMES = frozenset({*_IDENTIFIERS, cs.TS_TYPE_IDENTIFIER})
 _IMPLICIT_NAMES = frozenset({cs.KEYWORD_SUPER, cs.TS_JS_ARGUMENTS_NAME})
 _SCOPES = frozenset(
     {
@@ -536,11 +537,37 @@ def _refuse_unsupported(qn: str, definition: Node, returned: Node) -> None:
         )
     ):
         raise InlineRefused(cs.INLINE_REFUSED_GENERATOR.format(qn=qn))
+    generics = _type_parameter_names(definition)
     for n in _walk(returned):
         if n.type in _IMPLICIT_TYPES or (
             n.type in _IDENTIFIERS and _text(n) in _IMPLICIT_NAMES
         ):
             raise InlineRefused(cs.INLINE_REFUSED_IMPLICIT.format(qn=qn, name=_text(n)))
+        if n.type in _TYPE_NAMES and _text(n) in generics:
+            # `identity<T>`'s `x as T` copied into a caller names a `T`
+            # nothing there declares (TS2304); the call site's type
+            # arguments are often inferred, so there is nothing to put in
+            # its place (Greptile, PR #2932).
+            raise InlineRefused(
+                cs.INLINE_REFUSED_TYPE_PARAMETER.format(qn=qn, name=_text(n))
+            )
+
+
+def _type_parameter_names(definition: Node) -> set[str]:
+    """The names the definition's own `<T, U>` (or Python `[T]`) declares."""
+    holder = definition.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    if holder is None:
+        return set()
+    names: set[str] = set()
+    # A TypeScript `type_parameter` names itself in a field; a Python one is
+    # a `type` whose first identifier is the name.
+    for param in holder.named_children:
+        named = param.child_by_field_name(cs.FIELD_NAME) or next(
+            (n for n in _walk(param) if n.type in _TYPE_NAMES), None
+        )
+        if named is not None:
+            names.add(_text(named))
+    return names
 
 
 def _parameters(qn: str, definition: Node) -> list[_Param]:
@@ -1079,6 +1106,11 @@ def _without_entry(statement: str, name: str) -> str | None:
     if named is not None:
         entries = [e.strip() for e in named.group("names").split(",") if e.strip()]
         kept = [e for e in entries if _local_name(e) != name]
+        lead = statement[: named.start()].rstrip()
+        if not kept and lead.endswith(cs.CHAR_COMMA):
+            # `import dflt, { helper } from 'm'` still binds `dflt`
+            # (Greptile, PR #2932).
+            return lead[: -len(cs.CHAR_COMMA)] + statement[named.end() :]
         if not kept:
             return None
         return (
