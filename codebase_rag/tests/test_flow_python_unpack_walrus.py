@@ -48,6 +48,32 @@ FUNCTIONS = {
     # The other element's source never reaches the sink.
     "pairwise": 'x, y = os.getenv("PB_X"), os.getenv("PB_Y")\nprint(y)',
     "clean_unpack": "a, b = 1, 2\nprint(a)",
+    # Bot review on PR #2764: Python evaluates the value once, left to right
+    # with its calls and walrus bindings, and only then binds the targets; a
+    # walrus Python may skip binds only on the path that runs it.
+    "walrus_short_circuit": (
+        'token = os.getenv("PB_SHORT")\nflag = len("")\n'
+        'if flag and (token := "safe"):\n    pass\nprint(token)'
+    ),
+    "walrus_arm": (
+        'token = os.getenv("PB_ARM")\nv = (token := "safe") if len("") else 0\n'
+        "print(token)"
+    ),
+    "chain_swap": (
+        'a = os.getenv("PB_CHSWAP")\nb = "safe"\na, b = b, a = b, a\nprint(a)'
+    ),
+    "value_splat": '*rest, tail = [*os.getenv("PB_SPLAT"), "safe"]\nprint(rest)',
+    "walrus_then_read": 'x, y = (t := os.getenv("PB_WREAD")), t\nprint(y)',
+    "call_before_unpack": 'x = os.getenv("PB_CALLU")\nx, unused = print(x), 1',
+    "call_in_walrus": 'x = os.getenv("PB_CALLW")\n(x := print(x))',
+    "call_before_assign": 'x = os.getenv("PB_CALLA")\nx = print(x)',
+    # A walrus Python always runs binds strongly, and a target bound after a
+    # walrus in the value replaces what the walrus bound.
+    "walrus_left_operand": (
+        'token = os.getenv("PB_LEFTOP")\n'
+        'if (token := "safe") and len(""):\n    pass\nprint(token)'
+    ),
+    "walrus_then_target": 't, y = "safe", (t := os.getenv("PB_WAFTER"))\nprint(t)',
 }
 
 
@@ -101,6 +127,14 @@ def _leaks(flows: set[tuple[str, str]], var: str) -> bool:
         "PB_WLATER",
         "PB_CHAIN",
         "PB_SWAP",
+        "PB_SHORT",
+        "PB_ARM",
+        "PB_CHSWAP",
+        "PB_SPLAT",
+        "PB_WREAD",
+        "PB_CALLU",
+        "PB_CALLW",
+        "PB_CALLA",
     ],
 )
 def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
@@ -109,7 +143,9 @@ def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
     assert _leaks(flows, var)
 
 
-@pytest.mark.parametrize("var", ["PB_KILL", "PB_WKILL", "PB_SWAPK"])
+@pytest.mark.parametrize(
+    "var", ["PB_KILL", "PB_WKILL", "PB_SWAPK", "PB_LEFTOP", "PB_WAFTER"]
+)
 def test_a_name_rebound_to_a_clean_value_is_clean(
     flows: set[tuple[str, str]], var: str
 ) -> None:
