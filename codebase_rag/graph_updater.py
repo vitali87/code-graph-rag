@@ -36,6 +36,7 @@ from .language_spec import (
     csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
+    sql_object_reference_name,
 )
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
@@ -130,6 +131,8 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    default_project_name,
+    project_roots_from_rows,
     python_stub_has_implementation,
     rescued_files,
     should_keep_dir,
@@ -937,6 +940,16 @@ def _touch_empty_json(cache_path: Path) -> None:
         pass
 
 
+def _is_placeholder_hash_cache(cache_path: Path) -> bool:
+    # Read quietly rather than through `_load_hash_cache`, which logs every
+    # load: this only classifies the file. One that cannot be read or decoded
+    # is not the placeholder `_touch_empty_json` wrote.
+    try:
+        return loads_json(cache_path.read_text(encoding=cs.ENCODING_UTF8)) == {}
+    except (OSError, ValueError):
+        return False
+
+
 def _natural_qn(qualified_name: str) -> str:
     """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
 
@@ -1261,7 +1274,7 @@ class GraphUpdater:
         )
         self.project_name = (
             project_name and project_name.strip()
-        ) or repo_path.resolve().name
+        ) or default_project_name(repo_path)
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
@@ -1294,6 +1307,10 @@ class GraphUpdater:
         )
         self._embeddings_interrupted = False
         self.skipped_because_in_sync = False
+        # Whether the current run has saved its graph and sync state; see
+        # `run`. A caller interrupted mid-run reads it to tell a partial graph
+        # from a whole one (issue #2442).
+        self.committed = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
         # Module-qn claims `_forget_flux_stem_qns` dropped this run, by file
@@ -2108,7 +2125,15 @@ class GraphUpdater:
         and side-effect free for callers that never run. A single-file
         target deleted AFTER construction passes this check (its parent
         exists) and is a separate decision (#1737).
+
+        `committed` turns True once the run has nothing left that could leave
+        the graph partial: at the commit point, or on the in-sync fast path.
+        A Ctrl+C can land after that and before the return (#2442), so where
+        the interrupt surfaced does not say whether the graph is whole.
         """
+        # First, so an interrupt anywhere below reads this run's answer, not
+        # a reused updater's previous one.
+        self.committed = False
         if not self.repo_path.is_dir():
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
         self._clear_python_inference_caches()
@@ -2119,6 +2144,7 @@ class GraphUpdater:
         # so a reused updater must not treat a previous run's interfaces as
         # unflushed writes that rehydration has to preserve.
         self.factory.definition_processor.cpp_interfaces_parsed_this_run.clear()
+        self.factory.definition_processor.unparsable_manifests.clear()
         # Per-run for the same reason: set on the in-sync early return below
         # and previously cleared only in `__init__`, so a reused instance kept
         # reporting a previous run's skip. `cli.py` reads it to decide what to
@@ -2179,6 +2205,7 @@ class GraphUpdater:
         self._trace_gone_paths = frozenset()
         if not force and self._is_already_in_sync():
             self._finish_in_sync_run()
+            self._retire_legacy_dotted_project()
             return
 
         # Cleared only when a REAL indexing run begins: an in-sync no-op above
@@ -2348,6 +2375,7 @@ class GraphUpdater:
         self._commit_run_state()
         if self._embeddings_interrupted:
             raise ex.EmbeddingsInterrupted
+        self._retire_legacy_dotted_project()
 
     def _clear_python_inference_caches(self) -> None:
         py_engine = self.factory.type_inference._python_type_inference
@@ -2369,6 +2397,8 @@ class GraphUpdater:
         self.ingestor.flush_all()
         if self._single_file is None and not self._graph_state_unknown:
             self._stamp_exclusion_state(only_if_changed=True)
+        # Nothing to save on this path, and nothing left half-written.
+        self.committed = True
 
     def _commit_run_state(self) -> None:
         # The delombok state commits ONLY here, after every pass and the
@@ -2485,6 +2515,8 @@ class GraphUpdater:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
                 self._stamp_exclusion_state()
+        # Last, so an interrupt anywhere above still reads as a partial run.
+        self.committed = True
 
     def _stamp_exclusion_state(self, *, only_if_changed: bool = False) -> None:
         """Record this run's scope as the last run's and as this project's own.
@@ -3253,6 +3285,11 @@ class GraphUpdater:
         # macro defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_MACRO):
             self.factory.definition_processor.macro_qns.add(qn)
+        # Restore the body-scoped-name set for unchanged files, or a
+        # re-parsed file's bare call binds by name to a function expression
+        # only its own body can call by that name (issue #2402).
+        if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
+            self.function_registry.mark_body_scoped_name(qn)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
@@ -3989,6 +4026,17 @@ class GraphUpdater:
         names: set[str] = set()
         for capture in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
             for node in captures.get(capture, ()):
+                if language == cs.SupportedLanguage.SQL:
+                    # A SQL caller waits on the normalized name it wrote:
+                    # `fee` (any schema) or `billing.fee` (that schema only).
+                    # The raw identifier (`FEE`, `"Fee"`) would match neither.
+                    # The graph keeps only the last segment, so an edited file
+                    # re-offers its qualified names: a caller waiting on one
+                    # is either linked into the file (re-parsed anyway) or
+                    # really gains the routine.
+                    if routine := sql_object_reference_name(node):
+                        names.update({routine, routine.rsplit(cs.SEPARATOR_DOT, 1)[-1]})
+                    continue
                 names.update(_definition_names(node))
         return names
 
@@ -5017,6 +5065,122 @@ class GraphUpdater:
             dirname, dir_prefix, self.exclude_paths, self.unignore_paths
         )
 
+    def _retire_legacy_dotted_project(self) -> None:
+        """Remove the project this checkout was indexed under before #2412.
+
+        A checkout at `acme.web/` used to default to project `acme.web`,
+        whose qualified names alias project `acme`'s package `web`. Syncing
+        under the new default would leave that project beside it (review of
+        PR 2497). It goes only once this run is committed, so a failed sync
+        keeps it; its vectors go first, since they are keyed by node id and
+        cannot be found once the nodes are gone, and while they cannot be
+        deleted the project stays for the next sync to try again.
+        """
+        ingestor = self.ingestor
+        if not isinstance(ingestor, QueryProtocol):
+            return
+        legacy = self._legacy_dotted_project()
+        if legacy is None:
+            return
+        try:
+            if not self._delete_legacy_embeddings(legacy):
+                logger.warning(
+                    ls.LEGACY_DOTTED_PROJECT_VECTORS_KEPT.format(legacy=legacy)
+                )
+                return
+            ingestor.execute_write(
+                cq.CYPHER_RETIRE_PROJECT,
+                {
+                    cs.KEY_PROJECT_NAME: legacy,
+                    cs.KEY_PROJECT_PREFIX: f"{legacy}{cs.SEPARATOR_DOT}",
+                },
+            )
+            # What `delete_project` sweeps after its walk: shared nodes the
+            # retired project alone anchored.
+            ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+            prune_unanchored_resources(ingestor)
+        except Exception as e:
+            # The sync itself succeeded; the next one tries again.
+            logger.warning(
+                ls.LEGACY_DOTTED_PROJECT_RETIRE_FAILED.format(legacy=legacy, error=e)
+            )
+            return
+        logger.info(
+            ls.LEGACY_DOTTED_PROJECT_RETIRED.format(
+                legacy=legacy, project=self.project_name
+            )
+        )
+
+    def _legacy_dotted_project(self) -> str | None:
+        """The pre-#2412 project of this checkout, if it can be removed.
+
+        Only an unnamed directory run has one, and only a project whose
+        recorded root is this checkout is it. It is kept while another
+        project's name is a prefix of it (`acme`) or extends it
+        (`acme.web.api`): their qualified names overlap, so some of its nodes
+        may be that project's too.
+        """
+        if self.project_named or self._single_file is not None:
+            return None
+        legacy = self.repo_path.resolve().name
+        if legacy == self.project_name or cs.SEPARATOR_DOT not in legacy:
+            return None
+        try:
+            roots = project_roots_from_rows(
+                self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
+            )
+        except Exception:
+            return None
+        root = roots.get(legacy)
+        if root is None or Path(root).resolve() != self.repo_path.resolve():
+            return None
+        sharing = sorted(
+            name
+            for name in roots
+            if name != legacy and legacy.startswith(f"{name}{cs.SEPARATOR_DOT}")
+        )
+        if sharing:
+            logger.warning(
+                ls.LEGACY_DOTTED_PROJECT_KEPT.format(
+                    legacy=legacy,
+                    project=self.project_name,
+                    sharing=", ".join(sharing),
+                )
+            )
+            return None
+        descendants = sorted(
+            name for name in roots if name.startswith(f"{legacy}{cs.SEPARATOR_DOT}")
+        )
+        if descendants:
+            logger.info(
+                ls.LEGACY_DOTTED_PROJECT_KEPT_FOR_DESCENDANTS.format(
+                    legacy=legacy,
+                    project=self.project_name,
+                    descendants=", ".join(descendants),
+                )
+            )
+            return None
+        return legacy
+
+    def _delete_legacy_embeddings(self, legacy: str) -> bool:
+        # A failed read raises: without the ids the vectors could never be
+        # found again, so the project must stay until a read succeeds. A
+        # failed delete, which the vector store logs and swallows, returns
+        # False for the same reason (review of PR 2497).
+        rows = self._graph_rows(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS, {cs.KEY_PROJECT_NAME: legacy}
+        )
+        node_ids = [
+            node_id
+            for row in rows
+            if isinstance(node_id := row.get(cs.KEY_NODE_ID), int)
+        ]
+        if not node_ids:
+            return True
+        from .vector_store import delete_project_embeddings
+
+        return delete_project_embeddings(legacy, node_ids)
+
     def _drop_cache_if_graph_lost(self) -> None:
         """Discard the hash cache when the graph no longer holds this project.
 
@@ -5052,7 +5216,12 @@ class GraphUpdater:
             return
         if count:
             return
-        logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
+        if self._previous_build_unfinished():
+            # Nothing was wiped: that build stopped before any of its modules
+            # reached the graph.
+            logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
+        else:
+            logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
         # Discarding is best-effort by intent: `missing_ok=True` already says a
         # cache that is not there is fine, and a cache that cannot be REMOVED
         # is the same situation one step later. Every other filesystem writer
@@ -5078,6 +5247,23 @@ class GraphUpdater:
                 self._cache_discarded_in_memory = True
                 logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
+    def _previous_build_unfinished(self) -> bool:
+        """Whether the hash cache is the placeholder of a build that never committed.
+
+        A full build writes an empty cache before its first graph write
+        (`_hash_baseline`) and replaces it, stamping the parser fingerprint
+        beside it, only at its commit point. An empty cache with no stamp is
+        therefore a build that stopped short (Ctrl+C, a crash), and blaming a
+        parser change or a wiped database for the rebuild that follows sent
+        users looking for a cause that was not there (issue #2442). A graph
+        built before the stamp existed has a cache naming its files, and a
+        finished build that found no files stamps its parser all the same.
+        """
+        stamp = self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
+        return _load_parser_fingerprint(stamp) is None and _is_placeholder_hash_cache(
+            self.state_dir / cs.HASH_CACHE_FILENAME
+        )
+
     def _reparse_all_if_parser_changed(self) -> None:
         """Ignore the hash cache for this run when a parser input changed.
 
@@ -5092,6 +5278,11 @@ class GraphUpdater:
         """
         # No hash cache means a full build is coming: nothing to compare.
         if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
+            return
+        if self._previous_build_unfinished():
+            # The empty cache names no file to force, so this run is the full
+            # build it would be anyway; what changes is the reason given.
+            logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
             return
         stored = _load_parser_fingerprint(
             self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
@@ -5537,6 +5728,7 @@ class GraphUpdater:
         self._restore_inbound_edges(captured_inbound)
 
         self._log_process_counts(scan, changed_count)
+        self._log_unparsable_manifests()
         if first_failure is not None:
             raise first_failure
 
@@ -6183,6 +6375,27 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_CHANGED, count=changed_count)
         if scan.unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=scan.unreadable_count)
+
+    def _log_unparsable_manifests(self) -> None:
+        """Name the manifests this run could not parse in one WARNING (#2568).
+
+        Each is a DEBUG line already: fixture and mock manifests are broken on
+        purpose often enough that a line apiece buried the run's own output,
+        so they are counted like the unreadable files above. The shallowest is
+        the one named, so a broken root manifest, which is the project's own
+        dependency list, is never hidden behind a fixture that sorts first.
+        """
+        unparsable = self.factory.definition_processor.unparsable_manifests
+        if not unparsable:
+            return
+        first = min(unparsable, key=lambda path: (len(path.parts), path))
+        logger.warning(
+            ls.DEP_MANIFESTS_UNPARSABLE,
+            count=len(unparsable),
+            path=cached_relative_path(first, self.repo_path).as_posix(),
+            error=unparsable[first],
+        )
+        unparsable.clear()
 
     def _stash_pending_caches(
         self,
@@ -7462,6 +7675,7 @@ class GraphUpdater:
         self._reingest_delete(reparse, gone, hashes)
         self._resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
+        self._log_unparsable_manifests()
         # After BOTH seed calls and after the re-parse, so a re-parsed file's
         # own entry is exempt while its Module node is still unflushed
         # (issue #1712). The exemption is the paths THIS call re-parsed, not
