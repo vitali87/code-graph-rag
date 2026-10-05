@@ -70,8 +70,13 @@ FILE_WRITER = (
 )
 
 SHELL_COMMAND = (
-    "Executes shell commands from allowlist. "
-    "Read-only commands run without approval; write operations require user confirmation."
+    "Executes allowlisted shell commands; `grep` is not available, use `rg`. "
+    "Reads confined to the project (ls, rg, cat, find, wc, head, tail, sort, uniq, "
+    "cut, with no redirects or paths outside it) run without approval; anything "
+    "else asks the user first. A fallback: callers, callees, inheritance, counts, "
+    "package layout and dependencies come from `"
+    + AgenticToolName.QUERY_GRAPH
+    + "`, so ask it before reconstructing them with rg, ls or wc."
 )
 
 CODE_RETRIEVAL = (
@@ -477,7 +482,11 @@ MCP_EXPLAIN_TRACEBACK = (
     "resolved to its Function/Method/Module node and returned with its "
     "graph neighbourhood (callers, callees, and FLOWS_TO sources feeding "
     "it). Frames outside the repository or unknown to the graph carry an "
-    "unresolved reason instead. Use this to ground a failure report in "
+    "unresolved reason instead. A traceback from another checkout (a CI "
+    "runner, a container, a teammate's machine, Windows) is matched by the "
+    "checkout root its frames share, reported as inferred_checkout_root; "
+    "pass path_prefix_map when that root cannot be inferred. When nothing "
+    "resolves, note says why. Use this to ground a failure report in "
     "the indexed code before deciding where to look."
 )
 
@@ -494,13 +503,38 @@ MCP_RANK_ROOT_CAUSES = (
     "carries its file, definition line, reasons, and the call path to the "
     "failure. When the project has no FLOWS_TO edges the ranking degrades "
     "to a CALLS-only walk and flow_used is false; flow_gaps always names "
-    "the files outside flow-analysis coverage."
+    "the files outside flow-analysis coverage. Frames from another checkout "
+    "resolve as in explain_traceback, and resolution plus note say why a "
+    "ranking is empty."
 )
 
+MCP_CONTEXT = (
+    "A graph-ranked minimal context slice for a task, within a token budget. "
+    "`target` is a qualified name, a bare name, `path:line`, or free text "
+    "(matched by embedding similarity when the semantic extra is installed). "
+    "Returns the target's source, its direct callers' call lines, its direct "
+    "callees' signatures, the types it accepts and returns, the tests that "
+    "reach it, and the documentation sections whose file links to it, ranked "
+    "by graph distance (trace hotness and similarity break ties) and trimmed "
+    "to `budget_tokens`. Every piece says why it is included. Use this before "
+    "reading whole files."
+)
+MCP_PARAM_CONTEXT_TARGET = (
+    "A qualified name, a bare name (`helper`, `Store.get`), `path:line`, or a "
+    "free-text description of the task."
+)
+MCP_PARAM_BUDGET_TOKENS = "Token budget for the slice (default 4000)."
 MCP_PARAM_TRACEBACK_TEXT = (
     "The traceback text exactly as Python printed it (the 'Traceback "
     "(most recent call last):' block; chained tracebacks are fine, the "
     "final propagated section is used)"
+)
+MCP_PARAM_PATH_PREFIX_MAP = (
+    "Optional. Maps the checkout root the traceback was recorded under to a "
+    'directory of the indexed repository, e.g. {"/app": "."} or '
+    '{"/usr/lib/python3.12/site-packages": "src"}. Needed only when the '
+    "root cannot be inferred from the frame paths, such as an installed "
+    "copy of the package"
 )
 
 MCP_TOOLS: dict[MCPToolName, str] = {
@@ -524,6 +558,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.ANNOTATE: MCP_ANNOTATE,
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
+    MCPToolName.CONTEXT: MCP_CONTEXT,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,
