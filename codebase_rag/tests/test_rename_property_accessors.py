@@ -48,7 +48,7 @@ BANK = """class Account:
         self._amount = v
 
 
-def audit(acct):
+def audit(acct: Account):
     return acct.balance
 """
 
@@ -67,7 +67,7 @@ RENAMED = """class Account:
         self._amount = v
 
 
-def audit(acct):
+def audit(acct: Account):
     return acct.funds
 """
 
@@ -255,7 +255,7 @@ GETTER_ONLY = """class Account:
         return self._amount
 
 
-def audit(acct):
+def audit(acct: Account):
     return acct.balance
 """
 
