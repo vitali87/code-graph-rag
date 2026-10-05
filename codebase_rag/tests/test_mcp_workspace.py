@@ -164,7 +164,7 @@ def test_the_server_scopes_cypher_generation_to_the_workspace(
         patch.object(mcp_server, "setup_logging"),
         patch.object(mcp_server, "load_workspace", return_value=ws),
         patch.object(mcp_server, "MemgraphIngestor"),
-        patch.object(mcp_server, "CypherGenerator") as cypher,
+        patch.object(mcp_server, "LazyCypherGenerator") as cypher,
         patch.object(mcp_server, "create_mcp_tools_registry") as registry,
         patch.object(
             type(mcp_server.settings), "active_orchestrator_config", MagicMock()

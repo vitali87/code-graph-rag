@@ -24,6 +24,7 @@ from codebase_rag.parsers.dependency_parser import (
 
 @pytest.fixture
 def log_messages() -> Generator[list[str], None, None]:
+    # A parser fault, not bad content, is what logs at ERROR (issue #2568).
     messages: list[str] = []
     handler_id = logger.add(lambda msg: messages.append(str(msg)), level="ERROR")
     yield messages
@@ -215,9 +216,7 @@ class TestPyProjectTomlParser:
 
         assert deps == [Dependency("requests", "requests>=2.28")]
 
-    def test_truncated_file_is_rejected_not_guessed(
-        self, tmp_path: Path, log_messages: list[str]
-    ) -> None:
+    def test_truncated_file_is_rejected_not_guessed(self, tmp_path: Path) -> None:
         # Negative test. An unterminated array is invalid TOML that pip and uv
         # refuse; a lenient reader accepted it and clipped the last character,
         # inventing `request`, a different real PyPI package.
@@ -226,10 +225,11 @@ class TestPyProjectTomlParser:
             '[project]\nname = "my-project"\ndependencies = ["requests"\n'
         )
 
-        deps = PyProjectTomlParser().parse(pyproject)
+        manifest = PyProjectTomlParser().read(pyproject)
 
-        assert deps == []
-        assert any(str(pyproject) in message for message in log_messages)
+        assert manifest.dependencies == []
+        # Refused as unparsable, which the run's one WARNING counts (#2568).
+        assert manifest.unparsable is not None
 
     def test_nonexistent_file(self, tmp_path: Path) -> None:
         parser = PyProjectTomlParser()
@@ -527,7 +527,7 @@ class TestCargoTomlParser:
         assert deps == [Dependency("serde", "1.0")]
 
     def test_truncated_file_yields_no_partial_dependencies(
-        self, tmp_path: Path, log_messages: list[str]
+        self, tmp_path: Path
     ) -> None:
         # Negative test. Cargo refuses this manifest outright; a lenient reader
         # parsed up to the break and still reported the crates before it.
@@ -536,10 +536,11 @@ class TestCargoTomlParser:
             '[package]\nname = "my-app"\n[dependencies]\nserde = "1.0"\ntokio = ["full"\n'
         )
 
-        deps = CargoTomlParser().parse(cargo)
+        manifest = CargoTomlParser().read(cargo)
 
-        assert deps == []
-        assert any(str(cargo) in message for message in log_messages)
+        assert manifest.dependencies == []
+        # Refused as unparsable, which the run's one WARNING counts (#2568).
+        assert manifest.unparsable is not None
 
 
 class TestGoModParser:
@@ -854,9 +855,7 @@ class TestCsprojParser:
 
         assert deps == []
 
-    def test_entity_declarations_are_refused_not_expanded(
-        self, tmp_path: Path, log_messages: list[str]
-    ) -> None:
+    def test_entity_declarations_are_refused_not_expanded(self, tmp_path: Path) -> None:
         # Negative test. Entity declarations are where XML expansion bombs and
         # external-entity reads start, and the stdlib parser resolves internal
         # ones, so `&pkg;` would surface as a dependency the file never named.
@@ -868,10 +867,11 @@ class TestCsprojParser:
             "</ItemGroup></Project>\n"
         )
 
-        deps = CsprojParser().parse(csproj)
+        manifest = CsprojParser().read(csproj)
 
-        assert deps == []
-        assert any(str(csproj) in message for message in log_messages)
+        assert manifest.dependencies == []
+        # Refused as unparsable, which the run's one WARNING counts (#2568).
+        assert manifest.unparsable is not None
 
 
 class TestParseDependencies:

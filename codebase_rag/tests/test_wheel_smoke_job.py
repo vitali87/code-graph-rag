@@ -16,6 +16,9 @@ from types import ModuleType
 import pytest
 import yaml
 
+from codebase_rag.config import settings
+from codebase_rag.mcp import server as mcp_server
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SMOKE_SCRIPT = REPO_ROOT / "scripts" / "smoke_wheel.py"
@@ -135,3 +138,78 @@ class TestSmokeScript:
         monkeypatch.setattr(smoke_module, "CHECKS", (lambda: None,))
 
         assert smoke_module.main() == 0
+
+
+class _DecoratorlessServer:
+    """The mcp 2.x ``Server`` shape: handlers are constructor arguments and the
+    ``list_tools()``/``call_tool()`` decorators the 1.x API had are gone."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class TestMcpServerSmokeCheck:
+    """Issue #2519: importing the server module is not enough, since the SDK
+    attribute that broke is only read while the server is built."""
+
+    @pytest.fixture
+    def isolated_server_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The check selects offline model roles on the process-wide settings;
+        # restoring them keeps later tests on their own configuration.
+        monkeypatch.setattr(
+            settings, "_active_orchestrator", settings._active_orchestrator
+        )
+        monkeypatch.setattr(settings, "_active_cypher", settings._active_cypher)
+        monkeypatch.setenv("TARGET_REPO_PATH", str(tmp_path))
+
+    def test_the_check_runs_in_the_wheel_job(self, smoke_module: ModuleType) -> None:
+        assert smoke_module.check_mcp_server_lists_tools in smoke_module.CHECKS
+
+    def test_initialize_and_tools_list_round_trip_on_the_installed_sdk(
+        self, smoke_module: ModuleType, isolated_server_config: None
+    ) -> None:
+        smoke_module.check_mcp_server_lists_tools()
+
+    def test_an_sdk_without_the_decorator_api_fails_the_smoke(
+        self,
+        smoke_module: ModuleType,
+        isolated_server_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # RED without the check: this is the break a fresh install hit with
+        # mcp 2.2.0, and no CI job reported it.
+        monkeypatch.setattr(mcp_server, "Server", _DecoratorlessServer)
+
+        with pytest.raises(smoke_module.SmokeFailure, match="list_tools"):
+            smoke_module.check_mcp_server_lists_tools()
+
+    def test_the_check_needs_no_graph_database(
+        self,
+        smoke_module: ModuleType,
+        isolated_server_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Negative test. The wheel job runs no Memgraph service, so the round
+        # trip must never open the ingestor's connection.
+        def refuse_connection(self: mcp_server.MemgraphIngestor) -> None:
+            raise AssertionError("the MCP smoke opened a Memgraph connection")
+
+        monkeypatch.setattr(mcp_server.MemgraphIngestor, "__enter__", refuse_connection)
+
+        smoke_module.check_mcp_server_lists_tools()
+
+    def test_the_check_needs_no_reachable_llm(
+        self,
+        smoke_module: ModuleType,
+        isolated_server_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Negative test. The wheel job has no model endpoint; the default
+        # local provider would probe Ollama while the server is built (#2518).
+        monkeypatch.setattr(settings, "_active_orchestrator", None)
+        monkeypatch.setattr(settings, "_active_cypher", None)
+        monkeypatch.setattr(settings, "OLLAMA_BASE_URL", "http://127.0.0.1:9")
+
+        smoke_module.check_mcp_server_lists_tools()

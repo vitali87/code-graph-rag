@@ -1890,8 +1890,13 @@ def test_the_dependency_harness_catches_a_broken_parser(
     h = dependency_harness
     data = _dependency_seed(seed)
     h.fuzz_dependency_manifest(data)
-    real = h.parse_dependencies
-    monkeypatch.setattr(h, "parse_dependencies", lambda path: broken(real(path)))
+    real = h.read_manifest
+
+    def read(path: Path) -> Any:
+        parsed = real(path)
+        return parsed._replace(dependencies=broken(parsed.dependencies))
+
+    monkeypatch.setattr(h, "read_manifest", read)
     with pytest.raises(AssertionError, match=message):
         h.fuzz_dependency_manifest(data)
 
@@ -1905,12 +1910,15 @@ def test_the_dependency_harness_catches_a_lost_poetry_entry(
     data = _dependency_seed("manifest_pyproject_every_shape")
     loose = h.build_manifest(data[1], data[2:]).loose
     assert loose, "the seed holds no poetry table or number"
-    real = h.parse_dependencies
-    monkeypatch.setattr(
-        h,
-        "parse_dependencies",
-        lambda path: [d for d in real(path) if d.name != loose[0]],
-    )
+    real = h.read_manifest
+
+    def read(path: Path) -> Any:
+        parsed = real(path)
+        return parsed._replace(
+            dependencies=[d for d in parsed.dependencies if d.name != loose[0]]
+        )
+
+    monkeypatch.setattr(h, "read_manifest", read)
     with pytest.raises(AssertionError, match="reported"):
         h.fuzz_dependency_manifest(data)
 
@@ -1951,7 +1959,7 @@ def test_the_dependency_harness_restores_the_parser_logger(
     def crashes(path: Path) -> list[Any]:
         raise OSError(path)
 
-    monkeypatch.setattr(h, "parse_dependencies", crashes)
+    monkeypatch.setattr(h, "read_manifest", crashes)
     with pytest.raises(OSError):
         h.fuzz_dependency_manifest(_dependency_seed("manifest_gomod_every_shape"))
     assert h.dependency_parser.logger is real

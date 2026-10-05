@@ -1,6 +1,6 @@
 """Fuzz the dependency manifest parsers.
 
-Every manifest `parse_dependencies` reads is repository content, so any value
+Every manifest `read_manifest` reads is repository content, so any value
 in it can have any type. What it reports becomes `ExternalPackage` nodes and
 `DEPENDS_ON_EXTERNAL` properties, so a number or a map in a version, or a
 package invented from a malformed section, is written to the graph. Two
@@ -38,7 +38,7 @@ from loguru import logger
 with atheris.instrument_imports():
     from codebase_rag.models import Dependency
     from codebase_rag.parsers import dependency_parser
-    from codebase_rag.parsers.dependency_parser import parse_dependencies
+    from codebase_rag.parsers.dependency_parser import read_manifest
 
 MODES = 2
 MODE_RAW, MODE_MANIFEST = range(MODES)
@@ -448,8 +448,9 @@ def build_manifest(fmt: int, data: bytes) -> Manifest:
 
 
 class _Failures:
-    """Stands in for the parser module's logger: each parser swallows its own
-    exception and logs it, so a crash is otherwise invisible to the oracle."""
+    """Stands in for the parser module's logger: each parser swallows a fault
+    of its own and logs it at ERROR, so a crash is otherwise invisible to the
+    oracle. Content the format rejects is reported as `unparsable` instead."""
 
     def __init__(self) -> None:
         self.messages: list[str] = []
@@ -466,9 +467,14 @@ def parse(path: Path) -> tuple[list[Dependency], list[str]]:
     saved = dependency_parser.logger
     dependency_parser.logger = failures  # type: ignore[assignment]
     try:
-        return parse_dependencies(path), failures.messages
+        parsed = read_manifest(path)
     finally:
         dependency_parser.logger = saved
+    # A parser fault and content the parser refused both fail a manifest
+    # that is well formed; the second logs only at DEBUG (issue #2568).
+    if parsed.unparsable is not None:
+        failures.messages.append(parsed.unparsable)
+    return parsed.dependencies, failures.messages
 
 
 def _check_types(dependencies: list[Dependency]) -> None:

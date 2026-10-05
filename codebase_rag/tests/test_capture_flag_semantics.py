@@ -22,9 +22,8 @@ from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
-from codebase_rag.capture import default_capture, resolve_capture
+from codebase_rag.capture import capture_help, default_capture, resolve_capture
 from codebase_rag.cli import _capture_selection, app
-from codebase_rag.cli_help import HELP_CAPTURE
 from codebase_rag.config import settings
 
 runner = CliRunner()
@@ -117,8 +116,10 @@ def test_a_comma_list_on_the_flag_is_split_like_the_variable(
 
 
 def test_the_help_states_that_a_group_is_added_to_the_defaults() -> None:
-    assert "default" in HELP_CAPTURE
-    assert "none" in HELP_CAPTURE
+    # The rendered help: HELP_CAPTURE is a template since #2584.
+    text = capture_help()
+    assert "on top of the defaults" in text
+    assert "none,structure" in text
 
 
 def test_a_bare_group_still_adds_to_the_defaults(no_env_capture: None) -> None:

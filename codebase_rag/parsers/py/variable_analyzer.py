@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     # the engine's MRO. It exists for the checker only.
     class _VariableAnalyzerDeps:
         def _infer_type_from_expression(
-            self, node: ASTNode, module_qn: str
+            self, node: ASTNode, module_qn: str, scope: ASTNode | None = None
         ) -> str | None: ...
 
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
@@ -369,7 +369,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
             )
         ):
             return
-        assigned_type = self._infer_type_from_expression(right_node, module_qn)
+        # Read without its body's type map (a whole module's self-assignments,
+        # or `__init__`'s for another method), so the assignment goes along:
+        # `self.client = pkg.Client()` under a parameter `pkg` is not the
+        # imported package's class.
+        assigned_type = self._infer_type_from_expression(
+            right_node, module_qn, assignment
+        )
         if not assigned_type and right_node.type == cs.TS_PY_IDENTIFIER:
             # self.x = param: a bare identifier carries the type of the matching
             # (already-seeded) parameter or local, so flow it onto the attribute.
@@ -666,7 +672,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         found: dict[frozenset[str], str] = {}
         for node in candidates:
             if node.type == cs.TS_PY_CALL:
-                inferred = self._infer_type_from_expression(node, module_qn)
+                inferred = self._infer_type_from_expression(node, module_qn, node)
             else:
                 inferred = local_var_types.get(safe_decode_text(node) or "")
             if inferred:
