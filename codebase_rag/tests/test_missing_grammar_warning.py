@@ -23,6 +23,7 @@ from codebase_rag import parser_loader
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.schemas import HealthCheckResult
+from codebase_rag.tests import conftest as tests_conftest
 from codebase_rag.tools.health_checker import HealthChecker
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
@@ -134,7 +135,11 @@ def test_doctor_prints_the_install_command_whole(
 
 
 def test_doctor_passes_with_every_grammar_installed() -> None:
-    # Negative: this environment installs the full extra.
+    # Negative: with the full extra nothing is missing. A base install lacks
+    # it by design, and the check is right to fail there.
+    if missing := tests_conftest._unavailable_grammars():
+        names = ", ".join(sorted(str(lang.value) for lang in missing))
+        pytest.skip(f"{names} parser not available")
     result = HealthChecker().check_tree_sitter_grammars()
     assert result.passed, result
 
