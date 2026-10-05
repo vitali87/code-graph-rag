@@ -96,6 +96,7 @@ def test_a_failed_reingests_queued_writes_are_not_committed_by_the_restore(
             cs.KEY_PATH: "pkg/util.py",
             cs.KEY_PROJECT_NAME: PROJECT,
             cs.KEY_PROJECT_PREFIX: PROJECT + ".",
+            cs.KEY_NESTED_PROJECTS: [],
         },
     )
     store.ensure_node_batch(
