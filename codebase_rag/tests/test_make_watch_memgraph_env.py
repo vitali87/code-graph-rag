@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="needs make")
@@ -29,6 +31,7 @@ def _watch_command(*make_vars: str, env: dict[str, str] | None = None) -> str:
         env={**os.environ, **(env or {})},
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
     return " ".join(result.stdout.split())
