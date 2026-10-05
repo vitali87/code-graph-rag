@@ -61,3 +61,18 @@ def test_an_exact_gloss_without_its_edge_and_a_bare_function_still_fail(
             cs.AUDIT_DETAIL_ORPHAN_COUNT.format(count=1, label="Function"),
         ]
     )
+
+
+def test_a_gloss_without_an_anchor_state_and_no_edge_still_fails(
+    memgraph_ingestor: MemgraphIngestor,
+) -> None:
+    # `null IN [...]` is null, and so is `NOT (true AND null)`, which WHERE
+    # drops: the state test must not skip a gloss that has none (bot review
+    # on PR #2697).
+    memgraph_ingestor._execute_query(
+        "CREATE (:Gloss {qualified_name: 'proj.note.stateless'})"
+    )
+
+    assert _orphan_details(memgraph_ingestor) == [
+        cs.AUDIT_DETAIL_ORPHAN_COUNT.format(count=1, label="Gloss")
+    ]
