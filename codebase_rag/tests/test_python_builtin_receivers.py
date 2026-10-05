@@ -26,7 +26,7 @@ LIB = (
 )
 
 APP = (
-    "from lib import Bag\n\n\n"
+    "from typing import Optional\n\nfrom lib import Bag\n\n\n"
     'def s_join():\n    return "-".join(["a", "b"])\n\n\n'
     'def fs_join(x):\n    return f"{x}".join([])\n\n\n'
     'def d_get():\n    return {}.get("k")\n\n\n'
@@ -58,7 +58,16 @@ APP = (
     "def make_bag() -> Bag:\n    return Bag()\n\n\n"
     "def factory_reassigned():\n    x = {}\n    x = make_bag()\n    return x.get(1)\n\n\n"
     "def bag_then_literal():\n"
-    "    x = Bag()\n    first = x.get(1)\n    x = {}\n    return first\n"
+    "    x = Bag()\n    first = x.get(1)\n    x = {}\n    return first\n\n\n"
+    # Bot review on PR #2912: an optional builtin annotation is that builtin.
+    "class OptionalStore:\n"
+    "    def __init__(self):\n"
+    "        self.cache: dict | None = {}\n"
+    "        self.legacy: Optional[dict] = None\n"
+    "        self.seq: None | list = []\n\n"
+    "    def lookup(self, k):\n        return self.cache.get(k)\n\n"
+    "    def lookup_legacy(self, k):\n        return self.legacy.get(k)\n\n"
+    "    def count_seq(self, x):\n        return self.seq.count(x)\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = "from lib import Bag as dict\n\n\ndef fetch(x: dict):\n    return x.get(1)\n"
@@ -99,6 +108,9 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         "App.record",
         "Store.lookup",
         "chars_strip",
+        "OptionalStore.lookup",
+        "OptionalStore.lookup_legacy",
+        "OptionalStore.count_seq",
     ],
 )
 def test_a_call_on_a_builtin_value_binds_no_first_party_method(

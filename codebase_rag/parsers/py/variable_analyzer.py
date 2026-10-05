@@ -112,10 +112,43 @@ def _container_element_type(type_str: str | None) -> str | None:
     return None
 
 
+def _optional_member(annotation: ASTNode) -> ASTNode | None:
+    """The one type an optional annotation allows besides None (`X` of
+    `X | None`, `None | X`, `Optional[X]`), the annotation itself when it is
+    no union, or None for any other union."""
+    node = annotation
+    if node.type == cs.TS_PY_TYPE and node.named_children:
+        node = node.named_children[0]
+    if node.type == cs.TS_PY_BINARY_OPERATOR:
+        members = [
+            node.child_by_field_name(cs.TS_FIELD_LEFT),
+            node.child_by_field_name(cs.TS_FIELD_RIGHT),
+        ]
+        others = [m for m in members if m is not None and m.type != cs.TS_PY_NONE]
+        return others[0] if len(others) == 1 and None not in members else None
+    if node.type == cs.TS_PY_GENERIC_TYPE:
+        head = next(iter(node.named_children), None)
+        params = next(
+            (c for c in node.named_children if c.type == cs.TS_PY_TYPE_PARAMETER), None
+        )
+        if (
+            head is None
+            or safe_decode_text(head) != cs.PY_TYPING_OPTIONAL
+            or params is None
+        ):
+            return node
+        return params.named_children[0] if len(params.named_children) == 1 else None
+    return node
+
+
 def _builtin_annotation(annotation: ASTNode) -> str | None:
-    """The builtin an attribute annotation names (`dict`, `list[int]`), or
-    None for any other type."""
-    text = (safe_decode_text(annotation) or "").split(cs.PY_GENERIC_ARGS_OPEN, 1)[0]
+    """The builtin an attribute annotation names (`dict`, `list[int]`, and
+    `dict | None` or `Optional[dict]`: the value is that builtin whenever it
+    is not None), or None for any other type."""
+    member = _optional_member(annotation)
+    if member is None:
+        return None
+    text = (safe_decode_text(member) or "").split(cs.PY_GENERIC_ARGS_OPEN, 1)[0]
     name = text.strip()
     return name if name in cs.PY_BUILTIN_VALUE_TYPES else None
 

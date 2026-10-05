@@ -123,6 +123,12 @@ TS_PY_FINALLY_CLAUSE = "finally_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
+# An annotation's wrapper and the shapes of an optional one (`X | None`,
+# `Optional[X]`).
+TS_PY_TYPE = "type"
+TS_PY_NONE = "none"
+TS_PY_GENERIC_TYPE = "generic_type"
+TS_PY_TYPE_PARAMETER = "type_parameter"
 TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
