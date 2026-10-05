@@ -14,12 +14,13 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
@@ -61,10 +62,10 @@ def get_project_root() -> Path:
     project_root = Path(repo_path).resolve()
 
     if not project_root.exists():
-        raise ValueError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
+        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
 
     if not project_root.is_dir():
-        raise ValueError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
 
     logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root
@@ -132,7 +133,10 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         if workspace_config is not None
         else [derive_project_name(project_root)]
     )
-    cypher_generator = CypherGenerator(active_projects=active_projects)
+    # Built on the first natural-language query, not here: indexing and the
+    # deterministic tools need no LLM, and an unreachable provider must not
+    # keep them from starting (issue #2518).
+    cypher_generator = LazyCypherGenerator(active_projects=active_projects)
 
     tools = create_mcp_tools_registry(
         project_root=str(project_root),
@@ -184,7 +188,18 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             else:
                 result_text = str(result)
 
-            return [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            # A JSON tool refuses with a result that is nothing but its error
+            # (an unknown project or name, a partial graph, a failed read).
+            # One that carries an error beside its data, such as an applied
+            # rename reporting a marker it could not clear, did its work.
+            if (
+                returns_json
+                and isinstance(result, dict)
+                and result.keys() == {cs.DICT_KEY_ERROR}
+            ):
+                return CallToolResult(content=content, isError=True)
+            return content
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)

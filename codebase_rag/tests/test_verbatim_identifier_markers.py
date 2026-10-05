@@ -175,7 +175,6 @@ class TestDeadCodeRootLeaf:
             include_classes=False,
             root_decorators=frozenset(),
             entry_points=(),
-            test_patterns=(),
             exclude_patterns=(),
             min_resolution=None,
             endpoint_roots=False,
