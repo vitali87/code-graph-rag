@@ -70,6 +70,9 @@ if TYPE_CHECKING:
 
         def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
 
+        @staticmethod
+        def _is_static_method(def_node: ASTNode) -> bool: ...
+
     _VarBase: type = _VariableAnalyzerDeps
 else:
     _VarBase = object
@@ -128,8 +131,34 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if not params_node:
             return
 
+        receiver = self._bound_receiver(caller_node, params_node)
         for param in params_node.children:
+            if param == receiver:
+                # Python binds it to the instance (the class, for a
+                # classmethod), so its name says nothing about its type: the
+                # name heuristic typed `self` as a module's one-letter class
+                # `F` ("sel-f"), and every `self.m()` was looked up on F
+                # (issue #2872).
+                continue
             self._process_parameter(param, local_var_types, module_qn)
+
+    def _bound_receiver(
+        self, def_node: ASTNode, params_node: ASTNode
+    ) -> ASTNode | None:
+        """The unannotated first parameter of a method in a class body, if any."""
+        holder = def_node.parent
+        if holder is not None and holder.type == cs.TS_PY_DECORATED_DEFINITION:
+            holder = holder.parent
+        if (
+            holder is None
+            or holder.parent is None
+            or holder.parent.type != cs.TS_PY_CLASS_DEFINITION
+            or self._is_static_method(def_node)
+            or not params_node.named_children
+        ):
+            return None
+        first = params_node.named_children[0]
+        return first if first.type == cs.TS_PY_IDENTIFIER else None
 
     def _process_parameter(
         self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
