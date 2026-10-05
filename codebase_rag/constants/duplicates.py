@@ -4,6 +4,8 @@
 # (constants/ is one of PARSER_FINGERPRINT_SOURCE_DIRS), which is exactly the
 # invalidation the feature relies on.
 
+from enum import StrEnum
+
 # Placeholder tokens for the blanked node classes. Control-character prefixes
 # cannot collide with a tree-sitter node type or an unnamed token's text.
 AST_FP_ID_TOKEN = "\x01ID"
@@ -105,18 +107,36 @@ DUPLICATES_PREFIX_EPSILON = 1e-9
 # boilerplate bodies makes the true pair set quadratic, so generation stops
 # here and the scan reports truncation instead of hanging.
 DUPLICATES_MAX_CANDIDATE_PAIRS = 1_000_000
-# Hard budget on materialized similar groups: a pathological threshold graph
-# (Moon-Moser shape) has exponentially many maximal cliques, so enumeration
-# stops here and the scan reports truncation instead of hanging.
+# Hard budget on reported similar groups. Clustering is linear in the links,
+# so this no longer guards against a hang; it bounds the report, keeping the
+# largest clusters and flagging truncation. A dropped cluster's exact copies
+# are still reported as exact groups.
 DUPLICATES_MAX_SIMILAR_GROUPS = 1000
+# Member pairs a JSON report lists per similar group. A link between two
+# clone classes stands for their whole cross product (1,000 copies a side is
+# a million pairs), so the report keeps the strongest and flags truncation.
+DUPLICATES_MAX_GROUP_LINKS = 10_000
 
 KIND_EXACT = "exact"
 KIND_SIMILAR = "similar"
 # Per-site arity verdicts in a structural delta (issue #1525).
 DELTA_ARITY_OK = "ok"
 DELTA_ARITY_TOO_MANY = "too_many"
+# Fewer arguments than the required parameters, where the signature declares
+# which are optional and the language rejects the call (issue #2517).
+DELTA_ARITY_TOO_FEW = "too_few"
 DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
+
+
+# What still names a removed or renamed symbol in a structural delta's
+# `dangling_importers` (issue #2516): an import statement binding it, or a
+# Python `__all__` string entry exporting it.
+class DanglingImportKind(StrEnum):
+    IMPORT = "import"
+    ALL = "__all__"
+
+
 # Hops the backward test-reach walk follows before giving up.
 DELTA_REACH_MAX_DEPTH = 12
 
@@ -143,10 +163,16 @@ MSG_DUPLICATES_NONE = (
 )
 MSG_DUPLICATES_HEADER = (
     "Found {count} duplicate group(s) in project '{project}' "
-    "(largest first; 'exact' groups are certain copies, 'similar' carry a score):"
+    "(largest first; each function is in one group; 'exact' groups are "
+    "certain copies, 'similar' groups link near-copies and carry a score "
+    "range):"
 )
 MSG_DUPLICATES_GROUP = "{number}. {kind} ({similarity:.0%} similar):"
+MSG_DUPLICATES_GROUP_RANGE = (
+    "{number}. {kind} ({similarity:.0%}-{max_similarity:.0%} similar):"
+)
 MSG_DUPLICATES_MEMBER = "   - {qualified_name}  {path}:{start}-{end}"
+MSG_DUPLICATES_EXACT_SUBGROUP = "   exact copies: {names}"
 MSG_DUPLICATES_TRUNCATED = "... {count} more group(s); raise limit to see them."
 MSG_DUPLICATES_SKIPPED = (
     "{count} symbol(s) had no structural fingerprint and were not analyzed."

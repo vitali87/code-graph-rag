@@ -30,8 +30,9 @@ from ..constants import (
 from ..schemas import QueryGraphData
 from ..services import ReadOnlyQueryProtocol
 from ..services.graph_service import is_query_rejection
-from ..services.llm import CypherGenerator
+from ..services.llm import CypherQueryGenerator
 from ..types_defs import ResultRow
+from ..utils.terminal_console import terminal_aware_console
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
@@ -874,7 +875,7 @@ class _QueryAttempt:
 
 async def _run_query(
     ingestor: ReadOnlyQueryProtocol,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     question: str,
     project_name: str | None,
     attempt: _QueryAttempt,
@@ -900,12 +901,12 @@ async def _run_query(
 
 def create_query_tool(
     ingestor: ReadOnlyQueryProtocol,
-    cypher_gen: CypherGenerator,
+    cypher_gen: CypherQueryGenerator,
     console: Console | None = None,
     project_name: str | None = None,
 ) -> Tool:
     if console is None:
-        console = Console(width=None, stderr=True, force_terminal=True)
+        console = terminal_aware_console(stderr=True)
 
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
@@ -943,6 +944,17 @@ def create_query_tool(
             )
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
+            )
+        except ex.CypherModelUnavailableError as e:
+            # Not a translation that went wrong: the request could not be
+            # served at all, which a caller must be able to tell from an
+            # empty answer, so it carries `error` like a scope refusal.
+            message = str(e)
+            return QueryGraphData(
+                query_used=QUERY_NOT_AVAILABLE,
+                results=[],
+                summary=message,
+                error=message,
             )
         except ex.LLMGenerationError as e:
             return QueryGraphData(
