@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from ... import constants as cs
+from ... import logs as ls
 from ...config import settings
 from ...services import IngestorProtocol
 from ...types_defs import (
@@ -222,7 +226,11 @@ class _Collector:
             cs.KEY_DOCSTRING: libclang_docstring(getattr(cursor, "raw_comment", None)),
             cs.KEY_IS_EXPORTED: False,
             cs.KEY_PATH: rel,
-            cs.KEY_ABSOLUTE_PATH: Path(cursor.location.file.name).resolve().as_posix(),
+            cs.KEY_ABSOLUTE_PATH: Path(
+                self.resolver.absolute_name(cursor.location.file.name)
+            )
+            .resolve()
+            .as_posix(),
         }
 
     def _add_node(self, label: str, qn: str, props: PropertyDict, is_def: bool) -> None:
@@ -241,7 +249,9 @@ class _Collector:
             cs.KEY_QUALIFIED_NAME: module_qn,
             cs.KEY_NAME: Path(rel).name,
             cs.KEY_PATH: rel,
-            cs.KEY_ABSOLUTE_PATH: Path(absolute_file).resolve().as_posix(),
+            cs.KEY_ABSOLUTE_PATH: Path(self.resolver.absolute_name(absolute_file))
+            .resolve()
+            .as_posix(),
         }
 
     def _add_edge(
@@ -460,7 +470,8 @@ class _Collector:
         if cursor.location.file is None:
             return
         extent = cursor.extent
-        self._instantiation_extents.setdefault(cursor.location.file.name, []).append(
+        file_name = self.resolver.absolute_name(cursor.location.file.name)
+        self._instantiation_extents.setdefault(file_name, []).append(
             (
                 extent.start.line,
                 extent.start.column,
@@ -480,7 +491,9 @@ class _Collector:
         pos = (loc.line, loc.column)
         return any(
             (sl, sc) <= pos <= (el, ec)
-            for sl, sc, el, ec in self._instantiation_extents.get(loc.file.name, ())
+            for sl, sc, el, ec in self._instantiation_extents.get(
+                self.resolver.absolute_name(loc.file.name), ()
+            )
         )
 
     def _process_hybrid(self, cursor: Cursor) -> None:
@@ -567,7 +580,9 @@ class _Collector:
         callee_qn = self._macro_function_qn(referenced)
         if callee_qn is None:
             return
-        file_name = cursor.location.file.name
+        # Absolute now: the name is reused at flush, after the working
+        # directory has moved on to later translation units.
+        file_name = self.resolver.absolute_name(cursor.location.file.name)
         rel = self.resolver.rel_path(file_name)
         if rel is None:
             return
@@ -648,6 +663,8 @@ class _Collector:
     def _include_info(self, file_name: str) -> tuple[str, str] | None:
         # Resolve rel + module_qn together, once per file: rel_path is the
         # filesystem-touching step and module_qn is a map lookup keyed by it.
+        # Keyed absolute: two entry directories can both spell `./local.h`.
+        file_name = self.resolver.absolute_name(file_name)
         if file_name in self._include_file_info:
             return self._include_file_info[file_name]
         rel = self.resolver.rel_path(file_name)
@@ -913,10 +930,19 @@ def run_cpp_frontend_hybrid(
 def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
     import clang.cindex as ci
 
-    db = ci.CompilationDatabase.fromDirectory(str(Path(compdb_dir).resolve()))
+    compdb_root = Path(compdb_dir).resolve()
+    db = ci.CompilationDatabase.fromDirectory(str(compdb_root))
     index = ci.Index.create()
     for command in db.getAllCompileCommands():
         args = list(command.arguments)[1:]
+        # An entry's relative paths (source, -I, -include) are relative to its
+        # `directory`, per the JSON Compilation Database spec; libclang would
+        # resolve them against cgr's cwd, failing every TU of a `bear -- make`
+        # database indexed via --repo-path from elsewhere (issue #2943).
+        directory = os.path.join(compdb_root, command.directory or "")
+        collector.resolver.working_dir = directory
+        if os.path.isdir(directory):
+            args = [fc.CLANG_WORKING_DIRECTORY_FLAG, directory, *args]
         try:
             # the detailed record exposes MACRO_DEFINITION /
             # MACRO_INSTANTIATION cursors (preprocessing entities are
@@ -927,6 +953,11 @@ def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
                 options=ci.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
             )
         except ci.TranslationUnitLoadError:
+            logger.warning(
+                ls.CPP_FRONTEND_TU_LOAD_FAILED.format(
+                    file=command.filename, directory=directory
+                )
+            )
             continue
         _walk(tu.cursor, collector)
         collector.process_includes(tu)
