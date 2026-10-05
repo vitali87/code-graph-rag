@@ -16,7 +16,9 @@ the framework or the interpreter calls with no call site in the code: Celery
 `@shared_task`, Flask `@app.errorhandler` and the request hooks
 (`before_request`, `after_request`, `teardown_request` and their `_app_`
 forms), FastAPI/Starlette `@app.exception_handler` and `@app.middleware`,
-Django `@receiver`, SQLAlchemy `@event.listens_for`, and `@atexit.register`.
+Django `@receiver` and `@admin.register`, SQLAlchemy `@event.listens_for`,
+and `@atexit.register`. Those last two are matched dotted, so a project's own
+`@registry.register` is not a root unless `--decorator-root` names it.
 A `functools.singledispatch` (or `singledispatchmethod`) implementation
 registered with `@generic.register` is reachable exactly when its generic is,
 so the implementations of a dead generic are still reported. An

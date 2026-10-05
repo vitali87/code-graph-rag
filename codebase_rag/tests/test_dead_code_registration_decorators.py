@@ -42,6 +42,7 @@ def _dead(tmp_path: Path, source: str) -> set[str]:
         "@api.exception_handler(ValueError)",
         '@api.middleware("http")',
         "@atexit.register",
+        "@admin.register(Author)",
         "@receiver(post_save)",
         '@event.listens_for(Engine, "connect")',
     ],
@@ -177,7 +178,16 @@ def test_an_implementation_stacked_on_two_dead_generics_stays_dead(
 
 
 @pytest.mark.parametrize(
-    "decorator", ["@functools.lru_cache", "@staticmethod_like", "@my.decorates"]
+    "decorator",
+    [
+        "@functools.lru_cache",
+        "@staticmethod_like",
+        "@my.decorates",
+        # The project's own registry: only `atexit` and Django's `admin` are
+        # rooted by default, and `--decorator-root registry.register` adds it.
+        "@registry.register",
+        "@myatexit.register",
+    ],
 )
 def test_an_unrelated_decorator_does_not_root(tmp_path: Path, decorator: str) -> None:
     source = f"{decorator}\ndef _handler(*args):\n    return 1\n"
