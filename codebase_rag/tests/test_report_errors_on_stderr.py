@@ -21,7 +21,7 @@ from codebase_rag.types_defs import PropertyValue, ResultRow
 
 PROJECTS = ["alpha", "beta"]
 
-_DEAD = [
+_DEAD: list[ResultRow] = [
     {
         cs.KEY_LABEL: cs.NodeLabel.FUNCTION.value,
         cs.KEY_NAME: "_orphan",
