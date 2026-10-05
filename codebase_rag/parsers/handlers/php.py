@@ -19,6 +19,7 @@ class PhpHandler(BaseLanguageHandler):
             cs.TS_INTERFACE_DECLARATION,
             cs.TS_PHP_TRAIT_DECLARATION,
             cs.TS_ENUM_DECLARATION,
+            cs.TS_PHP_ANONYMOUS_CLASS,
         }
     )
 
