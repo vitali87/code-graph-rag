@@ -15,7 +15,7 @@ installed (`pip install code-graph-rag[ast-grep]`); otherwise it is a no-op.
 ## Config format
 
 ```yaml
-language: ruby          # human-readable name (documentation only)
+language: ruby          # human-readable name, shown by `cgr language list-languages`
 ast_grep_id: ruby       # ast-grep language id (see AST_GREP_LANGUAGES)
 extensions:             # file extensions routed to this config
   - ".rb"

@@ -223,3 +223,26 @@ def test_a_target_missing_from_the_graph_yields_no_excerpt(tmp_path: Path) -> No
 
     assert piece.source == "", repr(piece.source)
     assert "import os" not in piece.source, repr(piece.source)
+
+
+# graph_query.definition drops source for a path that resolves outside the
+# project, and the target excerpt then falls back to _lines. An indexed
+# symlink pointing out of the project must read as empty there too, or the
+# MCP `context` tool would return the outside file's contents.
+def test_an_excerpt_through_a_symlink_out_of_the_project_is_empty(
+    tmp_path: Path,
+) -> None:
+    from codebase_rag.context_slice import _lines
+
+    outside = tmp_path / "outside.py"
+    outside.write_text("SECRET = 1\nTOKEN = 2\n", encoding=cs.ENCODING_UTF8)
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "inside.py").write_text("A = 1\nB = 2\n", encoding=cs.ENCODING_UTF8)
+    try:
+        (root / "leak.py").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+
+    assert _lines(root, "leak.py", 1, 2) == ""
+    assert _lines(root, "inside.py", 1, 2) == "A = 1\nB = 2"
