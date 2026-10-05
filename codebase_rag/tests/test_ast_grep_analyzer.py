@@ -222,6 +222,9 @@ _POSITIVE_FIXTURES = {
         "    eval(u); exec(u)\n"
         "    import os, subprocess, yaml, pickle\n"
         '    os.system("rm " + u)\n'
+        '    os.system(f"rm {u}")\n'
+        '    os.system("rm {}".format(u))\n'
+        '    db.execute("SELECT {}".format(u))\n'
         "    subprocess.run(u, shell=True)\n"
         "    yaml.load(u); pickle.loads(u)\n"
     ),
