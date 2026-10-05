@@ -78,6 +78,10 @@ the repository root, so it is left there, and edits take it as well as their
 own lock for as long as it exists. Delete it once no older cgr runs against
 the checkout.
 
+![cgr stats on pallets/flask, then a .cgrignore excluding tests and examples, a cgr start --update-graph sync, and cgr stats showing the smaller graph](../assets/demos/ignore-patterns.gif)
+
+*Recorded on pallets/flask.*
+
 ## Default Exclusions
 
 Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.

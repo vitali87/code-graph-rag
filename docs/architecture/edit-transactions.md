@@ -74,12 +74,18 @@ cgr edits undo            # reverse the latest transaction
 cgr edits undo -n 3       # reverse the latest three, newest first
 ```
 
+![cgr edits show listing three rename transactions, cgr edits undo -n 3 reversing them and re-ingesting the restored files, and the history left empty](../assets/demos/edit-transactions.gif)
+
+![cgr edits show --diff printing the patch set of a rename of clamp to bound](../assets/demos/edit-transactions-diff.gif)
+
 An undo is itself a transaction staging `after -> before`. It refuses, and
 stops the run, when a file no longer holds what the transaction wrote, so an
 undo never clobbers a later hand edit; the entry stays in the history until
 it is undone. History paths are validated against the repo root before they
 are staged (the file is data on disk, not a trusted instruction), and a
 reversal whose history update fails is put back so tree and history agree.
+
+![cgr edits undo refusing with exit code 1 because pkg/util.py was edited by hand after the rename](../assets/demos/edit-transactions-refused.gif)
 
 `cgr edits undo` then re-ingests every file it restored (a file the edit
 created and the undo removed drops out of the graph), the same scoped
