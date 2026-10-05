@@ -421,4 +421,10 @@ TS_RS_RETURN_EXPRESSION = "return_expression"
 TS_RS_SELF = "self"
 # An enum body and its variants (issue #1807).
 TS_RS_ENUM_VARIANT_LIST = "enum_variant_list"
+TS_RS_ORDERED_FIELD_DECLARATION_LIST = "ordered_field_declaration_list"
+# Patterns that wrap a binding without changing what it names: `ref s`,
+# `ref mut s`, `mut s`, `&s` (issue #2923).
+RS_BINDING_WRAPPER_PATTERNS = frozenset(
+    {TS_RS_REF_PATTERN, TS_RS_MUT_PATTERN, TS_RS_REFERENCE_PATTERN}
+)
 TS_RS_ENUM_VARIANT = "enum_variant"

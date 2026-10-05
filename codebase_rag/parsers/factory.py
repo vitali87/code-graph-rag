@@ -165,6 +165,7 @@ class ProcessorFactory:
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 class_field_element_types=self.definition_processor.class_field_element_types,
+                rust_variant_payload_types=self.definition_processor.rust_variant_payload_types,
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
                 go_call_sites=self.definition_processor.go_call_sites,

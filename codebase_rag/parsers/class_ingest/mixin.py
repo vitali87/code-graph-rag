@@ -344,6 +344,7 @@ class ClassIngestMixin:
     go_type_locations: dict[tuple[str, int, int], tuple[str, str]]
     class_field_guard_inner: dict[str, dict[str, str]]
     class_field_element_types: dict[str, dict[str, str]]
+    rust_variant_payload_types: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
@@ -1575,6 +1576,10 @@ class ClassIngestMixin:
             self.class_field_guard_inner[class_qn] = guard_inner
         if elements := rust_engine.build_field_element_map(class_node):
             self.class_field_element_types[class_qn] = elements
+        if payloads := rust_engine.build_variant_payload_map(class_node):
+            self.rust_variant_payload_types[class_qn] = payloads
+        else:
+            self.rust_variant_payload_types.pop(class_qn, None)
 
     def _record_csharp_class_members(
         self,

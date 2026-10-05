@@ -1183,6 +1183,7 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    processor.rust_variant_payload_types.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
