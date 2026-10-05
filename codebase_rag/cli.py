@@ -13,7 +13,7 @@ from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 import typer
@@ -32,7 +32,13 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import exceptions as ex
 from . import logs as ls
-from .capture import CaptureSelection, resolve_capture, split_spec, unknown_tokens
+from .capture import (
+    CaptureSelection,
+    capture_help,
+    resolve_capture,
+    split_spec,
+    unknown_tokens,
+)
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -76,11 +82,17 @@ from .types_defs import (
 )
 from .utils.path_utils import (
     derive_project_name,
+    project_name_error,
     project_roots_from_rows,
     resolve_repo_path,
+    unwritable_output_reason,
 )
+from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
+
+if TYPE_CHECKING:
+    from .graph_updater import GraphUpdater
 
 
 def _vendored_click_exception() -> type[click.ClickException]:
@@ -107,7 +119,7 @@ def clear_all_embeddings(*args: Any, **kwargs: Any) -> None:
     return impl(*args, **kwargs)
 
 
-def delete_project_embeddings(*args: Any, **kwargs: Any) -> None:
+def delete_project_embeddings(*args: Any, **kwargs: Any) -> bool:
     from .vector_store import delete_project_embeddings as impl
 
     return impl(*args, **kwargs)
@@ -244,7 +256,7 @@ def _global_options(
     if quiet:
         logger.remove()
         logger.add(
-            lambda msg: app_context.console.print(msg, end=""),
+            sys.stderr,
             level="ERROR",
             backtrace=False,
             diagnose=False,
@@ -280,6 +292,15 @@ def _pre_chat_sync(
     # workspace is active, else just the target repo.
     if workspace_config is None:
         return repo_sync, cs.MSG_SYNCING_KNOWLEDGE_GRAPH
+    # A workspace file written before names were checked can still hold a
+    # dotted one; syncing it would merge nodes across projects (#2412).
+    for repo in workspace_config.repos:
+        if (error := project_name_error(repo.project_name)) is not None:
+            _exit_with_error(
+                cs.CLI_ERR_WORKSPACE_PROJECT_NAME.format(
+                    workspace=workspace_config.name, path=repo.path, error=error
+                )
+            )
     workspace_sync = partial(
         _sync_workspace,
         workspace_config,
@@ -296,6 +317,34 @@ def _pre_chat_sync(
 def _exit_with_error(message: str) -> NoReturn:
     app_context.console.print(style(message, cs.Color.RED))
     raise typer.Exit(1)
+
+
+def _refuse_options_update_graph_drops(
+    update_graph: bool,
+    ask_agent: str | None,
+    output_format: cs.QueryFormat,
+    no_sync: bool,
+    projects: str | None,
+) -> None:
+    # `--update-graph` returns once its sync is done, before anything that
+    # reads these, so they were accepted and dropped with exit 0 (#2478).
+    # `--workspace` is left out: it decides what the sync covers (#2418).
+    if not update_graph:
+        return
+    for option, given, remedy in (
+        (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
+        (
+            cs.CLI_OPT_OUTPUT_FORMAT_JSON,
+            output_format == cs.QueryFormat.JSON,
+            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+        ),
+        (cs.CLI_OPT_NO_SYNC, no_sync, cs.CLI_REMEDY_SYNC_OR_NO_SYNC),
+        (cs.CLI_OPT_PROJECTS, projects is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
+    ):
+        if given:
+            _exit_with_error(
+                cs.CLI_ERR_UPDATE_GRAPH_CONFLICT.format(option=option, remedy=remedy)
+            )
 
 
 def _start_update_graph(
@@ -316,19 +365,32 @@ def _start_update_graph(
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
-    _run_graph_sync(
-        repo=repo,
-        project_name=project_name,
-        project_named=project_named,
-        batch_size=batch_size,
-        exclude=exclude,
-        interactive_setup=interactive_setup,
-        clean=clean,
-        output=output,
-        capture=capture,
-        skip_embeddings=skip_embeddings,
-        assume_yes=assume_yes,
-    )
+    try:
+        _run_graph_sync(
+            repo=repo,
+            project_name=project_name,
+            project_named=project_named,
+            batch_size=batch_size,
+            exclude=exclude,
+            interactive_setup=interactive_setup,
+            clean=clean,
+            output=output,
+            capture=capture,
+            skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
+        )
+    except KeyboardInterrupt as stop:
+        # Ctrl+C is a request, not a crash (#2442): one line when it left the
+        # graph partial, and the shell's interrupt status, set here so it
+        # does not hinge on how typer happens to handle a KeyboardInterrupt.
+        if isinstance(stop, ex.SyncInterrupted):
+            app_context.console.print(
+                style(
+                    cs.CLI_MSG_SYNC_INTERRUPTED.format(project=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+        raise typer.Exit(cs.CLI_EXIT_INTERRUPTED) from stop
     _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
 
 
@@ -641,6 +703,34 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _run_updater_deferring_interrupt(
+    updater: "GraphUpdater",
+) -> KeyboardInterrupt | None:
+    """Run the sync's graph update; return a Ctrl+C that landed after its commit.
+
+    The caller records the sync and clears its marker before re-raising what
+    this returns; a Ctrl+C before the commit raises `SyncInterrupted` instead.
+    """
+    try:
+        updater.run()
+    except ex.EmbeddingsInterrupted as stop:
+        # Raised only after the run committed, so the graph is whole and
+        # the sync is recorded like any other; the interrupt then ends
+        # the command outside the connection, which would otherwise log
+        # it as a failed write.
+        return stop
+    except KeyboardInterrupt as stop:
+        # Decided by whether the run committed, not by where the interrupt
+        # surfaced: a Ctrl+C between the commit and the return found the
+        # graph whole, and must be recorded and unmarked the same way.
+        if not updater.committed:
+            # Stopped short of the commit: the marker stays down, and only
+            # the caller knows whether to say so.
+            raise ex.SyncInterrupted from stop
+        return stop
+    return None
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -699,23 +789,30 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        interrupted: ex.EmbeddingsInterrupted | None = None
-        try:
-            updater.run()
-        except ex.EmbeddingsInterrupted as stop:
-            # Raised only after the run committed, so the graph is whole and
-            # the sync is recorded like any other; the interrupt then ends
-            # the command outside the connection, which would otherwise log
-            # it as a failed write.
-            interrupted = stop
+        interrupted = _run_updater_deferring_interrupt(updater)
         cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
+        # Taken before the export: counting it made a no-op sync of a small
+        # repo report the time to dump the whole shared graph (issue #2440).
+        elapsed = time.monotonic() - elapsed
 
+        exported = True
         if output and interrupted is None:
-            _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
-            if not export_graph_to_file(ingestor, output):
-                raise typer.Exit(1)
-    elapsed = time.monotonic() - elapsed
+            # The repo's own graph: `-o` wrote every project in the shared
+            # database (issue #2440), which `cgr export` without a scope still
+            # does. The updater's name is the one its Project node carries.
+            project = updater.project_name
+            _info(
+                style(
+                    cs.CLI_MSG_EXPORTING_TO.format(project=project, path=output),
+                    cs.Color.CYAN,
+                )
+            )
+            exported = export_graph_to_file(ingestor, output, [project])
+    # Raised outside the `with`: the ingestor logs any exception leaving it as
+    # a traceback, typer.Exit included, and the failure is already reported.
+    if not exported:
+        raise typer.Exit(1)
     if updater.skipped_because_in_sync:
         app_context.console.print(
             style(
@@ -750,6 +847,12 @@ def _delete_hash_cache(repo_path: Path) -> None:
     (repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).unlink(missing_ok=True)
     (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
     (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
+
+
+def _storable_project_name(value: str | None) -> str | None:
+    if value is not None and (error := project_name_error(value)) is not None:
+        raise typer.BadParameter(error)
+    return value
 
 
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:
@@ -846,6 +949,7 @@ def start(
         None,
         "--project-name",
         help=ch.HELP_PROJECT_NAME,
+        callback=_storable_project_name,
     ),
     exclude: list[str] | None = typer.Option(
         None,
@@ -855,7 +959,7 @@ def start(
     capture: list[str] | None = typer.Option(
         None,
         "--capture",
-        help=ch.HELP_CAPTURE,
+        help=capture_help(),
         callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
@@ -903,6 +1007,9 @@ def start(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
+    _refuse_options_update_graph_drops(
+        update_graph, ask_agent, output_format, no_sync, projects
+    )
     if output_format == cs.QueryFormat.JSON and not ask_agent:
         _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
 
@@ -912,6 +1019,8 @@ def start(
 
     if output and not update_graph:
         _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
+    if output:
+        _exit_if_unwritable(output)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -1013,7 +1122,7 @@ def index(
     capture: list[str] | None = typer.Option(
         None,
         "--capture",
-        help=ch.HELP_CAPTURE,
+        help=capture_help(),
         callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
@@ -1144,37 +1253,100 @@ def diff_index_command(
 )
 def export(
     output: str = typer.Option(..., "-o", "--output", help=ch.HELP_OUTPUT_PATH),
-    format_json: bool = typer.Option(
-        True, "--json/--no-json", help=ch.HELP_FORMAT_JSON
+    project_name: list[str] = typer.Option(
+        [], "--project-name", "-n", help=ch.HELP_EXPORT_PROJECT_NAME
     ),
-    batch_size: int | None = typer.Option(
-        None,
-        "--batch-size",
-        min=1,
-        help=ch.HELP_BATCH_SIZE,
+    workspace: str | None = typer.Option(
+        None, "--workspace", help=ch.HELP_EXPORT_WORKSPACE
     ),
+    # Retired (issue #2410), but still accepted so scripts that pass them get
+    # a warning rather than click's "No such option".
+    format_json: bool | None = typer.Option(None, "--json/--no-json", hidden=True),
+    batch_size: int | None = typer.Option(None, "--batch-size", hidden=True),
 ) -> None:
-    if not format_json:
-        app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
-        raise typer.Exit(1)
+    _check_retired_export_options(format_json, batch_size)
+    _exit_if_unwritable(output)
+    requested = _requested_projects(project_name, _load_workspace_or_exit(workspace))
+    # An explicit scope that resolves to nothing (`-n ""`, an empty workspace)
+    # must not fall through to the whole graph.
+    if not requested and (project_name or workspace is not None):
+        _exit_with_error(cs.CLI_ERR_EXPORT_EMPTY_SCOPE)
 
     _info(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
-
-    effective_batch_size = settings.resolve_batch_size(batch_size)
-
+    exported = False
+    missing: list[str] = []
+    indexed: list[str] = []
     try:
-        with connect_memgraph(effective_batch_size) as ingestor:
-            _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
-
-            if not export_graph_to_file(ingestor, output):
-                raise typer.Exit(1)
-
+        # An export only reads, so the write buffer's size is moot.
+        with connect_memgraph(batch_size=1) as ingestor:
+            if requested:
+                indexed = ingestor.list_projects()
+                missing = [name for name in requested if name not in indexed]
+            if not missing:
+                exported = _export_to_file(ingestor, output, requested)
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
         )
-        logger.exception(ls.EXPORT_ERROR.format(error=e))
+        # The one line above is the report; the traceback is for debugging.
+        logger.opt(exception=e).debug(ls.EXPORT_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # Exits are raised out here: typer.Exit is a RuntimeError, so inside the
+    # `try` it was reported as "Failed to export graph: 1" with a traceback.
+    if missing:
+        _exit_with_error(
+            cs.CLI_ERR_EXPORT_UNKNOWN_PROJECTS.format(
+                missing=", ".join(missing), projects=", ".join(sorted(indexed))
+            )
+        )
+    if not exported:
+        raise typer.Exit(1)
+
+
+def _check_retired_export_options(
+    format_json: bool | None, batch_size: int | None
+) -> None:
+    match format_json:
+        case False:
+            _exit_with_error(cs.CLI_ERR_EXPORT_NO_JSON)
+        case True:
+            app_context.console.print(style(cs.CLI_WARN_EXPORT_JSON, cs.Color.YELLOW))
+    if batch_size is not None:
+        app_context.console.print(style(cs.CLI_WARN_EXPORT_BATCH_SIZE, cs.Color.YELLOW))
+
+
+def _exit_if_unwritable(output: str) -> None:
+    if problem := unwritable_output_reason(Path(output)):
+        _exit_with_error(problem)
+
+
+def _requested_projects(
+    project_name: list[str], workspace_config: WorkspaceConfig | None
+) -> list[str]:
+    # Order kept, duplicates dropped: `-n a --workspace w` where w also holds
+    # `a` selects `a` once. `cgr stats -n` (#2391) resolves its scope the same
+    # way.
+    return list(
+        dict.fromkeys(
+            [name.strip() for name in project_name if name.strip()]
+            + (workspace_config.project_names() if workspace_config else [])
+        )
+    )
+
+
+def _export_to_file(
+    ingestor: MemgraphIngestor, output: str, requested: list[str]
+) -> bool:
+    if requested:
+        _info(
+            style(
+                cs.CLI_EXPORT_SCOPE.format(projects=", ".join(requested)),
+                cs.Color.CYAN,
+            )
+        )
+    _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
+    return export_graph_to_file(ingestor, output, requested)
 
 
 @app.command(
@@ -1249,6 +1421,15 @@ def optimize(
         )
 
 
+def _mcp_server_notice(message: str) -> None:
+    # On the stdio transport stdout IS the JSON-RPC stream: a diagnostic
+    # there reaches the client as a malformed message and hides the cause
+    # (issue #2518). stderr is where the server's logs already go. Hosts
+    # capture it to a log, not a terminal, so the message is not hard-wrapped
+    # there: a long repository path stays whole on one line.
+    terminal_aware_console(stderr=True).print(message)
+
+
 @app.command(
     name=ch.CLICommandName.MCP_SERVER,
     help=ch.CMD_MCP_SERVER,
@@ -1280,16 +1461,20 @@ def mcp_server(
 
             asyncio.run(serve_stdio(workspace=workspace))
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        _mcp_server_notice(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
-        )
-        _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        _mcp_server_notice(style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED))
+        # Only a bad repository root is about TARGET_REPO_PATH. The HTTP bind
+        # refusal, an unknown workspace or a missing API key are ValueErrors
+        # too, and the hint sent the user to a variable that was set (#2881).
+        if isinstance(e, ex.RepoPathError) and not settings.QUIET:
+            _mcp_server_notice(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        raise typer.Exit(1) from e
     except Exception as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)
-        )
+        _mcp_server_notice(style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED))
+        # Non-zero, so a host or supervisor can tell a server that never
+        # came up from a clean shutdown (issue #2518).
+        raise typer.Exit(1) from e
 
 
 @app.command(
@@ -1338,11 +1523,23 @@ _DELEGATED_GROUP_CONTEXT = {
 
 
 def _run_delegated_group(group: click.Group, ctx: typer.Context) -> None:
-    group.main(
-        args=list(ctx.args),
-        prog_name=ctx.command_path,
-        standalone_mode=False,
-    )
+    # The groups are the real click's and run non-standalone, so their usage
+    # errors and aborts reach typer, and a typer that vendors click handles
+    # only its own classes: they escaped as a traceback with exit 1. Reported
+    # here the way click's standalone mode would, whichever typer is
+    # installed (#2416).
+    try:
+        group.main(
+            args=list(ctx.args),
+            prog_name=ctx.command_path,
+            standalone_mode=False,
+        )
+    except click.ClickException as e:
+        e.show()
+        raise typer.Exit(e.exit_code) from e
+    except click.exceptions.Abort as e:
+        typer.echo(cs.CLI_MSG_ABORTED, err=True)
+        raise typer.Exit(1) from e
 
 
 @app.command(
@@ -1437,6 +1634,7 @@ def check_command(
     fail_on_found: bool = typer.Option(
         False, "--fail-on-found", help=ch.HELP_CHECK_FAIL_ON_FOUND
     ),
+    isolated: bool = typer.Option(False, "--isolated", help=ch.HELP_CHECK_ISOLATED),
 ) -> None:
     from .structural_check import CheckError, indexed_scope, run_check
     from .structural_delta import has_findings
@@ -1463,6 +1661,7 @@ def check_command(
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
                 project_named=project is not None,
+                isolated=isolated,
             )
         except CheckError as error:
             typer.echo(str(error), err=True)
@@ -1491,7 +1690,7 @@ def rename_command(
     ),
     project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
     allow_heuristic: bool = typer.Option(
-        False, "--allow-heuristic", help=ch.HELP_RENAME_ALLOW_HEURISTIC
+        False, cs.RENAME_CLI_ALLOW_HEURISTIC, help=ch.HELP_RENAME_ALLOW_HEURISTIC
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
 ) -> None:
@@ -1520,6 +1719,7 @@ def rename_command(
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
                 reingest=updater.reingest,
+                heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
@@ -1731,6 +1931,48 @@ def _build_stats_table(
 
 
 @app.command(
+    name=ch.CLICommandName.CONTEXT,
+    help=ch.CMD_CONTEXT,
+    short_help=ch.CMD_CONTEXT,
+    epilog=ch.EXAMPLES_CONTEXT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def context_command(
+    target: str = typer.Argument(..., help=ch.HELP_CONTEXT_TARGET),
+    budget: int = typer.Option(
+        cs.CONTEXT_DEFAULT_BUDGET, "--budget", min=1, help=ch.HELP_CONTEXT_BUDGET
+    ),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+) -> None:
+    from . import graph_query
+    from .context_slice import context as build_context
+    from .graph_cli import _project_and_fetch
+    from .tools.semantic_search import semantic_code_search
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:  # type: ignore[attr-defined]
+        payload = build_context(
+            fetch_all,
+            name,
+            target,
+            budget,
+            graph_query.source_root_for(fetch_all, name, repo_path),
+            search=lambda text: semantic_code_search(ingestor, text, project=name),  # type: ignore[arg-type]
+        )
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))
+    if payload["resolved"] is None:
+        typer.echo(cs.CONTEXT_UNRESOLVED.format(target=target), err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.STATS,
     help=ch.CMD_STATS,
     short_help=ch.CMD_STATS,
@@ -1754,6 +1996,19 @@ def stats(
             + (workspace_config.project_names() if workspace_config else [])
         )
     )
+    # An empty list is what "no scope" looks like to the queries below, so a
+    # scope that was asked for and came out empty would report the whole
+    # shared graph as if it were that scope's (review of PR 2436).
+    if not requested and (project_name or workspace_config is not None):
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
+                if workspace_config is not None
+                else cs.CLI_ERR_STATS_EMPTY_PROJECT_NAME,
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
@@ -1884,8 +2139,6 @@ def _dead_code_config(
 ) -> DeadCodeConfig:
     from .dead_code import normalize_decorator_root
 
-    # test_patterns is always set: included tests become roots; excluded, it
-    # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
@@ -1894,7 +2147,6 @@ def _dead_code_config(
             | {normalize_decorator_root(d) for d in decorator_roots}
         ),
         entry_points=tuple(entry_points),
-        test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
         endpoint_roots=endpoint_roots,
     )
@@ -1922,9 +2174,35 @@ def _to_dead_code_row(row: ResultRow) -> DeadCodeRow:
         label=str(row.get(cs.KEY_LABEL, "")),
         name=str(row.get(cs.KEY_NAME, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
+        path=str(row.get(cs.KEY_PATH) or ""),
         start_line=int(start) if isinstance(start, int | float) else 0,
         end_line=int(end) if isinstance(end, int | float) else 0,
     )
+
+
+def _width_set_by_user() -> bool:
+    # Rich reads $COLUMNS only when it is a number, so only that counts.
+    return os.environ.get(cs.ENV_COLUMNS, "").isdigit()
+
+
+def _print_report_table(console: Console, table: Table) -> None:
+    """Print a report table at its content's width when no screen shows it.
+
+    A file or pipe has no width to fit, yet Rich lays the table out at
+    $COLUMNS or 80 columns there and cuts every long name with an ellipsis,
+    so a CI report's rows read alike and depended on who ran it (issue
+    #2561). A terminal keeps its own width, and a $COLUMNS the user set still
+    wins. The stream's own isatty decides, not Rich's is_terminal: a forced
+    terminal or FORCE_COLOR chooses styling, not whether a screen clips lines.
+    The table is sized in place.
+    """
+    if console.file.isatty() or _width_set_by_user():
+        console.print(table)
+        return
+    unbounded = console.options.update_width(sys.maxsize)
+    table.width = console.measure(table, options=unbounded).maximum
+    # Wider than the console on purpose, so it must not be cropped back to it.
+    console.print(table, crop=False)
 
 
 def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> Table:
@@ -1937,12 +2215,22 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
         header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
     )
     table.add_column(cs.CLI_DEADCODE_COL_KIND, style=cs.Color.MAGENTA)
-    table.add_column(cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN)
+    # Folded, not ellipsised: a qualified name has no space to wrap at, so a
+    # narrow terminal cut every row back to the same package prefix and never
+    # named the method (issue #2561).
+    table.add_column(
+        cs.CLI_DEADCODE_COL_QUALIFIED_NAME, style=cs.Color.CYAN, overflow="fold"
+    )
+    # Lines mean nothing without the file they are in (issue #2561).
+    table.add_column(cs.CLI_DEADCODE_COL_PATH, style=cs.Color.YELLOW, overflow="fold")
     table.add_column(cs.CLI_DEADCODE_COL_LINES, style=cs.Color.YELLOW, justify="right")
+    # A str cell is parsed as markup, and a route directory such as
+    # `app/[slug]/` reads as a tag in both the path and the qn derived from it.
     for row in candidates:
         table.add_row(
             row["label"],
-            row["qualified_name"],
+            Text(row["qualified_name"]),
+            Text(row["path"]),
             cs.CLI_DEADCODE_LINE_RANGE.format(
                 start=row["start_line"], end=row["end_line"]
             ),
@@ -1983,7 +2271,7 @@ def _emit_dead_code(
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
             file_console = Console(file=fh)
-            file_console.print(table)
+            _print_report_table(file_console, table)
             if notice:
                 file_console.print(notice)
         app_context.console.print(
@@ -1999,7 +2287,7 @@ def _emit_dead_code(
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
     else:
-        app_context.console.print(table)
+        _print_report_table(app_context.console, table)
         app_context.console.print(
             style(cs.CLI_DEADCODE_SUMMARY.format(count=len(candidates)), cs.Color.GREEN)
         )
@@ -2145,7 +2433,34 @@ def dead_code(
 def _similarity_text(group: DuplicateGroup) -> str:
     if group["kind"] == cs.KIND_EXACT:
         return cs.CLI_DUPLICATES_SIMILARITY_EXACT
-    return cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=group["similarity"] * 100)
+    low, high = group["similarity"] * 100, group["max_similarity"] * 100
+    single = cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=low)
+    if single == cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=high):
+        return single
+    # A cluster's members are linked through each other (issue #2473), so
+    # one score would hide how far apart its weakest and strongest links are.
+    return cs.CLI_DUPLICATES_SIMILARITY_RANGE.format(low=low, high=high)
+
+
+def _exact_copy_numbers(group: DuplicateGroup) -> dict[str, str]:
+    """Qualified name -> number of the exact-copy set it belongs to.
+
+    Only a `similar` group nests exact copies; an `exact` group is one set
+    as a whole, so its rows stay unnumbered.
+    """
+    if group["kind"] == cs.KIND_EXACT:
+        return {}
+    return {
+        qualified_name: str(number)
+        for number, names in enumerate(group["exact_subgroups"], start=1)
+        for qualified_name in names
+    }
+
+
+def _exact_copy_cells(
+    numbers: dict[str, str], member: DuplicateMember, shown: bool
+) -> list[str]:
+    return [numbers.get(member["qualified_name"], "")] if shown else []
 
 
 def _duplicates_location_cell(
@@ -2218,6 +2533,12 @@ def _build_duplicates_table(
     table.add_column(
         cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW, overflow="fold"
     )
+    copy_numbers = [_exact_copy_numbers(group) for group in groups]
+    # Added only when a cluster holds exact copies, so every other report
+    # keeps the width it had.
+    show_copies = any(copy_numbers)
+    if show_copies:
+        table.add_column(cs.CLI_DUPLICATES_COL_EXACT, style=cs.Color.MAGENTA)
     # The title names the project, so each member drops that prefix: at pipe
     # width the column otherwise showed nothing else (issue #2397). Only the
     # dotted prefix goes, so `projx.mod` under `proj` keeps its name.
@@ -2230,6 +2551,7 @@ def _build_duplicates_table(
                 _similarity_text(group) if at == 0 else "",
                 member["qualified_name"].removeprefix(prefix),
                 _duplicates_location_cell(member, root_path),
+                *_exact_copy_cells(copy_numbers[number - 1], member, show_copies),
             )
         table.add_section()
     return table
@@ -2241,14 +2563,18 @@ def _emit_duplicates_json(
     skipped_symbols: int,
     truncated: bool,
 ) -> None:
+    from .duplicates import reported_groups
+
+    # Only this report prints links, so only it expands them to member pairs.
+    reported, links_truncated = reported_groups(groups, cs.DUPLICATES_MAX_GROUP_LINKS)
     # Envelope, not a bare list: scan-completeness metadata must reach
     # JSON consumers too, or a CI artifact reads as a complete scan when
     # symbols went unanalyzed or group enumeration hit its cap.
     payload = json.dumps(
         {
-            cs.KEY_DUPLICATE_GROUPS: groups,
+            cs.KEY_DUPLICATE_GROUPS: reported,
             cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
-            cs.KEY_TRUNCATED: truncated,
+            cs.KEY_TRUNCATED: truncated or links_truncated,
         },
         indent=2,
     )
@@ -2291,7 +2617,7 @@ def _write_duplicates_file(
 ) -> None:
     with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
         file_console = Console(file=fh)
-        file_console.print(table)
+        _print_report_table(file_console, table)
         for notice in notices:
             file_console.print(notice)
     _print_duplicates_written(group_count, output)
@@ -2331,7 +2657,7 @@ def _emit_duplicates(
         if not all_skipped:
             app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
     else:
-        app_context.console.print(table)
+        _print_report_table(app_context.console, table)
         members = sum(len(group["members"]) for group in groups)
         app_context.console.print(
             style(
@@ -2413,7 +2739,7 @@ def _open_duplicate_group(
 
 @app.command(
     name=ch.CLICommandName.DUPLICATES,
-    help=ch.CMD_DUPLICATES,
+    help=ch.DESC_DUPLICATES,
     short_help=ch.CMD_DUPLICATES,
     epilog=ch.EXAMPLES_DUPLICATES,
     rich_help_panel=ch.PANEL_GRAPH,
