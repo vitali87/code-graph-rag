@@ -234,3 +234,139 @@ def test_a_private_name_is_not_taken_through_a_star(graph: RecordedGraph) -> Non
     # `from ._client import *` binds no `_Hidden`, so `star._Hidden` names
     # nothing and its receiver stays untyped.
     assert "star._client._Hidden.send" not in _callees(graph, "via_private_name")
+
+
+# How `__all__` is read. Each package below stars `_b` and then `_a`, both
+# defining `Client`; `_a`'s later star wins exactly when it binds `Client`.
+# An `__all__` grown by `.append("x")`, `.extend([...])` or `+=` is read as
+# the names it ends up listing; one changed by any other call, or grown by a
+# value the source does not spell, falls back to binding every public name,
+# and statements that do not touch `__all__` leave it readable.
+OTHER = "class Other:\n    pass\n\n\n"
+ALL_FORMS = {
+    "appended": '__all__ = ["Other"]\n__all__.append("Client")\n',
+    "extended": '__all__ = ["Other"]\n__all__.extend(["Client"])\n',
+    "augmented": '__all__ = ["Other"]\n__all__ += ["Client"]\n',
+    "appended_without": '__all__ = []\n__all__.append("Other")\n',
+    "extended_without": '__all__ = []\n__all__.extend(("Other",))\n',
+    "inserted": '__all__ = ["Other"]\n__all__.insert(0, "Client")\n',
+    "appended_name": 'NAME = "Client"\n__all__ = ["Other"]\n__all__.append(NAME)\n',
+    "computed": '__all__ = list(("Other", "Client"))\n',
+    "untouched": (
+        '"""Implementation details."""\n\n'
+        "import warnings\n\n"
+        "LIMIT = 3\n"
+        'warnings.filterwarnings("ignore")\n'
+        "callable(LIMIT)\n"
+        '__all__ = ["Other"]\n'
+    ),
+}
+
+# `Pool.__enter__` hands back a `Connection`, so typing `with Pool() as c`
+# needs the indexed `Pool` behind the bare name the star re-exports, not the
+# same-named class a search by name finds first (`decoy._pool.Pool`).
+POOL = """\
+__all__ = ["Pool"]
+
+
+class Connection:
+    def execute(self, query):
+        return query
+
+
+class Pool:
+    def __enter__(self) -> Connection:
+        return Connection()
+
+    def __exit__(self, *exc):
+        pass
+
+    def execute(self, query):
+        return query
+"""
+
+DECOY_POOL = """\
+class Pool:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def execute(self, query):
+        return query
+"""
+
+ALL_APP = (
+    "\n".join(f"import {package}" for package in ALL_FORMS)
+    + "\nimport later_named\nfrom pooled import Pool\n"
+    + "".join(
+        f"\n\ndef via_{package}():\n    client = {package}.Client()\n"
+        "    client.send(1)\n"
+        for package in (*ALL_FORMS, "later_named")
+    )
+    + """
+
+def via_bare_with():
+    with Pool() as connection:
+        connection.execute("SELECT 1")
+"""
+)
+
+
+@pytest.fixture(scope="module")
+def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("starall") / "starall"
+    for package, dunder_all in ALL_FORMS.items():
+        _write(root, f"{package}/_a.py", f"{dunder_all}\n\n{OTHER}{KLASS}")
+        _write(root, f"{package}/_b.py", KLASS)
+        _write(root, f"{package}/__init__.py", "from ._b import *\nfrom ._a import *\n")
+    # A by-name import of another name after the star leaves `Client` to it.
+    _write(root, "later_named/_impl.py", LISTED)
+    _write(root, "later_named/_other.py", OTHER)
+    _write(
+        root,
+        "later_named/__init__.py",
+        "from ._impl import *\nfrom ._other import Other\n",
+    )
+    _write(root, "decoy/_pool.py", DECOY_POOL)
+    _write(root, "pooled/_pool.py", POOL)
+    _write(root, "pooled/__init__.py", "from ._pool import *\n")
+    _write(root, "app.py", ALL_APP)
+    return _index(root, MagicMock())
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("via_appended", "appended._a.Client.send"),
+        ("via_extended", "extended._a.Client.send"),
+        ("via_augmented", "augmented._a.Client.send"),
+        ("via_appended_without", "appended_without._b.Client.send"),
+        ("via_extended_without", "extended_without._b.Client.send"),
+        ("via_inserted", "inserted._a.Client.send"),
+        ("via_appended_name", "appended_name._a.Client.send"),
+        ("via_computed", "computed._a.Client.send"),
+        ("via_untouched", "untouched._b.Client.send"),
+        ("via_later_named", "later_named._impl.Client.send"),
+        ("via_bare_with", "pooled._pool.Connection.execute"),
+    ],
+    ids=[
+        "append-lists-it",
+        "extend-lists-it",
+        "plus-equals-lists-it",
+        "append-of-another-name-leaves-it-out",
+        "extend-of-other-names-leaves-it-out",
+        "another-list-method-falls-back-to-every-public-name",
+        "append-of-a-non-literal-falls-back-to-every-public-name",
+        "a-computed-all-falls-back-to-every-public-name",
+        "unrelated-statements-keep-all-readable",
+        "a-later-by-name-import-of-another-name-keeps-the-star",
+        "with-on-a-bare-name-imported-through-a-star",
+    ],
+)
+def test_the_all_a_module_builds_decides_what_its_star_binds(
+    all_graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    callees = _callees(all_graph, caller)
+    assert callees == {callee}, callees
