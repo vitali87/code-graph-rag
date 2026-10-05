@@ -156,9 +156,12 @@ async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
     from codebase_rag.utils.path_utils import derive_project_name
 
     local_root, store = graph
+    derived = derive_project_name(local_root)
     ingestor = MagicMock()
     ingestor.fetch_all = store.fetch_all
-    ingestor.list_projects.return_value = [LOCAL, OTHER]
+    # The derived default must be an indexed project, or the tool refuses
+    # the read before it searches (issue #2461).
+    ingestor.list_projects.return_value = [derived, LOCAL, OTHER]
     registry = MCPToolsRegistry(
         project_root=str(local_root), ingestor=ingestor, cypher_gen=MagicMock()
     )
@@ -181,7 +184,6 @@ async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
 
     monkeypatch.setattr(mcp_tools, "semantic_code_search", fake_search)
 
-    derived = derive_project_name(local_root)
     payload = await registry.context(target="return the checkout source")
     assert scopes == [derived]
     assert isinstance(payload, dict)
