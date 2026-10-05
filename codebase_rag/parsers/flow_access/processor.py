@@ -378,6 +378,144 @@ def _py_unpacking_pairs(
     )
 
 
+# Python values built out of every element they hold (issue #2588): string
+# pieces, container elements and dict keys and values, splats, the awaited
+# value. The result carries the union of their taints.
+_PY_ELEMENTWISE_TRANSFORMS = frozenset(
+    {
+        cs.TS_PY_CONCATENATED_STRING,
+        cs.TS_PY_LIST,
+        cs.TS_PY_TUPLE,
+        cs.TS_PY_SET,
+        cs.TS_PY_EXPRESSION_LIST,
+        cs.TS_PY_DICTIONARY,
+        cs.TS_PY_PAIR,
+        cs.TS_PY_LIST_SPLAT,
+        cs.TS_PY_DICTIONARY_SPLAT,
+        cs.TS_PY_AWAIT,
+    }
+)
+# Python values built from named fields only: the operands, or the value an
+# attribute or subscript reads out of. The attribute name and the subscript
+# index select from that value rather than become it. `a or b` yields one
+# of its operands, so it carries both.
+_PY_FIELD_TRANSFORMS: dict[str, tuple[str, ...]] = {
+    cs.TS_PY_BOOLEAN_OPERATOR: (cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT),
+    cs.TS_PY_BINARY_OPERATOR: (cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT),
+    cs.TS_PY_UNARY_OPERATOR: (cs.TS_FIELD_ARGUMENT,),
+    cs.TS_PY_ATTRIBUTE: (cs.FIELD_OBJECT,),
+    cs.TS_PY_SUBSCRIPT: (cs.FIELD_VALUE,),
+}
+_PY_COMPREHENSIONS = frozenset(
+    {
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+    }
+)
+# A string and a format spec hold replacement fields (`{t:{w}}`); each
+# field's value and its own format spec reach the text.
+_PY_FORMATTED_TEXT = frozenset({cs.TS_PY_STRING, cs.TS_PY_FORMAT_SPECIFIER})
+_PY_REPLACEMENT_FIELDS = frozenset({cs.TS_PY_INTERPOLATION, cs.TS_PY_FORMAT_EXPRESSION})
+_PY_REPLACEMENT_FIELD_PARTS = (
+    cs.TS_PY_FIELD_EXPRESSION,
+    cs.TS_PY_FIELD_FORMAT_SPECIFIER,
+)
+# Registry-shaped, so a taint-clearing call matches through the same import
+# normalisation as the source/sink registry: `from hashlib import sha256`
+# still clears, while a `len` imported from project code does not.
+_PY_TAINT_CLEARING_CALLS = dict.fromkeys(cs.PY_TAINT_CLEARING_CALLS, True)
+
+
+def _py_value_operands(node: Node) -> list[Node] | None:
+    # The sub-expressions whose taint a Python value carries, or None for a
+    # leaf the caller evaluates itself (a name, a call, a comprehension). A
+    # value-selection form MAY yield either operand, but its condition never
+    # becomes the value; a comparison or `not` yields a bool, never an
+    # operand, so neither is listed.
+    node_type = node.type
+    if node_type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        inner = next(iter(node.named_children), None)
+        return [inner] if inner is not None else []
+    if node_type == cs.TS_PY_NAMED_EXPRESSION:
+        # `print(t := secret())`: a walrus evaluates to the value it binds.
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        return [value] if value is not None else []
+    if node_type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+        # Named children are [consequence, condition, alternative].
+        values = node.named_children
+        return [values[0], values[2]] if len(values) == 3 else []
+    if node_type in _PY_FORMATTED_TEXT:
+        # An f-string's interpolated values reach its text, and so does a
+        # dynamic format spec: `f"{'':{fill}>8}"` pads with `fill` itself, as
+        # `"{:{}>8}".format("", fill)` does through its arguments. A spec's
+        # own `{...}` may nest one more spec, expanded the same way.
+        return [
+            operand
+            for child in node.named_children
+            if child.type in _PY_REPLACEMENT_FIELDS
+            for field in _PY_REPLACEMENT_FIELD_PARTS
+            if (operand := child.child_by_field_name(field)) is not None
+        ]
+    if node_type in _PY_ELEMENTWISE_TRANSFORMS:
+        return [c for c in node.named_children if c.type != cs.TS_COMMENT]
+    fields = _PY_FIELD_TRANSFORMS.get(node_type)
+    if fields is None:
+        return None
+    return [
+        child
+        for field in fields
+        if (child := node.child_by_field_name(field)) is not None
+    ]
+
+
+def _py_target_names(target: Node | None) -> list[str]:
+    # The names a comprehension's `for` target binds: the identifier itself,
+    # or each identifier of a destructuring target (`for k, v in pairs`).
+    if target is None:
+        return []
+    if target.type == cs.TS_PY_IDENTIFIER and target.text is not None:
+        return [target.text.decode(cs.ENCODING_UTF8)]
+    if target.type in cs.PY_UNPACKING_TARGET_TYPES:
+        return [name for c in target.named_children for name in _py_target_names(c)]
+    return []
+
+
+def _py_call_arguments(call_node: Node) -> list[Node]:
+    # A Python call's arguments in order, comments left out. `f(x for x in
+    # xs)` has no argument list: the bare generator is its only argument.
+    args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    if args is None:
+        return []
+    if args.type != cs.TS_ARGUMENT_LIST:
+        return [args]
+    return [c for c in args.named_children if c.type != cs.TS_COMMENT]
+
+
+def _py_argument_values(call_node: Node) -> list[Node]:
+    # The value each argument passes: a keyword argument's value, any other
+    # argument as written.
+    values: list[Node] = []
+    for child in _py_call_arguments(call_node):
+        if child.type != cs.TS_PY_KEYWORD_ARGUMENT:
+            values.append(child)
+        elif (value := child.child_by_field_name(cs.FIELD_VALUE)) is not None:
+            values.append(value)
+    return values
+
+
+def _py_is_taint_clearing_method(func: Node) -> bool:
+    # `t.startswith("x")`, `t.count("a")`: a `str` predicate or lookup method,
+    # whose result reveals nothing of the receiver's content.
+    method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    return (
+        method is not None
+        and method.text is not None
+        and method.text.decode(cs.ENCODING_UTF8) in cs.PY_TAINT_CLEARING_METHODS
+    )
+
+
 class _FlowCtx(NamedTuple):
     # Per-caller constants threaded through the source-ordered walk.
     caller_spec: tuple[str, str, str]
@@ -3530,6 +3668,8 @@ class FlowProcessor:
             self._apply_assignment(node, state, ctx)
         elif node_type == cs.TS_PY_NAMED_EXPRESSION:
             self._apply_named_expression(node, state, ctx)
+        elif node_type == cs.TS_PY_AUGMENTED_ASSIGNMENT:
+            self._apply_augmented_assignment(node, state, ctx)
         elif node_type == cs.TS_PY_CALL:
             self._apply_call(node, state, ctx)
         elif node_type == cs.TS_PY_RETURN_STATEMENT:
@@ -3766,6 +3906,28 @@ class FlowProcessor:
             else:
                 tainted.pop(bound, None)
 
+    def _apply_augmented_assignment(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> None:
+        # `s += t` builds the new value from BOTH operands, so the target keeps
+        # its own taint and gains the right side's; it can never clean it.
+        left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        self._note_capture_escapes_in(right)
+        if (
+            left is None
+            or right is None
+            or left.type != cs.TS_PY_IDENTIFIER
+            or left.text is None
+        ):
+            return
+        lhs = left.text.decode(cs.ENCODING_UTF8)
+        merged = _merge_optional_taints(
+            tainted.get(lhs), self._py_value_taint(right, tainted, ctx)
+        )
+        if merged is not None:
+            tainted[lhs] = merged
+
     def _py_value_taint(
         self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
     ) -> Taint | None:
@@ -3773,49 +3935,88 @@ class FlowProcessor:
         # propagate the map, calls seed a source or defer on the callee's
         # return, and value-selection forms (`a if c else b`, `a or b`,
         # `a and b`) union their operands (the result MAY be either).
+        # A value BUILT from operands (f-string, `%`, `+`, a container, an
+        # attribute or slice of a value, a call the walk cannot see into)
+        # carries the union of theirs, so a transformed secret is still the
+        # secret (issue #2588). Operands expand on an explicit stack: a
+        # generated `a + b + ...` or method chain is as deep as it is long,
+        # and one frame per level would overflow the interpreter stack and
+        # drop the whole file's call processing.
+        result: Taint | None = None
+        stack = [node]
+        while stack:
+            operands, taint = self._py_value_step(stack.pop(), tainted, ctx)
+            stack.extend(operands)
+            result = _merge_optional_taints(result, taint)
+        return result
+
+    def _py_value_step(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> tuple[list[Node], Taint | None]:
+        # One node of the value walk: the operands to expand next, and the
+        # taint this node itself contributes as a leaf.
         if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
             text = node.text.decode(cs.ENCODING_UTF8)
             # A VALUE use of a locally-defined closure name escapes it: it may
             # be stored/passed/returned and run later with any cell value, so
             # its capture falls back to the def-site MAY snapshot (#1211).
             self._note_capture_escape(text)
-            return tainted.get(text)
-        if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
-            inner = next(iter(node.named_children), None)
-            return self._py_value_taint(inner, tainted, ctx) if inner else None
-        if node.type == cs.TS_PY_NAMED_EXPRESSION:
-            # `print(t := secret())`: a walrus evaluates to the value it binds.
-            value = node.child_by_field_name(cs.FIELD_VALUE)
-            return self._py_value_taint(value, tainted, ctx) if value else None
-        if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
-            # Named children are [consequence, condition, alternative]; the
-            # condition never becomes the value.
-            values = node.named_children
-            if len(values) != 3:
-                return None
-            return _merge_optional_taints(
-                self._py_value_taint(values[0], tainted, ctx),
-                self._py_value_taint(values[2], tainted, ctx),
-            )
-        if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
-            return _merge_optional_taints(
-                self._py_value_taint_field(node, cs.TS_FIELD_LEFT, tainted, ctx),
-                self._py_value_taint_field(node, cs.TS_FIELD_RIGHT, tainted, ctx),
-            )
-        if node.type == cs.TS_PY_SUBSCRIPT:
+            return [], tainted.get(text)
+        if node.type == cs.TS_PY_SUBSCRIPT and (
+            seed := self._py_env_member_seed(node, ctx)
+        ):
             # `os.environ["K"]` is a subscript read of a process-env mapping:
             # a source like `os.getenv("K")` / `os.environ.get("K")`, only
             # shaped as an indexed object (issue #1324).
-            if seed := self._py_env_member_seed(node, ctx):
-                return Taint(frozenset({seed}), frozenset())
+            return [], Taint(frozenset({seed}), frozenset())
         if node.type == cs.TS_PY_CALL and (raw := call_name(node)) is not None:
-            return self._py_call_taint(node, raw, ctx)
-        return None
+            return self._py_call_step(node, raw, ctx)
+        if node.type in _PY_COMPREHENSIONS:
+            return [], self._py_comprehension_taint(node, tainted, ctx)
+        return _py_value_operands(node) or [], None
 
-    def _py_call_taint(self, node: Node, raw: str, ctx: _FlowCtx) -> Taint | None:
-        # A call seeds a source, or defers on the resolved callee's return.
+    def _py_union_taint(
+        self, nodes: list[Node], tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        result: Taint | None = None
+        for operand in nodes:
+            result = _merge_optional_taints(
+                result, self._py_value_taint(operand, tainted, ctx)
+            )
+        return result
+
+    def _py_comprehension_taint(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        # Each `for` target takes its iterable's taint in a scope of its own,
+        # so `''.join(c for c in secret)` carries the secret while
+        # `[len(c) for c in secret]` does not; an `if` filter only decides
+        # which elements survive and never becomes one.
+        scope = dict(tainted)
+        for clause in node.named_children:
+            if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+                continue
+            iterable = clause.child_by_field_name(cs.TS_FIELD_RIGHT)
+            taint = (
+                self._py_value_taint(iterable, scope, ctx)
+                if iterable is not None
+                else None
+            )
+            for name in _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT)):
+                if taint is None:
+                    scope.pop(name, None)
+                else:
+                    scope[name] = taint
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        return self._py_value_taint(body, scope, ctx) if body is not None else None
+
+    def _py_call_step(
+        self, node: Node, raw: str, ctx: _FlowCtx
+    ) -> tuple[list[Node], Taint | None]:
+        # A call seeds a source, defers on the resolved callee's return, or,
+        # for code the walk cannot see into, expands to its operands.
         if seed := self._source_binding(node, raw, ctx.import_map, ctx.read_sinks):
-            return Taint(frozenset({seed}), frozenset())
+            return [], Taint(frozenset({seed}), frozenset())
         callee = self._resolve(
             raw,
             ctx.module_qn,
@@ -3825,7 +4026,7 @@ class FlowProcessor:
             ctx.local_var_types,
         )
         if callee is None:
-            return None
+            return self._py_unresolved_call_operands(node, raw, ctx), None
         # Defer: mark the value pending on the callee's return and record a
         # candidate return edge. finalize() decides whether the callee really
         # returns taint, so a callee processed later still counts.
@@ -3835,13 +4036,31 @@ class FlowProcessor:
         # only (issue #1168); it resolves to nothing when the callee is not a
         # pass-through, so non-pass-through calls are unaffected.
         token = _passthrough_result_token(ctx.caller_qn, node)
-        return Taint(frozenset(), frozenset({callee[1], token}))
+        return [], Taint(frozenset(), frozenset({callee[1], token}))
 
-    def _py_value_taint_field(
-        self, node: Node, field: str, tainted: _TaintMap, ctx: _FlowCtx
-    ) -> Taint | None:
-        child = node.child_by_field_name(field)
-        return self._py_value_taint(child, tainted, ctx) if child is not None else None
+    def _py_unresolved_call_operands(
+        self, node: Node, raw: str, ctx: _FlowCtx
+    ) -> list[Node]:
+        # A builtin, a method on a value, or any library call is code the walk
+        # cannot see into, so -- the usual default for unknown functions in a
+        # taint engine -- its result carries its receiver's and arguments'
+        # taint (issue #2588). A first-party callee never gets here: it keeps
+        # its return summary. A write sink returns nothing of its payload and a
+        # taint-clearing call nothing of its input, so both yield no operands.
+        if (
+            registry_match(ctx.write_sinks, raw, ctx.import_map) is not None
+            or registry_match(_PY_TAINT_CLEARING_CALLS, raw, ctx.import_map) is not None
+        ):
+            return []
+        operands: list[Node] = []
+        func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is not None and func.type == cs.TS_PY_ATTRIBUTE:
+            if _py_is_taint_clearing_method(func):
+                return []
+            if (receiver := func.child_by_field_name(cs.FIELD_OBJECT)) is not None:
+                operands.append(receiver)
+        operands.extend(_py_argument_values(node))
+        return operands
 
     def _py_env_member_seed(self, node: Node, ctx: _FlowCtx) -> HandleBinding | None:
         # A Python subscript read of a process-env mapping: `os.environ["K"]`
@@ -3989,16 +4208,11 @@ class FlowProcessor:
         # expression, so an inline source or tainted call is tracked; positional
         # index counts positional args only (keywords never advance it), keeping
         # arg:<i> aligned with the callee's parameter order.
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return []
         out: list[tuple[Taint, str]] = []
         index = 0
-        for child in args.named_children:
-            # Comments are named children; skip them so they neither consume a
-            # positional index nor get evaluated as a value.
-            if child.type == cs.TS_COMMENT:
-                continue
+        # Comments are left out, so they neither consume a positional index
+        # nor get evaluated as a value.
+        for child in _py_call_arguments(call_node):
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 if (keyword := _keyword_argument(child)) is not None:
                     name, value = keyword
@@ -4034,18 +4248,13 @@ class FlowProcessor:
         self, child: Node, tainted: _TaintMap, ctx: _FlowCtx
     ) -> Taint | None:
         # The Taint one returned value node contributes, or None if it adds none.
-        if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
-            name = child.text.decode(cs.ENCODING_UTF8)
-            return tainted.get(name)
+        # A returned call keeps its own path (it records the pass-through
+        # hand-off); every other form -- a name, `os.environ["K"]` (issue
+        # #1324), a value built from a tainted one (issue #2588) -- carries
+        # what it would carry anywhere else.
         if child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
             return self._return_call_taint(child, raw, tainted, ctx)
-        if child.type == cs.TS_PY_SUBSCRIPT:
-            # `return os.environ["K"]`: the subscript source flows out of
-            # the function exactly like the call-shaped env reads (issue
-            # #1324).
-            if seed := self._py_env_member_seed(child, ctx):
-                return Taint(frozenset({seed}), frozenset())
-        return None
+        return self._py_value_taint(child, tainted, ctx)
 
     def _return_call_taint(
         self, child: Node, raw: str, tainted: _TaintMap, ctx: _FlowCtx
@@ -4061,70 +4270,112 @@ class FlowProcessor:
             ctx.local_var_types,
         )
         if callee is None:
-            return None
+            return self._py_union_taint(
+                self._py_unresolved_call_operands(child, raw, ctx), tainted, ctx
+            )
         self._return_edge_candidates.append((callee[0], callee[1], ctx.caller_spec))
         # `return redact(x)`: record that each of this function's
         # parameters appearing in the returned call reaches its return
         # through the callee, so a pass-through chain resolves (#1168).
-        for pnames, via in self._returned_arg_params(child, tainted):
+        for pnames, via in self._returned_arg_params(child, tainted, ctx):
             for pname in pnames:
                 self._return_param_edges.append((ctx.caller_qn, pname, callee[1], via))
         return Taint(frozenset(), frozenset({callee[1]}))
 
     def _returned_arg_params(
-        self, call_node: Node, tainted: _TaintMap
+        self, call_node: Node, tainted: _TaintMap, ctx: _FlowCtx
     ) -> list[tuple[frozenset[str], str]]:
         # The enclosing function's parameters each argument of a returned call
         # carries, tagged with the argument's `via`. Params-only (never touches
         # the deferred-candidate lists), because the value/return-edge side of the
         # returned call is already handled by the walk's descent into it.
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return []
         out: list[tuple[frozenset[str], str]] = []
         index = 0
-        for child in args.named_children:
-            if child.type == cs.TS_COMMENT:
-                continue
+        for child in _py_call_arguments(call_node):
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 if (keyword := _keyword_argument(child)) is not None:
                     name, value = keyword
-                    params = self._value_params(value, tainted)
+                    params = self._value_params(value, tainted, ctx)
                     if params:
                         out.append((params, VIA_KW_FORMAT.format(name=name)))
                 continue
-            params = self._value_params(child, tainted)
+            params = self._value_params(child, tainted, ctx)
             if params:
                 out.append((params, VIA_ARG_FORMAT.format(index=index)))
             index += 1
         return out
 
-    def _value_params(self, node: Node, tainted: _TaintMap) -> frozenset[str]:
+    def _value_params(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> frozenset[str]:
         # The parameter names a value expression carries, following the same
-        # aliasing forms _py_value_taint threads (identifier, parenthesis, and the
-        # value-selection unions) but reading only the seeded `params` field.
-        if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
-            taint = tainted.get(node.text.decode(cs.ENCODING_UTF8))
-            return taint.params if taint is not None else frozenset()
-        if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
-            inner = next(iter(node.named_children), None)
-            return self._value_params(inner, tainted) if inner else frozenset()
-        if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
-            values = node.named_children
-            if len(values) != 3:
-                return frozenset()
-            return self._value_params(values[0], tainted) | self._value_params(
-                values[2], tainted
+        # selection and transform forms _py_value_taint threads but reading
+        # only the seeded `params` field, so `return redact(p.strip())` still
+        # hands `p` to redact. Side-effect free: the walk's own descent records
+        # the return-edge candidates of any call inside. Iterative for the same
+        # stack-depth reason as _py_value_taint.
+        params: frozenset[str] = frozenset()
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_PY_IDENTIFIER and current.text is not None:
+                taint = tainted.get(current.text.decode(cs.ENCODING_UTF8))
+                if taint is not None:
+                    params |= taint.params
+            elif current.type == cs.TS_PY_CALL:
+                stack.extend(self._py_param_call_operands(current, ctx))
+            elif current.type in _PY_COMPREHENSIONS:
+                params |= self._py_comprehension_params(current, tainted, ctx)
+            else:
+                stack.extend(_py_value_operands(current) or [])
+        return params
+
+    def _py_comprehension_params(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> frozenset[str]:
+        # _py_comprehension_taint's scoping, reading only `params`: each `for`
+        # target carries the parameters its iterable does, so `return
+        # redact([c for c in p])` still hands `p` to redact.
+        scope = dict(tainted)
+        for clause in node.named_children:
+            if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+                continue
+            iterable = clause.child_by_field_name(cs.TS_FIELD_RIGHT)
+            params = (
+                self._value_params(iterable, scope, ctx)
+                if iterable is not None
+                else frozenset()
             )
-        if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
-            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-            return (
-                self._value_params(left, tainted) if left is not None else frozenset()
-            ) | (
-                self._value_params(right, tainted) if right is not None else frozenset()
+            for name in _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT)):
+                if params:
+                    scope[name] = Taint(frozenset(), frozenset(), params)
+                else:
+                    scope.pop(name, None)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        return self._value_params(body, scope, ctx) if body is not None else frozenset()
+
+    def _py_param_call_operands(self, node: Node, ctx: _FlowCtx) -> list[Node]:
+        # A source or a resolved callee hands no parameter through its result
+        # here (a resolved one is followed by the return-parameter closure);
+        # only a call the walk cannot see into carries its operands.
+        raw = call_name(node)
+        if raw is None or self._source_binding(
+            node, raw, ctx.import_map, ctx.read_sinks
+        ):
+            return []
+        if (
+            self._resolve(
+                raw,
+                ctx.module_qn,
+                ctx.class_context,
+                ctx.caller_qn,
+                ctx.language,
+                ctx.local_var_types,
             )
-        return frozenset()
+            is not None
+        ):
+            return []
+        return self._py_unresolved_call_operands(node, raw, ctx)
 
     def _emit_return_edge(
         self, callee: tuple[str, str], caller_spec: tuple[str, str, str]
