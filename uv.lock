@@ -421,7 +421,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.1.54"
+version = "0.1.58"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -945,11 +945,11 @@ wheels = [
 
 [[package]]
 name = "filelock"
-version = "3.20.3"
+version = "4.0.6"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1d/65/ce7f1b70157833bf3cb851b556a37d4547ceafc158aa9b34b36782f23696/filelock-3.20.3.tar.gz", hash = "sha256:18c57ee915c7ec61cff0ecf7f0f869936c7c30191bb0cf406f1341778d0834e1", size = 19485, upload-time = "2026-01-09T17:55:05.421Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/2d/5cb7a5ac017031e96a63173f3d57a8a5162ce36f9ff461e62bc6da4d88ab/filelock-4.0.6.tar.gz", hash = "sha256:323fab3b2fb22d889b29fa83774f60029addddb4b6a1bcfa1e73066eabffb5f2", size = 248237, upload-time = "2026-09-28T22:16:16.257Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/36/7fb70f04bf00bc646cd5bb45aa9eddb15e19437a28b8fb2b4a5249fac770/filelock-3.20.3-py3-none-any.whl", hash = "sha256:4b0dda527ee31078689fc205ec4f1c1bf7d56cf88b6dc9426c4f230e46c2dce1", size = 16701, upload-time = "2026-01-09T17:55:04.334Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/3b/b74ae9db2f78f1354278731372ae89870626be7b86cbb46b8d707acd1a98/filelock-4.0.6-py3-none-any.whl", hash = "sha256:9b139fb93b2ac5807f7feaf63aa4546fbd74074a2d3f554c040f40a4694d7b9f", size = 109077, upload-time = "2026-09-28T22:16:14.731Z" },
 ]
 
 [[package]]
@@ -2707,6 +2707,18 @@ wheels = [
 ]
 
 [[package]]
+name = "python-discovery"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "filelock" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/57/250bd238b966cece44328235eb85290045d059265fdaf7527a3a958123db/python_discovery-1.6.1.tar.gz", hash = "sha256:cf87d3627dfb4412437fdd5b13eae402607722998d21567993aedbc59b23c15e", size = 84338, upload-time = "2026-09-18T01:31:53.971Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/7d/e9ffbadfbf89c93848412d04594135c4ae8c1d37d9e053b9c3ed718fabc4/python_discovery-1.6.1-py3-none-any.whl", hash = "sha256:d43fcdef879fe795352bd13ccf8d185ba5a9f86f36cfcd00529f596e737442b3", size = 38664, upload-time = "2026-09-18T01:31:52.448Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3883,16 +3895,18 @@ wheels = [
 
 [[package]]
 name = "virtualenv"
-version = "20.36.1"
+version = "21.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "distlib" },
     { name = "filelock" },
+    { name = "packaging" },
     { name = "platformdirs" },
+    { name = "python-discovery" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/a3/4d310fa5f00863544e1d0f4de93bddec248499ccf97d4791bc3122c9d4f3/virtualenv-20.36.1.tar.gz", hash = "sha256:8befb5c81842c641f8ee658481e42641c68b5eab3521d8e092d18320902466ba", size = 6032239, upload-time = "2026-01-09T18:21:01.296Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/67/57/630a01cf5ab58f33b9c7dc8a7f13464cb5740b5227f8a08cab9d798bd532/virtualenv-21.14.2.tar.gz", hash = "sha256:571930928b11e43db690073ad8228162eca8a3f8fd3a87acdeae07df7dd57068", size = 5463798, upload-time = "2026-10-01T06:22:46.965Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/2a/dc2228b2888f51192c7dc766106cd475f1b768c10caaf9727659726f7391/virtualenv-20.36.1-py3-none-any.whl", hash = "sha256:575a8d6b124ef88f6f51d56d656132389f961062a9177016a50e4f507bbcc19f", size = 6008258, upload-time = "2026-01-09T18:20:59.425Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/e0/10bb71ddf2946ccbe4ae06fca4e951212531e148daa3f45fa6b907bcafcf/virtualenv-21.14.2-py3-none-any.whl", hash = "sha256:6a8b7fd4e4ee00ebcdc1c5ee8cffd035d1fe130e354e8c9a44f510aac8affdc1", size = 5487107, upload-time = "2026-10-01T06:22:44.56Z" },
 ]
 
 [[package]]
