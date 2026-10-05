@@ -86,6 +86,9 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Field": frozenset({"absolute_path"}),
     "EnumVariant": frozenset({"absolute_path"}),
+    # Same reason as Field: a Constant records `absolute_path` on the node
+    # but must not export it, or the canonical format differs per checkout.
+    "Constant": frozenset({"absolute_path"}),
     # `positional_params` (issue #227) is the one entry here added with a
     # known cost rather than as a record of the past: a graph round-tripped
     # through protobuf loses it, so arity diagnosis on an IMPORTED graph
@@ -98,10 +101,16 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # the definition's current text; it is recomputed on every parse and a
     # graph round-tripped through protobuf simply grades no note until the
     # next parse, so it stays off the wire.
+    # `is_body_scoped_name` (issue #2402) is read back only by an incremental
+    # run's registry rehydration. A graph round-tripped through protobuf loses
+    # it, so a scoped re-ingest against an IMPORTED graph may again bind a
+    # bare call to a function expression in an unchanged file until that file
+    # is next parsed; exporting it needs protoc, which #1490 carries.
     "Function": frozenset(
         {
             "absolute_path",
             "anchor_hash",
+            "is_body_scoped_name",
             "is_macro",
             "modifiers",
             "name_start_col",
