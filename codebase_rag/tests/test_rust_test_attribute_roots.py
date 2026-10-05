@@ -250,7 +250,7 @@ def test_project_named_tests_still_reports() -> None:
 
 
 def test_singular_test_module_matches_plural() -> None:
-    # cs.TEST_PATH_PATTERNS covers both /tests/ and /test/ directories;
+    # The test-path rules cover both tests/ and test/ directories;
     # the inline-module rule mirrors it, so `mod test` behaves exactly
     # like `mod tests` on both flag polarities. Distinct spans and NO
     # call edge: only the module rule itself can suppress mk_input, so
