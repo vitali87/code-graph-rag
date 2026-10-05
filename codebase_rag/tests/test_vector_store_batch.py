@@ -173,6 +173,45 @@ class TestDeleteProjectEmbeddings:
         with patch(_PATCH_CLIENT, return_value=mock_client):
             delete_project_embeddings("myproject", [1, 2])
 
+    def test_reports_a_failed_delete(self) -> None:
+        # Review of PR 2497: retiring a project must know its vectors are
+        # still there, or it deletes the node ids they are keyed by.
+        from codebase_rag.vector_store import delete_project_embeddings
+
+        mock_client = MagicMock()
+        mock_client.delete.side_effect = Exception("connection lost")
+
+        with patch(_PATCH_CLIENT, return_value=mock_client):
+            deleted = delete_project_embeddings("myproject", [1, 2])
+
+        assert deleted is False
+
+    def test_reports_a_successful_delete(self) -> None:
+        # Negative.
+        from codebase_rag.vector_store import delete_project_embeddings
+
+        with patch(_PATCH_CLIENT, return_value=MagicMock()):
+            deleted = delete_project_embeddings("myproject", [1, 2])
+
+        assert deleted is True
+
+    def test_reports_nothing_to_delete_as_done(self) -> None:
+        from codebase_rag.vector_store import delete_project_embeddings
+
+        with patch(_PATCH_CLIENT, return_value=MagicMock()):
+            deleted = delete_project_embeddings("myproject", [])
+
+        assert deleted is True
+
+    def test_reports_no_vector_store_as_done(self) -> None:
+        # A run without a vector store wrote no vectors to delete.
+        import codebase_rag.vector_store as vs
+
+        with patch.object(vs, "_get_vector_store", return_value=None):
+            deleted = vs.delete_project_embeddings("myproject", [1, 2])
+
+        assert deleted is True
+
 
 class TestVerifyStoredIds:
     def test_returns_found_ids(self) -> None:

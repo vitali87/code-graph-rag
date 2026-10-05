@@ -44,8 +44,9 @@ Every top-level command, from the CLI's own help registry:
 | `cgr trace` | Ingest runtime call traces as dynamic CALLS edges |
 | `cgr edits` | Show or undo recorded edit transactions (multi-file edits applied through cgr). |
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
-| `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
+| `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites and on occurrences the graph has no site for. |
+| `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
 | `cgr status` | Show stack state and the last sync time for each project |
@@ -219,13 +220,40 @@ Manage language support.
 cgr language add-grammar <language-name>
 cgr language add-grammar --grammar-url <url>
 cgr language list-languages
+cgr language list-languages --verbose
 cgr language remove-language <language-name>
 cgr language cleanup-orphaned-modules
 ```
 
+`list-languages` prints one row per language across all three parsing tiers: its name, file extensions, tier (`tree-sitter`, `ast-grep` or `document`), level of support (`full`, `in development`, `structural` or `headings`) and whether this install can parse it. A language marked `no` needs its extra, which the command names below the table. A second table shows the optional semantic frontends (libclang, go/types, Roslyn, javac, Jedi): whether each toolchain is found, the setting that selects it, and whether indexing will use it. The language name and extensions are never truncated, including in piped output. `--verbose` adds the tree-sitter node types each language maps to functions, classes, modules and calls.
+
 ![cgr language list-languages printing the configured languages table](../assets/demos/cli-language.gif)
 
 `add-grammar`, `remove-language` and `cleanup-orphaned-modules` are contributor tools: they edit the code-graph-rag source checkout the running `cgr` comes from, never the current directory. An installed `cgr` (PyPI, `pipx`, `uv tool install`) refuses them with a non-zero exit and changes nothing; clone the repository and run them there. See [Adding Languages](../advanced/adding-languages.md).
+
+### `cgr graph`
+
+Deterministic graph queries, printed as JSON, with no LLM in the path.
+
+```bash
+cgr graph resolve helper
+cgr graph callers myrepo__1a2b3c4d.pkg.util.helper --depth 2
+cgr graph tests-reaching myrepo__1a2b3c4d.pkg.util.helper --project myrepo__1a2b3c4d
+```
+
+The project is `--project`, or else the one `--repo-path` (default `.`) was
+indexed as. The exit status tells an empty answer apart from a question the
+graph cannot answer, and a refusal prints nothing on stdout:
+
+| Status | Meaning |
+|--------|---------|
+| `0` | The JSON answer. `[]` means the name is in the graph and nothing matches it. |
+| `3` | The project is not indexed, or, without `--project`, the directory was never indexed. The message on stderr names close matches. |
+| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold. The message names close matches, or points at `cgr graph resolve`. |
+
+`resolve` answers `[]` when no name matches, and `definition` answers
+`{"found": false, ...}` for a qualified name it does not find; neither exits
+with `4`.
 
 ## Makefile Commands
 

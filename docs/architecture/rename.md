@@ -43,6 +43,17 @@ becomes `a.b.assist(x)` and the receiver is untouched. Every edit is a
 span-preserving [patcher](patchers.md) edit, so formatting elsewhere in the
 file is not disturbed.
 
+A bare JS/TS call or reference in another file follows the rename only when
+that file imports the name by the definition's own name, so the import is
+rewritten with it. A file that binds a name of its own keeps both its import
+and its uses: `import mul from "./mul"`, `const mul = require("./mul")`, and a
+barrel's `export { default as mul } from "./mul"` together with the modules
+importing that `mul`. A use whose import goes through a barrel's
+`export * from` refuses even with `--allow-heuristic`, naming the barrel: the
+rename cannot rewrite that import, so rewriting the use would leave it naming
+what the barrel no longer exports. Any other use with no such import is
+reported as `heuristic` and refuses like a guessed site (issue #2464).
+
 ## Refusal
 
 The graph tags each call edge with how it was resolved (issue #1526). A
