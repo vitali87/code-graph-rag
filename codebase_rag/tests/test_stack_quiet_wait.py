@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Iterator
 from functools import partial
 from pathlib import Path
+from typing import IO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -319,14 +320,99 @@ def test_concurrent_probes_leave_stderr_pointing_at_the_terminal(
     assert capfd.readouterr().err == "after\n"
 
 
+class _SeparateCRuntime:
+    """A C runtime with descriptors of its own, as msvcrt.dll has on Windows.
+
+    pymgclient's Windows wheels print through msvcrt.dll, while Python's os
+    module works on the UCRT's descriptors, so os.dup2 onto fd 2 leaves the
+    fd 2 that mgclient writes to where it was. Each descriptor here is backed
+    by a real one but numbered apart from them.
+    """
+
+    def __init__(self, stderr: int | None) -> None:
+        self.fds: dict[int, int] = {}
+        if stderr is not None:
+            self.fds[STDERR_FD] = os.dup(stderr)
+
+    def _add(self, real_fd: int) -> int:
+        # The lowest free number, so with fd 2 closed the next one is fd 2.
+        fd = next(n for n in itertools.count(STDERR_FD) if n not in self.fds)
+        self.fds[fd] = real_fd
+        return fd
+
+    def dup(self, fd: int) -> int:
+        if fd not in self.fds:
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+        return self._add(os.dup(self.fds[fd]))
+
+    def dup2(self, fd: int, fd2: int) -> None:
+        real_fd = os.dup(self.fds[fd])
+        if fd2 in self.fds:
+            os.close(self.fds[fd2])
+        self.fds[fd2] = real_fd
+
+    def close(self, fd: int) -> None:
+        os.close(self.fds.pop(fd))
+
+    def open_file(self, file: IO[bytes]) -> int:
+        return self._add(os.dup(file.fileno()))
+
+    def perror(self, text: str) -> None:
+        os.write(self.fds[STDERR_FD], f"{text}\n".encode())
+
+
 @pytest.mark.usefixtures("mgclient_in_this_process")
-def test_a_process_without_stderr_still_probes() -> None:
-    # A service started with fd 2 closed has nothing to redirect.
+def test_a_process_without_stderr_still_probes(
+    debug_records: list[tuple[str, str]],
+) -> None:
+    # A service started with fd 2 closed: the C library's message still goes
+    # to the debug log, and fd 2 is left closed.
+    runtime = _SeparateCRuntime(stderr=None)
+
+    def connect(**_: object) -> MagicMock:
+        runtime.perror(f"{MGCLIENT_NOISE}_recv: connection closed by server")
+        raise health.mgclient.OperationalError("failed to receive handshake")
+
     with (
-        patch.object(os, "dup", side_effect=OSError(errno.EBADF, "closed")),
-        patch.object(health.mgclient, "connect"),
+        patch.object(health, "_PYTHON_C_RUNTIME", runtime),
+        patch.object(health, "_mgclient_own_c_runtime", return_value=None),
+        patch.object(health.mgclient, "connect", side_effect=connect),
     ):
-        assert health._bolt_reachable(cs.LOOPBACK_HOST, 7687)
+        assert not health._bolt_reachable(cs.LOOPBACK_HOST, 7687)
+
+    assert runtime.fds == {}
+    assert [level for level, text in debug_records if MGCLIENT_NOISE in text] == [
+        "DEBUG"
+    ]
+
+
+@pytest.mark.usefixtures("mgclient_in_this_process")
+def test_an_unusable_fd_2_that_refuses_the_capture_is_left_as_it_was(
+    tmp_path: Path,
+) -> None:
+    # fd 2 still taken, but by a handle that can no longer be duplicated:
+    # when it will not take the capture either, the probe still runs and
+    # reports its result, and nothing is closed after.
+    with (tmp_path / "terminal").open("wb") as file:
+        runtime = _SeparateCRuntime(file.fileno())
+    failure = health.mgclient.OperationalError("failed to receive handshake")
+    try:
+        with (
+            patch.object(health, "_PYTHON_C_RUNTIME", runtime),
+            patch.object(health, "_mgclient_own_c_runtime", return_value=None),
+            patch.object(runtime, "dup", side_effect=OSError(errno.EBADF, "gone")),
+            patch.object(runtime, "dup2", side_effect=OSError(errno.EBADF, "bad")),
+            patch.object(health.mgclient, "connect", side_effect=failure),
+        ):
+            assert (
+                health.memgraph_anonymous_access(cs.LOOPBACK_HOST, 7687)
+                is cs.AnonymousAccess.NO_ANSWER
+            )
+
+        assert set(runtime.fds) == {STDERR_FD}
+    finally:
+        for real_fd in runtime.fds.values():
+            os.close(real_fd)
 
 
 @pytest.mark.usefixtures("mgclient_in_this_process")

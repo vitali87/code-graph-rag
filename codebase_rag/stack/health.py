@@ -201,21 +201,34 @@ def _login_refused(report: MgclientProbeReport) -> bool:
 @contextmanager
 def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
     try:
-        saved = runtime.dup(cs.NATIVE_STDERR_FD)
+        saved: int | None = runtime.dup(cs.NATIVE_STDERR_FD)
     except OSError:
-        # With fd 2 closed there is no terminal to keep clean.
-        yield
-        return
+        # fd 2 is closed, or holds a handle that can no longer be duplicated.
+        # There is no terminal to put back, but the message still belongs in
+        # the capture rather than nowhere.
+        saved = None
+    redirected = False
     try:
-        target = runtime.open_file(capture)
         try:
-            runtime.dup2(target, cs.NATIVE_STDERR_FD)
-        finally:
-            runtime.close(target)
+            target = runtime.open_file(capture)
+            # With fd 2 free, the capture's descriptor is given that number.
+            if target != cs.NATIVE_STDERR_FD:
+                try:
+                    runtime.dup2(target, cs.NATIVE_STDERR_FD)
+                finally:
+                    runtime.close(target)
+            redirected = True
+        except OSError:
+            # Keeping the terminal clean is best-effort: the probe still runs
+            # and reports its result, its message going where fd 2 points.
+            pass
         yield
     finally:
-        runtime.dup2(saved, cs.NATIVE_STDERR_FD)
-        runtime.close(saved)
+        if saved is not None:
+            runtime.dup2(saved, cs.NATIVE_STDERR_FD)
+            runtime.close(saved)
+        elif redirected:
+            runtime.close(cs.NATIVE_STDERR_FD)
 
 
 @contextmanager
