@@ -4,6 +4,7 @@
 # walk, but the flow walk had no handle model, so no FLOWS_TO joined them.
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -110,10 +111,86 @@ def write_verb():
 """
 
 
-@pytest.fixture(scope="module")
-def flows(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
-    root = tmp_path_factory.mktemp("pyhandles")
-    (root / "app.py").write_text(APP, encoding="utf-8")
+# Bot review on PR #2770: a handle read on the right of its own rebinding,
+# a handle bound on either branch, a `with ... as` alias over a bound name,
+# and an enclosing scope's later rebinding of the name.
+REVIEW = """import contextlib
+import io
+import os
+import sqlite3
+
+cfg = open("/tmp/cfg.txt", "w")
+if os.getenv("QUIET"):
+    cfg = None
+
+log = open("/tmp/log.txt", "w")
+log = None
+
+out = open("/tmp/out.txt", "w")
+
+
+def reread():
+    rows = sqlite3.connect("/var/reread.db")
+    rows = rows.execute("SELECT name FROM t").fetchall()
+    print(rows)
+
+
+def either(flag):
+    token = os.getenv("EITHER_TOKEN")
+    if flag:
+        f = open("/tmp/a.txt", "w")
+    else:
+        f = open("/tmp/b.txt", "w")
+    f.write(token)
+
+
+def realiased():
+    f = open("/tmp/old.txt", "w")
+    with contextlib.nullcontext(io.StringIO()) as f:
+        f.write(os.getenv("ALIAS_TOKEN"))
+
+
+def emit_log():
+    log.write(os.getenv("LOG_TOKEN"))
+
+
+def emit_cfg():
+    cfg.write(os.getenv("CFG_TOKEN"))
+
+
+def outer(buffer):
+    out = buffer
+
+    def inner():
+        out.write(os.getenv("INNER_TOKEN"))
+
+    inner()
+
+
+class Closer:
+    def __init__(self):
+        self.f = open("/tmp/closer.txt", "w")
+
+    def save(self):
+        self.f.write(os.getenv("CLOSER_TOKEN"))
+
+    def close(self):
+        self.f.close()
+        self.f = None
+
+
+class Swapper:
+    def __init__(self):
+        self.f = open("/tmp/first.txt", "w")
+        self.f = open("/tmp/second.txt", "w")
+
+    def save(self):
+        self.f.write(os.getenv("SWAP_TOKEN"))
+"""
+
+
+def _flows(root: Path, source: str) -> set[tuple[str, str]]:
+    (root / "app.py").write_text(source, encoding="utf-8")
     parsers, queries = load_parsers()
     mock = MagicMock()
     GraphUpdater(
@@ -128,6 +205,16 @@ def flows(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
         for c in mock.ensure_relationship_batch.call_args_list
         if str(c.args[1]) == FLOWS_TO
     }
+
+
+@pytest.fixture(scope="module")
+def flows(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
+    return _flows(tmp_path_factory.mktemp("pyhandles"), APP)
+
+
+@pytest.fixture(scope="module")
+def review_flows(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
+    return _flows(tmp_path_factory.mktemp("pyhandlesreview"), REVIEW)
 
 
 @pytest.mark.parametrize(
@@ -153,6 +240,36 @@ def test_a_handle_read_or_write_is_a_flow_end(
     flows: set[tuple[str, str]], source: str, sink: str
 ) -> None:
     assert (source, sink) in flows
+
+
+@pytest.mark.parametrize(
+    ("source", "sink"),
+    [
+        ("resource::DATABASE::/var/reread.db", STDOUT),
+        ("resource::ENV::EITHER_TOKEN", "resource::FILE::/tmp/a.txt"),
+        ("resource::ENV::EITHER_TOKEN", "resource::FILE::/tmp/b.txt"),
+    ],
+    ids=["read-on-the-right-of-its-rebinding", "if-branch", "else-branch"],
+)
+def test_a_handle_the_path_may_hold_is_a_flow_end(
+    review_flows: set[tuple[str, str]], source: str, sink: str
+) -> None:
+    assert (source, sink) in review_flows
+
+
+@pytest.mark.parametrize(
+    ("source", "sink"),
+    [
+        ("resource::ENV::ALIAS_TOKEN", "resource::FILE::/tmp/old.txt"),
+        ("resource::ENV::LOG_TOKEN", "resource::FILE::/tmp/log.txt"),
+        ("resource::ENV::INNER_TOKEN", "resource::FILE::/tmp/out.txt"),
+    ],
+    ids=["with-alias", "later-module-rebinding", "nearer-scope-rebinding"],
+)
+def test_a_handle_the_name_no_longer_holds_is_no_flow_end(
+    review_flows: set[tuple[str, str]], source: str, sink: str
+) -> None:
+    assert (source, sink) not in review_flows
 
 
 # Negative: what must not change.
@@ -198,3 +315,31 @@ def test_a_read_on_a_value_that_is_not_a_handle_is_no_source(
         "resource::ENV::SELF_TOKEN",
         "resource::ENV::SHOW_TOKEN",
     } | {source for source, _sink in flows if not source.startswith("resource::")}
+
+
+@pytest.mark.parametrize(
+    ("source", "sink"),
+    [
+        ("resource::ENV::CFG_TOKEN", "resource::FILE::/tmp/cfg.txt"),
+        ("resource::ENV::CLOSER_TOKEN", "resource::FILE::/tmp/closer.txt"),
+        ("resource::ENV::SWAP_TOKEN", "resource::FILE::/tmp/second.txt"),
+    ],
+    ids=[
+        "a-conditional-rebinding-keeps-the-handle",
+        "a-reset-in-another-method-keeps-the-handle",
+        "the-later-self-binding-wins",
+    ],
+)
+def test_a_handle_the_name_may_still_hold_stays_a_flow_end(
+    review_flows: set[tuple[str, str]], source: str, sink: str
+) -> None:
+    assert (source, sink) in review_flows
+
+
+def test_an_earlier_self_binding_is_replaced(
+    review_flows: set[tuple[str, str]],
+) -> None:
+    assert (
+        "resource::ENV::SWAP_TOKEN",
+        "resource::FILE::/tmp/first.txt",
+    ) not in review_flows
