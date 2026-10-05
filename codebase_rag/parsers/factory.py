@@ -191,6 +191,7 @@ class ProcessorFactory:
                 function_locations=self.definition_processor.function_locations,
                 dart_extends_type_args=self.definition_processor.dart_extends_type_args,
                 dart_constructor_qns=self.definition_processor.dart_constructor_qns,
+                dart_extension_on_types=self.definition_processor.dart_extension_on_types,
             )
         return self._type_inference
 

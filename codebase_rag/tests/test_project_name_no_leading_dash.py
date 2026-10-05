@@ -17,7 +17,9 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.types_defs import ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
 
 
@@ -54,9 +56,20 @@ def test_a_qualified_name_of_such_a_project_is_accepted_as_an_argument(
 ) -> None:
     repo = tmp_path / "мой-repo"
     repo.mkdir()
-    qn = f"{derive_project_name(repo)}.app.helper"
+    project = derive_project_name(repo)
+    qn = f"{project}.app.helper"
+
+    # Indexed, and holding the name: an empty graph is refused as one that
+    # never indexed the repo (issue #2461), before the name is looked at.
+    def fetch_all(query: str, _params: object = None) -> list[ResultRow]:
+        if query == cq.CYPHER_LIST_PROJECTS:
+            return [{cs.KEY_NAME: project, cs.KEY_ROOT_PATH: str(repo)}]
+        if query == cq.CYPHER_GRAPH_NODE_EXISTS:
+            return [{cs.KEY_QUALIFIED_NAME: qn}]
+        return []
+
     ingestor = MagicMock()
-    ingestor.fetch_all.return_value = []
+    ingestor.fetch_all.side_effect = fetch_all
     ingestor.__enter__ = MagicMock(return_value=ingestor)
     ingestor.__exit__ = MagicMock(return_value=False)
 
