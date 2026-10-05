@@ -51,6 +51,7 @@ from .extract import (
 from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
 from .py_handles import (
     inherited_python_handles,
+    inline_python_handle,
     python_binding_from_node,
     python_stream_target,
 )
@@ -420,7 +421,9 @@ class IOAccessProcessor:
                 var, binding = bound
                 handles[var] = binding
             elif node.type == cs.TS_PY_CALL:
-                self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
+                self._emit_call(
+                    node, caller_spec, import_map, sink_by_name, handles, ctor_by_name
+                )
             elif node.type == cs.TS_PY_SUBSCRIPT:
                 self._emit_py_env_subscript(
                     node, caller_spec, import_map, caller_node, locally_assigned
@@ -1939,11 +1942,17 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         handles: dict[str, HandleBinding],
+        ctor_by_name: dict[str, HandleConstructor],
     ) -> None:
         raw = call_name(node)
         if raw is None:
             return
-        if self._emit_handle_method(node, caller_spec, raw, handles):
+        binding = self._method_receiver_handle(
+            node, raw, handles, import_map, ctor_by_name
+        )
+        if binding is not None and self._emit_handle_method(
+            node, caller_spec, raw, binding
+        ):
             return
         sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
@@ -2033,19 +2042,32 @@ class IOAccessProcessor:
             direction if left is not None and left.id == node.id else IODirection.READ
         )
 
+    @staticmethod
+    def _method_receiver_handle(
+        call_node: Node,
+        raw_name: str,
+        handles: dict[str, HandleBinding],
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+    ) -> HandleBinding | None:
+        # The handle a method call runs on: a bound name (`p.read_text()`),
+        # or the constructor call itself (`Path("/x").read_text()`).
+        receiver, sep, _method = raw_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return None
+        bound = handles.get(receiver)
+        if bound is not None:
+            return bound
+        return inline_python_handle(call_node, import_map, ctor_by_name)
+
     def _emit_handle_method(
         self,
         call_node: Node,
         caller_spec: tuple[str, str, str],
         raw_name: str,
-        handles: dict[str, HandleBinding],
+        binding: HandleBinding,
     ) -> bool:
-        receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return False
-        binding = handles.get(receiver)
-        if binding is None:
-            return False
+        method = raw_name.rpartition(cs.SEPARATOR_DOT)[2]
         methods = IO_HANDLE_METHODS.get(binding.kind, {})
         direction = methods.get(method)
         if direction is None:

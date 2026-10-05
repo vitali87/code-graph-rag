@@ -27,6 +27,45 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
     ),
     # `file=` redirects the write: to stderr, or into an open handle (#2776).
     IOSink("print", ResourceKind.STDOUT, IODirection.WRITE, stream_kw="file"),
+    # The standard streams' own file objects (issue #2778).
+    IOSink("sys.stdout.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("sys.stdout.writelines", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("sys.stderr.write", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("sys.stderr.writelines", ResourceKind.STDERR, IODirection.WRITE),
+    # setdefault reads the variable, and writes it when it is unset.
+    IOSink(
+        "os.environ.setdefault",
+        ResourceKind.ENV,
+        IODirection.READ_WRITE,
+        target_arg=0,
+        target_kw="key",
+    ),
+    # Running a command (issue #2778): the command is the resource, so a
+    # tainted argument reaching it models command injection.
+    *(
+        IOSink(
+            f"subprocess.{fn}",
+            ResourceKind.PROCESS,
+            IODirection.WRITE,
+            target_arg=0,
+            target_kw="args",
+        )
+        for fn in ("run", "call", "check_call", "check_output", "Popen")
+    ),
+    IOSink(
+        "os.system",
+        ResourceKind.PROCESS,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="command",
+    ),
+    IOSink(
+        "os.popen",
+        ResourceKind.PROCESS,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="cmd",
+    ),
     IOSink("json.load", ResourceKind.FILE, IODirection.READ),
     IOSink("json.dump", ResourceKind.FILE, IODirection.WRITE),
     IOSink(
