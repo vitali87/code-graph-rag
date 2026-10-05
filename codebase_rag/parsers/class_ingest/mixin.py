@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -39,6 +40,7 @@ from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
+from ..php import namespaces as php_namespaces
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -52,6 +54,7 @@ from ..utils import (
     sorted_captures,
     written_simple_name,
 )
+from . import base_targets as bt
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -195,6 +198,31 @@ def _is_cpp_template_inner_specifier(
     )
 
 
+def _is_elaborated_type_use(class_node: Node, language: cs.SupportedLanguage) -> bool:
+    # `struct Table *metatable;`, `f(struct stat *st)`, `sizeof(struct node)`:
+    # a bodyless tag written as the type of something only names a type
+    # declared elsewhere. Indexing it minted a Class nested under whatever
+    # held the use (`Udata.Table`, `node.node`, libc's `stat`), and that
+    # phantom could even win the field's OF_TYPE edge (issue #2615). A forward
+    # declaration has no declarator and stays on the deferred path, as does a
+    # bodyless typedef: `typedef struct lua_State lua_State;` is C's
+    # opaque-handle idiom and may be the only declaration the type has.
+    if (
+        language not in cs.C_FAMILY_LANGUAGES
+        or class_node.type not in cs.C_ELABORATED_TYPE_NODE_TYPES
+        or class_node.child_by_field_name(cs.FIELD_BODY) is not None
+        or (parent := class_node.parent) is None
+        or parent.type == cs.CppNodeType.TYPE_DEFINITION
+        or (written := parent.child_by_field_name(cs.FIELD_TYPE)) is None
+        or written.id != class_node.id
+    ):
+        return False
+    return (
+        parent.type not in cs.C_FORWARD_DECLARING_NODE_TYPES
+        or parent.child_by_field_name(cs.FIELD_DECLARATOR) is not None
+    )
+
+
 def _cpp_type_spec(class_node: Node) -> Node | None:
     if class_node.type != cs.CppNodeType.TEMPLATE_DECLARATION:
         return class_node
@@ -296,6 +324,7 @@ class ClassIngestMixin:
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
     dart_constructor_qns: set[str]
+    dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -394,8 +423,28 @@ class ClassIngestMixin:
         self, class_name: str, module_qn: str, exclude_qn: str | None = None
     ) -> tuple[str, bool]: ...
 
-    def _resolve_to_qn(self, name: str, module_qn: str) -> str:
-        return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
+    def _resolve_to_qn(
+        self,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str:
+        # Parse time sees a partial registry, so the C# declared-form tier of
+        # _resolve_class_name (a uniqueness test) is left to the deferred pass.
+        return (
+            self._resolve_base_name(name, module_qn, language) or f"{module_qn}.{name}"
+        )
+
+    def _resolve_base_name(
+        self, name: str, module_qn: str, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        return resolve_class_name(
+            name,
+            module_qn,
+            self.import_processor,
+            self.function_registry,
+            kinds=bt.base_target_kinds(language),
+        )
 
     def _resolve_rust_trait_qn(
         self, path: str, name: str, module_qn: str
@@ -415,7 +464,7 @@ class ClassIngestMixin:
         module while the trait registers where it is declared.
         """
         head, _, tail = path.partition(cs.SEPARATOR_DOUBLE_COLON)
-        anchored = self._resolve_to_qn(name, module_qn)
+        anchored = self._resolve_to_qn(name, module_qn, cs.SupportedLanguage.RUST)
         if not tail:
             return anchored, None
         if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
@@ -544,6 +593,42 @@ class ClassIngestMixin:
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
+    def _reserve_python_class_qns(
+        self,
+        combined_captures: dict[str, list] | None,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> None:
+        # A file's functions and methods register before its classes, so a
+        # `def Tool` shim written below `class Tool` took the plain name the
+        # class is owed as the first definition (issue #2621). Only a class
+        # sharing its name with a def can lose it, which spares every other
+        # class a second identity pass (and a second truncated-name warning).
+        reservations: dict[str, tuple[int, int]] = {}
+        captures = combined_captures or {}
+        def_names = {
+            safe_decode_text(func_node.child_by_field_name(cs.FIELD_NAME))
+            for func_node in captures.get(cs.CAPTURE_FUNCTION, [])
+        }
+        for class_node in captures.get(cs.CAPTURE_CLASS, []):
+            name = safe_decode_text(class_node.child_by_field_name(cs.FIELD_NAME))
+            if name is None or name not in def_names:
+                continue
+            identity = id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                cs.SupportedLanguage.PYTHON,
+                lang_config,
+                file_path,
+            )
+            if identity is None:
+                continue
+            class_qn = identity[0]
+            start = _class_start_point(class_node, cs.SupportedLanguage.PYTHON)
+            reservations[class_qn] = min(reservations.get(class_qn, start), start)
+        self.function_registry.reserve_qns(reservations)
+
     def resolve_deferred_forward_declarations(self) -> int:
         # Run after every file's definitions are registered. A deferred forward
         # declaration whose class name already produced a real node is a phantom
@@ -652,7 +737,10 @@ class ClassIngestMixin:
         emits no edge, because the module-anchored guess is a phantom endpoint
         the database silently drops anyway. Resolved base qns replace the
         guesses in class_inheritance in place so Pass-3 method resolution and
-        override detection walk the real hierarchy.
+        override detection walk the real hierarchy. A C# base is looked up by
+        scope first (its namespace, the enclosing ones, then `using`s); one no
+        scope reaches falls to the name search and its edge is marked
+        heuristic (issue #2534).
         """
         deferred = self._deferred_inherits
         self._deferred_inherits = []
@@ -665,7 +753,12 @@ class ClassIngestMixin:
             child_type = self.function_registry.get(entry.child_qn)
             if child_type is None:
                 continue
-            resolved = self._resolve_deferred_parent_qn(entry)
+            scoped = self._resolve_csharp_scoped_base(entry)
+            resolved = (
+                (scoped, False)
+                if scoped is not None
+                else self._resolve_deferred_parent_qn(entry)
+            )
             is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None or resolved[1]:
                 # Resolved nowhere, or to a node outside the index: the file
@@ -675,8 +768,13 @@ class ClassIngestMixin:
                 )
             if resolved is None:
                 continue
+            # A C# base no scope or `using` reaches, bound anyway by a
+            # project-wide name match, is a guess; say so on the edge.
+            heuristic = (
+                scoped is None and entry.written_ref is not None and not resolved[1]
+            )
             self._emit_resolved_inherit(
-                entry, str(child_type), resolved, is_dart, dart_implements
+                entry, str(child_type), resolved, is_dart, dart_implements, heuristic
             )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
@@ -822,6 +920,22 @@ class ClassIngestMixin:
             stack.extend(implements_map.get(ancestor, []))
         return False
 
+    def _resolve_csharp_scoped_base(self, entry: DeferredInherit) -> str | None:
+        if entry.written_ref is None:
+            return None
+        return bt.resolve_csharp_scoped_base(
+            entry.written_ref,
+            entry.child_qn,
+            self.csharp_class_namespaced.get(entry.child_qn),
+            self.import_processor.import_mapping.get(entry.module_qn, {}),
+            bt.CSharpTypeIndex(
+                self.function_registry,
+                self.csharp_namespaced_qns,
+                self.csharp_class_generic_arity,
+                self.csharp_partial_groups,
+            ),
+        )
+
     def _rust_reexport_target(self, entry: DeferredInherit) -> str | None:
         """Where a `pub use` in the named module declares the parent.
 
@@ -855,7 +969,7 @@ class ClassIngestMixin:
                 # Two modules re-exporting each other's name never declare it.
                 return None
             seen.add(qn)
-            if self.function_registry.get(qn) is not None:
+            if self.function_registry.get(qn) in bt.base_target_kinds(entry.language):
                 return qn
 
     def _resolve_deferred_parent_qn(
@@ -876,7 +990,10 @@ class ClassIngestMixin:
         """
         if entry.parent_qn == entry.child_qn:
             return self._resolve_self_edge_parent(entry)
-        if self.function_registry.get(entry.parent_qn) is not None:
+        # Only a type declaration is a base: a registered member of the same
+        # name (a C# property, a method) is not, however it was reached.
+        target_kinds = bt.base_target_kinds(entry.language)
+        if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
             return followed, False
@@ -906,7 +1023,7 @@ class ClassIngestMixin:
             # A simple-name sweep can land on the child itself; a
             # self-INHERITS is never real.
             and resolved != entry.child_qn
-            and self.function_registry.get(resolved) is not None
+            and self.function_registry.get(resolved) in target_kinds
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
@@ -946,8 +1063,13 @@ class ClassIngestMixin:
         simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
         candidates = self.function_registry.find_ending_with(simple)
+        target_kinds = bt.base_target_kinds(entry.language)
         matches = {
-            qn for qn in candidates if qn.endswith(suffix) and qn != entry.child_qn
+            qn
+            for qn in candidates
+            if qn.endswith(suffix)
+            and qn != entry.child_qn
+            and self.function_registry.get(qn) in target_kinds
         }
         if len(matches) == 1:
             return matches.pop(), False
@@ -1119,6 +1241,8 @@ class ClassIngestMixin:
         # from the natural qn that callers reference, orphaning the whole class.
         if _is_cpp_template_inner_specifier(class_node, language):
             return
+        if _is_elaborated_type_use(class_node, language):
+            return
 
         type_spec = _cpp_type_spec(class_node)
         if (
@@ -1176,6 +1300,8 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        if language == cs.SupportedLanguage.PHP:
+            self._record_php_namespace(class_node, class_props)
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
         # a member edit is a change under it. It makes a class note gradable
@@ -1266,7 +1392,7 @@ class ClassIngestMixin:
             self.class_inheritance,
             self.ingestor,
             self.import_processor,
-            self._resolve_to_qn,
+            partial(self._resolve_to_qn, language=language),
             self.function_registry,
             self.interface_implementers,
             defer_cpp_inherits=self._deferred_cpp_inherits,
@@ -1275,10 +1401,14 @@ class ClassIngestMixin:
         )
         if language == cs.SupportedLanguage.DART and (
             type_args := pe.extract_dart_extends_type_args(
-                member_node, module_qn, self._resolve_to_qn
+                member_node, module_qn, partial(self._resolve_to_qn, language=language)
             )
         ):
             self.dart_extends_type_args[class_qn] = type_args
+        if language == cs.SupportedLanguage.DART and (
+            on_type := dart_utils.dart_extension_on_type(member_node)
+        ):
+            self.dart_extension_on_types[class_qn] = on_type
         self._record_class_field_types(
             class_node,
             member_node,
@@ -1328,6 +1458,16 @@ class ClassIngestMixin:
                     func_node_starts,
                 )
             )
+
+    def _record_php_namespace(
+        self, class_node: Node, class_props: PropertyDict
+    ) -> None:
+        # A PHP class's qn follows its path, but other files `use` it by the
+        # namespace around its declaration; the dead-code walk needs that name
+        # to tell an imported project base from a vendor class of the same
+        # name (issue #2472).
+        if namespace := php_namespaces.enclosing_namespace(class_node):
+            class_props[cs.KEY_NAMESPACE] = namespace
 
     def _record_csharp_namespace(
         self, class_node: Node, class_qn: str, class_props: PropertyDict
@@ -1507,8 +1647,10 @@ class ClassIngestMixin:
         resolved: tuple[str, bool],
         is_dart: bool,
         dart_implements: dict[str, list[str]],
+        heuristic: bool = False,
     ) -> None:
         parent_qn, is_external = resolved
+        resolution = cs.EdgeResolution.HEURISTIC if heuristic else None
         if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
             self._pin_csharp_base_module(entry, parent_qn)
         external_label: str | None = None
@@ -1529,6 +1671,7 @@ class ClassIngestMixin:
                 self.ingestor,
                 entry.base_index,
                 parent_label=external_label,
+                resolution=resolution,
             )
             return
         # Dart has no `interface` keyword: `implements X` targets a
@@ -1545,6 +1688,7 @@ class ClassIngestMixin:
             parent_qn,
             self.ingestor,
             interface_label=interface_label,
+            resolution=resolution,
         )
         self.interface_implementers.setdefault(parent_qn, set()).add(entry.child_qn)
         if is_dart and not is_external:
@@ -1582,6 +1726,11 @@ class ClassIngestMixin:
             else module_qn
         )
         class_qn = f"{owner_module_qn}.{impl_target}"
+        written_path = rs_utils.extract_impl_target_path(class_node)
+        if written_path:
+            self.import_processor.record_rust_impl_self_path(
+                module_qn, class_qn, written_path
+            )
 
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source
@@ -1645,6 +1794,15 @@ class ClassIngestMixin:
                 ),
                 impl_method_qns,
             )
+
+        # Two blocks of one module can share `class_qn` while naming
+        # different types (the crate's `String` and `std::string::String`),
+        # so each method keeps its own block's self type (#2595 review).
+        if written_path:
+            for method_qn in impl_method_qns:
+                self.import_processor.record_rust_impl_self_path(
+                    module_qn, method_qn, written_path
+                )
 
         # The PATH decides, not the name: `extract_impl_trait` reads no name
         # off `impl std::ops::Add<u32> for S`, and calling that inherent would
@@ -2330,9 +2488,7 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage | None = None,
     ) -> str | None:
-        resolved = resolve_class_name(
-            class_name, module_qn, self.import_processor, self.function_registry
-        )
+        resolved = self._resolve_base_name(class_name, module_qn, language)
         if resolved is not None or language != cs.SupportedLanguage.CSHARP:
             return resolved
         # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to

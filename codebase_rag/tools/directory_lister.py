@@ -22,15 +22,17 @@ class DirectoryLister:
         try:
             target_path = self._get_safe_path(directory_path)
         except PermissionError:
-            return te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
-                path=directory_path, root=self.project_root
+            return te.ToolFailure(
+                te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
+                    path=directory_path, root=self.project_root
+                )
             )
 
         logger.info(ls.DIR_LISTING.format(path=target_path))
 
         try:
             if not target_path.is_dir():
-                return te.DIRECTORY_INVALID.format(path=directory_path)
+                return te.ToolFailure(te.DIRECTORY_INVALID.format(path=directory_path))
 
             if contents := sorted(os.listdir(target_path)):
                 return "\n".join(contents)
@@ -38,7 +40,7 @@ class DirectoryLister:
 
         except Exception as e:
             logger.error(ls.DIR_LIST_ERROR.format(path=directory_path, error=e))
-            return te.DIRECTORY_LIST_FAILED.format(path=directory_path)
+            return te.ToolFailure(te.DIRECTORY_LIST_FAILED.format(path=directory_path))
 
     def _get_safe_path(self, file_path: str) -> Path:
         if Path(file_path).is_absolute():
