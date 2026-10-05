@@ -5,10 +5,21 @@ from __future__ import annotations
 import io
 from decimal import Decimal
 
+import pytest
 from rich.console import Console
 
 from codebase_rag import main
 from codebase_rag.models import SessionState
+
+
+@pytest.fixture(autouse=True)
+def _restore_app_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `_fresh_session` swaps the shared console and session for this module's
+    # own; recording them here puts them back afterwards. A leaked buffer
+    # console swallowed the output of every CLI test that ran later in the
+    # same worker.
+    monkeypatch.setattr(main.app_context, "console", main.app_context.console)
+    monkeypatch.setattr(main.app_context, "session", main.app_context.session)
 
 
 def _fresh_session() -> tuple[SessionState, io.StringIO]:

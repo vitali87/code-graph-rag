@@ -75,9 +75,9 @@ RUST_TEST_ATTRIBUTE_SUFFIX = "::test"
 
 # The `#[cfg(test)] mod tests` convention: a real MODULE node named
 # `tests` or `test` in a .rs file marks inline test code (issue #1008).
-# This is deliberately WIDER than TEST_PATH_PATTERNS (whose /tests/ and
-# /test/ entries match directory segments only, never a src/test.rs file
-# or an inline mod): the name is a proxy for the `#[cfg(test)]` gate the
+# This is deliberately WIDER than the test-path rules (TEST_NAME_WORDS),
+# which see files and directories, never an inline mod declared inside
+# src/lib.rs: the name is a proxy for the `#[cfg(test)]` gate the
 # graph does not yet record. Measured across a 972-crate corpus, 4155
 # such modules are cfg-gated test code and 41 are ungated, of which two
 # ship as production API (aws-lc-rs `pub mod test`, alacritty's terminal
@@ -252,30 +252,59 @@ CSHARP_ROOT_ATTRIBUTES: frozenset[str] = frozenset(
 # the .cs extension and method-ness (name-scoped, like the Java hooks above).
 CSHARP_DISPOSE_METHOD_NAMES: frozenset[str] = frozenset({"Dispose", "DisposeAsync"})
 
+# The C# program entry point the runtime invokes: a static method with this
+# name, whatever its accessibility (`dotnet new console` declares it without
+# `public`), returning one of these types and taking no parameter or a single
+# string array. Types are compared as _csharp_type_name spells them: without
+# whitespace and with every namespace or `global::` qualifier dropped.
+CSHARP_ENTRY_METHOD_NAME = "Main"
+CSHARP_ENTRY_TASK_RETURN_TYPES: frozenset[str] = frozenset(
+    {"Task", "Task<int>", "Task<Int32>"}
+)
+CSHARP_ENTRY_RETURN_TYPES: frozenset[str] = (
+    frozenset({"void", "int", "Int32"}) | CSHARP_ENTRY_TASK_RETURN_TYPES
+)
+CSHARP_ENTRY_ARGS_TYPES: frozenset[str] = frozenset({"string[]", "String[]"})
+CSHARP_TYPE_QUALIFIER_PATTERN = r"(?:\w+(?:\.|::))+"
+# A nullable-reference annotation (`string[]?`, `string?[]`, `Task?`) leaves
+# the CLR type unchanged, so it is ignored on the args parameter and on a
+# Task return. On a value type it is not an annotation: `int?` is
+# Nullable<int>, which is not an entry-point return.
+CSHARP_NULLABLE_MARKER = "?"
+
 # Base classes that mark a class as a structural interface: its method stubs
 # are never call targets themselves (callers resolve to the implementations),
 # so dead-code analysis roots every method the class defines.
 # ponytail: direct bases only; transitive Protocol subclassing is not chased.
 PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
 
-# Substrings in a node's file path that mark it as test code. Covers Python
-# (test_, _test, conftest, /tests/), the JS/TS filename convention
-# (foo.test.ts, foo.spec.tsx), the Jest __tests__/ directory, and the
-# Node.js/mocha singular /test/ dir (express: 34 of 49 dead-code reports
-# were test/ helpers). Matching is segment-anchored via the leading-slash
-# normalization, so contest/ and latest/ do not match. Singular /spec/
-# stays excluded: it collides with product code (a domain "spec" module),
-# which would misclassify live code as test.
-TEST_PATH_PATTERNS: tuple[str, ...] = (
-    "test_",
-    "_test",
-    "conftest",
-    "/tests/",
-    "/test/",
-    ".test.",
-    ".spec.",
-    "__tests__",
+# What marks a repo-relative path as test code (path_filters.matches_test_path).
+# Judged on whole words of path segments, never raw substrings: `test_` as a
+# substring made shortest_paths/ and latest_prices.py tests (issue #2618).
+#
+# A snake/kebab word of any directory or file stem, case-insensitive: tests/,
+# Tests/ (SwiftPM), __tests__/ (Jest), test_x.py, x_test.go, conftest.py,
+# snappy_unittest.cc (googletest), e2e-tests/.
+TEST_NAME_WORDS: frozenset[str] = frozenset(
+    {"test", "tests", "unittest", "unittests", "conftest"}
 )
+# CamelCase words, case-sensitive so Latest and Contest stay production:
+# FooTests.cs, AppTests/ (Xcode), androidTest/ and integrationTest/ (Gradle
+# source sets), testFixtures/. A leading `Test` is not a marker: FluentValidation
+# ships its TestHelper namespace to users as production API.
+TEST_NAME_CAMEL_SUFFIXES: tuple[str, ...] = ("Test", "Tests")
+TEST_NAME_CAMEL_PREFIX = "test"
+# A dotted qualifier after the first name part: foo.test.ts, foo.spec.tsx,
+# and .NET test projects (Foo.Tests/, Foo.Specs/). `_spec` and a CamelCase
+# Spec stay production (TensorFlow's type_spec.py, PodSpec.java).
+TEST_NAME_QUALIFIERS: frozenset[str] = frozenset({"test", "tests", "spec", "specs"})
+# Whole directory names, underscores stripped: numpy/testing/, pandas/_testing/.
+TEST_DIR_NAMES: frozenset[str] = frozenset({"testing"})
+# Only at the repo root (RSpec, Jasmine): a nested spec/ is as often a domain
+# package (the JDK's java/security/spec/, swagger-ui's plugins/spec/).
+TEST_ROOT_DIR_NAMES: frozenset[str] = frozenset({"spec", "specs"})
+# Distinct paths matches_test_path remembers; a large monorepo's file count.
+TEST_PATH_CACHE_SIZE = 65536
 
 # NestJS component decorators that mark a CLASS as instantiated and driven by
 # the DI container / framework, never by a first-party `new` the graph can see:
@@ -401,4 +430,31 @@ JS_WELL_KNOWN_SYMBOLS: frozenset[str] = frozenset(
         "dispose",
         "asyncDispose",
     }
+)
+
+# PHP test code that lives beside the production code (issue #2472):
+# PHPUnit's default test-file suffix, the PSR-4 `Tests/` directory that
+# Symfony-style components keep their tests in, and the name suffix of the
+# base every PHPUnit test class extends (PHPUnit's `TestCase`, Symfony's
+# `KernelTestCase`/`WebTestCase`, a project's abstract `*TestCase`). All three
+# apply to .php files only, so the capitalised directory and the suffixes keep
+# their meaning in other languages.
+PHP_TEST_FILE_SUFFIX = "Test.php"
+PHP_TEST_DIR_SEGMENT = "/Tests/"
+PHP_TEST_CASE_SUFFIX = "TestCase"
+# The external bases that make a PHP class a test, as the graph holds them:
+# by class name alone (spelled fully qualified or never imported), or
+# namespace-qualified through a `use` import. A name ending in
+# PHP_TEST_CASE_SUFFIX counts only from one of these test-framework
+# namespaces, so a vendor's `Acme\Qa\ScenarioTestCase` is not a test base.
+PHP_TEST_BASE_NAMES: frozenset[str] = frozenset(
+    {"TestCase", "KernelTestCase", "WebTestCase", "ApiTestCase", "PantherTestCase"}
+)
+PHP_TEST_FRAMEWORK_NAMESPACES: tuple[str, ...] = (
+    "PHPUnit.",
+    "Symfony.Bundle.FrameworkBundle.Test.",
+    "Symfony.Component.Panther.",
+    "Illuminate.Foundation.Testing.",
+    "Orchestra.Testbench.",
+    "Mockery.Adapter.Phpunit.",
 )
