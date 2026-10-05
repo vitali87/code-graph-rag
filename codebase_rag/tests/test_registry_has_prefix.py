@@ -34,7 +34,7 @@ def _is_namespace(trie: FunctionRegistryTrie, target: str) -> bool:
 
 @pytest.fixture
 def no_subtree_listing(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(*_args: object, **_kwargs: object) -> list[tuple[str, NodeType]]:
+    def refuse(*_args: str, **_kwargs: str) -> list[tuple[str, NodeType]]:
         raise AssertionError("listed a whole subtree to answer a yes/no question")
 
     monkeypatch.setattr(FunctionRegistryTrie, "_collect_from_subtree", refuse)
