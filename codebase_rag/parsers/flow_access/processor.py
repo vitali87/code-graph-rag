@@ -54,6 +54,7 @@ from ..io_access import (
     unwrap_argument,
 )
 from ..io_access.py_handles import (
+    python_bound_target,
     python_handle_access,
     python_handle_binding,
     python_inherited_handles,
@@ -296,6 +297,18 @@ def _merge_taint(a: Taint, b: Taint) -> Taint:
 
 # Live taint state threaded through the walk: variable -> its Taint.
 type _TaintMap = dict[str, Taint]
+# The Python walk keeps the resource handles a name may hold in its taint map,
+# under a key no identifier can spell, with the handles as the origins: every
+# branch copy and MAY join the walk makes then carries them too, so a name
+# bound to `/tmp/a` on one path and `/tmp/b` on another writes to either at a
+# later `f.write(x)` (bot review on PR #2770).
+_PY_HANDLE_KEY = "<handle>"
+
+
+def _py_handle_key(name: str) -> str:
+    return f"{_PY_HANDLE_KEY}{name}"
+
+
 # Live handle bindings threaded through the lean walk: variable -> the resource
 # handles it may hold. Set-valued so a name bound to different handles on
 # different branches writes to ALL of them at a later method call (issue #1204).
@@ -885,11 +898,10 @@ class FlowProcessor:
         # accounted for (issue #712). Only plain data crosses the walk boundary,
         # never a tree-sitter Node (the AST cache evicts trees).
         self._summaries: dict[str, Taint] = {}
-        # Python resource handles of the caller being walked (`f = open(p)`,
-        # `with open(p) as f`, `self.conn`), in source order like the I/O walk,
-        # so `f.read()` starts a flow and `f.write(x)` ends one (issue #2751).
-        # Reset per Python caller; not reentrant (one caller at a time).
-        self._py_handles: dict[str, HandleBinding] = {}
+        # Python resource handles (`f = open(p)`, `with open(p) as f`,
+        # `self.conn`) ride the walk's taint map, in source order like the I/O
+        # walk, so `f.read()` starts a flow and `f.write(x)` ends one (issue
+        # #2751).
         self._py_handle_ctors: dict[str, HandleConstructor] = {
             c.callee: c
             for c in IO_HANDLE_CONSTRUCTORS.get(cs.SupportedLanguage.PYTHON, ())
@@ -1023,19 +1035,19 @@ class FlowProcessor:
         # walk (single path, no branches to merge).
         self._acc_returns_taint = False
         self._acc_return_taint = _EMPTY_TAINT
-        # Handles bound in enclosing scopes (`self.conn` set in __init__, a
-        # module-level `f`) are visible here unless this body rebinds the
-        # plain name, which makes it local for the whole body (as io_access).
-        self._py_handles = python_inherited_handles(
-            caller_node, ctx.import_map, self._py_handle_ctors
-        )
-        for name in python_locally_assigned_names(caller_node):
-            if cs.SEPARATOR_DOT not in name:
-                self._py_handles.pop(name, None)
         # Seed from the caller's own scope; on a nested def descend into its
         # header only (default args/decorators/bases run in THIS scope, its
         # body is a separate caller). Same scoping as io_access.
         tainted: _TaintMap = {}
+        # Handles bound in enclosing scopes (`self.conn` set in __init__, a
+        # module-level `f`) are visible here unless this body rebinds the
+        # plain name, which makes it local for the whole body (as io_access).
+        local_names = python_locally_assigned_names(caller_node)
+        for name, binding in python_inherited_handles(
+            caller_node, ctx.import_map, self._py_handle_ctors
+        ).items():
+            if name not in local_names:
+                tainted[_py_handle_key(name)] = Taint(frozenset({binding}), frozenset())
         # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
         # reaches becomes a parameter-taint summary composed at finalize (#1142).
         # Every parameter (including keyword-only) is seeded so it can be matched
@@ -3640,8 +3652,8 @@ class FlowProcessor:
             return self._walk_try(node, state, ctx)
         if node_type == cs.TS_PY_MATCH_STATEMENT:
             return self._walk_py_match(node, state, ctx)
-        if node_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AS_PATTERN):
-            self._bind_py_handle(node, ctx)
+        if node_type == cs.TS_PY_AS_PATTERN:
+            self._bind_py_handle(node, state, ctx)
         if node_type == cs.TS_PY_ASSIGNMENT:
             self._apply_assignment(node, state, ctx)
         elif node_type == cs.TS_PY_AUGMENTED_ASSIGNMENT:
@@ -3661,6 +3673,10 @@ class FlowProcessor:
         # needs _apply_call for its arg edges; nested calls in args likewise).
         for child in node.children:
             state = self._walk_stmt(child, state, ctx)
+        if node_type == cs.TS_PY_ASSIGNMENT:
+            # Only once its right side ran: `rows = rows.execute(..)` reads
+            # through the handle `rows` held (bot review on PR #2770).
+            self._bind_py_handle(node, state, ctx)
         return state
 
     def _walk_py_match(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
@@ -3892,7 +3908,7 @@ class FlowProcessor:
             # shaped as an indexed object (issue #1324).
             return [], Taint(frozenset({seed}), frozenset())
         if node.type == cs.TS_PY_CALL and (raw := call_name(node)) is not None:
-            return self._py_call_step(node, raw, ctx)
+            return self._py_call_step(node, raw, tainted, ctx)
         if node.type in _PY_COMPREHENSIONS:
             return [], self._py_comprehension_taint(node, tainted, ctx)
         return _py_value_operands(node) or [], None
@@ -3933,17 +3949,19 @@ class FlowProcessor:
         return self._py_value_taint(body, scope, ctx) if body is not None else None
 
     def _py_call_step(
-        self, node: Node, raw: str, ctx: _FlowCtx
+        self, node: Node, raw: str, tainted: _TaintMap, ctx: _FlowCtx
     ) -> tuple[list[Node], Taint | None]:
         # A call seeds a source, defers on the resolved callee's return, or,
         # for code the walk cannot see into, expands to its operands.
-        if (access := self._py_handle_access(node, ctx)) is not None:
+        if accesses := self._py_handle_accesses(node, tainted, ctx):
             # `f.read()`, `conn.execute("SELECT ..").fetchall()`: a read
             # through a handle yields the handle's resource (issue #2751).
-            binding, direction = access
-            if direction in (IODirection.READ, IODirection.READ_WRITE):
-                return [], Taint(frozenset({binding}), frozenset())
-            return [], None
+            reads = frozenset(
+                binding
+                for binding, direction in accesses
+                if direction in (IODirection.READ, IODirection.READ_WRITE)
+            )
+            return [], Taint(reads, frozenset()) if reads else None
         if seed := self._source_binding(node, raw, ctx.import_map, ctx.read_sinks):
             return [], Taint(frozenset({seed}), frozenset())
         callee = self._resolve(
@@ -4066,16 +4084,18 @@ class FlowProcessor:
             for taint, _via in arg_taints:
                 self._flow_taint_into_sink(taint, sink.kind, dst_identity, ctx)
             return
-        access = self._py_handle_access(node, ctx)
-        if access is not None and access[1] in (
-            IODirection.WRITE,
-            IODirection.READ_WRITE,
-        ):
+        if writes := [
+            binding
+            for binding, direction in self._py_handle_accesses(node, tainted, ctx)
+            if direction in (IODirection.WRITE, IODirection.READ_WRITE)
+        ]:
             # `f.write(token)`, `sock.send(data)`: what the handle method is
-            # given is written to the handle's resource (issue #2751).
-            binding = access[0]
-            for taint, _via in arg_taints:
-                self._flow_taint_into_sink(taint, binding.kind, binding.identity, ctx)
+            # given is written to each resource the handle may be (#2751).
+            for binding in writes:
+                for taint, _via in arg_taints:
+                    self._flow_taint_into_sink(
+                        taint, binding.kind, binding.identity, ctx
+                    )
             return
         callee = self._resolve(
             raw,
@@ -4090,25 +4110,58 @@ class FlowProcessor:
         for taint, via in arg_taints:
             self._flow_arg_into_callee(taint, via, callee, node, ctx)
 
-    def _bind_py_handle(self, node: Node, ctx: _FlowCtx) -> None:
-        # Track the handle a name holds, in source order. A name assigned
-        # anything else no longer holds the handle it held before.
-        bound = python_handle_binding(
-            node, ctx.import_map, self._py_handle_ctors, self._py_handles
-        )
-        if bound is not None:
-            self._py_handles[bound[0]] = bound[1]
+    def _bind_py_handle(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
+        # Track the handles a name may hold, in source order. A name assigned
+        # anything else (an `as` alias included) no longer holds the handle it
+        # held before.
+        target = python_bound_target(node)
+        if target is None or target.text is None:
             return
-        target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-        if target is not None and target.text is not None:
-            self._py_handles.pop(target.text.decode(cs.ENCODING_UTF8), None)
-
-    def _py_handle_access(
-        self, node: Node, ctx: _FlowCtx
-    ) -> tuple[HandleBinding, IODirection] | None:
-        return python_handle_access(
-            node, ctx.import_map, self._py_handle_ctors, self._py_handles
+        key = _py_handle_key(target.text.decode(cs.ENCODING_UTF8))
+        bound = frozenset(
+            found[1]
+            for handles in self._py_handle_views(tainted)
+            if (
+                found := python_handle_binding(
+                    node, ctx.import_map, self._py_handle_ctors, handles
+                )
+            )
+            is not None
         )
+        if bound:
+            tainted[key] = Taint(bound, frozenset())
+        else:
+            tainted.pop(key, None)
+
+    def _py_handle_accesses(
+        self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> set[tuple[HandleBinding, IODirection]]:
+        return {
+            access
+            for handles in self._py_handle_views(tainted)
+            if (
+                access := python_handle_access(
+                    node, ctx.import_map, self._py_handle_ctors, handles
+                )
+            )
+            is not None
+        }
+
+    @staticmethod
+    def _py_handle_views(tainted: _TaintMap) -> list[dict[str, HandleBinding]]:
+        # One single-handle map per alternative: a name that may hold either
+        # of two handles has each in turn, and a call consults one name's
+        # handle, so every handle a call may act on is seen.
+        held = {
+            key.removeprefix(_PY_HANDLE_KEY): tuple(taint.origins)
+            for key, taint in tainted.items()
+            if key.startswith(_PY_HANDLE_KEY)
+        }
+        width = max((len(bindings) for bindings in held.values()), default=1)
+        return [
+            {name: b[min(i, len(b) - 1)] for name, b in held.items()}
+            for i in range(width)
+        ]
 
     def _flow_taint_into_sink(
         self, taint: Taint, kind: ResourceKind, dst_identity: str, ctx: _FlowCtx

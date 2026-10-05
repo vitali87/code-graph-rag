@@ -19,9 +19,40 @@ from .constants import (
     ResourceKind,
 )
 from .descriptor import LanguageDescriptor
-from .extract import call_name, literal_target, registry_match, scope_seed_nodes
+from .extract import (
+    call_name,
+    literal_target,
+    python_locally_assigned_names,
+    registry_match,
+    scope_seed_nodes,
+)
 from .models import HandleBinding, HandleConstructor
 from .registry import IO_HANDLE_DERIVES, IO_HANDLE_METHODS
+
+# Statements whose body may not run, so a rebinding inside one leaves the
+# name's earlier binding possibly in place.
+_PY_BRANCHING = frozenset(
+    {
+        cs.TS_PY_IF_STATEMENT,
+        cs.TS_PY_FOR_STATEMENT,
+        cs.TS_PY_WHILE_STATEMENT,
+        cs.TS_PY_TRY_STATEMENT,
+        cs.TS_PY_MATCH_STATEMENT,
+    }
+)
+
+
+def python_bound_target(node: Node) -> Node | None:
+    """The name an assignment (`f = ...`) or a `with ... as f` alias binds."""
+    if node.type == cs.TS_PY_ASSIGNMENT:
+        return node.child_by_field_name(cs.TS_FIELD_LEFT)
+    if node.type == cs.TS_PY_AS_PATTERN:
+        alias = next(
+            (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+            None,
+        )
+        return alias.children[0] if alias and alias.children else None
+    return None
 
 
 def python_handle_binding(
@@ -34,17 +65,12 @@ def python_handle_binding(
     `with open(...) as f:` (as_pattern) bind a handle var to a constructor call,
     and `cur = conn.cursor()` derives a sub-handle of a bound one."""
     if node.type == cs.TS_PY_ASSIGNMENT:
-        target = node.child_by_field_name(cs.TS_FIELD_LEFT)
         call = node.child_by_field_name(cs.TS_FIELD_RIGHT)
     elif node.type == cs.TS_PY_AS_PATTERN:
         call = next((c for c in node.children if c.type == cs.TS_PY_CALL), None)
-        alias = next(
-            (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
-            None,
-        )
-        target = alias.children[0] if alias and alias.children else None
     else:
         return None
+    target = python_bound_target(node)
     # `f = open(...)` binds a plain name; `self.f = open(...)` binds an
     # attribute: keep the full dotted text ("self.f") as the handle key so a
     # later `self.f.write(...)` resolves against it.
@@ -75,11 +101,13 @@ def python_inherited_handles(
     ctor_by_name: dict[str, HandleConstructor],
 ) -> dict[str, HandleBinding]:
     """Handle bindings visible from ENCLOSING scopes, walked innermost-first so
-    a nearer scope shadows a farther one (setdefault keeps the first seen). An
-    enclosing class contributes its `self.<attr>` handles (set in any method);
-    an enclosing function/module contributes its top-level local handles.
-    Nested scopes are pruned; their locals are not visible."""
+    a nearer scope shadows a farther one: a name an enclosing function binds
+    at all is that function's, handle or not. An enclosing class contributes
+    its `self.<attr>` handles (set in any method); an enclosing
+    function/module contributes the handles its own body leaves its names
+    holding. Nested scopes are pruned; their locals are not visible."""
     handles: dict[str, HandleBinding] = {}
+    shadowed: set[str] = set()
     class_scanned = False
     node = caller_node.parent
     while node is not None:
@@ -88,7 +116,11 @@ def python_inherited_handles(
                 class_scanned = True
                 _collect_self_attr_handles(node, import_map, ctor_by_name, handles)
         elif node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_MODULE):
-            _collect_scope_var_handles(node, import_map, ctor_by_name, handles)
+            _collect_scope_var_handles(
+                node, import_map, ctor_by_name, handles, shadowed
+            )
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+                shadowed |= python_locally_assigned_names(node)
         node = node.parent
     return handles
 
@@ -189,18 +221,43 @@ def _collect_scope_var_handles(
     import_map: dict[str, str],
     ctor_by_name: dict[str, HandleConstructor],
     handles: dict[str, HandleBinding],
+    shadowed: set[str],
 ) -> None:
-    # Top-level handle bindings of one scope's OWN body; nested defs/classes are
-    # pruned (their locals belong to their own scope, not this one).
+    # The handle each name of one scope's OWN body is left holding; nested
+    # defs/classes are pruned (their locals belong to their own scope, not
+    # this one), and a name a nearer scope binds is skipped. The walk runs in
+    # reverse source order, so the first binding met is a name's last: a
+    # handle there decides it, and so does an unconditional rebinding to
+    # anything else (`f = None` after `f = open(p)`, bot review on PR #2770).
+    # A rebinding under a branch may not run, so an earlier handle may hold.
+    decided: set[str] = set()
     stack = list(scope_seed_nodes(scope_node))
     while stack:
         node = stack.pop()
         if node.type in PY_SCOPE_BOUNDARIES:
             continue
+        stack.extend(node.children)
+        target = python_bound_target(node)
+        if target is None or target.text is None:
+            continue
+        name = target.text.decode(cs.ENCODING_UTF8)
+        if name in decided or name in shadowed:
+            continue
         bound = python_handle_binding(node, import_map, ctor_by_name, handles)
         if bound is not None:
-            handles.setdefault(bound[0], bound[1])
-        stack.extend(node.children)
+            decided.add(name)
+            handles.setdefault(name, bound[1])
+        elif not _under_branch(node, scope_node):
+            decided.add(name)
+
+
+def _under_branch(node: Node, scope_node: Node) -> bool:
+    parent = node.parent
+    while parent is not None and parent != scope_node:
+        if parent.type in _PY_BRANCHING:
+            return True
+        parent = parent.parent
+    return False
 
 
 def _collect_self_attr_handles(
