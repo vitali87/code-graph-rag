@@ -12,6 +12,13 @@ updates:
     schedule:
       interval: "weekly"
 
+  # The stack `cgr daemon up` renders from codebase_rag/docker-compose.yaml:
+  # every image is pinned by digest, so bumps arrive here (issue #2409).
+  - package-ecosystem: "docker-compose"
+    directory: "/codebase_rag"
+    schedule:
+      interval: "weekly"
+
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
