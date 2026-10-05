@@ -20,6 +20,10 @@ class CppNodeType(StrEnum):
     FUNCTION_DECLARATOR = "function_declarator"
     VARIADIC_PARAMETER = "variadic_parameter"
     POINTER_DECLARATOR = "pointer_declarator"
+    ARRAY_DECLARATOR = "array_declarator"
+    ABSTRACT_POINTER_DECLARATOR = "abstract_pointer_declarator"
+    ABSTRACT_ARRAY_DECLARATOR = "abstract_array_declarator"
+    FIELD_DECLARATION_LIST = "field_declaration_list"
     REFERENCE_DECLARATOR = "reference_declarator"
     # An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)
     # bool sax_parse(...)`) parses as a parenthesized_declarator wrapping
@@ -93,6 +97,14 @@ CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 # definition's qn and fragments the class into same-named nodes.
 CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
     {"class_specifier", "struct_specifier", "union_specifier"}
+)
+# The tags that can also name a type without defining it: `struct Table *mt;`,
+# `f(struct stat *st)`, `enum color c;` (issue #2615).
+C_ELABORATED_TYPE_NODE_TYPES = CPP_TYPE_SPECIFIER_NODE_TYPES | {TS_ENUM_SPECIFIER}
+# A bodyless tag as the whole of one of these, with no declarator, is a
+# forward declaration (`class Inner;` in a class body), not a use.
+C_FORWARD_DECLARING_NODE_TYPES = frozenset(
+    {CppNodeType.DECLARATION, CppNodeType.FIELD_DECLARATION}
 )
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
@@ -203,6 +215,29 @@ TS_CPP_TEMPLATE_FUNCTION = "template_function"
 # `operator` field. Only address-of names a function it hands over.
 TS_CPP_POINTER_EXPRESSION = "pointer_expression"
 CPP_ADDRESS_OF = "&"
+CPP_DEREFERENCE = "*"
+# Declarators that put a pointer or an array between a declared type and its
+# name (or its unnamed slot): it holds an address, not a value of that type.
+CPP_INDIRECT_DECLARATOR_TYPES = frozenset(
+    {
+        CppNodeType.POINTER_DECLARATOR,
+        CppNodeType.ARRAY_DECLARATOR,
+        CppNodeType.ABSTRACT_POINTER_DECLARATOR,
+        CppNodeType.ABSTRACT_ARRAY_DECLARATOR,
+    }
+)
+# Parameter declarations a C++ parameter list holds, a pack among them.
+CPP_PARAMETER_DECLARATION_TYPES = frozenset(
+    {
+        CppNodeType.PARAMETER_DECLARATION,
+        CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        CppNodeType.VARIADIC_PARAMETER_DECLARATION,
+    }
+)
+# The nodes a free function is declared by: a definition or a prototype.
+CPP_FREE_FUNCTION_DECLARATION_TYPES = frozenset(
+    {CppNodeType.FUNCTION_DEFINITION, CppNodeType.DECLARATION}
+)
 # `return {args};` -- a braced construction of the declared return type.
 TS_CPP_INITIALIZER_LIST = "initializer_list"
 # Stream-insertion operator; a `binary_expression` using it whose left-spine base
@@ -328,3 +363,30 @@ TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
 # A C or C++ enum body and its enumerators (issue #1807).
 TS_ENUMERATOR_LIST = "enumerator_list"
 TS_ENUMERATOR = "enumerator"
+
+# Where C names a function as a VALUE rather than calling it (issue #2529): an
+# initializer-list entry (positional, or `.field = f` in an initializer_pair),
+# a declarator's initial value, an assignment's right side, a call argument.
+TS_CPP_INITIALIZER_PAIR = "initializer_pair"
+TS_CPP_ASSIGNMENT_EXPRESSION = "assignment_expression"
+TS_CPP_ARGUMENT_LIST = "argument_list"
+# Wrappers a function designator keeps its identity through: `&f`, `(f)`,
+# `(handler_t)f` and either branch of `c ? f : g`.
+TS_CPP_POINTER_EXPRESSION = "pointer_expression"
+TS_CPP_CAST_EXPRESSION = "cast_expression"
+TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
+CPP_OP_ADDRESS_OF = "&"
+# Nodes that hold file-scope declarations without opening a scope of their
+# own: preprocessor conditionals and an `extern "C" { ... }` block.
+C_FILE_SCOPE_CONTAINER_TYPES = frozenset(
+    {
+        "translation_unit",
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_else",
+        "preproc_elif",
+        "preproc_elifdef",
+        "linkage_specification",
+        "declaration_list",
+    }
+)
