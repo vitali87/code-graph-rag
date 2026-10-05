@@ -44,6 +44,10 @@ in the repository root, alongside the hash cache. An index built before that
 file existed has no recorded set, so the first run after upgrading re-runs once
 to establish it and logs why.
 
+![cgr stats on pallets/flask, then a .cgrignore excluding tests and examples, a cgr start --update-graph sync, and cgr stats showing the smaller graph](../assets/demos/ignore-patterns.gif)
+
+*Recorded on pallets/flask.*
+
 ## Default Exclusions
 
 Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.
