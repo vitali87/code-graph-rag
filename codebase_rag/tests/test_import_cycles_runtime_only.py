@@ -61,6 +61,17 @@ REBOUND_ALIAS = (
     "import typing as t\nimport settings as t\n\nif t.TYPE_CHECKING:\n"
     "    from app.db import save\n\n" + MODELS
 )
+# A class body runs in its own namespace, and a top-level `try` binds the
+# module's names too.
+CLASS_ALIAS = (
+    "class User:\n    import typing as t\n\n    if t.TYPE_CHECKING:\n"
+    "        from app.db import save\n\n"
+    "    def __init__(self, name):\n        self.name = name\n"
+)
+TRY_ALIAS = (
+    "try:\n    import typing as t\nexcept ImportError:\n    pass\n\n"
+    "if t.TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
+)
 CLASS_BODY = "class User:\n    from app.db import save\n\n    def __init__(self, name):\n        self.name = name\n"
 
 
@@ -136,6 +147,12 @@ def repo(tmp_path: Path) -> _Repo:
             ALIASED_TYPING,
             cs.ImportScope.TYPE_CHECKING_BLOCK,
             id="aliased-typing.type-checking",
+        ),
+        pytest.param(
+            CLASS_ALIAS, cs.ImportScope.TYPE_CHECKING_BLOCK, id="class-local-alias"
+        ),
+        pytest.param(
+            TRY_ALIAS, cs.ImportScope.TYPE_CHECKING_BLOCK, id="alias-bound-in-a-try"
         ),
     ],
 )
