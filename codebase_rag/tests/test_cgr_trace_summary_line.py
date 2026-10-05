@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 import pytest
 
@@ -67,6 +68,30 @@ def test_the_summary_is_reported_under_no_summary(
     result = traced.runpytest_subprocess("--cgr-trace", "--no-summary", *args)
 
     assert [SUMMARY.match(line) is not None for line in _mentions(result)] == [True]
+
+
+@pytest.mark.parametrize("args", [("-q",), ("-q", "--no-summary")], ids=["q", "nosum"])
+def test_the_summary_is_its_own_line_in_process(
+    traced: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
+) -> None:
+    # The subprocess runs above cannot report coverage, and the pytest11 entry
+    # point imports the plugin before coverage starts, so its definitions read
+    # as unexecuted. Dropping the cached module makes the inner session import
+    # it afresh where coverage observes it; both entries are restored after.
+    # Tracing needs the profiler slot, so this skips under an outer
+    # `--cgr-trace` session.
+    try:
+        sys.monitoring.use_tool_id(sys.monitoring.PROFILER_ID, "probe")
+    except ValueError:
+        pytest.skip("sys.monitoring PROFILER_ID already claimed in this session")
+    sys.monitoring.free_tool_id(sys.monitoring.PROFILER_ID)
+    monkeypatch.delattr("codebase_rag.trace.pytest_plugin")
+    monkeypatch.delitem(sys.modules, "codebase_rag.trace.pytest_plugin")
+
+    result = traced.runpytest_inprocess("--cgr-trace", *args)
+
+    assert [SUMMARY.match(line) is not None for line in _mentions(result)] == [True]
+    assert (traced.path / "cgr-trace.jsonl").stat().st_size > 0
 
 
 # Negative: what must not change.
