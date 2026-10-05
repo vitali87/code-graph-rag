@@ -105,6 +105,30 @@ def starred():
     return print("x")
 """
 
+# An import binds the name only to what it names (bot review on PR #2968):
+# an external package's `get`, or a star import of a module without
+# `print`, leaves the project's same-named functions out.
+EXTERNAL = """\
+from requests import get
+
+
+def fetch():
+    return get("u")
+"""
+
+GETTER = """\
+def get(x):
+    return x
+"""
+
+STAR_OTHER = """\
+from lib.progress import *
+
+
+def starred_other():
+    return print("x")
+"""
+
 QUALIFIED = """\
 import lib
 
@@ -126,6 +150,9 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, "aliased.py", ALIASED)
     _write(root, "starred.py", STARRED)
     _write(root, "qualified.py", QUALIFIED)
+    _write(root, "external.py", EXTERNAL)
+    _write(root, "getter.py", GETTER)
+    _write(root, "star_other.py", STAR_OTHER)
     return _index(root, MagicMock())
 
 
@@ -140,12 +167,21 @@ def _targets(graph: RecordedGraph, caller: str) -> dict[str, str]:
 
 @pytest.mark.parametrize(
     "caller",
-    ["app.main", "scripts.report", "lib.unbound", "lib.namespaced"],
+    [
+        "app.main",
+        "scripts.report",
+        "lib.unbound",
+        "lib.namespaced",
+        "external.fetch",
+        "star_other.starred_other",
+    ],
     ids=[
         "builtins",
         "builtin-in-loop",
         "package-submodule",
         "module-under-a-plain-directory",
+        "imported-from-an-external-package",
+        "star-import-of-a-module-without-it",
     ],
 )
 def test_a_bare_name_its_module_cannot_see_binds_nothing_elsewhere(

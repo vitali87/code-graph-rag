@@ -3888,7 +3888,7 @@ class CallResolver:
                 if self._in_python_module(qn, module_qn)
                 or (
                     self.function_registry[qn] != cs.NodeLabel.METHOD.value
-                    and self._python_import_may_bind(call_name, module_qn)
+                    and self._python_import_may_bind(call_name, module_qn, qn)
                 )
             ]
         if not possible_matches:
@@ -3919,10 +3919,19 @@ class CallResolver:
             for depth in range(1, len(rest))
         )
 
-    def _python_import_may_bind(self, call_name: str, module_qn: str) -> bool:
+    def _python_import_may_bind(self, call_name: str, module_qn: str, qn: str) -> bool:
+        # An import binds the name only to what it names (bot review on PR
+        # #2968): its target, or a function under the target's package that
+        # the package may re-export; through `from m import *`, a function of
+        # `m` or of a module under it. An external package's `get` leaves a
+        # project `get` out.
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        return call_name in import_map or any(
-            key.startswith(cs.IMPORTED_NAME_WILDCARD) for key in import_map
+        if (target := import_map.get(call_name)) is not None:
+            owner = target.rpartition(cs.SEPARATOR_DOT)[0]
+            return qn == target or _qn_under(qn, target) or _qn_within(qn, owner)
+        return any(
+            key.startswith(cs.IMPORTED_NAME_WILDCARD) and _qn_within(qn, module)
+            for key, module in import_map.items()
         )
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
@@ -5827,3 +5836,17 @@ class CallResolver:
         if func.type == cs.TS_PY_ATTRIBUTE:
             return func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
         return None
+
+
+def _qn_within(qn: str, module: str) -> bool:
+    # `qn` sits under `module`, which may be written with or without the
+    # project prefix.
+    return bool(module) and (
+        qn.startswith(f"{module}{cs.SEPARATOR_DOT}")
+        or f"{cs.SEPARATOR_DOT}{module}{cs.SEPARATOR_DOT}" in f"{cs.SEPARATOR_DOT}{qn}"
+    )
+
+
+def _qn_under(qn: str, target: str) -> bool:
+    # `qn` is `target` written with the project prefix.
+    return qn.endswith(f"{cs.SEPARATOR_DOT}{target}")
