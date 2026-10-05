@@ -81,6 +81,21 @@ FALSE_TYPE_CHECKING = (
     "TYPE_CHECKING = False\n\nif TYPE_CHECKING:\n    from app.db import save\n\n"
     + MODELS
 )
+# Every binding that may be active at the guard counts: a class of the
+# name replaces the alias, and a rebinding under a branch may not run.
+CLASS_SHADOW = (
+    "import typing as t\n\n\nclass t:\n    TYPE_CHECKING = True\n\n\n"
+    "if t.TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
+)
+CONDITIONAL_REBIND = (
+    "import settings as t\n\nif False:\n    import typing as t\n\n"
+    "if t.TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
+)
+TRY_EITHER = (
+    "try:\n    import typing as t\nexcept ImportError:\n"
+    "    import typing_extensions as t\n\n"
+    "if t.TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
+)
 CLASS_BODY = "class User:\n    from app.db import save\n\n    def __init__(self, name):\n        self.name = name\n"
 
 
@@ -168,6 +183,11 @@ def repo(tmp_path: Path) -> _Repo:
             cs.ImportScope.TYPE_CHECKING_BLOCK,
             id="a-module-false-type-checking",
         ),
+        pytest.param(
+            TRY_EITHER,
+            cs.ImportScope.TYPE_CHECKING_BLOCK,
+            id="typing-or-typing-extensions",
+        ),
     ],
 )
 def test_an_import_that_does_not_run_at_import_time_makes_no_cycle(
@@ -206,6 +226,8 @@ def test_an_import_that_runs_at_import_time_still_makes_a_cycle(
         pytest.param(OTHER_TYPE_CHECKING, {None}, id="another-modules-type-checking"),
         pytest.param(REBOUND_ALIAS, {None}, id="an-alias-rebound-to-another-module"),
         pytest.param(TRUE_TYPE_CHECKING, {None}, id="a-module-true-type-checking"),
+        pytest.param(CLASS_SHADOW, {None}, id="a-class-replaces-the-alias"),
+        pytest.param(CONDITIONAL_REBIND, {None}, id="a-rebinding-that-may-not-run"),
     ],
 )
 def test_an_import_time_import_beside_a_deferred_look_alike_makes_a_cycle(

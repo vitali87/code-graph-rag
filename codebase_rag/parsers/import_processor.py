@@ -686,11 +686,11 @@ def _is_type_checking_test(condition: Node | None) -> bool:
     if text == cs.PY_TYPE_CHECKING:
         # Only typing's, or a module's own `TYPE_CHECKING = False`: one set
         # to True runs its imports at import time (bot review on PR #2728).
-        return _python_module_bound_at(condition, text) in _PY_FALSE_TYPE_CHECKING
+        return _python_module_bound_at(condition, text) <= _PY_FALSE_TYPE_CHECKING
     head, sep, attr = text.rpartition(cs.SEPARATOR_DOT)
     if not sep or attr != cs.PY_TYPE_CHECKING:
         return False
-    return _python_module_bound_at(condition, head) in _PY_TYPING_MODULES
+    return _python_module_bound_at(condition, head) <= _PY_TYPING_MODULES
 
 
 _PY_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
@@ -710,15 +710,27 @@ _PY_FALSE_TYPE_CHECKING = frozenset(
 
 
 _UNBOUND = "<unbound>"
+# Statements whose body may not run, so a binding inside one may not be the
+# active one at a later guard.
+_PY_BRANCHING = frozenset(
+    {
+        cs.TS_PY_IF_STATEMENT,
+        cs.TS_PY_FOR_STATEMENT,
+        cs.TS_PY_WHILE_STATEMENT,
+        cs.TS_PY_TRY_STATEMENT,
+        cs.TS_PY_MATCH_STATEMENT,
+    }
+)
+_PY_DEFINITIONS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION})
 
 
-def _python_module_bound_at(node: Node, name: str) -> str | None:
-    # The module `name` names at `node`: what the last statement before it
-    # binding `name` imported (`import typing as t`, `import typing`), None
-    # when that statement bound something else (`import settings as t`
-    # after it, bot review on PR #2728). The nearest namespace binding the
-    # name decides: the class body the guard runs in, then the module
-    # (bot review on PR #2728). A name nothing binds is taken at its word.
+def _python_module_bound_at(node: Node, name: str) -> frozenset[str | None]:
+    # What `name` may name at `node`: the module an import bound it to
+    # (`import typing as t`, `import typing`), or None for a binding of
+    # anything else (`import settings as t`, `class t:`), for every binding
+    # that may be the active one there (bot review on PR #2728). The nearest
+    # namespace binding the name decides: the class body the guard runs in,
+    # then the module. A name nothing binds is taken at its word.
     scope = node.parent
     while scope is not None:
         if scope.type == cs.TS_PY_CLASS_DEFINITION:
@@ -727,34 +739,48 @@ def _python_module_bound_at(node: Node, name: str) -> str | None:
             body = scope
         else:
             body = None
-        if body is not None:
-            bound = _python_last_binding(body, name, node.start_byte)
-            if bound != _UNBOUND:
-                return bound
-        scope = scope.parent
-    return name
-
-
-def _python_last_binding(body: Node, name: str, before: int) -> str | None:
-    # What the last statement of one namespace's body before `before`
-    # binding `name` bound it to, through `if`/`try`/`with` blocks but not
-    # into a nested function or class; `_UNBOUND` when none does.
-    bound: str | None = _UNBOUND
-    last = -1
-    stack = list(body.named_children)
-    while stack:
-        stmt = stack.pop()
-        if stmt.start_byte >= before or stmt.type in (
-            cs.TS_PY_FUNCTION_DEFINITION,
-            cs.TS_PY_CLASS_DEFINITION,
-            cs.TS_PY_DECORATED_DEFINITION,
+        if body is not None and (
+            bound := _python_active_bindings(body, name, node.start_byte)
         ):
+            return bound
+        scope = scope.parent
+    return frozenset({name})
+
+
+def _python_active_bindings(
+    body: Node, name: str, before: int
+) -> frozenset[str | None]:
+    # The bindings of `name` in one namespace's body that may be active at
+    # `before`, in source order: an unconditional one replaces those before
+    # it, one under a branch (`if`, `try`, a loop) joins them. A nested
+    # function or class binds its own name; its body is not read.
+    found: list[tuple[int, bool, str | None]] = []
+    stack = [(child, False) for child in body.named_children]
+    while stack:
+        stmt, branched = stack.pop()
+        if stmt.start_byte >= before:
             continue
-        found = _python_statement_binding(stmt, name)
-        if found != _UNBOUND and stmt.start_byte > last:
-            bound, last = found, stmt.start_byte
-        stack.extend(stmt.named_children)
-    return bound
+        definition = stmt
+        if stmt.type == cs.TS_PY_DECORATED_DEFINITION:
+            definition = stmt.child_by_field_name(cs.FIELD_DEFINITION) or stmt
+        if definition.type in _PY_DEFINITIONS:
+            if (
+                safe_decode_text(definition.child_by_field_name(cs.TS_FIELD_NAME))
+                == name
+            ):
+                found.append((stmt.start_byte, branched, None))
+            continue
+        bound = _python_statement_binding(stmt, name)
+        if bound != _UNBOUND:
+            found.append((stmt.start_byte, branched, bound))
+        inner = branched or stmt.type in _PY_BRANCHING
+        stack.extend((child, inner) for child in stmt.named_children)
+    active: set[str | None] = set()
+    for _start, branched, bound in sorted(found, key=lambda entry: entry[0]):
+        if not branched:
+            active.clear()
+        active.add(bound)
+    return frozenset(active)
 
 
 def _python_statement_binding(stmt: Node, name: str) -> str | None:
