@@ -34,11 +34,12 @@ def _path(segment: str) -> str:
     return f"app/{segment}/page.tsx"
 
 
-def _dead_row(qn: str) -> DeadCodeRow:
+def _dead_row(qn: str, path: str = "mod.py") -> DeadCodeRow:
     return DeadCodeRow(
         label="Function",
         name=qn.rsplit(".", 1)[-1],
         qualified_name=qn,
+        path=path,
         start_line=7,
         end_line=9,
     )
@@ -90,7 +91,10 @@ class TestDeadCodeTable:
         self, segment: str, app_console: Console
     ) -> None:
         cli._emit_dead_code(
-            [_dead_row(_qn(segment))], cs.DeadCodeFormat.TABLE, None, "repo"
+            [_dead_row(_qn(segment), _path(segment))],
+            cs.DeadCodeFormat.TABLE,
+            None,
+            "repo",
         )
 
         assert _qn(segment) in _output(app_console)
@@ -102,7 +106,10 @@ class TestDeadCodeTable:
         report = tmp_path / "dead.txt"
 
         cli._emit_dead_code(
-            [_dead_row(_qn(segment))], cs.DeadCodeFormat.TABLE, report, "repo"
+            [_dead_row(_qn(segment), _path(segment))],
+            cs.DeadCodeFormat.TABLE,
+            report,
+            "repo",
         )
 
         assert _qn(segment) in report.read_text(encoding=cs.ENCODING_UTF8)
@@ -201,7 +208,9 @@ def test_title_markup_is_still_interpreted() -> None:
     # not start showing its markup tags.
     console = _plain_console()
 
-    console.print(cli._build_dead_code_table([_dead_row(_qn("[id]"))], "proj"))
+    console.print(
+        cli._build_dead_code_table([_dead_row(_qn("[id]"), _path("[id]"))], "proj")
+    )
 
     out = _output(console)
     assert "Dead Code Candidates (proj)" in out
