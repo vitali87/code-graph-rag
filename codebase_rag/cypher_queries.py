@@ -301,7 +301,8 @@ WITH collect(longer.name) AS nested
 OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
 WITH nested, collect(pkg) AS packages
 OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
-WITH packages + collect(mod) AS units
+WITH packages, collect(mod) AS modules
+WITH packages + modules AS units
 UNWIND units AS u
 OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
 WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
