@@ -146,18 +146,55 @@ def renamed_qualified_name(member: str, new_name: str) -> str:
     return f"{owner}{cs.SEPARATOR_DOT}{new_name}{marker}"
 
 
+def _marker_order(qn: str) -> tuple[int, int]:
+    # Registration order of same-named definitions: the unmarked one came
+    # first, the others by the line their `@line` marker names.
+    marker = qn[len(strip_dup_marker(qn)) :]
+    line = marker[len(cs.DUP_QN_MARKER) :].split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
+    return (1, int(line)) if line.isdigit() else (0, 0)
+
+
+def reindexed_names(
+    members: Iterable[str], new_name: str | None = None
+) -> list[tuple[str, str]]:
+    """Each member with the name a re-index gives it once its group of
+    same-named definitions of one owner is all that holds the name: the
+    first takes the plain name, the others keep their markers.
+
+    A plain `def` before a property's accessors held the plain name, so the
+    renamed getter loses its marker; one that keeps the old name after the
+    accessors are renamed away takes the plain name back (bot review on PR
+    #2725). `new_name` None keeps each member's own name.
+    """
+    groups: dict[str, list[str]] = {}
+    for member in members:
+        groups.setdefault(natural_qn(member), []).append(member)
+    out: list[tuple[str, str]] = []
+    for natural, group in groups.items():
+        owner = natural.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        name = new_name or natural.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        ordered = sorted(group, key=_marker_order)
+        out.append((ordered[0], f"{owner}{cs.SEPARATOR_DOT}{name}"))
+        out += [
+            (member, renamed_qualified_name(member, name)) for member in ordered[1:]
+        ]
+    return out
+
+
 def _node_text(node: Node | None) -> str | None:
     if node is None or node.text is None:
         return None
     return node.text.decode(cs.ENCODING_UTF8, errors="replace")
 
 
-def _decorators(source: bytes, start_line: int, name: str) -> list[Node]:
-    """The decorator expressions of the Python `def name` on `start_line`."""
+def _python_root(source: bytes) -> Node | None:
     parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
-    if parser is None:
-        return []
-    stack: list[Node] = [parser.parse(source).root_node]
+    return None if parser is None else parser.parse(source).root_node
+
+
+def _decorators(root: Node | None, start_line: int, name: str) -> list[Node]:
+    """The decorator expressions of the Python `def name` on `start_line`."""
+    stack: list[Node] = [root] if root is not None else []
     while stack:
         node = stack.pop()
         if not node.start_point[0] < start_line <= node.end_point[0] + 1:
@@ -439,6 +476,23 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        # Read once per rename: planning asks per property accessor and the
+        # contract once more (Copilot review on PR #2725).
+        self._longer_prefixes: tuple[str, ...] | None = None
+        # One parse per Python source, however many `def`s it is asked about.
+        self._python_roots: dict[bytes, Node | None] = {}
+
+    def _project_prefixes(self) -> tuple[str, ...]:
+        if self._longer_prefixes is None:
+            self._longer_prefixes = _longer_project_prefixes(
+                self.fetch_all, self.project
+            )
+        return self._longer_prefixes
+
+    def _parsed(self, source: bytes) -> Node | None:
+        if source not in self._python_roots:
+            self._python_roots[source] = _python_root(source)
+        return self._python_roots[source]
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -485,7 +539,8 @@ class Renamer:
             source = Patcher(self.repo_root).source(path)
         except PatcherError:
             return []
-        own = _decorators(source, definition["start_line"] or 1, name)
+        root = self._parsed(source)
+        own = _decorators(root, definition["start_line"] or 1, name)
         # Only a `def` that is part of a property can have accessor twins;
         # every other method skips the graph read below.
         if not _accessor_tokens(own, name) and not any(
@@ -498,9 +553,7 @@ class Renamer:
             cq.CYPHER_DELTA_DEFINITIONS,
             {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(
-                    _longer_project_prefixes(self.fetch_all, self.project)
-                ),
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(self._project_prefixes()),
                 cs.CYPHER_PARAM_PATHS: [path],
             },
         ):
@@ -515,14 +568,39 @@ class Renamer:
                 twins[other] = line
         if len(twins) < 2:
             return []
+        decorators = {
+            other: _decorators(root, line, name) for other, line in twins.items()
+        }
         # Same-named methods are one property only when one of them adds an
-        # accessor to it; a getter redefined as a plain method is not.
-        if not any(
-            _accessor_tokens(_decorators(source, line, name), name)
-            for line in twins.values()
-        ):
+        # accessor to it; a getter redefined as a plain method is not, and a
+        # plain `def` beside the accessors is no accessor either (bot review
+        # on PR #2725).
+        if not any(_accessor_tokens(found, name) for found in decorators.values()):
             return []
-        return sorted(other for other in twins if other != qn)
+        accessors = sorted(
+            other
+            for other, found in decorators.items()
+            if other != qn
+            and (
+                _accessor_tokens(found, name)
+                or any(
+                    _node_text(expression) == cs.PY_PROPERTY_DECORATOR
+                    for expression in found
+                )
+            )
+        )
+        plain = sorted(
+            (line, other)
+            for other, line in twins.items()
+            if other != qn and other not in accessors
+        )
+        if plain and natural in (qn, *accessors):
+            raise RenameRefused(
+                cs.RENAME_PROPERTY_REDEFINED.format(qn=natural, line=plain[0][0]),
+                [],
+                [],
+            )
+        return accessors
 
     def _collect(self, qn: str) -> tuple[list[RenameSite], list[str], str, str | None]:
         definition = graph_query.definition(
@@ -542,7 +620,9 @@ class Renamer:
                 RenameSite("decorator", path, line, col, qn, cs.EdgeResolution.EXACT)
                 for line, col in _accessor_tokens(
                     _decorators(
-                        patcher.source(path), definition["start_line"] or 1, old_name
+                        self._parsed(patcher.source(path)),
+                        definition["start_line"] or 1,
+                        old_name,
                     ),
                     old_name,
                 )
@@ -1416,26 +1496,32 @@ class Renamer:
     def _declared_renames(
         self, report: RenameReport, new_name: str
     ) -> list[tuple[str, str]]:
-        parents = [
-            (member, renamed_qualified_name(member, new_name))
-            for member in report.hierarchy
-        ]
+        parents = reindexed_names(report.hierarchy, new_name)
         pairs = list(parents)
-        longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
-        for row in self.fetch_all(
+        rows = self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(self._project_prefixes()),
                 cs.CYPHER_PARAM_PATHS: list(report.files),
             },
-        ):
+        )
+        renamed = set(report.hierarchy)
+        groups = {natural_qn(member) for member in renamed}
+        left_behind: list[str] = []
+        for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
-            if not isinstance(qn, str) or row.get(cs.KEY_AST_FINGERPRINT):
+            if not isinstance(qn, str):
+                continue
+            if qn not in renamed and natural_qn(qn) in groups:
+                # A plain `def` of the old name the rename left alone.
+                left_behind.append(qn)
+            if row.get(cs.KEY_AST_FINGERPRINT):
                 continue
             for old, new in parents:
                 if qn.startswith(old + cs.SEPARATOR_DOT):
                     pairs.append((qn, new + qn[len(old) :]))
+        pairs += [(old, new) for old, new in reindexed_names(left_behind) if old != new]
         return pairs
 
     def _enforce_contract(
