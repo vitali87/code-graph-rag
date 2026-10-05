@@ -41,6 +41,11 @@ is inert until you do:
 pytest --cgr-trace
 ```
 
+
+![pytest --cgr-trace on pluggy's test suite, then cgr trace ingest, turning an empty callees list for PluginManager._hookexec into dynamic CALLS edges](../assets/demos/dynamic-tracing-python.gif)
+
+*Recorded on pytest-dev/pluggy, with code-graph-rag installed in the project's test environment.*
+
 The overlay leaves the project's dependencies untouched; installing the package
 adds cgr's own dependencies (pydantic-ai and the rest) to the test
 environment. The `cgr trace ingest` step below runs with the `cgr` you already
@@ -89,6 +94,11 @@ java -javaagent:build/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
 
+
+![make jvm-agent, then jlox run under the agent and cgr trace ingest, revealing the visitor dispatch from Expr.Call.accept to Interpreter.visitCallExpr](../assets/demos/dynamic-tracing-jvm.gif)
+
+*Recorded on munificent/craftinginterpreters (jlox) with OpenJDK 25, indexed with `--exclude note`.*
+
 Agent arguments are semicolon-separated `key=value` pairs:
 
 | Argument | Meaning |
@@ -119,6 +129,11 @@ node --cpu-prof --cpu-prof-name=run.cpuprofile app.js
 cgr trace convert run.cpuprofile --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+
+![node --cpu-prof on a js-yaml workload, then cgr trace convert and ingest, adding the registry dispatch from Schema.resolveImplicitScalarTag to resolveYamlTimestamp](../assets/demos/dynamic-tracing-node.gif)
+
+*Recorded on nodeca/js-yaml; `app.js` loads and dumps the repository's 7 MB benchmark document.*
 
 Parent/child links in the profile are caller/callee relationships the
 sampler actually observed, so dispatch through registries, event emitters,
@@ -211,6 +226,11 @@ cgr trace convert run.xt --workload phpunit
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+
+![PHPUnit under Xdebug tracing, then cgr trace convert and ingest, adding the callable-stage call from FingersCrossedProcessor.process to Pipeline.__invoke](../assets/demos/dynamic-tracing-php.gif)
+
+*Recorded on thephpleague/pipeline (PHP 8.3, Xdebug 3.2) with a minimal `phpunit.xml.dist` pointing at `src`.*
+
 Counts are true invocation counts. Xdebug reports call sites rather than
 where functions are defined, so the converter recovers each function's
 defining file from its own calls' positions; PHP qualified names are
@@ -301,6 +321,11 @@ cgr trace convert cpu.out --repo-path /path/to/your-repo --workload go-test
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+
+![go test with a CPU profile on google/btree, then cgr trace convert and ingest, adding the edge from BTree.ReplaceOrInsert to the generic BTreeG.ReplaceOrInsert](../assets/demos/dynamic-tracing-go.gif)
+
+*Recorded on google/btree, whose tests live in the root package (`.`).*
+
 Name one package (`./mypkg`), not `./...`: `go test` runs each package's
 test binary from that package's own source directory, so `./...` scatters a
 separate relative `cpu.out` into every package and the converter reads only
@@ -358,6 +383,11 @@ cgr trace convert cpu.pb --language rust \
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+
+![cargo run --release on a pprof-rs harness, then cgr trace convert --language rust and cgr trace ingest](../assets/demos/dynamic-tracing-rust.gif)
+
+*Recorded on fralken/ray-tracing-in-one-weekend with the harness above wrapped around its renderer.*
+
 Sampled stacks make `dyn Trait` dispatch and calls through function pointers
 visible; counts are sample counts, so give the workload enough CPU time. An
 optimized build inlines small functions and turns a pass-through wrapper
@@ -387,6 +417,11 @@ cc -pthread -finstrument-functions -g -O0 your_sources... \
 cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+
+![inih built with the shim and run on its example file, then cgr trace convert and ingest, adding the function-pointer call from ini_parse_stream to the dumper callback](../assets/demos/dynamic-tracing-c.gif)
+
+*Recorded on benhoyt/inih (`examples/ini_dump.c`).*
 
 For a **C++** project, compile the shim with the C compiler (it is C, and a
 C++ driver would compile the `.c` file as C++ and fail) and link the
@@ -511,6 +546,11 @@ cgr trace pull "https://parca.example/...&format=pprof" \
     --label endpoint --header "Authorization=Bearer $TOKEN"
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+
+![cgr trace pull fetching a pprof from a running service's endpoint with --build-id and --label endpoint, then cgr trace ingest](../assets/demos/dynamic-tracing-pull.gif)
+
+*Recorded against a small google/btree service serving Go's `net/http/pprof` endpoint, with `endpoint` pprof labels; no eBPF profiler was available.*
 
 Ingest is idempotent (properties are set, not accumulated), so a cron'd `pull`
 plus `ingest` keeps a continuously refreshing production overlay. **Off-CPU and
