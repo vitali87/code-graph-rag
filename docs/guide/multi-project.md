@@ -126,9 +126,13 @@ unresolved ones. `cgr dead-code --no-endpoint-roots` stops rooting a
 decorator-routed handler (FastAPI, Flask) by its decorator alone: such a
 handler whose endpoint no indexed call site reaches is reported. A handler
 registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
-stays live through that registration, whatever the switch. On a graph
-holding one project the report reads as "no callers indexed", which the
-command says; index the calling services first.
+stays live through that registration, whatever the switch. Endpoints are
+recorded only by the `io` capture group, so the switch needs the project
+indexed with `--capture io`: on a project that has route handlers but no
+recorded endpoint, the command refuses and says so rather than report
+nothing unreachable. On a graph holding one project the report reads as
+"no callers indexed", which the command says; index the calling services
+first.
 
 Two analyses follow the link across the boundary. `flow_verdict` continues
 a `FLOWS_TO` walk from a client's network resource into the handler it

@@ -2410,6 +2410,10 @@ def dead_code(
                 )
                 if not endpoint_roots and len(projects) <= 1:
                     _notice_single_project_endpoint_roots(show_progress)
+    except ex.EndpointDataMissingError as e:
+        # A finding about the project, not a failed scan: no traceback.
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
