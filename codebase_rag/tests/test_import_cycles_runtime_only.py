@@ -72,6 +72,15 @@ TRY_ALIAS = (
     "try:\n    import typing as t\nexcept ImportError:\n    pass\n\n"
     "if t.TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
 )
+# A bare guard is typing's only when the module's binding of the name is.
+TRUE_TYPE_CHECKING = (
+    "TYPE_CHECKING = True\n\nif TYPE_CHECKING:\n    from app.db import save\n\n"
+    + MODELS
+)
+FALSE_TYPE_CHECKING = (
+    "TYPE_CHECKING = False\n\nif TYPE_CHECKING:\n    from app.db import save\n\n"
+    + MODELS
+)
 CLASS_BODY = "class User:\n    from app.db import save\n\n    def __init__(self, name):\n        self.name = name\n"
 
 
@@ -154,6 +163,11 @@ def repo(tmp_path: Path) -> _Repo:
         pytest.param(
             TRY_ALIAS, cs.ImportScope.TYPE_CHECKING_BLOCK, id="alias-bound-in-a-try"
         ),
+        pytest.param(
+            FALSE_TYPE_CHECKING,
+            cs.ImportScope.TYPE_CHECKING_BLOCK,
+            id="a-module-false-type-checking",
+        ),
     ],
 )
 def test_an_import_that_does_not_run_at_import_time_makes_no_cycle(
@@ -191,6 +205,7 @@ def test_an_import_that_runs_at_import_time_still_makes_a_cycle(
         ),
         pytest.param(OTHER_TYPE_CHECKING, {None}, id="another-modules-type-checking"),
         pytest.param(REBOUND_ALIAS, {None}, id="an-alias-rebound-to-another-module"),
+        pytest.param(TRUE_TYPE_CHECKING, {None}, id="a-module-true-type-checking"),
     ],
 )
 def test_an_import_time_import_beside_a_deferred_look_alike_makes_a_cycle(

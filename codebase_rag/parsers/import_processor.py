@@ -684,7 +684,9 @@ def _is_type_checking_test(condition: Node | None) -> bool:
     if text is None or condition is None:
         return False
     if text == cs.PY_TYPE_CHECKING:
-        return True
+        # Only typing's, or a module's own `TYPE_CHECKING = False`: one set
+        # to True runs its imports at import time (bot review on PR #2728).
+        return _python_module_bound_at(condition, text) in _PY_FALSE_TYPE_CHECKING
     head, sep, attr = text.rpartition(cs.SEPARATOR_DOT)
     if not sep or attr != cs.PY_TYPE_CHECKING:
         return False
@@ -692,6 +694,19 @@ def _is_type_checking_test(condition: Node | None) -> bool:
 
 
 _PY_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
+# What a bare `TYPE_CHECKING` guard may be bound to and be false at import
+# time: typing's constant, `TYPE_CHECKING = False`, or no binding the walk
+# sees (taken at its word, as before).
+_PY_FALSE_TYPE_CHECKING = frozenset(
+    {
+        cs.PY_TYPE_CHECKING,
+        "=False",
+        *(
+            f"{module}{cs.SEPARATOR_DOT}{cs.PY_TYPE_CHECKING}"
+            for module in _PY_TYPING_MODULES
+        ),
+    }
+)
 
 
 _UNBOUND = "<unbound>"
@@ -743,8 +758,9 @@ def _python_last_binding(body: Node, name: str, before: int) -> str | None:
 
 
 def _python_statement_binding(stmt: Node, name: str) -> str | None:
-    # The module an import statement binds `name` to, None for a binding of
-    # anything else, `_UNBOUND` when the statement does not bind `name`.
+    # What a statement binds `name` to: the module an `import` names, the
+    # `module.member` a `from module import member` takes, `=<value>` for an
+    # assignment; `_UNBOUND` when the statement does not bind `name`.
     if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
         bound: str | None = _UNBOUND
         for child in stmt.named_children:
@@ -759,28 +775,25 @@ def _python_statement_binding(stmt: Node, name: str) -> str | None:
                 if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
                     bound = name
         return bound
-    if stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT or (
-        stmt.type == cs.TS_PY_EXPRESSION_STATEMENT
-        and any(c.type == cs.TS_PY_ASSIGNMENT for c in stmt.named_children)
-    ):
-        return None if name in _bound_identifiers(stmt) else _UNBOUND
-    return _UNBOUND
-
-
-def _bound_identifiers(stmt: Node) -> set[str]:
-    # The names a `from m import a as b` or an `x = ...` statement binds.
-    names: set[str] = set()
     if stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+        module = safe_decode_text(stmt.child_by_field_name(cs.FIELD_MODULE_NAME))
+        bound = _UNBOUND
         for child in stmt.children_by_field_name(cs.TS_FIELD_NAME):
+            member = child.child_by_field_name(cs.TS_FIELD_NAME) or child
             target = child.child_by_field_name(cs.FIELD_ALIAS) or child
-            if (text := safe_decode_text(target)) is not None:
-                names.add(text.split(cs.SEPARATOR_DOT, 1)[0])
-        return names
-    for child in stmt.named_children:
-        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
-        if (text := safe_decode_text(left)) is not None:
-            names.add(text)
-    return names
+            if safe_decode_text(target) == name:
+                bound = f"{module}{cs.SEPARATOR_DOT}{safe_decode_text(member)}"
+        return bound
+    if stmt.type == cs.TS_PY_EXPRESSION_STATEMENT:
+        bound = _UNBOUND
+        for child in stmt.named_children:
+            if child.type != cs.TS_PY_ASSIGNMENT:
+                continue
+            if safe_decode_text(child.child_by_field_name(cs.TS_FIELD_LEFT)) == name:
+                value = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_RIGHT))
+                bound = f"={value}"
+        return bound
+    return _UNBOUND
 
 
 def _rust_norm_manifest_path(path: str) -> str:
