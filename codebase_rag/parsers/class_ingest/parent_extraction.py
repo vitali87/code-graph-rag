@@ -9,6 +9,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs
 from ..cpp import utils as cpp_utils
+from ..csharp import utils as csharp_utils
 from ..utils import safe_decode_text
 from .utils import find_child_by_type
 
@@ -100,18 +101,36 @@ _CSHARP_BASE_KIND_CLASS = "class"
 _CSHARP_BASE_KIND_INTERFACE = "interface"
 
 
-def split_csharp_bases(
+def _csharp_base_arity(node: Node) -> int:
+    # The written type-argument count of the base's own (last) segment:
+    # `Base<int, string>` -> 2, `Outer<int>.Inner` -> 0. A record positional
+    # base is measured on its type, not on its argument list.
+    if node.type == cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
+        return next(
+            (
+                _csharp_base_arity(child)
+                for child in node.children
+                if _csharp_base_written_name(child)
+            ),
+            0,
+        )
+    text = safe_decode_text(node) if node.text else None
+    return csharp_utils.generic_arity_of_type_text(text) if text else 0
+
+
+def split_csharp_base_refs(
     class_node: Node,
-    module_qn: str,
-    resolve_to_qn: Callable[[str, str], str],
     base_kinds: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    # Return (inherited_qns, implemented_qns). C# folds the base class and all
-    # interfaces into one base_list; the base class, if any, is the FIRST entry
-    # (grammar-enforced) and must not look like an interface. An interface's
-    # bases are all inheritance; a struct/record/class implements the rest.
-    # `base_kinds` (from the Roslyn frontend) maps a base's simple name to its
-    # exact kind; when present it overrides the I-prefix heuristic per base.
+    # Return the (inherited, implemented) bases as written: generic-free,
+    # with the written arity in CLR style (`NotificationHandler`1`), so a
+    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`. C# folds
+    # the base class and all interfaces into one base_list; the base class,
+    # if any, is the FIRST entry (grammar-enforced) and must not look like
+    # an interface. An interface's bases are all inheritance; a
+    # struct/record/class implements the rest. `base_kinds` (from the
+    # Roslyn frontend) maps a base's simple name to its exact kind; when
+    # present it overrides the I-prefix heuristic per base.
     if class_node.type == cs.TS_CSHARP_ENUM_DECLARATION:
         return [], []
     base_list = find_child_by_type(class_node, cs.TS_CSHARP_BASE_LIST)
@@ -119,7 +138,7 @@ def split_csharp_bases(
         return [], []
 
     written = [
-        name
+        (name, csharp_utils.type_ref(name, _csharp_base_arity(child)))
         for child in base_list.children
         if (name := _csharp_base_written_name(child))
     ]
@@ -128,24 +147,44 @@ def split_csharp_bases(
 
     inherited: list[str] = []
     implemented: list[str] = []
-    for index, name in enumerate(written):
-        resolved = resolve_to_qn(name, module_qn)
+    for index, (name, ref) in enumerate(written):
         simple = name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         # An interface's own bases are all INHERITS in cgr's model (interface
         # extends interface), independent of the semantic kind.
         if is_interface:
-            inherited.append(resolved)
+            inherited.append(ref)
             continue
         kind = base_kinds.get(simple) if base_kinds else None
         if kind == _CSHARP_BASE_KIND_INTERFACE:
-            implemented.append(resolved)
+            implemented.append(ref)
         elif kind == _CSHARP_BASE_KIND_CLASS:
-            inherited.append(resolved)
+            inherited.append(ref)
         elif index == 0 and not is_struct and not _csharp_looks_like_interface(simple):
-            inherited.append(resolved)
+            inherited.append(ref)
         else:
-            implemented.append(resolved)
+            implemented.append(ref)
     return inherited, implemented
+
+
+def split_csharp_bases(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+    base_kinds: dict[str, str] | None = None,
+) -> tuple[list[str], list[str]]:
+    # Return (inherited_qns, implemented_qns), in the order and split of
+    # split_csharp_base_refs.
+    inherited, implemented = split_csharp_base_refs(class_node, base_kinds)
+    return (
+        [_resolve_csharp_ref(ref, module_qn, resolve_to_qn) for ref in inherited],
+        [_resolve_csharp_ref(ref, module_qn, resolve_to_qn) for ref in implemented],
+    )
+
+
+def _resolve_csharp_ref(
+    ref: str, module_qn: str, resolve_to_qn: Callable[[str, str], str]
+) -> str:
+    return resolve_to_qn(csharp_utils.split_type_ref(ref)[0], module_qn)
 
 
 def extract_parent_classes(

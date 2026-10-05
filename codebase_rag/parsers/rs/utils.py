@@ -320,6 +320,27 @@ def extract_impl_target(impl_node: Node) -> str | None:
     return _impl_field_type_name(impl_node, cs.FIELD_TYPE)
 
 
+def extract_impl_target_path(impl_node: Node) -> str | None:
+    """The impl block's self type as written, generics and references
+    peeled: `std::string::String`, `crate::shadow::String`, `String`, `u8`.
+    Its first segment is what decides which type the block is on."""
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    type_node = impl_node.child_by_field_name(cs.FIELD_TYPE)
+    while type_node is not None and type_node.type in (
+        cs.TS_GENERIC_TYPE,
+        cs.TS_RS_REFERENCE_TYPE,
+    ):
+        type_node = type_node.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.type not in (
+        cs.TS_TYPE_IDENTIFIER,
+        cs.TS_RS_SCOPED_TYPE_IDENTIFIER,
+        cs.TS_RS_PRIMITIVE_TYPE,
+    ):
+        return None
+    return safe_decode_text(type_node) or None
+
+
 def extract_impl_trait(impl_node: Node) -> str | None:
     # The `trait` field of `impl Trait for Type` -> the implemented trait's
     # simple name (a trait impl means Type IMPLEMENTS Trait).
@@ -498,6 +519,30 @@ def block_item_at(
     return best[1] if best else None
 
 
+def literal_receiver_types(receiver: str) -> frozenset[str] | None:
+    """The primitive types a literal method-call receiver can have.
+
+    None when `receiver` is not a literal at all. A literal's type is a
+    primitive (or an array, which yields the empty set), so only an impl
+    block on that primitive can hold the method it calls (issue #2543).
+    """
+    if cs.RS_BYTE_STRING_LITERAL.match(receiver):
+        return frozenset()
+    if cs.RS_STRING_LITERAL.match(receiver):
+        return frozenset({cs.RS_STR_TYPE})
+    if receiver.startswith(cs.RS_BYTE_LITERAL_PREFIX):
+        return frozenset({cs.RS_BYTE_TYPE})
+    if receiver.startswith(cs.RS_CHAR_LITERAL_PREFIX):
+        return frozenset({cs.RS_CHAR_TYPE})
+    if receiver in cs.RS_BOOL_LITERALS:
+        return frozenset({cs.RS_BOOL_TYPE})
+    if receiver[:1].isdigit():
+        if suffix := cs.RS_NUMERIC_SUFFIX.search(receiver):
+            return frozenset({suffix.group()})
+        return cs.RS_NUMERIC_TYPES
+    return None
+
+
 def is_body_local(node: Node) -> bool:
     """True when *node* sits directly in a function body or an initializer.
 
@@ -515,6 +560,31 @@ def is_body_local(node: Node) -> bool:
             return True
         current = current.parent
     return False
+
+
+def use_visibility_path(node: Node) -> str | None:
+    """The path a declaration's visibility is restricted to, None for `pub`.
+
+    No modifier is private, `self`, as `pub(self)` and `pub(in self)` spell
+    out; `pub(crate)`, `pub(super)` and `pub(in path)` name the module whose
+    subtree sees the item.
+    """
+    modifier = next(
+        (
+            child
+            for child in node.children
+            if child.type == cs.TS_RS_VISIBILITY_MODIFIER
+        ),
+        None,
+    )
+    if modifier is None:
+        return cs.KEYWORD_SELF
+    restriction = [
+        child
+        for child in modifier.children
+        if child.type not in cs.RS_VISIBILITY_SYNTAX_TOKENS
+    ]
+    return safe_decode_text(restriction[0]) if restriction else None
 
 
 def enclosing_mod_names(node: Node) -> frozenset[str]:
@@ -728,3 +798,31 @@ def build_module_path(
 
     path_parts.reverse()
     return path_parts
+
+
+def in_attribute_arguments(token: Node) -> bool:
+    """True when a token sits inside an attribute's `#[...]` arguments.
+
+    tree-sitter-rust gives attribute arguments the same `token_tree` a macro
+    body gets, so `skip(self)` in `#[instrument(skip(self))]` has the shape of
+    a macro-internal call. Only the owner of the enclosing groups tells them
+    apart (issue #2541).
+    """
+    group = token.parent
+    while group is not None and group.type == cs.TS_RS_TOKEN_TREE:
+        if _is_raw_attribute_group(group):
+            return True
+        group = group.parent
+    return group is not None and group.type == cs.TS_RS_ATTRIBUTE
+
+
+def _is_raw_attribute_group(group: Node) -> bool:
+    # A macro body (`macro_rules!` arm, `quote!`) does not parse the attributes
+    # it carries: `#[cfg(not(test))]` there is a `#` token then a `[...]` group.
+    first = group.child(0)
+    if first is None or first.type != cs.TS_RS_TOKEN_BRACKET_OPEN:
+        return False
+    marker = group.prev_sibling
+    if marker is not None and marker.type == cs.TS_RS_TOKEN_BANG:
+        marker = marker.prev_sibling
+    return marker is not None and marker.type == cs.TS_RS_TOKEN_HASH

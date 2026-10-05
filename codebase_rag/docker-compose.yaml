@@ -10,6 +10,10 @@ services:
     # patch-level tags, so even `3.3` can float to a rebuilt image. Bump
     # deliberately and run the integration suite against the new digest.
     image: memgraph/memgraph-mage:3.3@sha256:4579a70a2a095026d2e4039a5b0a4756e8e0e8a37ea0350f71240346efe343e8
+    # Memgraph reports the host's CPU and memory and the graph's vertex and
+    # edge counts to its vendor by default; a local index of private code
+    # stays local (issue #2675). Delete this line to share them.
+    command: ["--telemetry-enabled=false"]
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_PORT:-7687}:7687"
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_HTTP_PORT:-7444}:7444"
@@ -47,8 +51,11 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
     # Filled from QDRANT_API_KEY by `cgr daemon up`; unset leaves Qdrant open.
+    # Qdrant reports usage to telemetry.qdrant.io by default (issue #2675);
+    # set QDRANT__TELEMETRY_DISABLED=false to share it.
     environment:
       - QDRANT__SERVICE__API_KEY
+      - QDRANT__TELEMETRY_DISABLED=true
 
 volumes:
   qdrant_storage:

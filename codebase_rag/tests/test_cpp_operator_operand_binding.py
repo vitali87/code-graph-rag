@@ -4,8 +4,9 @@
 # every duplicate-qn overload variant (9 edges of pure noise). When the
 # left operand's type is KNOWN, the operator must bind only to that type's
 # own operator (member, or a free overload in the type's module) or emit
-# nothing at all; only an UNTYPED operand keeps the old best-candidate
-# behaviour so no existing edge drops.
+# nothing at all. An UNTYPED operand emits nothing either (issue #2554):
+# the old best-candidate fallback bound built-in arithmetic to any
+# same-named overload in the project.
 from pathlib import Path
 
 from evals.cgr_graph import _capture
@@ -86,10 +87,10 @@ def test_typed_operand_binds_free_operator_in_type_module(tmp_path: Path) -> Non
     assert ("proj.free.driver", "proj.free.Aaa.operator_equal") not in calls
 
 
-def test_untyped_operand_keeps_existing_binding(tmp_path: Path) -> None:
-    # fmt regression guard shape: an operand the type inference cannot see
-    # (a macro-produced expression) must keep the pre-existing
-    # best-candidate behaviour rather than dropping edges wholesale.
+def test_untyped_operand_binds_nothing(tmp_path: Path) -> None:
+    # An operand the type inference cannot see (a macro-produced
+    # expression) gives no type to select an overload with, so binding the
+    # project's only operator== by name would be a guess (issue #2554).
     (tmp_path / "keep.hpp").write_text(
         "struct Only {\n"
         "    bool operator==(const Only& rhs) const { return true; }\n"
@@ -100,7 +101,7 @@ def test_untyped_operand_keeps_existing_binding(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     calls = _calls(tmp_path)
-    assert ("proj.keep.driver", "proj.keep.Only.operator_equal") in calls, sorted(
+    assert ("proj.keep.driver", "proj.keep.Only.operator_equal") not in calls, sorted(
         c for c in calls if "operator" in c[1]
     )
 

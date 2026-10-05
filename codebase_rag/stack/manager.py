@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -234,6 +235,35 @@ def _container_ids(command: list[str], env: dict[str, str]) -> str | None:
 
 class StackError(RuntimeError):
     pass
+
+
+def _compose_failure(output: str, project_name: str) -> tuple[str, str | None]:
+    """Why `docker compose up` failed, briefly, and which service failed.
+
+    A port clash is named with the variable that moves it; otherwise the
+    error lines are kept and the progress lines dropped. Output with no
+    recognisable error line is reported whole rather than lost.
+    """
+    failed = re.search(
+        cs.COMPOSE_FAILED_SERVICE.format(project=re.escape(project_name)), output
+    )
+    service = (
+        (failed.group("endpoint") or failed.group("container")) if failed else None
+    )
+    if (clash := cs.COMPOSE_PORT_IN_USE.search(output)) is not None:
+        detail = cs.ERR_PORT_IN_USE.format(
+            address=clash.group("address"),
+            variables=" or ".join(cs.SERVICE_PORT_VARIABLES.get(service or "", ()))
+            or "its port",
+        )
+    else:
+        errors = [
+            line.strip()
+            for line in output.splitlines()
+            if cs.COMPOSE_ERROR_LINE.search(line)
+        ]
+        detail = "\n".join(dict.fromkeys(errors)) or output.strip()
+    return detail, service
 
 
 def _service_images(compose_file: Path) -> dict[str, str]:
@@ -693,12 +723,29 @@ class StackManager:
             self._stop_if_left_open()
             raise
         if result.returncode != 0:
-            self._stop_if_left_open()
-            raise StackError(
-                cs.ERR_STACK_START_FAILED.format(
-                    detail=result.stderr.strip() or result.stdout.strip()
-                )
+            output = "\n".join(
+                part for part in (result.stdout.strip(), result.stderr.strip()) if part
             )
+            logger.debug(cs.MSG_COMPOSE_UP_OUTPUT.format(output=output))
+            detail, service = _compose_failure(output, self.project_name)
+            if service == cs.SERVICE_LAB and self._core_services_running():
+                logger.warning(cs.WARN_LAB_NOT_STARTED.format(detail=detail))
+                return
+            if service is not None:
+                detail = cs.ERR_SERVICE_NOT_STARTED.format(
+                    service=cs.SERVICE_DISPLAY_NAMES.get(service, service),
+                    detail=detail,
+                )
+            self._stop_if_left_open()
+            raise StackError(cs.ERR_STACK_START_FAILED.format(detail=detail))
+
+    def _core_services_running(self) -> bool:
+        """Whether Memgraph and Qdrant each have a running container."""
+        env = self._compose_env()
+        return all(
+            _container_ids(self._compose_cmd(*cs.COMPOSE_PS_RUNNING_ARGS, service), env)
+            for service in cs.CORE_SERVICES
+        )
 
     def down(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self._stop_containers("down", timeout)

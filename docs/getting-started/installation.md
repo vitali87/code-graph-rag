@@ -86,6 +86,10 @@ Dependencies may still need platform wheels or build tools, such as `cmake` for
 pip install code-graph-rag
 ```
 
+![uv venv --python 3.12 --seed, then pip install code-graph-rag and cgr --version in a fresh virtual environment](../assets/demos/installation-pip.gif)
+
+*PyPI served 0.1.38 when this was recorded; it trails `main` (see [Install from git](#install-from-git)).*
+
 With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lua, PHP, C#, Dart):
 
 ```bash
@@ -183,6 +187,8 @@ Check the result with:
 cgr --version
 ```
 
+![cgr --version printing the installed code-graph-rag version](../assets/demos/installation-version.gif)
+
 ## Verify Release Artifacts
 
 Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships prebuilt binaries together with Sigstore signatures (`*.sigstore.json`); releases from v0.0.484 onwards also carry a SLSA build provenance attestation (`multiple.intoto.jsonl`). Both are produced by the `build-binaries.yml` GitHub Actions workflow using keyless signing, so there is no maintainer-held key to obtain: verification checks that the artifact was built by this repository's release workflow.
@@ -215,6 +221,10 @@ Substitute the binary name for your platform. Packages installed from PyPI are p
 cgr daemon up
 ```
 
+![cgr daemon up reporting the Memgraph and Qdrant stack as running and reachable](../assets/demos/installation-daemon-up.gif)
+
+*Recorded with the stack already running, so it returns at once.*
+
 This starts the packaged Memgraph + Qdrant stack and waits until it is healthy. It works the same whether you installed from PyPI or from source, since the compose file ships inside the package. Memgraph listens on port 7687 and Memgraph Lab on port 3000. The services are reachable only from this machine and run without authentication by default; to require credentials, see [Turning on authentication](../architecture/security.md#turning-on-authentication).
 
 ## Set Up Environment Variables
@@ -231,6 +241,10 @@ See the [Configuration](configuration.md) guide for all available options.
 ```bash
 cgr doctor
 ```
+
+![cgr doctor checking Docker, Memgraph, the configured models and ripgrep](../assets/demos/installation-doctor.gif)
+
+*No Ollama or API key is configured on the recording machine, so the two model checks fail.*
 
 This checks that all required dependencies and services are available.
 
