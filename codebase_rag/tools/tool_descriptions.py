@@ -185,7 +185,9 @@ MCP_PARAM_REINGEST_DELETED = (
     "Files reported deleted (e.g. by a file watcher). Their old definitions "
     "are dropped; one that exists on disk again (an editor's atomic save) is "
     "re-parsed from its current content instead of being removed. To keep a "
-    "file out of the graph, exclude it in .cgrignore."
+    "file out of the graph, exclude it in .cgrignore; an excluded path is "
+    "skipped here, so one already indexed keeps its definitions until "
+    "update_repository drops them."
 )
 _MCP_DETERMINISTIC_NOTE = (
     "Deterministic: fixed graph queries, no LLM, same graph gives the same "
