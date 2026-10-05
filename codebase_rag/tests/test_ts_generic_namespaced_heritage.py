@@ -80,6 +80,10 @@ export interface Solid extends ns.Shape { volume(): number }
 
 
 def _heritage(root: Path) -> set[tuple[str, str, str, str, str]]:
+    # The module-scoped fixtures index through here before the per-test
+    # grammar skip hook is installed, so a base install must skip here.
+    if cs.SupportedLanguage.TS not in load_parsers()[0]:
+        pytest.skip("typescript parser not available")
     prefix = f"{_PROJECT}{cs.SEPARATOR_DOT}"
     return {
         (
