@@ -23,6 +23,9 @@ from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 FILES = {
+    # Bot review on PR #2895: a declaration and a same-named pair value on one
+    # line share a line span; their columns tell them apart.
+    "oneline.js": "function foo() { return 0; } const obj = { foo: () => 1 }; foo();\n",
     "util.c": (
         "static int helper(int x) {\n"
         "    return x + 1;\n"
@@ -201,6 +204,8 @@ def _sites(report: RenameReport, kind: str) -> set[tuple[str, int, int]]:
         ("obj2.named", ("obj2.js", 6, 2)),
         # The property; `obj2.outer` alone is the function declared inside.
         ("obj2.outer@9", ("obj2.js", 9, 2)),
+        ("oneline.foo", ("oneline.js", 1, 9)),
+        ("oneline.foo@1", ("oneline.js", 1, 43)),
     ],
 )
 def test_the_definition_token_is_located(
