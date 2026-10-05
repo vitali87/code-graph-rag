@@ -17,6 +17,7 @@ from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
 from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .variable_analyzer import PythonVariableAnalyzerMixin
+from .with_analyzer import PythonWithBindingMixin
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -54,6 +55,7 @@ _PATTERN_TYPES = frozenset(
 
 class PythonTypeInferenceEngine(
     PythonExpressionAnalyzerMixin,
+    PythonWithBindingMixin,
     PythonAstAnalyzerMixin,
     PythonVariableAnalyzerMixin,
 ):
