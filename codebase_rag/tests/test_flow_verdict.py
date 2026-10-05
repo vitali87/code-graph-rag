@@ -23,15 +23,17 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _query_fn(
-    edges: list[tuple[str, str]],
+    edges: list[tuple[str, ...]],
     gaps: list[str] | dict[str, list[str]],
     remote: list[tuple[str, str]] | None = None,
-    other_edges: dict[str, list[tuple[str, str]]] | None = None,
+    other_edges: dict[str, list[tuple[str, ...]]] | None = None,
     calls: list[tuple[str, dict | None]] | None = None,
     projects: list[str] | None = None,
 ):
-    """`remote` rows are (source, target) with the handler's project read
-    off its name, as the graph has it; `other_edges` holds the flow edges of
+    """Flow edges are (source, target), or (source, target, scope) for a
+    resource-to-resource flow; `remote` rows are (source, target) with the
+    handler's project read off its name, as the graph has it; `other_edges`
+    holds the flow edges of
     every project other than the asked one, keyed by project name; `gaps`
     is the asked project's list, or one per project; `calls` records every
     (query, params) issued."""
@@ -41,9 +43,15 @@ def _query_fn(
             calls.append((query, params))
         project = params["project_name"] if params else None
         if query == CYPHER_FLOW_EDGES:
-            if other_edges and project in other_edges:
-                return [{"source": s, "target": t} for s, t in other_edges[project]]
-            return [{"source": s, "target": t} for s, t in edges]
+            rows = (
+                other_edges[project]
+                if other_edges and project in other_edges
+                else edges
+            )
+            return [
+                {"source": e[0], "target": e[1], "scope": e[2] if len(e) > 2 else None}
+                for e in rows
+            ]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
             if isinstance(gaps, dict):
                 return [{"path": p} for p in gaps.get(project or "", [])]
@@ -419,3 +427,64 @@ def test_a_handler_in_a_dotted_project_loads_that_projects_edges() -> None:
     )
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.remote_hops == (("svc.client.net", "svc.v2.api.handler"),)
+
+
+TOKEN = "resource::ENV::TOKEN"
+STDOUT = "resource::STDOUT::<dynamic>"
+NET = "resource::NETWORK::http://q:8000/items"
+
+
+@pytest.mark.parametrize(
+    ("scope", "verdict"),
+    [("p.v2.fn", FLOW_VERDICT_NO_FLOW), ("p.fn", FLOW_VERDICT_FOUND)],
+    ids=["a-dotted-sibling-project-owns-it", "the-project-owns-it"],
+)
+def test_a_resource_flow_belongs_to_the_project_its_scope_names(
+    scope: str, verdict: str
+) -> None:
+    """`r.scope STARTS WITH 'p.'` also loads `p.v2`'s resource flows; only
+    the project the scope's function belongs to owns one (bot review on PR
+    #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn([(TOKEN, STDOUT, scope)], [], projects=["p", "p.v2"]),
+        "p",
+        TOKEN,
+        STDOUT,
+    )
+    assert result.verdict == verdict
+
+
+def test_another_projects_resource_flow_is_not_taken_for_this_ones() -> None:
+    """Resource names carry no project: after a hop into `q`, `q`'s own
+    `ENV::TOKEN -> STDOUT` is not a flow of `p`'s token (bot review on PR
+    #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [(TOKEN, NET, "p.client.send")],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": [(TOKEN, STDOUT, "q.api.other")]},
+            projects=["p", "q"],
+        ),
+        "p",
+        TOKEN,
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_NO_FLOW
+
+
+def test_a_flow_through_the_handler_of_another_project_still_reaches_its_sink() -> None:
+    result = flow_reachability_verdict(
+        _query_fn(
+            [(TOKEN, NET, "p.client.send")],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": [("q.api.handler", STDOUT)]},
+            projects=["p", "q"],
+        ),
+        "p",
+        TOKEN,
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (TOKEN, NET, "q.api.handler", STDOUT)
