@@ -6594,10 +6594,17 @@ class CallProcessor:
                 if ctx.is_python:
                     self._emit_python_binding_twin(ctx, target_qn, target_type)
                 continue
+            # A callable variant takes its OWN label: a Scala method's local
+            # def or anonymous-object member registers as a Function beside
+            # the class's same-named Method, and the primary's label on the
+            # other is the same phantom (issue #2848).
+            label = (
+                callee_type if target_type is None else cs.NodeLabel(target_type.value)
+            )
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
     def _emit_python_binding_twin(
