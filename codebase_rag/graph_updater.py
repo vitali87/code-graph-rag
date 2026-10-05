@@ -41,6 +41,7 @@ from .language_spec import (
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.ast_grep_tier import AstGrepTier
+from .parsers.callable_flow_scope import flow_function_names
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
@@ -5597,6 +5598,7 @@ class GraphUpdater:
             scan.changed_entries, is_full_build
         )
         added_keys = [key for key, _b in added_entries]
+        changed_count = len(scan.changed_entries)
         reindexed_keys = self._queue_affected_callers(
             sorted(
                 {
@@ -5615,6 +5617,9 @@ class GraphUpdater:
             eligible_by_key,
             scan,
             reindexed_keys,
+        )
+        reindexed_keys = self._queue_callable_flow_passers(
+            changed_count, present, eligible_by_key, scan, reindexed_keys
         )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
@@ -6204,6 +6209,75 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_AFFECTED_CALLERS, count=affected)
             reindexed_keys = _reindexed_keys(scan.changed_entries)
         return reindexed_keys
+
+    def _queue_callable_flow_passers(
+        self,
+        changed_count: int,
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+        reindexed_keys: list[str],
+    ) -> list[str]:
+        """Queue the files that pass callables into a re-parsed function.
+
+        `run_callback(fn): return fn()` gets an edge to each callable its
+        callers pass in (`run_callback(_on_start)`), derived from bindings
+        recorded while walking the CALLERS' files. A dependent re-parsed only
+        because an import changed loses that outgoing edge, and its callers,
+        a level past the dependents, were never walked to re-emit it
+        (issue #2911). So a re-parsed file defining such a function brings in
+        its callers, and a caller that forwards its own parameter into one
+        (`wrap(cb): return run_callback(cb)`) brings in its callers in turn.
+        A file is checked only when it is queued, so a dependent whose
+        functions take no part in callable flow widens nothing.
+        """
+        # An edited file's callers are already queued as its dependents; its
+        # flow functions only seed the names a dependent may forward into.
+        flow_names = frozenset(
+            name
+            for path, _key, _new, data in scan.changed_entries[:changed_count]
+            for name in self._flow_function_names(path, data, frozenset())
+        )
+        frontier = scan.changed_entries[changed_count:]
+        while frontier:
+            holders: list[str] = []
+            for path, key, _new, data in frontier:
+                if names := self._flow_function_names(path, data, flow_names):
+                    holders.append(key)
+                    flow_names = flow_names | names
+            if not holders:
+                break
+            queued = len(scan.changed_entries)
+            reindexed_keys = self._queue_affected_callers(
+                self._affected_caller_keys(sorted(holders)),
+                present,
+                eligible_by_key,
+                scan,
+                reindexed_keys,
+            )
+            frontier = scan.changed_entries[queued:]
+        return reindexed_keys
+
+    def _flow_function_names(
+        self, filepath: Path, file_bytes: bytes, flow_names: frozenset[str]
+    ) -> set[str]:
+        language = self._tree_sitter_language(filepath)
+        if language not in cs.CALLABLE_FLOW_LANGUAGES:
+            return set()
+        language_queries = self.queries.get(language)
+        if language_queries is None:
+            return set()
+        parser = language_queries.get(cs.KEY_PARSER)
+        functions_query = language_queries.get(cs.QUERY_FUNCTIONS)
+        if parser is None or functions_query is None:
+            return set()
+        root = parse_with_preproc_recovery(
+            parser, grammar_bytes(file_bytes, language, filepath), language
+        ).root_node
+        captures = sorted_captures(QueryCursor(functions_query), root)
+        return flow_function_names(
+            captures.get(cs.CAPTURE_FUNCTION, ()), language, flow_names
+        )
 
     def _captured_inbound_edges(
         self, reindexed_keys: list[str], deleted_set: set[str]
