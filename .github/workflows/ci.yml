@@ -485,9 +485,10 @@ jobs:
       && github.event.pull_request.base.ref == 'main'
       && github.event.pull_request.user.login != 'dependabot[bot]'
       && github.event.pull_request.head.repo.full_name == github.repository
-    # Outlasts the SonarCloud Analysis job's 50 min cap plus the time
-    # SonarCloud takes to publish, so a healthy analysis is never missed.
-    timeout-minutes: 65
+    # The polling loop below does the waiting (it holds out for as long as
+    # SonarCloud Analysis is queued or running); this cap only bounds a hang,
+    # and covers that job's 50 min cap, a late start and the publish window.
+    timeout-minutes: 90
     permissions:
       # checks: read backs the check-runs API call that detects a failed
       # SonarCloud Analysis job, so the gate fails fast instead of waiting
@@ -513,7 +514,12 @@ jobs:
           # positive) in the SonarCloud UI. Both endpoints are public for
           # public projects, so no token is needed. Analysis lands minutes
           # after the SonarCloud Analysis job finishes, so poll until the
-          # reported analyzed commit is this exact commit.
+          # reported analyzed commit is this exact commit. The window for
+          # publishing restarts while the analysis job is queued or running,
+          # so a job that starts late or runs long is not cut short (within
+          # this job's own cap); the first deadline covers a job that never
+          # shows up at all.
+          publish_window=900
           deadline=$(( $(date +%s) + 3600 ))
           while :; do
             analyzed=$(curl -sf "https://sonarcloud.io/api/project_pull_requests/list?project=$PROJECT_KEY" \
@@ -545,9 +551,12 @@ jobs:
               # started_at null while queued, which jq sorts before every
               # real timestamp, so only the completed runs are ranked and
               # any active run suppresses the fast fail until it finishes.
+              # An unreadable check-runs reply (rate limit, outage) is null,
+              # which jq cannot iterate, so `active` falls back to 1 and the
+              # verdict stays open instead of reading as "no job".
               runs=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
                 --jq '[.check_runs[] | select(.name == "SonarCloud Analysis")]' \
-                2>/dev/null || echo '[]')
+                2>/dev/null || echo 'null')
               active=$(printf '%s' "$runs" \
                 | jq '[.[] | select(.status != "completed")] | length' \
                 2>/dev/null || echo 1)
@@ -561,10 +570,14 @@ jobs:
                 echo "Fix or re-run SonarCloud Analysis, then re-run this job."
                 exit 1
               fi
+              if [ "$active" != "0" ]; then
+                held=$(( $(date +%s) + publish_window ))
+                if [ "$held" -gt "$deadline" ]; then deadline=$held; fi
+              fi
               echo "No SonarCloud analysis of $HEAD_SHA yet (last analyzed: ${analyzed:-none}), waiting ..."
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "❌ No SonarCloud analysis of $HEAD_SHA appeared within 60 minutes."
+              echo "❌ No SonarCloud analysis of $HEAD_SHA appeared within $(( publish_window / 60 )) min of SonarCloud Analysis finishing (or 60 min with no such job)."
               echo "Check the SonarCloud Analysis job, then re-run this job."
               exit 1
             fi
