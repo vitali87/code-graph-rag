@@ -7,6 +7,17 @@ from ..utils import contains_node, safe_decode_text
 def extract_assigned_name(
     target_node: Node, accepted_var_types: tuple[str, ...] = cs.LUA_DEFAULT_VAR_TYPES
 ) -> str | None:
+    var_child = _assignment_target(target_node)
+    if var_child is None or var_child.type not in accepted_var_types:
+        return None
+    if var_child.type == cs.TS_LUA_BRACKET_INDEX_EXPRESSION:
+        return bracket_key_path(var_child)
+    return safe_decode_text(var_child)
+
+
+def _assignment_target(target_node: Node) -> Node | None:
+    """The variable the nearest enclosing assignment binds to the value that
+    holds `target_node`, or None when no value of that assignment does."""
     current = target_node.parent
     while current and current.type != cs.TS_LUA_ASSIGNMENT_STATEMENT:
         current = current.parent
@@ -55,12 +66,117 @@ def extract_assigned_name(
         if variable_list.field_name_for_child(i) == cs.FIELD_NAME
         and (child := variable_list.child(i)) is not None
     ]
-    if target_index < len(names):
-        var_child = names[target_index]
-        if var_child.type in accepted_var_types:
-            return safe_decode_text(var_child)
+    return names[target_index] if target_index < len(names) else None
 
-    return None
+
+def bracket_key_path(index_node: Node) -> str | None:
+    """`t.key` for the target `t["key"]`: the same table slot, spelled the way
+    the dotted form `t.key = function` names its function (issue #2578).
+
+    None unless every bracketed key on the way is a string literal that is a
+    Lua name. `t["lume.clamp"]` spelled `t.lume.clamp` would forge a nested
+    table that does not exist, `t["has space"]` and `t["end"]` have no dotted
+    spelling at all, and a computed `t[k]` names nothing; those functions
+    keep the generated name every language gives a nameless function.
+    """
+    key = _string_literal_content(index_node.child_by_field_name(cs.FIELD_FIELD))
+    if key is None or not _is_lua_name(key):
+        return None
+    owner = bracket_table_path(index_node)
+    return f"{owner}{cs.SEPARATOR_DOT}{key}" if owner else None
+
+
+def bracket_table_path(index_node: Node) -> str | None:
+    """The table `t[...]` indexes, as a dotted path (`t`, `a.b`, and `t.k`
+    for `t["k"][...]`), or None when no path spells it."""
+    table = index_node.child_by_field_name(cs.TS_LUA_FIELD_TABLE)
+    if table is None:
+        return None
+    match table.type:
+        case cs.TS_LUA_BRACKET_INDEX_EXPRESSION:
+            return bracket_key_path(table)
+        case cs.TS_LUA_IDENTIFIER | cs.TS_DOT_INDEX_EXPRESSION:
+            return safe_decode_text(table)
+        case _:
+            return None
+
+
+def bracket_assignment_target(func_node: Node) -> Node | None:
+    """The `t[...]` target when `func_node` IS the value assigned to it.
+
+    Such a function has a node of its own even when `bracket_key_path` finds
+    no name for it, so the call pass must credit its body's calls to it. A
+    callback nested inside that value is not the value: it stays nameless and
+    its calls bubble to the function around it, as they do everywhere else.
+    """
+    value = func_node
+    while (
+        value.parent is not None and value.parent.type == cs.TS_PARENTHESIZED_EXPRESSION
+    ):
+        value = value.parent
+    if not _is_assigned_value(value):
+        return None
+    target = _assignment_target(func_node)
+    if target is None or target.type != cs.TS_LUA_BRACKET_INDEX_EXPRESSION:
+        return None
+    return target
+
+
+def is_module_return_value(func_node: Node) -> bool:
+    """True when `func_node` is part of the value the chunk returns: the
+    returned function itself, or an entry of a returned table at any depth.
+
+    That value is what `require` hands the caller, so the function is the
+    module's API (issue #2578). A function nested in such an entry's body
+    is not part of the value; it exists only once the entry runs.
+    """
+    value = func_node
+    while value.parent is not None and value.parent.type in _VALUE_PART_TYPES:
+        value = value.parent
+    return is_chunk_return_list(value.parent)
+
+
+def is_chunk_return_list(node: Node | None) -> bool:
+    """True for the expression list of the chunk's own `return`: a `return`
+    inside a function returns from that function, not from the module."""
+    statement = node.parent if node is not None else None
+    return (
+        node is not None
+        and node.type == cs.TS_LUA_EXPRESSION_LIST
+        and statement is not None
+        and statement.type == cs.TS_RETURN_STATEMENT
+        and statement.parent is not None
+        and statement.parent.type == cs.TS_LUA_CHUNK
+    )
+
+
+# What a function can sit in while still being part of the one value its
+# statement produces: `{ f = <fn> }`, `{ sub = { <fn> } }`, `(<fn>)`.
+_VALUE_PART_TYPES = frozenset(
+    {cs.TS_LUA_FIELD, cs.TS_LUA_TABLE_CONSTRUCTOR, cs.TS_PARENTHESIZED_EXPRESSION}
+)
+
+
+def anonymous_function_name(func_node: Node) -> str:
+    """The name the definition pass generates for a function nothing names."""
+    row, col = func_node.start_point
+    return f"{cs.PREFIX_ANONYMOUS}{row}{cs.CHAR_UNDERSCORE}{col}"
+
+
+def _string_literal_content(node: Node | None) -> str | None:
+    if node is None or node.type not in cs.LUA_STRING_TYPES:
+        return None
+    content = next(
+        (c for c in node.named_children if c.type == cs.TS_LUA_STRING_CONTENT),
+        None,
+    )
+    return safe_decode_text(content) if content is not None else None
+
+
+def _is_lua_name(text: str) -> bool:
+    # ASCII letters, digits and underscores, not starting with a digit: the
+    # ASCII subset of a Python identifier is exactly a Lua name.
+    return text.isascii() and text.isidentifier() and text not in cs.LUA_RESERVED_WORDS
 
 
 def find_ancestor_statement(node: Node) -> Node | None:
@@ -110,13 +226,7 @@ def field_key_name(field: Node) -> str | None:
     bracketed = bool(field.children) and field.children[0].type == cs.LUA_OPEN_BRACKET
     if key.type == cs.TS_LUA_IDENTIFIER:
         return None if bracketed else safe_decode_text(key)
-    if key.type in cs.LUA_STRING_TYPES:
-        content = next(
-            (c for c in key.named_children if c.type == cs.TS_LUA_STRING_CONTENT),
-            None,
-        )
-        return safe_decode_text(content) if content is not None else None
-    return None
+    return _string_literal_content(key)
 
 
 def field_function_path(func_node: Node) -> tuple[str, str] | None:
@@ -161,7 +271,7 @@ def field_function_path(func_node: Node) -> tuple[str, str] | None:
     # the function would carry a false identity `r.f` (#1750 review).
     if table is not None and _is_assigned_value(table):
         owner = extract_assigned_name(
-            table, accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER)
+            table, accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS
         )
         if owner:
             parts.insert(0, owner)
@@ -210,3 +320,161 @@ def _field_valued_by(func_node: Node) -> Node | None:
     ):
         return None
     return parent
+
+
+def member_spellings(
+    owner_qn: str, member: str, separator: str = cs.LUA_FIELD_SEPARATOR
+) -> tuple[str, str]:
+    """Both qns a member of the Lua table `owner_qn` may be registered under,
+    the call's own spelling (`separator`) first.
+
+    `function T:m()` is sugar for `function T.m(self)`, but the definition
+    keeps its colon (`T:m`) while `function T.f()` and `T.f = function`
+    register `T.f`. A call spells either form whatever the definition used
+    (`obj:m()`, `T.m(obj)`, `T:f()`), so a lookup of a table's member must
+    accept both, or no call to a colon-method ever bound (issue #2481).
+    """
+    other = (
+        cs.LUA_FIELD_SEPARATOR
+        if separator == cs.LUA_METHOD_SEPARATOR
+        else cs.LUA_METHOD_SEPARATOR
+    )
+    return f"{owner_qn}{separator}{member}", f"{owner_qn}{other}{member}"
+
+
+def split_member_call(call_name: str) -> tuple[str, str, str] | None:
+    """(table path, separator, member) of a Lua call name: `a.b:m` gives
+    (`a.b`, `:`, `m`). None for a bare name, which indexes no table."""
+    cut = max(
+        call_name.rfind(cs.LUA_FIELD_SEPARATOR),
+        call_name.rfind(cs.LUA_METHOD_SEPARATOR),
+    )
+    if cut <= 0 or cut == len(call_name) - 1:
+        return None
+    return call_name[:cut], call_name[cut], call_name[cut + 1 :]
+
+
+def method_self_owner(func_node: Node) -> str | None:
+    """The table path `self` stands for inside `func_node`: `T` in the body
+    of `function T:m()`, whose colon declares `self` implicitly.
+
+    A closure nested in the method sees the method's `self` as an upvalue,
+    so the walk climbs through enclosing functions to the nearest method. It
+    stops with None at a function that declares its own `self` parameter
+    (that parameter shadows the method's and its type is unknown), and when
+    no method encloses the node at all.
+    """
+    current: Node | None = func_node
+    while current is not None:
+        if current.type in cs.FQN_LUA_FUNCTION_TYPES:
+            name = current.child_by_field_name(cs.FIELD_NAME)
+            if name is not None and name.type == cs.TS_LUA_METHOD_INDEX_EXPRESSION:
+                table = name.child_by_field_name(cs.TS_LUA_FIELD_TABLE)
+                return safe_decode_text(table) if table is not None else None
+            if _declares_self_parameter(current):
+                return None
+        current = current.parent
+    return None
+
+
+def _declares_self_parameter(func_node: Node) -> bool:
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    return params is not None and any(
+        param.type == cs.TS_LUA_IDENTIFIER
+        and safe_decode_text(param) == cs.KEYWORD_SELF
+        for param in params.named_children
+    )
+
+
+def root_name(path: str) -> str:
+    """The variable a table path starts from: `M` of `M.sub.f` or `M:f`."""
+    return path.split(cs.LUA_FIELD_SEPARATOR, 1)[0].split(cs.LUA_METHOD_SEPARATOR, 1)[0]
+
+
+def rebinds_locally(node: Node, name: str) -> bool:
+    """True when `name`, read at `node`, is a local of an enclosing scope.
+
+    A `local name` (or `local function name`) earlier in an enclosing block,
+    a parameter of an enclosing function, or a variable of an enclosing
+    `for` loop is a separate variable from the chunk's own `name`, so a
+    table it holds is not the one the chunk returns (Greptile, PR #2617).
+    The chunk's top level is where the module's variable lives, and the
+    walk stops there.
+    """
+    child, parent = node, node.parent
+    while parent is not None and parent.type != cs.TS_LUA_CHUNK:
+        if _binds_locally_at(parent, child, name):
+            return True
+        child, parent = parent, parent.parent
+    return False
+
+
+def _binds_locally_at(scope: Node, child: Node, name: str) -> bool:
+    """True when `scope`, the parent of `child`, makes `name` a local there:
+    a block declaring it before `child`, or a function or `for` loop whose
+    body `child` is and which binds it as a parameter or loop variable."""
+    if scope.type == cs.TS_LUA_BLOCK:
+        return _declared_before(scope, child, name)
+    return child.type == cs.TS_LUA_BLOCK and name in _scope_names(scope)
+
+
+def _declared_before(block: Node, child: Node, name: str) -> bool:
+    """True when a `local` statement of `block` ahead of `child` declares
+    `name`; a declaration after `child` is not yet in scope there."""
+    for statement in block.children:
+        if statement == child:
+            return False
+        if name in _local_names(statement):
+            return True
+    return False
+
+
+def _local_names(statement: Node) -> set[str]:
+    """The names a `local` statement declares."""
+    if statement.type == cs.TS_LUA_FUNCTION_DECLARATION:
+        first = statement.children[0] if statement.children else None
+        name = statement.child_by_field_name(cs.FIELD_NAME)
+        if first is None or first.type != cs.TS_LUA_LOCAL_KEYWORD or name is None:
+            return set()
+        return {safe_decode_text(name) or ""}
+    if statement.type != cs.TS_LUA_VARIABLE_DECLARATION:
+        return set()
+    names: set[str] = set()
+    for part in statement.named_children:
+        variables = (
+            next(
+                (c for c in part.named_children if c.type == cs.TS_LUA_VARIABLE_LIST),
+                part,
+            )
+            if part.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+            else part
+        )
+        names |= _identifiers(variables.children_by_field_name(cs.FIELD_NAME))
+    return names
+
+
+def _scope_names(scope: Node) -> set[str]:
+    """The parameters of a function, or the variables of a `for` loop."""
+    if scope.type in (cs.TS_LUA_FUNCTION_DECLARATION, cs.TS_LUA_FUNCTION_DEFINITION):
+        params = scope.child_by_field_name(cs.FIELD_PARAMETERS)
+        return _identifiers(params.named_children) if params is not None else set()
+    clause = (
+        scope.child_by_field_name(cs.TS_LUA_FIELD_CLAUSE)
+        if scope.type == cs.TS_LUA_FOR_STATEMENT
+        else None
+    )
+    if clause is None:
+        return set()
+    names = _identifiers(clause.children_by_field_name(cs.FIELD_NAME))
+    for variables in clause.named_children:
+        if variables.type == cs.TS_LUA_VARIABLE_LIST:
+            names |= _identifiers(variables.children_by_field_name(cs.FIELD_NAME))
+    return names
+
+
+def _identifiers(nodes: list[Node]) -> set[str]:
+    return {
+        text
+        for node in nodes
+        if node.type == cs.TS_LUA_IDENTIFIER and (text := safe_decode_text(node))
+    }

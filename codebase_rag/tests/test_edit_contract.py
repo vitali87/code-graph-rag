@@ -70,12 +70,12 @@ def _dangling(path: str = "pkg/app.py", line: int = 5) -> dict[str, object]:
     }
 
 
-def _site(path: str, line: int, verdict: str) -> dict[str, object]:
+def _site(path: str, line: int, verdict: str, col: int = 11) -> dict[str, object]:
     return {
         "caller": "p.pkg.app.run",
         "path": path,
         "line": line,
-        "col": 11,
+        "col": col,
         "arg_count": 2,
         "kwarg_names": [],
         "declared_count": 1,
@@ -385,6 +385,22 @@ def test_rename_refuses_silently_rewritten_heuristic_sites() -> None:
     assert verify(allowed, delta, rewritten=rewritten).ok
 
 
+def test_change_signature_refuses_silently_rewritten_heuristic_sites() -> None:
+    # The same leave a rename carries: without it, `allow_heuristic` on a
+    # signature change rewrote the guessed site and the contract then undid
+    # the whole change for having done what it was told.
+    delta = _delta(
+        symbols={"added": [], "removed": [], "renamed": [], "changed": ["p.h"]}
+    )
+    rewritten = [("pkg/app.py:5", "exact"), ("pkg/other.py:9", "heuristic")]
+    strict = verify(change_signature_expectation([]), delta, rewritten=rewritten)
+    assert strict.failures == (
+        cs.CONTRACT_HEURISTIC_REWRITTEN.format(sites="pkg/other.py:9"),
+    )
+    allowed = change_signature_expectation([], heuristic_allowed=True)
+    assert verify(allowed, delta, rewritten=rewritten).ok
+
+
 def test_change_signature_requires_every_site_mapped_or_listed() -> None:
     change = {
         "qualified_name": "p.pkg.util.helper",
@@ -410,21 +426,59 @@ def test_change_signature_requires_every_site_mapped_or_listed() -> None:
     strict = verify(change_signature_expectation([]), delta)
     assert strict.failures == (
         cs.CONTRACT_SITES_UNMAPPED.format(
-            sites="pkg/app.py:9 (possibly_missing), pkg/cli.py:3 (too_many)"
+            sites="pkg/app.py:9:11 (possibly_missing), pkg/cli.py:3:11 (too_many)"
         ),
     )
     listed = verify(
-        change_signature_expectation(["pkg/app.py:9", "pkg/cli.py:3"]), delta
+        change_signature_expectation(["pkg/app.py:9:11", "pkg/cli.py:3:11"]), delta
     )
     assert listed.ok
     # A site the operation rewrote is mapped by construction: a
     # `possibly_missing` there relies on a default the mapping supplied.
     rewritten = verify(
-        change_signature_expectation(["pkg/cli.py:3"]),
+        change_signature_expectation(["pkg/cli.py:3:11"]),
         delta,
-        rewritten=[("pkg/app.py:9", "exact")],
+        rewritten=[("pkg/app.py:9:11", "exact")],
     )
     assert rewritten.ok
+
+
+def test_change_signature_tells_two_calls_on_one_line_apart() -> None:
+    # `helper(1) + helper(2)`: rewriting or listing one call must not cover
+    # the other, so the site's identity carries its column.
+    change = {
+        "qualified_name": "p.pkg.util.helper",
+        "path": "pkg/util.py",
+        "before": ["a"],
+        "after": ["a", "b"],
+        "sites": [
+            _site("pkg/app.py", 9, cs.DELTA_ARITY_POSSIBLY_MISSING, col=4),
+            _site("pkg/app.py", 9, cs.DELTA_ARITY_POSSIBLY_MISSING, col=20),
+        ],
+    }
+    delta = _delta(
+        symbols={
+            "added": [],
+            "removed": [],
+            "renamed": [],
+            "changed": ["p.pkg.util.helper"],
+        },
+        signature_changes=[change],
+    )
+    one_rewritten = verify(
+        change_signature_expectation([]),
+        delta,
+        rewritten=[("pkg/app.py:9:4", "exact")],
+    )
+    assert one_rewritten.failures == (
+        cs.CONTRACT_SITES_UNMAPPED.format(sites="pkg/app.py:9:20 (possibly_missing)"),
+    )
+    one_listed = verify(
+        change_signature_expectation(["pkg/app.py:9:4"]),
+        delta,
+        rewritten=[("pkg/app.py:9:20", "exact")],
+    )
+    assert one_listed.ok
 
 
 def test_move_requires_no_new_cycle_and_updated_importers() -> None:
