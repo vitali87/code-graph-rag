@@ -434,6 +434,40 @@ def _is_js_star_reexport(site: PropertyDict | None) -> bool:
     )
 
 
+def _is_module_exports(node: Node | None) -> bool:
+    # `module.exports` as an assignment target.
+    if node is None or node.type != cs.TS_MEMBER_EXPRESSION:
+        return False
+    target = node.child_by_field_name(cs.FIELD_OBJECT)
+    prop = node.child_by_field_name(cs.FIELD_PROPERTY)
+    return (
+        target is not None
+        and prop is not None
+        and safe_decode_text(target) == cs.JS_MODULE_KEYWORD
+        and safe_decode_text(prop) == cs.JS_EXPORTS_KEYWORD
+    )
+
+
+def _renamed_object_pairs(obj: Node) -> Iterator[tuple[str, str]]:
+    # The (exported, local) names of each `key: binding` pair whose value is
+    # a plain identifier naming something else.
+    for pair in obj.named_children:
+        if pair.type != cs.TS_PAIR:
+            continue
+        key = pair.child_by_field_name(cs.FIELD_KEY)
+        value = pair.child_by_field_name(cs.FIELD_VALUE)
+        if (
+            key is None
+            or value is None
+            or key.type != cs.TS_PROPERTY_IDENTIFIER
+            or value.type != cs.TS_IDENTIFIER
+        ):
+            continue
+        name, binding = safe_decode_text(key), safe_decode_text(value)
+        if name and binding and name != binding:
+            yield name, binding
+
+
 def _load_jsonc(path: Path) -> dict | None:
     # tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first,
     # then fall back to stripping comments/trailing commas. The naive strip can
@@ -1591,6 +1625,7 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TSX
                 ):
                     self._parse_js_ts_imports(captures, module_qn)
+                    self._record_commonjs_export_object(root_node, module_qn)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -3947,6 +3982,33 @@ class ImportProcessor:
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+
+    def _record_commonjs_export_object(self, root: Node, module_qn: str) -> None:
+        """Record the bindings a top-level `module.exports = { ... }` renames.
+
+        `module.exports = { renamed: beta }` publishes `beta` under the name
+        `renamed`, as `export { beta as renamed }` does, so it joins the same
+        export table: a consumer's `renamed()` then reaches `beta` (issue
+        #2984). A shorthand `{ alpha }` names its own binding already.
+        """
+        exported: dict[str, JsExport] = {}
+        for statement in root.named_children:
+            if statement.type != cs.TS_EXPRESSION_STATEMENT:
+                continue
+            for expression in statement.named_children:
+                if expression.type != cs.TS_ASSIGNMENT_EXPRESSION or not (
+                    _is_module_exports(expression.child_by_field_name(cs.TS_FIELD_LEFT))
+                ):
+                    continue
+                value = expression.child_by_field_name(cs.TS_FIELD_RIGHT)
+                if value is None or value.type != cs.TS_OBJECT:
+                    continue
+                for name, binding in _renamed_object_pairs(value):
+                    exported[name] = JsExport(
+                        f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True
+                    )
+        if exported:
+            self.js_export_bindings.setdefault(module_qn, {}).update(exported)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
