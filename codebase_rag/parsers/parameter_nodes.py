@@ -301,13 +301,6 @@ def _js_ts_typed_slot(node: Node, slots: _Slots) -> None:
 
 # --- C / C++ -----------------------------------------------------------------
 
-_C_FAMILY_PARAMETER_DECLARATIONS = frozenset(
-    {
-        cs.CppNodeType.PARAMETER_DECLARATION,
-        cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
-        cs.CppNodeType.VARIADIC_PARAMETER_DECLARATION,
-    }
-)
 _C_FAMILY_DEFINITIONS = frozenset(
     {cs.CppNodeType.FUNCTION_DEFINITION, cs.TS_CPP_DECLARATION}
 )
@@ -322,14 +315,14 @@ def c_cpp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     `extract_type_facts` gives a C/C++ return type. A C `...` and an unnamed
     parameter keep their positions; a pack (`Args&&... args`) is one variadic
     slot. A C++ C-style `...` is an anonymous token and takes no position."""
-    params = _c_family_parameter_list(func_node)
+    params = c_family_parameter_list(func_node)
     if params is None:
         return []
     slots = _Slots()
     for decl in params.named_children:
         if decl.type == cs.CppNodeType.VARIADIC_PARAMETER:
             slots.skip()
-        elif decl.type in _C_FAMILY_PARAMETER_DECLARATIONS:
+        elif decl.type in cs.CPP_PARAMETER_DECLARATION_TYPES:
             slots.add(
                 _c_family_name_node(decl.child_by_field_name(cs.FIELD_DECLARATOR)),
                 _field_type_text(decl),
@@ -339,7 +332,7 @@ def c_cpp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     return slots.declared
 
 
-def _c_family_parameter_list(func_node: Node) -> Node | None:
+def c_family_parameter_list(func_node: Node) -> Node | None:
     node = func_node
     if node.type == cs.TS_CPP_TEMPLATE_DECLARATION:
         # `template<...> void f(...)`: the definition is the wrapped child.

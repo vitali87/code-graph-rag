@@ -8,6 +8,8 @@ The knowledge graph uses a unified schema across all supported languages.
 
 ## Node Types
 
+A label marked opt-in belongs to a [capture group](#capture-groups) that a default index leaves out, so it appears only once that group is enabled.
+
 <!-- SECTION:node_schemas -->
 | Label | Properties |
 |-----|----------|
@@ -17,7 +19,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
-| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
 | Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
@@ -27,15 +29,16 @@ The knowledge graph uses a unified schema across all supported languages.
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
-| Resource | `{qualified_name: string, name: string, kind: string}` |
+| Resource (opt-in: [`io`](#capture-groups)) | `{qualified_name: string, name: string, kind: string}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
-| Pattern | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| CodeSmell | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| SecurityIssue | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| Gloss | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
-| Parameter | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
-| Field | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
-| EnumVariant | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
+| Pattern (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| CodeSmell (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| SecurityIssue (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| Gloss (opt-in: [`glosses`](#capture-groups)) | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
+| Parameter (opt-in: [`parameters`](#capture-groups)) | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
+| Field (opt-in: [`fields`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
+| EnumVariant (opt-in: [`enum_variants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
+| Constant (opt-in: [`constants`](#capture-groups)) | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, value: string?}` |
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
@@ -47,6 +50,8 @@ The knowledge graph uses a unified schema across all supported languages.
 `Pattern`, `CodeSmell`, and `SecurityIssue` are ast-grep finding nodes, captured only when the `findings` capture group is enabled.
 
 ## Relationships
+
+Every relationship type belongs to exactly one [capture group](#capture-groups). A relationship marked opt-in belongs to a group that a default index leaves out, so it appears only once that group is enabled.
 
 <!-- SECTION:relationship_schemas -->
 | Source | Relationship | Target |
@@ -73,23 +78,24 @@ The knowledge graph uses a unified schema across all supported languages.
 | Module, Function, Method | CALLS | Function, Method, Enum, Type |
 | Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
-| Module, Function, Method | READS_FROM | Resource |
-| Module, Function, Method | WRITES_TO | Resource |
-| Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
-| Function, Method, File | EXPOSES | Resource |
-| Resource | RESOLVES_TO | Resource |
-| Module | IMPLEMENTS_PATTERN | Pattern |
-| Module | HAS_SMELL | CodeSmell |
-| Module | HAS_VULNERABILITY | SecurityIssue |
-| Gloss | ANNOTATES | Module, Class, Function, Method, Interface, Enum, Type, Union |
-| Gloss | MENTIONS | Module, Class, Function, Method, Interface, Enum, Type, Union |
-| Function, Method | HAS_PARAMETER | Parameter |
-| Class, Interface, Enum, Type, Union | HAS_FIELD | Field |
-| Enum | HAS_VARIANT | EnumVariant |
-| Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
+| Module, Function, Method | READS_FROM (opt-in: [`io`](#capture-groups)) | Resource |
+| Module, Function, Method | WRITES_TO (opt-in: [`io`](#capture-groups)) | Resource |
+| Module, Function, Method, Resource | FLOWS_TO (opt-in: [`io`](#capture-groups)) | Module, Function, Method, Resource |
+| Function, Method, File | EXPOSES (opt-in: [`io`](#capture-groups)) | Resource |
+| Resource | RESOLVES_TO (opt-in: [`io`](#capture-groups)) | Resource |
+| Module | IMPLEMENTS_PATTERN (opt-in: [`findings`](#capture-groups)) | Pattern |
+| Module | HAS_SMELL (opt-in: [`findings`](#capture-groups)) | CodeSmell |
+| Module | HAS_VULNERABILITY (opt-in: [`findings`](#capture-groups)) | SecurityIssue |
+| Gloss | ANNOTATES (opt-in: [`glosses`](#capture-groups)) | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Gloss | MENTIONS (opt-in: [`glosses`](#capture-groups)) | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Function, Method | HAS_PARAMETER (opt-in: [`parameters`](#capture-groups)) | Parameter |
+| Class, Interface, Enum, Type, Union | HAS_FIELD (opt-in: [`fields`](#capture-groups)) | Field |
+| Enum | HAS_VARIANT (opt-in: [`enum_variants`](#capture-groups)) | EnumVariant |
+| Module | DEFINES_CONSTANT (opt-in: [`constants`](#capture-groups)) | Constant |
+| Parameter, Field, Constant | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 
-`REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
+`REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict, a Java method reference such as `Acc::add`). `INSTANTIATES` records a class being constructed; a Java constructor reference (`Acc::new`) instantiates its class and references each declared constructor. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
 
 ### Edge-site properties
 
@@ -98,12 +104,15 @@ The knowledge graph uses a unified schema across all supported languages.
 | Edge types | Property | Meaning |
 |---|---|---|
 | CALLS, REFERENCES, INSTANTIATES, IMPORTS | `line: int`, `col: int`, `end_line: int`, `end_col: int` | Span of the producing expression (the call, the referencing name, the constructor invocation) or of the import statement. Lines are 1-based, columns 0-based and the end is exclusive, matching node `start_line` / `start_col`. |
-| CALLS, REFERENCES, INSTANTIATES | `arg_count: int?`, `kwarg_names: list[string]?` | Present when the site has an argument list: the number of arguments passed (positional plus keyword) and the keyword names in source order. A reference site (a bare function value) carries neither. |
+| CALLS, REFERENCES, INSTANTIATES | `arg_count: int?`, `kwarg_names: list[string]?` | Present when the site has an argument list: the number of arguments passed (positional plus keyword) and the keyword names in source order. A Python `*rest` or `**opts` unpacking is not counted: it passes an unknown number of arguments, and `star_args` / `star_kwargs` record it instead. A reference site (a bare function value) carries neither. |
+| CALLS, REFERENCES, INSTANTIATES | `star_args: boolean?`, `star_kwargs: boolean?` | `true` when the Python argument list unpacks a sequence (`f(*rest)`) or a mapping (`f(**opts)`); absent otherwise (issue #2635). The arguments written beside a `*rest` are a lower bound on the positionals passed, which is how `cgr check` reads them. |
 | IMPORTS | `alias: string?` | The name the statement binds in the importing scope: the `as` name when renamed, otherwise the imported symbol or module name. Wildcard imports and Go dot-imports bind no name and carry no alias. |
 | IMPORTS | `imported_name: string?` | For symbol-level imports (`from x import y`, `import { y as z }`, `use a::b::y`, Java `import a.b.C`, `const { y } = require(...)`) the symbol's own name; `*` for wildcards; absent for whole-module imports. |
 | CALLS, REFERENCES, INSTANTIATES | `resolution: string?` | How the edge was bound (issue #1526): `exact` (scope, import, type or signature), `overload` (one edge per same-named candidate), `heuristic` (name-only: trie suffix, wildcard import, package member), `trace_confirmed` (a static edge a runtime trace observed), `dynamic` (a call only a trace saw). Absent on edges emitted before the label existed; they rank as `exact`. |
 | INHERITS, IMPLEMENTS (C#) | `resolution: string?` | `heuristic` when neither the class's namespace, an enclosing namespace, nor a `using` alias or namespace declares the base, and it was bound by a project-wide name match instead (issue #2534). Absent when scope resolved it. |
 | CALLS (`dynamic` only) | `dispatch_literal: boolean?`, `unlocatable: boolean?` | `dispatch_literal: true` with `line`/`col` pointing at the `getattr(obj, "name")` argument or the registry-key literal the call went through; `unlocatable: true` when the caller's own body (nested definitions excluded) holds no such literal, or more than one, since two candidates cannot be told apart statically. |
+| CALLS, REFERENCES, INSTANTIATES | `spread_args: boolean?` | `true` when a TypeScript, JavaScript, PHP or Go call passes a number of values its written arguments do not show: `f(...xs)`, `f(...$xs)`, `f(xs...)`, a Go call whose lone argument is itself a call (`f(pair())` passes every result of `pair`), or a tagged template, which passes its strings array and one value per substitution. `arg_count` keeps what is written; absent otherwise (issue #2517). `cgr check` gives such a site no definite arity verdict. |
+| CALLS, REFERENCES, INSTANTIATES | `call_qualifier: string?` | What a Rust or C# call is written through: the last name of a Rust path (`S` in `S::m(s, 1)`, `Self`, `<S as Trait>`) or of a C# member call's left side when that name binds no local, parameter, field or property at the call (`Util` in `Util.Ext(s, 1)`), and `""` when the left side is a value (every Rust `s.m(1)`; C# `s.Ext(1)` for a parameter `s`, `"x".Ext(1)`, `this.Ext(1)`, `s?.Ext(1)`). Absent for a bare call and in other languages (issue #2517). `cgr check` reads it to count a Rust `self` or C# extension receiver only where the call passes it. |
 
 Sites are stored as **one edge per site**: a function that calls `g` twice has two `CALLS` edges to `g`, one per call expression, and `from x import a, b` yields two `IMPORTS` edges to `x` (same statement span, different `alias`). The site properties join the write-time `MERGE` key (`line`, `col`; plus `alias` for `IMPORTS`), the same mechanism that keeps parallel `FLOWS_TO` edges apart, so re-indexing is idempotent. A query that wants callers rather than call sites should `DISTINCT` on the endpoint; a query that wants the sites reads `r.line`.
 
@@ -122,6 +131,17 @@ absent, not empty, for languages the extractor does not read (Python,
 TypeScript/JavaScript, Go, Java, Rust, C# and, return type only, C/C++ are
 read). Receivers (`self`, `&self`) count as a parameter with `""`.
 
+`positional_params` lists a Python definition's positional parameter names
+as CPython counts them, receiver included (issue #227). TypeScript,
+JavaScript, Go, Rust, PHP, Java and C# definitions list every parameter a
+call fills, marked with the optionality the signature declares (issue
+#2517): `pad?` may be left out, `...rest` takes any number of trailing
+arguments, and `self` (Rust) or `this s` (a C# extension method) is a
+receiver one call form passes and another does not. The property is absent,
+never empty, for every other language and for a bodiless TypeScript
+signature, which reads as "kinds unknown". `cgr check` compares the lists to
+report [signature changes](structural-delta.md#signatures-outside-python).
+
 The names an annotation mentions are resolved after every file is parsed:
 through the module's imports first, then the module and its enclosing
 modules, then a unique project type of that name (two equally near
@@ -129,6 +149,60 @@ candidates stay unresolved rather than guessed). Each resolved name yields
 one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.
+
+## Capture Groups
+
+Which parts of the schema above an index writes is chosen per capture group. Every relationship type belongs to exactly one group; a node label a group owns is written only while at least one of that group's relationships is enabled, and a label no group owns is always written. A default index enables the groups marked ✓. The others are opt-in: until the repository is indexed with one of them, a query for its labels or relationships, such as `MATCH (f)-[:HAS_PARAMETER]->(p)`, returns nothing.
+
+<!-- SECTION:capture_groups -->
+| Group | Default | Node labels | Relationships | Description |
+|-----|-------|-----------|-------------|-----------|
+| `structure` | ✓ | - | CONTAINS_PACKAGE, CONTAINS_FOLDER, CONTAINS_FILE, CONTAINS_MODULE, CONTAINS_SECTION, DEFINES, DEFINES_METHOD | The containment tree from the project down to modules and document sections, and what each module, class or function defines. |
+| `calls` | ✓ | - | CALLS, REFERENCES, INSTANTIATES | Call sites, functions and classes used as values, and class instantiations. |
+| `types` | ✓ | - | IMPLEMENTS_MODULE, INHERITS, IMPLEMENTS, OVERRIDES, RETURNS, ACCEPTS | Inheritance, interface and module implementation, method overrides, and the project types a signature returns or accepts. |
+| `imports` | ✓ | - | IMPORTS, EXPORTS, EXPORTS_MODULE, DEPENDS_ON_EXTERNAL, LINKS_TO | Imports and exports between modules, the project's external package dependencies, and document links to files. |
+| `io` | - | Resource | READS_FROM, WRITES_TO, FLOWS_TO, EXPOSES, RESOLVES_TO | External resources code reads, writes or exposes (files, environment variables, network, databases, endpoints), value flow between them, and client calls resolved to the endpoints they reach. |
+| `findings` | - | Pattern, CodeSmell, SecurityIssue | IMPLEMENTS_PATTERN, HAS_SMELL, HAS_VULNERABILITY | ast-grep findings on each module: design patterns, code smells and security issues. |
+| `glosses` | - | Gloss | ANNOTATES, MENTIONS | Notes agents write about definitions with the annotate MCP tool, rather than anything parsed from source. |
+| `parameters` | - | Parameter | HAS_PARAMETER, OF_TYPE | One node per declared parameter of a function or method, and the OF_TYPE edge from a parameter or field to the project type its annotation names. |
+| `fields` | - | Field | HAS_FIELD | One node per field of a class, interface, enum, type or union. A field's OF_TYPE edge belongs to parameters, so field types need both. |
+| `enum_variants` | - | EnumVariant | HAS_VARIANT | One node per enum member, with its position and value. |
+| `constants` | - | Constant | DEFINES_CONSTANT | One node per module-level constant, with its declared type and value. A constant's OF_TYPE edge belongs to parameters, so constant types need both. |
+<!-- /SECTION:capture_groups -->
+
+### Choosing Groups
+
+Every indexing run reads the selection from the `CGR_CAPTURE` environment variable, whose tokens are separated by commas, semicolons or spaces. `cgr start --update-graph` and `cgr index` also take `--capture`, repeatable and comma-separated (`--capture none,structure`), applied after `CGR_CAPTURE`. Tokens apply left to right, starting from the default groups:
+
+| Token | Effect |
+|-------|--------|
+| `GROUP`, `+GROUP` | Add the group. |
+| `-GROUP` | Drop the group. |
+| `TYPE`, `+TYPE` | Add one relationship type, such as `+HAS_PARAMETER`. |
+| `-TYPE` | Drop one relationship type, such as `-OVERRIDES`. |
+| `all` | Enable every group. |
+| `none` | Disable every group, so the tokens after it build the selection from nothing. |
+
+Names are case-insensitive. A name that is both a group and a relationship type is read as the group, so `-calls` and `-CALLS` both drop `CALLS`, `REFERENCES` and `INSTANTIATES`. Node labels are not tokens: `+Parameter` is not recognised, while the group `parameters` is. A bare group is added to what is already enabled, so naming a default group changes nothing and logs a warning saying so; put `none` first to capture only that group. A `--capture` token that names neither a group nor a relationship type is a usage error, and the command stops before indexing anything. In `CGR_CAPTURE`, which long-running servers also read, such a token is skipped with the warning `Ignoring unknown capture token`, and the rest of the selection still applies.
+
+```bash
+# The defaults plus Parameter and Field nodes
+cgr start --repo-path . --update-graph --capture parameters --capture fields
+# Every group
+cgr index --repo-path . -o ./index-out --capture all
+# Only the containment tree and definitions
+CGR_CAPTURE=none,structure cgr start --repo-path . --update-graph
+# The defaults without OVERRIDES edges
+cgr start --repo-path . --update-graph --capture -OVERRIDES
+```
+
+![cgr start --update-graph --capture parameters --capture fields on pallets/itsdangerous, then cgr stats listing the new Parameter and Field nodes and HAS_PARAMETER, HAS_FIELD and OF_TYPE relationships](../assets/demos/graph-schema-capture.gif)
+
+![CGR_CAPTURE=none,structure cgr start --update-graph on pallets/itsdangerous, then cgr stats showing only the containment tree and DEFINES relationships](../assets/demos/graph-schema-capture-structure.gif)
+
+*Recorded on pallets/itsdangerous.*
+
+The selection is part of the parser fingerprint, so enabling a group on an indexed project needs no `--clean`: the next `--update-graph` re-parses the project once and writes the group's nodes and relationships (see [Document Support](language-support.md#document-support-document-tier)).
 
 ## Resource Kinds
 
@@ -159,7 +233,7 @@ its head key.
 
 ## I/O and Data-Flow Edges
 
-The `io` capture group (opt-in; excluded from the default capture set) adds three relationships that model how code touches external resources and how values move between them.
+The `io` capture group (opt-in; excluded from the default capture set) adds the relationships that model how code touches external resources and how values move between them: the three below, and `EXPOSES` and `RESOLVES_TO` from [Resource Kinds](#resource-kinds).
 
 `READS_FROM` and `WRITES_TO` connect a callable to a `Resource` it reads from or writes to (for example `os.getenv("K")` reads the `ENV` resource, `print(x)` writes the `STDOUT` resource).
 
@@ -250,15 +324,17 @@ right one.
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
 
+A JavaScript or TypeScript named function expression whose value is not stored under that same name (a callback argument such as `app.use(function createError (req, res, next) {...})`, a return value, `var g = function f () {}`) carries `is_body_scoped_name: true`. Its name is in scope inside its own body only, so a bare call by that name resolves to it from there (recursion). Anywhere else the name reaches it only as one `@line` variant of a same-named definition that does bind the name (see Qualified Name Uniqueness below).
+
 Methods of classes defined inside function bodies are captured only when `CGR_CAPTURE_LOCAL_DEFINITIONS` is enabled, which is the default (see [Configuration](../getting-started/configuration.md)); function-local *classes* are always captured, and setting the flag to `false` skips their methods.
 
 ## Qualified Name Uniqueness
 
 `qualified_name` uniquely identifies each `Function`, `Method`, and `Class` node. When the same qualified name is defined more than once in a module, every definition is kept as a distinct node. This happens with the `if has_x(): ... else: ...` import-fallback idiom, `typing.overload`, and `try/except ImportError` fallbacks.
 
-The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant.
+The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant. Source order decides across labels too: a Python `class Tool` followed by a same-named `def Tool` in an `if` block (a docs or `TYPE_CHECKING` shim) keeps `m.Tool` for the class, and the `def` becomes `m.Tool@<line>`.
 
-A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
+A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target. When a Python name has both a class and a function variant, a call such as `Tool()` records `INSTANTIATES` to each class variant and `CALLS` to each function variant, and a method call on the result (`Tool().run()`) resolves through the class. A bare decorator `@Tool` runs `Tool(func)` and binds the same way: the module `INSTANTIATES` a class decorator (and `CALLS` its `__init__`), whether or not a same-named function shares its name.
 
 A C# method or constructor with parameters carries its parameter signature, generic arguments included, so overloads are distinct nodes rather than `@<start_line>` variants: `Validator.Validate(T)` and `Validator.Validate(Ctx<T>)`. An explicit interface implementation (`int IValidator.Validate(Ctx context)`) is named after the interface it implements, `Validator.IValidator#Validate(Ctx)`, in the documentation-ID spelling where a dot of the interface path is written `#`. Only an `IValidator`-typed receiver reaches it, so a call on the class never binds it, and it `OVERRIDES` the interface member. A member call is matched to an overload by its argument types, with the receiver's type arguments substituted (`T` is `Person` on `class PersonValidator : Validator<Person>`). When no overload has the call's arity, the overloads that take it through defaulted parameters or a `params` tail are matched the same way, so `v.ValidateAsync(person)` binds `ValidateAsync(T, CancellationToken)`. When the arguments fit several overloads equally, the call takes an `overload` edge to each.
 
@@ -277,6 +353,7 @@ Language notes:
 - **C/C++ hybrid mode** (the default: `CPP_FRONTEND=hybrid`; `libclang` forces the pure libclang frontend and `treesitter` disables libclang entirely; the libclang bindings ship in the `cpp` extra, `pip install "code-graph-rag[cpp]"`): tree-sitter remains the backbone (every file gets its tree-sitter definitions and calls; nothing is skipped) and libclang layers on only macro `Function` nodes and `#include` `IMPORTS` edges, whose qualified names are identical between the two schemes. Macro uses are attributed to the tightest enclosing tree-sitter definition span after the definition pass, so macro `CALLS` edges join the qualified-name scheme the rest of the graph uses.
 - **C#**: a namespace that mirrors the file's directory is not repeated in the qualified name: `src/Serilog/Capturing/PropertyBinder.cs` under `namespace Serilog.Capturing` is `proj.src.Serilog.Capturing.PropertyBinder.PropertyBinder`, not `…PropertyBinder.Serilog.Capturing.PropertyBinder`. A namespace the directory does not spell stays in the qualified name, so two same-named types in one file remain distinct. The declared namespace is always on the type node as `namespace`, and `resolve` finds a type by `<namespace>.<name>` through it.
 - **C# hybrid mode** (opt-in: the default is `CSHARP_FRONTEND=treesitter`; selecting `auto` uses hybrid mode when `dotnet` is on PATH, while `hybrid`/`roslyn` explicitly request Roslyn-backed analysis; unavailable toolchains fall back to tree-sitter): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site. See the [security model](security.md#repository-parsing-and-toolchains) before enabling toolchain-backed analysis on untrusted repositories.
+- **Java** (default `JAVA_FRONTEND=heuristic`): a call to same-arity overloads is bound by the argument types the parser can see: literals, declared and cast types, and widening up the project's own classes and interfaces or common JDK collection, map and reflection types. Overloads a class inherits compete with the ones it declares. When the argument types cannot tell candidates apart, each tied overload gets a `CALLS` edge labelled `overload` instead of the first declaration getting one labelled `exact`. The same happens when a candidate the parser cannot rule out could beat the pick: a type-variable parameter, or a JDK supertype outside that table (an `IOException` argument beside `f(Throwable)` and `f(Object)`).
 
 ## Language-Specific AST Mappings
 
