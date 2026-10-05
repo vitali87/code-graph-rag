@@ -16,9 +16,17 @@ TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
 
 TS_JAVA_CAST_EXPRESSION = "cast_expression"
 
+# `Type::m`, `expr::m`, `this::m`, `super::m`, `Type::new` (issue #2546). The
+# grammar gives the node no fields: the receiver is its first child and the
+# referenced name its last, the `new` keyword token for a constructor reference.
+TS_JAVA_METHOD_REFERENCE = "method_reference"
+TS_JAVA_NEW_KEYWORD = "new"
+
 # Java tree-sitter node types
 TS_FORMAL_PARAMETER = "formal_parameter"
 TS_SPREAD_PARAMETER = "spread_parameter"
+# A method's parameter list; a lambda's may be `inferred_parameters` instead.
+TS_JAVA_FORMAL_PARAMETERS = "formal_parameters"
 TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
 TS_FIELD_DECLARATION = "field_declaration"
 # An interface field. The grammar names it after what it implicitly is
@@ -312,12 +320,62 @@ JAVA_REFERENCE_SUPERTYPES: dict[str, tuple[str, ...]] = {
     "String": ("CharSequence", "Comparable", "Serializable"),
 }
 JAVA_TYPE_OBJECT_NAME = "Object"
+# What every array type widens to besides Object (JLS 4.10.3).
+JAVA_ARRAY_SUPERTYPES = frozenset({"Cloneable", "Serializable"})
+# How a variable-arity parameter's type reads in a method signature (`m(T...)`).
+JAVA_VARARGS_SUFFIX = "..."
 # Lower is more specific; the resolver prefers the smallest total across args.
 JAVA_RANK_EXACT = 0
 JAVA_RANK_WIDENED = 1
 JAVA_RANK_BOXED = 2
 JAVA_RANK_SUPERTYPE = 3
 JAVA_RANK_OBJECT = 4
+# A conversion that can be neither proven nor ruled out: the argument's type
+# hierarchy is not fully visible, or the parameter is a type variable. It is
+# counted apart from the ranks above, and a candidate that has one stays in
+# contention with a proven pick it could outrank (issue #2548).
+JAVA_RANK_UNPROVEN = 5
+
+# Direct supertypes of common JDK reference types, by simple name, so an
+# argument such as `new LinkedHashMap<>()` reaches a `Map` parameter through
+# HashMap and AbstractMap. Each lists only what its other entries do not
+# imply, because the walk measures specificity by distance. Unlike the table
+# above it is not exhaustive: a parameter type no chain reaches stays unproven
+# rather than ruled out (issue #2548).
+JAVA_LIBRARY_SUPERTYPES: dict[str, tuple[str, ...]] = {
+    "Collection": ("Iterable",),
+    "List": ("Collection",),
+    "Set": ("Collection",),
+    "SortedSet": ("Set",),
+    "NavigableSet": ("SortedSet",),
+    "Queue": ("Collection",),
+    "Deque": ("Queue",),
+    "AbstractCollection": ("Collection",),
+    "AbstractList": ("AbstractCollection", "List"),
+    "AbstractSequentialList": ("AbstractList",),
+    "AbstractSet": ("AbstractCollection", "Set"),
+    "ArrayList": ("AbstractList", "RandomAccess", "Cloneable", "Serializable"),
+    "LinkedList": ("AbstractSequentialList", "Deque", "Cloneable", "Serializable"),
+    "ArrayDeque": ("AbstractCollection", "Deque", "Cloneable", "Serializable"),
+    "HashSet": ("AbstractSet", "Cloneable", "Serializable"),
+    "LinkedHashSet": ("HashSet",),
+    "TreeSet": ("AbstractSet", "NavigableSet", "Cloneable", "Serializable"),
+    "SortedMap": ("Map",),
+    "NavigableMap": ("SortedMap",),
+    "AbstractMap": ("Map",),
+    "HashMap": ("AbstractMap", "Cloneable", "Serializable"),
+    "LinkedHashMap": ("HashMap",),
+    "TreeMap": ("AbstractMap", "NavigableMap", "Cloneable", "Serializable"),
+    "ConcurrentMap": ("Map",),
+    "ConcurrentHashMap": ("AbstractMap", "ConcurrentMap", "Serializable"),
+    "StringBuilder": ("CharSequence", "Appendable", "Serializable"),
+    "StringBuffer": ("CharSequence", "Appendable", "Serializable"),
+    "Class": ("Type", "Serializable"),
+    "GenericArrayType": ("Type",),
+    "ParameterizedType": ("Type",),
+    "TypeVariable": ("Type",),
+    "WildcardType": ("Type",),
+}
 
 # `void m(C this, int b)`: the explicit receiver, which no caller supplies.
 TS_RECEIVER_PARAMETER = "receiver_parameter"
