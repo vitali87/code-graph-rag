@@ -19,6 +19,7 @@ from ...types_defs import (
 )
 from ..utils import module_qn_for_entity, safe_decode_text
 from .utils import (
+    enum_constants,
     extract_class_info,
     extract_method_call_info,
     extract_method_info,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 # The registry kinds a Java type declaration takes; records and annotation
 # types register as CLASS.
 _JAVA_TYPE_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+_JAVA_COMMENTS = frozenset({cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT})
 # The declarations that name every supertype they have. An enum, a record and
 # an annotation type also extend a JDK type nobody wrote down.
 _JAVA_FULLY_DECLARED_TYPES = frozenset(
@@ -813,12 +815,29 @@ class JavaMethodResolverMixin:
         for field_name in parts[1:]:
             next_type = self._lookup_java_field_type(
                 current_type, field_name, module_qn
-            )
+            ) or self._enum_constant_type(current_type, field_name)
             if not next_type:
                 return None
             current_type = next_type
 
         return current_type
+
+    def _enum_constant_type(self, type_qn: str, name: str) -> str | None:
+        # An enum constant's static type is its enum: `Level.HIGH` is a
+        # `Level`, so `Level.HIGH.weight()` is `Level.weight()` (issue #2700).
+        # A constant with a body of its own overrides there; its methods
+        # register as variants of the enum's, which the call fans out to.
+        if self.function_registry.get(type_qn) != NodeType.ENUM or not (
+            owner := module_qn_for_entity(type_qn, self.module_qn_to_file_path)
+        ):
+            return None
+        declaration = self._java_type_declaration(type_qn, owner)
+        if declaration is None or not any(
+            safe_decode_text(constant.child_by_field_name(cs.FIELD_NAME)) == name
+            for constant in enum_constants(declaration)
+        ):
+            return None
+        return type_qn
 
     def _find_parent_class(self, class_qn: str) -> str | None:
         parent_classes = self.class_inheritance.get(class_qn, [])
@@ -838,9 +857,10 @@ class JavaMethodResolverMixin:
         current_dir = current_file.parent
         for candidate_module in candidate_modules:
             candidate_qn = f"{candidate_module}{cs.SEPARATOR_DOT}{class_name}"
+            # An enum is a receiver too: `Level.HIGH.weight()` (issue #2700).
             if candidate_qn not in self.function_registry or self.function_registry[
                 candidate_qn
-            ] not in (NodeType.CLASS, NodeType.INTERFACE):
+            ] not in (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM):
                 continue
             candidate_file = self.module_qn_to_file_path.get(candidate_module)
             if candidate_file and candidate_file.parent == current_dir:
@@ -1707,6 +1727,31 @@ class JavaMethodResolverMixin:
             return None
         return self._declared_return_type_of(resolved[1])
 
+    @staticmethod
+    def _created_receiver(call_node: ASTNode) -> ASTNode | None:
+        # The `new X(...)` a call is made on, through any parentheses.
+        receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        while receiver is not None and receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
+            receiver = next(
+                (c for c in receiver.named_children if c.type not in _JAVA_COMMENTS),
+                None,
+            )
+        if receiver is None or receiver.type != cs.TS_OBJECT_CREATION_EXPRESSION:
+            return None
+        return receiver
+
+    def _created_type_qn(self, creation: ASTNode, module_qn: str) -> str | None:
+        # The registered type a `new` names: generic arguments and the diamond
+        # dropped (`new Box<>(1)`), a member type through its enclosing one
+        # (`new Request.Builder()`).
+        type_node = creation.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return None
+        written = type_node.text.decode(cs.ENCODING_UTF8)
+        base = written.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
+        ref = self._java_member_type_ref(base, module_qn)
+        return ref if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES else None
+
     def _declared_return_type_of(self, method_qn: str) -> str | None:
         open_idx = method_qn.find(cs.CHAR_PAREN_OPEN)
         unsignatured = method_qn[:open_idx] if open_idx >= 0 else method_qn
@@ -1767,6 +1812,17 @@ class JavaMethodResolverMixin:
             # alone, which is how the chain used to land on an unrelated class.
             logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN, object=method_name)
             return None
+
+        if (created := self._created_receiver(call_node)) is not None:
+            # `new Box(3).value()`: the receiver's type is the class it
+            # creates (issue #2700). An unregistered type is a third-party
+            # one, and the call is never `this.value()`.
+            created_type = self._created_type_qn(created, module_qn)
+            if created_type is None:
+                return None
+            return self._resolve_instance_method(
+                created_type, str(method_name), module_qn, arg_count, arg_types
+            )
 
         if not object_ref:
             return self._resolve_unqualified_java_call(
