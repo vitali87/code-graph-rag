@@ -42,6 +42,8 @@ TS_PY_IMPORT_STATEMENT = "import_statement"
 TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_PY_WITH_STATEMENT = "with_statement"
 TS_PY_AS_PATTERN = "as_pattern"
+TS_PY_WITH_CLAUSE = "with_clause"
+TS_PY_WITH_ITEM = "with_item"
 TS_PY_AS_PATTERN_TARGET = "as_pattern_target"
 # The keyword child of an `async with` (and of `async for` / `async def`).
 TS_PY_ASYNC = "async"
@@ -239,6 +241,30 @@ PY_DUNDER_SETITEM = "__setitem__"
 PY_DUNDER_CONTAINS = "__contains__"
 PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
+PY_DUNDER_CALL = "__call__"
+PY_DUNDER_ITER = "__iter__"
+PY_DUNDER_AITER = "__aiter__"
+PY_DUNDER_EXIT = "__exit__"
+PY_DUNDER_AEXIT = "__aexit__"
+# `a < b` calls `a.__lt__(b)`, else the reflection `b.__gt__(a)`.
+PY_COMPARISON_DUNDERS: dict[str, tuple[str, str]] = {
+    "<": ("__lt__", "__gt__"),
+    "<=": ("__le__", "__ge__"),
+    ">": ("__gt__", "__lt__"),
+    ">=": ("__ge__", "__le__"),
+    "==": ("__eq__", "__eq__"),
+    "!=": ("__ne__", "__ne__"),
+}
+PY_UNARY_OPERATOR_DUNDERS: dict[str, str] = {
+    "-": "__neg__",
+    "+": "__pos__",
+    "~": "__invert__",
+}
+# `a += b` is `+` spelled with this suffix; it tries `__iadd__` first.
+PY_AUGMENTED_OPERATOR_SUFFIX = "="
+PY_DUNDER_MARK = "__"
+PY_REFLECTED_DUNDER_PREFIX = "__r"
+PY_INPLACE_DUNDER_PREFIX = "__i"
 # Operands with these characters are not simple attribute/name chains (calls,
 # nested subscripts, whitespace), so the operator-dispatch synthesiser skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
