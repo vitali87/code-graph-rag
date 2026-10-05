@@ -90,6 +90,13 @@ def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     for rel, text in files.items():
         (root / rel).write_text(text, encoding="utf-8")
     parsers, queries = load_parsers()
+    missing = sorted(
+        str(lang.value) for lang in (cs.SupportedLanguage.CPP,) if lang not in parsers
+    )
+    if missing:
+        # A module-scoped fixture runs before the per-test grammar skip
+        # hook is installed, so a base install must skip here.
+        pytest.skip(f"{', '.join(missing)} parser not available")
     store = _StatefulIngestor()
     GraphUpdater(
         ingestor=store,
