@@ -2135,9 +2135,17 @@ class CallResolver:
         owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if self._rust_owner_is(owner, owners, names, method_qn):
             return True
-        return self.function_registry.get(owner) == NodeType.INTERFACE and any(
+        if self.function_registry.get(owner) != NodeType.INTERFACE:
+            return False
+        # The read-back pairs too: a run that re-parsed only the caller has
+        # `impl FloatErrors for u64` in them alone, and `u64::error_halfscale()`
+        # lost the trait method a clean index binds (issue #2403).
+        implementers = self.interface_implementers.get(
+            owner, set()
+        ) | self.rehydrated_interface_implementers.get(owner, set())
+        return any(
             self._rust_owner_is(implementer, owners, names)
-            for implementer in self.interface_implementers.get(owner, ())
+            for implementer in implementers
         )
 
     def _rust_owner_is(
