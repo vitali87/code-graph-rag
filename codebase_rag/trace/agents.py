@@ -25,13 +25,17 @@ AGENT_PATHS: dict[cs.TraceAgent, Path] = {
     cs.TraceAgent.JVM: _JVM,
 }
 
-# Every file the agents consist of, for the packaging check.
-AGENT_FILES: tuple[Path, ...] = (
-    AGENT_PATHS[cs.TraceAgent.C],
-    AGENT_PATHS[cs.TraceAgent.LUA],
-    _DART / "pubspec.yaml",
-    _DART / "pubspec.lock",
-    *sorted((_DART / "bin").glob("*.dart")),
-    _JVM / "MANIFEST.MF",
-    *sorted((_JVM / "src" / "cgr" / "trace").glob("*.java")),
-)
+
+def agent_files() -> tuple[Path, ...]:
+    """Every file the agents consist of, for the packaging check. A function,
+    not a module constant: `cgr trace agent` only prints a path and must not
+    scan the agent directories on every run (Copilot review on PR #2731)."""
+    return (
+        AGENT_PATHS[cs.TraceAgent.C],
+        AGENT_PATHS[cs.TraceAgent.LUA],
+        _DART / "pubspec.yaml",
+        _DART / "pubspec.lock",
+        *sorted((_DART / "bin").glob("*.dart")),
+        _JVM / "MANIFEST.MF",
+        *sorted((_JVM / "src" / "cgr" / "trace").glob("*.java")),
+    )

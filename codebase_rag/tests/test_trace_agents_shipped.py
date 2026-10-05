@@ -51,6 +51,7 @@ _PROBE = (
     "from codebase_rag.trace.cli import cli\n"
     "result = CliRunner().invoke(cli, ['agent', sys.argv[1]])\n"
     "print(result.output.strip())\n"
+    "sys.exit(result.exit_code)\n"
 )
 
 

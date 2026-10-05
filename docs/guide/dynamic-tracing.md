@@ -89,10 +89,11 @@ javac --release 24 -d cgr-jvm-agent "$AGENT"/src/cgr/trace/*.java
 jar cfm cgr-jvm-agent.jar "$AGENT/MANIFEST.MF" -C cgr-jvm-agent .
 ```
 
-Attach it to any JVM workload, most usefully a test run:
+Attach the `cgr-jvm-agent.jar` that built to any JVM workload, most usefully
+a test run (give its absolute path when the workload runs elsewhere):
 
 ```bash
-java -javaagent:/path/to/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
+java -javaagent:./cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
 # Maven:  MAVEN_OPTS='-javaagent:...' mvn test
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
