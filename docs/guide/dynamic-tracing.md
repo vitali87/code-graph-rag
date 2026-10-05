@@ -20,12 +20,36 @@ Pyroscope, OpenTelemetry, `perf`) can be ingested through the same pprof door
 
 ## Recording a trace
 
-The `cgr` package ships a pytest plugin. It is inert unless enabled:
+The `cgr` package ships a pytest plugin. It runs inside your test process, so
+`code-graph-rag` must be importable by the pytest that runs your tests. The
+`uv tool install` or `pipx install` from the installation guide keeps cgr in an
+environment of its own, which your project's pytest cannot see: run as is,
+`pytest --cgr-trace` stops with `error: unrecognized arguments: --cgr-trace`.
+Add the package to the test run instead:
 
 ```bash
 cd /path/to/your-repo
+# a uv-managed project: overlay the package for this run only
+uv run --with code-graph-rag pytest --cgr-trace
+```
+
+In any other virtual environment, install it into the project's test
+environment once (`pip install code-graph-rag`), then enable the plugin, which
+is inert until you do:
+
+```bash
 pytest --cgr-trace
 ```
+
+
+![pytest --cgr-trace on pluggy's test suite, then cgr trace ingest, turning an empty callees list for PluginManager._hookexec into dynamic CALLS edges](../assets/demos/dynamic-tracing-python.gif)
+
+*Recorded on pytest-dev/pluggy, with code-graph-rag installed in the project's test environment.*
+
+The overlay leaves the project's dependencies untouched; installing the package
+adds cgr's own dependencies (pydantic-ai and the rest) to the test
+environment. The `cgr trace ingest` step below runs with the `cgr` you already
+have on your PATH.
 
 This writes `cgr-trace.jsonl` (override with `--cgr-trace-output PATH`). Each
 test's node id is attached to the calls it triggered, so an edge in the graph
@@ -73,6 +97,11 @@ java -javaagent:/path/to/cgr-jvm-agent.jar="include=com.example;repo=/path/to/yo
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
 
+
+![make jvm-agent, then jlox run under the agent and cgr trace ingest, revealing the visitor dispatch from Expr.Call.accept to Interpreter.visitCallExpr](../assets/demos/dynamic-tracing-jvm.gif)
+
+*Recorded on munificent/craftinginterpreters (jlox) with OpenJDK 25, indexed with `--exclude note`.*
+
 Agent arguments are semicolon-separated `key=value` pairs:
 
 | Argument | Meaning |
@@ -103,6 +132,11 @@ node --cpu-prof --cpu-prof-name=run.cpuprofile app.js
 cgr trace convert run.cpuprofile --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+
+![node --cpu-prof on a js-yaml workload, then cgr trace convert and ingest, adding the registry dispatch from Schema.resolveImplicitScalarTag to resolveYamlTimestamp](../assets/demos/dynamic-tracing-node.gif)
+
+*Recorded on nodeca/js-yaml; `app.js` loads and dumps the repository's 7 MB benchmark document.*
 
 Parent/child links in the profile are caller/callee relationships the
 sampler actually observed, so dispatch through registries, event emitters,
@@ -194,6 +228,11 @@ php -d xdebug.mode=trace -d xdebug.start_with_request=yes \
 cgr trace convert run.xt --workload phpunit
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+
+![PHPUnit under Xdebug tracing, then cgr trace convert and ingest, adding the callable-stage call from FingersCrossedProcessor.process to Pipeline.__invoke](../assets/demos/dynamic-tracing-php.gif)
+
+*Recorded on thephpleague/pipeline (PHP 8.3, Xdebug 3.2) with a minimal `phpunit.xml.dist` pointing at `src`.*
 
 Counts are true invocation counts. Xdebug reports call sites rather than
 where functions are defined, so the converter recovers each function's
@@ -289,6 +328,11 @@ cgr trace convert cpu.out --repo-path /path/to/your-repo --workload go-test
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+
+![go test with a CPU profile on google/btree, then cgr trace convert and ingest, adding the edge from BTree.ReplaceOrInsert to the generic BTreeG.ReplaceOrInsert](../assets/demos/dynamic-tracing-go.gif)
+
+*Recorded on google/btree, whose tests live in the root package (`.`).*
+
 Name one package (`./mypkg`), not `./...`: `go test` runs each package's
 test binary from that package's own source directory, so `./...` scatters a
 separate relative `cpu.out` into every package and the converter reads only
@@ -346,6 +390,11 @@ cgr trace convert cpu.pb --language rust \
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+
+![cargo run --release on a pprof-rs harness, then cgr trace convert --language rust and cgr trace ingest](../assets/demos/dynamic-tracing-rust.gif)
+
+*Recorded on fralken/ray-tracing-in-one-weekend with the harness above wrapped around its renderer.*
+
 Sampled stacks make `dyn Trait` dispatch and calls through function pointers
 visible; counts are sample counts, so give the workload enough CPU time. An
 optimized build inlines small functions and turns a pass-through wrapper
@@ -375,6 +424,11 @@ cc -pthread -finstrument-functions -g -O0 your_sources... \
 cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+
+![inih built with the shim and run on its example file, then cgr trace convert and ingest, adding the function-pointer call from ini_parse_stream to the dumper callback](../assets/demos/dynamic-tracing-c.gif)
+
+*Recorded on benhoyt/inih (`examples/ini_dump.c`).*
 
 For a **C++** project, compile the shim with the C compiler (it is C, and a
 C++ driver would compile the `.c` file as C++ and fail) and link the
@@ -501,6 +555,11 @@ cgr trace pull "https://parca.example/...&format=pprof" \
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+
+![cgr trace pull fetching a pprof from a running service's endpoint with --build-id and --label endpoint, then cgr trace ingest](../assets/demos/dynamic-tracing-pull.gif)
+
+*Recorded against a small google/btree service serving Go's `net/http/pprof` endpoint, with `endpoint` pprof labels; no eBPF profiler was available.*
+
 Ingest is idempotent (properties are set, not accumulated), so a cron'd `pull`
 plus `ingest` keeps a continuously refreshing production overlay. **Off-CPU and
 wall-clock** profiles use the same pprof format and convert through the same
@@ -583,6 +642,7 @@ properties:
 | `dynamic_receiver_types` | Concrete receiver types observed for method calls. |
 | `dynamic_sampled` | `true` when the edge came from a sampling profiler (Go pprof, Node.js/V8, .NET `dotnet-trace`, Dart CPU samples), so its presence and `dynamic_call_count` are approximate; `false` when the tracer observed every call (Python, the JVM agent, Xdebug, the C shim, the Lua hook), so counts are exact. |
 | `static_missed: true` | No matching static `CALLS` edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes; a stale or incomplete static graph produces the same flag. |
+| `dynamic_stale` | `false` when ingested. Set to `true` by a later sync that re-parsed a caller or callee whose definition changed since (compared by its `anchor_hash`, so comments and formatting do not count): the edge is kept, but it records what the old code did. Only a new ingest sets it back to `false`. |
 
 An edge with `dynamic: true` and `static_missed: false` is a static edge
 confirmed at runtime. Re-ingesting a trace is idempotent: properties are set,
@@ -598,8 +658,14 @@ does not know are counted per reason instead of being silently dropped.
   traced. The absence of a dynamic edge never means dead code; it means the
   traced workload did not exercise that path.
 - **Staleness.** Dynamic properties describe the commit that was traced.
-  After significant edits, re-run the trace and ingest again; a full graph
-  rebuild with `--clean` discards dynamic edges entirely.
+  An incremental sync (`cgr start --update-graph`, the watcher, the MCP
+  `reingest` tool) keeps them on every re-parsed file: each edge is
+  re-applied by qualified name, confirming the static edge the re-parse
+  produced or staying runtime-only, and is flagged `dynamic_stale: true` when
+  its caller's or callee's definition changed. An edge whose caller or callee
+  no longer exists is dropped. The sync logs a warning with both counts; re-run
+  the trace and ingest again to refresh them. A full graph rebuild with
+  `--clean` discards dynamic edges entirely.
 - **Threading.** Counts are aggregated without locks; heavily threaded
   workloads may undercount, though edge presence is unaffected.
 - **Overhead.** `sys.monitoring` keeps Python tracing cheap enough for test
