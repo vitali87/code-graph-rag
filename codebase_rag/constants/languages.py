@@ -252,6 +252,9 @@ TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
 TS_EXTENDS_KEY = "extends"
+# TypeScript 5 conditions a tsconfig adds to the `exports` keys it selects
+# (issue #2935).
+TS_CUSTOM_CONDITIONS_KEY = "customConditions"
 TSCONFIG_EXTENSION = EXT_JSON
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"

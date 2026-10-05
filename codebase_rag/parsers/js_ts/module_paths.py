@@ -62,11 +62,14 @@ def resolve_js_workspace_import(
     import_path: str,
     repo_path: Path,
     require: bool = False,
+    conditions: frozenset[str] = frozenset(),
 ) -> str | None:
     # Longest package name wins; the remainder of the specifier is the subpath
     # the package's own manifest maps to a file. Returns the repo-relative
     # module path without extension, or None when no first-party package owns
-    # the specifier (every third-party import).
+    # the specifier (every third-party import). `conditions` are the
+    # importer's tsconfig `customConditions`, selectable beside the
+    # module-system ones (issue #2935).
     for name, package_dir in packages:
         if import_path == name:
             subpath = cs.PATH_CURRENT_DIR
@@ -77,16 +80,22 @@ def resolve_js_workspace_import(
             )
         else:
             continue
-        resolved = _package_module(package_dir, subpath, repo_path, require)
+        resolved = _package_module(package_dir, subpath, repo_path, require, conditions)
         if resolved is not None:
             return resolved
     return None
 
 
 def _package_module(
-    package_dir: Path, subpath: str, repo_path: Path, require: bool = False
+    package_dir: Path,
+    subpath: str,
+    repo_path: Path,
+    require: bool = False,
+    conditions: frozenset[str] = frozenset(),
 ) -> str | None:
-    targets = _manifest_targets(_read_manifest(package_dir), subpath, require)
+    targets = _manifest_targets(
+        _read_manifest(package_dir), subpath, require, conditions
+    )
     for target in targets.paths:
         if (module := _source_module(package_dir, target, repo_path)) is not None:
             return module
@@ -120,7 +129,10 @@ def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
 
 
 def _manifest_targets(
-    manifest: dict[str, JsonValue], subpath: str, require: bool = False
+    manifest: dict[str, JsonValue],
+    subpath: str,
+    require: bool = False,
+    conditions: frozenset[str] = frozenset(),
 ) -> _ManifestTargets:
     # Every file the manifest says this subpath names, most specific first.
     # A conditions object (`{"import": .., "require": .., "types": ..}`) points
@@ -130,7 +142,7 @@ def _manifest_targets(
     # through a conventional path, so its mere presence claims every subpath.
     declares_exports = cs.JS_PACKAGE_EXPORTS_KEY in manifest
     matched = _exports_matches(
-        manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath, require
+        manifest.get(cs.JS_PACKAGE_EXPORTS_KEY), subpath, require, conditions
     )
     targets = _ManifestTargets(matched.paths, matched.claimed or declares_exports)
     if not targets.claimed and subpath == cs.PATH_CURRENT_DIR:
@@ -143,14 +155,19 @@ def _manifest_targets(
 
 
 def _exports_matches(
-    exports: JsonValue, subpath: str, require: bool = False
+    exports: JsonValue,
+    subpath: str,
+    require: bool = False,
+    conditions: frozenset[str] = frozenset(),
 ) -> _ManifestTargets:
     # A string, or an object whose keys are all CONDITIONS (`{"import": ..,
     # "require": ..}`) rather than subpaths, declares the package root: it
     # applies whole to `.` and matches no other subpath.
     if isinstance(exports, str) or _is_root_only(exports):
         root = subpath == cs.PATH_CURRENT_DIR
-        return _ManifestTargets(_leaf_targets(exports, require) if root else [], root)
+        return _ManifestTargets(
+            _leaf_targets(exports, require, conditions) if root else [], root
+        )
     if not isinstance(exports, dict):
         return _ManifestTargets([], False)
     matched = [
@@ -173,7 +190,7 @@ def _exports_matches(
         [
             target
             for _exact, _length, value in matched
-            for target in _leaf_targets(value, require)
+            for target in _leaf_targets(value, require, conditions)
         ],
         True,
     )
@@ -215,7 +232,11 @@ def _substitute(value: JsonValue, star: str) -> JsonValue:
     return value
 
 
-def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
+def _leaf_targets(
+    value: JsonValue,
+    require: bool = False,
+    conditions: frozenset[str] = frozenset(),
+) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
@@ -229,13 +250,19 @@ def _leaf_targets(value: JsonValue, require: bool = False) -> list[str]:
         # nest a further conditions map, and when that inner map offers this
         # request nothing, Node abandons the key and carries on to the next
         # rather than failing the whole entry, so an empty branch is skipped.
-        selectable = cs.JS_REQUIRE_CONDITIONS if require else cs.JS_EXPORT_CONDITIONS
+        # A tsconfig's `customConditions` join the selectable set, still in
+        # manifest order, as tsc applies them.
+        selectable = (
+            cs.JS_REQUIRE_CONDITIONS if require else cs.JS_EXPORT_CONDITIONS
+        ) | conditions
         for key, target in value.items():
-            if key in selectable and (leaves := _leaf_targets(target, require)):
+            if key in selectable and (
+                leaves := _leaf_targets(target, require, conditions)
+            ):
                 return leaves
         return []
     if isinstance(value, list):
-        return [t for inner in value for t in _leaf_targets(inner, require)]
+        return [t for inner in value for t in _leaf_targets(inner, require, conditions)]
     return []
 
 
