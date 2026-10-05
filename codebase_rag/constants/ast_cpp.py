@@ -20,6 +20,10 @@ class CppNodeType(StrEnum):
     FUNCTION_DECLARATOR = "function_declarator"
     VARIADIC_PARAMETER = "variadic_parameter"
     POINTER_DECLARATOR = "pointer_declarator"
+    ARRAY_DECLARATOR = "array_declarator"
+    ABSTRACT_POINTER_DECLARATOR = "abstract_pointer_declarator"
+    ABSTRACT_ARRAY_DECLARATOR = "abstract_array_declarator"
+    FIELD_DECLARATION_LIST = "field_declaration_list"
     REFERENCE_DECLARATOR = "reference_declarator"
     # An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)
     # bool sax_parse(...)`) parses as a parenthesized_declarator wrapping
@@ -94,6 +98,14 @@ CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 CPP_TYPE_SPECIFIER_NODE_TYPES = frozenset(
     {"class_specifier", "struct_specifier", "union_specifier"}
 )
+# The tags that can also name a type without defining it: `struct Table *mt;`,
+# `f(struct stat *st)`, `enum color c;` (issue #2615).
+C_ELABORATED_TYPE_NODE_TYPES = CPP_TYPE_SPECIFIER_NODE_TYPES | {TS_ENUM_SPECIFIER}
+# A bodyless tag as the whole of one of these, with no declarator, is a
+# forward declaration (`class Inner;` in a class body), not a use.
+C_FORWARD_DECLARING_NODE_TYPES = frozenset(
+    {CppNodeType.DECLARATION, CppNodeType.FIELD_DECLARATION}
+)
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
@@ -158,6 +170,8 @@ CPP_TYPE_PARAMETER_DECL_TYPES = frozenset(
 TS_CPP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
+# The body of a namespace or an `extern "C++" { }` block.
+TS_CPP_DECLARATION_LIST = "declaration_list"
 TS_CPP_CALL_EXPRESSION = "call_expression"
 TS_CPP_FIELD_EXPRESSION = "field_expression"
 TS_CPP_SUBSCRIPT_EXPRESSION = "subscript_expression"
@@ -197,6 +211,33 @@ TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
 # `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
+# `&fn` / `*p`: the unary address-of or dereference, told apart by its
+# `operator` field. Only address-of names a function it hands over.
+TS_CPP_POINTER_EXPRESSION = "pointer_expression"
+CPP_ADDRESS_OF = "&"
+CPP_DEREFERENCE = "*"
+# Declarators that put a pointer or an array between a declared type and its
+# name (or its unnamed slot): it holds an address, not a value of that type.
+CPP_INDIRECT_DECLARATOR_TYPES = frozenset(
+    {
+        CppNodeType.POINTER_DECLARATOR,
+        CppNodeType.ARRAY_DECLARATOR,
+        CppNodeType.ABSTRACT_POINTER_DECLARATOR,
+        CppNodeType.ABSTRACT_ARRAY_DECLARATOR,
+    }
+)
+# Parameter declarations a C++ parameter list holds, a pack among them.
+CPP_PARAMETER_DECLARATION_TYPES = frozenset(
+    {
+        CppNodeType.PARAMETER_DECLARATION,
+        CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        CppNodeType.VARIADIC_PARAMETER_DECLARATION,
+    }
+)
+# The nodes a free function is declared by: a definition or a prototype.
+CPP_FREE_FUNCTION_DECLARATION_TYPES = frozenset(
+    {CppNodeType.FUNCTION_DEFINITION, CppNodeType.DECLARATION}
+)
 # `return {args};` -- a braced construction of the declared return type.
 TS_CPP_INITIALIZER_LIST = "initializer_list"
 # Stream-insertion operator; a `binary_expression` using it whose left-spine base
@@ -241,6 +282,53 @@ CPP_PREPROC_CONDITIONAL_PATTERN = (
 CPP_PREPROC_OPEN_DIRECTIVES = frozenset({b"if", b"ifdef", b"ifndef"})
 CPP_PREPROC_SPLIT_DIRECTIVES = frozenset({b"elif", b"elifdef", b"elifndef", b"else"})
 
+# Annotation macros written after a declarator (`bool Check() const
+# LOCKS_REQUIRED(mu) {`, `int count_ GUARDED_BY(mu);`, issue #2552). Only a
+# macro can stand there in valid C++, but tree-sitter cannot see the
+# #define and splits the declaration around it. The recovery pass blanks an
+# ALL_CAPS word, with its balanced argument list if it has one, when it
+# sits between a declarator and the token that ends the declaration. The
+# case rule keeps `int ATTR(x) name(void)` (a macro BEFORE the name) from
+# losing its real name.
+CPP_IDENTIFIER_PATTERN = rb"[A-Za-z_][A-Za-z0-9_]*"
+CPP_ANNOTATION_MACRO_PATTERN = rb"_*[A-Z][A-Z0-9_]*"
+# Whitespace and comments between the declarator and the macro (gmock puts
+# the annotation on its own line, sometimes after a `//` note).
+CPP_TRIVIA_PATTERN = rb"(?:\s+|//[^\n]*|/\*.*?\*/)*"
+# A string or character literal: a paren inside one does not count when
+# matching an argument list's closing paren.
+CPP_LITERAL_PATTERN = rb"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"
+CPP_ARGUMENT_TOKEN_PATTERN = CPP_LITERAL_PATTERN + rb"|[()]"
+# Two words in a row (`int a`, `const T& x`) declare a parameter; a macro's
+# arguments are expressions.
+CPP_DECLARED_NAME_PATTERN = rb"\b[A-Za-z_]\w*\s+[A-Za-z_]\w*\b"
+CPP_OPEN_PAREN = b"("
+CPP_CLOSE_PAREN = b")"
+CPP_BLANK_BYTE = ord(" ")
+CPP_LINE_BREAK_BYTES = frozenset(b"\r\n")
+# Declarator suffixes the grammar knows; an annotation may sit on either side
+# of them (`f() LOCKS_REQUIRED(mu) override`), so the scan steps over them
+# without blanking them.
+CPP_DECLARATOR_SUFFIX_KEYWORDS = frozenset(
+    {
+        b"const",
+        b"volatile",
+        b"override",
+        b"final",
+        b"noexcept",
+        b"throw",
+        b"__attribute__",
+        b"__attribute",
+    }
+)
+# What may follow the last annotation: a body, the end of the declaration,
+# `= 0`/`= default`/an initializer, the next declarator, a ctor-initializer.
+CPP_DECLARATOR_END_BYTES = frozenset(b"{;=,:")
+CPP_DECLARATOR_END_KEYWORDS = frozenset({b"try", b"requires"})
+# An annotation's argument list is short; an unbalanced `(` must not send
+# the scan across the rest of the file.
+CPP_ANNOTATION_MAX_ARGUMENT_BYTES = 1024
+
 # Reserved keywords that error recovery can leave in declarator position
 # (nlohmann: a macro access-label followed by `const decltype(MACRO_)`
 # members parses as a function declaration NAMED decltype). None can ever
@@ -275,3 +363,30 @@ TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
 # A C or C++ enum body and its enumerators (issue #1807).
 TS_ENUMERATOR_LIST = "enumerator_list"
 TS_ENUMERATOR = "enumerator"
+
+# Where C names a function as a VALUE rather than calling it (issue #2529): an
+# initializer-list entry (positional, or `.field = f` in an initializer_pair),
+# a declarator's initial value, an assignment's right side, a call argument.
+TS_CPP_INITIALIZER_PAIR = "initializer_pair"
+TS_CPP_ASSIGNMENT_EXPRESSION = "assignment_expression"
+TS_CPP_ARGUMENT_LIST = "argument_list"
+# Wrappers a function designator keeps its identity through: `&f`, `(f)`,
+# `(handler_t)f` and either branch of `c ? f : g`.
+TS_CPP_POINTER_EXPRESSION = "pointer_expression"
+TS_CPP_CAST_EXPRESSION = "cast_expression"
+TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
+CPP_OP_ADDRESS_OF = "&"
+# Nodes that hold file-scope declarations without opening a scope of their
+# own: preprocessor conditionals and an `extern "C" { ... }` block.
+C_FILE_SCOPE_CONTAINER_TYPES = frozenset(
+    {
+        "translation_unit",
+        "preproc_if",
+        "preproc_ifdef",
+        "preproc_else",
+        "preproc_elif",
+        "preproc_elifdef",
+        "linkage_specification",
+        "declaration_list",
+    }
+)

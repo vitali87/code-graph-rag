@@ -8,9 +8,14 @@ ast_grep_id: kotlin
 extensions:
   - ".kt"
   - ".kts"
+# Members are named under their type and overloads stay distinct nodes, the
+# way the tree-sitter tier names them (issue #2589).
+scoped_names: true
 functions:
   # covers fun/suspend fun/private fun/override fun and companion-object members
   - kind: function_declaration
+    # `fun Client.get()` is named under Client, like a Go receiver method
+    receiver_child: receiver_type
 classes:
   # one kind for class, interface, data class, sealed class and enum class
   - kind: class_declaration
