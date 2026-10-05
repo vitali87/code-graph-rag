@@ -14,7 +14,7 @@ import sys
 import threading
 import uuid
 from collections import deque
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
@@ -1758,8 +1758,10 @@ def update_model_settings(
         _update_single_model_setting(cs.ModelRole.CYPHER, cypher)
 
 
-def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphData:
-    graph_data: GraphData = ingestor.export_graph_to_dict()
+def _write_graph_json(
+    ingestor: MemgraphIngestor, output_path: Path, project_names: Sequence[str]
+) -> GraphData:
+    graph_data: GraphData = ingestor.export_graph_to_dict(project_names)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w", encoding=cs.ENCODING_UTF8) as f:
@@ -1768,11 +1770,13 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
     return graph_data
 
 
-def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+def export_graph_to_file(
+    ingestor: MemgraphIngestor, output: str, project_names: Sequence[str] = ()
+) -> bool:
     output_path = Path(output)
 
     try:
-        graph_data = _write_graph_json(ingestor, output_path)
+        graph_data = _write_graph_json(ingestor, output_path, project_names)
         metadata = graph_data[cs.KEY_METADATA]
         app_context.console.print(
             cs.UI_GRAPH_EXPORT_SUCCESS.format(path=output_path.absolute())
@@ -1787,7 +1791,9 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
     except Exception as e:
         app_context.console.print(cs.UI_ERR_EXPORT_FAILED.format(error=e))
-        logger.exception(ls.EXPORT_ERROR.format(error=e))
+        # The one line above is the report; a traceback at ERROR was ~200
+        # lines of frames and locals for a mistyped path (issue #2410).
+        logger.opt(exception=e).debug(ls.EXPORT_ERROR.format(error=e))
         return False
 
 
