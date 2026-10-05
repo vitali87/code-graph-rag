@@ -42,17 +42,66 @@ rules:
                   - kind: template_string
                     not: { has: { kind: template_substitution } }
   - id: hardcoded_secret
+    # A name is bound to a literal by a declarator, an assignment to a
+    # variable, member or subscript (the member's own name decides:
+    # `token.value = ...` sets a value), an object property or a class
+    # field; matching only the declarator missed `this.token = "..."`
+    # and `{ password: "..." }` (issue #2866).
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
-      kind: variable_declarator
-      all:
-        - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
-        - has:
-            field: value
-            all:
-              - kind: string
-              - regex: '^.{10,}$'
-              - not:
-                  any:
-                    - regex: '\{[^{}]*\}'
-                    - regex: '%[sdrifeEgGxXoc(]'
+      any:
+        - kind: variable_declarator
+          all:
+            - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: value
+                all:
+                  - kind: string
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: assignment_expression
+          all:
+            - has:
+                field: left
+                any:
+                  - { kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+                  - kind: member_expression
+                    has: { field: property, regex: '(?i)(password|secret|api_key|token)' }
+                  - kind: subscript_expression
+                    has: { field: index, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: right
+                all:
+                  - kind: string
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: pair
+          all:
+            - has: { field: key, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: value
+                all:
+                  - kind: string
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: public_field_definition
+          all:
+            - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+            - has:
+                field: value
+                all:
+                  - kind: string
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
