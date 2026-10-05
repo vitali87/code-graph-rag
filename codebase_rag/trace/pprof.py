@@ -39,7 +39,7 @@ from .records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
     from pathlib import Path
 
 _Sample = tuple[list[int], int]
@@ -126,18 +126,58 @@ def _parse_function(payload: bytes) -> tuple[int, _Function]:
     return function_id, function
 
 
-def _parse_location(payload: bytes) -> tuple[int, list[int]]:
-    """A location's function ids, innermost inline frame first."""
+def _parse_line(payload: bytes) -> tuple[int, int]:
+    """One `Line` record's function id and source line (0 when unknown)."""
+    function_id = line = 0
+    for field, _wire, value in _fields(payload):
+        if field == 1 and isinstance(value, int):
+            function_id = value
+        elif field == 2 and isinstance(value, int):
+            line = value
+    return function_id, line
+
+
+def _parse_location(payload: bytes) -> tuple[int, list[tuple[int, int]]]:
+    """A location's (function id, line) records, innermost inline frame first."""
     location_id = 0
-    function_ids: list[int] = []
+    lines: list[tuple[int, int]] = []
     for field, _wire, value in _fields(payload):
         if field == 1 and isinstance(value, int):
             location_id = value
         elif field == 4 and isinstance(value, bytes):
-            for line_field, _lw, line_value in _fields(value):
-                if line_field == 1 and isinstance(line_value, int):
-                    function_ids.append(line_value)
-    return location_id, function_ids
+            function_id, line = _parse_line(value)
+            if function_id:
+                lines.append((function_id, line))
+    return location_id, lines
+
+
+def _backfill_start_lines(
+    functions: Mapping[int, _Function], sampled_lines: Mapping[int, int]
+) -> None:
+    """Give a function without a start_line the first line it was sampled on.
+
+    pprof-rs writes no `Function.start_line`, only each location's
+    `Line.line`, so every Rust frame had line 0: same-named functions of one
+    file merged into one frame and resolved to whichever name match sorted
+    first (issue #2877). Any line inside the body resolves by span
+    containment; the smallest keeps one frame per function. A start_line
+    the producer wrote (Go's runtime/pprof) is kept.
+    """
+    for function_id, line in sampled_lines.items():
+        function = functions.get(function_id)
+        if function is not None and function.start_line <= 0:
+            function.start_line = line
+
+
+def _first_lines(
+    records: Iterable[tuple[int, int]], into: dict[int, int] | None = None
+) -> dict[int, int]:
+    """The smallest known line of each function among `records`."""
+    lines = {} if into is None else into
+    for function_id, line in records:
+        if line > 0 and (function_id not in lines or line < lines[function_id]):
+            lines[function_id] = line
+    return lines
 
 
 def _parse_sample(payload: bytes) -> tuple[list[int], int]:
@@ -272,6 +312,7 @@ def _decode_profile(
     strings: list[str] = []
     functions: dict[int, _Function] = {}
     locations: dict[int, list[int]] = {}
+    sampled_lines: dict[int, int] = {}
     samples: list[_Sample] = []
     for field, _wire, value in _fields(raw):
         if not isinstance(value, bytes):
@@ -279,13 +320,15 @@ def _decode_profile(
         if field == 2:
             samples.append(_parse_sample(value))
         elif field == 4:
-            location_id, function_ids = _parse_location(value)
-            locations[location_id] = function_ids
+            location_id, lines = _parse_location(value)
+            locations[location_id] = [function_id for function_id, _line in lines]
+            _first_lines(lines, into=sampled_lines)
         elif field == 5:
             function_id, function = _parse_function(value)
             functions[function_id] = function
         elif field == 6:
             strings.append(value.decode("utf-8", errors="replace"))
+    _backfill_start_lines(functions, sampled_lines)
     return strings, functions, locations, samples
 
 
