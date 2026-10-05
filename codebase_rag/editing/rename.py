@@ -314,6 +314,22 @@ def _names_something(
     return re.search(_ANY_IDENTIFIER_RE, callee) is not None
 
 
+def _outer_call_paren(text: str) -> int:
+    """Index of the `(` opening the argument list `text` ends with, else of
+    its last `(`; -1 when it has none."""
+    body = text.rstrip()
+    if body.endswith(cs.CHAR_PAREN_CLOSE):
+        depth = 0
+        for index in range(len(body) - 1, -1, -1):
+            if body[index] == cs.CHAR_PAREN_CLOSE:
+                depth += 1
+            elif body[index] == cs.CHAR_PAREN_OPEN:
+                depth -= 1
+                if depth == 0:
+                    return index
+    return text.rfind(cs.CHAR_PAREN_OPEN)
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -352,9 +368,11 @@ def _last_identifier(
         start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
     if callee is None:
-        # No grammar: cut at the last opening parenthesis so the arguments
-        # of a plain call are excluded (`helper(helper=2)`).
-        paren = text.rfind("(")
+        # No call node to read (no grammar, or Dart's, whose call is only a
+        # selector): cut where the argument list the span ends with opens,
+        # so the arguments are excluded (`helper(helper=2)`), even a nested
+        # call of the same name (`f(other.f(1))`, bot review on PR #2782).
+        paren = _outer_call_paren(text)
         if paren >= 0:
             text = text[:paren]
     matches = list(re.finditer(_IDENTIFIER_RE % re.escape(name), text))
