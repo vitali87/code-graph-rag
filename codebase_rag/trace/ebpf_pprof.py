@@ -67,6 +67,7 @@ from .pprof import (
     _fields,
     _parse_function,
     _repeated_uint,
+    _require_profile_content,
 )
 from .records import (
     CallRecord,
@@ -582,8 +583,9 @@ def convert_ebpf_pprof(
         profile = _decode(raw)
     except TraceFormatError as e:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
-    if not profile.strings or not profile.functions or not profile.samples:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    _require_profile_content(
+        profile_path, profile.strings, profile.functions, profile.samples
+    )
 
     builder: _FrameBuilder | _JvmFrameBuilder
     if language == cs.TRACE_LANGUAGE_JVM:
