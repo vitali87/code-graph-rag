@@ -69,6 +69,14 @@ export function negatedPlain(value: unknown) {
 export async function parenthesized(client: Client) {
 \treturn await (client.call<number>('version'));
 }
+
+export async function foreignAwaited(remote: Map<string, number>) {
+\treturn await remote.call<number>('version');
+}
+
+export async function foreignPlain(remote: Map<string, number>) {
+\treturn await remote.call('version');
+}
 """
 
 
@@ -107,7 +115,22 @@ def test_a_prefixed_call_with_type_arguments_is_recorded(
     assert _callees(graph, caller) == {callee: "exact"}
 
 
+def test_a_prefixed_call_on_a_foreign_receiver_binds_nothing(
+    graph: RecordedGraph,
+) -> None:
+    # A receiver declared as a type the project does not define cannot be
+    # `Client`, so the name-only pick is dropped (#2609), as for the plain
+    # form: the operator must not hide the receiver from that check.
+    assert _callees(graph, "foreignAwaited") == {}
+
+
 # Negative: what must not change.
+
+
+def test_a_plain_call_on_a_foreign_receiver_still_binds_nothing(
+    graph: RecordedGraph,
+) -> None:
+    assert _callees(graph, "foreignPlain") == {}
 
 
 @pytest.mark.parametrize(
