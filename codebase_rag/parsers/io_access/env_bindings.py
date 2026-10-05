@@ -87,41 +87,196 @@ def object_pattern_reads(pattern: Node) -> list[tuple[str | None, str]]:
     return reads
 
 
-def env_aliases(
+class EnvAliases:
+    """Resolves the `env` of `env.PORT` to the env mapping it stands for
+    (`const env = process.env`), at each access, by lexical scope: the nearest
+    scope around the access that declares the name decides (bot review on PR
+    #2767). It is an alias only when that declaration and every assignment to
+    it is the mapping itself; a parameter, a `catch` binding or a declaration
+    of anything else is not."""
+
+    def __init__(
+        self,
+        caller_node: Node | None,
+        descriptor: LanguageDescriptor,
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        head_is_live: Callable[[str], bool],
+    ) -> None:
+        self._descriptor = descriptor
+        self._member_reads = member_reads
+        self._head_is_live = head_is_live
+        self._names = (
+            _alias_candidates(caller_node, descriptor, member_reads, head_is_live)
+            if caller_node is not None and member_reads
+            else frozenset()
+        )
+        self._decided: dict[tuple[int, str], ResourceKind | None] = {}
+
+    def kind_of(self, obj: Node) -> ResourceKind | None:
+        name = _text(obj)
+        if (
+            name is None
+            or name not in self._names
+            or obj.type != self._descriptor.identifier_type
+        ):
+            return None
+        scope = obj.parent
+        while scope is not None:
+            values = _declared_values(scope, name, self._descriptor)
+            if values is not None:
+                key = (scope.id, name)
+                if key not in self._decided:
+                    self._decided[key] = self._declaration_kind(scope, name, values)
+                return self._decided[key]
+            scope = scope.parent
+        return None
+
+    def _declaration_kind(
+        self, scope: Node, name: str, values: list[Node | None]
+    ) -> ResourceKind | None:
+        if None in values:
+            return None
+        values = values + _assigned_values(scope, name, self._descriptor)
+        kinds = {
+            None
+            if value is None
+            else env_mapping_kind(value, self._member_reads, self._head_is_live)
+            for value in values
+        }
+        return kinds.pop() if len(kinds) == 1 else None
+
+
+def _alias_candidates(
     caller_node: Node,
     descriptor: LanguageDescriptor,
     member_reads: tuple[tuple[str, ResourceKind], ...],
     head_is_live: Callable[[str], bool],
-) -> dict[str, ResourceKind]:
-    """Names that stand for an env mapping in the caller: every binding of
-    the name, in the caller's own body or at module top level, is the mapping
-    itself (`const env = process.env`). A name rebound to anything else is not
-    an alias, and a caller's own parameter or declaration of a module alias's
-    name shadows it."""
-    if not member_reads:
-        return {}
-    own = _bindings(_scope_nodes(caller_node, descriptor), descriptor)
-    root = caller_node
-    while root.parent is not None:
-        root = root.parent
-    module = (
-        _bindings(_top_level_nodes(root, descriptor), descriptor)
-        if root.id != caller_node.id
-        else {}
-    )
-    shadows = set(own) | _parameter_names(caller_node, descriptor)
-    aliases: dict[str, ResourceKind] = {}
-    for scope, shadowed in ((module, shadows), (own, set())):
-        for name, values in scope.items():
-            if name in shadowed:
-                aliases.pop(name, None)
+) -> frozenset[str]:
+    # Names some binding in the caller or a scope around it sets to the env
+    # mapping: the only names an access can resolve, found once per caller so
+    # every other member read skips the scope walk.
+    names: set[str] = set()
+    scope: Node | None = caller_node
+    while scope is not None:
+        nodes = (
+            _top_level_nodes(scope, descriptor)
+            if scope.parent is None
+            else _scope_nodes(scope, descriptor)
+        )
+        for name, values in _bindings(nodes, descriptor).items():
+            if any(env_mapping_kind(v, member_reads, head_is_live) for v in values):
+                names.add(name)
+        scope = scope.parent
+        while (
+            scope is not None
+            and scope.parent is not None
+            and scope.type not in descriptor.nested_scope_types
+        ):
+            scope = scope.parent
+    return frozenset(names)
+
+
+def _declared_values(
+    scope: Node, name: str, descriptor: LanguageDescriptor
+) -> list[Node | None] | None:
+    # What `scope` declares `name` as, None when it does not declare it: the
+    # value of each declarator (the target itself when it has none, which is
+    # `undefined`), and None for a parameter, a `catch` or loop binding, a
+    # destructured declarator, a function, class or import.
+    # ponytail: `var` is function-scoped, but it is read block-locally here,
+    # as the I/O walk's shadowing reads it.
+    if scope.type in descriptor.nested_scope_types:
+        return [None] if name in _parameter_names(scope, descriptor) else None
+    if scope.type == cs.TS_JS_CATCH_CLAUSE:
+        param = scope.child_by_field_name(cs.FIELD_PARAMETER)
+        return [None] if name in _identifiers(param, descriptor) else None
+    if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
+        left = scope.child_by_field_name(cs.FIELD_LEFT)
+        declares = scope.child_by_field_name(cs.FIELD_KIND) is not None
+        return [None] if declares and name in _identifiers(left, descriptor) else None
+    if scope.parent is not None and scope.type != descriptor.block_scope_type:
+        return None
+    values: list[Node | None] = []
+    for stmt in scope.named_children:
+        if stmt.type == cs.TS_EXPORT_STATEMENT:
+            stmt = stmt.child_by_field_name(cs.FIELD_DECLARATION) or stmt
+        if stmt.type == cs.TS_IMPORT_STATEMENT:
+            if name in _identifiers(stmt, descriptor):
+                values.append(None)
+            continue
+        if stmt.type in descriptor.nested_scope_types or stmt.type == (
+            cs.TS_CLASS_DECLARATION
+        ):
+            if _text(stmt.child_by_field_name(cs.TS_FIELD_NAME)) == name:
+                values.append(None)
+            continue
+        for decl in stmt.named_children:
+            if decl.type != descriptor.declarator_type:
                 continue
-            kinds = {env_mapping_kind(v, member_reads, head_is_live) for v in values}
-            if len(kinds) == 1 and (kind := kinds.pop()) is not None:
-                aliases[name] = kind
-            else:
-                aliases.pop(name, None)
-    return aliases
+            target = decl.child_by_field_name(cs.TS_FIELD_NAME)
+            if target is None:
+                continue
+            if target.type == descriptor.identifier_type:
+                if _text(target) == name:
+                    value = decl.child_by_field_name(cs.FIELD_VALUE)
+                    values.append(value if value is not None else target)
+            elif name in _identifiers(target, descriptor):
+                values.append(None)
+    return values or None
+
+
+def _assigned_values(
+    scope: Node, name: str, descriptor: LanguageDescriptor
+) -> list[Node | None]:
+    # What every assignment to the `name` that `scope` declares sets it to:
+    # the right side of a plain assignment, None for a destructuring, an
+    # augmented or update assignment and a loop rebinding. A nested scope
+    # declaring its own `name` is not descended into, a closure is.
+    out: list[Node | None] = []
+    stack = list(scope.named_children)
+    while stack:
+        node = stack.pop()
+        if _declared_values(node, name, descriptor) is not None:
+            continue
+        stack.extend(node.named_children)
+        if node.type == descriptor.assignment_type:
+            left = node.child_by_field_name(cs.FIELD_LEFT)
+            if left is not None and left.type == descriptor.identifier_type:
+                if _text(left) == name:
+                    out.append(node.child_by_field_name(cs.FIELD_RIGHT))
+            elif (
+                left is not None
+                and left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN)
+                and name in _identifiers(left, descriptor)
+            ):
+                out.append(None)
+            continue
+        if node.type == cs.TS_JS_FOR_IN_STATEMENT:
+            target = node.child_by_field_name(cs.FIELD_LEFT)
+        elif node.type == descriptor.augmented_assignment_type:
+            target = node.child_by_field_name(cs.FIELD_LEFT)
+        elif node.type == descriptor.update_expression_type:
+            target = node.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+        else:
+            continue
+        if target is not None and _text(target) == name:
+            out.append(None)
+    return out
+
+
+def _identifiers(node: Node | None, descriptor: LanguageDescriptor) -> set[str]:
+    # Every name a binding target or statement spells.
+    names: set[str] = set()
+    stack = [node] if node is not None else []
+    while stack:
+        current = stack.pop()
+        if current.type in (
+            descriptor.identifier_type,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ) and (name := _text(current)):
+            names.add(name)
+        stack.extend(current.named_children)
+    return names
 
 
 def _bindings(
@@ -153,9 +308,12 @@ def _parameter_names(caller_node: Node, descriptor: LanguageDescriptor) -> set[s
     # Every identifier in the parameter list: a parameter (destructured or
     # not) shadows a module-level name of the same spelling. A default value's
     # identifiers are included too, which can only drop an alias, never add one.
-    params = caller_node.child_by_field_name(descriptor.params_field)
     names: set[str] = set()
-    stack = [params] if params is not None else []
+    stack = [
+        params
+        for field in (descriptor.params_field, cs.FIELD_PARAMETER)
+        if (params := caller_node.child_by_field_name(field)) is not None
+    ]
     while stack:
         node = stack.pop()
         if node.type == descriptor.identifier_type and (name := _text(node)):

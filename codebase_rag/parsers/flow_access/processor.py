@@ -53,8 +53,8 @@ from ..io_access import (
     unwrap_argument,
 )
 from ..io_access.env_bindings import (
+    EnvAliases,
     destructured_pattern,
-    env_aliases,
     env_mapping_kind,
     object_pattern_reads,
 )
@@ -802,9 +802,9 @@ class _JsCtx(NamedTuple):
     # declarator, so a later `out << x` / `out.write(..)` routes to that file
     # (issue #1220). Empty for languages without type-declaration stream handles.
     type_ctors: dict[str, ResourceKind]
-    # Names standing for an env mapping (`const env = process.env`), so
-    # `env.KEY` is a source like `process.env.KEY` (issue #2753).
-    env_aliases: dict[str, ResourceKind]
+    # Resolves a name standing for an env mapping (`const env = process.env`),
+    # so `env.KEY` is a source like `process.env.KEY` (issue #2753).
+    env_aliases: EnvAliases | None
 
 
 @dataclass
@@ -1070,10 +1070,10 @@ class FlowProcessor:
             identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(ctx.language, {}),
             arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
             type_ctors=IO_TYPE_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
-            env_aliases={},
+            env_aliases=None,
         )
         jc = jc._replace(
-            env_aliases=env_aliases(
+            env_aliases=EnvAliases(
                 caller_node,
                 descriptor,
                 member_reads,
@@ -1781,9 +1781,11 @@ class FlowProcessor:
             cs.FIELD_RIGHT
         )
         if value is not None and (env_reads := self._js_env_destructure(value, jc)):
-            # `const { PORT } = process.env` binds each local to its env key.
+            # `const { PORT } = process.env` binds each local to its env key,
+            # and no longer to a handle it held (bot review on PR #2767).
             for local, binding in env_reads:
                 tainted[local] = Taint(frozenset({binding}), frozenset())
+                handles.pop(local, None)
             return
         targets, values = binding_targets_values(node, jc.descriptor)
         # `resp, err := http.Get(u)`: one RHS call feeding several LHS taints them
@@ -3476,7 +3478,10 @@ class FlowProcessor:
         if obj is None or obj.text is None:
             return None
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
-        if (alias_kind := jc.env_aliases.get(obj_text)) is not None:
+        if (
+            jc.env_aliases is not None
+            and (alias_kind := jc.env_aliases.kind_of(obj)) is not None
+        ):
             # `env.KEY` where `const env = process.env` (issue #2753).
             return HandleBinding(
                 kind=alias_kind, identity=self._js_member_identity(node, jc)
