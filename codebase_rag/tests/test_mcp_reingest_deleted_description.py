@@ -54,6 +54,15 @@ def test_deleted_names_the_way_to_keep_a_file_out(
     assert ".cgrignore" in _deleted(reingest_schema)
 
 
+def test_deleted_says_an_indexed_file_needs_a_repository_update(
+    reingest_schema: MCPInputSchema,
+) -> None:
+    # An excluded path is skipped by reingest, so an indexed file excluded
+    # later keeps its definitions until update_repository (bot review on PR
+    # #2771).
+    assert "update_repository" in _deleted(reingest_schema)
+
+
 # Negative: what must not change.
 
 
