@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.1.48"
+version = "0.1.58"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -36,7 +36,10 @@ keywords = [
 ]
 dependencies = [
     "loguru>=0.7.3",
-    "mcp>=1.28.1",
+    # mcp 2.x removed the Server.list_tools()/call_tool() decorators that
+    # codebase_rag/mcp/server.py registers its handlers with, and every
+    # documented install resolves this range rather than uv.lock (#2519).
+    "mcp>=1.28.1,<2",
     # Only the providers codebase_rag/providers imports. The `pydantic-ai`
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
