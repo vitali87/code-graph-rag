@@ -936,10 +936,12 @@ class CallResolver:
         # its qn. A module node itself is not in the function registry, but its
         # contents are; an imported instance has an empty subtree.
         #
-        # The label check above must stay FIRST: `find_with_prefix` returns the
-        # subtree INCLUDING the target, so an imported function reports one
-        # descendant (itself) and a prefix-only test would call it a namespace.
-        return bool(self.function_registry.find_with_prefix(target))
+        # The label check above must stay FIRST: `has_prefix` counts the
+        # target itself, so an imported function reports one descendant
+        # (itself) and a prefix-only test would call it a namespace. An
+        # existence test, not a listing: this runs once per call through an
+        # imported module (issue #2919).
+        return self.function_registry.has_prefix(target)
 
     def _resolve_js_prototype_sibling(
         self,
