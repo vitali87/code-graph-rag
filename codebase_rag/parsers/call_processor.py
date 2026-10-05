@@ -5613,6 +5613,18 @@ class CallProcessor:
                         cs.RelationshipType.CALLS,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, sibling_qn),
                     )
+        if callee_info is not None and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET:
+            engine = self._resolver.type_inference.csharp_type_inference
+            if not engine.semantic_fact_resolved(call_node, ctx.module_qn):
+                # An extension call bound to one of an overload set whose
+                # members differ only in parameter types reaches the whole
+                # set, as the bare-call family above does (issue #2839).
+                for overload_qn in engine.csharp_extension_overloads(callee_info[1]):
+                    ctx.ensure_rel(
+                        ctx.caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, overload_qn),
+                    )
         if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
             # Provably external (base.X() with an external base, a
             # static call on an unregistered type, an object
