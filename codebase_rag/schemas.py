@@ -9,9 +9,11 @@ class QueryGraphData(BaseModel):
     query_used: str
     results: list[ResultRow]
     summary: str
-    # Set only when the requested scope could not be honoured, so a caller
-    # can tell a refusal from a genuine empty result. Execution failures
-    # (translation, timeout, database) stay in `summary`, as they always did.
+    # Set only when the request could not be served at all -- the requested
+    # scope could not be honoured, or no Cypher model is available -- so a
+    # caller can tell a refusal from a genuine empty result. Execution
+    # failures (translation, timeout, database) stay in `summary`, as they
+    # always did.
     error: str | None = None
 
     @field_validator("results", mode="before")

@@ -86,12 +86,15 @@ def rename_expectation(
     )
 
 
-def change_signature_expectation(unmapped: Iterable[str]) -> Expectation:
+def change_signature_expectation(
+    unmapped: Iterable[str], heuristic_allowed: bool = False
+) -> Expectation:
     return Expectation(
         operation=cs.CONTRACT_OP_CHANGE_SIGNATURE,
         unmapped=tuple(sorted(set(unmapped))),
         # A parameter added with a default changes no caller count.
         caller_count_unchanged=True,
+        heuristic_allowed=heuristic_allowed,
     )
 
 
@@ -109,6 +112,15 @@ def move_expectation(old_qn: str, new_qn: str) -> Expectation:
 
 def _site_key(site: Mapping[str, object]) -> str:
     return f"{site.get(cs.KEY_PATH)}:{site.get(cs.KEY_LINE)}"
+
+
+def _call_key(site: Mapping[str, object]) -> str:
+    """A call's identity for the signature checks.
+
+    Two calls can share a line (`helper(1) + helper(2)`), and rewriting or
+    listing one must not cover the other, so the column is part of the key.
+    """
+    return f"{_site_key(site)}:{site.get(cs.KEY_COL)}"
 
 
 def _carried_by_ancestor(
@@ -200,7 +212,7 @@ def _changed_site_fault(
     loops plus these three verdicts put that function one point over the
     threshold. The decision is per site and reads better named anyway.
     """
-    key = _site_key(site)
+    key = _call_key(site)
     verdict = site["verdict"]
     if verdict == cs.DELTA_ARITY_OK or key in unmapped:
         return None
@@ -232,7 +244,7 @@ def _check_sites_mapped(
             if fault := _changed_site_fault(site, unmapped, rewritten):
                 bad.append(fault)
     for site in delta["arity_findings"]:
-        key = _site_key(site)
+        key = _call_key(site)
         if key not in unmapped:
             bad.append(f"{key} ({site['verdict']})")
     if bad:
@@ -303,7 +315,9 @@ def verify(
     """Pass or fail the delta against the expectation, with reasons.
 
     `rewritten` lists the sites the operation rewrote as `(path:line,
-    resolution)`; `parse_failures` the files the transaction found not to
+    resolution)`, or `(path:line:col, resolution)` for a signature change,
+    whose per-site checks key on the column; `parse_failures` the files the
+    transaction found not to
     parse (the transaction refuses those itself, so a caller normally
     passes none, but the contract states the rule in one place).
     """
