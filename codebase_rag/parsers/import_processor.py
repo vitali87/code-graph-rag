@@ -3987,16 +3987,23 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
-    def _js_base_url_names_file(self, import_path: str, current_module: str) -> bool:
+    def _js_base_url_module_qn(
+        self, import_path: str, current_module: str
+    ) -> str | None:
         # A bare specifier the importing file's own `baseUrl` resolves to a
-        # project file is first-party even though no `paths` alias maps it.
-        # Its qn stays the bare path it always had; only the package flag
-        # needs the disk's answer, so resolution beyond this flag is unchanged.
+        # project file is first-party even though no `paths` alias maps it,
+        # and it names THAT module: with `"baseUrl": "src"`, `lib/format` is
+        # `src/lib/format.ts`. Keeping the bare path as the qn pointed the
+        # import at an ExternalModule `lib.format` and dropped every call
+        # through it (issue #2808).
         base = self._js_governing_base_url(current_module)
-        return (
-            base is not None
-            and self._js_module_rel_on_disk(f"{base}{import_path}") is not None
-        )
+        if base is None:
+            return None
+        module_rel = self._js_module_rel_on_disk(f"{base}{import_path}")
+        if module_rel is None:
+            return None
+        dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
 
     def _js_governing_base_url(self, current_module: str) -> str | None:
         # The `baseUrl` of the nearest tsconfig whose directory holds the
@@ -4079,6 +4086,10 @@ class ImportProcessor:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
                 return JsImportTarget(aliased, False)
+            # TypeScript tries `baseUrl` after `paths` and before node_modules,
+            # which the workspace mapping stands in for.
+            if based := self._js_base_url_module_qn(import_path, current_module):
+                return JsImportTarget(based, False)
             if workspace := self._map_js_workspace_import(import_path, require):
                 dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
                 return JsImportTarget(
@@ -4086,8 +4097,7 @@ class ImportProcessor:
                 )
             return JsImportTarget(
                 import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
-                not _has_aliased_scheme(import_path)
-                and not self._js_base_url_names_file(import_path, current_module),
+                not _has_aliased_scheme(import_path),
             )
         import_path = self._strip_js_extension(import_path)
 
