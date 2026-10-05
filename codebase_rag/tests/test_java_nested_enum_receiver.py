@@ -76,6 +76,33 @@ public final class Scoped {
         }
 
         static boolean useInner(Helper h) { return h.check(); }
+
+        static class Box { int size() { return 2; } }
+
+        static int viaNew() { Box b = new Box(); return b.size(); }
+    }
+
+    static class Box { int size() { return 1; } }
+}
+"""
+
+# `Kind` inside Child is the member Child inherits from Parent, ahead of
+# the one its enclosing Outer2 declares (JLS 8.5: inherited member types).
+PARENT = """\
+package demo;
+
+public class Parent {
+    public enum Kind { A; int code() { return 1; } }
+}
+"""
+OUTER2 = """\
+package demo;
+
+public class Outer2 {
+    enum Kind { B; int code() { return 2; } }
+
+    static class Child extends Parent {
+        int use(Kind k) { return k.code(); }
     }
 }
 """
@@ -89,6 +116,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{PREFIX.replace('.', '/')}/Outer.java", OUTER)
     _write(root, f"{PREFIX.replace('.', '/')}/Color.java", COLOR)
     _write(root, f"{PREFIX.replace('.', '/')}/Scoped.java", SCOPED)
+    _write(root, f"{PREFIX.replace('.', '/')}/Parent.java", PARENT)
+    _write(root, f"{PREFIX.replace('.', '/')}/Outer2.java", OUTER2)
     return _index(root, MagicMock())
 
 
@@ -139,8 +168,15 @@ def test_a_nested_enum_with_constant_bodies_binds_both_definitions(
             "Scoped.Scoped.Other.useInner(Helper)",
             "Scoped.Scoped.Other.Helper.check()",
         ),
+        ("Scoped.Scoped.Other.viaNew()", "Scoped.Scoped.Other.Box.size()"),
+        ("Outer2.Outer2.Child.use(Kind)", "Parent.Parent.Kind.code()"),
     ],
-    ids=["enclosing-class-member", "inner-scope-enum"],
+    ids=[
+        "enclosing-class-member",
+        "inner-scope-enum",
+        "local-typed-by-its-initializer",
+        "inherited-member-type",
+    ],
 )
 def test_a_same_named_type_resolves_in_the_callers_scope(
     graph: RecordedGraph, caller: str, callee: str

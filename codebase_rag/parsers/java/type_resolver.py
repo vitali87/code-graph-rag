@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
@@ -41,6 +41,7 @@ class JavaTypeResolverMixin:
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
     _fqn_to_module_qn: dict[str, list[str]]
+    class_inheritance: dict[str, list[str]]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -162,14 +163,32 @@ class JavaTypeResolverMixin:
         # enclosing type that declares one, ahead of the file's other types
         # and its imports, so a same-named type elsewhere in the file does
         # not make it ambiguous (Greptile, PR #2973).
+        # Each enclosing type's members include those it inherits, ahead of
+        # the next type out (JLS 8.5; CodeRabbit, PR #2973).
         for enclosing in self._enclosing_type_qns(scope, module_qn):
-            member = f"{enclosing}{cs.SEPARATOR_DOT}{type_name}"
-            if (
-                member in self.function_registry
-                and self.function_registry[member] in _JAVA_TYPE_DECL_NODE_TYPES
-            ):
-                return member
+            for owner in self._type_and_supertypes(enclosing):
+                member = f"{owner}{cs.SEPARATOR_DOT}{type_name}"
+                if (
+                    member in self.function_registry
+                    and self.function_registry[member] in _JAVA_TYPE_DECL_NODE_TYPES
+                ):
+                    return member
         return None
+
+    def _type_and_supertypes(self, class_qn: str) -> Iterator[str]:
+        """`class_qn`, then its superclasses and superinterfaces, nearest
+        first, each once."""
+        seen = {class_qn}
+        pending = [class_qn]
+        while pending:
+            current = pending.pop(0)
+            yield current
+            # The hierarchy the definition pass resolved: superclass and
+            # interfaces, by their registered qns.
+            for supertype in self.class_inheritance.get(current, ()):
+                if supertype not in seen:
+                    seen.add(supertype)
+                    pending.append(supertype)
 
     def _resolve_java_type_name(
         self, type_name: str, module_qn: str, scope: ASTNode | None = None

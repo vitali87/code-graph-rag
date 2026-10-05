@@ -236,7 +236,9 @@ class JavaVariableAnalyzerMixin:
             if inferred_type := self._infer_java_type_from_expression(
                 value_node, module_qn, local_var_types
             ):
-                resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
+                resolved_type = self._resolve_java_type_name(
+                    inferred_type, module_qn, declarator_node
+                )
                 local_var_types[var_name] = resolved_type
                 logger.debug(
                     ls.JAVA_LOCAL_VAR_INFERRED, name=var_name, type=resolved_type
