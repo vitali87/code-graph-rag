@@ -688,29 +688,63 @@ def _is_type_checking_test(condition: Node | None) -> bool:
     head, sep, attr = text.rpartition(cs.SEPARATOR_DOT)
     if not sep or attr != cs.PY_TYPE_CHECKING:
         return False
-    return head in _PY_TYPING_MODULES or head in _python_typing_aliases(condition)
+    return _python_module_bound_at(condition, head) in _PY_TYPING_MODULES
 
 
 _PY_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
 
 
-def _python_typing_aliases(node: Node) -> set[str]:
-    # The names a module's top-level `import typing as t` binds.
+def _python_module_bound_at(node: Node, name: str) -> str | None:
+    # The module `name` names at `node`: what the module's last top-level
+    # statement before it binding `name` imported (`import typing as t`,
+    # `import typing`), None when that statement bound something else
+    # (`import settings as t` after it, bot review on PR #2728). A name no
+    # top-level statement binds is taken at its word, as before.
     root = node
     while root.parent is not None:
         root = root.parent
-    aliases: set[str] = set()
+    bound: str | None = name
     for stmt in root.named_children:
-        if stmt.type != cs.TS_PY_IMPORT_STATEMENT:
-            continue
-        for child in stmt.named_children:
-            if child.type != cs.TS_ALIASED_IMPORT:
-                continue
-            name = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_NAME))
-            alias = safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
-            if name in _PY_TYPING_MODULES and alias:
-                aliases.add(alias)
-    return aliases
+        if stmt.start_byte >= node.start_byte:
+            break
+        if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
+            for child in stmt.named_children:
+                if child.type == cs.TS_ALIASED_IMPORT:
+                    module = safe_decode_text(
+                        child.child_by_field_name(cs.TS_FIELD_NAME)
+                    )
+                    if (
+                        safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
+                        == name
+                    ):
+                        bound = module
+                elif child.type == cs.TS_DOTTED_NAME:
+                    module = safe_decode_text(child)
+                    if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
+                        bound = name
+        elif stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT or (
+            stmt.type == cs.TS_PY_EXPRESSION_STATEMENT
+            and any(c.type == cs.TS_PY_ASSIGNMENT for c in stmt.named_children)
+        ):
+            if name in _bound_identifiers(stmt):
+                bound = None
+    return bound
+
+
+def _bound_identifiers(stmt: Node) -> set[str]:
+    # The names a `from m import a as b` or an `x = ...` statement binds.
+    names: set[str] = set()
+    if stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+        for child in stmt.children_by_field_name(cs.TS_FIELD_NAME):
+            target = child.child_by_field_name(cs.FIELD_ALIAS) or child
+            if (text := safe_decode_text(target)) is not None:
+                names.add(text.split(cs.SEPARATOR_DOT, 1)[0])
+        return names
+    for child in stmt.named_children:
+        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+        if (text := safe_decode_text(left)) is not None:
+            names.add(text)
+    return names
 
 
 def _rust_norm_manifest_path(path: str) -> str:

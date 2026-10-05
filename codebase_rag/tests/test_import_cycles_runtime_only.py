@@ -56,6 +56,11 @@ ALIASED_TYPING = (
     "import typing as t\n\nif t.TYPE_CHECKING:\n    from app.db import save\n\n"
     + MODELS
 )
+# The guard's alias names the module its last import before the guard bound.
+REBOUND_ALIAS = (
+    "import typing as t\nimport settings as t\n\nif t.TYPE_CHECKING:\n"
+    "    from app.db import save\n\n" + MODELS
+)
 CLASS_BODY = "class User:\n    from app.db import save\n\n    def __init__(self, name):\n        self.name = name\n"
 
 
@@ -168,6 +173,7 @@ def test_an_import_that_runs_at_import_time_still_makes_a_cycle(
             id="a-lazy-import-of-an-eager-name",
         ),
         pytest.param(OTHER_TYPE_CHECKING, {None}, id="another-modules-type-checking"),
+        pytest.param(REBOUND_ALIAS, {None}, id="an-alias-rebound-to-another-module"),
     ],
 )
 def test_an_import_time_import_beside_a_deferred_look_alike_makes_a_cycle(
