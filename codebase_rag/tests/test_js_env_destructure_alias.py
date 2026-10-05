@@ -148,6 +148,31 @@ function caught() {
   }
 }
 
+// A rebinding counts only for the accesses it can precede.
+function readBeforeRebind() {
+  let env = process.env;
+  console.log(env.JE_BEFORE_REBIND);
+  env = {};
+  console.log(env.JE_AFTER_REBIND);
+}
+
+function rebindInLoop(items) {
+  let env = process.env;
+  for (const item of items) {
+    console.log(env.JE_LOOP_REBIND);
+    env = {};
+  }
+}
+
+function rebindInClosure() {
+  let env = process.env;
+  const reset = () => {
+    env = {};
+  };
+  reset();
+  console.log(env.JE_CLOSURE_REBIND);
+}
+
 function destructureOverHandle() {
   let stream = fs.createWriteStream("/tmp/je_stream.txt");
   ({ JE_STREAM: stream } = process.env);
@@ -239,6 +264,7 @@ CASES = [
     ("enclosingAlias.inner", "JE_ENCLOSING"),
     ("blockShadowsModuleAlias", "JE_BLOCK_OUTER"),
     ("blockShadowsOwnAlias", "JE_OWN_OUTER"),
+    ("readBeforeRebind", "JE_BEFORE_REBIND"),
 ]
 
 
@@ -293,6 +319,9 @@ def test_member_reads_still_read_and_flow(
         "JE_BLOCK_INNER",
         "JE_OWN_INNER",
         "JE_CAUGHT",
+        "JE_AFTER_REBIND",
+        "JE_LOOP_REBIND",
+        "JE_CLOSURE_REBIND",
     ],
 )
 def test_a_value_that_is_not_the_env_mapping_reads_nothing(
