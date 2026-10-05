@@ -344,7 +344,8 @@ async def test_mcp_dry_run_leaves_no_incomplete_marker(repo: Indexed) -> None:
         dry_run=True,
         project=PROJECT,
     )
-    assert isinstance(payload, dict) and payload["applied"] is False, payload
+    assert isinstance(payload, dict), payload
+    assert payload["applied"] is False, payload
     assert "+    return helper(2, 1)" in payload["diff"]
     assert registry._live_updater is None
     assert not registry._persisted_incomplete(PROJECT)
@@ -369,7 +370,8 @@ def test_mcp_apply_without_a_listed_project_skips_the_contract(
     payload = registry._run_change_signature(
         PROJECT, HELPER, ["a", "b", "c=None"], None, False, False
     )
-    assert isinstance(payload, dict) and payload["applied"] is True, payload
+    assert isinstance(payload, dict), payload
+    assert payload["applied"] is True, payload
     assert payload[cs.KEY_VERDICT] is None
     assert registry._live_updater is None
     assert not registry._persisted_incomplete(PROJECT)
@@ -386,7 +388,8 @@ async def test_mcp_cold_apply_is_measured_and_clears_its_marker(repo: Indexed) -
         mapping={"n": "=1"},
         project=PROJECT,
     )
-    assert isinstance(payload, dict) and payload["applied"] is True, payload
+    assert isinstance(payload, dict), payload
+    assert payload["applied"] is True, payload
     assert payload[cs.KEY_VERDICT]["ok"] is True
     assert "return helper(3, 1, 'z')" in _read(root, APP)
     assert registry._live_updater is not None
