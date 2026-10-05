@@ -214,6 +214,40 @@ def _split_names(names: str) -> tuple[list[str], str, str]:
     return entries, open_deco, close_deco
 
 
+_PY_NAME_SEPARATORS = frozenset("(),")
+
+
+def _py_entry_spans(names: str) -> list[tuple[int, int]]:
+    """Where each imported entry (`a`, `a as b`) sits in a names list.
+
+    Separators, parentheses, line continuations and `#` comments are skipped,
+    so an entry is its own text and nothing else. Splitting on commas carried
+    the line breaks and a previous line's comment into the next entry, which
+    then read as `#` and never matched (issue #2875).
+    """
+    spans: list[tuple[int, int]] = []
+    start = end = -1
+    position = 0
+    while position < len(names):
+        char = names[position]
+        if char == "#":
+            newline = names.find("\n", position)
+            position = len(names) if newline == -1 else newline
+            continue
+        if char in _PY_NAME_SEPARATORS:
+            if start >= 0:
+                spans.append((start, end))
+                start = -1
+        elif not (char.isspace() or char == "\\"):
+            if start < 0:
+                start = position
+            end = position + 1
+        position += 1
+    if start >= 0:
+        spans.append((start, end))
+    return spans
+
+
 def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
     if parsed := _match_py_from(statement):
         lead, module, mid, raw_names = parsed
@@ -223,7 +257,9 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
             return None
         names = raw_names.rstrip()
         tail = raw_names[len(names) :]
-        entries, open_deco, close_deco = _split_names(names)
+        _, open_deco, close_deco = _split_names(names)
+        spans = _py_entry_spans(raw_names)
+        entries = [raw_names[start:end] for start, end in spans]
         moved = [e for e in entries if _imported(e) == move.symbol]
         if not moved:
             return None
@@ -238,14 +274,16 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
         ]
         new_module = _target_module(module, move)
         if new_module == module:
-            # Same module (a rename): keep one statement, entries rewritten in
-            # place, so the surrounding parenthesis decoration is preserved.
+            # Same module (a rename): only the renamed entries' own text
+            # changes. Line breaks, trailing commas, comments and alignment
+            # elsewhere in the statement stay byte for byte (issue #2875).
             by_entry = dict(zip(moved, moved_entries, strict=True))
-            rewritten = [by_entry.get(e, e) for e in entries]
-            return (
-                f"{lead}{module}{mid}"
-                f"{open_deco}{', '.join(rewritten)}{close_deco}{tail}"
-            )
+            rewritten = raw_names
+            for start, end in reversed(spans):
+                entry = raw_names[start:end]
+                if entry in by_entry:
+                    rewritten = rewritten[:start] + by_entry[entry] + rewritten[end:]
+            return f"{lead}{module}{mid}{rewritten}"
         moved_stmt = f"{lead}{new_module}{mid}{', '.join(moved_entries)}"
         if not kept:
             return f"{moved_stmt}{tail}"
