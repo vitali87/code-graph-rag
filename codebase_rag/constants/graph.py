@@ -28,6 +28,10 @@ KEY_IS_PROPERTY = "is_property"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
+# The qualified name of the binding an object member's literal is assigned to
+# (`const api = { fetchUser() {} }` -> `<module>.api`), so `api.fetchUser()`
+# resolves to it (issue #2763).
+KEY_OBJECT_BINDING = "object_binding"
 KEY_IS_MACRO = "is_macro"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
@@ -1018,7 +1022,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.object_binding AS object_binding, n.name AS name"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

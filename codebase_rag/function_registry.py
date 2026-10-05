@@ -28,6 +28,8 @@ class FunctionRegistryTrie:
         "_properties",
         "_property_names",
         "_object_members",
+        "_object_bindings",
+        "_object_binding_of",
         "_abstracts",
         "_body_scoped_names",
         "_callable_params",
@@ -49,6 +51,10 @@ class FunctionRegistryTrie:
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         self._object_members: set[QualifiedName] = set()
+        # binding qn -> {member key -> member qn}, and its inverse, for the
+        # object literals bound to a name (issue #2763).
+        self._object_bindings: dict[QualifiedName, dict[str, QualifiedName]] = {}
+        self._object_binding_of: dict[QualifiedName, tuple[QualifiedName, str]] = {}
         self._abstracts: set[QualifiedName] = set()
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
@@ -91,6 +97,26 @@ class FunctionRegistryTrie:
 
     def is_object_member(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._object_members
+
+    def mark_object_binding(
+        self, qualified_name: QualifiedName, binding_qn: QualifiedName, key: str
+    ) -> None:
+        """Record that `binding.key` names this object member.
+
+        `const api = { fetchUser() {} }` registers `fetchUser` under its scope,
+        without the object's name; this is how `api.fetchUser()` finds it.
+        """
+        self._object_bindings.setdefault(binding_qn, {})[key] = qualified_name
+        self._object_binding_of[qualified_name] = (binding_qn, key)
+
+    def object_binding_member(
+        self, binding_qn: QualifiedName, key: str
+    ) -> QualifiedName | None:
+        members = self._object_bindings.get(binding_qn)
+        return members.get(key) if members else None
+
+    def has_object_bindings(self) -> bool:
+        return bool(self._object_bindings)
 
     def mark_abstract(self, qualified_name: QualifiedName) -> None:
         self._abstracts.add(qualified_name)
@@ -195,6 +221,13 @@ class FunctionRegistryTrie:
             ):
                 self._property_names.discard(simple_name)
         self._object_members.discard(qualified_name)
+        if (bound := self._object_binding_of.pop(qualified_name, None)) is not None:
+            binding_qn, key = bound
+            members = self._object_bindings.get(binding_qn, {})
+            if members.get(key) == qualified_name:
+                del members[key]
+            if not members:
+                self._object_bindings.pop(binding_qn, None)
         self._abstracts.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)

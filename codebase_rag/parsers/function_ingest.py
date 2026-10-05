@@ -1531,6 +1531,9 @@ class FunctionIngestMixin:
             # #2435), and the persisted mark keeps that across incremental runs.
             func_props[cs.KEY_IS_OBJECT_MEMBER] = True
             self.function_registry.mark_object_member(qualified_name)
+            js_ts_utils.mark_js_ts_object_binding(
+                self.function_registry, func_props, qualified_name, func_node
+            )
         # A JS/TS function expression whose name only its own body can call:
         # bare-name resolution skips it everywhere else (issue #2402), and the
         # persisted property lets an incremental run's rehydrated registry

@@ -7,7 +7,11 @@ from ... import constants as cs
 from ..utils import get_cached_query, safe_decode_text
 
 if TYPE_CHECKING:
-    from ...types_defs import LanguageQueries
+    from ...types_defs import (
+        FunctionRegistryTrieProtocol,
+        LanguageQueries,
+        PropertyDict,
+    )
 
 
 def get_js_ts_language_obj(
@@ -338,6 +342,79 @@ def is_object_literal_method(func_node: Node) -> bool:
         and parent is not None
         and parent.type == cs.TS_OBJECT
     )
+
+
+# Wrappers a TS object literal can sit in without changing which binding holds
+# it: `const api = { ... } as const`, `satisfies Api`, `({ ... })`.
+_OBJECT_LITERAL_WRAPPERS = frozenset(
+    {cs.TS_AS_EXPRESSION, cs.TS_SATISFIES_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION}
+)
+
+
+def object_literal_binding(func_node: Node) -> str | None:
+    """The name an object literal holding this function is bound to.
+
+    `const api = { fetchUser() {} }` and `{ build: () => 2 }` assigned to
+    `tools` give `api` and `tools`; `export default { run() {} }` gives
+    `default` (issue #2763). A nested object, or one that is passed,
+    returned or assigned to a property, has no name of its own: None.
+    """
+    obj = func_node.parent
+    if obj is not None and obj.type == cs.TS_PAIR:
+        value = obj.child_by_field_name(cs.FIELD_VALUE)
+        if value is None or value.id != func_node.id:
+            return None
+        obj = obj.parent
+    if obj is None or obj.type != cs.TS_OBJECT:
+        return None
+    holder = obj.parent
+    while holder is not None and holder.type in _OBJECT_LITERAL_WRAPPERS:
+        holder = holder.parent
+    if holder is None:
+        return None
+    if holder.type == cs.TS_VARIABLE_DECLARATOR:
+        name = holder.child_by_field_name(cs.TS_FIELD_NAME)
+        if name is not None and name.type == cs.TS_IDENTIFIER:
+            return safe_decode_text(name)
+        return None
+    if holder.type == cs.TS_EXPORT_STATEMENT and any(
+        child.type == cs.TS_EXPORT_DEFAULT for child in holder.children
+    ):
+        return cs.TS_EXPORT_DEFAULT
+    return None
+
+
+def object_binding_qn(func_node: Node, member_qn: str) -> str | None:
+    """The qualified name of the binding an object member is reached through.
+
+    A member registers under the scope its object is written in
+    (`<scope>.<key>`, or a duplicate variant of it), and so does the
+    object's binding: `const api = { fetchUser() {} }` in module `m` gives
+    `m.api` for member `m.fetchUser` (issue #2763).
+    """
+    binding = object_literal_binding(func_node)
+    if binding is None:
+        return None
+    natural = member_qn.split(cs.DUP_QN_MARKER, 1)[0]
+    scope, sep, _key = natural.rpartition(cs.SEPARATOR_DOT)
+    return f"{scope}{cs.SEPARATOR_DOT}{binding}" if sep else None
+
+
+def mark_js_ts_object_binding(
+    registry: "FunctionRegistryTrieProtocol",
+    props: "PropertyDict",
+    qualified_name: str,
+    func_node: Node,
+) -> None:
+    # The binding the member's object is reached through, recorded in the
+    # registry and on the node, which carries it to an incremental run's
+    # rehydrated registry (the is_object_member pattern).
+    binding_qn = object_binding_qn(func_node, qualified_name)
+    key = props.get(cs.KEY_NAME)
+    if binding_qn is None or not isinstance(key, str):
+        return
+    props[cs.KEY_OBJECT_BINDING] = binding_qn
+    registry.mark_object_binding(qualified_name, binding_qn, key)
 
 
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
