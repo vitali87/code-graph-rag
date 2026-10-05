@@ -189,6 +189,10 @@ TS_DART_PROGRAM = "program"
 TS_DART_IMPORT_OR_EXPORT = "import_or_export"
 TS_DART_PART_DIRECTIVE = "part_directive"
 TS_DART_PART_OF_DIRECTIVE = "part_of_directive"
+# `export '...';` sits under `import_or_export` as this child; with a
+# `part` directive it is how a library exposes ANOTHER file's names to
+# its importers (issue #2482).
+TS_DART_LIBRARY_EXPORT = "library_export"
 TS_DART_URI = "uri"
 TS_DART_IDENTIFIER_LIST = "dotted_identifier_list"
 
@@ -221,6 +225,28 @@ DART_SIGNATURE_TYPES = frozenset(
     }
 )
 DART_SIGNATURE_WRAPPERS = frozenset({TS_DART_METHOD_SIGNATURE, TS_DART_DECLARATION})
+
+# Constructor clauses between the signature and the body: `: this(...)` /
+# `: this.named(...)` is a `redirection`; `: super(...)`, field initializers
+# and asserts are `initializer_list_entry` nodes under `initializers`. Both
+# sit BESIDE the signature inside its wrapper, so neither the signature nor
+# the sibling body spans them, and neither holds a selector call node: the
+# delegated-to constructor is named by a `this`/`super` keyword child, an
+# optional `identifier` and the `arguments` (issue #2482).
+TS_DART_REDIRECTION = "redirection"
+TS_DART_INITIALIZERS = "initializers"
+TS_DART_INITIALIZER_LIST_ENTRY = "initializer_list_entry"
+DART_CONSTRUCTOR_CLAUSE_TYPES = frozenset({TS_DART_REDIRECTION, TS_DART_INITIALIZERS})
+DART_CONSTRUCTOR_DELEGATION_TYPES = frozenset(
+    {TS_DART_REDIRECTION, TS_DART_INITIALIZER_LIST_ENTRY}
+)
+
+# `extension E on T { ... }` names its extended type after this keyword
+# token; the call resolver reaches E's members through a `T` receiver.
+DART_EXTENSION_ON_KEYWORD = "on"
+# `class C extends B with M`: the `superclass` node names B after this
+# keyword token; only B declares constructors a `: super(...)` can run.
+DART_EXTENDS_KEYWORD = "extends"
 
 # Constructor signatures whose grammar `name` field is the CLASS identifier,
 # not the declared name: `C.named` must take its LAST bare identifier or every
