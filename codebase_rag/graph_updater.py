@@ -2334,8 +2334,8 @@ class GraphUpdater:
         self._record_exposes_cleanup(cleared_by_this_run=True)
 
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
-        # Modules the definition pass and the ast-grep tier already emitted,
-        # so no dangling edges.
+        # Modules the definition pass already emitted, and to those the
+        # ast-grep tier did, so no dangling edges.
         self.finding_analyzer.analyze(self._analysable_modules())
 
         logger.info(ls.ANALYSIS_COMPLETE)
