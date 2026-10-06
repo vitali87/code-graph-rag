@@ -70,8 +70,9 @@ RESEARCH = (
 )
 
 FILE_WRITER = (
-    "Writes `content` to `file_path` inside the project, creating any missing "
-    "parent directories. An existing file at that path is replaced entirely "
+    "Creates or replaces the file at `file_path` inside the project with "
+    "`content`, creating any missing parent directories. An existing file at "
+    "that path is replaced entirely "
     "and no diff is shown, so use it for new files and change existing ones "
     f"with `{AgenticToolName.REPLACE_CODE}`. The write may need the user's "
     "approval first. Returns the written path, or an error."
