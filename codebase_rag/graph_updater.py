@@ -7732,11 +7732,12 @@ class GraphUpdater:
     def _reingest_rebuild_findings(self, reparse: dict[str, Path]) -> None:
         """Re-run the finding analysis for the RE-PARSED modules only.
 
-        `CYPHER_DELETE_MODULE` detaches a re-parsed Module from its finding
-        nodes (`HAS_SMELL`, `HAS_VULNERABILITY`, `IMPLEMENTS_PATTERN`), and
-        nothing recreated those edges until the next full `update_repository`
-        (issue #1670). A re-ingested file therefore lost its findings and
-        stayed lost, which reads as "this file is clean".
+        `CYPHER_DELETE_MODULE` takes a re-parsed Module's finding nodes
+        (`HAS_SMELL`, `HAS_VULNERABILITY`, `IMPLEMENTS_PATTERN`) with it
+        (issue #2536), and without this pass nothing wrote them again until
+        the next full `update_repository` (issue #1670). A re-ingested file
+        therefore lost its findings and stayed lost, which reads as "this
+        file is clean".
 
         Scoped rather than repo-wide, because the full pass is not cheap
         enough to run on every re-ingest -- the other option the issue

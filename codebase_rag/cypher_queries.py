@@ -190,10 +190,15 @@ CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
     "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
 )
 
+# The definition walk takes what `CYPHER_DELETE_MODULE` takes from each
+# module (a test pins that), the finding edges included: a Pattern,
+# CodeSmell or SecurityIssue is keyed under its module's qualified name, so
+# no other project holds it, and left out it outlived the project as an
+# orphan (issue #2536).
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
 DETACH DELETE p, container, defined
 """
 
@@ -345,7 +350,7 @@ RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as prope
 _CYPHER_PROJECT_OWNED_NODES = """
 MATCH (p:Project) WHERE p.name IN $project_names
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
 WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 UNWIND owned AS n
 WITH DISTINCT n
@@ -530,7 +535,7 @@ ORDER BY count DESC
 _CYPHER_STATS_OWNED_NODES = """
 MATCH (p:Project) WHERE p.name IN $project_names
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
 WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 UNWIND owned AS n
 WITH DISTINCT n
@@ -553,7 +558,7 @@ ORDER BY count DESC
 CYPHER_STATS_PER_PROJECT = """
 MATCH (p:Project)
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
 WITH p, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 UNWIND owned AS n
 WITH DISTINCT p, n
@@ -1318,8 +1323,8 @@ RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
 # relation list must be kept in step with that query's, or the re-ingest
 # deletes nodes the capture never saw and the restore cannot put them back
 # (HAS_FIELD was added to the delete by #1899 and missed here: CodeRabbit;
-# HAS_VARIANT likewise by #1807, and a test now pins the two lists equal),
-# plus
+# HAS_VARIANT likewise by #1807, and a test now pins the two lists equal;
+# the finding edges joined both with #2536), plus
 # the File nodes at those paths and the containers above them (a package
 # indicator appearing or vanishing flips the directory's node kind).
 _CHECK_SCOPE = f"""MATCH (n)
@@ -1328,7 +1333,7 @@ WHERE (n:{NodeLabel.MODULE.value} AND n.path IN $paths
             OR n.qualified_name STARTS WITH $project_prefix))
    OR ((n:{NodeLabel.FILE.value} OR n:{NodeLabel.FOLDER.value}
         OR n:{NodeLabel.PACKAGE.value}) AND n.absolute_path IN $absolute_paths)
-MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c)
+MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*0..]->(c)
 WITH DISTINCT c"""
 CYPHER_CHECK_SCOPE_NODES = f"""{_CHECK_SCOPE}
 RETURN labels(c)[0] AS label, properties(c) AS props"""
@@ -1337,10 +1342,10 @@ RETURN labels(c)[0] AS label, properties(c) AS props"""
 # a node on (the label decides which one applies). The far end's properties
 # come along only for the labels the check can prune, re-grade or rewrite:
 # an ExternalModule a new import created, a Resource an endpoint anchored, a
-# Gloss whose anchor the re-parse re-graded, and a finding whose qualified
-# name (file, line, column, rule) survives the re-parse while its snippet
-# and span move with the edited source -- that node is not deleted by the
-# cleanup, so only its captured properties can put it back (#1718).
+# Gloss whose anchor the re-parse re-graded, and a finding (#1718). Since
+# #2536 a finding is also inside the walk, because the module delete takes
+# it with its module, so the scope capture already holds the same property
+# set and restores the same node.
 CYPHER_CHECK_SCOPE_EDGES = f"""{_CHECK_SCOPE}
 MATCH (c)-[r]-(x)
 RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,

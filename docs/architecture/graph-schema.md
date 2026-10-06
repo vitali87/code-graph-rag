@@ -29,7 +29,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
-| Resource (opt-in: [`io`](#capture-groups)) | `{qualified_name: string, name: string, kind: string}` |
+| Resource (opt-in: [`io`](#capture-groups)) | `{qualified_name: string, name: string, kind: string, project: string?}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
 | Pattern (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
 | CodeSmell (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
@@ -69,6 +69,8 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | Module | IMPLEMENTS_MODULE | ModuleImplementation |
 | Class, Interface, Function | INHERITS | Class, Interface, Function, ExternalModule |
 | Class, Enum | IMPLEMENTS | Interface, Class, Enum, ExternalModule |
+| Interface | INHERITS | Type |
+| Class | IMPLEMENTS | Type |
 | Method, Function | OVERRIDES | Method |
 | Function, Method | RETURNS | Class, Interface, Enum, Type, Union |
 | Function, Method | ACCEPTS | Class, Interface, Enum, Type, Union |
