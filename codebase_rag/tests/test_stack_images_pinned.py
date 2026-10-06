@@ -25,8 +25,8 @@ COMPOSE_PATH = REPO_ROOT / "codebase_rag" / "docker-compose.yaml"
 DEPENDABOT_PATH = REPO_ROOT / ".github" / "dependabot.yml"
 PINNED = re.compile(r"^(?P<name>[\w./-]+):(?P<tag>[\w.-]+)@sha256:[0-9a-f]{64}$")
 MEMGRAPH_PIN = (
-    "memgraph/memgraph-mage:3.3@sha256:"
-    "4579a70a2a095026d2e4039a5b0a4756e8e0e8a37ea0350f71240346efe343e8"
+    "memgraph/memgraph-mage:3.7@sha256:"
+    "91ab47cfee0eb0fa87d04bbd5b0352ef46374eef7dc4dbe676dbeec7d2facc72"
 )
 
 
