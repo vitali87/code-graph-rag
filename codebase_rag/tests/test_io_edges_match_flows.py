@@ -199,6 +199,12 @@ void notHttp() {
 
 @pytest.fixture(scope="module")
 def dart_php(tmp_path_factory: pytest.TempPathFactory) -> _Edges:
+    # Module scope runs before conftest's autouse grammar skips, so a base
+    # install (Python grammar only) must skip here, not build an empty graph.
+    parsers, _ = load_parsers()
+    for lang in ("dart", "php"):
+        if lang not in parsers:
+            pytest.skip(f"{lang} parser not available")
     root = tmp_path_factory.mktemp("io2761") / "app"
     return _index(
         root, {"leak.dart": _DART, "leak.php": _PHP, "not_http.dart": _NOT_HTTP}
