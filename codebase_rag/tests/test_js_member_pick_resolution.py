@@ -130,7 +130,9 @@ def test_a_first_party_interface_param_does_not_confirm_an_implementor(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # `Repo<Shape>` has two implementors; the file importing one of them is
-    # no evidence that `repo` is that one.
+    # no evidence that `repo` is that one. The call binds the interface's own
+    # `find`, the one callee the annotation names (issue #2524), and neither
+    # implementor takes an edge, since the annotation picks neither of them.
     _index(
         temp_repo,
         mock_ingestor,
@@ -151,7 +153,9 @@ def test_a_first_party_interface_param_does_not_confirm_an_implementor(
             ),
         },
     )
-    assert _calls(mock_ingestor, ".use.load")["impls.UserRepo.find"] == {HEURISTIC}
+    calls = _calls(mock_ingestor, ".use.load")
+    assert calls["repo.Repo.find"] == {EXACT}
+    assert "impls.UserRepo.find" not in calls
 
 
 def test_untyped_fields_locals_and_callbacks_bind_heuristically(
