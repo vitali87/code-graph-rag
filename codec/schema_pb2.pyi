@@ -435,14 +435,16 @@ class EnumVariant(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., index: _Optional[int] = ..., value: _Optional[str] = ..., docstring: _Optional[str] = ...) -> None: ...
 
 class Resource(_message.Message):
-    __slots__ = ("qualified_name", "name", "kind")
+    __slots__ = ("qualified_name", "name", "kind", "project")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
+    PROJECT_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     kind: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., kind: _Optional[str] = ...) -> None: ...
+    project: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., kind: _Optional[str] = ..., project: _Optional[str] = ...) -> None: ...
 
 class Section(_message.Message):
     __slots__ = ("qualified_name", "name", "heading_level", "start_line", "end_line", "path", "absolute_path")

@@ -454,6 +454,9 @@ message GraphCodeIndex {
 
     string name = 2;
     string kind = 3;
+    // The project serving an ENDPOINT (#2730); absent on every other kind,
+    // which reads as the empty string.
+    string project = 4;
   }
 
   // A heading in a document, and the prose beneath it. Sections nest by
