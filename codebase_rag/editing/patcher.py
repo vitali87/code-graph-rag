@@ -33,6 +33,7 @@ from tree_sitter import Node, Parser
 from .. import constants as cs
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
+from ..utils.source_encoding import python_source_view
 
 
 class SpanEdit(NamedTuple):
@@ -270,6 +271,9 @@ class Patcher:
         self._parsers = parsers
         self._overlay = overlay or {}
         self._sources: dict[str, bytes] = {}
+        # A Python file declaring a non-UTF-8 encoding is patched in the
+        # UTF-8 view its graph columns address and re-encoded on apply.
+        self._codecs: dict[str, str] = {}
         self._edits: dict[str, list[SpanEdit]] = {}
 
     def _relative(self, file: str | Path) -> str:
@@ -286,18 +290,37 @@ class Patcher:
         if key not in self._sources:
             staged = self._overlay.get(key)
             if staged is not None:
-                self._sources[key] = staged
+                raw = staged
             else:
                 path = self.repo_root / key
                 if not path.is_file():
                     raise PatcherError(cs.PATCH_NO_FILE.format(path=key))
                 try:
-                    self._sources[key] = path.read_bytes()
+                    raw = path.read_bytes()
                 except OSError as error:
                     # A file that vanished or became unreadable between the
                     # check and the read is the same refusal as a missing one.
                     raise PatcherError(cs.PATCH_NO_FILE.format(path=key)) from error
+            view, codec = python_source_view(
+                raw, _language_for(Path(key)), self.repo_root / key
+            )
+            if codec is not None:
+                self._codecs[key] = codec
+            self._sources[key] = view
         return self._sources[key]
+
+    def _encoded(self, key: str, content: bytes) -> bytes:
+        # Written back in the encoding the file declares: as UTF-8, a
+        # latin-1 `é` would become `Ã©` under the latin-1 cookie (#2901).
+        codec = self._codecs.get(key)
+        if codec is None:
+            return content
+        try:
+            return content.decode(cs.ENCODING_UTF8).encode(codec)
+        except UnicodeError as error:
+            raise PatcherError(
+                cs.PATCH_UNENCODABLE.format(path=key, codec=codec)
+            ) from error
 
     def _parser(self, key: str) -> tuple[cs.SupportedLanguage | None, Parser | None]:
         language = _language_for(Path(key))
@@ -394,7 +417,13 @@ class Patcher:
             else:
                 message = cs.PATCH_OK.format(path=key, count=len(edits))
             results[key] = PatchResult(
-                key, content, len(edits), parses, tool, formatted, message
+                key,
+                self._encoded(key, content),
+                len(edits),
+                parses,
+                tool,
+                formatted,
+                message,
             )
         return results
 

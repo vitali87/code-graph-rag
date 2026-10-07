@@ -11,6 +11,7 @@ from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..schemas import FileReadResult
 from ..taint import ReadContentRecord
+from ..utils.source_encoding import source_codec
 from . import tool_descriptions as td
 
 
@@ -40,7 +41,9 @@ class FileReader:
                 return FileReadResult(file_path=str(file_path), error_message=error_msg)
 
             try:
-                content = file_path.read_text(encoding=cs.ENCODING_UTF8)
+                # In the encoding a Python file declares, as the indexer
+                # read it (issue #2901).
+                content = file_path.read_text(encoding=source_codec(file_path))
                 logger.info(ls.TOOL_FILE_READ_SUCCESS.format(path=file_path))
                 return FileReadResult(file_path=str(file_path), content=content)
             except UnicodeDecodeError:

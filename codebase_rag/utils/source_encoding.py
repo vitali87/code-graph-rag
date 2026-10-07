@@ -107,6 +107,48 @@ def decode_python_source(source: bytes, path: Path) -> str | None:
     return _decode(source, codec, path)
 
 
+def source_codec(path: Path) -> str:
+    """The codec to read `path` as text with (issue #2901).
+
+    A Python file's PEP 263 declaration (only its first two lines can hold
+    one), else UTF-8: every other reader of a source then sees the text the
+    indexer parsed.
+    """
+    if path.suffix not in cs.PY_EXTENSIONS:
+        return cs.ENCODING_UTF8
+    try:
+        with path.open("rb") as handle:
+            head = handle.readline() + handle.readline()
+    except OSError:
+        return cs.ENCODING_UTF8
+    return _declared_codec(head, path) or cs.ENCODING_UTF8
+
+
+def decode_source(source: bytes, path: Path) -> str:
+    """`source` as text for display, in a Python file's declared encoding."""
+    declared = (
+        decode_python_source(source, path) if path.suffix in cs.PY_EXTENSIONS else None
+    )
+    if declared is not None:
+        return declared
+    return source.decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def python_source_view(
+    source: bytes, language: cs.SupportedLanguage | None, path: Path
+) -> tuple[bytes, str | None]:
+    """`source` as the UTF-8 bytes the grammar parsed, plus the codec to
+    write an edit of it back in (None when that is UTF-8 already).
+
+    The graph's byte columns address this view (issue #2901), so an editor
+    patches it and re-encodes only the result.
+    """
+    view = grammar_bytes(source, language, path)
+    if view is source:
+        return source, None
+    return view, _declared_codec(source, path)
+
+
 def grammar_bytes(
     source: bytes, language: cs.SupportedLanguage | None, path: Path
 ) -> bytes:
