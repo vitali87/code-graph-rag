@@ -2357,6 +2357,8 @@ class MCPToolsRegistry:
             result = await _plain_function(self._find_duplicates_tool)(
                 project=project, threshold=threshold, min_size=min_size, limit=limit
             )
+        if isinstance(result, te.ToolFailure):
+            return result
         return str(result)
 
     async def get_function_source(self, node_id: int) -> str:
@@ -2381,6 +2383,8 @@ class MCPToolsRegistry:
         result = await _plain_function(self._structural_search_tool)(
             pattern=pattern, language=language
         )
+        if isinstance(result, te.ToolFailure):
+            return result
         return str(result)
 
     async def structural_replace(
