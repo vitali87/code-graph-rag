@@ -1709,7 +1709,11 @@ async def _run_interactive_loop(
 
             initial_question = None
 
-        except KeyboardInterrupt:
+        # Ctrl+D on an empty prompt, or the terminal's input closing, raises
+        # EOFError: leave as Ctrl+C does. Reported as an unexpected error, it
+        # printed a traceback and re-prompted, forever once input had closed
+        # (issue #2917).
+        except (KeyboardInterrupt, EOFError):
             break
         except Exception as e:
             logger.exception(ls.UNEXPECTED.format(error=e))
