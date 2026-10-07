@@ -606,19 +606,65 @@ class RustTypeInferenceEngine:
                 var_types[name] = type_name
 
     def _tuple_struct_binding(self, pattern: Node) -> tuple[str, str] | None:
-        # `Variant(x)`: bind x to the variant's payload type. Rust's newtype idiom
-        # (`Command::Get(Get)`) names the variant after the wrapped type, so the
-        # variant name IS the payload type. Only single-field patterns bind.
+        # `Variant(x)`: bind x to the variant as written (`Strategy::Literal`),
+        # which the unified engine maps to the payload type the enum declares
+        # (issue #2923). Only single-field patterns bind; `ref s`, `ref mut s`,
+        # `mut s` and `&s` bind the identifier they wrap.
         variant = pattern.child_by_field_name(cs.FIELD_TYPE)
-        if variant is None:
+        if variant is None or self._path_leaf_name(variant) is None:
             return None
-        variant_name = self._path_leaf_name(variant)
-        bound = [
-            c for c in pattern.children if c.type == cs.TS_IDENTIFIER and c != variant
-        ]
-        if variant_name and len(bound) == 1 and (name := safe_decode_text(bound[0])):
-            return (name, variant_name)
+        fields = [c for c in pattern.named_children if c != variant]
+        if len(fields) != 1:
+            return None
+        bound = self._pattern_identifier(fields[0])
+        if bound is not None and (name := safe_decode_text(bound)):
+            if variant_path := safe_decode_text(variant):
+                return (name, variant_path)
         return None
+
+    @staticmethod
+    def _pattern_identifier(pattern: Node) -> Node | None:
+        # The identifier a binding pattern names, through any `ref`/`mut`/`&`
+        # wrappers.
+        while pattern.type in cs.RS_BINDING_WRAPPER_PATTERNS:
+            inner = [
+                c
+                for c in pattern.named_children
+                if c.type != cs.TS_RS_MUTABLE_SPECIFIER
+            ]
+            if len(inner) != 1:
+                return None
+            pattern = inner[0]
+        return pattern if pattern.type == cs.TS_IDENTIFIER else None
+
+    def build_variant_payload_map(self, enum_node: Node) -> dict[str, str]:
+        # {variant: payload type} for an enum's single-field tuple variants
+        # (`Literal(LiteralStrategy)` -> {"Literal": "LiteralStrategy"}).
+        payloads: dict[str, str] = {}
+        if enum_node.type != cs.TS_RS_ENUM_ITEM:
+            return payloads
+        body = enum_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return payloads
+        for variant in body.named_children:
+            if variant.type != cs.TS_RS_ENUM_VARIANT:
+                continue
+            fields = variant.child_by_field_name(cs.FIELD_BODY)
+            name_node = variant.child_by_field_name(cs.FIELD_NAME)
+            if (
+                fields is None
+                or name_node is None
+                or fields.type != cs.TS_RS_ORDERED_FIELD_DECLARATION_LIST
+            ):
+                continue
+            types = fields.children_by_field_name(cs.FIELD_TYPE)
+            if len(types) != 1:
+                continue
+            if (name := safe_decode_text(name_node)) and (
+                payload := self._bare_type_name(types[0])
+            ):
+                payloads[name] = payload
+        return payloads
 
     def collect_match_arm_bindings(
         self, caller_node: Node

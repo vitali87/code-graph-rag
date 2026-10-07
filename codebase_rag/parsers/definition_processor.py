@@ -268,6 +268,11 @@ class DefinitionProcessor(
         # (`workers: Vec<Worker>` -> {"workers": "Worker"}), applied only when
         # an iterator adaptor's closure parameter binds the element (#1045).
         self.class_field_element_types: dict[str, dict[str, str]] = {}
+        # {enum_qn: {variant_name: payload_type}} for Rust single-field tuple
+        # variants (`Literal(LiteralStrategy)` -> {"Literal":
+        # "LiteralStrategy"}), so a match-arm binding takes the payload's
+        # type, not the variant's name (issue #2923).
+        self.rust_variant_payload_types: dict[str, dict[str, str]] = {}
         # {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
         # receiver declared with an alias resolves to the aliased class. Collected
         # across all files (an alias in a header is used in a .cc), read by the

@@ -53,6 +53,7 @@ class TypeInferenceEngine:
         "class_field_types",
         "class_field_guard_inner",
         "class_field_element_types",
+        "rust_variant_payload_types",
         "method_return_types",
         "go_function_return_types",
         "go_call_sites",
@@ -107,6 +108,7 @@ class TypeInferenceEngine:
         class_field_types: dict[str, dict[str, str]] | None = None,
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
         class_field_element_types: dict[str, dict[str, str]] | None = None,
+        rust_variant_payload_types: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
@@ -159,6 +161,9 @@ class TypeInferenceEngine:
         # applied only when an iterator adaptor's closure parameter binds the
         # element (issue #1045).
         self.class_field_element_types = _shared(class_field_element_types, dict)
+        # Shared reference: Rust tuple-variant payload types per enum, which
+        # type a match-arm binding (issue #2923).
+        self.rust_variant_payload_types = _shared(rust_variant_payload_types, dict)
         # Shared reference (as with class_field_types): DefinitionProcessor's
         # func_qn -> return-type map, populated during ingestion and read by the
         # resolver's chained-call path.
@@ -436,7 +441,17 @@ class TypeInferenceEngine:
         finds, so an unresolvable binding is strictly worse than none.
         """
         engine = self.rust_type_inference
-        bindings = engine.collect_match_arm_bindings(caller_node)
+        bindings = [
+            (
+                start,
+                end,
+                name,
+                self._rust_variant_payload_type(variant, module_qn, class_context),
+            )
+            for start, end, name, variant in engine.collect_match_arm_bindings(
+                caller_node
+            )
+        ]
         element_entries = engine.collect_element_entries(caller_node)
         if class_context:
             span = (caller_node.start_byte, caller_node.end_byte)
@@ -454,6 +469,34 @@ class TypeInferenceEngine:
             if self._rust_binding_type_resolves(binding[3], module_qn)
         )
         return bindings
+
+    def _rust_variant_payload_type(
+        self, variant_path: str, module_qn: str, class_context: str | None
+    ) -> str:
+        # `Strategy::Literal(s)` binds `s` to the payload type the enum
+        # declares for `Literal` (issue #2923). The enum comes from the path
+        # (`Self::` is the impl target); a bare variant (`use Strategy::*`)
+        # takes the one enum of this module declaring it. Otherwise, or for a
+        # variant without a single payload, the variant name stands, which is
+        # the payload type under the newtype idiom (`Command::Get(Get)`).
+        enum_path, separator, variant = variant_path.rpartition(
+            cs.SEPARATOR_DOUBLE_COLON
+        )
+        payloads = self.rust_variant_payload_types
+        if separator:
+            enum_qn = (
+                class_context
+                if enum_path == cs.RS_SELF_TYPE and class_context
+                else self._resolve_rust_type_qn(enum_path, module_qn)
+            )
+            return payloads.get(enum_qn, {}).get(variant) or variant
+        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        declaring = {
+            payload
+            for enum_qn, variants in payloads.items()
+            if enum_qn.startswith(prefix) and (payload := variants.get(variant))
+        }
+        return declaring.pop() if len(declaring) == 1 else variant
 
     def _substitute_rust_generic_bounds(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
