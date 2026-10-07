@@ -310,9 +310,9 @@ class TestDotenvIntoTheEnvironment:
         assert os.environ["CGR_TEST_DOTENV_LAST"] == "two"
 
     def test_a_variable_already_set_is_not_overridden(
-        self, scratch_environ: Path
+        self, scratch_environ: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        os.environ["CGR_TEST_DOTENV_FIRST"] = "exported"
+        monkeypatch.setenv("CGR_TEST_DOTENV_FIRST", "exported")
         dotenv = _write_dotenv(
             scratch_environ,
             "CGR_TEST_DOTENV_FIRST=from-file",
@@ -327,13 +327,16 @@ class TestDotenvIntoTheEnvironment:
 
     @pytest.mark.parametrize("disabled", [None, "true"])
     def test_the_environment_ends_as_load_dotenv_leaves_it(
-        self, scratch_environ: Path, disabled: str | None
+        self,
+        scratch_environ: Path,
+        disabled: str | None,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Quoting, interpolation, a key with no value, UTF-8 and python-dotenv's
         # own off switch all behave as they did before.
         if disabled is not None:
-            os.environ["PYTHON_DOTENV_DISABLED"] = disabled
-        os.environ["CGR_TEST_DOTENV_FIRST"] = "exported"
+            monkeypatch.setenv("PYTHON_DOTENV_DISABLED", disabled)
+        monkeypatch.setenv("CGR_TEST_DOTENV_FIRST", "exported")
         dotenv = _write_dotenv(
             scratch_environ,
             "CGR_TEST_DOTENV_FIRST=from-file",
