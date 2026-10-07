@@ -75,7 +75,8 @@ def test_doctor_fails_on_an_unsupported_memgraph(
     result = HealthChecker().check_memgraph_connection()
     assert result.passed is False, result
     assert "2.14.1" in result.name, result
-    assert result.error is not None and "cgr daemon up" in result.error, result
+    assert result.error is not None, result
+    assert "cgr daemon up" in result.error, result
 
 
 @pytest.mark.parametrize("version", ["3.3.0", "3.0.0", "4.1.2"])
@@ -91,7 +92,8 @@ def test_connecting_to_an_unsupported_memgraph_warns_once(
 ) -> None:
     warnings = _enter(monkeypatch, "2.14.1")
     assert len(warnings) == 1, warnings
-    assert "2.14.1" in warnings[0] and "cgr daemon up" in warnings[0], warnings
+    assert "2.14.1" in warnings[0], warnings
+    assert "cgr daemon up" in warnings[0], warnings
     # A second connection in the same process does not repeat it.
     handler_warnings: list[str] = []
     handler = logger.add(lambda m: handler_warnings.append(str(m)), level="WARNING")
