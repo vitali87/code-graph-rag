@@ -783,20 +783,25 @@ def _cpp_parameter_types(node: Node) -> tuple[str, ...]:
     for parameter in parameters.named_children:
         if parameter.text is None or parameter.type == cs.TS_COMMENT:
             continue
-        text = parameter.text
-        end = len(text)
-        default = parameter.child_by_field_name(cs.TS_CPP_FIELD_DEFAULT_VALUE)
-        if default is not None:
-            end = default.start_byte - parameter.start_byte
-        named = parameter.child_by_field_name(cs.FIELD_DECLARATOR)
-        while named is not None and named.type != cs.TS_CPP_IDENTIFIER:
-            named = named.child_by_field_name(cs.FIELD_DECLARATOR)
-        written = text[:end]
-        if named is not None and named.end_byte - parameter.start_byte <= end:
-            start = named.start_byte - parameter.start_byte
-            written = written[:start] + written[named.end_byte - parameter.start_byte :]
-        types.append("".join(written.decode(cs.ENCODING_UTF8).split()).rstrip("="))
+        types.append(_cpp_written_parameter_type(parameter, parameter.text))
     return () if types == ["void"] else tuple(types)
+
+
+def _cpp_written_parameter_type(parameter: Node, text: bytes) -> str:
+    # One parameter's type as written (`text` is the parameter's source):
+    # its name and default value cut out, whitespace dropped.
+    end = len(text)
+    default = parameter.child_by_field_name(cs.TS_CPP_FIELD_DEFAULT_VALUE)
+    if default is not None:
+        end = default.start_byte - parameter.start_byte
+    named = parameter.child_by_field_name(cs.FIELD_DECLARATOR)
+    while named is not None and named.type != cs.TS_CPP_IDENTIFIER:
+        named = named.child_by_field_name(cs.FIELD_DECLARATOR)
+    written = text[:end]
+    if named is not None and named.end_byte - parameter.start_byte <= end:
+        start = named.start_byte - parameter.start_byte
+        written = written[:start] + written[named.end_byte - parameter.start_byte :]
+    return "".join(written.decode(cs.ENCODING_UTF8).split()).rstrip("=")
 
 
 def _cpp_declared_name(node: Node) -> str | None:
