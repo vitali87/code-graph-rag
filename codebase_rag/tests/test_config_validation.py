@@ -161,7 +161,8 @@ class TestValidateApiKey:
         monkeypatch.setenv("MADEUP_API_KEY", "k")
         cfg = ModelConfig(provider="madeup", model_id="m")
 
-        with pytest.raises(ValueError, match="API Key Missing"):
+        # Refused as unknown before any key is asked for (#2897).
+        with pytest.raises(ValueError, match="Unknown provider 'madeup'"):
             cfg.validate_api_key()
 
     def test_an_explicit_key_still_wins_over_an_absent_variable(self) -> None:
