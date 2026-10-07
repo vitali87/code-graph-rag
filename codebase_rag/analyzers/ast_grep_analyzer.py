@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import constants as cs
 from ..utils.path_utils import cached_relative_path
+from .finding_filters import FINDING_FILTERS, FindingFilter
 
 if TYPE_CHECKING:
     from ..capture import CaptureSelection
@@ -40,6 +42,8 @@ class _Rule:
     body: dict[str, Any]  # ast-grep rule body, splatted into find_all(**body)
     node_label: cs.NodeLabel
     rel_type: cs.RelationshipType
+    # Builds a per-file check for what a pattern cannot express (issue #2889).
+    match_filter: Callable[[], FindingFilter] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,10 +93,20 @@ def _parse_rule_file(
             body=entry["rule"],
             node_label=node_label,
             rel_type=rel_type,
+            match_filter=_match_filter(path, entry.get("filter")),
         )
         for entry in (data.get("rules") or [])
     ]
     return str(ast_grep_id), list(extensions), rules
+
+
+def _match_filter(path: Path, name: str | None) -> Callable[[], FindingFilter] | None:
+    if name is None:
+        return None
+    factory = FINDING_FILTERS.get(str(name))
+    if factory is None:
+        raise ValueError(f"{path.name}: unknown finding filter {name!r}")
+    return factory
 
 
 class FindingAnalyzer:
@@ -164,8 +178,10 @@ class FindingAnalyzer:
                 "bad ast-grep rule %r for %s: %s", rule.rule_id, file_path, exc
             )
             return
+        keep = rule.match_filter() if rule.match_filter is not None else None
         for node in matches:
-            self._emit_finding(rule, node, module_qn, relative_path)
+            if keep is None or keep(node):
+                self._emit_finding(rule, node, module_qn, relative_path)
 
     def _emit_finding(
         self, rule: _Rule, node: Any, module_qn: str, relative_path: str
