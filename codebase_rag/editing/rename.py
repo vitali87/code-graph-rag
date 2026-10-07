@@ -548,24 +548,7 @@ class Renamer:
         ):
             return []
         natural = natural_qn(qn)
-        twins: dict[str, int] = {}
-        for row in self.fetch_all(
-            cq.CYPHER_DELTA_DEFINITIONS,
-            {
-                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(self._project_prefixes()),
-                cs.CYPHER_PARAM_PATHS: [path],
-            },
-        ):
-            other = row.get(cs.KEY_QUALIFIED_NAME)
-            line = row.get(cs.KEY_START_LINE)
-            if (
-                row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD.value
-                and isinstance(other, str)
-                and isinstance(line, int)
-                and natural_qn(other) == natural
-            ):
-                twins[other] = line
+        twins = self._same_named_methods(path, natural)
         if len(twins) < 2:
             return []
         decorators = {
@@ -601,6 +584,28 @@ class Renamer:
                 [],
             )
         return accessors
+
+    def _same_named_methods(self, path: str, natural: str) -> dict[str, int]:
+        """Each method in `path` whose natural qn is `natural`, by start line."""
+        twins: dict[str, int] = {}
+        for row in self.fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS,
+            {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(self._project_prefixes()),
+                cs.CYPHER_PARAM_PATHS: [path],
+            },
+        ):
+            other = row.get(cs.KEY_QUALIFIED_NAME)
+            line = row.get(cs.KEY_START_LINE)
+            if (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD.value
+                and isinstance(other, str)
+                and isinstance(line, int)
+                and natural_qn(other) == natural
+            ):
+                twins[other] = line
+        return twins
 
     def _collect(self, qn: str) -> tuple[list[RenameSite], list[str], str, str | None]:
         definition = graph_query.definition(
