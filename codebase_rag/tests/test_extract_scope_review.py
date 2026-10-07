@@ -151,7 +151,8 @@ def test_a_switch_local_break_is_not_an_early_exit() -> None:
     assert _early_exit(switches[0]) is None
     # A `continue` in a selected switch still targets the loop outside it.
     leaving = _early_exit(switches[1])
-    assert leaving is not None and leaving.type == cs.TS_CONTINUE_STATEMENT
+    assert leaving is not None
+    assert leaving.type == cs.TS_CONTINUE_STATEMENT
 
 
 def _walk(node: Node) -> list[Node]:

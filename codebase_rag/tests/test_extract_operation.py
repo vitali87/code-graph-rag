@@ -56,7 +56,8 @@ def test_extract_nine_lines_with_two_inputs_and_two_outputs_in_python(
         "    average = total / count if count else 0\n    return total, average\n"
     ) in text
     assert report.new_qualified_name == _project_qn("pkg.report.accumulate")
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     _smoke(root)
 
 
@@ -136,6 +137,8 @@ def test_extract_refuses_early_exits_and_split_statements(
     extract_inline_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = extract_inline_repo
+    build = _project_qn("pkg.report.build")
+    nothing = _project_qn("pkg.report.nothing")
     # Lines 5-10 hold the loop with its `continue`: fine as a whole (the
     # continue targets the loop inside the span)... but a span holding the
     # `return` cannot be one call.
@@ -144,7 +147,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.report.build"),
+            build,
             (12, 15),
             "tail",
             dry_run=True,
@@ -154,7 +157,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.report.build"),
+            build,
             (3, 6),
             "part",
             dry_run=True,
@@ -164,7 +167,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.report.build"),
+            build,
             (40, 45),
             "none",
             dry_run=True,
@@ -174,7 +177,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.report.nothing"),
+            nothing,
             (3, 4),
             "x",
             dry_run=True,
