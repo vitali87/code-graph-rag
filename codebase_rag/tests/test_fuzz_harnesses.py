@@ -1377,8 +1377,9 @@ def test_a_closed_defect_reappearing_fails_the_run(
         return result
 
     monkeypatch.setattr(harness.GraphUpdater, "reingest", planting)
+    data = seed.read_bytes()
     with pytest.raises(AssertionError, match="reingest disagreed") as raised:
-        harness.fuzz_incremental_update(seed.read_bytes())
+        harness.fuzz_incremental_update(data)
     assert named in str(raised.value)
 
 
@@ -1700,14 +1701,12 @@ def test_the_cypher_harness_catches_a_range_check_reading_names_as_syntax(
     monkeypatch.setattr(
         llm, "mask_literals_and_comments", lambda query, **_: unquoting(query)
     )
+    unbounded = _cypher_seed("query_unbounded_bracket_in_backtick_name")
+    bounded = _cypher_seed("query_bounded_star_in_backtick_name")
     with pytest.raises(AssertionError, match="unbounded path accepted"):
-        cypher_harness.fuzz_cypher_guard(
-            _cypher_seed("query_unbounded_bracket_in_backtick_name")
-        )
+        cypher_harness.fuzz_cypher_guard(unbounded)
     with pytest.raises(AssertionError, match="bounded path rejected"):
-        cypher_harness.fuzz_cypher_guard(
-            _cypher_seed("query_bounded_star_in_backtick_name")
-        )
+        cypher_harness.fuzz_cypher_guard(bounded)
 
 
 def test_the_cypher_harness_lets_an_undocumented_exception_escape(
@@ -1960,8 +1959,9 @@ def test_the_dependency_harness_restores_the_parser_logger(
         raise OSError(path)
 
     monkeypatch.setattr(h, "read_manifest", crashes)
+    data = _dependency_seed("manifest_gomod_every_shape")
     with pytest.raises(OSError):
-        h.fuzz_dependency_manifest(_dependency_seed("manifest_gomod_every_shape"))
+        h.fuzz_dependency_manifest(data)
     assert h.dependency_parser.logger is real
 
 

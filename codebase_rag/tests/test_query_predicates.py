@@ -228,7 +228,8 @@ def _corpus_sources() -> dict[str, str]:
     spec = importlib.util.spec_from_file_location(
         "_build_corpus", _REPO / "fuzz" / "build_corpus.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.SOURCES
