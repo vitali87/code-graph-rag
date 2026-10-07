@@ -206,11 +206,12 @@ def test_a_call_site_that_names_nothing_is_unlocatable_not_dropped(
         (src, rel, dst, {**props, "col": 16} if props.get("line") == 6 else props)
         for src, rel, dst, props in graph.edges
     ]
+    fetch = _fetch(graph)
 
     with pytest.raises(RenameRefused, match="1 graph-known site"):
         rename(
             root,
-            _fetch(graph),
+            fetch,
             graph.project,
             f"{graph.project}.dmod.dhelper",
             "bump",
