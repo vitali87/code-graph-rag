@@ -226,6 +226,39 @@ def _declaration_visible_at(decl: Node, at: Node) -> bool:
     return container.start_byte <= at.start_byte and at.end_byte <= container.end_byte
 
 
+def _declarator_named(declarator: Node, name: str) -> bool:
+    return (
+        declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+        and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME)) == name
+    )
+
+
+def _local_declarator_type_text(type_node: Node | None, declarator: Node) -> str | None:
+    """The declared type of a local's declarator, or for `var` the type its
+    initializer constructs (None when neither is read)."""
+    if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+        return safe_decode_text(type_node)
+    # Only a direct `new T(...)`: a creation among a call's arguments
+    # (`Make(new List<ISink>())`) is not what the call returns (bot review on
+    # PR #2990).
+    name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+    value = next(
+        (c for c in reversed(declarator.named_children) if c != name_node),
+        None,
+    )
+    if value is not None and value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+        return safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
+    return None
+
+
+def _enclosing_type_body(node: Node) -> Node | None:
+    # The body of the type declaration that encloses `node`, if any.
+    owner = node.parent
+    while owner is not None and owner.type not in cs.CSHARP_TYPE_DECLARATION_NODES:
+        owner = owner.parent
+    return owner.child_by_field_name(cs.FIELD_BODY) if owner is not None else None
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -507,42 +540,15 @@ class CSharpTypeInferenceEngine:
                 continue
             type_node = decl.child_by_field_name(cs.FIELD_TYPE)
             for declarator in decl.named_children:
-                if (
-                    declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR
-                    or safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
-                    != name
-                ):
-                    continue
-                if type_node is not None and type_node.type != (
-                    cs.TS_CSHARP_IMPLICIT_TYPE
-                ):
-                    return True, safe_decode_text(type_node)
-                # Only a direct `new T(...)`: a creation among a call's
-                # arguments (`Make(new List<ISink>())`) is not what the call
-                # returns (bot review on PR #2990).
-                name_node = declarator.child_by_field_name(cs.FIELD_NAME)
-                value = next(
-                    (c for c in reversed(declarator.named_children) if c != name_node),
-                    None,
-                )
-                if (
-                    value is not None
-                    and value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
-                ):
-                    return True, safe_decode_text(
-                        value.child_by_field_name(cs.FIELD_TYPE)
-                    )
-                return True, None
+                if _declarator_named(declarator, name):
+                    return True, _local_declarator_type_text(type_node, declarator)
         return False, None
 
     @staticmethod
     def _field_type_text(scope_node: Node, name: str) -> str | None:
         # A field of the type that declares this member, read off the syntax:
         # the per-class field map is keyed by class qn, unknown here.
-        owner = scope_node.parent
-        while owner is not None and owner.type not in cs.CSHARP_TYPE_DECLARATION_NODES:
-            owner = owner.parent
-        body = owner.child_by_field_name(cs.FIELD_BODY) if owner is not None else None
+        body = _enclosing_type_body(scope_node)
         for member in body.named_children if body is not None else ():
             if member.type != cs.TS_CSHARP_FIELD_DECLARATION:
                 continue
@@ -550,9 +556,7 @@ class CSharpTypeInferenceEngine:
                 if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
                     continue
                 if any(
-                    declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
-                    and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
-                    == name
+                    _declarator_named(declarator, name)
                     for declarator in decl.named_children
                 ):
                     return safe_decode_text(decl.child_by_field_name(cs.FIELD_TYPE))
