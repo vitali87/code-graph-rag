@@ -30,6 +30,7 @@ from ..constants import (
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_NAME,
+    KEY_PATH,
     KEY_PROJECT_NAME,
     KEY_PROJECT_NAMES,
     KEY_PROPS,
@@ -40,6 +41,7 @@ from ..constants import (
     MERGE_KEY_PROPS_BY_REL,
     NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
+    NODE_PATH_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_ENDPOINT_JOINER,
     REL_ENDPOINT_SOURCE,
@@ -593,6 +595,11 @@ class MemgraphIngestor:
         for label in NODE_NAME_INDEXES:
             try:
                 self._execute_query(self._dialect.create_index(label, KEY_NAME))
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
+                pass
+        for label in NODE_PATH_INDEXES:
+            try:
+                self._execute_query(self._dialect.create_index(label, KEY_PATH))
             except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_INDEXES_DONE)

@@ -810,16 +810,17 @@ CYPHER_QUERY_PROJECT_NODE_IDS = (
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
-CYPHER_DELETE_MODULE = (
-    # Scoped to the project: two projects in the shared graph can hold the
-    # same relative path, and a path-only match would take the sibling's
-    # module subtree with it. A repository-root __init__.py's module qn IS
-    # the bare project name (no trailing dot), so the prefix test alone
-    # would miss it.
-    # `svc.` also prefixes `svc.v2`'s modules, so a registered project whose
-    # name extends this one is excluded: a module belongs to the LONGEST
-    # registered name it sits under (issue #1985).
-    "MATCH (m:Module {path: $path}) "
+# What a module owns: the walk the module delete takes and the inbound-edge
+# capture mirrors, so the two cannot disagree on what goes (issue #2918).
+_CYPHER_MODULE_SUBTREE_RELS = (
+    "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
+)
+# Which matched Module `m` this project owns. `svc.` also prefixes
+# `svc.v2`'s modules, so a registered project whose name extends this one is
+# excluded: a module belongs to the LONGEST registered name it sits under
+# (issue #1985).
+_CYPHER_OWN_MODULE = (
     "WHERE (m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix) "
     "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
@@ -835,6 +836,15 @@ CYPHER_DELETE_MODULE = (
     "AND (m.qualified_name = nested.name "
     "OR m.qualified_name STARTS WITH (nested.name + '.')) "
     "WITH m, nested WHERE nested IS NULL "
+)
+CYPHER_DELETE_MODULE = (
+    # Scoped to the project: two projects in the shared graph can hold the
+    # same relative path, and a path-only match would take the sibling's
+    # module subtree with it. A repository-root __init__.py's module qn IS
+    # the bare project name (no trailing dot), so the prefix test alone
+    # would miss it.
+    "MATCH (m:Module {path: $path}) "
+    + _CYPHER_OWN_MODULE
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
@@ -843,8 +853,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
-    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c) "
+    + f"OPTIONAL MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -1068,9 +1077,22 @@ CYPHER_INBOUND_EDGES = (
     # the graph, so the edge that attaches it to a re-parsed symbol has no
     # source to be re-derived from and would otherwise die with the subtree,
     # leaving the note orphaned for the next sweep to delete.
+    # The targets are what CYPHER_DELETE_MODULE is about to delete: this
+    # project's modules at those paths, found through the Module(path)
+    # index, and the same subtree walk. Matching `target.path IN $paths`
+    # over every edge scanned the whole shared database, once per sync, and
+    # returned other projects' edges into their own same-path files (issue
+    # #2918). A target outside the subtree is not deleted, so its edges
+    # never needed restoring, and a nested project's module is not deleted
+    # either, so the capture applies the delete's ownership filter too.
+    "UNWIND $paths AS path "
+    "MATCH (m:Module {path: path}) "
+    + _CYPHER_OWN_MODULE
+    + f"MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(target) "
+    "WITH DISTINCT target "
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
     "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS]->(target) "
-    "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
+    "WHERE caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
@@ -1369,6 +1391,10 @@ NODE_NAME_INDEXES: tuple[str, ...] = tuple(
     for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
     if key is not UniqueKeyType.NAME
 )
+# Module(path) serves the per-file module delete and the inbound-edge
+# capture, which find a re-parsed file's Module by its relative path; without
+# it each lookup scans every node of the shared database (issue #2918).
+NODE_PATH_INDEXES: tuple[str, ...] = (NodeLabel.MODULE.value,)
 
 # Superseded unique constraints that must be dropped from existing shared
 # databases; a leftover Folder/File path constraint would keep rejecting the

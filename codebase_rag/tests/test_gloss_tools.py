@@ -865,7 +865,7 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
     existed, so it must reach the store regardless of the selection."""
     ingestor = MagicMock()
     updater = GraphUpdater(
-        ingestor=ingestor, repo_path=tmp_path, parsers={}, queries={}
+        ingestor=ingestor, repo_path=tmp_path, parsers={}, queries={}, project_name=P
     )
     assert not updater.capture.rel_enabled(cs.RelationshipType.ANNOTATES)
     updater.function_registry[RUN] = NodeType.FUNCTION
@@ -931,7 +931,12 @@ def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) ->
     updater._is_full_build = True
     with patch("codebase_rag.graph_updater.logger") as log:
         assert updater._capture_inbound_edges(["app.py"]) == []
-    log.warning.assert_called_once_with(lg.INBOUND_CAPTURE_FAILED)
+    # The capture reads the project registry as the delete does (issue
+    # #2918), and that read reports its own outage.
+    captured = [
+        c for c in log.warning.call_args_list if c.args[0] == lg.INBOUND_CAPTURE_FAILED
+    ]
+    assert len(captured) == 1
 
 
 class _RecordingStore:
