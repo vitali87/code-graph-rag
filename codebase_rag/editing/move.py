@@ -35,6 +35,7 @@ from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..structural_delta import _longer_project_prefixes, import_cycles, snapshot
+from ..types_defs import ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, move_expectation, verify
 from .imports import (
@@ -238,23 +239,26 @@ def _py_bound(node: ast.AST) -> set[str]:
             isinstance(current, ast.AnnAssign) and current.value is None
         ):
             continue
-        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Store):
-            names.add(current.id)
-        elif isinstance(current, ast.Import | ast.ImportFrom):
-            names.update(
-                alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0]
-                for alias in current.names
-                if alias.name != _PY_STAR
-            )
-        elif (
-            isinstance(current, ast.ExceptHandler | ast.MatchAs | ast.MatchStar)
-            and current.name
-        ):
-            names.add(current.name)
-        elif isinstance(current, ast.MatchMapping) and current.rest:
-            names.add(current.rest)
+        names |= _py_own_bound(current)
         stack.extend(ast.iter_child_nodes(current))
     return names
+
+
+def _py_own_bound(node: ast.AST) -> set[str]:
+    """The names `node` itself binds, leaving its children to the caller."""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+        return {node.id}
+    if isinstance(node, ast.Import | ast.ImportFrom):
+        return {
+            alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0]
+            for alias in node.names
+            if alias.name != _PY_STAR
+        }
+    if isinstance(node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar) and node.name:
+        return {node.name}
+    if isinstance(node, ast.MatchMapping) and node.rest:
+        return {node.rest}
+    return set()
 
 
 def _meet(left: set[str] | None, right: set[str] | None) -> set[str] | None:
@@ -276,20 +280,18 @@ def _py_definite(body: list[ast.stmt]) -> set[str] | None:
     for statement in body:
         if isinstance(statement, ast.Raise):
             return None
+        # Nested blocks are walked here, not in the helpers, so a nesting
+        # level costs one frame: an `elif` chain nests a level per branch.
         if isinstance(statement, ast.If):
             bound = _meet(_py_definite(statement.body), _py_definite(statement.orelse))
         elif isinstance(statement, ast.Try | ast.TryStar):
-            bound = _py_definite(statement.body + statement.orelse)
-            for handler in statement.handlers:
-                bound = _meet(bound, _py_definite(handler.body))
-            final = _py_definite(statement.finalbody)
-            bound = None if bound is None or final is None else bound | final
+            bound = _try_definite(
+                _py_definite(statement.body + statement.orelse),
+                [_py_definite(handler.body) for handler in statement.handlers],
+                _py_definite(statement.finalbody),
+            )
         elif isinstance(statement, ast.With | ast.AsyncWith):
-            bound = _py_definite(statement.body)
-            if bound is not None:
-                for item in statement.items:
-                    if item.optional_vars is not None:
-                        bound |= _py_bound(item.optional_vars)
+            bound = _with_definite(_py_definite(statement.body), statement.items)
         elif isinstance(statement, _PY_FLOW):
             bound = set()
         else:
@@ -298,6 +300,27 @@ def _py_definite(body: list[ast.stmt]) -> set[str] | None:
             return None
         names |= bound
     return names
+
+
+def _try_definite(
+    body: set[str] | None, handlers: list[set[str] | None], final: set[str] | None
+) -> set[str] | None:
+    """What a `try` certainly binds, from what its body (with its `else`),
+    each of its handlers and its `finally` certainly bind."""
+    for handled in handlers:
+        body = _meet(body, handled)
+    return None if body is None or final is None else body | final
+
+
+def _with_definite(body: set[str] | None, items: list[ast.withitem]) -> set[str] | None:
+    """What a `with` certainly binds, from what its body certainly binds:
+    that, and each `as` target once the body completes."""
+    if body is None:
+        return None
+    for item in items:
+        if item.optional_vars is not None:
+            body |= _py_bound(item.optional_vars)
+    return body
 
 
 def _flow_bindings(source: bytes) -> tuple[frozenset[str], frozenset[str]]:
@@ -497,6 +520,18 @@ def _js_assigned(top: Node) -> set[str]:
     return written - declared
 
 
+def _clause_exports(clause: Node) -> list[str]:
+    """The names a JS/TS `export { a, b as c }` clause exports: `a`, `c`."""
+    return [
+        _text(
+            spec.child_by_field_name(cs.FIELD_ALIAS)
+            or spec.child_by_field_name(cs.FIELD_NAME)
+        )
+        for spec in clause.named_children
+        if spec.type == cs.TS_EXPORT_SPECIFIER
+    ]
+
+
 def _type_checking_imports(
     source: bytes, old_path: str, new_path: str
 ) -> dict[str, str]:
@@ -512,32 +547,49 @@ def _type_checking_imports(
         return {}
     out: dict[str, str] = {}
     for node in tree.body:
-        if (
-            not isinstance(node, ast.If)
-            or node.orelse
-            or ast.unparse(node.test) not in _TYPE_CHECKING_GUARDS
-        ):
-            continue
-        for statement in node.body:
-            if isinstance(statement, ast.ImportFrom):
-                module = _rebase_py_relative(
-                    cs.SEPARATOR_DOT * statement.level + (statement.module or ""),
-                    old_path,
-                    new_path,
-                )
-                for alias in statement.names:
-                    if alias.name != _PY_STAR:
-                        out.setdefault(
-                            alias.asname or alias.name,
-                            f"from {module} import {ast.unparse(alias)}",
-                        )
-            elif isinstance(statement, ast.Import):
-                for alias in statement.names:
-                    out.setdefault(
-                        alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0],
-                        f"import {ast.unparse(alias)}",
-                    )
+        for statement in _guarded_body(node):
+            for local, narrowed in _narrowed_imports(statement, old_path, new_path):
+                out.setdefault(local, narrowed)
     return out
+
+
+def _guarded_body(node: ast.stmt) -> list[ast.stmt]:
+    """The body of `node` when it is an `if TYPE_CHECKING:` without an
+    `else`; nothing for any other statement."""
+    if (
+        isinstance(node, ast.If)
+        and not node.orelse
+        and ast.unparse(node.test) in _TYPE_CHECKING_GUARDS
+    ):
+        return node.body
+    return []
+
+
+def _narrowed_imports(
+    statement: ast.stmt, old_path: str, new_path: str
+) -> list[tuple[str, str]]:
+    """Each name the import `statement` binds, with the import narrowed to
+    it and spelled for `new_path`; nothing for any other statement."""
+    if isinstance(statement, ast.ImportFrom):
+        module = _rebase_py_relative(
+            cs.SEPARATOR_DOT * statement.level + (statement.module or ""),
+            old_path,
+            new_path,
+        )
+        return [
+            (alias.asname or alias.name, f"from {module} import {ast.unparse(alias)}")
+            for alias in statement.names
+            if alias.name != _PY_STAR
+        ]
+    if isinstance(statement, ast.Import):
+        return [
+            (
+                alias.asname or alias.name.split(cs.SEPARATOR_DOT)[0],
+                f"import {ast.unparse(alias)}",
+            )
+            for alias in statement.names
+        ]
+    return []
 
 
 def _type_checking_block(root: Node) -> Node | None:
@@ -757,15 +809,7 @@ class Mover:
     def plan(
         self, qn: str, target: str, keep_alias: bool = False
     ) -> tuple[MoveReport, Patcher, str | None]:
-        definition = graph_query.definition(
-            self.fetch_all, self.project, qn, self.repo_root
-        )
-        if not definition["found"] or not definition["path"]:
-            raise MoveRefused(cs.MOVE_UNKNOWN.format(qn=qn))
-        if definition["label"] == cs.NodeLabel.METHOD.value:
-            raise MoveRefused(cs.MOVE_METHOD.format(qn=qn))
-        old_path = definition["path"]
-        name = definition["name"] or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        old_path, name, start_line, end_line = self._definition(qn)
         new_path = self._target_path(target, old_path)
         if new_path == old_path:
             raise MoveRefused(cs.MOVE_SAME_MODULE.format(path=old_path))
@@ -773,38 +817,10 @@ class Mover:
         new_module = base_module_qn(Path(new_path), self.project)
         patcher = Patcher(self.repo_root)
         source = patcher.source(old_path)
-        language, root = self._parse(old_path, source)
-        if language not in self._MOVABLE:
-            raise MoveRefused(
-                self._UNSUPPORTED.format(language=language, path=old_path)
-            )
-        # An explicit `pkg/core.ts` for a Python definition would get Python
-        # text under a TypeScript name, and no parser of the right language
-        # would ever look at it.
-        if get_language_for_extension(Path(new_path).suffix) != language:
-            raise MoveRefused(
-                self._CROSS_LANGUAGE.format(new_path=new_path, old_path=old_path)
-            )
-        token = _name_token(
-            source,
-            language,
-            definition["start_line"] or 1,
-            definition["end_line"] or 1,
-            name,
+        language, root = self._parse_movable(old_path, new_path, source)
+        node, top = self._top_definition(
+            qn, old_path, name, source, language, root, start_line, end_line
         )
-        node = _definition_at(root, *token) if token else None
-        if node is None:
-            raise MoveRefused(cs.MOVE_NO_DEFINITION_TOKEN.format(qn=qn, path=old_path))
-        # A nested function or class keeps its indentation when cut, and
-        # pasted at module level it no longer parses (or, one level down,
-        # silently changes what it closes over).
-        top = (
-            node.parent
-            if node.parent is not None and node.parent.type in _WRAPPERS
-            else node
-        )
-        if top.parent is None or top.parent.type != root.type:
-            raise MoveRefused(self._NESTED.format(qn=qn))
         existing = self._existing_target(patcher, new_path)
         target_root: Node | None = None
         if existing is not None:
@@ -837,55 +853,11 @@ class Mover:
         needed = self._needed_imports(
             old_module, old_path, new_path, source, root, cut.text, language
         )
-        old_bindings = self._bindings(root)
-        guarded: dict[str, str] = {}
-        if language == cs.SupportedLanguage.PYTHON:
-            # `_bindings` reads top-level statements only, so a constant set
-            # in both branches of an `if` was left behind (a NameError once
-            # moved); a name some path leaves unbound cannot be carried.
-            carried, unsafe = _flow_bindings(source)
-            reads = _global_references(cut.text)
-            unbound = sorted(
-                n
-                for n in unsafe
-                if n != name
-                and (n in reads if reads is not None else _uses(cut.text, n))
-            )
-            split = _split_globals(cut.text, remainder, name)
-            if split:
-                raise MoveRefused(
-                    cs.MOVE_SPLIT_GLOBAL.format(
-                        names=cs.SEPARATOR_COMMA_SPACE.join(split), path=old_path
-                    )
-                )
-            typed = _type_checking_imports(source, old_path, new_path)
-            guarded = {n: typed[n] for n in unbound if n in typed}
-            unbound = [n for n in unbound if n not in guarded]
-            if unbound:
-                raise MoveRefused(
-                    cs.MOVE_MAYBE_UNBOUND.format(
-                        names=cs.SEPARATOR_COMMA_SPACE.join(unbound), path=old_path
-                    )
-                )
-            old_bindings = {**dict.fromkeys(carried, False), **old_bindings}
+        old_bindings, guarded = self._old_bindings(
+            source, root, cut.text, remainder, name, old_path, new_path, language
+        )
         from_old = self._needed_from_old(old_path, cut.text, name, old_bindings)
-        if language in _JS_LANGUAGES:
-            # An imported binding is read-only: the moved `count += 1` that
-            # updated the old module's `let` would throw at the destination.
-            assigned = sorted(_js_assigned(top) & set(from_old))
-            if assigned:
-                raise MoveRefused(
-                    cs.MOVE_ASSIGNS_IMPORT.format(
-                        names=cs.SEPARATOR_COMMA_SPACE.join(assigned), path=old_path
-                    )
-                )
-            # `import { X }` of a name the module never exported is a load
-            # error in ESM and a compile error in TypeScript.
-            hidden = [n for n in from_old if not old_bindings.get(n, False)]
-            if hidden:
-                raise MoveRefused(
-                    self._NOT_EXPORTED.format(names=", ".join(hidden), path=old_path)
-                )
+        self._refuse_js_imports(top, from_old, old_bindings, old_path, language)
         if existing is not None:
             assert target_root is not None
             self._refuse_collisions(
@@ -904,6 +876,9 @@ class Mover:
                 language,
             )
         old_uses = _uses(remainder, name)
+        # The old module imports the moved name back: it still uses it, or
+        # keeps a deprecation alias of it.
+        old_needs_new = old_uses or keep_alias
         if not keep_alias:
             self._refuse_wildcard_loss(
                 old_module, old_path, source, root, name, language, old_uses
@@ -914,7 +889,7 @@ class Mover:
             new_module,
             [n.target_qn for n in needed],
             bool(from_old),
-            old_uses or keep_alias,
+            old_needs_new,
             old_path,
             new_path,
             qn,
@@ -925,7 +900,7 @@ class Mover:
         # 1. Cut from the old module, import the name back when still used.
         for edit in old_edits:
             patcher.replace_span(old_path, (edit.start, edit.end), edit.text)
-        if old_uses or keep_alias:
+        if old_needs_new:
             self._add_import(
                 patcher,
                 old_path,
@@ -954,59 +929,13 @@ class Mover:
             guard_lines,
             guard_head,
         )
-        if (
-            language in _JS_LANGUAGES
-            and top.type != cs.TS_EXPORT_STATEMENT
-            and (listed or old_uses or keep_alias)
-        ):
+        if self._exports_moved(language, top, listed, old_needs_new):
             # Whatever imports it from the destination needs it exported
             # there: the rewritten importers, and the old module.
             paste += f"\nexport {{ {name} }};\n"
-        # `from __future__ import annotations` is never referenced by name,
-        # so the use filter above drops it, and without it the destination
-        # evaluates the moved annotations eagerly: a forward reference that
-        # loaded fine before the move is a NameError after it.
-        futures = (
-            self._future_features(source)
-            if language == cs.SupportedLanguage.PYTHON
-            else []
+        new_content = self._place_paste(
+            patcher, new_path, existing, target_root, source, paste, language
         )
-        new_content: str | None = None
-        if existing is None:
-            head = (
-                self._FUTURE_IMPORT.format(features=", ".join(futures)) + "\n"
-                if futures
-                else ""
-            )
-            new_content = head + paste.lstrip("\n")
-        else:
-            sep = (
-                ""
-                if not existing.strip()
-                else ("\n" if existing.endswith(b"\n\n") else "\n\n")
-            )
-            if existing and not existing.endswith(b"\n"):
-                sep = "\n" + sep
-            have = set(self._future_features(existing))
-            missing = [f for f in futures if f not in have]
-            future_line = (
-                self._FUTURE_IMPORT.format(features=", ".join(missing))
-                if missing
-                else ""
-            )
-            # A future statement must precede every other statement, so it
-            # goes at the head of the destination (after its docstring),
-            # never with the pasted imports at the end.
-            assert target_root is not None
-            at = self._head_end(existing, target_root)
-            if future_line and at < len(existing):
-                patcher.replace_span(new_path, (at, at), future_line)
-                future_line = ""
-            patcher.replace_span(
-                new_path,
-                (len(existing), len(existing)),
-                sep + future_line + paste.lstrip("\n"),
-            )
         # 3. Importers, and uses through a module import (`pkg.util.helper`).
         self._retarget_attribute_uses(
             patcher, qn, old_spelled, new_spelled, name, language
@@ -1032,6 +961,235 @@ class Mover:
             ),
         )
         return report, patcher, new_content
+
+    def _definition(self, qn: str) -> tuple[str, str, int, int]:
+        """The path, name, first and last line the graph holds for `qn`;
+        refused when it holds no definition there, or holds a method."""
+        definition = graph_query.definition(
+            self.fetch_all, self.project, qn, self.repo_root
+        )
+        if not definition["found"] or not definition["path"]:
+            raise MoveRefused(cs.MOVE_UNKNOWN.format(qn=qn))
+        if definition["label"] == cs.NodeLabel.METHOD.value:
+            raise MoveRefused(cs.MOVE_METHOD.format(qn=qn))
+        return (
+            definition["path"],
+            definition["name"] or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            definition["start_line"] or 1,
+            definition["end_line"] or 1,
+        )
+
+    def _parse_movable(
+        self, old_path: str, new_path: str, source: bytes
+    ) -> tuple[cs.SupportedLanguage | None, Node]:
+        """The old module's language and tree; refused when the move cannot
+        write that language, or the destination is in another one."""
+        language, root = self._parse(old_path, source)
+        if language not in self._MOVABLE:
+            raise MoveRefused(
+                self._UNSUPPORTED.format(language=language, path=old_path)
+            )
+        # An explicit `pkg/core.ts` for a Python definition would get Python
+        # text under a TypeScript name, and no parser of the right language
+        # would ever look at it.
+        if get_language_for_extension(Path(new_path).suffix) != language:
+            raise MoveRefused(
+                self._CROSS_LANGUAGE.format(new_path=new_path, old_path=old_path)
+            )
+        return language, root
+
+    @classmethod
+    def _top_definition(
+        cls,
+        qn: str,
+        old_path: str,
+        name: str,
+        source: bytes,
+        language: cs.SupportedLanguage | None,
+        root: Node,
+        start_line: int,
+        end_line: int,
+    ) -> tuple[Node, Node]:
+        """The definition's node and the module statement holding it (the
+        node, or the decorators or export wrapping it); refused when the
+        name is not found in the span, or the definition is nested."""
+        token = _name_token(source, language, start_line, end_line, name)
+        node = _definition_at(root, *token) if token else None
+        if node is None:
+            raise MoveRefused(cs.MOVE_NO_DEFINITION_TOKEN.format(qn=qn, path=old_path))
+        # A nested function or class keeps its indentation when cut, and
+        # pasted at module level it no longer parses (or, one level down,
+        # silently changes what it closes over).
+        top = (
+            node.parent
+            if node.parent is not None and node.parent.type in _WRAPPERS
+            else node
+        )
+        if top.parent is None or top.parent.type != root.type:
+            raise MoveRefused(cls._NESTED.format(qn=qn))
+        return node, top
+
+    @classmethod
+    def _old_bindings(
+        cls,
+        source: bytes,
+        root: Node,
+        moved: str,
+        remainder: str,
+        name: str,
+        old_path: str,
+        new_path: str,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[dict[str, bool], dict[str, str]]:
+        """The old module's names the moved text can import, each with
+        whether it is exported, and the TYPE_CHECKING imports it carries
+        under a guard instead; refused when the move would split a module
+        variable or need a name some path leaves unbound."""
+        bindings = cls._bindings(root)
+        if language != cs.SupportedLanguage.PYTHON:
+            return bindings, {}
+        # `_bindings` reads top-level statements only, so a constant set
+        # in both branches of an `if` was left behind (a NameError once
+        # moved); a name some path leaves unbound cannot be carried.
+        carried, unsafe = _flow_bindings(source)
+        reads = _global_references(moved)
+        unbound = sorted(
+            n
+            for n in unsafe
+            if n != name and (n in reads if reads is not None else _uses(moved, n))
+        )
+        split = _split_globals(moved, remainder, name)
+        if split:
+            raise MoveRefused(
+                cs.MOVE_SPLIT_GLOBAL.format(
+                    names=cs.SEPARATOR_COMMA_SPACE.join(split), path=old_path
+                )
+            )
+        typed = _type_checking_imports(source, old_path, new_path)
+        guarded = {n: typed[n] for n in unbound if n in typed}
+        unbound = [n for n in unbound if n not in guarded]
+        if unbound:
+            raise MoveRefused(
+                cs.MOVE_MAYBE_UNBOUND.format(
+                    names=cs.SEPARATOR_COMMA_SPACE.join(unbound), path=old_path
+                )
+            )
+        return {**dict.fromkeys(carried, False), **bindings}, guarded
+
+    @classmethod
+    def _refuse_js_imports(
+        cls,
+        top: Node,
+        from_old: list[str],
+        old_bindings: dict[str, bool],
+        old_path: str,
+        language: cs.SupportedLanguage | None,
+    ) -> None:
+        """Refuse when the JS/TS destination's import of the old module's
+        names could not work."""
+        if language not in _JS_LANGUAGES:
+            return
+        # An imported binding is read-only: the moved `count += 1` that
+        # updated the old module's `let` would throw at the destination.
+        assigned = sorted(_js_assigned(top) & set(from_old))
+        if assigned:
+            raise MoveRefused(
+                cs.MOVE_ASSIGNS_IMPORT.format(
+                    names=cs.SEPARATOR_COMMA_SPACE.join(assigned), path=old_path
+                )
+            )
+        # `import { X }` of a name the module never exported is a load
+        # error in ESM and a compile error in TypeScript.
+        hidden = [n for n in from_old if not old_bindings.get(n, False)]
+        if hidden:
+            raise MoveRefused(
+                cls._NOT_EXPORTED.format(names=", ".join(hidden), path=old_path)
+            )
+
+    @staticmethod
+    def _exports_moved(
+        language: cs.SupportedLanguage | None,
+        top: Node,
+        listed: list[SpanEdit],
+        old_needs_new: bool,
+    ) -> bool:
+        """Whether the JS/TS destination must export the moved name, which
+        something imports from there and the moved text does not export."""
+        return (
+            language in _JS_LANGUAGES
+            and top.type != cs.TS_EXPORT_STATEMENT
+            and (bool(listed) or old_needs_new)
+        )
+
+    @classmethod
+    def _place_paste(
+        cls,
+        patcher: Patcher,
+        new_path: str,
+        existing: bytes | None,
+        target_root: Node | None,
+        source: bytes,
+        paste: str,
+        language: cs.SupportedLanguage | None,
+    ) -> str | None:
+        """Append `paste` to the destination, or return the whole content of
+        a destination the move creates."""
+        # `from __future__ import annotations` is never referenced by name,
+        # so the use filter in `_needed_imports` drops it, and without it
+        # the destination evaluates the moved annotations eagerly: a forward
+        # reference that loaded fine before the move is a NameError after it.
+        futures = (
+            cls._future_features(source)
+            if language == cs.SupportedLanguage.PYTHON
+            else []
+        )
+        if existing is None:
+            head = (
+                cls._FUTURE_IMPORT.format(features=", ".join(futures)) + "\n"
+                if futures
+                else ""
+            )
+            return head + paste.lstrip("\n")
+        assert target_root is not None
+        cls._append_paste(patcher, new_path, existing, target_root, paste, futures)
+        return None
+
+    @classmethod
+    def _append_paste(
+        cls,
+        patcher: Patcher,
+        new_path: str,
+        existing: bytes,
+        target_root: Node,
+        paste: str,
+        futures: list[str],
+    ) -> None:
+        """Append `paste` to an existing destination, and enable the
+        `futures` it lacks at its head."""
+        sep = (
+            ""
+            if not existing.strip()
+            else ("\n" if existing.endswith(b"\n\n") else "\n\n")
+        )
+        if existing and not existing.endswith(b"\n"):
+            sep = "\n" + sep
+        have = set(cls._future_features(existing))
+        missing = [f for f in futures if f not in have]
+        future_line = (
+            cls._FUTURE_IMPORT.format(features=", ".join(missing)) if missing else ""
+        )
+        # A future statement must precede every other statement, so it
+        # goes at the head of the destination (after its docstring),
+        # never with the pasted imports at the end.
+        at = cls._head_end(existing, target_root)
+        if future_line and at < len(existing):
+            patcher.replace_span(new_path, (at, at), future_line)
+            future_line = ""
+        patcher.replace_span(
+            new_path,
+            (len(existing), len(existing)),
+            sep + future_line + paste.lstrip("\n"),
+        )
 
     @staticmethod
     def _preview_diff(patcher: Patcher, new_path: str, new_content: str | None) -> str:
@@ -1136,18 +1294,11 @@ class Mover:
             nodes = list(child.named_children) if child.type in _WRAPPERS else [child]
             for node in nodes:
                 if node.type == cs.TS_EXPORT_CLAUSE:
-                    for spec in node.named_children:
-                        if spec.type == cs.TS_EXPORT_SPECIFIER:
-                            as_name = spec.child_by_field_name(
-                                cs.FIELD_ALIAS
-                            ) or spec.child_by_field_name(cs.FIELD_NAME)
-                            exported_as.add(_text(as_name))
+                    exported_as.update(_clause_exports(node))
                     continue
                 for named in Mover._bound_names(node):
                     bound[named] = bound.get(named, False) or exported
-        for named in exported_as:
-            if named in bound:
-                bound[named] = True
+        bound.update(dict.fromkeys(exported_as & bound.keys(), True))
         return bound
 
     @staticmethod
@@ -1315,42 +1466,21 @@ class Mover:
         )
         out: dict[str, _NeededImport] = {}
         for row in rows:
-            alias = row.get(cs.KEY_ALIAS)
-            line, col = row.get(cs.KEY_LINE), row.get(cs.KEY_COL)
-            end_line, end_col = row.get(cs.KEY_END_LINE), row.get(cs.KEY_END_COL)
-            if (
-                not isinstance(alias, str)
-                or not isinstance(line, int)
-                or not isinstance(col, int)
-            ):
+            site = _row_site(row, old_path)
+            if site is None or site.alias is None:
                 continue
-            bound = alias.split(cs.SEPARATOR_DOT)[0]
-            imported_raw = row.get(cs.KEY_IMPORTED_NAME)
-            imported = imported_raw if isinstance(imported_raw, str) else None
-            if not _uses(moved_text, bound):
+            bound = site.alias.split(cs.SEPARATOR_DOT)[0]
+            if not _uses(moved_text, bound) or not _starts_in(source, site, top_level):
                 continue
-            try:
-                at = line_col_to_byte(source, line, col)
-            except PatcherError:
-                continue
-            if not any(start <= at < end for start, end in top_level):
-                continue
-            site = ImportSite(
-                old_path,
-                line,
-                col,
-                end_line if isinstance(end_line, int) else line,
-                end_col if isinstance(end_col, int) else col,
-                alias,
-                imported,
-            )
             statement = _statement_text(source, site)
-            narrowed = _narrow_statement(statement, alias, language, old_path, new_path)
+            narrowed = _narrow_statement(
+                statement, site.alias, language, old_path, new_path
+            )
             # Future directives are placed by `plan`, at the destination's
             # head; one pasted among the ordinary imports is a SyntaxError.
             if (
                 narrowed is None
-                or imported_raw == self._FUTURE
+                or row.get(cs.KEY_IMPORTED_NAME) == self._FUTURE
                 or (row.get(cs.KEY_TO_QN) == self._FUTURE)
             ):
                 continue
@@ -1785,13 +1915,18 @@ class Mover:
             patcher.replace_span(path, (at, at + len(old_attr)), new_attr)
             if path not in touched:
                 touched.add(path)
-                _language, root = self._parse(path, source)
-                text = source.decode(cs.ENCODING_UTF8, errors="replace")
-                if not _module_bound(text, new_spelled):
-                    at_import = _import_block_end(source, root)
-                    patcher.replace_span(
-                        path, (at_import, at_import), f"import {new_spelled}\n"
-                    )
+                self._import_module(patcher, path, source, new_spelled)
+
+    def _import_module(
+        self, patcher: Patcher, path: str, source: bytes, module: str
+    ) -> None:
+        """Give `path` the `import module` its rewritten call sites need,
+        unless it already binds the module's root name."""
+        _language, root = self._parse(path, source)
+        text = source.decode(cs.ENCODING_UTF8, errors="replace")
+        if not _module_bound(text, module):
+            at_import = _import_block_end(source, root)
+            patcher.replace_span(path, (at_import, at_import), f"import {module}\n")
 
     # --- applying ---------------------------------------------------------------------
 
@@ -1937,6 +2072,39 @@ def _statement_text(source: bytes, site: ImportSite) -> str:
     return source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
 
 
+def _row_site(row: ResultRow, path: str) -> ImportSite | None:
+    """The import in `path` an IMPORTS row describes; None when the row
+    lacks its alias or its start. A missing end falls back to the start."""
+    alias = row.get(cs.KEY_ALIAS)
+    line, col = row.get(cs.KEY_LINE), row.get(cs.KEY_COL)
+    end_line, end_col = row.get(cs.KEY_END_LINE), row.get(cs.KEY_END_COL)
+    if (
+        not isinstance(alias, str)
+        or not isinstance(line, int)
+        or not isinstance(col, int)
+    ):
+        return None
+    imported = row.get(cs.KEY_IMPORTED_NAME)
+    return ImportSite(
+        path,
+        line,
+        col,
+        end_line if isinstance(end_line, int) else line,
+        end_col if isinstance(end_col, int) else col,
+        alias,
+        imported if isinstance(imported, str) else None,
+    )
+
+
+def _starts_in(source: bytes, site: ImportSite, spans: list[tuple[int, int]]) -> bool:
+    """Whether `site` starts inside one of the byte `spans` of `source`."""
+    try:
+        at = line_col_to_byte(source, site.line, site.col)
+    except PatcherError:
+        return False
+    return any(start <= at < end for start, end in spans)
+
+
 def _narrow_statement(
     statement: str,
     alias: str,
@@ -1979,30 +2147,48 @@ def _binding_key(
     spelled: `import os` and `import os.path` both bind `os` to `os`.
     """
     if language in _JS_LANGUAGES:
-        # A side-effect import (`import './x'`) binds nothing.
-        if _JS_FROM.search(statement) is None:
-            return None
-        narrowed = _narrow_js(statement, local, path, path)
-        return None if narrowed is None else (narrowed.rstrip(";").strip(),)
+        return _js_binding_key(statement, local, path)
     try:
         tree = ast.parse(statement.strip())
     except SyntaxError:
         return None
     for node in tree.body:
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.asname == local:
-                    return (alias.name, "", local)
-                if (
-                    alias.asname is None
-                    and alias.name.split(cs.SEPARATOR_DOT)[0] == local
-                ):
-                    return (local, "", local)
+            key = _import_key(node, local)
         elif isinstance(node, ast.ImportFrom):
-            module = cs.SEPARATOR_DOT * node.level + (node.module or "")
-            for alias in node.names:
-                if (alias.asname or alias.name) == local:
-                    return (module, alias.name, local)
+            key = _from_key(node, local)
+        else:
+            continue
+        if key is not None:
+            return key
+    return None
+
+
+def _js_binding_key(statement: str, local: str, path: str) -> tuple[str, ...] | None:
+    """`_binding_key` for a JS/TS import: the clause binding `local`."""
+    # A side-effect import (`import './x'`) binds nothing.
+    if _JS_FROM.search(statement) is None:
+        return None
+    narrowed = _narrow_js(statement, local, path, path)
+    return None if narrowed is None else (narrowed.rstrip(";").strip(),)
+
+
+def _import_key(node: ast.Import, local: str) -> tuple[str, ...] | None:
+    """`_binding_key` for a Python `import a.b [as c]`."""
+    for alias in node.names:
+        if alias.asname == local:
+            return (alias.name, "", local)
+        if alias.asname is None and alias.name.split(cs.SEPARATOR_DOT)[0] == local:
+            return (local, "", local)
+    return None
+
+
+def _from_key(node: ast.ImportFrom, local: str) -> tuple[str, ...] | None:
+    """`_binding_key` for a Python `from m import a [as b]`."""
+    module = cs.SEPARATOR_DOT * node.level + (node.module or "")
+    for alias in node.names:
+        if (alias.asname or alias.name) == local:
+            return (module, alias.name, local)
     return None
 
 
