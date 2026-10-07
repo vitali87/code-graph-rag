@@ -65,7 +65,8 @@ def test_a_one_route_service_passes_the_audit(temp_repo: Path) -> None:
         )
     ]
     # The fixture must exercise the property the schema missed.
-    assert endpoints and all("project" in n.properties for n in endpoints), nodes
+    assert endpoints, nodes
+    assert all("project" in n.properties for n in endpoints), nodes
     assert ga.collect_violations(nodes, rels) == []
 
 
