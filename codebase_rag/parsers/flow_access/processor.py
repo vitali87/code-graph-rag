@@ -3652,9 +3652,24 @@ class FlowProcessor:
             return self._walk_try(node, state, ctx)
         if node_type == cs.TS_PY_MATCH_STATEMENT:
             return self._walk_py_match(node, state, ctx)
+        self._apply_py_node(node, state, ctx)
+        # Descend into children in source order (an assignment's RHS call still
+        # needs _apply_call for its arg edges; nested calls in args likewise).
+        for child in node.children:
+            state = self._walk_stmt(child, state, ctx)
+        if node_type == cs.TS_PY_ASSIGNMENT:
+            # Only once its right side ran: `rows = rows.execute(..)` reads
+            # through the handle `rows` held (bot review on PR #2770).
+            self._bind_py_handle(node, state, ctx)
+        return state
+
+    def _apply_py_node(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> None:
+        # What a non-compound node does itself, before its children are walked.
+        # Kept out of _walk_stmt's frame-per-level recursion: it never recurses.
+        node_type = node.type
         if node_type == cs.TS_PY_AS_PATTERN:
             self._bind_py_handle(node, state, ctx)
-        if node_type == cs.TS_PY_ASSIGNMENT:
+        elif node_type == cs.TS_PY_ASSIGNMENT:
             self._apply_assignment(node, state, ctx)
         elif node_type == cs.TS_PY_AUGMENTED_ASSIGNMENT:
             self._apply_augmented_assignment(node, state, ctx)
@@ -3669,15 +3684,6 @@ class FlowProcessor:
             if returned is not None:
                 self._acc_returns_taint = True
                 self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
-        # Descend into children in source order (an assignment's RHS call still
-        # needs _apply_call for its arg edges; nested calls in args likewise).
-        for child in node.children:
-            state = self._walk_stmt(child, state, ctx)
-        if node_type == cs.TS_PY_ASSIGNMENT:
-            # Only once its right side ran: `rows = rows.execute(..)` reads
-            # through the handle `rows` held (bot review on PR #2770).
-            self._bind_py_handle(node, state, ctx)
-        return state
 
     def _walk_py_match(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         # match arms are EXCLUSIVE: each case_clause walks against a copy
