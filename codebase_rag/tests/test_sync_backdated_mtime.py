@@ -11,6 +11,7 @@ from user space and moves on every write, so it marks those files.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -164,6 +165,11 @@ def test_a_metadata_only_change_is_still_in_sync(
     assert _updater(repo, mock_ingestor)._is_already_in_sync() is True
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows has no inode change time, so a cached file is always hashed "
+    "there (test_on_windows_a_cached_file_is_hashed covers it)",
+)
 def test_a_file_untouched_since_the_cache_is_still_settled_unhashed(
     synced: tuple[Path, float], mock_ingestor: MagicMock
 ) -> None:
