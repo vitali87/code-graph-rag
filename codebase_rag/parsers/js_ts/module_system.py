@@ -45,6 +45,18 @@ def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
     return safe_decode_text(name_node)
 
 
+def _default_alias_spec(statement: ASTNode) -> ASTNode | None:
+    # The `pad as default` specifier of an `export { ... }` clause, if any.
+    for clause in statement.named_children:
+        if clause.type != cs.TS_EXPORT_CLAUSE:
+            continue
+        for spec in clause.named_children:
+            alias = safe_decode_text(spec.child_by_field_name(cs.FIELD_ALIAS))
+            if alias == cs.TS_EXPORT_DEFAULT:
+                return spec
+    return None
+
+
 class JsTsModuleSystemMixin:
     __slots__ = ("_processed_imports", "_pending_direct_module_exports")
     ingestor: IngestorProtocol
@@ -465,16 +477,12 @@ class JsTsModuleSystemMixin:
             # another module's binding and is left alone.
             if statement.child_by_field_name(cs.FIELD_SOURCE) is not None:
                 continue
-            for clause in statement.named_children:
-                if clause.type != cs.TS_EXPORT_CLAUSE:
-                    continue
-                for spec in clause.named_children:
-                    alias = safe_decode_text(spec.child_by_field_name(cs.FIELD_ALIAS))
-                    if alias == cs.TS_EXPORT_DEFAULT:
-                        return self._esm_named_qn(
-                            safe_decode_text(spec.child_by_field_name(cs.FIELD_NAME)),
-                            module_qn,
-                        )
+            spec = _default_alias_spec(statement)
+            if spec is not None:
+                return self._esm_named_qn(
+                    safe_decode_text(spec.child_by_field_name(cs.FIELD_NAME)),
+                    module_qn,
+                )
         return None
 
     def _esm_exported_qn(self, exported: ASTNode, module_qn: str) -> str | None:
