@@ -104,7 +104,8 @@ def test_apply_rewrites_definition_and_sites_under_the_contract(
     assert report.applied, report.message
     assert report.transaction_id
     assert set(report.files) == {UTIL, APP}
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     assert "def helper(a: int, n: int, b: str = 'x') -> str:" in _read(root, UTIL)
     app = _read(root, APP)
     assert "return helper(2, 1)" in app
@@ -243,8 +244,9 @@ def test_edit_the_patcher_cannot_apply_is_a_refusal(
     root, store, _updater = repo
     changer = SignatureChanger(root, store.fetch_all, PROJECT)
     planned = Patcher(root)
+    edits = [_Edit(UTIL, (0, 10_000), "x")]
     with pytest.raises(SignatureRefused, match="Cannot stage the signature change"):
-        changer._stage([_Edit(UTIL, (0, 10_000), "x")], planned)
+        changer._stage(edits, planned)
 
 
 # --- a file changed between planning and staging (CodeRabbit, #2166) ---------
