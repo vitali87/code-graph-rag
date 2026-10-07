@@ -161,16 +161,23 @@ def _collect_dunder_all(scope: Node, names: set[str], top_level: bool) -> None:
         if statement.type in cs.PY_MODULE_LEVEL_BLOCKS:
             _collect_dunder_all(statement, names, top_level=False)
         elif statement.type == cs.TS_PY_EXPRESSION_STATEMENT:
-            for expression in statement.named_children:
-                if (listed := _dunder_all_update(expression)) is None:
-                    continue
-                if (
-                    top_level
-                    and expression.type == cs.TS_PY_ASSIGNMENT
-                    and not _reads_dunder_all(listed)
-                ):
-                    names.clear()
-                names.update(_string_values(listed))
+            _apply_dunder_all_updates(statement, names, top_level)
+
+
+def _apply_dunder_all_updates(
+    statement: Node, names: set[str], top_level: bool
+) -> None:
+    # The `__all__` updates of one expression statement, in order.
+    for expression in statement.named_children:
+        if (listed := _dunder_all_update(expression)) is None:
+            continue
+        if (
+            top_level
+            and expression.type == cs.TS_PY_ASSIGNMENT
+            and not _reads_dunder_all(listed)
+        ):
+            names.clear()
+        names.update(_string_values(listed))
 
 
 def _reads_dunder_all(node: Node) -> bool:
