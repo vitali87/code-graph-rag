@@ -168,9 +168,7 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     # `(node:)fs/promises` (which maps to `fs.promises.<fn>`), a namespace
     # import of it, and the `fs.promises.<fn>(...)` member call.
     IOSink("fs.promises.readFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
-    IOSink(
-        "fs.promises.writeFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0
-    ),
+    IOSink("fs.promises.writeFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink(
         "fs.promises.appendFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0
     ),

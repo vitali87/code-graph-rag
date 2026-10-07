@@ -1297,6 +1297,12 @@ class IOAccessProcessor:
             )
             if formatted is not None:
                 identity = formatted
+        direction = self._direct_call_direction(node, sink, descriptor)
+        self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _direct_call_direction(
+        self, node: Node, sink: IOSink, descriptor: LanguageDescriptor
+    ) -> IODirection:
         direction = sink.direction
         if sink.mode_arg is not None:
             mode = literal_target(
@@ -1312,7 +1318,7 @@ class IOAccessProcessor:
             )
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
-        self._emit(caller_spec, direction, sink.kind, identity)
+        return direction
 
     def _emit_object_url_client_call(
         self,
