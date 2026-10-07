@@ -4981,15 +4981,7 @@ class CallProcessor:
                 ctx, call_node, call_name, call_var_types
             )
         ):
-            # Each member type's method is a runtime-possible target of this
-            # one site: an edge to each, `overload` when there are several
-            # (issue #2842), or when a member resolved to nothing first-party
-            # and may run a method of its own (Greptile, PR #2957).
-            members, every_member_resolved = union
-            for member_callee in members:
-                if len(members) > 1 or not every_member_resolved:
-                    self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
-                self._ingest_resolved_call(ctx, call_node, call_name, member_callee)
+            self._ingest_union_receiver_callees(ctx, call_node, call_name, union)
             return
         callee_info = self._resolve_call_callee(
             ctx, call_node, call_name, call_var_types
@@ -5023,6 +5015,23 @@ class CallProcessor:
             self._ingest_unresolved_call(ctx, call_node, call_name)
             return
         self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+
+    def _ingest_union_receiver_callees(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        union: tuple[list[tuple[str, str]], bool],
+    ) -> None:
+        # Each member type's method is a runtime-possible target of this
+        # one site: an edge to each, `overload` when there are several
+        # (issue #2842), or when a member resolved to nothing first-party
+        # and may run a method of its own (Greptile, PR #2957).
+        members, every_member_resolved = union
+        for member_callee in members:
+            if len(members) > 1 or not every_member_resolved:
+                self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
+            self._ingest_resolved_call(ctx, call_node, call_name, member_callee)
 
     def _union_receiver_callees(
         self,
