@@ -762,6 +762,11 @@ RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
 )
+RENAME_TWIN_BOUND_IMPORT = (
+    "Cannot rename {qn}: the import of `{name}` in {paths} also binds the "
+    "same-named type, which that file uses; rewriting the import would leave "
+    "the type unbound"
+)
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 RENAME_CONTRACT_FAILED = "Rename rolled back, postcondition failed: {reasons}"

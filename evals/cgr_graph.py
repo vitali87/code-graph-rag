@@ -886,7 +886,9 @@ class _StatefulIngestor:
                         rows.append(self._graph_call_row(edge, callee))
             return rows
         if query == cq.CYPHER_GRAPH_DEFINITION:
-            for label, uid in targets:
+            # Label order first, as the real query's tiebreak: a TS type and
+            # a value share one qualified name (issue #2520).
+            for label, uid in sorted(targets):
                 props = self.nodes[(label, uid)]
                 row: ResultRow = {cs.KEY_LABEL: label}
                 for key in self._GRAPH_DEFINITION_KEYS:
@@ -911,6 +913,11 @@ class _StatefulIngestor:
                     cs.RelationshipType.RETURNS.value,
                 },
             }[query]
+            if query != cq.CYPHER_GRAPH_CALLERS and cs.KEY_LABEL in params:
+                # The label-scoped reads keep only the renamed node's own
+                # edges, as the real queries do (issue #2520).
+                label = _str(params.get(cs.KEY_LABEL))
+                targets = [target for target in targets if target[0] == label]
             for target in targets:
                 for edge in self._in.get(target, ()):
                     source = (edge[0], edge[1])
@@ -922,6 +929,16 @@ class _StatefulIngestor:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
                         )
+        elif query == cq.CYPHER_GRAPH_IMPLEMENTORS:
+            heritage = {
+                cs.RelationshipType.INHERITS.value,
+                cs.RelationshipType.IMPLEMENTS.value,
+            }
+            for target in targets:
+                for edge in self._in.get(target, ()):
+                    source = (edge[0], edge[1])
+                    if edge[2] in heritage and self._in_project(source, prefix):
+                        rows.append(self._graph_edge_row(edge, (), source))
         elif query == cq.CYPHER_GRAPH_OVERRIDES:
             overrides = cs.RelationshipType.OVERRIDES.value
             for target in targets:
@@ -1155,6 +1172,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_CALLERS
                 | cq.CYPHER_GRAPH_REFERENCES
                 | cq.CYPHER_GRAPH_TYPE_EDGES
+                | cq.CYPHER_GRAPH_IMPLEMENTORS
                 | cq.CYPHER_GRAPH_OVERRIDES
                 | cq.CYPHER_GRAPH_IMPORTERS
                 | cq.CYPHER_GRAPH_RESOLVE_NAME

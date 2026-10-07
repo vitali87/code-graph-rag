@@ -302,7 +302,10 @@ class TypeReferenceResolver:
         self._prefix = f"{project_name}{cs.SEPARATOR_DOT}"
 
     def _is_type(self, qn: str) -> bool:
-        node_type = self._registry.get(qn)
+        # An annotation is a type position: a TS `type`/`interface` sharing
+        # its name with a function answers here, not the function that holds
+        # the registry entry (issue #2520).
+        node_type = self._registry.type_kind(qn)
         return node_type is not None and str(node_type) in TYPE_NODE_TYPES
 
     def _scoped_candidates(self, name: str, module_qn: str) -> list[str]:
@@ -384,7 +387,7 @@ class TypeReferenceResolver:
         return list(found)
 
     def label_for(self, qn: str) -> str:
-        return str(self._registry[qn])
+        return str(self._registry.type_kind(qn))
 
 
 def _target_spec(

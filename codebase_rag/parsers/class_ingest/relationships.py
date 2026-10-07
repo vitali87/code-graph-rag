@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...function_registry import TYPE_SPACE_KINDS
 from ...types_defs import DeferredCppInherit, DeferredInherit, NodeType, PropertyDict
 from ..cpp import utils as cpp_utils
 from . import parent_extraction as pe
@@ -41,7 +42,17 @@ def create_class_relationships(
         parent_classes = pe.extract_parent_classes(
             class_node, module_qn, import_processor, resolve_to_qn, csharp_base_kinds
         )
-    class_inheritance[class_qn] = parent_classes
+    base_offset = 0
+    if function_registry.type_kind(class_qn) != function_registry.get(class_qn):
+        # A TS class and an interface merged under one name (issue #2520)
+        # describe one instance type, so the second one's heritage clause adds
+        # to the first's bases rather than replacing them. Its base indexes
+        # continue the list, which keeps a rehydrated order unambiguous.
+        inherited = class_inheritance.get(class_qn, [])
+        base_offset = len(inherited)
+        class_inheritance[class_qn] = inherited + parent_classes
+    else:
+        class_inheritance[class_qn] = parent_classes
     # The C# bases as written ride along with the deferred edges, in the
     # same order and split as the qns above, so the deferred pass can look
     # each one up by scope instead of by the parse-time guess alone.
@@ -75,6 +86,7 @@ def create_class_relationships(
             function_registry,
             defer_inherits,
             inherited_refs,
+            base_offset,
         )
 
     # A class OR an enum can `implements` interfaces; both expose them via the
@@ -121,9 +133,10 @@ def _link_parent_classes(
     function_registry: FunctionRegistryTrieProtocol,
     defer_inherits: list[DeferredInherit] | None,
     written_refs: list[str],
+    base_offset: int = 0,
 ) -> None:
     if defer_inherits is None:
-        for base_index, parent_class_qn in enumerate(parent_classes):
+        for base_index, parent_class_qn in enumerate(parent_classes, base_offset):
             create_inheritance_relationship(
                 node_type,
                 class_qn,
@@ -137,16 +150,19 @@ def _link_parent_classes(
     # above is only the module-anchored fallback guess; hold the edge back for
     # resolve_deferred_inherits so it is re-resolved against the full registry
     # (an unresolvable parent emits no edge).
-    for base_index, parent_class_qn in enumerate(parent_classes):
+    # The written refs follow this clause's own list, so they are indexed by
+    # position in it; base_index continues a merged declaration's list.
+    for position, parent_class_qn in enumerate(parent_classes):
         defer_inherits.append(
             DeferredInherit(
                 rel_type=cs.RelationshipType.INHERITS,
                 child_qn=class_qn,
                 parent_qn=parent_class_qn,
                 module_qn=module_qn,
-                base_index=base_index,
+                base_index=base_offset + position,
                 language=language,
-                written_ref=_written_ref(written_refs, base_index),
+                child_label=str(node_type),
+                written_ref=_written_ref(written_refs, position),
             )
         )
 
@@ -172,6 +188,7 @@ def _link_implemented_interfaces(
                     module_qn=module_qn,
                     base_index=0,
                     language=language,
+                    child_label=str(node_type),
                     written_ref=_written_ref(written_refs, position),
                 )
             )
@@ -211,9 +228,17 @@ def _defer_cpp_bases(
 def get_node_type_for_inheritance(
     qualified_name: str,
     function_registry: FunctionRegistryTrieProtocol,
+    type_position: bool = False,
 ) -> str:
-    node_type = function_registry.get(qualified_name, NodeType.CLASS)
-    return str(node_type)
+    # `implements X` and an interface's `extends X` name a type. Where a TS
+    # type shares its name with a value (issue #2520) the registry entry is
+    # the value's, so a type position asks for the type side instead.
+    node_type = (
+        function_registry.type_kind(qualified_name)
+        if type_position
+        else function_registry.get(qualified_name)
+    )
+    return str(node_type if node_type is not None else NodeType.CLASS)
 
 
 def create_inheritance_relationship(
@@ -227,7 +252,10 @@ def create_inheritance_relationship(
     resolution: cs.EdgeResolution | None = None,
 ) -> None:
     parent_type = parent_label or get_node_type_for_inheritance(
-        parent_qn, function_registry
+        parent_qn,
+        function_registry,
+        # An interface's `extends` names a type, a class's names a value.
+        type_position=child_node_type in TYPE_SPACE_KINDS,
     )
     properties: PropertyDict = {cs.KEY_BASE_INDEX: base_index}
     if resolution is not None:

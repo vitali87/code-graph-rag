@@ -650,8 +650,14 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     ) -> None:
         if self._span_claimed_for_qn(module_qn, function_node, function_qn):
             return
+        # This pass runs after the class pass, so a same-named TS `type` or
+        # `interface` is already registered; the function still takes the
+        # plain name beside it (issue #2520).
         function_qn = self.function_registry.register_unique_qn(
-            function_qn, function_node.start_point[0] + 1, function_node.start_point[1]
+            function_qn,
+            function_node.start_point[0] + 1,
+            function_node.start_point[1],
+            kind=NodeType.FUNCTION,
         )
         function_props = module_function_props(
             function_qn,

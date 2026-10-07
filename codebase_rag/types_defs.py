@@ -150,8 +150,16 @@ class FunctionRegistryTrieProtocol(Protocol):
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
     def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
+        self,
+        natural_qn: QualifiedName,
+        start_line: int,
+        start_col: int = 0,
+        kind: NodeType | None = None,
     ) -> QualifiedName: ...
+
+    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
+
+    def type_kind(self, qualified_name: QualifiedName) -> NodeType | None: ...
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
 
@@ -991,6 +999,10 @@ class DeferredInherit(NamedTuple):
     language: SupportedLanguage
     alt_parent_qn: str | None = None
     written_ref: str | None = None
+    # The label the child was declared with. The registry keeps one kind per
+    # name, so a TS interface sharing its name with a value (issue #2520)
+    # cannot be told from that value by its qualified name alone.
+    child_label: str | None = None
 
 
 class RustTraitImpl(NamedTuple):

@@ -107,6 +107,17 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_GRAPH_IMPLEMENTORS:
+            return [
+                {
+                    cs.KEY_LABEL: self.nodes[src][cs.KEY_LABEL],
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                    cs.KEY_REL_TYPE: rel,
+                }
+                for src, rel, dst, _props in self.edges
+                if dst == qn and rel in ("INHERITS", "IMPLEMENTS") and src in self.nodes
+            ]
         if query == cq.CYPHER_GRAPH_OVERRIDES:
             out = []
             for src, rel, dst, _props in self.edges:

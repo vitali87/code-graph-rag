@@ -1399,6 +1399,7 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             func_node.start_point[0] + 1,
             func_node.start_point[1],
+            kind=NodeType.FUNCTION if language in cs.JS_TS_LANGUAGES else None,
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)

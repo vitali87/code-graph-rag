@@ -3256,11 +3256,17 @@ class GraphUpdater:
         label = row.get(cs.KEY_LABEL)
         if not isinstance(qn, str) or not isinstance(label, str):
             return False
-        if qn in self.function_registry:
-            return False
         try:
             node_type = NodeType(label)
         except ValueError:
+            return False
+        # A TS type and a value hold one qualified name under two labels
+        # (issue #2520). Skipping the second row left whichever the store
+        # returned first as the name's only kind, so an `interface Box` read
+        # back before `class Box` made every `new Box()` bind the interface.
+        if qn in self.function_registry and not (
+            self.function_registry.claim_other_space(qn, node_type)
+        ):
             return False
         self.function_registry[qn] = node_type
         # Restore the property-name set for unchanged files: property-dispatch
