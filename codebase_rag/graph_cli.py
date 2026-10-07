@@ -90,24 +90,84 @@ def _unknown_target(
     return _Refusal(message, cs.GRAPH_EXIT_UNKNOWN_TARGET)
 
 
+def _ambiguous_target(target: str, names: list[str]) -> _Refusal:
+    shown = names[: cs.GRAPH_AMBIGUOUS_LIST_LIMIT]
+    more = len(names) - len(shown)
+    message = cs.CLI_ERR_GRAPH_AMBIGUOUS_TARGET.format(
+        target=target,
+        count=len(names),
+        names=cs.SEPARATOR_COMMA_SPACE.join(shown),
+        more=cs.CLI_ERR_GRAPH_AMBIGUOUS_MORE.format(more=more) if more else "",
+    )
+    return _Refusal(message, cs.GRAPH_EXIT_AMBIGUOUS_TARGET)
+
+
+def _named_target(
+    fetch_all: graph_query.QueryFn, name: str, target: str
+) -> tuple[str, _Refusal | None]:
+    """The qualified name a short `target` stands for (issue #2861).
+
+    The name is resolved in the selected project as `cgr graph resolve`
+    resolves it, and has to name exactly one definition. Only when it names
+    none there is a node of that exact qualified name, in any project, taken
+    as written (`os`, another project's function): `lib.helper` is this
+    project's `app.lib.helper` before it is a project `lib`'s `helper`.
+    """
+    names = graph_query.resolve_one(fetch_all, name, target)
+    if len(names) == 1:
+        return names[0], None
+    if names:
+        return target, _ambiguous_target(target, names)
+    if graph_query.node_exists(fetch_all, target):
+        return target, None
+    return target, _unknown_target(fetch_all, name, target)
+
+
 def _run_query_and_emit(
     project: str | None,
     repo_path: Path,
     query: Callable[[graph_query.QueryFn, str], object],
-    target: str | None = None,
 ) -> None:
-    """Run `query` and print its JSON, or refuse on stderr with a status.
-
-    `target` is the qualified name the query walks from; an empty answer
-    for it is checked against the graph, because `[]` for a name the graph
-    never saw reads as "nothing calls it" (issue #2461).
-    """
+    """Run `query` and print its JSON, or refuse on stderr with a status."""
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:
         refusal = _unknown_project(fetch_all, name, project, repo_path)
         result = None if refusal is not None else query(fetch_all, name)
-        if refusal is None and target is not None and result == []:
-            refusal = _unknown_target(fetch_all, name, target)
+    _finish(refusal, result)
+
+
+def _run_target_query_and_emit(
+    project: str | None,
+    repo_path: Path,
+    target: str,
+    query: Callable[[graph_query.QueryFn, str, str], object],
+) -> None:
+    """Run `query` from the definition `target` names and print its JSON,
+    or refuse on stderr with a status.
+
+    A qualified name under the project is queried as written, and an empty
+    answer for it is checked against the graph, because `[]` for a name the
+    graph never saw reads as "nothing calls it" (issue #2461). Anything
+    else may be a name, dotted suffix or `path:line`, resolved first.
+    """
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        refusal = _unknown_project(fetch_all, name, project, repo_path)
+        qualified_name, checked = target, False
+        # `app.py:5` in a project named `app` is a location, not a name.
+        qualified = target.startswith(f"{name}{cs.SEPARATOR_DOT}")
+        if refusal is None and (
+            not qualified or graph_query.parse_location(target) is not None
+        ):
+            qualified_name, refusal = _named_target(fetch_all, name, target)
+            checked = True
+        result = None if refusal is not None else query(fetch_all, name, qualified_name)
+        if refusal is None and not checked and result == []:
+            refusal = _unknown_target(fetch_all, name, qualified_name)
+    _finish(refusal, result)
+
+
+def _finish(refusal: _Refusal | None, result: object) -> None:
     # Reported after the connection closes: an exit raised inside it is
     # logged as a failed write with a traceback.
     if refusal is not None:
@@ -181,11 +241,11 @@ def _depth_option[F: Callable[..., None]](fn: F) -> F:
 def callers_cmd(
     qualified_name: str, depth: int, project: str | None, repo_path: Path
 ) -> None:
-    _run_query_and_emit(
+    _run_target_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.callers(f, n, qualified_name, depth),
-        target=qualified_name,
+        qualified_name,
+        lambda f, n, qn: graph_query.callers(f, n, qn, depth),
     )
 
 
@@ -196,11 +256,11 @@ def callers_cmd(
 def callees_cmd(
     qualified_name: str, depth: int, project: str | None, repo_path: Path
 ) -> None:
-    _run_query_and_emit(
+    _run_target_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.callees(f, n, qualified_name, depth),
-        target=qualified_name,
+        qualified_name,
+        lambda f, n, qn: graph_query.callees(f, n, qn, depth),
     )
 
 
@@ -210,11 +270,11 @@ def callees_cmd(
 @click.argument("qualified_name")
 @_graph_options
 def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
-    _run_query_and_emit(
+    _run_target_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.implementors(f, n, qualified_name),
-        target=qualified_name,
+        qualified_name,
+        graph_query.implementors,
     )
 
 
@@ -224,11 +284,11 @@ def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) 
 @click.argument("qualified_name")
 @_graph_options
 def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
-    _run_query_and_emit(
+    _run_target_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.overrides(f, n, qualified_name),
-        target=qualified_name,
+        qualified_name,
+        graph_query.overrides,
     )
 
 
@@ -240,11 +300,11 @@ def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> 
 def importers_cmd(
     module_qualified_name: str, project: str | None, repo_path: Path
 ) -> None:
-    _run_query_and_emit(
+    _run_target_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.importers(f, n, module_qualified_name),
-        target=module_qualified_name,
+        module_qualified_name,
+        graph_query.importers,
     )
 
 
@@ -258,9 +318,9 @@ def importers_cmd(
 def tests_reaching_cmd(
     qualified_name: str, project: str | None, repo_path: Path
 ) -> None:
-    _run_query_and_emit(
+    _run_target_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.tests_reaching(f, n, qualified_name),
-        target=qualified_name,
+        qualified_name,
+        graph_query.tests_reaching,
     )

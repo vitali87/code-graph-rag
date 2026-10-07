@@ -132,9 +132,12 @@ CMD_GRAPH_TESTS_REACHING = (
 )
 EPILOG_GRAPH = (
     "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "A command that takes a qualified name also takes anything 'resolve' "
+    "does (a bare name, a dotted suffix, path:line) that names exactly one "
+    "definition.\n\n"
     "Exit status: 0 with the JSON answer, where [] means the name is in the "
     "graph and nothing matches it; 3 when the project is not indexed; 4 when "
-    "a qualified name is not in the graph."
+    "a name is not in the graph; 5 when it names several definitions."
 )
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
