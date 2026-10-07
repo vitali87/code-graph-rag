@@ -38,6 +38,7 @@ from ..utils.path_utils import (
     should_keep_dir,
     should_skip_rel_file,
 )
+from .cpp.utils import cpp_include_local_name
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
@@ -699,7 +700,7 @@ def _external_module_name(module_path: str) -> str:
     position, so every `.h` include minted an ExternalModule called `h`:
     `std.stdio.h`, `std.signal.h` and `std.sys.types.h` alike (issue #1758).
     A header is named by its own stem instead, the same name
-    `_cpp_include_local_name` binds it under, so the node and the local name
+    `cpp_include_local_name` binds it under, so the node and the local name
     agree.
 
     The header rule is deliberately confined to the `std.` prefix that
@@ -711,7 +712,7 @@ def _external_module_name(module_path: str) -> str:
 
     The three-segment floor leaves one known inconsistency: `<std.h>` has the
     two-segment qn `std.h`, indistinguishable here from a package `h` under
-    `std`, so its node is named `h` while `_cpp_include_local_name` binds it
+    `std`, so its node is named `h` while `cpp_include_local_name` binds it
     as `std`. Lowering the floor to two would rename every `<pkg.h>`-shaped
     external of every language; `<std.h>` is not a real header, so the
     inconsistency is the cheaper of the two errors.
@@ -719,7 +720,7 @@ def _external_module_name(module_path: str) -> str:
     A second, unfixable-here case: this sees only the qn, and slash
     segmentation has already erased the difference between a PATH and dots
     inside one basename. `<foo/bar.h>` and `<foo.bar.h>` both become
-    `std.foo.bar.h`, yet `_cpp_include_local_name` binds the first as `bar`
+    `std.foo.bar.h`, yet `cpp_include_local_name` binds the first as `bar`
     (basename stem) and the second as `foo` (first stem segment). One name
     must therefore disagree with its binding, and no rule at this layer can
     tell which. It is `<foo/bar.h>` -- a real path, the common shape -- that
@@ -737,15 +738,6 @@ def _external_module_name(module_path: str) -> str:
     ):
         return segments[-2]
     return segments[-1]
-
-
-def _cpp_include_local_name(include_path: str) -> str:
-    """The name the include binds locally: the header's stem for `.h`/`.hpp`,
-    the bare last path segment otherwise (`<vector>`)."""
-    header_name = include_path.rsplit(cs.SEPARATOR_SLASH, maxsplit=1)[-1]
-    if header_name.endswith(cs.EXT_H) or header_name.endswith(cs.EXT_HPP):
-        return header_name.split(cs.SEPARATOR_DOT)[0]
-    return header_name
 
 
 def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
@@ -5311,7 +5303,7 @@ class ImportProcessor:
         if spec is None:
             return
         include_path, is_system_include = spec
-        local_name = _cpp_include_local_name(include_path)
+        local_name = cpp_include_local_name(include_path)
         full_name = self._cpp_include_full_name(
             include_path, is_system_include, module_qn
         )
