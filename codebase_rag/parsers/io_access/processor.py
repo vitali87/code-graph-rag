@@ -35,6 +35,7 @@ from .extract import (
     first_token_arg_string,
     format_call_target,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     literal_target,
@@ -803,10 +804,7 @@ class IOAccessProcessor:
             # inline callback the call pass never walks alone runs here, as a
             # Python lambda does, so its I/O lands on this caller (#2772).
             if node.type in descriptor.nested_scope_types:
-                if (
-                    node.type in descriptor.inline_callable_types
-                    and not self._has_own_pass(node)
-                ):
+                if is_inline_callback(node, descriptor, self._has_own_pass):
                     self._emit_direct_sinks(
                         node,
                         caller_spec,

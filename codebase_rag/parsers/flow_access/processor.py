@@ -37,6 +37,7 @@ from ..io_access import (
     definition_header_nodes,
     first_token_arg_string,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     lean_binding_targets,
@@ -1217,9 +1218,7 @@ class FlowProcessor:
             # THIS scope; walk them, then leave the body to its own caller pass.
             for header in lean_definition_header_nodes(node, jc.descriptor):
                 state = self._walk_flat_stmt(header, state, jc)
-            if node_type in jc.descriptor.inline_callable_types and not (
-                self._has_own_pass(node)
-            ):
+            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
                 self._walk_inline_callback(node, state, jc, self._walk_flat_stmt)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
@@ -1579,9 +1578,7 @@ class FlowProcessor:
             # THIS scope; walk them, then leave the body to its own caller pass.
             for header in lean_definition_header_nodes(node, jc.descriptor):
                 state = self._walk_js_stmt(header, state, jc)
-            if node_type in jc.descriptor.inline_callable_types and not (
-                self._has_own_pass(node)
-            ):
+            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
                 self._walk_inline_callback(node, state, jc, self._walk_js_stmt)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:

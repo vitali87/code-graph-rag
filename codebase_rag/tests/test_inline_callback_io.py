@@ -88,7 +88,13 @@ func goLeak() {
 \tfunc() { fmt.Println(s) }()
 }
 
-func main() { goCb(nil); goLeak() }
+func goBound() {
+\tg := func() { fmt.Println("bound") }
+\tvar h = func() { fmt.Println("bound") }
+\t_, _ = g, h
+}
+
+func main() { goCb(nil); goLeak(); goBound() }
 """,
     "Cb.java": """\
 import java.util.List;
@@ -102,6 +108,10 @@ class Cb {
     String s = System.getenv("SECRET");
     items.forEach(x -> { System.out.println(s); });
   }
+
+  static void javaBound() {
+    Runnable r = () -> System.out.println("bound");
+  }
 }
 """,
     "Cb.cs": """\
@@ -111,6 +121,10 @@ using System.Collections.Generic;
 class Cb {
   static void CsCb(List<string> items) {
     items.ForEach(x => Console.WriteLine(x));
+  }
+
+  static void CsBound() {
+    Action a = () => Console.WriteLine("bound");
   }
 }
 """,
@@ -124,7 +138,15 @@ fn rust_leak(items: Vec<String>) {
     items.iter().for_each(|_x| println!("{}", s));
 }
 
-fn main() { rust_cb(vec![]); rust_leak(vec![]); }
+fn rust_inline() {
+    vec![1].iter().for_each(|_x| { std::fs::write("inline.txt", "x"); });
+}
+
+fn rust_bound() {
+    let g = || { std::fs::write("secret.txt", "x"); };
+}
+
+fn main() { rust_cb(vec![]); rust_leak(vec![]); rust_inline(); rust_bound(); }
 """,
 }
 
@@ -210,6 +232,25 @@ def test_nested_definitions_keep_their_own_io(
     assert _io(edges, "inner") == {("WRITES_TO", _STDOUT)}, edges
     assert _io(edges, "outer") == set(), edges
     assert _io(edges, "cb") == set(), edges
+
+
+def test_an_inline_rust_closure_write_lands_on_its_enclosing_fn(
+    edges: set[tuple[str, str, str]],
+) -> None:
+    inline = ("WRITES_TO", "resource::FILE::inline.txt")
+    assert inline in _io(edges, "rust_inline"), edges
+
+
+@pytest.mark.parametrize("caller", ["rust_bound", "goBound", "javaBound", "CsBound"])
+def test_a_callback_bound_to_a_local_is_not_credited(
+    edges: set[tuple[str, str, str]], caller: str
+) -> None:
+    # Negatives: a closure bound to a local (`let g = || ...`, `g := func()
+    # {...}`, `Runnable r = () -> ...`) is a named callback, like JS `const
+    # handler = ...`. It runs only where that name is called (never, here), so
+    # the enclosing function is not credited with its I/O.
+    assert _io(edges, caller) == set(), edges
+    assert not any(dst == "resource::FILE::secret.txt" for _, _, dst in edges), edges
 
 
 def test_a_callback_parameter_shadows_the_outer_name(

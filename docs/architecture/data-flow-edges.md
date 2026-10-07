@@ -89,7 +89,10 @@ as part of the function that writes it. In
 function, as the callback's `CALLS` are. A value the callback reads from the
 enclosing scope flows into its sinks. A `return` inside the callback leaves the
 callback, not the enclosing function. A named callback (`const handler = (req)
-=> …`) is a function of its own and keeps its own edges.
+=> …`) is a function of its own and keeps its own edges. A callback bound to a
+local (`let g = || …` in Rust, `g := func() {…}` in Go, `Runnable r = () -> …`
+in Java, `Action a = () => …` in C#) counts as named too: it runs only where
+that name is called, so the enclosing function is not credited with its I/O.
 
 ## FLOWS_TO
 
