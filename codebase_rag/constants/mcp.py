@@ -120,6 +120,7 @@ class MCPParamName(StrEnum):
     MENTIONS = "mentions"
     AUTHOR = "author"
     MODULE_QN = "module_qualified_name"
+    THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
     BUDGET_TOKENS = "budget_tokens"

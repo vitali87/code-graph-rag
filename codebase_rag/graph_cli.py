@@ -236,10 +236,24 @@ def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> 
     "importers", help=ch.CMD_GRAPH_IMPORTERS, short_help=ch.CMD_GRAPH_IMPORTERS
 )
 @click.argument("module_qualified_name")
+@click.option("--through-reexports", is_flag=True, help=ch.HELP_GRAPH_THROUGH_REEXPORTS)
 @_graph_options
 def importers_cmd(
-    module_qualified_name: str, project: str | None, repo_path: Path
+    module_qualified_name: str,
+    through_reexports: bool,
+    project: str | None,
+    repo_path: Path,
 ) -> None:
+    if through_reexports:
+        _run_query_and_emit(
+            project,
+            repo_path,
+            lambda f, n: graph_query.importers_through_reexports(
+                f, n, module_qualified_name
+            ),
+            target=module_qualified_name,
+        )
+        return
     _run_query_and_emit(
         project,
         repo_path,
