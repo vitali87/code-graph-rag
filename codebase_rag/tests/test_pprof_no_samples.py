@@ -50,7 +50,8 @@ def test_a_profile_without_samples_says_so(
     with pytest.raises(TraceFormatError) as exc_info:
         convert(profile, repo_root=tmp_path, output=tmp_path / "t.jsonl")
     message = str(exc_info.value)
-    assert NO_SAMPLES in message and NOT_PPROF not in message, message
+    assert NO_SAMPLES in message, message
+    assert NOT_PPROF not in message, message
     assert "sampling period" in message, message
     assert not (tmp_path / "t.jsonl").exists()
 
@@ -62,7 +63,8 @@ def test_trace_convert_prints_the_reason(tmp_path: Path) -> None:
         ["convert", str(profile), "--repo-path", str(tmp_path), "-o", "t.jsonl"],
     )
     assert result.exit_code == 1, result.output
-    assert NO_SAMPLES in result.output and NOT_PPROF not in result.output
+    assert NO_SAMPLES in result.output
+    assert NOT_PPROF not in result.output
 
 
 @pytest.mark.parametrize(
@@ -70,8 +72,11 @@ def test_trace_convert_prints_the_reason(tmp_path: Path) -> None:
     [
         b"not a pprof",
         # Decodes, but without even a string table: nothing pprof writes.
-        gzip.compress(_uint(12, 10_000_000)),
+        # mtime=0: the gzip header otherwise embeds the current time, so the
+        # bytes (and a byte-derived test id) differed between xdist workers.
+        gzip.compress(_uint(12, 10_000_000), mtime=0),
     ],
+    ids=["plain-bytes", "gzip-without-string-table"],
 )
 def test_input_that_is_not_a_profile_is_still_called_one(
     tmp_path: Path, data: bytes
