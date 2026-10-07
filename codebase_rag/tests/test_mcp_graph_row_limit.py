@@ -126,7 +126,8 @@ async def test_a_small_answer_is_still_a_plain_list(
     assert isinstance(rows, list)
     assert [r["depth"] for r in rows] == [1, 2, 3]
     callers = await registry.callers(_HELPER, project=P)
-    assert isinstance(callers, list) and callers
+    assert isinstance(callers, list)
+    assert callers
 
 
 async def test_the_bounds_are_declared_in_the_schemas(
