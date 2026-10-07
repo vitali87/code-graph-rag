@@ -127,48 +127,12 @@ class Extractor:
         path, node, language, source, label = self._locate(qn, patcher)
         start, end = span
         parts = _split_span(node, start, end)
-        exit_node = next(
-            (e for e in (_early_exit(s) for s in parts.statements) if e is not None),
-            None,
-        )
-        if exit_node is not None:
-            raise ExtractRefused(
-                cs.EXTRACT_EARLY_EXIT.format(
-                    kind=exit_node.type, line=exit_node.start_point[0] + 1
-                )
-            )
-        awaited = _first_in_scope(
-            parts.statements,
-            lambda n: (
-                n.type in _AWAIT_TOKENS
-                or (n.type == cs.TS_IDENTIFIER and _text(n) == cs.JS_AWAIT_IDENTIFIER)
-            ),
-            _FUNCTION_SCOPES,
-        )
-        if awaited is not None:
-            # The helper would be synchronous and its call un-awaited, which
-            # neither parser accepts (Greptile, PR #2062).
-            raise ExtractRefused(
-                cs.EXTRACT_AWAITS.format(
-                    token=_text(awaited), line=awaited.start_point[0] + 1
-                )
-            )
+        _refuse_early_exit(parts)
+        _refuse_await(parts)
         inputs, outputs = _analyse(node, parts)
         is_method = label == cs.NodeLabel.METHOD.value
-        py_method = None
-        js_method = (
-            _js_method_form(qn, node)
-            if language in _JS_LANGUAGES
-            and (is_method or node.type == cs.TS_METHOD_DEFINITION)
-            else None
-        )
-        if language in _JS_LANGUAGES:
-            _refuse_lost_js_context(parts, receiver_kept=js_method is not None)
-            _refuse_outer_writes(node, parts)
-        if language == cs.SupportedLanguage.PYTHON:
-            _refuse_shared_names(node, parts)
-        if is_method and language == cs.SupportedLanguage.PYTHON:
-            py_method = _py_method_form(qn, node)
+        py_method, js_method = _method_forms(qn, node, language, parts, is_method)
+        if py_method is not None:
             inputs = [i for i in inputs if i != py_method.receiver]
         if py_method is None and js_method is None:
             _refuse_shadowed_helper(node, new_name)
@@ -178,8 +142,7 @@ class Extractor:
         first, last = parts.statements[0], parts.statements[-1]
         _refuse_shared_lines(source, first, last)
         span_start = source.rfind(b"\n", 0, first.start_byte) + 1
-        span_end = source.find(b"\n", last.end_byte)
-        span_end = len(source) if span_end < 0 else span_end + 1
+        span_end = _line_end(source, last.end_byte)
         body_indent = _indent_of(source, first)
         literal_lines = _string_lines(parts.statements, first.start_point[0])
         body_text = _dedent(
@@ -190,14 +153,10 @@ class Extractor:
             body_indent,
             literal_lines,
         )
-        def_indent = _indent_of(
-            source,
-            node
-            if node.parent is None
-            or node.parent.type
-            not in (cs.TS_PY_DECORATED_DEFINITION, cs.TS_EXPORT_STATEMENT)
-            else node.parent,
-        )
+        # The new function goes right after the enclosing definition (or
+        # its decorator/export wrapper), at the same indentation.
+        holder = _definition_holder(node)
+        def_indent = _indent_of(source, holder)
         if language in _JS_LANGUAGES:
             function_text, call_text = _js_helper_and_call(
                 node,
@@ -226,23 +185,9 @@ class Extractor:
         function_text = function_text.replace("\n", newline)
         call_text = call_text.replace("\n", newline)
         patcher.replace_span(path, (span_start, span_end), call_text)
-        # The new function goes right after the enclosing definition (or
-        # its decorator/export wrapper), at the same indentation.
-        holder = (
-            node.parent
-            if node.parent is not None
-            and node.parent.type
-            in (cs.TS_PY_DECORATED_DEFINITION, cs.TS_EXPORT_STATEMENT)
-            else node
-        )
-        after_def = source.find(b"\n", holder.end_byte)
-        after_def = len(source) if after_def < 0 else after_def + 1
+        after_def = _line_end(source, holder.end_byte)
         patcher.replace_span(path, (after_def, after_def), function_text)
-        owner = (
-            qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if is_method
-            else qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        )
+        owner = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         report = ExtractReport(
             qualified_name=qn,
             new_qualified_name=f"{owner}{cs.SEPARATOR_DOT}{new_name}",
@@ -293,6 +238,81 @@ class Extractor:
             )
             report = report._replace(**enforced._asdict())
         return report
+
+
+def _refuse_early_exit(parts: _Span) -> None:
+    """Refuse a span with a statement that leaves it early."""
+    exit_node = next(
+        (e for e in (_early_exit(s) for s in parts.statements) if e is not None),
+        None,
+    )
+    if exit_node is not None:
+        raise ExtractRefused(
+            cs.EXTRACT_EARLY_EXIT.format(
+                kind=exit_node.type, line=exit_node.start_point[0] + 1
+            )
+        )
+
+
+def _refuse_await(parts: _Span) -> None:
+    """Refuse a span that awaits outside any nested function of its own."""
+    awaited = _first_in_scope(
+        parts.statements,
+        lambda n: (
+            n.type in _AWAIT_TOKENS
+            or (n.type == cs.TS_IDENTIFIER and _text(n) == cs.JS_AWAIT_IDENTIFIER)
+        ),
+        _FUNCTION_SCOPES,
+    )
+    if awaited is not None:
+        # The helper would be synchronous and its call un-awaited, which
+        # neither parser accepts (Greptile, PR #2062).
+        raise ExtractRefused(
+            cs.EXTRACT_AWAITS.format(
+                token=_text(awaited), line=awaited.start_point[0] + 1
+            )
+        )
+
+
+def _method_forms(
+    qn: str,
+    definition: Node,
+    language: cs.SupportedLanguage | None,
+    parts: _Span,
+    is_method: bool,
+) -> tuple[_PyMethod | None, _JsMethod | None]:
+    """How a helper extracted from a method is declared and called, once
+    the language's own refusals pass; (None, None) for a plain function."""
+    if language in _JS_LANGUAGES:
+        js_method = (
+            _js_method_form(qn, definition)
+            if is_method or definition.type == cs.TS_METHOD_DEFINITION
+            else None
+        )
+        _refuse_lost_js_context(parts, receiver_kept=js_method is not None)
+        _refuse_outer_writes(definition, parts)
+        return None, js_method
+    if language == cs.SupportedLanguage.PYTHON:
+        _refuse_shared_names(definition, parts)
+        return (_py_method_form(qn, definition) if is_method else None), None
+    return None, None
+
+
+def _definition_holder(definition: Node) -> Node:
+    """The definition, or the decorator/export wrapper that holds it."""
+    parent = definition.parent
+    if parent is not None and parent.type in (
+        cs.TS_PY_DECORATED_DEFINITION,
+        cs.TS_EXPORT_STATEMENT,
+    ):
+        return parent
+    return definition
+
+
+def _line_end(source: bytes, offset: int) -> int:
+    """The offset just past the newline ending the line `offset` is on."""
+    newline = source.find(b"\n", offset)
+    return len(source) if newline < 0 else newline + 1
 
 
 def _python_helper_and_call(
@@ -531,27 +551,39 @@ def _js_declarations(definition: Node, parts: _Span) -> set[str]:
                 names.add(_text(named))
         elif statement.type in (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION):
             _binds(statement, found)
+    _js_inner_declarations(definition, parts, found)
+    return names | set(found)
+
+
+def _js_inner_declarations(definition: Node, parts: _Span, found: list[str]) -> None:
+    """Add to `found` every `var` the function holds outside nested
+    functions, and the catch and loop bindings inside the span."""
     span_ids = {statement.id for statement in parts.statements}
     stack = list(_body_statements(definition))
     while stack:
-        current, inside = stack.pop(), False
+        current = stack.pop()
         if current.type in _FUNCTION_SCOPES:
             continue
         if current.type == cs.TS_VARIABLE_DECLARATION:
             _binds(current, found)
-        elif current.type == cs.TS_JS_CATCH_CLAUSE or (
-            current.type == cs.TS_FOR_IN_STATEMENT
-            and current.child_by_field_name(cs.FIELD_KIND) is not None
+        elif (binding := _block_binding(current)) is not None and _within(
+            current, span_ids
         ):
-            inside = _within(current, span_ids)
-        if inside:
-            binding = current.child_by_field_name(
-                cs.TS_FIELD_PARAMETER
-            ) or current.child_by_field_name(cs.FIELD_LEFT)
-            if binding is not None:
-                _targets(binding, found)
+            _targets(binding, found)
         stack.extend(current.children)
-    return names | set(found)
+
+
+def _block_binding(node: Node) -> Node | None:
+    """The binding a `catch (e)` or a declaring `for (const k of ...)`
+    introduces, or None for any other node."""
+    if node.type == cs.TS_JS_CATCH_CLAUSE or (
+        node.type == cs.TS_FOR_IN_STATEMENT
+        and node.child_by_field_name(cs.FIELD_KIND) is not None
+    ):
+        return node.child_by_field_name(
+            cs.TS_FIELD_PARAMETER
+        ) or node.child_by_field_name(cs.FIELD_LEFT)
+    return None
 
 
 def _within(node: Node, ids: set[int]) -> bool:
@@ -623,6 +655,15 @@ def _js_helper_and_call(
     function_text = "\n" + _reindent("\n".join(lines), def_indent, keep) + "\n"
     callee = f"{method.receiver}.{new_name}" if method else new_name
     call = f"{callee}{type_args}({', '.join(inputs)})"
+    text = _js_call_statement(call, outputs, parts, body_indent)
+    return function_text, f"{body_indent}{text}\n"
+
+
+def _js_call_statement(
+    call: str, outputs: list[str], parts: _Span, body_indent: str
+) -> str:
+    """The statement that calls the helper and takes back its outputs:
+    declared again where the span declared them, assigned where not."""
     declared_in_span: list[str] = []
     for statement in parts.statements:
         _binds(statement, declared_in_span)
@@ -633,20 +674,18 @@ def _js_helper_and_call(
     ]
     keyword = _declaration_keyword(parts, fresh)
     if not outputs:
-        text = f"{call};"
-    elif len(outputs) == 1:
-        text = (
+        return f"{call};"
+    if len(outputs) == 1:
+        return (
             f"{keyword} {outputs[0]} = {call};" if fresh else f"{outputs[0]} = {call};"
         )
-    elif len(fresh) == len(outputs):
-        text = f"{keyword} {{ {', '.join(outputs)} }} = {call};"
-    else:
-        # Some outputs are new and some reassign outer names: declare the new
-        # ones first, or the destructuring assigns undeclared names and
-        # strict code throws (Greptile, PR #2062).
-        declare = f"let {', '.join(fresh)};\n{body_indent}" if fresh else ""
-        text = f"{declare}({{ {', '.join(outputs)} }} = {call});"
-    return function_text, f"{body_indent}{text}\n"
+    if len(fresh) == len(outputs):
+        return f"{keyword} {{ {', '.join(outputs)} }} = {call};"
+    # Some outputs are new and some reassign outer names: declare the new
+    # ones first, or the destructuring assigns undeclared names and strict
+    # code throws (Greptile, PR #2062).
+    declare = f"let {', '.join(fresh)};\n{body_indent}" if fresh else ""
+    return f"{declare}({{ {', '.join(outputs)} }} = {call});"
 
 
 _JS_ASSIGNMENTS = frozenset(
