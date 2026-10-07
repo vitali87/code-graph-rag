@@ -15,7 +15,6 @@ and asks for the edges document order gives.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -124,9 +123,9 @@ def _calls(root: Path, reverse: bool) -> _Calls:
 
 
 @pytest.fixture(scope="module")
-def runs(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[bool, _Calls]]:
+def runs(tmp_path_factory: pytest.TempPathFactory) -> dict[bool, _Calls]:
     base = tmp_path_factory.mktemp("order")
-    yield {
+    return {
         False: _calls(base / "document", reverse=False),
         True: _calls(base / "reversed", reverse=True),
     }
@@ -173,13 +172,15 @@ def test_the_js_return_reader_lists_returns_in_document_order() -> None:
 
 
 def test_no_analysis_reads_unsorted_captures() -> None:
-    # `sorted_captures` is the one reader of `QueryCursor.captures()`.
+    # `sorted_captures` is the one reader of `QueryCursor.captures()`. The
+    # sources are UTF-8 whatever the platform's locale encoding (cp1252 on
+    # Windows), and the paths are compared with `/` separators.
     package = Path(codebase_rag.__file__).parent
     readers = [
-        str(path.relative_to(package))
+        path.relative_to(package).as_posix()
         for path in package.rglob("*.py")
         if "tests" not in path.parts
-        for line in path.read_text().splitlines()
+        for line in path.read_text(encoding="utf-8").splitlines()
         if re.search(r"\.captures\(", line)
     ]
     assert readers == ["parsers/utils.py"]
