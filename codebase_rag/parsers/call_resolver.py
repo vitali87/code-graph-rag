@@ -2732,18 +2732,18 @@ class CallResolver:
             or call_name.startswith(f"{cs.KEYWORD_SUPER}()")
         )
 
-    def _try_resolve_js_reexport(
+    def _followed_js_reexport(
         self,
         call_name: str,
         import_map: dict[str, str],
         language: cs.SupportedLanguage | None,
-        module_qn: str,
-    ) -> tuple[str, str] | None:
+    ) -> str | None:
         # `import { plus } from "./lib"` maps `plus` to `lib.plus`, where a
         # barrel registers nothing: its `export { add as plus } from` names
         # the definition, possibly through further barrels. Without this the
         # call fell to the name-only fallback, which found no `plus` at all,
-        # or only guessed the right `add` (issue #2464).
+        # or only guessed the right `add` (issue #2464). None when the name
+        # leads nowhere else.
         if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
             return None
         imported_qn = import_map[call_name]
@@ -2752,13 +2752,7 @@ class CallResolver:
             self.type_inference.module_qn_to_file_path,
             self.function_registry,
         )
-        if followed == imported_qn:
-            return None
-        # The chain's end resolves as a direct import of it would, so a
-        # CommonJS whole-module export there is still reached.
-        return self._try_resolve_direct_import(
-            call_name, {call_name: followed}, language, module_qn
-        )
+        return None if followed == imported_qn else followed
 
     def _try_resolve_via_imports(
         self,
@@ -2779,12 +2773,20 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(
-            call_name, import_map, language, module_qn
-        ):
-            return result
-
-        if result := self._try_resolve_js_reexport(
+        # The export walk goes first: a module may publish a name for another
+        # of its bindings (`export { beta as renamed }`, `module.exports = {
+        # renamed: beta }`) beside a local of that name, and the import gets
+        # the published one (bot review on PR #2994). The chain's end
+        # resolves as a direct import of it would, so a CommonJS whole-module
+        # export there is still reached; when it resolves to nothing (an
+        # external package), the module's own `renamed` is still not what
+        # the import names, so the direct import of it is skipped.
+        if followed := self._followed_js_reexport(call_name, import_map, language):
+            if result := self._try_resolve_direct_import(
+                call_name, {call_name: followed}, language, module_qn
+            ):
+                return result
+        elif result := self._try_resolve_direct_import(
             call_name, import_map, language, module_qn
         ):
             return result

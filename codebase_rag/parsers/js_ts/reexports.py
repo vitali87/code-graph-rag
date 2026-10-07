@@ -66,13 +66,31 @@ class _ReexportWalk:
         # (`local`). `seen` is shared with the star branches, so a cycle of
         # barrels ends.
         current, local = qn, False
-        while current not in self._registry and (current, local) not in seen:
+        while (current, local) not in seen and (
+            current not in self._registry
+            or (not local and self._exported_as_another(current))
+        ):
             seen.add((current, local))
             step = self._binding(current) if local else self._export(current, seen)
             if step is None:
                 break
             current, local = step
         return current
+
+    def _exported_as_another(self, qn: str) -> bool:
+        """Whether the module publishes `qn`'s name for another binding.
+
+        `export { beta as renamed }` or `module.exports = { renamed: beta }`
+        beside a local `renamed`: an importer of `renamed` gets `beta`, so
+        the registered local of that name must not end the walk (bot review
+        on PR #2994).
+        """
+        module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
+        barrel = self._barrel(module_qn) if separator else None
+        if barrel is None:
+            return False
+        export = self._exports.get(barrel, {}).get(name)
+        return export is not None and export.target != qn
 
     def _export(self, qn: str, seen: set[tuple[str, bool]]) -> tuple[str, bool] | None:
         module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
