@@ -134,7 +134,8 @@ def test_moving_an_empty_class_declares_the_rename_to_the_contract(
     store, updater = _index(root)
     report = _move(root, store, updater, qn=_qn("pkg.util.Empty"))
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
 
 
 # --- the new destination is checked like every other file -------------------------
@@ -169,12 +170,13 @@ def test_a_language_move_does_not_implement_is_refused(temp_repo: Path) -> None:
     _write(root, "go.mod", "module example.com/m\n\ngo 1.21\n")
     _write(root, "util/util.go", "package util\n\nfunc Helper() int {\n\treturn 1\n}\n")
     store, updater = _index(root)
+    helper = _qn("util.util.Helper")
     with pytest.raises(MoveRefused, match="does not support"):
         _move(
             root,
             store,
             updater,
-            qn=_qn("util.util.Helper"),
+            qn=helper,
             target="core/core.go",
             dry_run=True,
         )
@@ -199,8 +201,9 @@ def test_a_nested_definition_is_refused(temp_repo: Path) -> None:
     )
     root = _materialise(temp_repo, fixture)
     store, updater = _index(root)
+    inner = _qn("pkg.util.outer.inner")
     with pytest.raises(MoveRefused, match="nested"):
-        _move(root, store, updater, qn=_qn("pkg.util.outer.inner"))
+        _move(root, store, updater, qn=inner)
     assert not (root / "pkg/core.py").exists()
 
 
@@ -248,7 +251,8 @@ def test_moving_the_last_function_beside_a_module_constant_passes_its_contract(
     store, updater = _index(root)
     report = _move(root, store, updater)
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     assert "from pkg.util import SEP" in (root / "pkg/core.py").read_text()
     assert "from pkg.core import helper" in (root / "pkg/a.py").read_text()
 

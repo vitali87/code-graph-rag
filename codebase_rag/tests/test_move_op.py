@@ -110,7 +110,9 @@ def test_move_updates_three_importers_without_a_cycle(
         'def helper(a):\n    """Join."""\n    return os.sep.join(a)\n'
     )
     util = (root / "pkg/util.py").read_text()
-    assert "def helper" not in util and "def other" in util and "def unrelated" in util
+    assert "def helper" not in util
+    assert "def other" in util
+    assert "def unrelated" in util
     assert "from pathlib import Path" in util
     assert (root / "pkg/a.py").read_text().startswith("from pkg.core import helper\n")
     assert (
@@ -123,7 +125,8 @@ def test_move_updates_three_importers_without_a_cycle(
     # the symbol: it is left alone and named.
     assert report.unchanged_importers == ()
     assert report.copied_imports == ("import os",)
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     assert [t["qualified_name"] for t in report.verdict.affected_tests] == [
         _qn("tests.test_app.test_run")
     ]
@@ -177,12 +180,13 @@ def test_move_that_would_create_a_cycle_is_refused_before_writing(
     root = _materialise(temp_repo, fixture)
     store, updater = _index(root)
     before = {rel: (root / rel).read_text() for rel in fixture}
+    helper = _qn("pkg.util.helper")
     with pytest.raises(MoveRefused) as excinfo:
         move(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.util.helper"),
+            helper,
             "pkg.core",
             reingest=updater.reingest,
         )
@@ -240,12 +244,14 @@ def test_old_module_that_still_uses_the_name_imports_it(temp_repo: Path) -> None
 
 def test_refusals(repo: tuple[Path, _StatefulIngestor, GraphUpdater]) -> None:
     root, store, _updater = repo
+    nothing = _qn("pkg.util.nothing")
+    helper = _qn("pkg.util.helper")
     with pytest.raises(MoveRefused, match="No definition"):
         move(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.util.nothing"),
+            nothing,
             "pkg.core",
             dry_run=True,
         )
@@ -254,14 +260,15 @@ def test_refusals(repo: tuple[Path, _StatefulIngestor, GraphUpdater]) -> None:
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.util.helper"),
+            helper,
             "pkg.util",
             dry_run=True,
         )
     report = move(
         root, store.fetch_all, PROJECT, _qn("pkg.util.helper"), "pkg.core", dry_run=True
     )
-    assert not report.applied and report.new_path == "pkg/core.py"
+    assert not report.applied
+    assert report.new_path == "pkg/core.py"
     assert (root / "pkg/util.py").read_text() == FIXTURE["pkg/util.py"]
 
 
@@ -290,7 +297,8 @@ async def test_mcp_move_tool_reports_and_refuses(
     refused = await registry.move(
         qualified_name=_qn("pkg.util.helper"), target_module="pkg.util", project=PROJECT
     )
-    assert isinstance(refused, dict) and cs.DICT_KEY_ERROR in refused
+    assert isinstance(refused, dict)
+    assert cs.DICT_KEY_ERROR in refused
     payload = await registry.move(
         qualified_name=_qn("pkg.util.helper"), target_module="pkg.core", project=PROJECT
     )
