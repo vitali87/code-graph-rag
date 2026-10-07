@@ -720,6 +720,31 @@ def _names_a_callable(node: Node) -> bool:
     return node.type in _CALLBACK_REF_TYPES
 
 
+def _is_inline_func_value(node: Node, language: cs.SupportedLanguage | None) -> bool:
+    return node.type in _INLINE_FUNC_VALUE_TYPES or (
+        language is not None
+        and node.type in _LANG_INLINE_FUNC_VALUE_TYPES.get(language, frozenset())
+    )
+
+
+def _callback_arg_name(node: Node, language: cs.SupportedLanguage | None) -> str | None:
+    # Only a name can hand a callable over. The whole source text of any
+    # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
+    # as if it were one (issue #2438).
+    if not _names_a_callable(node):
+        return None
+    # A Lua local or parameter hides a same-name function, which the
+    # name-based resolver cannot see: `show(view)` with a local `view`
+    # string would reference the module's `view` function.
+    if (
+        language == cs.SupportedLanguage.LUA
+        and node.type == cs.TS_LUA_IDENTIFIER
+        and lua_utils.is_local_value(node)
+    ):
+        return None
+    return safe_decode_text(node)
+
+
 def _first_class_value_children(
     node: Node, is_dart: bool, is_js_ts: bool = False
 ) -> list[Node] | None:
@@ -8804,30 +8829,12 @@ class CallProcessor:
         # registered anonymously in the enclosing scope but named after no
         # identifier, so resolve_func cannot find it. The call consumes it, so
         # reference it by position the same way inline object-literal values are.
-        if arg_node.type in _INLINE_FUNC_VALUE_TYPES or (
-            language is not None
-            and arg_node.type
-            in _LANG_INLINE_FUNC_VALUE_TYPES.get(language, frozenset())
-        ):
+        if _is_inline_func_value(arg_node, language):
             self._emit_inline_arg_function_ref(
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
-        # Only a name can hand a callable over. The whole source text of any
-        # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
-        # as if it were one (issue #2438).
-        if not _names_a_callable(arg_node):
-            return
-        # A Lua local or parameter hides a same-name function, which the
-        # name-based resolver cannot see: `show(view)` with a local `view`
-        # string would reference the module's `view` function.
-        if (
-            language == cs.SupportedLanguage.LUA
-            and arg_node.type == cs.TS_LUA_IDENTIFIER
-            and lua_utils.is_local_value(arg_node)
-        ):
-            return
-        if not (arg_text := safe_decode_text(arg_node)):
+        if not (arg_text := _callback_arg_name(arg_node, language)):
             return
         if language == cs.SupportedLanguage.CSHARP:
             # `Callback<int>` passes the method group with explicit type
