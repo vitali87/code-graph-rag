@@ -3879,12 +3879,17 @@ class CallResolver:
             # its own class body, which lives in the caller's module. So a
             # local `run` handed on as a callback, or a variable named like
             # some property, never names another module's method (#2360).
-            own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+            # Another module's function is no closer: only an import binds
+            # it, so with none naming the call (and no star import) the name
+            # is a builtin or a local, not that function (issue #2929).
             possible_matches = [
                 qn
                 for qn in possible_matches
-                if self.function_registry[qn] != cs.NodeLabel.METHOD.value
-                or qn.startswith(own_module)
+                if self._in_python_module(qn, module_qn)
+                or (
+                    self.function_registry[qn] != cs.NodeLabel.METHOD.value
+                    and self._python_import_may_bind(call_name, module_qn, qn)
+                )
             ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
@@ -3898,6 +3903,36 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _in_python_module(self, qn: str, module_qn: str) -> bool:
+        # Defined in the module itself, not in a module under it: a package's
+        # `__init__` qn prefixes every module of the package, and a module
+        # under a plain directory (`lib/tools/output.py`, no `__init__.py`)
+        # sits deeper than the first segment, so every prefix is checked.
+        own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+        if not qn.startswith(own_module):
+            return False
+        rest = qn[len(own_module) :].split(cs.SEPARATOR_DOT)
+        modules = self.type_inference.module_qn_to_file_path
+        return not any(
+            f"{own_module}{cs.SEPARATOR_DOT.join(rest[:depth])}" in modules
+            for depth in range(1, len(rest))
+        )
+
+    def _python_import_may_bind(self, call_name: str, module_qn: str, qn: str) -> bool:
+        # An import binds the name only to what it names (bot review on PR
+        # #2968): its target, or a function under the target's package that
+        # the package may re-export; through `from m import *`, a function of
+        # `m` or of a module under it. An external package's `get` leaves a
+        # project `get` out.
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (target := import_map.get(call_name)) is not None:
+            owner = target.rpartition(cs.SEPARATOR_DOT)[0]
+            return qn == target or _qn_under(qn, target) or _qn_within(qn, owner)
+        return any(
+            key.startswith(cs.IMPORTED_NAME_WILDCARD) and _qn_within(qn, module)
+            for key, module in import_map.items()
+        )
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:
@@ -5801,3 +5836,17 @@ class CallResolver:
         if func.type == cs.TS_PY_ATTRIBUTE:
             return func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
         return None
+
+
+def _qn_within(qn: str, module: str) -> bool:
+    # `qn` sits under `module`, which may be written with or without the
+    # project prefix.
+    return bool(module) and (
+        qn.startswith(f"{module}{cs.SEPARATOR_DOT}")
+        or f"{cs.SEPARATOR_DOT}{module}{cs.SEPARATOR_DOT}" in f"{cs.SEPARATOR_DOT}{qn}"
+    )
+
+
+def _qn_under(qn: str, target: str) -> bool:
+    # `qn` is `target` written with the project prefix.
+    return qn.endswith(f"{cs.SEPARATOR_DOT}{target}")

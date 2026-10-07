@@ -320,8 +320,10 @@ def test_heuristic_site_refuses_and_changes_nothing(
     _write(temp_repo, "pkg/__init__.py", "")
     _write(temp_repo, "pkg/util.py", "def lonely():\n    return 1\n")
     _write(
-        temp_repo, "pkg/app.py", "def run():\n    return lonely()\n"
-    )  # not imported: name-only match
+        temp_repo,
+        "pkg/app.py",
+        "from .util import *\n\n\ndef run():\n    return lonely()\n",
+    )  # a star import: name-only match
     graph = _index(temp_repo, mock_ingestor)
     before = (temp_repo / "pkg" / "app.py").read_bytes()
     with pytest.raises(RenameRefused) as excinfo:
