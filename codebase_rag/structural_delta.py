@@ -404,6 +404,24 @@ def snapshot(
             definition = _definition(row)
             if definition.qualified_name:
                 callees[definition.qualified_name] = definition
+    imports, eager_imports, module_paths = _module_imports(fetch_all, params)
+    return Snapshot(
+        paths=frozenset(path_list),
+        definitions=definitions,
+        callees=callees,
+        sites=sites,
+        imports=imports,
+        module_paths=module_paths,
+        eager_imports=eager_imports,
+        bindings=_named_import_bindings(fetch_all, params),
+    )
+
+
+def _module_imports(
+    fetch_all: QueryFn, params: PropertyDict
+) -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]], dict[str, str]]:
+    """The module import graph, its import-time subgraph, and each importing
+    module's path. Every module either graph names is a node of it."""
     imports: dict[str, set[str]] = {}
     eager: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
@@ -418,15 +436,10 @@ def snapshot(
             eager.setdefault(source, set()).add(target)
             eager.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
-    return Snapshot(
-        paths=frozenset(path_list),
-        definitions=definitions,
-        callees=callees,
-        sites=sites,
-        imports={qn: frozenset(targets) for qn, targets in imports.items()},
-        module_paths=module_paths,
-        eager_imports={qn: frozenset(targets) for qn, targets in eager.items()},
-        bindings=_named_import_bindings(fetch_all, params),
+    return (
+        {qn: frozenset(targets) for qn, targets in imports.items()},
+        {qn: frozenset(targets) for qn, targets in eager.items()},
+        module_paths,
     )
 
 
