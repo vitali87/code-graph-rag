@@ -71,7 +71,8 @@ def test_renaming_an_ascii_name_in_a_latin1_module(
 
     _rename(root, graph, f"{graph.project}.menu.menu", "main_menu", False)
     text = _on_disk(root)
-    assert "def main_menu():" in text and "def café(price):" in text, text
+    assert "def main_menu():" in text, text
+    assert "def café(price):" in text, text
 
 
 def test_renaming_a_non_ascii_name_in_a_latin1_module(
@@ -125,7 +126,8 @@ async def test_undeclared_non_utf8_python_is_still_reported(tmp_path: Path) -> N
     # bytes there are an undecodable file, not a declared one.
     (tmp_path / "raw.py").write_bytes("x = 'café'\n".encode(_LATIN1))
     result = await FileReader(str(tmp_path)).read_file("raw.py")
-    assert result.content is None and result.error_message is not None
+    assert result.content is None
+    assert result.error_message is not None
 
 
 @pytest.mark.asyncio
