@@ -232,6 +232,47 @@ def _definition_name_node(
     return None
 
 
+def _tree_name_token(
+    root: Node,
+    start_line: int,
+    end_line: int,
+    name: str,
+    start_col: int | None,
+) -> Node | None:
+    """The definition's own name token in the parsed tree, inside its span."""
+    in_span = list(_nodes_in_span(root, start_line, end_line))
+    anchored = [
+        node
+        for node in in_span
+        if start_col is not None and node.start_point == (start_line - 1, start_col)
+    ]
+    if anchored and (
+        token := _definition_name_node(anchored, start_line, end_line, name)
+    ):
+        return token
+    # A function that is a JS/TS object pair's value is the property its
+    # key names: the key comes first, though the value may start on the
+    # next line (outside the span) or spell the name itself, or declare
+    # a same-named function inside (bot review on PR #2895).
+    if (key := _pair_key_of(in_span, start_line, end_line, name)) is not None:
+        return key
+    for node in in_span:
+        named = _spelling(node.child_by_field_name(cs.FIELD_NAME), name, start_line)
+        if named is not None:
+            return named
+    # Only when no `name` field spells it, so every shape located before
+    # is located exactly as before. Earliest in the source, because the
+    # header comes before anything in the body that could spell it too.
+    declared = [
+        token
+        for node in in_span
+        if (token := _spelling(_declared_name(node), name, start_line)) is not None
+    ]
+    if declared:
+        return min(declared, key=lambda token: token.start_byte)
+    return None
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -251,40 +292,12 @@ def _name_token(
         parsers, _queries = load_parsers()
         parser = parsers.get(language)
     if parser is not None:
-        in_span = list(
-            _nodes_in_span(parser.parse(source).root_node, start_line, end_line)
+        token = _tree_name_token(
+            parser.parse(source).root_node, start_line, end_line, name, start_col
         )
-        anchored = [
-            node
-            for node in in_span
-            if start_col is not None and node.start_point == (start_line - 1, start_col)
-        ]
-        if anchored and (
-            token := _definition_name_node(anchored, start_line, end_line, name)
-        ):
-            return token.start_point[0] + 1, token.start_point[1]
-        # A function that is a JS/TS object pair's value is the property its
-        # key names: the key comes first, though the value may start on the
-        # next line (outside the span) or spell the name itself, or declare
-        # a same-named function inside (bot review on PR #2895).
-        if (key := _pair_key_of(in_span, start_line, end_line, name)) is not None:
-            return key.start_point[0] + 1, key.start_point[1]
-        for node in in_span:
-            named = _spelling(node.child_by_field_name(cs.FIELD_NAME), name, start_line)
-            if named is not None:
-                return named.start_point[0] + 1, named.start_point[1]
-        # Only when no `name` field spells it, so every shape located before
-        # is located exactly as before. Earliest in the source, because the
-        # header comes before anything in the body that could spell it too.
-        declared = [
-            token
-            for node in in_span
-            if (token := _spelling(_declared_name(node), name, start_line)) is not None
-        ]
-        if declared:
-            first = min(declared, key=lambda token: token.start_byte)
-            return first.start_point[0] + 1, first.start_point[1]
-        return None
+        if token is None:
+            return None
+        return token.start_point[0] + 1, token.start_point[1]
     # No grammar: the first whole-word occurrence inside the span.
     text = source.decode(cs.ENCODING_UTF8, errors="replace")
     lines = text.split("\n")
