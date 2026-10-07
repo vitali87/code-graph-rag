@@ -950,14 +950,21 @@ def _python_dunder_all_part(statement: Node) -> list[str] | None:
         )
     if expression.type != cs.TS_PY_CALL:
         return None
-    func = expression.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return _python_dunder_all_call_part(expression)
+
+
+def _python_dunder_all_call_part(call: Node) -> list[str] | None:
+    """What an `__all__.extend([...])` or `__all__.append("x")` call adds;
+    None when the call is not on `__all__`, raising _UnreadableDunderAll as
+    _python_dunder_all_part does."""
+    func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
     if func is None or func.type != cs.TS_PY_ATTRIBUTE:
         return None
     owner = func.child_by_field_name(cs.FIELD_OBJECT)
     method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
     if owner is None or owner.text != cs.PY_DUNDER_ALL.encode() or method is None:
         return None
-    args = expression.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    args = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     arg = next(iter(args.named_children), None) if args is not None else None
     if method.text == cs.PY_LIST_APPEND.encode() and arg is not None:
         name = _python_string_literal(arg)

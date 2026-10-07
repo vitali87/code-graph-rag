@@ -98,31 +98,54 @@ def _follow_reexports(
             # bindings are read latest first (bot review on PR #2989); `seen`
             # bounds a cycle of stars. Python-only: other languages' stars
             # bind differently.
-            following = None
-            for key, target in reversed(module_map.items()):
-                if key == name:
-                    following = target
-                    break
-                if not key.startswith(cs.IMPORT_MAPPING_WILDCARD_PREFIX):
-                    continue
-                binds = _star_binds(target, name, python_star_exports)
-                if binds is False:
-                    continue
-                found = _follow_reexports(
-                    f"{target}{cs.SEPARATOR_DOT}{name}",
-                    import_mapping,
-                    function_registry,
-                    python_star_exports,
-                    seen,
-                )
-                if found in function_registry or binds:
-                    # A name the source's `__all__` lists is bound by this
-                    # star even when it leads outside the project.
-                    return found
+            following, found = _python_latest_binding(
+                name,
+                module_map,
+                import_mapping,
+                function_registry,
+                python_star_exports,
+                seen,
+            )
+            if found is not None:
+                return found
         if not following or following == current:
             break
         current = following
     return current
+
+
+def _python_latest_binding(
+    name: str,
+    module_map: dict[str, str],
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    python_star_exports: Mapping[str, frozenset[str]],
+    seen: set[str],
+) -> tuple[str | None, str | None]:
+    """`name`'s LAST binding among a Python module's imports, latest first:
+    `(target, None)` for a named import, followed on by the caller;
+    `(None, found)` when a star import binds it, `found` being where that
+    star leads; `(None, None)` when no import binds it."""
+    for key, target in reversed(module_map.items()):
+        if key == name:
+            return target, None
+        if not key.startswith(cs.IMPORT_MAPPING_WILDCARD_PREFIX):
+            continue
+        binds = _star_binds(target, name, python_star_exports)
+        if binds is False:
+            continue
+        found = _follow_reexports(
+            f"{target}{cs.SEPARATOR_DOT}{name}",
+            import_mapping,
+            function_registry,
+            python_star_exports,
+            seen,
+        )
+        if found in function_registry or binds:
+            # A name the source's `__all__` lists is bound by this
+            # star even when it leads outside the project.
+            return None, found
+    return None, None
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
