@@ -35,6 +35,7 @@ from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
+from .cpp import local_types as cpp_local_types
 from .cpp import utils as cpp_utils
 from .cpp.function_values import (
     CFileScope,
@@ -197,6 +198,8 @@ _TYPED_LANGUAGES = frozenset(
 # name lives in a nested declarator (no `name` field), needing the libclang
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+# The node kinds a C++ type written in a function body registers as.
+_CPP_LOCAL_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.UNION, NodeType.ENUM})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 # Python callers whose own bindings shadow module and class names for the
 # whole body (issue #2666); a class body or module is excluded on purpose.
@@ -376,6 +379,38 @@ def _class_qn_for_calls(
         )
         or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
     )
+
+
+def _cpp_scoped_bindings(
+    scopes: list[tuple[int, int, str, bool]],
+    name: str,
+    type_name: str,
+    local_qn: str,
+) -> list[tuple[int, int, str, str]]:
+    # Each C++ declaration of `name` as a span binding, widest first: a
+    # qualified one keeps the bare type name, which the module-wide lookup
+    # resolves to the class the qualifier names; an unqualified one binds
+    # the local type.
+    bindings = [
+        (start, end, name, type_name if qualified else local_qn)
+        for start, end, scope_name, qualified in scopes
+        if scope_name == name
+    ]
+    bindings.sort(key=lambda binding: binding[0] - binding[1])
+    return bindings
+
+
+def _cpp_types_at(
+    var_types: dict[str, str], spans: list[tuple[int, int, str, str]], pos: int
+) -> dict[str, str]:
+    # The type map as a C++ use at byte `pos` sees it: each spanned name
+    # bound by the narrowest of its declarations whose window holds `pos`.
+    narrowest: dict[str, tuple[int, str]] = {}
+    for start, end, name, bound in spans:
+        best = narrowest.get(name)
+        if start <= pos < end and (best is None or end - start < best[0]):
+            narrowest[name] = (end - start, bound)
+    return {**var_types, **{name: bound for name, (_, bound) in narrowest.items()}}
 
 
 def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
@@ -1961,7 +1996,17 @@ class CallProcessor:
             return self._calls_owned_by(
                 func_node, owned_func_nodes, all_call_nodes, call_starts
             )
-        return self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        calls = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        if language == cs.SupportedLanguage.CPP:
+            # A member function of a type written in this body is its own
+            # caller; its calls are not also this function's (issue #2555).
+            # A lambda is no caller of its own, so its calls still count here.
+            return [
+                call
+                for call in calls
+                if not cpp_local_types.in_local_type_member(call, func_node)
+            ]
+        return calls
 
     def _filter_calls_in_node(
         self,
@@ -4259,6 +4304,11 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        cpp_spans: list[tuple[int, int, str, str]] = []
+        if language == cs.SupportedLanguage.CPP and local_var_types:
+            cpp_spans = self._bind_cpp_local_types(
+                caller_node, module_qn, local_var_types
+            )
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
 
@@ -4343,12 +4393,29 @@ class CallProcessor:
             span_bindings,
             caller_params,
         )
-        for call_node in call_nodes:
-            self._ingest_call_node(ctx, call_node)
+        self._ingest_call_nodes(ctx, call_nodes, cpp_spans)
         # Edges the later passes emit (decorators, property reads, operator
         # dispatch) are exact bindings; they must not carry the verdict the
         # last call node of this loop left behind.
         self._resolution = cs.EdgeResolution.EXACT
+
+    def _ingest_call_nodes(
+        self,
+        ctx: _CallScanContext,
+        call_nodes: list[Node],
+        cpp_spans: list[tuple[int, int, str, str]],
+    ) -> None:
+        # A C++ name whose declarations disagree (a block local `B b` hiding
+        # a `::B b` field) is typed per call by the declaration in force
+        # there, for every use the call makes of it: a receiver, a functor
+        # called (`b(1)`) or handed over (`keep(b)`), an operator operand.
+        flat_types = ctx.local_var_types
+        for call_node in call_nodes:
+            if cpp_spans and flat_types is not None:
+                ctx.local_var_types = _cpp_types_at(
+                    flat_types, cpp_spans, call_node.start_byte
+                )
+            self._ingest_call_node(ctx, call_node)
 
     def _record_python_shadowed_imports(
         self, caller_node: Node, caller_qn: str, module_qn: str
@@ -4774,6 +4841,23 @@ class CallProcessor:
         # one the syntax hides.
         if self._string_call_specs and call_name:
             self._emit_string_call_edges(ctx, call_node, call_name)
+        # `enter_state(n)` on a functor local, `Cmp{}(a, b)` on a temporary:
+        # a call on an object of class type runs that type's operator(),
+        # which no name lookup of the callee text reaches (issue #2555).
+        if (
+            ctx.is_cpp
+            and call_node.type == cs.TS_CPP_CALL_EXPRESSION
+            and (callee := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+            and (
+                functor := self._cpp_functor_operator(
+                    callee, ctx.module_qn, ctx.local_var_types
+                )
+            )
+        ):
+            self._ingest_resolved_call(
+                ctx, call_node, cs.CPP_OPERATOR_CALL_NAME, functor
+            )
+            return
         # An inline function ARGUMENT is handed to the callee regardless of
         # whether the callee resolves: an external/param callee
         # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
@@ -6029,6 +6113,128 @@ class CallProcessor:
         ):
             return (cs.NodeLabel.CLASS, aliased_qn)
         return None
+
+    def _cpp_local_anchors(self, node: Node, module_qn: str) -> list[str]:
+        # The qns the types written in each function and local type around
+        # `node` are named under, innermost first.
+        return cpp_local_types.scope_anchor_qns(
+            node, module_qn, self.function_locations
+        )
+
+    def _cpp_local_type_under(self, anchors: list[str], type_name: str) -> str | None:
+        registry = self._resolver.function_registry
+        for anchor in anchors:
+            local_qn = f"{anchor}{cs.SEPARATOR_DOT}{type_name}"
+            if registry.get(local_qn) in _CPP_LOCAL_TYPE_NODE_TYPES:
+                return local_qn
+        return None
+
+    def _bind_cpp_local_types(
+        self, caller_node: Node, module_qn: str, var_types: dict[str, str]
+    ) -> list[tuple[int, int, str, str]]:
+        # A variable of a type written in an enclosing function body binds
+        # to that type's node, not whichever same-named class the
+        # module-wide lookup meets first, so two functions' local
+        # `Checker`s stay apart (issue #2555). A position name that binds to
+        # nothing names a type with no node, and must not reach the
+        # name-based lookups.
+        # A name declared with a qualified type (`::B g`, `ns::B n`) keeps
+        # the class its qualifier names (#2631 re-review). Where a name's
+        # declarations disagree (a block local `B b` hiding a `::B b`
+        # field), the widest one is the flat binding and each is returned
+        # as a span binding over its window, so a call binds to the
+        # declaration in force where it sits.
+        anchors = self._cpp_local_anchors(caller_node, module_qn)
+        scopes: list[tuple[int, int, str, bool]] | None = None
+        spans: list[tuple[int, int, str, str]] = []
+        for name, type_name in list(var_types.items()):
+            if local_qn := self._cpp_local_type_under(anchors, type_name):
+                if scopes is None:
+                    scopes = CppTypeInferenceEngine().declaration_scopes(caller_node)
+                bindings = _cpp_scoped_bindings(scopes, name, type_name, local_qn)
+                var_types[name] = bindings[0][3] if bindings else local_qn
+                if any(binding[3] != var_types[name] for binding in bindings):
+                    spans.extend(bindings)
+            elif cpp_local_types.is_positional_name(type_name):
+                del var_types[name]
+        return spans
+
+    def _emit_cpp_functor_callback(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        ensure_rel: Callable[..., None],
+        language: cs.SupportedLanguage | None,
+    ) -> bool:
+        # A functor handed over (`std::sort(b, e, Cmp{})`) keeps its
+        # operator() reachable (issue #2555). The object is passed as a
+        # value: whether the callee runs it or only stores it
+        # (`values.push_back(f)`) is not visible here, so the pass is a
+        # REFERENCES edge, never an invocation (#2631 review). True when the
+        # argument was one and its edge is out.
+        if language != cs.SupportedLanguage.CPP:
+            return False
+        functor = self._cpp_functor_operator(arg_node, module_qn, local_var_types)
+        if functor is None:
+            return False
+        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        self._emit_callback_targets(
+            source_spec,
+            functor[0],
+            functor[1],
+            cs.RelationshipType.REFERENCES,
+            ensure_rel,
+            module_qn,
+            language,
+        )
+        return True
+
+    def _cpp_functor_operator(
+        self, node: Node, module_qn: str, var_types: dict[str, str] | None
+    ) -> tuple[str, str] | None:
+        # The operator() an object-valued expression runs when it is called:
+        # a local or parameter of class type (`enter_state`), or a temporary
+        # (`Cmp{}`, `Cmp()`). None for anything else, so every other callee
+        # and argument keeps its name-based resolution.
+        if (class_qn := self._cpp_functor_class(node, module_qn, var_types)) is None:
+            return None
+        return self._resolver._try_resolve_method(class_qn, cs.CPP_OPERATOR_CALL_NAME)
+
+    def _cpp_functor_class(
+        self, node: Node, module_qn: str, var_types: dict[str, str] | None
+    ) -> str | None:
+        match node.type:
+            case cs.TS_CPP_IDENTIFIER:
+                return self._resolver.cpp_operand_class_qn(
+                    safe_decode_text(node), var_types, module_qn
+                )
+            case cs.TS_CPP_COMPOUND_LITERAL_EXPRESSION:
+                type_node = node.child_by_field_name(cs.FIELD_TYPE)
+            case cs.TS_CPP_CALL_EXPRESSION:
+                type_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            case _:
+                return None
+        if type_node is None or not (
+            type_name := cpp_local_types.named_type(type_node)
+        ):
+            return None
+        if not cpp_local_types.is_qualified_type(type_node) and (
+            local_qn := self._cpp_local_type_under(
+                self._cpp_local_anchors(node, module_qn), type_name
+            )
+        ):
+            return local_qn
+        class_qn = self._resolver._resolve_class_name(type_name, module_qn)
+        # The same spelling calls a function (`make(x)`) as often as it
+        # constructs a class (`Cmp(x)`); only a class is a functor.
+        if (
+            class_qn is None
+            or self._resolver.function_registry.get(class_qn) != NodeType.CLASS
+        ):
+            return None
+        return class_qn
 
     def _bare_name_callee(
         self,
@@ -8796,6 +9002,10 @@ class CallProcessor:
             self._emit_inline_arg_function_ref(
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
+            return
+        if self._emit_cpp_functor_callback(
+            arg_node, source_spec, module_qn, local_var_types, ensure_rel, language
+        ):
             return
         # Only a name can hand a callable over. The whole source text of any
         # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved

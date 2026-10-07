@@ -31,6 +31,7 @@ from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
+from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
@@ -1263,12 +1264,17 @@ class ClassIngestMixin:
             )
             return
 
-        identity = id_.resolve_class_identity(
-            class_node,
-            module_qn,
-            language,
-            lang_config,
-            file_path,
+        local_qn = self._cpp_local_type_qn(class_node, module_qn, language)
+        identity = (
+            self._cpp_local_type_identity(class_node, local_qn)
+            if local_qn is not None
+            else id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                language,
+                lang_config,
+                file_path,
+            )
         )
         if not identity:
             return
@@ -1322,8 +1328,12 @@ class ClassIngestMixin:
         # record for the sweep to attribute it by.
         self.class_owner_module[class_qn] = module_qn
 
-        parent_label, parent_qn, parent_span = self._determine_function_parent(
-            class_node, class_qn, module_qn, lang_config, language
+        parent_label, parent_qn, parent_span = (
+            self._cpp_local_type_parent(class_node, local_qn, module_qn)
+            if local_qn is not None
+            else self._determine_function_parent(
+                class_node, class_qn, module_qn, lang_config, language
+            )
         )
         self._emit_or_defer_defines(
             parent_label,
@@ -1428,6 +1438,46 @@ class ClassIngestMixin:
             func_node_starts=func_node_starts,
             module_qn=module_qn,
         )
+
+    def _cpp_local_type_qn(
+        self, class_node: Node, module_qn: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        # A type written in a function body is that function's, not the
+        # module's: two functions' local `Checker`s must not collide, and an
+        # unnamed functor needs a name for its operator() to hang off
+        # (issue #2555).
+        if language != cs.SupportedLanguage.CPP:
+            return None
+        return cpp_local_types.local_type_qn(
+            class_node, module_qn, self.function_locations
+        )
+
+    @staticmethod
+    def _cpp_local_type_identity(
+        class_node: Node, local_qn: str
+    ) -> tuple[str, str, bool]:
+        return (
+            local_qn,
+            local_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            cpp_utils.is_exported(class_node),
+        )
+
+    def _cpp_local_type_parent(
+        self, class_node: Node, local_qn: str, module_qn: str
+    ) -> tuple[str, str, FunctionSpanKey | None]:
+        # A local type is defined by the callable it is written in, or by the
+        # local type it is nested in. The callable's span pins the parent
+        # node for the deferred link: an out-of-line method registers only
+        # once its class resolves after every file, and an overload's local
+        # type must bind to that overload, not a same-named twin.
+        owner_qn = local_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        parent = cpp_local_types.local_type_parent(class_node)
+        if parent is None or parent.type in cs.CPP_COMPOUND_TYPES:
+            return cs.NodeLabel.CLASS, owner_qn, None
+        span = function_span_key(module_qn, parent)
+        recorded = self.function_locations.get(span)
+        label = recorded.label if recorded is not None else cs.NodeLabel.METHOD
+        return label, owner_qn, span
 
     def _defer_forward_declaration(
         self,
