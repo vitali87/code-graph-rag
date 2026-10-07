@@ -157,9 +157,10 @@ def test_a_model_that_never_stops_asking_ends_in_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], confirm_edits: None
 ) -> None:
     app_context.session.confirm_edits = True
+    agent = _agent(tmp_path, insist=True)
 
     with pytest.raises(RuntimeError, match="approval"):
-        _single_query(_agent(tmp_path, insist=True))
+        _single_query(agent)
 
     assert REPR not in capsys.readouterr().out
 
