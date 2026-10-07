@@ -143,6 +143,14 @@ class _GoPackageFunctionLookup(NamedTuple):
     packages: tuple[tuple[str, bool], ...]
 
 
+class _PhpClassCallee(NamedTuple):
+    # What a PHP call whose class the site shows binds to. `decided` False
+    # leaves the call to the name-based resolver; True means `callee` is the
+    # answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
+
+
 @dataclass(slots=True)
 class _CallScanContext:
     # Per-invocation state _ingest_function_calls hands every call node it
@@ -5073,13 +5081,13 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
-        if ctx.language == cs.SupportedLanguage.PHP:
-            if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
-                return self._resolve_php_new_callee(ctx, call_node)
-            if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
-                typed := self._resolve_php_typed_member(ctx, call_node, call_name)
-            ):
-                return typed
+        if (
+            ctx.language == cs.SupportedLanguage.PHP
+            and (
+                php := self._resolve_php_class_callee(ctx, call_node, call_name)
+            ).decided
+        ):
+            return php.callee
         callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
@@ -5547,6 +5555,19 @@ class CallProcessor:
                     return current.parent is None
             current = current.parent
         return None
+
+    def _resolve_php_class_callee(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> _PhpClassCallee:
+        # `new C(...)` is always decided here; a member call only when its
+        # receiver's class is known, so a miss keeps the name-only fallback.
+        if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
+            return _PhpClassCallee(True, self._resolve_php_new_callee(ctx, call_node))
+        if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
+            typed := self._resolve_php_typed_member(ctx, call_node, call_name)
+        ):
+            return _PhpClassCallee(True, typed)
+        return _PhpClassCallee(False, None)
 
     def _resolve_php_new_callee(
         self, ctx: _CallScanContext, call_node: Node
