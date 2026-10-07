@@ -503,6 +503,7 @@ class _StatefulIngestor:
                     cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
                     cs.KEY_KWARG_NAMES: _result(props.get(cs.KEY_KWARG_NAMES)),
                     cs.KEY_STAR_ARGS: _result(props.get(cs.KEY_STAR_ARGS)),
+                    cs.KEY_STAR_KWARGS: _result(props.get(cs.KEY_STAR_KWARGS)),
                 }
             )
         return rows

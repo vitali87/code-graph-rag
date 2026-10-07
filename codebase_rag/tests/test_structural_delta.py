@@ -233,7 +233,9 @@ def test_signature_change_lists_every_site_with_a_verdict(
     (site,) = change["sites"]
     assert site["path"] == "pkg/app.py"
     assert site["line"] == 5
-    assert site["verdict"] == cs.DELTA_ARITY_POSSIBLY_MISSING
+    # `b` has no default, so `helper(1)` is certainly short (issue #2845);
+    # it read `possibly_missing` while the header was not read back.
+    assert site["verdict"] == cs.DELTA_ARITY_TOO_FEW
     assert site["declared_count"] == 2
 
 
