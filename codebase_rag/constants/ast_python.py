@@ -63,6 +63,10 @@ TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
+# Early exits an extracted span may not contain (issue #1535).
+TS_PY_BREAK_STATEMENT = "break_statement"
+TS_PY_CONTINUE_STATEMENT = "continue_statement"
+TS_PY_YIELD = "yield"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
 # A definition's parameter list node, and the splats an argument list can
@@ -283,6 +287,8 @@ PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
 # A static method takes no receiver: a first parameter named `self` is explicit.
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
+# A class method takes the class as its receiver.
+CLASS_DECORATORS: frozenset[str] = frozenset({"classmethod"})
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no
@@ -316,6 +322,10 @@ GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
 GUARD_JAVA_INFERENCE_DEPTH = "_java_inference_depth_guard"
 JAVA_MAX_INFERENCE_DEPTH = 64
 
+# Inline-function evaluation checks (PR #2058).
+TS_PY_INTEGER = "integer"
+TS_PY_FLOAT = "float"
+TS_PY_NONE = "none"
 # A Python `__all__` assignment (group 1 is the bracketed body) and one string
 # entry in it. Shared by the rename that rewrites the entries, its rollback
 # check, and the structural delta that reports entries naming a removed symbol

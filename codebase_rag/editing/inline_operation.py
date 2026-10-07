@@ -1,0 +1,1218 @@
+"""Inline-function planning and rewriting."""
+
+from __future__ import annotations
+
+import builtins
+import re
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import NamedTuple
+
+from tree_sitter import Node
+
+from .. import constants as cs
+from .. import cypher_queries as cq
+from .. import graph_query
+from ..graph_query import QueryFn
+from ..parsers.call_processor import _find_call_arguments_node, _split_call_arguments
+from .contract import Expectation, Reingest
+from .extract_operation import (
+    _JS_ASSIGNMENTS,
+    _JS_NAMED_DECLARATIONS,
+    _PY_SHARED,
+    Extractor,
+)
+from .extract_scope import (
+    _AMBIGUOUS,
+    _IDENTIFIERS,
+    _JS_DECLARATORS,
+    _NON_READ_FIELDS,
+    _SHORT_CIRCUIT,
+    _binds,
+    _body_statements,
+    _index_in,
+    _parameter_names,
+    _targets,
+)
+from .extract_transaction import _commit, _enforce
+from .extract_types import ExtractRefused, InlineRefused, InlineReport
+from .imports import (
+    _JS_NAMED,
+    _JS_SPEC,
+    ImportSite,
+    _local_name,
+    _match_py_from,
+    _split_names,
+)
+from .move import _WRAPPERS, _cut_span, _statement_text, _text
+from .patcher import Patcher, SpanEdit, apply_span_edits, line_col_to_byte
+from .sites import call_node_at
+from .transaction import StagedTree, VerificationResult
+
+# Evaluating any of these runs code, so an argument moved past one of them
+# no longer runs first (Greptile, PR #2058).
+_EVALUATING = frozenset(
+    {
+        cs.TS_PY_CALL,
+        cs.TS_CALL_EXPRESSION,
+        cs.TS_NEW_EXPRESSION,
+        cs.TS_PY_YIELD,
+        cs.TS_JS_YIELD_EXPRESSION,
+        cs.TS_AWAIT_EXPRESSION,
+    }
+)
+# A read under one of these may run zero times or many times.
+_LAZY = frozenset(
+    {
+        cs.TS_PY_CONDITIONAL_EXPRESSION,
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_JS_TERNARY_EXPRESSION,
+    }
+)
+# Nested scopes rebind names and defer evaluation; assignments rebind them.
+_REFUSED_IN_EXPRESSION = frozenset(
+    {
+        cs.TS_PY_LAMBDA,
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+        cs.TS_PY_NAMED_EXPRESSION,
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+        cs.TS_CLASS_EXPRESSION,
+        cs.TS_JS_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+    }
+)
+_LITERALS = frozenset(
+    {
+        cs.TS_PY_INTEGER,
+        cs.TS_PY_FLOAT,
+        cs.TS_PY_NONE,
+        cs.TS_TRUE,
+        cs.TS_FALSE,
+        cs.TS_JS_NUMBER,
+        cs.TS_JS_NULL,
+    }
+)
+_STRINGS = frozenset({cs.TS_PY_STRING, cs.TS_TEMPLATE_STRING})
+_INTERPOLATIONS = frozenset({cs.TS_PY_INTERPOLATION, cs.TS_TEMPLATE_SUBSTITUTION})
+_ACCESSES = frozenset({cs.TS_PY_ATTRIBUTE, cs.TS_MEMBER_EXPRESSION})
+_NEGATIONS = frozenset({cs.TS_PY_UNARY_OPERATOR, cs.TS_JS_UNARY_EXPRESSION})
+# Postfix forms bind tighter than any operator at the call site, so a result
+# of one of these shapes needs no parentheses of its own.
+_POSTFIX = frozenset(
+    {
+        cs.TS_PY_CALL,
+        cs.TS_CALL_EXPRESSION,
+        cs.TS_PY_PARENTHESIZED_EXPRESSION,
+        cs.TS_PY_SUBSCRIPT,
+        cs.TS_SUBSCRIPT_EXPRESSION,
+        *_ACCESSES,
+        *_IDENTIFIERS,
+        *_LITERALS,
+        *_STRINGS,
+    }
+)
+_SPREADS = frozenset(
+    {cs.TS_PY_LIST_SPLAT, cs.TS_PY_DICTIONARY_SPLAT, cs.TS_SPREAD_ELEMENT}
+)
+# Bindings the callee body gets from how it is called, not from its
+# parameters: copied into a caller they bind to the caller's receiver.
+_IMPLICIT_TYPES = frozenset({cs.TS_THIS, cs.TS_SUPER})
+_TYPE_NAMES = frozenset({*_IDENTIFIERS, cs.TS_TYPE_IDENTIFIER})
+_IMPLICIT_NAMES = frozenset({cs.KEYWORD_SUPER, cs.TS_JS_ARGUMENTS_NAME})
+_SCOPES = frozenset(
+    {
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_METHOD_DEFINITION,
+        cs.TS_CLASS_DECLARATION,
+        *_REFUSED_IN_EXPRESSION,
+    }
+)
+_PY_BUILTINS = frozenset(dir(builtins))
+# The statements an import site can be: an ES or Python import, or the
+# declaration a CommonJS `require` initialises.
+_STATEMENTS = frozenset(
+    {
+        cs.TS_PY_IMPORT_STATEMENT,
+        cs.TS_PY_IMPORT_FROM_STATEMENT,
+        cs.TS_IMPORT_STATEMENT,
+        cs.TS_LEXICAL_DECLARATION,
+        cs.TS_VARIABLE_DECLARATION,
+    }
+)
+# Scopes a Python call can sit in; only a function's locals are its own.
+_PY_SCOPES = frozenset(
+    {
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+        cs.TS_PY_LAMBDA,
+        cs.TS_PY_LIST_COMPREHENSION,
+        cs.TS_PY_SET_COMPREHENSION,
+        cs.TS_PY_DICTIONARY_COMPREHENSION,
+        cs.TS_PY_GENERATOR_EXPRESSION,
+    }
+)
+_TS_TYPE_ONLY = re.compile(r"\s*import\s+type\s*\{")
+_JS_IMPORT = re.compile(r"\s*import\b")
+_JS_REQUIRE = re.compile(r"\brequire\s*\(")
+
+
+class _Param(NamedTuple):
+    name: str
+    default: Node | None
+    positional: bool
+    keyword: bool
+
+
+def _site_end(row: graph_query.CallSiteRow) -> tuple[int, int] | None:
+    """The site's recorded end point as tree-sitter counts it, if recorded."""
+    end_line, end_col = row.get(cs.KEY_END_LINE), row.get(cs.KEY_END_COL)
+    if isinstance(end_line, int) and isinstance(end_col, int):
+        return (end_line - 1, end_col)
+    return None
+
+
+class _Callee(NamedTuple):
+    """What each call site of the inlined definition is rewritten from."""
+
+    path: str
+    returned: Node
+    params: list[_Param]
+    receiver: str | None
+    free: set[str]
+
+
+def _returned_expression(qn: str, definition: Node) -> Node:
+    """The expression the definition's body returns: a docstring aside, the
+    body must be one `return` with a value."""
+    statements = [s for s in _body_statements(definition) if not _is_docstring(s)]
+    if len(statements) != 1 or statements[0].type not in (
+        cs.TS_PY_RETURN_STATEMENT,
+        cs.TS_RETURN_STATEMENT,
+    ):
+        raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
+    returned = next((c for c in statements[0].named_children), None)
+    if returned is None:
+        raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
+    return returned
+
+
+def _receiver(label: str, params: list[_Param]) -> str | None:
+    """A method's `self` or `cls` parameter, which a call binds to the
+    object it is made on."""
+    if (
+        label == cs.NodeLabel.METHOD.value
+        and params
+        and params[0].name in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+    ):
+        return params[0].name
+    return None
+
+
+def _refuse_guessed(callers: list[graph_query.CallSiteRow]) -> None:
+    """Refuse when the graph only guessed at some caller's resolution."""
+    guessed = [
+        f"{r['path']}:{r['line']}"
+        for r in callers
+        if isinstance(r.get("resolution"), str) and r["resolution"] in _AMBIGUOUS
+    ]
+    if guessed:
+        raise InlineRefused(
+            cs.INLINE_GUESSED_CALLERS.format(sites=", ".join(sorted(guessed))),
+            guessed,
+        )
+
+
+def _import_site(row: graph_query.ImporterRow, name: str) -> ImportSite | None:
+    """The import statement a row records binding `name`; None when the row
+    imports another name or has no location."""
+    path, line = row["path"], row["line"]
+    if row["imported_name"] != name or path is None or line is None:
+        return None
+    return ImportSite(
+        path,
+        line,
+        row["col"] or 0,
+        row["end_line"] or line,
+        row["end_col"] or 0,
+        row["alias"],
+        row["imported_name"],
+    )
+
+
+class Inliner:
+    def __init__(
+        self,
+        repo_root: Path,
+        fetch_all: QueryFn,
+        project_name: str,
+        verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
+        reingest: Reingest | None = None,
+    ) -> None:
+        self.repo_root = repo_root.resolve()
+        self.fetch_all = fetch_all
+        self.project = project_name
+        self.verify = verify
+        self.reingest = reingest
+        self._extractor = Extractor(repo_root, fetch_all, project_name)
+
+    def plan(self, qn: str) -> tuple[InlineReport, Patcher]:
+        patcher = Patcher(self.repo_root)
+        try:
+            path, node, language, source, label = self._extractor._locate(qn, patcher)
+        except ExtractRefused as refused:
+            raise InlineRefused(str(refused)) from refused
+        returned = _returned_expression(qn, node)
+        _refuse_unsupported(qn, node, returned)
+        params = _parameters(qn, node)
+        receiver = _receiver(label, params)
+        if receiver is not None:
+            params = params[1:]
+        bound_names = {p.name for p in params} | ({receiver} if receiver else set())
+        callee = _Callee(
+            path, returned, params, receiver, _free_names(returned, bound_names)
+        )
+        callers = graph_query.callers(self.fetch_all, self.project, qn)
+        _refuse_guessed(callers)
+        sites: list[tuple[str, int]] = []
+        # Every queued rewrite, so the post-inline text of a file can be
+        # checked before the definition and its imports are removed.
+        edits: dict[str, list[SpanEdit]] = {}
+        rewritten_all = True
+        for row in callers:
+            site = self._rewrite_site(patcher, row, callee, edits)
+            if site is None:
+                rewritten_all = False
+            else:
+                sites.append(site)
+        removed = False
+        # A definition still used as a value (a callback, a registry entry)
+        # is a REFERENCES edge, not a caller row: rewriting every call does
+        # not make it dead (Copilot, PR #2060).
+        if rewritten_all and not self._referenced(qn):
+            removed = self._remove(patcher, qn, path, node, source, edits)
+        report = InlineReport(
+            qualified_name=qn,
+            sites=tuple(f"{p}:{n}" for p, n in sorted(sites)),
+            definition_removed=removed,
+            applied=False,
+            transaction_id="",
+            files=tuple(sorted(patcher.pending)),
+            diff="",
+            message=cs.INLINE_PLANNED.format(count=len(sites), removed=removed),
+        )
+        return report, patcher
+
+    def _rewrite_site(
+        self,
+        patcher: Patcher,
+        row: graph_query.CallSiteRow,
+        callee: _Callee,
+        edits: dict[str, list[SpanEdit]],
+    ) -> tuple[str, int] | None:
+        """Queue the rewrite of the call a caller row records, and return
+        its site; None leaves the call as it is."""
+        c_path, line, col = row["path"], row["line"], row["col"]
+        if not isinstance(c_path, str) or line is None or col is None:
+            return None
+        c_source = patcher.source(c_path)
+        c_language, root = self._extractor._parse(c_path, c_source)
+        # The recorded end picks the exact call: `helper(2).upper()` starts
+        # where `helper(2)` does (Copilot, PR #2064).
+        call = call_node_at(root, line, col, _site_end(row))
+        args_node = _find_call_arguments_node(call) if call is not None else None
+        if call is None or args_node is None:
+            return None
+        if not _scope_safe(callee.free, c_path == callee.path, c_language, root, call):
+            return None
+        substituted = _substitute(
+            callee.returned,
+            callee.params,
+            callee.receiver,
+            call,
+            args_node,
+            c_language,
+            root,
+        )
+        if substituted is None:
+            return None
+        patcher.replace_span(c_path, (call.start_byte, call.end_byte), substituted)
+        edits.setdefault(c_path, []).append(
+            SpanEdit(
+                call.start_byte,
+                call.end_byte,
+                substituted.encode(cs.ENCODING_UTF8),
+            )
+        )
+        return c_path, line
+
+    def _referenced(self, qn: str) -> bool:
+        params = {
+            cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+            cs.KEY_QN: qn,
+        }
+        return bool(self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params))
+
+    def _remove(
+        self,
+        patcher: Patcher,
+        qn: str,
+        path: str,
+        node: Node,
+        source: bytes,
+        edits: dict[str, list[SpanEdit]],
+    ) -> bool:
+        """Queue the definition's removal and its imports'; False keeps both.
+
+        Every removal is checked against the file as it will read after the
+        inline: a binding still named there (a value use, a decorator, a
+        base, `__all__`, a re-export) keeps the import, and then the
+        definition too, since an import of a deleted symbol fails at load
+        (Greptile, PR #2058).
+        """
+        name = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        cut_edit = _definition_cut(source, node)
+        if self._still_named(path, source, [*edits.get(path, []), cut_edit], name):
+            return False
+        drops = self._import_drops(patcher, qn, path, edits)
+        if drops is None:
+            return False
+        patcher.replace_span(path, (cut_edit.start, cut_edit.end), "")
+        for site_path, edit in drops:
+            patcher.replace_span(site_path, (edit.start, edit.end), edit.text)
+        return True
+
+    def _still_named(
+        self, path: str, source: bytes, edits: list[SpanEdit], name: str
+    ) -> bool:
+        final = apply_span_edits(source, edits)
+        _language, root = self._extractor._parse(path, final)
+        return _names(root, name)
+
+    def _import_drops(
+        self,
+        patcher: Patcher,
+        qn: str,
+        path: str,
+        edits: dict[str, list[SpanEdit]],
+    ) -> list[tuple[str, SpanEdit]] | None:
+        from ..utils.path_utils import base_module_qn
+
+        module = base_module_qn(Path(path), self.project)
+        name = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        drops: list[tuple[str, SpanEdit]] = []
+        for row in graph_query.importers(self.fetch_all, self.project, module):
+            site = _import_site(row, name)
+            if site is None:
+                continue
+            local = site.alias or name
+            # A package `__init__` import is its public surface, and a module
+            # that others import the name from re-exports it: neither shows
+            # a use inside the importing file.
+            if Path(site.path).name == cs.INIT_PY or self._reexported(site.path, local):
+                return None
+            source = patcher.source(site.path)
+            statement = _statement_text(source, site)
+            replacement = _without_entry(statement, local)
+            if replacement == statement:
+                continue
+            drop = self._site_drop(site, source, statement, replacement)
+            if drop is None or self._still_named(
+                site.path, source, [*edits.get(site.path, []), drop], local
+            ):
+                return None
+            drops.append((site.path, drop))
+        return drops
+
+    def _site_drop(
+        self,
+        site: ImportSite,
+        source: bytes,
+        statement: str,
+        replacement: str | None,
+    ) -> SpanEdit | None:
+        """The edit respelling the import statement at `site` as
+        `replacement`, or emptying it when that is None; None keeps it."""
+        start = line_col_to_byte(source, site.line, site.col)
+        end = line_col_to_byte(source, site.end_line, site.end_col)
+        if replacement is None:
+            return self._emptied(site.path, source, (start, end), statement)
+        return SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
+
+    def _emptied(
+        self,
+        path: str,
+        source: bytes,
+        span: tuple[int, int],
+        statement: str,
+    ) -> SpanEdit | None:
+        """The edit for an import left binding nothing; None keeps it.
+
+        Deleting it would also stop its module's import-time work (a handler
+        it registers, say), so it becomes an import that only loads the
+        module. Only one that loads nothing new (a type-only import, or the
+        importer's own package) is cut, and then alone: a statement sharing
+        its line stays.
+        """
+        loader = _loader(statement)
+        if loader is None:
+            return None
+        text, binds = loader
+        start, end = span
+        _language, root = self._extractor._parse(path, source)
+        if text:
+            # `import pkg.util` binds `pkg`, which must not take over a name
+            # the file gives something else. The rewritten call sites only
+            # add builtins to a file other than the callee's, so the file as
+            # it reads now, outside this statement, has every other use.
+            if binds is not None and _bound_elsewhere(root, binds, span):
+                return None
+            return SpanEdit(start, end, text.encode(cs.ENCODING_UTF8))
+        node = _statement_at(root, start, end)
+        if node is None:
+            return None
+        return SpanEdit(*_statement_cut(source, node), b"")
+
+    def _reexported(self, importer_path: str, local: str) -> bool:
+        from ..utils.path_utils import base_module_qn
+
+        module = base_module_qn(Path(importer_path), self.project)
+        return any(
+            row["imported_name"] == local
+            for row in graph_query.importers(self.fetch_all, self.project, module)
+        )
+
+    def apply(self, qn: str) -> InlineReport:
+        report, patcher = self.plan(qn)
+        outcome, broken = _commit(patcher, self.repo_root, self.verify)
+        if broken:
+            return report._replace(
+                message=cs.INLINE_PARSE_FAILED.format(files=", ".join(broken))
+            )
+        # `_commit` returns no outcome only alongside broken files.
+        assert outcome is not None
+        report = report._replace(
+            applied=outcome.applied,
+            transaction_id=outcome.transaction_id,
+            files=outcome.files,
+            diff=outcome.diff,
+            message=outcome.message,
+        )
+        if outcome.applied and self.reingest is not None:
+            # The callee is meant to disappear and its sites were replaced
+            # by its body, so "callers of the removed symbol" is the plan,
+            # not a dangling reference.
+            expectation = Expectation(
+                operation=cs.CONTRACT_OP_INLINE,
+                removed=(qn,) if report.definition_removed else (),
+                caller_count_unchanged=False,
+                no_dangling=False,
+            )
+            enforced = _enforce(
+                report.files,
+                report.transaction_id,
+                report.message,
+                expectation,
+                self.fetch_all,
+                self.project,
+                self.repo_root,
+                self.reingest,
+                cs.INLINE_CONTRACT_FAILED,
+            )
+            report = report._replace(**enforced._asdict())
+        return report
+
+
+def _definition_cut(source: bytes, node: Node) -> SpanEdit:
+    """The definition's removal: its whole lines when it has them to itself,
+    else only its own bytes, so a statement sharing its first or last line
+    survives (Greptile, PR #2932)."""
+    target = node
+    if target.parent is not None and target.parent.type in _WRAPPERS:
+        target = target.parent
+    line_start = source.rfind(b"\n", 0, target.start_byte) + 1
+    line_end = source.find(b"\n", target.end_byte)
+    line_end = len(source) if line_end < 0 else line_end
+    if not (
+        source[line_start : target.start_byte].strip()
+        or source[target.end_byte : line_end].strip()
+    ):
+        cut = _cut_span(source, node)
+        return SpanEdit(cut.start, cut.end, b"")
+    end = target.end_byte
+    while source[end : end + 1] in (b" ", b"\t"):
+        end += 1
+    return SpanEdit(target.start_byte, end, b"")
+
+
+def _is_docstring(statement: Node) -> bool:
+    return statement.type == cs.TS_PY_EXPRESSION_STATEMENT and any(
+        c.type == cs.TS_PY_STRING for c in statement.named_children
+    )
+
+
+def _walk(node: Node) -> Iterator[Node]:
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(reversed(current.children))
+
+
+def _refuse_unsupported(qn: str, definition: Node, returned: Node) -> None:
+    """Refuse definitions whose call is not just its returned expression.
+
+    An async call returns a coroutine or promise and a generator call an
+    iterator; the bare expression is neither (Greptile and Copilot, PR
+    #2058). `this`, `super` and `arguments` are bound by the call itself, so
+    copied into a caller they read the caller's binding (Greptile and
+    Copilot, PR #2060).
+    """
+    holder = definition.parent
+    if (holder is not None and holder.type == cs.TS_PY_DECORATED_DEFINITION) or (
+        definition.prev_named_sibling is not None
+        and definition.prev_named_sibling.type == cs.TS_DECORATOR
+    ):
+        # A decorator decides what calling the name does; the bare returned
+        # expression would skip it (Greptile, PR #2932).
+        raise InlineRefused(cs.INLINE_REFUSED_DECORATED.format(qn=qn))
+    tokens = {c.type for c in definition.children if not c.is_named}
+    if cs.TS_ASYNC_KEYWORD in tokens:
+        raise InlineRefused(cs.INLINE_REFUSED_ASYNC.format(qn=qn))
+    if (
+        cs.TS_GENERATOR_STAR in tokens
+        or definition.type
+        in (cs.TS_GENERATOR_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION)
+        or any(
+            n.type in (cs.TS_PY_YIELD, cs.TS_JS_YIELD_EXPRESSION)
+            for n in _walk(returned)
+        )
+    ):
+        raise InlineRefused(cs.INLINE_REFUSED_GENERATOR.format(qn=qn))
+    generics = _type_parameter_names(definition)
+    for n in _walk(returned):
+        if n.type in _IMPLICIT_TYPES or (
+            n.type in _IDENTIFIERS and _text(n) in _IMPLICIT_NAMES
+        ):
+            raise InlineRefused(cs.INLINE_REFUSED_IMPLICIT.format(qn=qn, name=_text(n)))
+        if n.type in _TYPE_NAMES and _text(n) in generics:
+            # `identity<T>`'s `x as T` copied into a caller names a `T`
+            # nothing there declares (TS2304); the call site's type
+            # arguments are often inferred, so there is nothing to put in
+            # its place (Greptile, PR #2932).
+            raise InlineRefused(
+                cs.INLINE_REFUSED_TYPE_PARAMETER.format(qn=qn, name=_text(n))
+            )
+
+
+def _type_parameter_names(definition: Node) -> set[str]:
+    """The names the definition's own `<T, U>` (or Python `[T]`) declares."""
+    holder = definition.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    if holder is None:
+        return set()
+    names: set[str] = set()
+    # A TypeScript `type_parameter` names itself in a field; a Python one is
+    # a `type` whose first identifier is the name.
+    for param in holder.named_children:
+        named = param.child_by_field_name(cs.FIELD_NAME) or next(
+            (n for n in _walk(param) if n.type in _TYPE_NAMES), None
+        )
+        if named is not None:
+            names.add(_text(named))
+    return names
+
+
+def _parameters(qn: str, definition: Node) -> list[_Param]:
+    """Each parameter's name, default and how a call may bind it.
+
+    Variadic and destructured parameters refuse: their binding is not one
+    argument expression per name (Greptile, PR #2058).
+    """
+    params = definition.child_by_field_name(cs.FIELD_PARAMETERS)
+    out: list[_Param] = []
+    if params is None:
+        return out
+    keyword_only = False
+    for child in params.named_children:
+        if child.type == cs.TS_COMMENT:
+            continue
+        if child.type == cs.TS_PY_KEYWORD_SEPARATOR:
+            keyword_only = True
+            continue
+        if child.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            out = [p._replace(keyword=False) for p in out]
+            continue
+        name, default = _parameter(child)
+        if name is None:
+            raise InlineRefused(
+                cs.INLINE_REFUSED_PARAMETER.format(qn=qn, parameter=_text(child))
+            )
+        out.append(_Param(name, default, not keyword_only, True))
+    return out
+
+
+def _parameter(node: Node) -> tuple[str | None, Node | None]:
+    if node.type in _IDENTIFIERS:
+        return _text(node), None
+    if node.type in (cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER):
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        default = node.child_by_field_name(cs.FIELD_VALUE)
+    elif node.type == cs.TS_ASSIGNMENT_PATTERN:
+        target = node.child_by_field_name(cs.FIELD_LEFT)
+        default = node.child_by_field_name(cs.FIELD_RIGHT)
+    elif node.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+        target = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+        default = node.child_by_field_name(cs.FIELD_VALUE)
+    elif node.type == cs.TS_PY_TYPED_PARAMETER:
+        target = node.named_children[0] if node.named_children else None
+        default = None
+    else:
+        return None, None
+    if target is None or target.type not in _IDENTIFIERS:
+        return None, None
+    return _text(target), default
+
+
+def _is_literal(node: Node) -> bool:
+    if node.type in _NEGATIONS:
+        operand = node.named_children[-1] if node.named_children else None
+        return operand is not None and operand.type in _LITERALS
+    if node.type in _STRINGS:
+        return not any(n.type in _INTERPOLATIONS for n in _walk(node))
+    return node.type in _LITERALS
+
+
+def _is_inert(node: Node) -> bool:
+    """A name or a literal: evaluating it has no effect, so it may be read
+    any number of times, or none. An attribute read is not: it may run a
+    property getter (Greptile, PR #2932)."""
+    if node.type in _IDENTIFIERS or node.type in _IMPLICIT_TYPES:
+        return True
+    return _is_literal(node)
+
+
+def _is_atomic(node: Node) -> bool:
+    """A name, a literal, or an attribute chain without calls: one operand,
+    which splices in without parentheses."""
+    if node.type in _IDENTIFIERS or node.type in _IMPLICIT_TYPES:
+        return True
+    if node.type in _ACCESSES:
+        obj = node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        return obj is not None and obj.type not in _LITERALS and _is_atomic(obj)
+    return _is_literal(node)
+
+
+def _bare(node: Node) -> bool:
+    """Safe to splice without parentheses: `-1` is atomic but `x ** 2`
+    would bind the minus last."""
+    return _is_atomic(node) and node.type not in _NEGATIONS
+
+
+def _read_field(node: Node) -> str | None:
+    parent = node.parent
+    return parent.field_name_for_child(_index_in(parent, node)) if parent else None
+
+
+def _is_read(node: Node) -> bool:
+    if node.type not in _IDENTIFIERS or _read_field(node) in _NON_READ_FIELDS:
+        return False
+    parent = node.parent
+    # `f(x=...)` names a keyword, it does not read `x`.
+    return not (
+        parent is not None
+        and parent.type == cs.TS_PY_KEYWORD_ARGUMENT
+        and _read_field(node) == cs.FIELD_NAME
+    )
+
+
+def _free_names(returned: Node, bound: set[str]) -> set[str]:
+    names = {
+        _text(n)
+        for n in _walk(returned)
+        if (_is_read(n) or n.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER)
+        and _text(n) not in bound
+    }
+    return names
+
+
+def _names(root: Node, name: str) -> bool:
+    """Whether `name` is still spelled in the file as a binding use or a
+    string (`__all__`, a string-keyed registry)."""
+    for n in _walk(root):
+        if (
+            n.type in _IDENTIFIERS or n.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER
+        ) and _text(n) == name:
+            if _read_field(n) not in _NON_READ_FIELDS:
+                return True
+        elif n.type in _STRINGS and _text(n).strip("'\"`") == name:
+            return True
+    return False
+
+
+def _scope_safe(
+    free: set[str],
+    same_module: bool,
+    language: cs.SupportedLanguage | None,
+    root: Node,
+    call: Node,
+) -> bool:
+    """Whether the callee's free names mean the same thing at `call`.
+
+    Copied into another module they would bind to that module's names, or
+    to nothing (Greptile, PR #2058); only builtins travel, and only into a
+    file that never rebinds them. In the same module a local of the
+    caller's enclosing function can still shadow the global the callee
+    reads.
+    """
+    if not free:
+        return True
+    if not same_module:
+        if language != cs.SupportedLanguage.PYTHON or not free <= _PY_BUILTINS:
+            return False
+        return not (free & _spelled(root))
+    scope: Node | None = None
+    current = call.parent
+    while current is not None:
+        if current.type in _SCOPES:
+            scope = current
+        current = current.parent
+    if scope is None:
+        return True
+    return not (free & _spelled(scope))
+
+
+def _spelled(node: Node) -> set[str]:
+    return {
+        _text(n)
+        for n in _walk(node)
+        if n.type in _IDENTIFIERS or n.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER
+    }
+
+
+def _bind(
+    params: list[_Param],
+    receiver: str | None,
+    call: Node,
+    args_node: Node,
+) -> tuple[dict[str, Node], list[tuple[str | None, Node]]] | None:
+    """Each name's argument node, and every evaluated argument in call order.
+
+    None refuses the call: a splat or spread has no single node per name
+    (Greptile, PR #2058), and an argument the definition cannot accept
+    fails at runtime today, which inlining must not hide.
+    """
+    if any(a.type in _SPREADS for a in args_node.named_children):
+        return None
+    bound: dict[str, Node] = {}
+    evaluated: list[tuple[str | None, Node]] = []
+    obj = _call_object(call)
+    if receiver is not None:
+        if obj is None:
+            return None
+        bound[receiver] = obj
+        evaluated.append((receiver, obj))
+    elif obj is not None:
+        evaluated.append((None, obj))
+    arguments = _arguments(params, args_node)
+    if arguments is None:
+        return None
+    for key, value in arguments:
+        bound[key] = value
+        evaluated.append((key, value))
+    if not _bind_defaults(params, bound):
+        return None
+    return bound, evaluated
+
+
+def _call_object(call: Node) -> Node | None:
+    """The object a call reaches its function through: `obj` in
+    `obj.helper(x)`; None for a bare name."""
+    function = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None or function.type not in _ACCESSES:
+        return None
+    return function.child_by_field_name(cs.TS_FIELD_OBJECT)
+
+
+def _arguments(params: list[_Param], args_node: Node) -> list[tuple[str, Node]] | None:
+    """Each argument with the parameter it binds, in call order; None when
+    one binds no parameter, or one already bound."""
+    positional, keyword = _split_call_arguments(args_node)
+    positional = [a for a in positional if a.type != cs.TS_COMMENT]
+    slots = [p for p in params if p.positional]
+    if len(positional) > len(slots):
+        return None
+    arguments: list[tuple[str, Node]] = [
+        (slot.name, arg) for slot, arg in zip(slots, positional)
+    ]
+    by_name = {p.name: p for p in params}
+    for key, value in keyword.items():
+        param = by_name.get(key)
+        if param is None or not param.keyword or key in dict(arguments):
+            return None
+        arguments.append((key, value))
+    arguments.sort(key=lambda pair: pair[1].start_byte)
+    return arguments
+
+
+def _bind_defaults(params: list[_Param], bound: dict[str, Node]) -> bool:
+    """Bind each parameter the call leaves out to its default; False when
+    one has no default, or one that is not a literal."""
+    for param in params:
+        if param.name in bound:
+            continue
+        # Python evaluates a default once, at definition time: copying a
+        # non-literal default re-evaluates it at every site (Greptile,
+        # PR #2058).
+        if param.default is None or not _is_literal(param.default):
+            return False
+        bound[param.name] = param.default
+    return True
+
+
+def _evaluation_kept(
+    returned: Node,
+    reads: dict[str, list[Node]],
+    evaluated: list[tuple[str | None, Node]],
+) -> bool:
+    """Whether every argument with an effect still runs once, in call order,
+    before anything else the callee runs (Greptile, PRs #2058/#2060)."""
+    effects = [n for n in _walk(returned) if n.type in _EVALUATING]
+    last = -1
+    for name, arg in evaluated:
+        # The object a module-qualified call names (`util.helper(x)`) is
+        # dropped with the call; only an argument has to keep its reads.
+        if _is_inert(arg) or (name is None and _is_atomic(arg)):
+            continue
+        uses = reads.get(name, []) if name is not None else []
+        if len(uses) != 1:
+            return False
+        use = uses[0]
+        if use.start_byte < last or _lazy(use, returned):
+            return False
+        if any(e.end_byte <= use.start_byte for e in effects):
+            return False
+        last = use.start_byte
+    return True
+
+
+def _names_kept(
+    returned: Node,
+    reads: dict[str, list[Node]],
+    bound: dict[str, Node],
+    evaluated: list[tuple[str | None, Node]],
+    language: cs.SupportedLanguage | None,
+    root: Node,
+    call: Node,
+) -> bool:
+    """Whether every name argument still reads the value it had at the call.
+
+    The call read it before the callee ran; substituted, it is read where
+    the parameter was, after whatever code the copied expression runs
+    first, which may rebind it: `helper(n)` returning `advance() + x` gave
+    11, `advance() + n` 12 once `advance` set `n = 2`. Only a name nothing
+    can rebind meanwhile may be read late.
+    """
+    runs = [n.end_byte for n in _walk(returned) if n.type in _EVALUATING]
+    # An argument with an effect runs it where its parameter is read.
+    runs.extend(
+        use.end_byte
+        for name, arg in evaluated
+        if name is not None and not _is_inert(arg)
+        for use in reads.get(name, [])
+    )
+    if not runs:
+        return True
+    for name, arg in bound.items():
+        if arg.type not in _IDENTIFIERS:
+            continue
+        late = any(
+            # Python's `a if c else b` runs `c` before `a`.
+            any(end <= use.start_byte for end in runs) or _py_conditional(use, returned)
+            for use in reads.get(name, [])
+        )
+        if late and not _unrebindable(_text(arg), language, root, call):
+            return False
+    return True
+
+
+def _py_conditional(node: Node, returned: Node) -> bool:
+    current = node.parent
+    while current is not None and current.start_byte >= returned.start_byte:
+        if current.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+            return True
+        if current == returned:
+            break
+        current = current.parent
+    return False
+
+
+def _unrebindable(
+    name: str, language: cs.SupportedLanguage | None, root: Node, call: Node
+) -> bool:
+    """Whether no code a call runs can rebind `name` as `call` sees it.
+
+    In Python that is a local of the enclosing function no nested scope
+    declares `nonlocal`; a global any function can rebind. In JavaScript
+    any closure can write a binding it sees, so it is one the file
+    declares and never assigns: an import is rebound by the module that
+    exports it, and an undeclared global by any script.
+    """
+    if language == cs.SupportedLanguage.PYTHON:
+        scope = call.parent
+        while scope is not None and scope.type not in _PY_SCOPES:
+            scope = scope.parent
+        if scope is None or scope.type != cs.TS_PY_FUNCTION_DEFINITION:
+            return False
+        local = _parameter_names(scope)
+        for statement in _body_statements(scope):
+            _binds(statement, local)
+        return name in local and not any(
+            n.type in _PY_SHARED and name in {_text(c) for c in n.named_children}
+            for n in _walk(scope)
+        )
+    return _js_declares(root, name) and not _js_writes(root, name)
+
+
+def _js_declares(root: Node, name: str) -> bool:
+    for n in _walk(root):
+        found: list[str] = []
+        if n.type in _JS_DECLARATORS or n.type in _JS_NAMED_DECLARATIONS:
+            target = n.child_by_field_name(cs.FIELD_NAME)
+            if target is not None:
+                _targets(target, found)
+        elif n.type in cs.JS_TS_FUNCTION_NODES:
+            found = _parameter_names(n)
+            single = n.child_by_field_name(cs.TS_FIELD_PARAMETER)
+            if single is not None:
+                _targets(single, found)
+        if name in found:
+            return True
+    return False
+
+
+def _js_writes(root: Node, name: str) -> bool:
+    for n in _walk(root):
+        target = None
+        if n.type in _JS_ASSIGNMENTS:
+            target = n.child_by_field_name(cs.FIELD_LEFT) or n.child_by_field_name(
+                cs.TS_JS_FIELD_ARGUMENT
+            )
+        elif n.type == cs.TS_FOR_IN_STATEMENT and (
+            n.child_by_field_name(cs.FIELD_KIND) is None
+        ):
+            target = n.child_by_field_name(cs.FIELD_LEFT)
+        found: list[str] = []
+        if target is not None:
+            _targets(target, found)
+        if name in found:
+            return True
+    return False
+
+
+def _lazy(node: Node, returned: Node) -> bool:
+    current = node.parent
+    while current is not None and current.start_byte >= returned.start_byte:
+        if current.type in _LAZY:
+            return True
+        if current.type == cs.TS_BINARY_EXPRESSION:
+            operator = current.child_by_field_name(cs.FIELD_OPERATOR)
+            if operator is not None and _text(operator) in _SHORT_CIRCUIT:
+                return True
+        if current == returned:
+            break
+        current = current.parent
+    return False
+
+
+def _substitute(
+    returned: Node,
+    params: list[_Param],
+    receiver: str | None,
+    call: Node,
+    args_node: Node,
+    language: cs.SupportedLanguage | None,
+    root: Node,
+) -> str | None:
+    binding = _bind(params, receiver, call, args_node)
+    if binding is None:
+        return None
+    bound, evaluated = binding
+    reads = _parameter_reads(returned, bound)
+    if reads is None:
+        return None
+    if not _evaluation_kept(returned, reads, evaluated):
+        return None
+    if not _names_kept(returned, reads, bound, evaluated, language, root, call):
+        return None
+    # Substitute by token position so `a` never touches `a.b`'s attribute or
+    # a longer name; arguments that are not bare atoms are parenthesised.
+    text = _text(returned).encode(cs.ENCODING_UTF8)
+    base = returned.start_byte
+    ordered = sorted(
+        (n for uses in reads.values() for n in uses),
+        key=lambda n: n.start_byte,
+        reverse=True,
+    )
+    for node in ordered:
+        arg = bound[_text(node)]
+        value = _text(arg) if _bare(arg) else f"({_text(arg)})"
+        text = (
+            text[: node.start_byte - base]
+            + value.encode(cs.ENCODING_UTF8)
+            + text[node.end_byte - base :]
+        )
+    result = text.decode(cs.ENCODING_UTF8, errors="replace")
+    # Decided on the node, not the text: `'a' + 'b'` looks like one string
+    # to a regex and would bind to a trailing `.upper()` at the call site.
+    if returned.type not in _POSTFIX:
+        result = f"({result})"
+    return result
+
+
+def _parameter_reads(
+    returned: Node, bound: dict[str, Node]
+) -> dict[str, list[Node]] | None:
+    """Every read of each bound name in the returned expression; None when
+    the expression rebinds names or defers evaluation, or spells a bound
+    name as a shorthand property."""
+    reads: dict[str, list[Node]] = {}
+    for current in _walk(returned):
+        if current.type in _REFUSED_IN_EXPRESSION:
+            return None
+        if current.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER and (
+            _text(current) in bound
+        ):
+            return None
+        if _is_read(current) and _text(current) in bound:
+            reads.setdefault(_text(current), []).append(current)
+    return reads
+
+
+def _loader(statement: str) -> tuple[str, str | None] | None:
+    """An import of the statement's module that binds none of its names, and
+    the name it binds instead; empty text when the module is loaded anyway.
+    None when the statement's form is not known well enough to respell."""
+    if parsed := _match_py_from(statement):
+        module = parsed[1]
+        dots = module[: len(module) - len(module.lstrip("."))]
+        parent, _sep, leaf = module[len(dots) :].rpartition(cs.SEPARATOR_DOT)
+        if not dots:
+            return f"import {module}", module.split(cs.SEPARATOR_DOT)[0]
+        # `from . import helper` reads the importer's own package, which
+        # is loaded before the importer runs.
+        if not leaf:
+            return "", None
+        return f"from {dots}{parent} import {leaf}", leaf
+    if _TS_TYPE_ONLY.match(statement):
+        return "", None
+    spec = _JS_SPEC.search(statement)
+    if spec is None:
+        return None
+    end = ";" if statement.rstrip().endswith(";") else ""
+    if _JS_IMPORT.match(statement):
+        return f"import {spec.group(0)}{end}", None
+    if _JS_REQUIRE.search(statement):
+        return f"require({spec.group(0)}){end}", None
+    return None
+
+
+def _bound_elsewhere(root: Node, name: str, skip: tuple[int, int]) -> bool:
+    """Whether the file spells `name` outside `skip` other than as the module
+    path of an import, where it names the same package a plain `import`
+    binds."""
+    for n in _walk(root):
+        if (
+            n.type in _IDENTIFIERS
+            and not skip[0] <= n.start_byte < skip[1]
+            and _text(n) == name
+            and _read_field(n) not in _NON_READ_FIELDS
+            and not _in_module_path(n)
+        ):
+            return True
+    return False
+
+
+def _in_module_path(identifier: Node) -> bool:
+    dotted = identifier.parent
+    if dotted is None or dotted.type != cs.TS_PY_DOTTED_NAME:
+        return False
+    holder = dotted.parent
+    if holder is not None and holder.type == cs.TS_PY_ALIASED_IMPORT:
+        holder = holder.parent
+    if holder is None:
+        return False
+    if holder.type in (cs.TS_PY_IMPORT_STATEMENT, cs.TS_RELATIVE_IMPORT):
+        return True
+    return (
+        holder.type == cs.TS_PY_IMPORT_FROM_STATEMENT
+        and holder.child_by_field_name(cs.FIELD_MODULE_NAME) == dotted
+    )
+
+
+def _statement_at(root: Node, start: int, end: int) -> Node | None:
+    node: Node | None = root.descendant_for_byte_range(start, end)
+    while node is not None and node.type not in _STATEMENTS:
+        node = node.parent
+    return node
+
+
+def _statement_cut(source: bytes, node: Node) -> tuple[int, int]:
+    """The statement's whole lines, or only its bytes and the separator
+    beside them when other code shares its line (as move's `_cut_span`)."""
+    before, after = node.prev_named_sibling, node.next_named_sibling
+    if (
+        after is not None
+        and after.type != cs.TS_COMMENT
+        and after.start_point[0] == node.end_point[0]
+    ):
+        return node.start_byte, after.start_byte
+    if before is not None and before.end_point[0] == node.start_point[0]:
+        return before.end_byte, node.end_byte
+    start = source.rfind(b"\n", 0, node.start_byte) + 1
+    nl = source.find(b"\n", node.end_byte)
+    return start, len(source) if nl < 0 else nl + 1
+
+
+def _without_entry(statement: str, name: str) -> str | None:
+    """The import statement without `name`; None when nothing is left."""
+    if parsed := _match_py_from(statement):
+        # main replaced the _PY_FROM regex with a token parser returning
+        # (lead, module, mid, names); the trailing whitespace the old `tail`
+        # group captured now splits off the names, as imports.py does.
+        lead, module, mid, raw_names = parsed
+        names = raw_names.rstrip()
+        tail = raw_names[len(names) :]
+        entries, _open, _close = _split_names(names)
+        kept = [e for e in entries if _local_name(e) != name]
+        if not kept:
+            return None
+        return f"{lead}{module}{mid}{', '.join(kept)}{tail}"
+    named = _JS_NAMED.search(statement)
+    if named is not None:
+        entries = [e.strip() for e in named.group("names").split(",") if e.strip()]
+        kept = [e for e in entries if _local_name(e) != name]
+        lead = statement[: named.start()].rstrip()
+        if not kept and lead.endswith(cs.CHAR_COMMA):
+            # `import dflt, { helper } from 'm'` still binds `dflt`
+            # (Greptile, PR #2932).
+            return lead[: -len(cs.CHAR_COMMA)] + statement[named.end() :]
+        if not kept:
+            return None
+        return (
+            statement[: named.start()]
+            + "{ "
+            + ", ".join(kept)
+            + " }"
+            + statement[named.end() :]
+        )
+    return statement
+
+
+# --- shared -----------------------------------------------------------------------

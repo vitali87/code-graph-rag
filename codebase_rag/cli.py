@@ -43,6 +43,7 @@ from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
+from .editing.extract_types import ExtractReport, InlineReport
 from .editor_links import (
     EditorTemplateError,
     diff_command,
@@ -1804,6 +1805,135 @@ def move_command(
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
+
+
+def _emit_edit_report(report: ExtractReport | InlineReport, dry_run: bool) -> None:
+    payload = dict(report._asdict())
+    payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    name=ch.CLICommandName.EXTRACT,
+    help=ch.CMD_EXTRACT,
+    short_help=ch.CMD_EXTRACT,
+    epilog=ch.EXAMPLES_EXTRACT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def extract_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    start_line: int = typer.Argument(..., min=1, help=ch.HELP_EXTRACT_START),
+    end_line: int = typer.Argument(..., min=1, help=ch.HELP_EXTRACT_END),
+    new_name: str = typer.Argument(..., help=ch.HELP_EXTRACT_NEW_NAME),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+) -> None:
+    from .editing.extract import ExtractRefused, extract
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # As for `move`: an explicit --project may name a graph indexed from
+        # another checkout, whose paths must not be edited under this one.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.EDIT_CLI_WRONG_ROOT.format(project=name, root=repo_path.resolve()),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = extract(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                (start_line, end_line),
+                new_name,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except ExtractRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    _emit_edit_report(report, dry_run)
+
+
+@app.command(
+    name=ch.CLICommandName.INLINE,
+    help=ch.CMD_INLINE,
+    short_help=ch.CMD_INLINE,
+    epilog=ch.EXAMPLES_INLINE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def inline_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+) -> None:
+    from .editing.extract import InlineRefused, inline
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # As for `move`: an explicit --project may name a graph indexed from
+        # another checkout, whose paths must not be edited under this one.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.EDIT_CLI_WRONG_ROOT.format(project=name, root=repo_path.resolve()),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = inline(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except InlineRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    _emit_edit_report(report, dry_run)
 
 
 @app.command(

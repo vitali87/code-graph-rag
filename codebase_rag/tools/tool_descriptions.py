@@ -363,6 +363,31 @@ MCP_MOVE = (
     "an import cycle, naming the cycle. One transaction, held to the "
     "postcondition contract; set `dry_run` to see the plan."
 )
+MCP_EXTRACT = (
+    "Extract a run of whole statements (lines `start_line` to `end_line`, "
+    "inclusive) inside a function or method into a new function named "
+    "`new_name`, placed right after it. Names the span reads from the "
+    "enclosing scope become parameters; names it binds that the rest of the "
+    "function still reads are returned; the span becomes a call. A span that "
+    "leaves the function early (return, break, continue, yield), cuts "
+    "through a statement, awaits, or (in JS/TS) uses `arguments` or a `this` "
+    "a standalone helper would lose is refused. One transaction, held to the "
+    "postcondition contract; set `dry_run` to see the plan."
+)
+MCP_INLINE = (
+    "Inline a single-return function or method at the call sites the graph "
+    "knows, binding arguments to parameters. A site whose rewrite would "
+    "change evaluation (an argument evaluated other than once or out of "
+    "order, a non-literal default, a splat, a free name the caller could "
+    "shadow) keeps its call. The definition and the imports that bound its "
+    "name are deleted only when every site was rewritten and no value "
+    "reference or live import remains. Refused for async functions, "
+    "generators, and when any caller was resolved by guesswork or only by a "
+    "trace. One transaction, held to the postcondition contract; set "
+    "`dry_run` to see the plan."
+)
+MCP_PARAM_START_LINE = "First line of the span to extract (1-based, inclusive)."
+MCP_PARAM_END_LINE = "Last line of the span to extract (1-based, inclusive)."
 MCP_PARAM_TARGET_MODULE = (
     "Destination module: a dotted module name (`pkg.core`) or a repo-relative path."
 )
@@ -615,6 +640,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
     MCPToolName.MOVE: MCP_MOVE,
+    MCPToolName.EXTRACT: MCP_EXTRACT,
+    MCPToolName.INLINE: MCP_INLINE,
     MCPToolName.CONTEXT: MCP_CONTEXT,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,

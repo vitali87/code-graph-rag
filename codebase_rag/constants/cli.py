@@ -920,6 +920,107 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+# extract and inline (issue #1535).
+EXTRACT_UNKNOWN = "No definition named {qn} in the graph"
+EXTRACT_NO_GRAMMAR = "No grammar for {path}; the span cannot be extracted"
+EXTRACT_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
+EXTRACT_SPLITS_STATEMENT = "The span cuts through the statement at lines {line}-{end}; extract whole statements"
+EXTRACT_EMPTY_SPAN = "No statement of the function lies within lines {start}-{end}"
+EXTRACT_EARLY_EXIT = (
+    "The span leaves the function early ({kind} at line {line}) and cannot be one call"
+)
+EXTRACT_PLANNED = (
+    "{inputs} input(s) become parameters, {outputs} output(s) are returned"
+)
+EXTRACT_PARSE_FAILED = "Extract rolled back: {files} would no longer parse"
+EXTRACT_CONTRACT_FAILED = "Extract rolled back, postcondition failed: {reasons}"
+EXTRACT_NOT_CALLABLE = (
+    "{qn} is a {label}, not a function or method; only a function body can be extracted"
+)
+EXTRACT_AWAITS = (
+    "The span awaits (`{token}` at line {line}); a synchronous helper cannot hold it"
+)
+EXTRACT_JS_CONTEXT = (
+    "The span uses `{word}` at line {line}, which the extracted function would not see"
+)
+EXTRACT_JS_UNSUPPORTED_METHOD = (
+    "{qn} is not a method of a named class; extracting from it is not supported"
+)
+EXTRACT_MAYBE_UNBOUND = (
+    "The span may leave `{name}` unchanged, and `{name}` may be unbound before "
+    "it; the extracted function could neither take it nor hand it back"
+)
+EXTRACT_SHARED_NAME = (
+    "The span writes `{name}`, which the function declares {keyword}; the "
+    "extracted function would bind a local of its own"
+)
+EXTRACT_SHARED_DECLARATION = (
+    "The span holds the {keyword} declaration at line {line}, which the rest of "
+    "the function would lose"
+)
+EXTRACT_PY_UNSUPPORTED_METHOD = (
+    "{qn} has no receiver the extracted method could be called through"
+)
+EXTRACT_TS_UNTYPED_INPUT = (
+    "The span reads `{name}`, whose type is not declared; the extracted "
+    "function's parameter would be an implicit any"
+)
+EXTRACT_JS_OUTER_WRITE = (
+    "The span writes `{name}`, which the function does not declare; the "
+    "extracted function would write a local of its own instead"
+)
+EXTRACT_SHADOWED_NAME = (
+    "The function already binds `{name}`; a call to the extracted function by "
+    "that name would reach that binding instead"
+)
+EXTRACT_SHARED_LINE = (
+    "The span shares line {line} with code outside it; only statements on "
+    "lines of their own can be extracted"
+)
+EXTRACT_STALE_CLOSURE = (
+    "A function defined in the span reads `{name}`, which later code rebinds; "
+    "moved out, it would keep reading the old value"
+)
+EDIT_ROLLBACK_REFUSED = (
+    "Edit failed its postcondition ({reasons}) and was not rolled back "
+    "({error}); its files may remain modified; check the working tree"
+)
+EDIT_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
+EDIT_CONTRACT_UNMEASURED = (
+    "Edit applied, but its postcondition could not be measured: {error}"
+)
+EDIT_ROLLBACK_UNMEASURED = (
+    "Edit rolled back after its postcondition failed ({reasons}), but the "
+    "graph could not be re-ingested afterwards ({error}); rebuild the graph "
+    "before the next graph-backed operation"
+)
+INLINE_NOT_SINGLE_RETURN = "{qn} is not a single-return function; only those inline"
+INLINE_GUESSED_CALLERS = (
+    "Refusing to inline: callers resolved by guesswork or trace only: {sites}"
+)
+INLINE_PLANNED = "{count} call site(s) would be inlined; definition removed: {removed}"
+INLINE_PARSE_FAILED = "Inline rolled back: {files} would no longer parse"
+INLINE_CONTRACT_FAILED = "Inline rolled back, postcondition failed: {reasons}"
+INLINE_REFUSED_ASYNC = (
+    "{qn} is async; inlining would replace its coroutine or promise with a bare value"
+)
+INLINE_REFUSED_GENERATOR = (
+    "{qn} is a generator; inlining would replace its iterator with a bare value"
+)
+INLINE_REFUSED_IMPLICIT = (
+    "{qn} reads `{name}`, which would bind to the call site instead of the callee"
+)
+INLINE_REFUSED_DECORATED = (
+    "{qn} is decorated; inlining would replace the decorated call with its bare body"
+)
+INLINE_REFUSED_TYPE_PARAMETER = (
+    "{qn} returns an expression naming its type parameter `{name}`, which no "
+    "call site declares"
+)
+INLINE_REFUSED_PARAMETER = "{qn} has a parameter inlining cannot bind: {parameter}"
 # move (issue #1534).
 MOVE_UNKNOWN = "No definition named {qn} in the graph"
 MOVE_METHOD = "{qn} is a method; move its class instead"
@@ -980,6 +1081,8 @@ MOVE_CLI_WRONG_ROOT = (
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
 CONTRACT_OP_MOVE = "move"
+CONTRACT_OP_EXTRACT = "extract"
+CONTRACT_OP_INLINE = "inline"
 CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
 CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
