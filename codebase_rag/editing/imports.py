@@ -217,6 +217,12 @@ def _split_names(names: str) -> tuple[list[str], str, str]:
 _PY_NAME_SEPARATORS = frozenset("(),")
 
 
+def _comment_end(names: str, position: int) -> int:
+    """Where the `#` comment at `position` ends: its newline, or the end."""
+    newline = names.find("\n", position)
+    return len(names) if newline == -1 else newline
+
+
 def _py_entry_spans(names: str) -> list[tuple[int, int]]:
     """Where each imported entry (`a`, `a as b`) sits in a names list.
 
@@ -231,8 +237,7 @@ def _py_entry_spans(names: str) -> list[tuple[int, int]]:
     while position < len(names):
         char = names[position]
         if char == "#":
-            newline = names.find("\n", position)
-            position = len(names) if newline == -1 else newline
+            position = _comment_end(names, position)
             continue
         if char in _PY_NAME_SEPARATORS:
             if start >= 0:
@@ -246,6 +251,19 @@ def _py_entry_spans(names: str) -> list[tuple[int, int]]:
     if start >= 0:
         spans.append((start, end))
     return spans
+
+
+def _replace_entries(
+    names: str, spans: list[tuple[int, int]], replacements: dict[str, str]
+) -> str:
+    """`names` with each entry in `replacements` swapped for its new text;
+    everything between the entries stays byte for byte (issue #2875)."""
+    rewritten = names
+    for start, end in reversed(spans):
+        entry = names[start:end]
+        if entry in replacements:
+            rewritten = rewritten[:start] + replacements[entry] + rewritten[end:]
+    return rewritten
 
 
 def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
@@ -278,11 +296,7 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
             # changes. Line breaks, trailing commas, comments and alignment
             # elsewhere in the statement stay byte for byte (issue #2875).
             by_entry = dict(zip(moved, moved_entries, strict=True))
-            rewritten = raw_names
-            for start, end in reversed(spans):
-                entry = raw_names[start:end]
-                if entry in by_entry:
-                    rewritten = rewritten[:start] + by_entry[entry] + rewritten[end:]
+            rewritten = _replace_entries(raw_names, spans, by_entry)
             return f"{lead}{module}{mid}{rewritten}"
         moved_stmt = f"{lead}{new_module}{mid}{', '.join(moved_entries)}"
         if not kept:

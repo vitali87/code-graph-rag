@@ -94,7 +94,8 @@ def test_a_commented_name_is_found_for_a_move_too() -> None:
         "from pkg.tax import (\n    round_cents,   # rounding\n    compute_vat,\n)",
         SymbolMove("compute_vat", "pkg.tax", "pkg.vat"),
     )
-    assert out is not None and "from pkg.vat import compute_vat" in out, out
+    assert out is not None, out
+    assert "from pkg.vat import compute_vat" in out, out
     assert "round_cents" in out.split("from pkg.vat")[0], out
 
 
