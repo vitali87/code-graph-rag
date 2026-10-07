@@ -110,4 +110,5 @@ def test_the_env_to_stdout_query_names_both_rows() -> None:
     # Example query 1 returns one row per resource edge into STDOUT.
     page = _page()
     query_section = page[page.index("## Example queries") :]
-    assert "ENV::K" in query_section and "ENV::T" in query_section, query_section[:800]
+    assert "ENV::K" in query_section, query_section[:800]
+    assert "ENV::T" in query_section, query_section[:800]
