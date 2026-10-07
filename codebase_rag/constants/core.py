@@ -71,6 +71,11 @@ DUP_QN_MARKER = "@"
 # so same-line twins stay distinct (issue #1071). Every consumer splits on
 # DUP_QN_MARKER and keeps the base, so nothing reads the suffix back.
 DUP_QN_COLUMN_MARKER = "_"
+# The CLR metadata spelling of a generic arity (`Foo`1` for `Foo<T>`). C#
+# overloads a type name by arity, so a generic type declared beside a
+# same-named type of another arity carries it in its qn (issue #2579), and a
+# stored C# type reference carries its written arity the same way.
+CSHARP_GENERIC_ARITY_MARKER = "`"
 
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."

@@ -814,7 +814,7 @@ def emit_parameter_type_edges(
         targets = memo.get(key)
         if targets is None:
             targets = memo[key] = resolver.resolve_annotation(
-                fact.type_name, fact.module_qn
+                fact.type_name, fact.module_qn, fact.path
             )
         source = (
             cs.NodeLabel.PARAMETER.value,

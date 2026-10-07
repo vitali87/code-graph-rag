@@ -3334,11 +3334,18 @@ class GraphUpdater:
             namespace if isinstance(namespace, str) else None,
         )
         processor = self.factory.definition_processor
+        # The arity a parse records, so `new PB<int>()` in a re-parsed file
+        # finds the generic twin in an unchanged one (issue #2579).
+        arity = row.get(cs.KEY_GENERIC_ARITY)
+        arity = arity if isinstance(arity, int) else 0
+        if arity:
+            processor.csharp_class_generic_arity[qn] = arity
+            processor.csharp_class_owner_module[qn] = self._recorded_module_qn(path)
         # Rejoin the partial group parsing would have given it,
         # under the same key, so a declared name spanning
         # unchanged parts stays one type; a lone type's group of
         # one reads exactly as no group (bot review).
-        if key := csharp_partial_key_from_graph(qn, path, self.project_name):
+        if key := csharp_partial_key_from_graph(qn, path, self.project_name, arity):
             group = processor._csharp_partial_index.setdefault(key, [])
             group.append(qn)
             processor.csharp_partial_groups[qn] = group

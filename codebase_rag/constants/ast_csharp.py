@@ -34,6 +34,20 @@ TS_CSHARP_DELEGATE_DECLARATION = "delegate_declaration"
 # attribute_list nested inside it.
 TS_CSHARP_PREPROC_IF_IN_ATTR_LIST = "preproc_if_in_attribute_list"
 TS_CSHARP_ATTRIBUTE_LIST = "attribute_list"
+# The nodes that can hold a type declaration without being a scope of their
+# own: a namespace or type body, and a conditional-compilation branch around
+# a declaration (`#if X class Foo<T> { } #endif`).
+CSHARP_TYPE_DECLARATION_HOLDERS = frozenset(
+    {
+        TS_CSHARP_DECLARATION_LIST,
+        "preproc_if",
+        "preproc_elif",
+        "preproc_else",
+    }
+)
+# Files whose type-name twins are remembered at once: ingestion reads one
+# file's declarations together, so a handful covers every reuse.
+CSHARP_ARITY_TWIN_CACHE_SIZE = 4
 
 # Member declarations -> Function/Method nodes.
 TS_CSHARP_METHOD_DECLARATION = "method_declaration"

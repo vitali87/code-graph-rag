@@ -1361,6 +1361,7 @@ class _StatefulIngestor:
                         cs.KEY_IS_OBJECT_MEMBER: bool(
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
+                        cs.KEY_GENERIC_ARITY: _int(props.get(cs.KEY_GENERIC_ARITY)),
                     }
                     defs.append(row)
                 return defs
@@ -2381,11 +2382,12 @@ def extract_cgr_lang_graph(
                 # Base simple name: cgr's resolved target may be a dotted qn
                 # (`module.Base`) or a Rust path (`std::io::Read`), so split on
                 # both `.` and `::`. A same-scope collision registers the base
-                # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
-                # grades by the written name, so strip the marker.
+                # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764), and a C#
+                # generic twin carries its CLR arity (`ITtl`1`, issue #2579);
+                # the oracle grades by the written name, so strip both.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-                target_name = qn_markers.strip_dup_marker(
-                    flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                target_name = qn_markers.strip_arity_marker(
+                    qn_markers.strip_dup_marker(flat.rsplit(cs.SEPARATOR_DOT, 1)[-1])
                 )
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
@@ -2611,10 +2613,11 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if source is None:
             continue
         if rel_type == cs.RelationshipType.INHERITS.value:
-            # Same DUP_QN_MARKER strip as the multi-language reducer: a base
-            # registered as a duplicate variant grades by its written name.
-            target = qn_markers.strip_dup_marker(
-                str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            # Same marker strip as the multi-language reducer: a base
+            # registered as a duplicate variant or a generic twin grades by
+            # its written name.
+            target = qn_markers.strip_arity_marker(
+                qn_markers.strip_dup_marker(str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1])
             )
             name_edges.add(NameEdge(rel_type, source, target))
         elif rel_type == cs.RelationshipType.IMPORTS.value:

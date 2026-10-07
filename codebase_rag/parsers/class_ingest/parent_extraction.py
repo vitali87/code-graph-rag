@@ -124,7 +124,8 @@ def split_csharp_base_refs(
 ) -> tuple[list[str], list[str]]:
     # Return the (inherited, implemented) bases as written: generic-free,
     # with the written arity in CLR style (`NotificationHandler`1`), so a
-    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`. C# folds
+    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`, and `Base`
+    # from `Base<T>`, which are two types too (issue #2579). C# folds
     # the base class and all interfaces into one base_list; the base class,
     # if any, is the FIRST entry (grammar-enforced) and must not look like
     # an interface. An interface's bases are all inheritance; a
@@ -173,7 +174,8 @@ def split_csharp_bases(
     base_kinds: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     # Return (inherited_qns, implemented_qns), in the order and split of
-    # split_csharp_base_refs.
+    # split_csharp_base_refs. The parse-time lookup is by the written name;
+    # the deferred pass moves it to the written arity's twin.
     inherited, implemented = split_csharp_base_refs(class_node, base_kinds)
     return (
         [_resolve_csharp_ref(ref, module_qn, resolve_to_qn) for ref in inherited],

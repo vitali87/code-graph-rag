@@ -1319,8 +1319,11 @@ class CallResolver:
         # class's constructor has an extra qn segment and is excluded).
         # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
         # Box`) declares its constructor under its natural name, so the
-        # marker is not part of the name to match (issue #2007).
-        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        # marker is not part of the name to match (issue #2007), and nor is a
+        # generic twin's CLR arity (`PB`1` declares `PB(...)`, issue #2579).
+        simple = qn_markers.strip_arity_marker(
+            qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        )
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]

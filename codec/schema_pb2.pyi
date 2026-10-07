@@ -519,7 +519,7 @@ class Method(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Class(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "namespace")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "namespace", "generic_arity")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
@@ -528,6 +528,7 @@ class Class(_message.Message):
     DECORATORS_FIELD_NUMBER: _ClassVar[int]
     IS_EXPORTED_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    GENERIC_ARITY_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
@@ -536,21 +537,24 @@ class Class(_message.Message):
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
     namespace: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., namespace: _Optional[str] = ...) -> None: ...
+    generic_arity: int
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ...) -> None: ...
 
 class Interface(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace")
+    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace", "generic_arity")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    GENERIC_ARITY_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
     absolute_path: str
     namespace: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ...) -> None: ...
+    generic_arity: int
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ...) -> None: ...
 
 class Enum(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace")
