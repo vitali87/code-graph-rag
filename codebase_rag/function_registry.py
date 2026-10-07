@@ -221,13 +221,7 @@ class FunctionRegistryTrie:
             ):
                 self._property_names.discard(simple_name)
         self._object_members.discard(qualified_name)
-        if (bound := self._object_binding_of.pop(qualified_name, None)) is not None:
-            binding_qn, key = bound
-            members = self._object_bindings.get(binding_qn, {})
-            if members.get(key) == qualified_name:
-                del members[key]
-            if not members:
-                self._object_bindings.pop(binding_qn, None)
+        self._forget_object_binding(qualified_name)
         self._abstracts.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
@@ -240,6 +234,18 @@ class FunctionRegistryTrie:
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
+
+    def _forget_object_binding(self, qualified_name: QualifiedName) -> None:
+        # Drop the `binding.key` entry mark_object_binding recorded for a
+        # removed object member, and the binding once it has no members left.
+        if (bound := self._object_binding_of.pop(qualified_name, None)) is None:
+            return
+        binding_qn, key = bound
+        members = self._object_bindings.get(binding_qn, {})
+        if members.get(key) == qualified_name:
+            del members[key]
+        if not members:
+            self._object_bindings.pop(binding_qn, None)
 
     def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:

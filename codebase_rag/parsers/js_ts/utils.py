@@ -367,6 +367,12 @@ def object_literal_binding(func_node: Node) -> str | None:
         obj = obj.parent
     if obj is None or obj.type != cs.TS_OBJECT:
         return None
+    return _object_holder_name(obj)
+
+
+def _object_holder_name(obj: Node) -> str | None:
+    # The name the declarator or default export holding an object literal
+    # (through any TS wrapper) binds it to; None for any other holder.
     holder = obj.parent
     while holder is not None and holder.type in _OBJECT_LITERAL_WRAPPERS:
         holder = holder.parent
