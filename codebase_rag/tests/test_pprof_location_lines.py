@@ -50,7 +50,7 @@ def _function(fid: int, name_idx: int, filename_idx: int, start_line: int) -> by
 def _issue_profile(root: Path, start_lines: tuple[int, int, int] = (0, 0, 0)) -> bytes:
     """The issue's repro: two `scatter` impls under `ray_color`, one location
     per function carrying `Line{function_id, line}`."""
-    strings = ["", _LAMBERTIAN, _METAL, _RAY_COLOR, str(root / "src/main.rs")]
+    strings = ["", _LAMBERTIAN, _METAL, _RAY_COLOR, (root / "src/main.rs").as_posix()]
     payload = b""
     for fid, start in zip((1, 2, 3), start_lines, strict=True):
         payload += _function(fid, fid, 4, start)
@@ -99,7 +99,7 @@ def test_each_impl_resolves_to_its_own_method(tmp_path: Path) -> None:
 
 
 def test_one_function_sampled_on_several_lines_is_one_frame(tmp_path: Path) -> None:
-    strings = ["", _LAMBERTIAN, _RAY_COLOR, str(tmp_path / "src/main.rs")]
+    strings = ["", _LAMBERTIAN, _RAY_COLOR, (tmp_path / "src/main.rs").as_posix()]
     payload = _function(1, 1, 3, 0) + _function(2, 2, 3, 0)
     payload += _location(1, [(1, 22)]) + _location(2, [(1, 19)])
     payload += _location(3, [(2, 61)])
@@ -108,7 +108,8 @@ def test_one_function_sampled_on_several_lines_is_one_frame(tmp_path: Path) -> N
         payload += _string(6, value)
     records = _records(tmp_path, payload)
     assert len(records) == 1, records
-    assert records[0].callee.line == 19 and records[0].count == 5
+    assert records[0].callee.line == 19
+    assert records[0].count == 5
 
 
 def test_a_producer_start_line_still_wins(tmp_path: Path) -> None:
@@ -136,7 +137,7 @@ def test_a_location_without_a_line_leaves_the_frame_unlined(
     tmp_path: Path, line: int
 ) -> None:
     # Negative: a producer that writes neither gives line 0, as before.
-    strings = ["", _LAMBERTIAN, _RAY_COLOR, str(tmp_path / "src/main.rs")]
+    strings = ["", _LAMBERTIAN, _RAY_COLOR, (tmp_path / "src/main.rs").as_posix()]
     payload = _function(1, 1, 3, 0) + _function(2, 2, 3, 0)
     payload += _location(1, [(1, line)]) + _location(2, [(2, line)])
     payload += _sample([1, 2], 1)
@@ -144,5 +145,5 @@ def test_a_location_without_a_line_leaves_the_frame_unlined(
         payload += _string(6, value)
     records = _records(tmp_path, payload)
     assert records[0].callee == FramePoint(
-        path=str(tmp_path / "src/main.rs"), qualname="scatter", line=0
+        path=(tmp_path / "src/main.rs").as_posix(), qualname="scatter", line=0
     )
