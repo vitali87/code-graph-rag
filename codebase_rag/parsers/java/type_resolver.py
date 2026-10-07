@@ -224,6 +224,9 @@ class JavaTypeResolverMixin:
             if type_name in import_map:
                 return self._imported_class_qn(import_map[type_name], type_name)
 
+        return self._module_local_type(type_name, module_qn) or type_name
+
+    def _module_local_type(self, type_name: str, module_qn: str) -> str | None:
         # An enum is a type declaration like a class or an interface: a
         # receiver of a nested enum's type was left untyped (issue #2922).
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
@@ -250,7 +253,7 @@ class JavaTypeResolverMixin:
         if len(nested) == 1:
             return nested[0]
 
-        return type_name
+        return None
 
     def _get_superclass_name(self, class_qn: str) -> str | None:
         ctx = get_class_context_from_qn(
