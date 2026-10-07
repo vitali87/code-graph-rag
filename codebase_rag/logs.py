@@ -422,6 +422,10 @@ LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"
+# Not the grammar-bindings BUILD_SUCCESS / BUILD_FAILED above: those name a
+# language and take `lang`, which this build never passed (issue #2880).
+BUILD_BINARY_SUCCESS = "Successfully built binary {name}"
+BUILD_BINARY_FAILED = "Failed to build binary {name}: stdout={stdout}, stderr={stderr}"
 BUILD_PROGRESS = "This may take a few minutes..."
 BUILD_READY = "Binary is ready for distribution!"
 BINARY_INFO = "Binary: {path}"
