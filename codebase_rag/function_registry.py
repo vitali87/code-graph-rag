@@ -325,3 +325,22 @@ class FunctionRegistryTrie:
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
         return [] if node is None else self._collect_from_subtree(node)
+
+    def has_prefix(self, prefix: str) -> bool:
+        """Whether anything is registered at or under `prefix`.
+
+        `bool(find_with_prefix(...))` without the listing: it stops at the
+        first entry, so asking about a 2,000-definition module costs the
+        walk to its first one, not a copy of all of them (issue #2919).
+        """
+        node = self._navigate_to_prefix(prefix)
+        stack = [] if node is None else [node]
+        while stack:
+            current = stack.pop()
+            if cs.TRIE_QN_KEY in current:
+                return True
+            for key, child in current.items():
+                if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
+                    assert isinstance(child, dict)
+                    stack.append(child)
+        return False
