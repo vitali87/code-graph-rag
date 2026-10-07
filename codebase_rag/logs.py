@@ -255,6 +255,12 @@ QDRANT_BUNDLED_NOT_RUNNING = (
     "embedded store at '{path}'. Run 'cgr daemon up' to store them in the "
     "stack's Qdrant"
 )
+QDRANT_BUNDLED_OTHER_MEMGRAPH = (
+    "The cgr stack's Qdrant at {url} holds the embeddings of the stack's own "
+    "Memgraph, and the Memgraph in use, {memgraph}, is not it, so embeddings "
+    "stay in the embedded store at '{path}'. Set QDRANT_URL={url} to share the "
+    "stack's Qdrant on purpose"
+)
 QDRANT_BUNDLED_UNVERIFIED = (
     "Could not confirm through Docker Compose that the cgr stack's Qdrant is "
     "running ({detail}), so embeddings stay in the embedded store at '{path}'"

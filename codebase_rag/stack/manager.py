@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -139,6 +140,64 @@ def _names_published_qdrant(url: str | None, bind: str, port: int) -> bool:
         return False
     host = parts.hostname if parts else None
     if host is None or (url_port or cs.QDRANT_CLIENT_DEFAULT_PORT) != port:
+        return False
+    if not bind or bind in cs.WILDCARD_BIND_HOSTS:
+        return _is_local_address(host)
+    return bind in _addresses_of(host)
+
+
+def _ps_containers(ps_output: str) -> list[JsonValue]:
+    """The containers in `docker compose ps` JSON output: an object per
+    line, or one array on older Compose."""
+    containers: list[JsonValue] = []
+    for line in ps_output.splitlines():
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        containers.extend(parsed if isinstance(parsed, list) else [parsed])
+    return containers
+
+
+def _bolt_endpoint(publisher: JsonValue) -> tuple[str, int] | None:
+    """(bind address, port) of a `docker compose ps` publisher of Bolt."""
+    if not isinstance(publisher, dict):
+        return None
+    port = publisher.get(cs.COMPOSE_PS_PUBLISHER_PORT_KEY)
+    host = publisher.get(cs.COMPOSE_PS_PUBLISHER_HOST_KEY)
+    if (
+        publisher.get(cs.COMPOSE_PS_PUBLISHER_TARGET_KEY)
+        == cs.MEMGRAPH_CONTAINER_BOLT_PORT
+        and isinstance(port, int)
+        and port
+    ):
+        return host if isinstance(host, str) else "", port
+    return None
+
+
+def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
+    """(bind address, port) of every Bolt publisher in `docker compose ps`
+    JSON output: an object per line, or one array on older Compose."""
+    endpoints: list[tuple[str, int]] = []
+    for container in _ps_containers(ps_output):
+        publishers = (
+            container.get(cs.COMPOSE_PS_PUBLISHERS_KEY)
+            if isinstance(container, dict)
+            else None
+        )
+        for publisher in publishers if isinstance(publishers, list) else []:
+            if (endpoint := _bolt_endpoint(publisher)) is not None:
+                endpoints.append(endpoint)
+    return endpoints
+
+
+def _names_published(host: str, port: int, bind: str, published: int) -> bool:
+    """Whether `host:port` reaches a port published on `bind:published`.
+
+    A wildcard bind publishes on every address of this machine; any other
+    bind publishes on that address alone.
+    """
+    if port != published:
         return False
     if not bind or bind in cs.WILDCARD_BIND_HOSTS:
         return _is_local_address(host)
@@ -585,6 +644,36 @@ class StackManager:
         if running is None:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED)
         return bool(running)
+
+    def runs_configured_memgraph(self) -> bool:
+        """Whether this project's running Memgraph is the one the app uses.
+
+        Compose's resolved configuration cannot say: the port mapping
+        interpolates MEMGRAPH_PORT, so it follows whatever port the caller
+        set. Docker's publishers of the running container are where the
+        stack's Memgraph actually listens (issue #2878). StackError when
+        Compose cannot tell.
+        """
+        try:
+            result = subprocess.run(
+                self._compose_cmd(
+                    *cs.COMPOSE_PS_RUNNING_JSON_ARGS, cs.SERVICE_MEMGRAPH
+                ),
+                capture_output=True,
+                text=True,
+                encoding=root_cs.ENCODING_UTF8,
+                timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+                check=False,
+                env=self._compose_env(),
+            )
+        except OSError as e:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED) from e
+        if result.returncode != 0:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED)
+        return any(
+            _names_published(self.memgraph_host, self.memgraph_port, bind, port)
+            for bind, port in _published_bolt(result.stdout)
+        )
 
     def raise_if_auth_not_enforced(self) -> None:
         """Refuse a running stack whose authentication differs from the settings.
@@ -1081,6 +1170,22 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
         return None
     host, port = manager.qdrant_host, manager.qdrant_port
     url = qdrant_base_url(host, port)
+    # The stack's Qdrant holds its own graph's vectors, keyed by that graph's
+    # node ids: another Memgraph's sync would mix its vectors in, and its
+    # `--clean` would drop the stack graph's collection (issue #2878).
+    try:
+        same_graph = manager.runs_configured_memgraph()
+    except (StackError, subprocess.TimeoutExpired) as e:
+        logger.info(ls.QDRANT_BUNDLED_UNVERIFIED.format(detail=e, path=path))
+        return None
+    if not same_graph:
+        memgraph = f"{manager.memgraph_host}:{manager.memgraph_port}"
+        logger.info(
+            ls.QDRANT_BUNDLED_OTHER_MEMGRAPH.format(
+                url=url, memgraph=memgraph, path=path
+            )
+        )
+        return None
     timeout = cs.BUNDLED_QDRANT_PROBE_TIMEOUT_S
     match qdrant_anonymous_access(port, timeout=timeout, host=host):
         case cs.AnonymousAccess.ALLOWED if qdrant_identifies(
