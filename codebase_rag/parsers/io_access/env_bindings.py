@@ -237,44 +237,68 @@ def _declared_values(
     # destructured declarator, a function, class or import.
     # ponytail: `var` is function-scoped, but it is read block-locally here,
     # as the I/O walk's shadowing reads it.
-    if scope.type in descriptor.nested_scope_types:
-        return [None] if name in _parameter_names(scope, descriptor) else None
-    if scope.type == cs.TS_JS_CATCH_CLAUSE:
-        param = scope.child_by_field_name(cs.FIELD_PARAMETER)
-        return [None] if name in _identifiers(param, descriptor) else None
-    if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
-        left = scope.child_by_field_name(cs.FIELD_LEFT)
-        declares = scope.child_by_field_name(cs.FIELD_KIND) is not None
-        return [None] if declares and name in _identifiers(left, descriptor) else None
+    head = _head_names(scope, descriptor)
+    if head is not None:
+        return [None] if name in head else None
     if scope.parent is not None and scope.type != descriptor.block_scope_type:
         return None
     values: list[Node | None] = []
     for stmt in scope.named_children:
-        if stmt.type == cs.TS_EXPORT_STATEMENT:
-            stmt = stmt.child_by_field_name(cs.FIELD_DECLARATION) or stmt
-        if stmt.type == cs.TS_IMPORT_STATEMENT:
-            if name in _identifiers(stmt, descriptor):
-                values.append(None)
-            continue
-        if stmt.type in descriptor.nested_scope_types or stmt.type == (
-            cs.TS_CLASS_DECLARATION
-        ):
-            if _text(stmt.child_by_field_name(cs.TS_FIELD_NAME)) == name:
-                values.append(None)
-            continue
-        for decl in stmt.named_children:
-            if decl.type != descriptor.declarator_type:
-                continue
-            target = decl.child_by_field_name(cs.TS_FIELD_NAME)
-            if target is None:
-                continue
-            if target.type == descriptor.identifier_type:
-                if _text(target) == name:
-                    value = decl.child_by_field_name(cs.FIELD_VALUE)
-                    values.append(value if value is not None else target)
-            elif name in _identifiers(target, descriptor):
-                values.append(None)
+        values.extend(_statement_values(stmt, name, descriptor))
     return values or None
+
+
+def _head_names(scope: Node, descriptor: LanguageDescriptor) -> set[str] | None:
+    # The names a function's parameters, a `catch` parameter or a declaring
+    # `for...in`/`for...of` head bind; None when `scope` has no such head.
+    if scope.type in descriptor.nested_scope_types:
+        return _parameter_names(scope, descriptor)
+    if scope.type == cs.TS_JS_CATCH_CLAUSE:
+        return _identifiers(scope.child_by_field_name(cs.FIELD_PARAMETER), descriptor)
+    if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
+        if scope.child_by_field_name(cs.FIELD_KIND) is None:
+            return set()
+        return _identifiers(scope.child_by_field_name(cs.FIELD_LEFT), descriptor)
+    return None
+
+
+def _statement_values(
+    stmt: Node, name: str, descriptor: LanguageDescriptor
+) -> list[Node | None]:
+    # What one statement of a block or module declares `name` as: None for
+    # an import, a function or a class of that name, else what each of its
+    # declarators declares it as.
+    if stmt.type == cs.TS_EXPORT_STATEMENT:
+        stmt = stmt.child_by_field_name(cs.FIELD_DECLARATION) or stmt
+    if stmt.type == cs.TS_IMPORT_STATEMENT:
+        return [None] if name in _identifiers(stmt, descriptor) else []
+    if (
+        stmt.type in descriptor.nested_scope_types
+        or stmt.type == cs.TS_CLASS_DECLARATION
+    ):
+        named = _text(stmt.child_by_field_name(cs.TS_FIELD_NAME)) == name
+        return [None] if named else []
+    values: list[Node | None] = []
+    for decl in stmt.named_children:
+        if decl.type == descriptor.declarator_type:
+            values.extend(_declarator_values(decl, name, descriptor))
+    return values
+
+
+def _declarator_values(
+    decl: Node, name: str, descriptor: LanguageDescriptor
+) -> list[Node | None]:
+    # What one declarator declares `name` as: its value (the target itself
+    # when it has none), or None when it destructures `name`.
+    target = decl.child_by_field_name(cs.TS_FIELD_NAME)
+    if target is None:
+        return []
+    if target.type == descriptor.identifier_type:
+        if _text(target) != name:
+            return []
+        value = decl.child_by_field_name(cs.FIELD_VALUE)
+        return [value if value is not None else target]
+    return [None] if name in _identifiers(target, descriptor) else []
 
 
 def _assigned_values(
@@ -292,29 +316,42 @@ def _assigned_values(
         if _declared_values(node, name, descriptor) is not None:
             continue
         stack.extend(node.named_children)
-        if node.type == descriptor.assignment_type:
-            left = node.child_by_field_name(cs.FIELD_LEFT)
-            if left is not None and left.type == descriptor.identifier_type:
-                if _text(left) == name:
-                    out.append((node, node.child_by_field_name(cs.FIELD_RIGHT)))
-            elif (
-                left is not None
-                and left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN)
-                and name in _identifiers(left, descriptor)
-            ):
-                out.append((node, None))
-            continue
-        if node.type == cs.TS_JS_FOR_IN_STATEMENT:
-            target = node.child_by_field_name(cs.FIELD_LEFT)
-        elif node.type == descriptor.augmented_assignment_type:
-            target = node.child_by_field_name(cs.FIELD_LEFT)
-        elif node.type == descriptor.update_expression_type:
-            target = node.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
-        else:
-            continue
-        if target is not None and _text(target) == name:
-            out.append((node, None))
+        rebinding = _rebinding(node, name, descriptor)
+        if rebinding is not None:
+            out.append(rebinding)
     return out
+
+
+def _rebinding(
+    node: Node, name: str, descriptor: LanguageDescriptor
+) -> tuple[Node, Node | None] | None:
+    # (`node`, what it sets `name` to) when `node` assigns `name`, else None.
+    if node.type == descriptor.assignment_type:
+        return _assignment_rebinding(node, name, descriptor)
+    if node.type in (cs.TS_JS_FOR_IN_STATEMENT, descriptor.augmented_assignment_type):
+        target = node.child_by_field_name(cs.FIELD_LEFT)
+    elif node.type == descriptor.update_expression_type:
+        target = node.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+    else:
+        return None
+    return (node, None) if _text(target) == name else None
+
+
+def _assignment_rebinding(
+    node: Node, name: str, descriptor: LanguageDescriptor
+) -> tuple[Node, Node | None] | None:
+    # A plain assignment sets `name` to its right side; a destructuring one
+    # sets it to something unknown (None).
+    left = node.child_by_field_name(cs.FIELD_LEFT)
+    if left is None:
+        return None
+    if left.type == descriptor.identifier_type:
+        value = node.child_by_field_name(cs.FIELD_RIGHT)
+        return (node, value) if _text(left) == name else None
+    destructures = left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN)
+    if destructures and name in _identifiers(left, descriptor):
+        return node, None
+    return None
 
 
 def _identifiers(node: Node | None, descriptor: LanguageDescriptor) -> set[str]:

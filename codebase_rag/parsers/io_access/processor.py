@@ -1146,22 +1146,27 @@ class IOAccessProcessor:
             and (alias_kind := self._env_aliases.kind_of(obj)) is not None
         ):
             # `env.KEY` where `const env = process.env` (issue #2753).
-            identity = self._member_identity(node, descriptor)
-            for direction in self._member_directions(node, descriptor):
-                self._emit(caller_spec, direction, alias_kind, identity)
+            self._emit_member_access(node, caller_spec, alias_kind, descriptor)
             return
         for prefix, kind in member_reads:
             if obj_text != prefix:
                 continue
-            head = prefix.partition(cs.SEPARATOR_DOT)[0]
-            if head in in_scope or not head_is_genuine_module(
-                import_map.get(head), head
-            ):
-                return
-            identity = self._member_identity(node, descriptor)
-            for direction in self._member_directions(node, descriptor):
-                self._emit(caller_spec, direction, kind, identity)
+            if head_is_live(prefix.partition(cs.SEPARATOR_DOT)[0]):
+                self._emit_member_access(node, caller_spec, kind, descriptor)
             return
+
+    def _emit_member_access(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        kind: ResourceKind,
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # One access of the member's key, in each direction its position
+        # gives (_member_directions): a read, a write, or both for `+=`.
+        identity = self._member_identity(node, descriptor)
+        for direction in self._member_directions(node, descriptor):
+            self._emit(caller_spec, direction, kind, identity)
 
     @staticmethod
     def _member_directions(
