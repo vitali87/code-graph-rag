@@ -738,6 +738,10 @@ CALL_CHAINED = (
 )
 CALL_CHAINED_INHERITED = "Resolved chained inherited call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
 CALL_SUPER_NO_CONTEXT = "No class context provided for super() call: {call_name}"
+CALL_RUST_OUTSIDE_CRATE = (
+    "Dropped Rust call into a crate outside the caller's dependencies: "
+    "{call_name} -> {qn}"
+)
 CALL_SUPER_NO_INHERITANCE = "No inheritance info for class {class_qn}"
 CALL_SUPER_NO_PARENTS = "No parent classes found for {class_qn}"
 CALL_SUPER_RESOLVED = "Resolved super() call: {call_name} -> {method_qn}"

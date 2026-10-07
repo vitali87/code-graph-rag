@@ -290,6 +290,19 @@ RS_MANIFEST_NAME_KEY = "name"
 RS_MANIFEST_LIB_SECTION = "lib"
 RS_MANIFEST_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 RS_MANIFEST_TARGET_TABLE_KEY = "target"
+# A dependency entry's source keys, and the registry an entry with none
+# fetches from; root `[patch.<source>]` tables substitute per source.
+RS_MANIFEST_GIT_KEY = "git"
+RS_MANIFEST_REGISTRY_KEY = "registry"
+RS_MANIFEST_REGISTRY_INDEX_KEY = "registry-index"
+RS_MANIFEST_DEP_SOURCE_KEYS = (
+    RS_MANIFEST_GIT_KEY,
+    RS_MANIFEST_REGISTRY_INDEX_KEY,
+    RS_MANIFEST_REGISTRY_KEY,
+)
+RS_MANIFEST_PATCH_KEY = "patch"
+RS_MANIFEST_VERSION_KEY = "version"
+RS_DEFAULT_REGISTRY = "crates-io"
 # Crates shipped with the toolchain: external by construction, no
 # manifest needed to know a use head naming one is outside the project.
 RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})
