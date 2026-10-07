@@ -146,7 +146,8 @@ def test_a_method_with_a_signature_is_renamed_and_kept(
     )
 
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     assert renamed_line in (root / path).read_text(encoding="utf-8")
     assert new_qn in _method_qns(store)
     assert old_qn not in _method_qns(store)
@@ -210,5 +211,6 @@ def test_a_python_method_rename_still_passes_its_contract(tmp_path: Path) -> Non
     )
 
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     assert f"{PROJECT}.pkg.greeter.Greeter.welcome" in _method_qns(store)
