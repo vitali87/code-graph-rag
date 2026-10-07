@@ -90,19 +90,51 @@ class TestSetting:
 class TestProviders:
     """Every provider that builds model settings must carry the budget."""
 
-    def test_anthropic_settings_carry_max_tokens(self) -> None:
+    def test_anthropic_settings_carry_max_tokens(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The provider from the report.
 
         Asserts the VALUE reaches the settings object, not merely that the
         key is present: a settings object built with `max_tokens=None` has
-        the key and changes nothing.
+        the key and changes nothing. At the declared default the Anthropic
+        budget is raised to a floor that leaves room for thinking.
         """
-        from codebase_rag.providers.base import AnthropicProvider
+        from codebase_rag.providers import base
 
-        model = AnthropicProvider(api_key="k").create_model("claude-x")
+        monkeypatch.setattr(base, "settings", AppConfig.model_construct())
+        model = base.AnthropicProvider(api_key="k").create_model("claude-x")
 
         assert model.settings is not None
-        assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
+        assert model.settings.get("max_tokens") == 16_000
+
+    def test_anthropic_keeps_a_budget_the_user_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit MODEL_MAX_TOKENS is never raised to the floor."""
+        from codebase_rag.providers import base
+
+        monkeypatch.setattr(
+            base, "settings", AppConfig.model_construct(MODEL_MAX_TOKENS=4000)
+        )
+        model = base.AnthropicProvider(api_key="k").create_model("claude-x")
+
+        assert model.settings is not None
+        assert model.settings.get("max_tokens") == 4000
+
+    def test_anthropic_claude_3_keeps_the_default_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """claude-3 snapshots predate default thinking and are not raised."""
+        from codebase_rag.providers import base
+
+        monkeypatch.setattr(base, "settings", AppConfig.model_construct())
+        model = base.AnthropicProvider(api_key="k").create_model(
+            "claude-3-7-sonnet-latest"
+        )
+
+        assert model.settings is not None
+        assert model.settings.get("max_tokens") == _declared_default()
 
     def test_google_settings_carry_max_tokens(self) -> None:
         """The other provider that builds settings.
@@ -182,18 +214,24 @@ class TestRetiredModelsGetALoweredBudget:
         assert model.settings is not None
         assert model.settings.get("max_tokens") == cs.DEFAULT_MAX_OUTPUT_TOKENS
 
-    def test_a_current_model_keeps_the_configured_budget(self) -> None:
+    def test_a_current_model_keeps_the_configured_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The control: the cap must not quietly apply to everything.
 
         Lowering every model to the legacy maximum would "fix" the rejection
-        by reintroducing the truncation this issue exists to remove.
+        by reintroducing the truncation this issue exists to remove. A set
+        budget is used so the Anthropic floor plays no part.
         """
-        from codebase_rag.providers.base import AnthropicProvider
+        from codebase_rag.providers import base
 
-        model = AnthropicProvider(api_key="k").create_model("claude-sonnet-5")
+        monkeypatch.setattr(
+            base, "settings", AppConfig.model_construct(MODEL_MAX_TOKENS=12_000)
+        )
+        model = base.AnthropicProvider(api_key="k").create_model("claude-sonnet-5")
 
         assert model.settings is not None
-        assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
+        assert model.settings.get("max_tokens") == 12_000
 
     def test_a_provider_prefixed_id_is_still_recognised(self) -> None:
         """Model ids may carry a `provider:model` prefix.
