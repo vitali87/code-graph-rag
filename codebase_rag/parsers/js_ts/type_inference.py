@@ -428,6 +428,57 @@ class JsTypeInferenceEngine:
         annotation = callable_node.child_by_field_name("return_type")
         return self._annotation_type(annotation, module_qn) if annotation else None
 
+    def free_function_return_type(
+        self, root: ASTNode, name: str, module_qn: str
+    ) -> str | None:
+        """The class a call of the free function `name` in `root` evaluates
+        to, so `make().handle()` can type its receiver (issue #2893).
+
+        A declared return annotation is the type (`Promise<T>` and other
+        generics name none). Without one, every value the function returns
+        must construct the same class: any other return could be anything.
+        An async or generator function's call is its wrapper, never that
+        value. Names resolve in the function's own module, where its
+        annotation and constructions are written.
+        """
+        fn_node = _find_function_declaration(root, name)
+        if fn_node is None:
+            return None
+        if annotation := fn_node.child_by_field_name(cs.FIELD_RETURN_TYPE):
+            return self._annotation_type(annotation, module_qn)
+        if fn_node.type == cs.TS_GENERATOR_FUNCTION_DECLARATION or any(
+            child.type == cs.TS_JS_ASYNC for child in fn_node.children
+        ):
+            return None
+        constructed: set[str] = set()
+        for value in self._returned_values(fn_node):
+            while value is not None and value.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                value = next(iter(value.named_children), None)
+            class_name = ut.extract_constructor_name(value) if value else None
+            if not class_name:
+                return None
+            constructed.add(
+                self._resolve_js_class_name(class_name, module_qn) or class_name
+            )
+        return constructed.pop() if len(constructed) == 1 else None
+
+    def _returned_values(self, fn_node: ASTNode) -> list[ASTNode | None]:
+        # An expression-bodied arrow's body is its one returned value; a
+        # block's are its own returns' values, not a nested callback's. A bare
+        # `return;` contributes None.
+        body = fn_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return []
+        if body.type != cs.TS_STATEMENT_BLOCK:
+            return [body]
+        returns: list[ASTNode] = []
+        ut.find_return_statements(body, returns)
+        return [
+            next(iter(node.named_children), None)
+            for node in returns
+            if self._return_belongs_to(node, fn_node)
+        ]
+
     def _infer_js_variable_type_from_value(
         self,
         value_node: ASTNode,
