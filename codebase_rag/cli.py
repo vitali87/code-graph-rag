@@ -2307,6 +2307,19 @@ def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
         typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
 
 
+def _refuse_without_endpoint_data(
+    error: ex.EndpointDataMissingError, show_progress: bool
+) -> NoReturn:
+    """No verdict, rather than one that reads as nothing unreachable. A
+    machine format owns stdout, so the refusal goes to stderr there, as the
+    single-project notice does."""
+    if show_progress:
+        app_context.console.print(style(str(error), cs.Color.RED))
+    else:
+        typer.echo(str(error), err=True)
+    raise typer.Exit(1)
+
+
 def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str:
     # An explicit name absent from the graph must error, not scan a
     # nonexistent prefix and report a clean project (the duplicates command
@@ -2390,25 +2403,32 @@ def dead_code(
     resolved: str | None = None
     rows: list[ResultRow] = []
     structural_tier_symbols = 0
+    endpoint_gap: ex.EndpointDataMissingError | None = None
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
             if resolved is not None and resolved in projects:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
-                rows, structural_tier_symbols = collect_dead_code_with_coverage(
-                    ingestor,
-                    resolved,
-                    _dead_code_config(
-                        include_tests,
-                        include_classes,
-                        entry_point,
-                        decorator_root,
-                        min_resolution,
-                        endpoint_roots,
-                    ),
-                )
-                if not endpoint_roots and len(projects) <= 1:
+                try:
+                    rows, structural_tier_symbols = collect_dead_code_with_coverage(
+                        ingestor,
+                        resolved,
+                        _dead_code_config(
+                            include_tests,
+                            include_classes,
+                            entry_point,
+                            decorator_root,
+                            min_resolution,
+                            endpoint_roots,
+                        ),
+                    )
+                except ex.EndpointDataMissingError as e:
+                    # Held until the connection closes: a finding about the
+                    # project, which the service layer would log on exit as a
+                    # failed session with a traceback (issue #2896).
+                    endpoint_gap = e
+                if not endpoint_roots and len(projects) <= 1 and not endpoint_gap:
                     _notice_single_project_endpoint_roots(show_progress)
     except Exception as e:
         app_context.console.print(
@@ -2417,6 +2437,8 @@ def dead_code(
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
+    if endpoint_gap is not None:
+        _refuse_without_endpoint_data(endpoint_gap, show_progress)
     resolved = _require_dead_code_project(resolved, projects)
 
     candidates = [

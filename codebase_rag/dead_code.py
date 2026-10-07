@@ -13,6 +13,7 @@ from fnmatch import fnmatch
 
 from . import constants as cs
 from . import cypher_queries as cq
+from . import exceptions as ex
 from .path_filters import matches_test_path
 from .types_defs import (
     DeadCodeConfig,
@@ -1347,6 +1348,21 @@ def _endpoint_links(
     return links
 
 
+def _route_handler_count(nodes: dict[_NodeId, PropertyDict]) -> int:
+    """Definitions carrying a route decorator: the handlers the io group
+    would link to an endpoint."""
+    from .parsers.endpoints import parse_route_decorator
+
+    count = 0
+    for props in nodes.values():
+        decorators = props.get(cs.KEY_DECORATORS)
+        if isinstance(decorators, list) and any(
+            parse_route_decorator(str(d)) for d in decorators
+        ):
+            count += 1
+    return count
+
+
 def collect_dead_code(
     ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
 ) -> list[ResultRow]:
@@ -1385,6 +1401,11 @@ def collect_dead_code_with_coverage(
     endpoint_links = (
         None if config.endpoint_roots else _endpoint_links(ingestor, params)
     )
+    # No endpoint at all is what a project indexed without the io group
+    # holds; the route decorator would then root every handler as if the
+    # switch were on (issue #2896).
+    if endpoint_links == {} and (handlers := _route_handler_count(nodes)):
+        raise ex.EndpointDataMissingError(project_name, handlers)
     dead = dead_code_from_graph(nodes, rels, prefix, config, endpoint_links)
     rows = [row for row in node_rows if _row_qn(row) in dead]
     rows.sort(key=_row_qn)

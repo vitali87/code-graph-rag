@@ -168,6 +168,16 @@ INGESTOR_NOT_QUERYABLE = "{kind} has no graph to read."
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
+DEADCODE_ENDPOINT_DATA_MISSING = (
+    "--no-endpoint-roots needs endpoint data: project '{project}' has "
+    "{handlers} route-decorated handler(s) but no recorded endpoint, so it was "
+    "indexed without the io capture group and each handler would stay live by "
+    "its decorator. Re-index it with --capture io (cgr start --repo-path <repo> "
+    "--update-graph --project-name {project} --capture io), or drop "
+    "--no-endpoint-roots."
+)
+
+
 # Exception classes
 class LLMGenerationError(Exception):
     pass
@@ -188,6 +198,24 @@ class RepoPathError(ValueError):
     still catch it. Its own type is what lets `cgr mcp-server` add the
     `TARGET_REPO_PATH` hint to this error and no other (issue #2881).
     """
+
+
+class EndpointDataMissingError(Exception):
+    """Endpoint roots are off, but the project holds no endpoint to decide by.
+
+    Only the `io` capture group writes `EXPOSES`; without it every
+    route-decorated handler stays live by its decorator, so the scan would
+    read as a clean result on handlers it never judged (issue #2896).
+    """
+
+    def __init__(self, project_name: str, handlers: int) -> None:
+        self.project_name = project_name
+        self.handlers = handlers
+        super().__init__(
+            DEADCODE_ENDPOINT_DATA_MISSING.format(
+                project=project_name, handlers=handlers
+            )
+        )
 
 
 # Deriving from Exception would let every `except Exception` handler between

@@ -525,7 +525,8 @@ HELP_DEADCODE_ENDPOINT_ROOTS = (
     "(RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and "
     "dispatch resources), so an endpoint nobody calls is reported. A handler "
     "registered by a call (Go HandleFunc, Express app.get) stays live "
-    "through that call."
+    "through that call. Endpoints are recorded only by the io capture group: "
+    "index the project with --capture io first, or the command refuses."
 )
 HELP_DEADCODE_MIN_RESOLUTION = (
     "Ignore call edges below this confidence when deciding liveness: "
