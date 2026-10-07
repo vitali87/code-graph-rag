@@ -72,7 +72,9 @@ def test_a_current_frame_still_resolves(tmp_path: Path) -> None:
     beta = resolver.resolve(_frame(tmp_path, "beta", 1), stats)
     driver = resolver.resolve(_frame(tmp_path, "driver", 4), stats)
     lam = resolver.resolve(_frame(tmp_path, "driver.<locals>.<lambda>", 5), stats)
-    assert beta is not None and beta.qualified_name == f"{_PROJECT}.m.beta"
-    assert driver is not None and driver.qualified_name == f"{_PROJECT}.m.driver"
+    assert beta is not None
+    assert beta.qualified_name == f"{_PROJECT}.m.beta"
+    assert driver is not None
+    assert driver.qualified_name == f"{_PROJECT}.m.driver"
     assert lam is None
     assert stats.unresolved == {cs.TraceUnresolvedReason.SYNTHETIC.value: 1}
