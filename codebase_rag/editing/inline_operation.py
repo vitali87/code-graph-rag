@@ -179,6 +179,74 @@ def _site_end(row: graph_query.CallSiteRow) -> tuple[int, int] | None:
     return None
 
 
+class _Callee(NamedTuple):
+    """What each call site of the inlined definition is rewritten from."""
+
+    path: str
+    returned: Node
+    params: list[_Param]
+    receiver: str | None
+    free: set[str]
+
+
+def _returned_expression(qn: str, definition: Node) -> Node:
+    """The expression the definition's body returns: a docstring aside, the
+    body must be one `return` with a value."""
+    statements = [s for s in _body_statements(definition) if not _is_docstring(s)]
+    if len(statements) != 1 or statements[0].type not in (
+        cs.TS_PY_RETURN_STATEMENT,
+        cs.TS_RETURN_STATEMENT,
+    ):
+        raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
+    returned = next((c for c in statements[0].named_children), None)
+    if returned is None:
+        raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
+    return returned
+
+
+def _receiver(label: str, params: list[_Param]) -> str | None:
+    """A method's `self` or `cls` parameter, which a call binds to the
+    object it is made on."""
+    if (
+        label == cs.NodeLabel.METHOD.value
+        and params
+        and params[0].name in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+    ):
+        return params[0].name
+    return None
+
+
+def _refuse_guessed(callers: list[graph_query.CallSiteRow]) -> None:
+    """Refuse when the graph only guessed at some caller's resolution."""
+    guessed = [
+        f"{r['path']}:{r['line']}"
+        for r in callers
+        if isinstance(r.get("resolution"), str) and r["resolution"] in _AMBIGUOUS
+    ]
+    if guessed:
+        raise InlineRefused(
+            cs.INLINE_GUESSED_CALLERS.format(sites=", ".join(sorted(guessed))),
+            guessed,
+        )
+
+
+def _import_site(row: graph_query.ImporterRow, name: str) -> ImportSite | None:
+    """The import statement a row records binding `name`; None when the row
+    imports another name or has no location."""
+    path, line = row["path"], row["line"]
+    if row["imported_name"] != name or path is None or line is None:
+        return None
+    return ImportSite(
+        path,
+        line,
+        row["col"] or 0,
+        row["end_line"] or line,
+        row["end_col"] or 0,
+        row["alias"],
+        row["imported_name"],
+    )
+
+
 class Inliner:
     def __init__(
         self,
@@ -201,75 +269,29 @@ class Inliner:
             path, node, language, source, label = self._extractor._locate(qn, patcher)
         except ExtractRefused as refused:
             raise InlineRefused(str(refused)) from refused
-        statements = [s for s in _body_statements(node) if not _is_docstring(s)]
-        if len(statements) != 1 or statements[0].type not in (
-            cs.TS_PY_RETURN_STATEMENT,
-            cs.TS_RETURN_STATEMENT,
-        ):
-            raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
-        returned = next((c for c in statements[0].named_children), None)
-        if returned is None:
-            raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
+        returned = _returned_expression(qn, node)
         _refuse_unsupported(qn, node, returned)
         params = _parameters(qn, node)
-        receiver = (
-            params[0].name
-            if label == cs.NodeLabel.METHOD.value
-            and params
-            and params[0].name in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
-            else None
-        )
+        receiver = _receiver(label, params)
         if receiver is not None:
             params = params[1:]
         bound_names = {p.name for p in params} | ({receiver} if receiver else set())
-        free = _free_names(returned, bound_names)
+        callee = _Callee(
+            path, returned, params, receiver, _free_names(returned, bound_names)
+        )
         callers = graph_query.callers(self.fetch_all, self.project, qn)
-        guessed = [
-            f"{r['path']}:{r['line']}"
-            for r in callers
-            if isinstance(r.get("resolution"), str) and r["resolution"] in _AMBIGUOUS
-        ]
-        if guessed:
-            raise InlineRefused(
-                cs.INLINE_GUESSED_CALLERS.format(sites=", ".join(sorted(guessed))),
-                guessed,
-            )
+        _refuse_guessed(callers)
         sites: list[tuple[str, int]] = []
         # Every queued rewrite, so the post-inline text of a file can be
         # checked before the definition and its imports are removed.
         edits: dict[str, list[SpanEdit]] = {}
         rewritten_all = True
         for row in callers:
-            c_path, line, col = row["path"], row["line"], row["col"]
-            if not isinstance(c_path, str) or line is None or col is None:
+            site = self._rewrite_site(patcher, row, callee, edits)
+            if site is None:
                 rewritten_all = False
-                continue
-            c_source = patcher.source(c_path)
-            c_language, root = self._extractor._parse(c_path, c_source)
-            # The recorded end picks the exact call: `helper(2).upper()` starts
-            # where `helper(2)` does (Copilot, PR #2064).
-            call = call_node_at(root, line, col, _site_end(row))
-            args_node = _find_call_arguments_node(call) if call is not None else None
-            if call is None or args_node is None:
-                rewritten_all = False
-                continue
-            substituted = None
-            if _scope_safe(free, c_path == path, c_language, root, call):
-                substituted = _substitute(
-                    returned, params, receiver, call, args_node, c_language, root
-                )
-            if substituted is None:
-                rewritten_all = False
-                continue
-            patcher.replace_span(c_path, (call.start_byte, call.end_byte), substituted)
-            edits.setdefault(c_path, []).append(
-                SpanEdit(
-                    call.start_byte,
-                    call.end_byte,
-                    substituted.encode(cs.ENCODING_UTF8),
-                )
-            )
-            sites.append((c_path, line))
+            else:
+                sites.append(site)
         removed = False
         # A definition still used as a value (a callback, a registry entry)
         # is a REFERENCES edge, not a caller row: rewriting every call does
@@ -287,6 +309,49 @@ class Inliner:
             message=cs.INLINE_PLANNED.format(count=len(sites), removed=removed),
         )
         return report, patcher
+
+    def _rewrite_site(
+        self,
+        patcher: Patcher,
+        row: graph_query.CallSiteRow,
+        callee: _Callee,
+        edits: dict[str, list[SpanEdit]],
+    ) -> tuple[str, int] | None:
+        """Queue the rewrite of the call a caller row records, and return
+        its site; None leaves the call as it is."""
+        c_path, line, col = row["path"], row["line"], row["col"]
+        if not isinstance(c_path, str) or line is None or col is None:
+            return None
+        c_source = patcher.source(c_path)
+        c_language, root = self._extractor._parse(c_path, c_source)
+        # The recorded end picks the exact call: `helper(2).upper()` starts
+        # where `helper(2)` does (Copilot, PR #2064).
+        call = call_node_at(root, line, col, _site_end(row))
+        args_node = _find_call_arguments_node(call) if call is not None else None
+        if call is None or args_node is None:
+            return None
+        if not _scope_safe(callee.free, c_path == callee.path, c_language, root, call):
+            return None
+        substituted = _substitute(
+            callee.returned,
+            callee.params,
+            callee.receiver,
+            call,
+            args_node,
+            c_language,
+            root,
+        )
+        if substituted is None:
+            return None
+        patcher.replace_span(c_path, (call.start_byte, call.end_byte), substituted)
+        edits.setdefault(c_path, []).append(
+            SpanEdit(
+                call.start_byte,
+                call.end_byte,
+                substituted.encode(cs.ENCODING_UTF8),
+            )
+        )
+        return c_path, line
 
     def _referenced(self, qn: str) -> bool:
         params = {
@@ -344,48 +409,42 @@ class Inliner:
         name = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         drops: list[tuple[str, SpanEdit]] = []
         for row in graph_query.importers(self.fetch_all, self.project, module):
-            if (
-                row["imported_name"] != name
-                or row["path"] is None
-                or row["line"] is None
-            ):
+            site = _import_site(row, name)
+            if site is None:
                 continue
-            local = row["alias"] or name
+            local = site.alias or name
             # A package `__init__` import is its public surface, and a module
             # that others import the name from re-exports it: neither shows
             # a use inside the importing file.
-            if Path(row["path"]).name == cs.INIT_PY or self._reexported(
-                row["path"], local
-            ):
+            if Path(site.path).name == cs.INIT_PY or self._reexported(site.path, local):
                 return None
-            site = ImportSite(
-                row["path"],
-                row["line"],
-                row["col"] or 0,
-                row["end_line"] or row["line"],
-                row["end_col"] or 0,
-                row["alias"],
-                row["imported_name"],
-            )
             source = patcher.source(site.path)
             statement = _statement_text(source, site)
             replacement = _without_entry(statement, local)
-            start = line_col_to_byte(source, site.line, site.col)
-            end = line_col_to_byte(source, site.end_line, site.end_col)
-            if replacement is None:
-                drop = self._emptied(site.path, source, (start, end), statement)
-                if drop is None:
-                    return None
-            elif replacement == statement:
+            if replacement == statement:
                 continue
-            else:
-                drop = SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
-            if self._still_named(
+            drop = self._site_drop(site, source, statement, replacement)
+            if drop is None or self._still_named(
                 site.path, source, [*edits.get(site.path, []), drop], local
             ):
                 return None
             drops.append((site.path, drop))
         return drops
+
+    def _site_drop(
+        self,
+        site: ImportSite,
+        source: bytes,
+        statement: str,
+        replacement: str | None,
+    ) -> SpanEdit | None:
+        """The edit respelling the import statement at `site` as
+        `replacement`, or emptying it when that is None; None keeps it."""
+        start = line_col_to_byte(source, site.line, site.col)
+        end = line_col_to_byte(source, site.end_line, site.end_col)
+        if replacement is None:
+            return self._emptied(site.path, source, (start, end), statement)
+        return SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
 
     def _emptied(
         self,
@@ -751,16 +810,9 @@ def _bind(
     """
     if any(a.type in _SPREADS for a in args_node.named_children):
         return None
-    positional, keyword = _split_call_arguments(args_node)
-    positional = [a for a in positional if a.type != cs.TS_COMMENT]
     bound: dict[str, Node] = {}
     evaluated: list[tuple[str | None, Node]] = []
-    function = call.child_by_field_name(cs.FIELD_FUNCTION)
-    obj = (
-        function.child_by_field_name(cs.TS_FIELD_OBJECT)
-        if function is not None and function.type in _ACCESSES
-        else None
-    )
+    obj = _call_object(call)
     if receiver is not None:
         if obj is None:
             return None
@@ -768,6 +820,31 @@ def _bind(
         evaluated.append((receiver, obj))
     elif obj is not None:
         evaluated.append((None, obj))
+    arguments = _arguments(params, args_node)
+    if arguments is None:
+        return None
+    for key, value in arguments:
+        bound[key] = value
+        evaluated.append((key, value))
+    if not _bind_defaults(params, bound):
+        return None
+    return bound, evaluated
+
+
+def _call_object(call: Node) -> Node | None:
+    """The object a call reaches its function through: `obj` in
+    `obj.helper(x)`; None for a bare name."""
+    function = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None or function.type not in _ACCESSES:
+        return None
+    return function.child_by_field_name(cs.TS_FIELD_OBJECT)
+
+
+def _arguments(params: list[_Param], args_node: Node) -> list[tuple[str, Node]] | None:
+    """Each argument with the parameter it binds, in call order; None when
+    one binds no parameter, or one already bound."""
+    positional, keyword = _split_call_arguments(args_node)
+    positional = [a for a in positional if a.type != cs.TS_COMMENT]
     slots = [p for p in params if p.positional]
     if len(positional) > len(slots):
         return None
@@ -781,9 +858,12 @@ def _bind(
             return None
         arguments.append((key, value))
     arguments.sort(key=lambda pair: pair[1].start_byte)
-    for key, value in arguments:
-        bound[key] = value
-        evaluated.append((key, value))
+    return arguments
+
+
+def _bind_defaults(params: list[_Param], bound: dict[str, Node]) -> bool:
+    """Bind each parameter the call leaves out to its default; False when
+    one has no default, or one that is not a literal."""
     for param in params:
         if param.name in bound:
             continue
@@ -791,9 +871,9 @@ def _bind(
         # non-literal default re-evaluates it at every site (Greptile,
         # PR #2058).
         if param.default is None or not _is_literal(param.default):
-            return None
+            return False
         bound[param.name] = param.default
-    return bound, evaluated
+    return True
 
 
 def _evaluation_kept(
@@ -964,16 +1044,9 @@ def _substitute(
     if binding is None:
         return None
     bound, evaluated = binding
-    reads: dict[str, list[Node]] = {}
-    for current in _walk(returned):
-        if current.type in _REFUSED_IN_EXPRESSION:
-            return None
-        if current.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER and (
-            _text(current) in bound
-        ):
-            return None
-        if _is_read(current) and _text(current) in bound:
-            reads.setdefault(_text(current), []).append(current)
+    reads = _parameter_reads(returned, bound)
+    if reads is None:
+        return None
     if not _evaluation_kept(returned, reads, evaluated):
         return None
     if not _names_kept(returned, reads, bound, evaluated, language, root, call):
@@ -1001,6 +1074,25 @@ def _substitute(
     if returned.type not in _POSTFIX:
         result = f"({result})"
     return result
+
+
+def _parameter_reads(
+    returned: Node, bound: dict[str, Node]
+) -> dict[str, list[Node]] | None:
+    """Every read of each bound name in the returned expression; None when
+    the expression rebinds names or defers evaluation, or spells a bound
+    name as a shorthand property."""
+    reads: dict[str, list[Node]] = {}
+    for current in _walk(returned):
+        if current.type in _REFUSED_IN_EXPRESSION:
+            return None
+        if current.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER and (
+            _text(current) in bound
+        ):
+            return None
+        if _is_read(current) and _text(current) in bound:
+            reads.setdefault(_text(current), []).append(current)
+    return reads
 
 
 def _loader(statement: str) -> tuple[str, str | None] | None:

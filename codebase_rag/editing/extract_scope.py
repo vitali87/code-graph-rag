@@ -110,22 +110,23 @@ def _reads(node: Node, out: list[str]) -> None:
             _target_reads(target, stack)
             continue
         if current.type in _IDENTIFIERS:
-            parent = current.parent
-            field = (
-                parent.field_name_for_child(_index_in(parent, current))
-                if parent
-                else None
-            )
-            if field not in _NON_READ_FIELDS and not (
-                parent is not None
-                and parent.type == cs.TS_PY_KEYWORD_ARGUMENT
-                and field == cs.FIELD_NAME
-            ):
-                name = _text(current)
-                if name and name not in out:
-                    out.append(name)
+            name = _text(current)
+            if name and name not in out and _is_variable_read(current):
+                out.append(name)
             continue
         stack.extend(reversed(current.children))
+
+
+def _is_variable_read(identifier: Node) -> bool:
+    """Whether `identifier` reads a variable: not an attribute or property
+    name, nor the keyword of a keyword argument."""
+    parent = identifier.parent
+    if parent is None:
+        return True
+    field = parent.field_name_for_child(_index_in(parent, identifier))
+    if field in _NON_READ_FIELDS:
+        return False
+    return not (parent.type == cs.TS_PY_KEYWORD_ARGUMENT and field == cs.FIELD_NAME)
 
 
 def _plain_target(node: Node) -> Node | None:
@@ -185,56 +186,66 @@ def _binds(node: Node, out: list[str], surely: bool = False) -> None:
     stack = [node]
     while stack:
         current = stack.pop()
-        kind = current.type
         if surely and _is_lazy(current):
             continue
-        if kind in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
-            left = current.child_by_field_name(cs.TS_FIELD_LEFT)
-            if left is not None:
-                _targets(left, out)
-        elif kind == cs.TS_PY_FOR_STATEMENT:
-            left = current.child_by_field_name(cs.TS_FIELD_LEFT)
-            if left is not None:
-                _targets(left, out)
-        elif kind == cs.TS_PY_AS_PATTERN_TARGET:
-            _targets(current, out)
-        elif kind in _JS_DECLARATORS:
-            named = current.child_by_field_name(cs.FIELD_NAME)
-            if named is not None:
-                _targets(named, out)
-        elif kind == cs.TS_ASSIGNMENT_EXPRESSION:
-            left = current.child_by_field_name(cs.TS_FIELD_LEFT)
-            # A destructuring assignment binds every name in its pattern
-            # (Greptile, PR #2057); a member target binds nothing here.
-            if left is not None and (
-                left.type in _IDENTIFIERS or left.type in _JS_PATTERNS
-            ):
-                _targets(left, out)
-        elif kind in _JS_UPDATES:
-            # `x += 1`, `x++` and `--x` rebind x as surely as `x = ...`: left
-            # out, the helper updated its own parameter and the caller kept
-            # the old value (Greptile, PR #2932).
-            target = current.child_by_field_name(
-                cs.TS_FIELD_LEFT
-            ) or current.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
-            if target is not None and target.type in _IDENTIFIERS:
-                _targets(target, out)
-        elif kind == cs.TS_PY_NAMED_EXPRESSION:
-            named = current.child_by_field_name(cs.FIELD_NAME)
-            if named is not None:
-                _targets(named, out)
-        elif kind in _PY_IMPORTS:
+        if current.type in _PY_IMPORTS:
             # An import binds a name like an assignment does: missing it kept
             # `import os` inside the helper while the caller still used `os`
             # (Greptile, PR #2057).
             _import_binds(current, out)
             continue
-        elif kind in _NESTED_SCOPES:
-            named = current.child_by_field_name(cs.FIELD_NAME)
-            if named is not None and kind in _NAME_BINDING_SCOPES:
-                _targets(named, out)
-            continue
-        stack.extend(reversed(current.children))
+        target = _bound_target(current)
+        if target is not None:
+            _targets(target, out)
+        # What a nested scope binds inside it is its own, not this scope's.
+        if current.type not in _NESTED_SCOPES:
+            stack.extend(reversed(current.children))
+
+
+def _bound_target(node: Node) -> Node | None:
+    """The target the binding at `node` writes, or None: an assignment's
+    left side, a for target, an `as` target, a declarator's or walrus's
+    name, a nested def or class declaration's name."""
+    kind = node.type
+    if kind in (
+        cs.TS_PY_ASSIGNMENT,
+        cs.TS_PY_AUGMENTED_ASSIGNMENT,
+        cs.TS_PY_FOR_STATEMENT,
+    ):
+        return node.child_by_field_name(cs.TS_FIELD_LEFT)
+    if kind == cs.TS_PY_AS_PATTERN_TARGET:
+        return node
+    if (
+        kind in _JS_DECLARATORS
+        or kind == cs.TS_PY_NAMED_EXPRESSION
+        or kind in _NAME_BINDING_SCOPES
+    ):
+        return node.child_by_field_name(cs.FIELD_NAME)
+    if kind == cs.TS_ASSIGNMENT_EXPRESSION or kind in _JS_UPDATES:
+        return _js_write_target(node)
+    return None
+
+
+def _js_write_target(node: Node) -> Node | None:
+    """The name or pattern a JS assignment or update rebinds, or None."""
+    if node.type == cs.TS_ASSIGNMENT_EXPRESSION:
+        left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        # A destructuring assignment binds every name in its pattern
+        # (Greptile, PR #2057); a member target binds nothing here.
+        if left is not None and (
+            left.type in _IDENTIFIERS or left.type in _JS_PATTERNS
+        ):
+            return left
+        return None
+    # `x += 1`, `x++` and `--x` rebind x as surely as `x = ...`: left out,
+    # the helper updated its own parameter and the caller kept the old
+    # value (Greptile, PR #2932).
+    target = node.child_by_field_name(cs.TS_FIELD_LEFT) or node.child_by_field_name(
+        cs.TS_JS_FIELD_ARGUMENT
+    )
+    if target is not None and target.type in _IDENTIFIERS:
+        return target
+    return None
 
 
 def _is_lazy(node: Node) -> bool:
@@ -412,11 +423,30 @@ def _analyse_span_dependencies(
     for statement in span.statements:
         reads: list[str] = []
         _reads(statement, reads)
-        for name in reads:
-            if name in bound_before and name not in bound_in and name not in inputs:
-                inputs.append(name)
+        inputs.extend(
+            name
+            for name in reads
+            if name in bound_before and name not in bound_in and name not in inputs
+        )
         _binds(statement, bound_in)
         _surely_binds(statement, surely_in)
+    read_after = _read_after(span)
+    outputs = [name for name in bound_in if name in read_after]
+    for name in outputs:
+        if name in inputs or name in surely_in or name not in bound_before:
+            continue
+        # A path through the span that leaves the name alone must hand back
+        # the value it came in with, so the helper takes it as a parameter;
+        # returned unbound it raised or read undefined (Greptile, PR #2932).
+        if name not in surely_before:
+            raise ExtractRefused(cs.EXTRACT_MAYBE_UNBOUND.format(name=name))
+        inputs.append(name)
+    return inputs, outputs
+
+
+def _read_after(span: _Span) -> list[str]:
+    """Names read after the span, a closure defined before it included;
+    refuses a closure in the span over a name rebound after it."""
     bound_after: list[str] = []
     captured_in: list[str] = []
     _captured(span.statements, captured_in)
@@ -434,17 +464,7 @@ def _analyse_span_dependencies(
     # is called, under its own name: `read()` after the span reads x
     # (Greptile, PR #2932).
     _captured(span.before, read_after)
-    outputs = [name for name in bound_in if name in read_after]
-    for name in outputs:
-        if name in inputs or name in surely_in or name not in bound_before:
-            continue
-        # A path through the span that leaves the name alone must hand back
-        # the value it came in with, so the helper takes it as a parameter;
-        # returned unbound it raised or read undefined (Greptile, PR #2932).
-        if name not in surely_before:
-            raise ExtractRefused(cs.EXTRACT_MAYBE_UNBOUND.format(name=name))
-        inputs.append(name)
-    return inputs, outputs
+    return read_after
 
 
 # Statements whose body may run zero times, or stop partway, on a path that
