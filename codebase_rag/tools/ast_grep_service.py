@@ -1,13 +1,15 @@
 # Structural search/replace over the project using ast-grep patterns (#415).
 # Purely additive: no graph, parser, or index dependency. Language is chosen
-# per file from its extension; languages ast-grep has no grammar for (scala,
-# dart) are skipped. Metavariables in a rewrite are interpolated here because
-# ast-grep's node.replace() does not substitute them.
+# per file from its extension, structural-tier languages (Ruby, Kotlin, ...)
+# included; a language ast-grep has no grammar for (SQL) is skipped.
+# Metavariables in a rewrite are interpolated here because ast-grep's
+# node.replace() does not substitute them.
 from __future__ import annotations
 
 import difflib
 import os
 import re
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,9 +24,32 @@ from ..utils.path_utils import should_skip_path
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
 
-# ast-grep's own language ids (e.g. "csharp"), accepted alongside the repo's
-# SupportedLanguage values (e.g. "c_sharp") so either spelling selects C#.
-_AST_GREP_LANG_IDS = frozenset(cs.AST_GREP_LANGUAGES.values())
+
+@cache
+def _structural_tier_ids() -> dict[str, str]:
+    """File extension -> ast-grep id for each structural-tier language.
+
+    Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash and Nix have no
+    SupportedLanguage, only a pattern config naming its ast-grep grammar;
+    leaving them out refused them by name and skipped their files (issue
+    #2783). Empty when the configs cannot be loaded.
+    """
+    from ..parsers.ast_grep_tier import load_pattern_configs
+
+    try:
+        configs = load_pattern_configs()
+    except Exception:  # noqa: BLE001
+        return {}
+    return {extension: config.ast_grep_id for extension, config in configs.items()}
+
+
+def _ast_grep_lang_ids() -> frozenset[str]:
+    # ast-grep's own language ids (e.g. "csharp"), accepted alongside the
+    # repo's SupportedLanguage values (e.g. "c_sharp") so either spelling
+    # selects C#; a structural-tier language's name is its id.
+    return frozenset(cs.AST_GREP_LANGUAGES.values()) | frozenset(
+        _structural_tier_ids().values()
+    )
 
 
 class AstGrepService:
@@ -49,12 +74,12 @@ class AstGrepService:
                 return ast_grep_lang
         # also accept ast-grep's own ids directly (e.g. "csharp" as well as the
         # repo's "c_sharp"), which callers and the tool descriptions use.
-        if language in _AST_GREP_LANG_IDS:
+        if language in _ast_grep_lang_ids():
             return language
         raise ValueError(
             cs.AST_GREP_UNKNOWN_LANGUAGE.format(
                 language=language,
-                supported=", ".join(sorted(_AST_GREP_LANG_IDS)),
+                supported=", ".join(sorted(_ast_grep_lang_ids())),
             )
         )
 
@@ -64,9 +89,11 @@ class AstGrepService:
         # (rel_posix, ast_grep_lang) if the file is one ast-grep can parse
         # and passes the ignore rules / language filter, else None.
         lang = get_language_for_extension(abs_path.suffix)
-        if lang is None:
-            return None
-        ast_grep_lang = cs.AST_GREP_LANGUAGES.get(lang)
+        ast_grep_lang = (
+            cs.AST_GREP_LANGUAGES.get(lang)
+            if lang is not None
+            else _structural_tier_ids().get(abs_path.suffix)
+        )
         if ast_grep_lang is None:
             return None
         if wanted is not None and ast_grep_lang != wanted:
