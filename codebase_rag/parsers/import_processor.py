@@ -3696,6 +3696,17 @@ class ImportProcessor:
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
 
+    def rust_path_qn(self, path: str, module_qn: str) -> str | None:
+        """The project qn a Rust path names as written in `module_qn`, or None
+        when it leads outside the project (`std::fmt`, an external crate).
+
+        The same rewrite a `use` gets, for a path a call spells inline:
+        `grep_searcher::BinaryDetection::convert(0)` names the type the way
+        `use grep_searcher::BinaryDetection` does (issue #2982).
+        """
+        rewritten = self._rewrite_rust_local_use_path(path, module_qn)
+        return None if rewritten == path else rewritten
+
     def _rust_rewrite_crate_path(self, rest: list[str], module_qn: str) -> str:
         root = self._rust_crate_root(module_qn)
         if root is None:
