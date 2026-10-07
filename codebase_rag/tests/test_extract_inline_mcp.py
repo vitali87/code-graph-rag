@@ -47,6 +47,8 @@ def test_mcp_extract_and_inline_tools(
         return refused, payload
 
     refused, payload = asyncio.run(run())
-    assert isinstance(refused, dict) and cs.DICT_KEY_ERROR in refused
-    assert isinstance(payload, dict) and payload["applied"] is True
+    assert isinstance(refused, dict)
+    assert cs.DICT_KEY_ERROR in refused
+    assert isinstance(payload, dict)
+    assert payload["applied"] is True
     assert payload[cs.KEY_VERDICT]["ok"] is True
