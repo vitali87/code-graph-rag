@@ -22,6 +22,7 @@ class CLICommandName(StrEnum):
     CHECK = "check"
     RENAME = "rename"
     CHANGE_SIGNATURE = "change-signature"
+    MOVE = "move"
     CONTEXT = "context"
     STOP = "stop"
     STATUS = "status"
@@ -204,6 +205,22 @@ HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC = (
     "a trace as well, instead of listing them as unmapped."
 )
 HELP_CHANGE_SIGNATURE_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_MOVE = (
+    "Move a module-level definition to another module: importers rewritten, "
+    "needed imports carried, refused when it would create an import cycle."
+)
+EXAMPLES_MOVE = (
+    "Examples:\n  cgr move myproj.pkg.util.helper pkg.core --dry-run\n"
+    "  cgr move myproj.pkg.util.helper pkg/core.py --keep-alias"
+)
+HELP_MOVE_QN = "Qualified name of the module-level definition to move."
+HELP_MOVE_DRY_RUN = (
+    "Print the plan (files, importers, copied imports) without writing anything."
+)
+HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative path."
+HELP_MOVE_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
+)
 CMD_CONTEXT = (
     "Print a graph-ranked context slice for a symbol, location or task within "
     "a token budget: source, caller lines, callee signatures, types, tests, docs."
@@ -618,6 +635,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
+    CLICommandName.MOVE: CMD_MOVE,
     CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,

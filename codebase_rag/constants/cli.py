@@ -920,6 +920,62 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+# move (issue #1534).
+MOVE_UNKNOWN = "No definition named {qn} in the graph"
+MOVE_METHOD = "{qn} is a method; move its class instead"
+MOVE_SAME_MODULE = "{path} already holds the definition"
+MOVE_NO_GRAMMAR = "No grammar for {path}; the definition cannot be moved"
+MOVE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
+MOVE_CYCLE = "Refusing to move: it would create the import cycle {cycle}"
+MOVE_IMPORT_COLLISION = (
+    "{path} already binds {name}; the import the moved definition needs would rebind it"
+)
+MOVE_MAYBE_UNBOUND = (
+    "{names} may be unbound in {path}: it is set under a module-level if, "
+    "try or loop that does not bind it on every path, so the moved "
+    "definition cannot import it safely"
+)
+MOVE_SPLIT_GLOBAL = (
+    "{names} is a variable of {path} rebound through a global statement; "
+    "the destination would import it as a separate copy, so the moved "
+    "definition and {path} would stop seeing each other's updates"
+)
+MOVE_ASSIGNS_IMPORT = (
+    "{names} is a variable of {path} that the moved definition assigns; "
+    "imported into the destination it is a read-only binding, so the "
+    "assignment would throw"
+)
+MOVE_WILDCARD_IMPORTER = (
+    "{importers} import(s) everything from {path} with *, and would no "
+    "longer get {name} from it; pass keep_alias to keep {path} exporting it"
+)
+MOVE_RELATIVE_IMPORT_ESCAPES = (
+    "{statement} in {qn} climbs above the top-level package of {path}, so "
+    "the move cannot respell it for the destination"
+)
+MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
+MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
+MOVE_SOURCE_CHANGED = (
+    "Cannot stage the move: {files} changed on disk after the move was "
+    "planned; retry once the tree is settled"
+)
+MOVE_CONTRACT_FAILED = "Move rolled back, postcondition failed: {reasons}"
+MOVE_CONTRACT_UNMEASURED = (
+    "Move applied, but its postcondition could not be measured: {error}"
+)
+MOVE_ROLLBACK_UNMEASURED = (
+    "Move rolled back after its postcondition failed ({reasons}), but the "
+    "graph could not be re-ingested afterwards ({error}); rebuild the graph "
+    "before the next graph-backed operation"
+)
+MOVE_WRONG_ROOT = (
+    "Project {project} was not indexed from this server's repository; "
+    "move from the MCP server rooted at its source tree"
+)
+MOVE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"

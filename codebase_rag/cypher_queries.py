@@ -1261,7 +1261,7 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
-CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[:IMPORTS]->(t:Module)
+CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1271,7 +1271,7 @@ WHERE m.qualified_name STARTS WITH $project_prefix
           WHERE t.qualified_name <> longer_project
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn"""
+       t.qualified_name AS to_qn, r.imported_name AS imported_name"""
 # The import statements that bind a symbol BY NAME into or out of the
 # touched files (issue #2516), one row per bound name: an importer of a
 # touched module still naming a symbol the edit removed, and a touched
@@ -1305,6 +1305,12 @@ MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
 WHERE doc.qualified_name STARTS WITH $project_prefix
 RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
        s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
+# What one module imports, with each statement's site (issue #1534).
+CYPHER_GRAPH_IMPORTS_OF = """MATCH (m:Module)-[r:IMPORTS]->(target)
+WHERE m.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
+RETURN target.qualified_name AS to_qn, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.alias AS alias,
+       r.imported_name AS imported_name"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,

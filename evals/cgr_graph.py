@@ -640,7 +640,8 @@ class _StatefulIngestor:
                 or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
             ):
                 continue
-            for _fl, fv, rel, tl, tv, _site in self._out.get(node_id, ()):
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
                 if (
                     rel == cs.RelationshipType.IMPORTS.value
                     and tl == module
@@ -652,6 +653,9 @@ class _StatefulIngestor:
                             cs.KEY_FROM_QN: _result(fv),
                             cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
                             cs.KEY_TO_QN: _result(tv),
+                            cs.KEY_IMPORTED_NAME: _result(
+                                self.props_for(edge).get(cs.KEY_IMPORTED_NAME)
+                            ),
                         }
                     )
         return rows
@@ -947,6 +951,16 @@ class _StatefulIngestor:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
                         )
+        elif query == cq.CYPHER_GRAPH_IMPORTS_OF:
+            for source in targets:
+                for edge in self._out.get(source, ()):
+                    if edge[2] != cs.RelationshipType.IMPORTS.value:
+                        continue
+                    row = self._graph_edge_row(
+                        edge, self._GRAPH_IMPORT_KEYS, (edge[3], edge[4])
+                    )
+                    row[cs.KEY_TO_QN] = _result(edge[4])
+                    rows.append(row)
         return rows
 
     # --- context slice reads (issue #1536) -----------------------------------
@@ -1157,6 +1171,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_TYPE_EDGES
                 | cq.CYPHER_GRAPH_OVERRIDES
                 | cq.CYPHER_GRAPH_IMPORTERS
+                | cq.CYPHER_GRAPH_IMPORTS_OF
                 | cq.CYPHER_GRAPH_RESOLVE_NAME
                 | cq.CYPHER_GRAPH_RESOLVE_LOCATION
                 | cq.CYPHER_GRAPH_CALLEES
