@@ -437,6 +437,15 @@ class CSharpCallShape(NamedTuple):
     is_static: bool
 
 
+class JavaStaticImport(NamedTuple):
+    """One Java `import static` declaration: the class whose static members
+    it brings into scope, and the member it names (`import static C.m;`), or
+    None for the on-demand form (`import static C.*;`)."""
+
+    class_path: str
+    member: str | None
+
+
 class CancelledResult(NamedTuple):
     cancelled: bool
 

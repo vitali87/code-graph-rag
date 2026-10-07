@@ -25,6 +25,7 @@ from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    JavaStaticImport,
     LanguageFamily,
     LanguageQueries,
     PropertyDict,
@@ -926,6 +927,7 @@ class ImportProcessor:
         "import_mapping",
         "csharp_static_imports",
         "csharp_global_static_imports",
+        "java_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "python_import_rebinds",
@@ -1017,6 +1019,13 @@ class ImportProcessor:
         # compilation. Keyed by the DECLARING module, so a re-parse or a
         # removal of that file drops exactly its own directives.
         self.csharp_global_static_imports: dict[str, set[str]] = {}
+        # Java `import static` brings a class's static MEMBERS into bare-call
+        # scope. import_mapping keys `import static C.m;` like a type import,
+        # and files `import static C.*;` (members of CLASS C) under the same
+        # `*path` key as `import p.*;` (types of PACKAGE p), so a bare `m()`
+        # cannot tell from it whether any static import names it. Module qn ->
+        # its static imports in source order (issue #2544).
+        self.java_static_imports: dict[str, list[JavaStaticImport]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -1427,6 +1436,7 @@ class ImportProcessor:
         self.import_mapping[module_qn] = {}
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
+        self.java_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -4427,6 +4437,8 @@ class ImportProcessor:
         is_static: bool,
         is_wildcard: bool,
     ) -> None:
+        if is_static:
+            self._record_java_static_import(module_qn, resolved_path, is_wildcard)
         if is_wildcard:
             logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
             self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
@@ -4445,6 +4457,20 @@ class ImportProcessor:
             name=imported_name,
             path=resolved_path,
         )
+
+    def _record_java_static_import(
+        self, module_qn: str, resolved_path: str, is_wildcard: bool
+    ) -> None:
+        # The on-demand form names the class itself; the single-member form
+        # names one member past it.
+        if is_wildcard:
+            entry = JavaStaticImport(class_path=resolved_path, member=None)
+        else:
+            class_path, _, member = resolved_path.rpartition(cs.SEPARATOR_DOT)
+            if not class_path:
+                return
+            entry = JavaStaticImport(class_path=class_path, member=member)
+        self.java_static_imports.setdefault(module_qn, []).append(entry)
 
     @staticmethod
     def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
