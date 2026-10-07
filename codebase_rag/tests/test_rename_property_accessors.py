@@ -106,7 +106,8 @@ def _methods(store: _StatefulIngestor) -> set[str]:
 
 def _load(path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(f"_bank_{uuid.uuid4().hex}", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     try:
@@ -143,7 +144,8 @@ def test_renaming_an_accessor_renames_the_whole_property(
     )
 
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None, report.verdict
+    assert report.verdict.ok, report.verdict
     assert (root / "bank.py").read_text(encoding="utf-8") == RENAMED
     methods = _methods(store)
     assert {
@@ -275,7 +277,8 @@ def test_a_plain_def_before_the_accessors_is_not_one_of_them(tmp_path: Path) -> 
         f"{PROJECT}.bank.Account.balance@10",
     }
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None, report.verdict
+    assert report.verdict.ok, report.verdict
     text = (root / "bank.py").read_text(encoding="utf-8")
     assert text == PLAIN_BEFORE.replace("balance", "funds").replace(
         "def funds(self):\n        return 2", "def balance(self):\n        return 2"
@@ -292,11 +295,12 @@ def test_a_plain_def_after_the_accessors_refuses_the_rename(tmp_path: Path) -> N
     root = tmp_path / PROJECT
     root.mkdir()
     store, _updater = _indexed(root, {"bank.py": PLAIN_AFTER})
+    query = _query(store)
 
     with pytest.raises(RenameRefused, match="redefined by a plain def on line 10"):
         rename(
             root,
-            _query(store),
+            query,
             PROJECT,
             f"{PROJECT}.bank.Account.balance@7",
             "funds",
@@ -400,9 +404,10 @@ def test_without_allow_heuristic_the_overload_access_still_refuses(
     bank: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = bank
+    query = _query(store)
 
     with pytest.raises(RenameRefused):
-        rename(root, _query(store), PROJECT, GETTER, "funds", dry_run=True)
+        rename(root, query, PROJECT, GETTER, "funds", dry_run=True)
 
     assert (root / "bank.py").read_text(encoding="utf-8") == BANK
 
