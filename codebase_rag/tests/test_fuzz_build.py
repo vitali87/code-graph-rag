@@ -284,12 +284,15 @@ def test_the_build_installs_the_locked_dependency_set(tmp_path: Path) -> None:
     result, _, log = _run_build(tmp_path)
     assert result.returncode == 0, result.stderr
     exports = [line for line in log if line.startswith("uv export")]
-    assert len(exports) == 1 and "--frozen" in exports[0].split(), exports
+    assert len(exports) == 1, exports
+    assert "--frozen" in exports[0].split(), exports
     installs = [line for line in log if line.startswith("uv pip install")]
     assert len(installs) == 2, installs
     locked, project = (line.split() for line in installs)
-    assert "-r" in locked and "--no-deps" not in locked
-    assert project[-1] == "." and "--no-deps" in project, project
+    assert "-r" in locked
+    assert "--no-deps" not in locked
+    assert project[-1] == ".", project
+    assert "--no-deps" in project, project
     assert not [line for line in log if " -m pip install" in line], (
         "a pip install resolves its own versions instead of the lockfile's"
     )
@@ -363,7 +366,8 @@ def test_every_clusterfuzzlite_workflow_runs_one_pinned_action_commit() -> None:
     refs = set().union(
         *(cflite_refs(yaml.safe_load(w.read_text())) for w in CFLITE_WORKFLOWS)
     )
-    assert len(refs) == 1 and FULL_SHA.fullmatch(next(iter(refs))), refs
+    assert len(refs) == 1, refs
+    assert FULL_SHA.fullmatch(next(iter(refs))), refs
 
 
 def test_the_pin_check_refuses_a_tag() -> None:
@@ -375,7 +379,8 @@ def test_the_pin_check_refuses_a_tag() -> None:
         }
     }
     refs = cflite_refs(workflow)
-    assert refs == {"v1"} and not FULL_SHA.fullmatch("v1")
+    assert refs == {"v1"}
+    assert not FULL_SHA.fullmatch("v1")
 
 
 @pytest.mark.parametrize("workflow", CFLITE_WORKFLOWS, ids=_ids)
