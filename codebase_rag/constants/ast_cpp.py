@@ -305,6 +305,15 @@ CPP_DECLARED_NAME_PATTERN = rb"\b[A-Za-z_]\w*\s+[A-Za-z_]\w*\b"
 CPP_OPEN_PAREN = b"("
 CPP_CLOSE_PAREN = b")"
 CPP_BLANK_BYTE = ord(" ")
+# The class specifiers a `class MACRO Name {...}` misreading starts from
+# (issue #2840), and the tokens that open a class after its name: its body
+# or its base clause.
+CAPTURE_CPP_MACRO_CLASS = "specifier"
+CPP_MACRO_CLASS_QUERY = (
+    "[(class_specifier) (struct_specifier) (union_specifier)]"
+    f" @{CAPTURE_CPP_MACRO_CLASS}"
+)
+CPP_CLASS_OPENERS = (b"{", b":")
 CPP_LINE_BREAK_BYTES = frozenset(b"\r\n")
 # Declarator suffixes the grammar knows; an annotation may sit on either side
 # of them (`f() LOCKS_REQUIRED(mu) override`), so the scan steps over them
