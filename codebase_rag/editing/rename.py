@@ -926,23 +926,7 @@ class Renamer:
         point value in a config file), is a site; a longer path, another
         module's, a bare name or prose around the path stays as written.
         """
-        spelled: dict[str, str] = {}
-        for member in members:
-            module_qn, module_path = self._module_of(member)
-            inner = member.removeprefix(f"{module_qn}{cs.SEPARATOR_DOT}")
-            if (
-                module_path is None
-                or inner == member
-                or inner.rsplit(cs.SEPARATOR_DOT, 1)[-1] != old_name
-                or get_language_for_extension(Path(module_path).suffix)
-                != cs.SupportedLanguage.PYTHON
-            ):
-                continue
-            for import_path in self._python_import_paths(module_path):
-                spelled[f"{import_path}{cs.SEPARATOR_DOT}{inner}"] = member
-                spelled[f"{import_path}{cs.RENAME_ENTRY_POINT_SEPARATOR}{inner}"] = (
-                    member
-                )
+        spelled = self._spelled_import_paths(members, old_name)
         if not spelled:
             return []
         alternatives = "|".join(
@@ -986,6 +970,30 @@ class Renamer:
                         ),
                     )
         return list(found.values())
+
+    def _spelled_import_paths(
+        self, members: list[str], old_name: str
+    ) -> dict[str, str]:
+        """Each dotted (`pkg.core.helper`) and entry point (`pkg.core:helper`)
+        path spelling a Python member, mapped to that member."""
+        spelled: dict[str, str] = {}
+        for member in members:
+            module_qn, module_path = self._module_of(member)
+            inner = member.removeprefix(f"{module_qn}{cs.SEPARATOR_DOT}")
+            if (
+                module_path is None
+                or inner == member
+                or inner.rsplit(cs.SEPARATOR_DOT, 1)[-1] != old_name
+                or get_language_for_extension(Path(module_path).suffix)
+                != cs.SupportedLanguage.PYTHON
+            ):
+                continue
+            for import_path in self._python_import_paths(module_path):
+                spelled[f"{import_path}{cs.SEPARATOR_DOT}{inner}"] = member
+                spelled[f"{import_path}{cs.RENAME_ENTRY_POINT_SEPARATOR}{inner}"] = (
+                    member
+                )
+        return spelled
 
     def _string_site_files(self) -> list[Path]:
         # Pruned while walking: `node_modules` or a virtualenv can hold more
