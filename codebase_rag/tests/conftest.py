@@ -31,8 +31,10 @@ if TYPE_CHECKING:
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-# pytester drives the cgr-trace pytest plugin end-to-end in its own sessions.
-pytest_plugins = ["pytester"]
+# pytester drives the cgr-trace pytest plugin end-to-end in its own sessions;
+# check_isolation_helpers holds the `indexed` fixture the `cgr check --isolated`
+# test modules share (a module's own `indexed` fixture still takes precedence).
+pytest_plugins = ["pytester", "check_isolation_helpers"]
 
 
 class NodeProtocol(Protocol):
