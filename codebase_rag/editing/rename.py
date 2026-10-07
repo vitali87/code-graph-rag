@@ -317,6 +317,30 @@ def _jsx_closing_token(
     return byte_to_line_col(source, closing.start_byte + offset - opening.start_byte)
 
 
+def _add_jsx_closing_site(
+    sites: list[RenameSite],
+    kind: str,
+    path: str,
+    source: bytes,
+    token: tuple[int, int],
+    owner: str,
+    resolution: str | None,
+) -> None:
+    """Append the closing-tag twin of a JSX opening-tag site, once (#2811).
+
+    Kept out of `Renamer._add_site` so that method stays under the
+    cognitive complexity limit (S3776).
+    """
+    closing = _jsx_closing_token(
+        source, get_language_for_extension(Path(path).suffix), token
+    )
+    if closing is None:
+        return
+    if any((s.path, s.line, s.col) == (path, *closing) for s in sites):
+        return
+    sites.append(RenameSite(kind, path, closing[0], closing[1], owner, resolution))
+
+
 def _chain_link_sites(
     kind: str,
     path: str,
@@ -781,15 +805,7 @@ class Renamer:
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
-        closing = _jsx_closing_token(
-            source, get_language_for_extension(Path(path).suffix), token
-        )
-        if closing is not None and not any(
-            (s.path, s.line, s.col) == (path, *closing) for s in sites
-        ):
-            sites.append(
-                RenameSite(kind, path, closing[0], closing[1], owner, resolution_text)
-            )
+        _add_jsx_closing_site(sites, kind, path, source, token, owner, resolution_text)
         if kind == "call":
             sites.extend(
                 _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
