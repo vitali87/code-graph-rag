@@ -752,7 +752,22 @@ def _python_active_bindings(
 ) -> frozenset[str | None]:
     # The bindings of `name` in one namespace's body that may be active at
     # `before`, in source order: an unconditional one replaces those before
-    # it, one under a branch (`if`, `try`, a loop) joins them. A nested
+    # it, one under a branch (`if`, `try`, a loop) joins them.
+    active: set[str | None] = set()
+    for _start, branched, bound in sorted(
+        _python_bindings_before(body, name, before), key=lambda entry: entry[0]
+    ):
+        if not branched:
+            active.clear()
+        active.add(bound)
+    return frozenset(active)
+
+
+def _python_bindings_before(
+    body: Node, name: str, before: int
+) -> list[tuple[int, bool, str | None]]:
+    # Every binding of `name` in one namespace's body that starts before
+    # `before`: (start, whether a branch holds it, what it binds). A nested
     # function or class binds its own name; its body is not read.
     found: list[tuple[int, bool, str | None]] = []
     stack = [(child, False) for child in body.named_children]
@@ -760,10 +775,8 @@ def _python_active_bindings(
         stmt, branched = stack.pop()
         if stmt.start_byte >= before:
             continue
-        definition = stmt
-        if stmt.type == cs.TS_PY_DECORATED_DEFINITION:
-            definition = stmt.child_by_field_name(cs.FIELD_DEFINITION) or stmt
-        if definition.type in _PY_DEFINITIONS:
+        definition = _python_definition(stmt)
+        if definition is not None:
             if (
                 safe_decode_text(definition.child_by_field_name(cs.TS_FIELD_NAME))
                 == name
@@ -775,12 +788,16 @@ def _python_active_bindings(
             found.append((stmt.start_byte, branched, bound))
         inner = branched or stmt.type in _PY_BRANCHING
         stack.extend((child, inner) for child in stmt.named_children)
-    active: set[str | None] = set()
-    for _start, branched, bound in sorted(found, key=lambda entry: entry[0]):
-        if not branched:
-            active.clear()
-        active.add(bound)
-    return frozenset(active)
+    return found
+
+
+def _python_definition(stmt: Node) -> Node | None:
+    # The function or class a statement defines, through its decorators;
+    # None for any other statement.
+    definition = stmt
+    if stmt.type == cs.TS_PY_DECORATED_DEFINITION:
+        definition = stmt.child_by_field_name(cs.FIELD_DEFINITION) or stmt
+    return definition if definition.type in _PY_DEFINITIONS else None
 
 
 def _python_statement_binding(stmt: Node, name: str) -> str | None:
@@ -788,38 +805,52 @@ def _python_statement_binding(stmt: Node, name: str) -> str | None:
     # `module.member` a `from module import member` takes, `=<value>` for an
     # assignment; `_UNBOUND` when the statement does not bind `name`.
     if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
-        bound: str | None = _UNBOUND
-        for child in stmt.named_children:
-            if child.type == cs.TS_ALIASED_IMPORT:
-                alias = safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
-                if alias == name:
-                    bound = safe_decode_text(
-                        child.child_by_field_name(cs.TS_FIELD_NAME)
-                    )
-            elif child.type == cs.TS_DOTTED_NAME:
-                module = safe_decode_text(child)
-                if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
-                    bound = name
-        return bound
+        return _python_import_binding(stmt, name)
     if stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
-        module = safe_decode_text(stmt.child_by_field_name(cs.FIELD_MODULE_NAME))
-        bound = _UNBOUND
-        for child in stmt.children_by_field_name(cs.TS_FIELD_NAME):
-            member = child.child_by_field_name(cs.TS_FIELD_NAME) or child
-            target = child.child_by_field_name(cs.FIELD_ALIAS) or child
-            if safe_decode_text(target) == name:
-                bound = f"{module}{cs.SEPARATOR_DOT}{safe_decode_text(member)}"
-        return bound
+        return _python_import_from_binding(stmt, name)
     if stmt.type == cs.TS_PY_EXPRESSION_STATEMENT:
-        bound = _UNBOUND
-        for child in stmt.named_children:
-            if child.type != cs.TS_PY_ASSIGNMENT:
-                continue
-            if safe_decode_text(child.child_by_field_name(cs.TS_FIELD_LEFT)) == name:
-                value = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_RIGHT))
-                bound = f"={value}"
-        return bound
+        return _python_assignment_binding(stmt, name)
     return _UNBOUND
+
+
+def _python_import_binding(stmt: Node, name: str) -> str | None:
+    # `import module as name` binds the module; `import name.sub` binds
+    # `name` itself.
+    bound: str | None = _UNBOUND
+    for child in stmt.named_children:
+        if child.type == cs.TS_ALIASED_IMPORT:
+            alias = safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
+            if alias == name:
+                bound = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_NAME))
+        elif child.type == cs.TS_DOTTED_NAME:
+            module = safe_decode_text(child)
+            if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
+                bound = name
+    return bound
+
+
+def _python_import_from_binding(stmt: Node, name: str) -> str | None:
+    # `from module import member [as name]` binds `module.member`.
+    module = safe_decode_text(stmt.child_by_field_name(cs.FIELD_MODULE_NAME))
+    bound: str | None = _UNBOUND
+    for child in stmt.children_by_field_name(cs.TS_FIELD_NAME):
+        member = child.child_by_field_name(cs.TS_FIELD_NAME) or child
+        target = child.child_by_field_name(cs.FIELD_ALIAS) or child
+        if safe_decode_text(target) == name:
+            bound = f"{module}{cs.SEPARATOR_DOT}{safe_decode_text(member)}"
+    return bound
+
+
+def _python_assignment_binding(stmt: Node, name: str) -> str | None:
+    # `name = <value>` binds `=<value>`.
+    bound: str | None = _UNBOUND
+    for child in stmt.named_children:
+        if child.type != cs.TS_PY_ASSIGNMENT:
+            continue
+        if safe_decode_text(child.child_by_field_name(cs.TS_FIELD_LEFT)) == name:
+            value = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_RIGHT))
+            bound = f"={value}"
+    return bound
 
 
 def _rust_norm_manifest_path(path: str) -> str:
