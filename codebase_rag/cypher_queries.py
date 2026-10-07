@@ -1136,6 +1136,22 @@ CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
        type(r) AS rel_type"""
+# One hop of the `depth` walks (issue #2624): the neighbours of a whole
+# frontier at once, each row naming the frontier node it hangs off as
+# `through`. OVERRIDES is read one direction per query so a walk that went
+# up to the overridden method never turns back down into its siblings.
+CYPHER_GRAPH_IMPLEMENTORS_OF = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
+WHERE base.qualified_name IN $qns AND impl.qualified_name STARTS WITH $project_prefix
+RETURN base.qualified_name AS through, labels(impl)[0] AS label,
+       impl.qualified_name AS qualified_name, impl.path AS path, type(r) AS rel_type"""
+CYPHER_GRAPH_OVERRIDERS_OF = """MATCH (a)-[r:OVERRIDES]->(b)
+WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
+RETURN b.qualified_name AS through, labels(a)[0] AS label,
+       a.qualified_name AS qualified_name, a.path AS path, type(r) AS rel_type"""
+CYPHER_GRAPH_OVERRIDDEN_BY = """MATCH (a)-[r:OVERRIDES]->(b)
+WHERE a.qualified_name IN $qns AND b.qualified_name STARTS WITH $project_prefix
+RETURN a.qualified_name AS through, labels(b)[0] AS label,
+       b.qualified_name AS qualified_name, b.path AS path, type(r) AS rel_type"""
 # Whether the graph holds a node by this name at all (issue #2461): the edge
 # walks above answer [] both for a definition nothing reaches and for a name
 # the graph never saw, and only the second is a mistake. Every label keyed by
