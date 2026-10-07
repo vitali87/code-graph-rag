@@ -184,6 +184,12 @@ protected transport and host/network restrictions appropriate to the data.
 Environment variables and `.env` configure credentials; they do not prevent
 secrets in source files, command output or logs from being exposed.
 
+Token counting, which bounds graph-query results and the agent's context,
+reads tiktoken's `cl100k_base` encoding, which tiktoken downloads on first use
+and caches. Without network access the counts are estimated from text length
+instead, with one warning; a copy of the encoding in the directory
+`TIKTOKEN_CACHE_DIR` names restores exact counts.
+
 ### MCP access
 
 The [HTTP MCP server](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/mcp/server.py)

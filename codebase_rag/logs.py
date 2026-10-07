@@ -569,6 +569,11 @@ TOOL_QUERY_REPAIRING = (
 TOOL_QUERY_TIMEOUT = (
     "[Tool:QueryGraph] Query exceeded {timeout:.1f}s and was cancelled: {query}"
 )
+TIKTOKEN_UNAVAILABLE = (
+    "Cannot load the {encoding} token encoding ({error}); token counts are "
+    "estimated from text length. Set TIKTOKEN_CACHE_DIR to a directory "
+    "holding the encoding for exact counts offline."
+)
 QUERY_RESULTS_TRUNCATED = (
     "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
     "({tokens} tokens, limit {max_tokens})"
