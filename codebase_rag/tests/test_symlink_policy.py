@@ -55,7 +55,11 @@ LINKS = ["NOTES.md", "app/vendored", "pkg/alias.py", "pkg/linkdir", "pkg/linked.
 
 def _link(link: Path, target: str, *, directory: bool = False) -> None:
     try:
-        link.symlink_to(target, target_is_directory=directory)
+        # `Path` spells a relative target with the host's separator: Windows
+        # stores a `../x` target verbatim and never resolves it, so the link
+        # dangled there and could not stand in for one a build before the
+        # fix followed.
+        link.symlink_to(Path(target), target_is_directory=directory)
     except OSError:  # Windows without symlink privileges.
         pytest.skip("symlinks need privileges on this host")
 

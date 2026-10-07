@@ -53,7 +53,7 @@ def test_an_upgraded_sync_drops_a_linked_package_and_keeps_its_target(
     repo = _repo(tmp_path, "repo")
     (repo / "app").mkdir()
     try:
-        (repo / "app" / "vendored").symlink_to("../pkg", target_is_directory=True)
+        (repo / "app" / "vendored").symlink_to(Path("../pkg"), target_is_directory=True)
     except OSError:
         pytest.skip("symlinks need privileges on this host")
     # The graph a build before the fix left: the link's own Package.
@@ -130,7 +130,7 @@ def test_a_link_to_the_other_checkouts_package_leaves_it(
     mine.mkdir()
     (mine / "main.py").write_text("X = 1\n")
     try:
-        (mine / "pkg").symlink_to("../other/pkg", target_is_directory=True)
+        (mine / "pkg").symlink_to(Path("../other/pkg"), target_is_directory=True)
     except OSError:
         pytest.skip("symlinks need privileges on this host")
     _updater(memgraph_ingestor, mine, "shared").run(force=True)
