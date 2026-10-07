@@ -66,7 +66,8 @@ def test_another_memgraph_keeps_its_embeddings_out_of_the_stack(
     # Nothing was even sent to the stack's Qdrant.
     assert open_qdrant.paths == []
     said = " ".join(messages)
-    assert f"{host}:{port}" in said and "QDRANT_URL" in said, messages
+    assert f"{host}:{port}" in said, messages
+    assert "QDRANT_URL" in said, messages
 
 
 @pytest.mark.usefixtures("stack_home")

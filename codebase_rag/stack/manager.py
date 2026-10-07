@@ -146,9 +146,9 @@ def _names_published_qdrant(url: str | None, bind: str, port: int) -> bool:
     return bind in _addresses_of(host)
 
 
-def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
-    """(bind address, port) of every Bolt publisher in `docker compose ps`
-    JSON output: an object per line, or one array on older Compose."""
+def _ps_containers(ps_output: str) -> list[JsonValue]:
+    """The containers in `docker compose ps` JSON output: an object per
+    line, or one array on older Compose."""
     containers: list[JsonValue] = []
     for line in ps_output.splitlines():
         try:
@@ -156,25 +156,38 @@ def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
         except ValueError:
             continue
         containers.extend(parsed if isinstance(parsed, list) else [parsed])
+    return containers
+
+
+def _bolt_endpoint(publisher: JsonValue) -> tuple[str, int] | None:
+    """(bind address, port) of a `docker compose ps` publisher of Bolt."""
+    if not isinstance(publisher, dict):
+        return None
+    port = publisher.get(cs.COMPOSE_PS_PUBLISHER_PORT_KEY)
+    host = publisher.get(cs.COMPOSE_PS_PUBLISHER_HOST_KEY)
+    if (
+        publisher.get(cs.COMPOSE_PS_PUBLISHER_TARGET_KEY)
+        == cs.MEMGRAPH_CONTAINER_BOLT_PORT
+        and isinstance(port, int)
+        and port
+    ):
+        return host if isinstance(host, str) else "", port
+    return None
+
+
+def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
+    """(bind address, port) of every Bolt publisher in `docker compose ps`
+    JSON output: an object per line, or one array on older Compose."""
     endpoints: list[tuple[str, int]] = []
-    for container in containers:
+    for container in _ps_containers(ps_output):
         publishers = (
             container.get(cs.COMPOSE_PS_PUBLISHERS_KEY)
             if isinstance(container, dict)
             else None
         )
         for publisher in publishers if isinstance(publishers, list) else []:
-            if not isinstance(publisher, dict):
-                continue
-            port = publisher.get(cs.COMPOSE_PS_PUBLISHER_PORT_KEY)
-            host = publisher.get(cs.COMPOSE_PS_PUBLISHER_HOST_KEY)
-            if (
-                publisher.get(cs.COMPOSE_PS_PUBLISHER_TARGET_KEY)
-                == cs.MEMGRAPH_CONTAINER_BOLT_PORT
-                and isinstance(port, int)
-                and port
-            ):
-                endpoints.append((host if isinstance(host, str) else "", port))
+            if (endpoint := _bolt_endpoint(publisher)) is not None:
+                endpoints.append(endpoint)
     return endpoints
 
 
