@@ -155,6 +155,22 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
 
+    def add_member_alias(
+        self, alias_qn: QualifiedName, target_qn: QualifiedName
+    ) -> None: ...
+
+    def member_alias_targets(
+        self, alias_qn: QualifiedName
+    ) -> tuple[QualifiedName, ...]: ...
+
+    def set_non_method_members(
+        self, class_qn: QualifiedName, names: Iterable[str]
+    ) -> None: ...
+
+    def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool: ...
+
+    def non_method_holders(self, member: str) -> frozenset[QualifiedName]: ...
+
     def mark_property(self, qualified_name: QualifiedName) -> None: ...
 
     def is_property(self, qualified_name: QualifiedName) -> bool: ...
@@ -1158,7 +1174,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, non_method_members: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1166,7 +1182,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

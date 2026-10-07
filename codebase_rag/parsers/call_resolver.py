@@ -524,6 +524,10 @@ class CallResolver:
     def _try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
     ) -> tuple[str, str] | None:
+        # A class-body alias of the name (issue #2620) lists every method
+        # the member may hold, its own `def` included when that survives.
+        if alias := self._member_alias(class_qn, method_name):
+            return alias
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
@@ -1646,6 +1650,16 @@ class CallResolver:
     def _resolve_caller_scope(
         self, call: _CallSite
     ) -> tuple[bool, tuple[str, str] | None]:
+        # `self.run()` where a class body aliases `run` (issue #2620) is a
+        # member of the enclosing class, which the module-keyed cache does
+        # not know about.
+        if call.language == cs.SupportedLanguage.PYTHON and call.class_context:
+            handled, result = self._resolve_self_member_alias(
+                call.call_name, call.class_context, call.local_var_types
+            )
+            if handled:
+                return True, result
+
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
@@ -5504,7 +5518,9 @@ class CallResolver:
             logger.debug(ls.CALL_SUPER_NO_PARENTS, class_qn=current_class_qn)
             return None
 
-        if result := self._resolve_inherited_method(current_class_qn, method_name):
+        if result := self._resolve_inherited_method(
+            current_class_qn, method_name, own_members=False
+        ):
             callee_type, parent_method_qn = result
             logger.debug(
                 ls.CALL_SUPER_RESOLVED,
@@ -5553,6 +5569,106 @@ class CallResolver:
         )
         return self.function_registry[method_qn], method_qn
 
+    def _member_alias(self, class_qn: str, member: str) -> tuple[str, str] | None:
+        # The alias is no node of its own, so a call through it binds to the
+        # first method it may hold; the call pass fans out to the others
+        # (member_alias_fanout).
+        for target_qn in self.function_registry.member_alias_targets(
+            f"{class_qn}{cs.SEPARATOR_DOT}{member}"
+        ):
+            if (kind := self.function_registry.get(target_qn)) is not None:
+                return kind, target_qn
+        return None
+
+    def _resolve_self_member_alias(
+        self,
+        call_name: str,
+        class_context: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # The receiver is the enclosing class, so walk its MRO to the first
+        # class whose body binds the name. A real def there leaves the call to
+        # the usual resolution. A value (`run = None`) found first hides
+        # whatever a base binds, so the call reaches nothing of the base's.
+        receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+            or not member
+            or cs.SEPARATOR_DOT in member
+            # A method that rebinds the receiver (`self = Other()`) has typed
+            # it; the usual resolution follows that type.
+            or (local_var_types and receiver in local_var_types)
+        ):
+            return False, None
+        order = self._value_aware_mro(class_context, member) or [
+            self._follow_reexports(class_qn) for class_qn in self._mro(class_context)
+        ]
+        hidden = False
+        for owner in order:
+            if alias := self._member_alias(owner, member):
+                return True, None if hidden else alias
+            if f"{owner}{cs.SEPARATOR_DOT}{member}" in self.function_registry:
+                return hidden, None
+            if self.function_registry.binds_non_method(owner, member):
+                hidden = True
+        return False, None
+
+    def member_alias_fanout(self, callee_qn: str, member: str) -> list[str]:
+        """Every method a call written as `.member` may run, given `callee_qn`.
+
+        A call resolved through a class-body alias lands on one method the
+        alias names; a conditional alias (`__call__ = _a if X else _b`)
+        names several and picks one at class creation, so each is a
+        candidate. A call that bound to the member's own `def` gets the
+        alias's methods instead when a later alias replaced that `def`. Any
+        other callee is returned alone.
+        """
+        owner, _, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not owner:
+            return [callee_qn]
+        targets = [
+            qn
+            for qn in self.function_registry.member_alias_targets(
+                f"{owner}{cs.SEPARATOR_DOT}{member}"
+            )
+            if qn in self.function_registry
+        ]
+        if callee_qn in targets or (targets and leaf == member):
+            return targets
+        return [callee_qn]
+
+    def instance_call_targets(
+        self,
+        callee: str,
+        is_call_result: bool,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> set[tuple[str, str]]:
+        """What `callee(...)` runs when `callee` is an instance: its `__call__`.
+
+        A typed name or attribute is resolved like any operator operand; a
+        call result (`Dispatcher()(1)`) is typed by its return. Calling the
+        class itself constructs it and never gets here, because the class
+        name is no typed local.
+        """
+        if not is_call_result:
+            return self.operator_dunder_targets(
+                callee, cs.PY_DUNDER_CALL, module_qn, local_var_types
+            )
+        returned = (
+            self.type_inference.python_type_inference._infer_expression_return_type(
+                callee, module_qn, local_var_types
+            )
+        )
+        if not returned:
+            return set()
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(returned, import_map, module_qn)
+        if not class_qn or self.function_registry.get(class_qn) != NodeType.CLASS:
+            return set()
+        hit = self._try_resolve_method(class_qn, cs.PY_DUNDER_CALL)
+        return {hit} if hit else set()
+
     def _mro_method_qns(self, class_qn: str, method_name: str) -> set[str]:
         results: set[str] = set()
         visited: set[str] = set()
@@ -5589,12 +5705,104 @@ class CallResolver:
             stack.extend(subclass_map.get(current, ()))
         return found
 
+    def _value_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
+        """class_qn's C3 MRO when a class in it binds `member` to a value.
+
+        Only Python class bodies record such values, so every other lookup
+        keeps the breadth-first walk it always had (None).
+        """
+        if not (holders := self.function_registry.non_method_holders(member)):
+            return None
+        order = self._c3_mro(class_qn)
+        return None if holders.isdisjoint(order) else order
+
+    def _c3_mro(self, class_qn: str) -> list[str]:
+        # Python's linearisation (C3). A hierarchy it rejects (a cycle, or
+        # bases in an order no class could have) cannot have been defined,
+        # so the breadth-first order stands in for it.
+        memo: dict[str, list[str] | None] = {}
+
+        def linearise(cls: str, active: frozenset[str]) -> list[str] | None:
+            if cls in memo:
+                return memo[cls]
+            if cls in active:
+                return None
+            bases = [
+                self._follow_reexports(base)
+                for base in self.class_inheritance.get(cls, [])
+            ]
+            sequences: list[list[str]] = []
+            for base in bases:
+                if (base_order := linearise(base, active | {cls})) is None:
+                    return None
+                sequences.append(list(base_order))
+            sequences.append(bases)
+            if (order := self._c3_merge(cls, sequences)) is not None:
+                memo[cls] = order
+            return order
+
+        return linearise(class_qn, frozenset()) or [
+            self._follow_reexports(qn) for qn in self._mro(class_qn)
+        ]
+
+    @staticmethod
+    def _c3_merge(class_qn: str, sequences: list[list[str]]) -> list[str] | None:
+        order = [class_qn]
+        while sequences := [seq for seq in sequences if seq]:
+            head = next(
+                (
+                    seq[0]
+                    for seq in sequences
+                    if not any(seq[0] in other[1:] for other in sequences)
+                ),
+                None,
+            )
+            if head is None:
+                return None
+            order.append(head)
+            sequences = [seq[1:] if seq[0] == head else seq for seq in sequences]
+        return order
+
     def _resolve_inherited_method(
-        self, class_qn: str, method_name: str
+        self, class_qn: str, method_name: str, own_members: bool = True
     ) -> tuple[str, str] | None:
+        # Every caller has already looked for a def of the name on class_qn
+        # itself. A class-body alias there (`run = _plain`, issue #2620) is
+        # still the class's own member, and a value there (`run = None`) hides
+        # every base's `run`, the way attribute lookup stops at the first
+        # class that binds the name. `super()` starts above the class, so it
+        # skips both.
+        if own_members:
+            if alias := self._member_alias(class_qn, method_name):
+                return alias
+            if self.function_registry.binds_non_method(class_qn, method_name):
+                return None
         if class_qn not in self.class_inheritance:
             return None
+        # Which class binds the name first decides whether a value hides
+        # it, and that order is the C3 MRO, not this walk's breadth-first
+        # order: `class C(A, B)` reaches a `run` that A inherits before B's
+        # `run = None`.
+        if (order := self._value_aware_mro(class_qn, method_name)) is not None:
+            return self._resolve_inherited_along_mro(order, method_name)
+        return self._resolve_inherited_breadth_first(class_qn, method_name)
 
+    def _resolve_inherited_along_mro(
+        self, order: list[str], method_name: str
+    ) -> tuple[str, str] | None:
+        for owner in order[1:]:
+            if alias := self._member_alias(owner, method_name):
+                return alias
+            owner_method_qn = f"{owner}{cs.SEPARATOR_DOT}{method_name}"
+            if owner_method_qn in self.function_registry:
+                return self.function_registry[owner_method_qn], owner_method_qn
+            if self.function_registry.binds_non_method(owner, method_name):
+                return None
+        return None
+
+    def _resolve_inherited_breadth_first(
+        self, class_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
         bfs_queue = deque(self.class_inheritance.get(class_qn, []))
         visited = set(bfs_queue)
 
@@ -5606,6 +5814,8 @@ class CallResolver:
             parent_class_qn = self._follow_reexports(bfs_queue.popleft())
             parent_method_qn = f"{parent_class_qn}.{method_name}"
 
+            if alias := self._member_alias(parent_class_qn, method_name):
+                return alias
             if parent_method_qn in self.function_registry:
                 return (
                     self.function_registry[parent_method_qn],
