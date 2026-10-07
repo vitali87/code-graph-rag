@@ -81,7 +81,7 @@ async def test_a_workspace_project_missing_from_the_graph_is_named(
         result.get("hint")
     )
     hint = str(result.get("hint"))
-    assert INDEX_COMMAND.format(path=root / "g", name=GAMMA) in hint
+    assert INDEX_COMMAND.format(path=(root / "g").as_posix(), name=GAMMA) in hint
     assert "--workspace" not in hint
 
 

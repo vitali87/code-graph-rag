@@ -193,8 +193,10 @@ def _not_indexed_hint(
         names=cs.SEPARATOR_COMMA_SPACE.join(r.project_name for r in missing),
     )
     for repo in missing:
+        # Forward slashes: shlex quotes a Windows path's backslashes into a
+        # form cmd.exe does not read, while `C:/...` runs in every shell.
         hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(
-            path=shlex.quote(str(repo.repo_path())), project=repo.project_name
+            path=shlex.quote(repo.repo_path().as_posix()), project=repo.project_name
         )
     for repo in missing:
         holder = _project_holding(repo.repo_path(), roots)
