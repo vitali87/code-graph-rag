@@ -359,6 +359,27 @@ PY_ENUM_HOOK_METHOD_NAMES: frozenset[str] = frozenset(
         "_missing_",
     }
 )
+# IPython/Jupyter's rich-display protocol: the display machinery looks each
+# one up by NAME on the object it shows (`getattr(obj, "_repr_html_")`), so,
+# like a dunder, none has a call site the graph can see (issue #2858; rich's
+# `_repr_mimebundle_`). A closed set, as IPython's formatters define it.
+PY_IPYTHON_DISPLAY_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "_repr_html_",
+        "_repr_markdown_",
+        "_repr_svg_",
+        "_repr_png_",
+        "_repr_jpeg_",
+        "_repr_latex_",
+        "_repr_json_",
+        "_repr_javascript_",
+        "_repr_pdf_",
+        "_repr_mimebundle_",
+        "_repr_pretty_",
+        "_ipython_display_",
+        "_ipython_key_completions_",
+    }
+)
 
 # (H) ES well-known symbols (incl. Explicit Resource Management: dispose/asyncDispose)
 # (H) These are invoked implicitly by the runtime (e.g. [Symbol.iterator] by for..of)
