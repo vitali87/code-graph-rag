@@ -1887,7 +1887,7 @@ def doctor() -> None:
         app_context.console.print()
         app_context.console.print(style("Failed checks details:", cs.Color.YELLOW))
         for result in failed_checks:
-            error_msg = f"  {escape(result.name)}: {escape(result.error)}"
+            error_msg = f"  {escape(result.name)}: {escape(result.error or '')}"
             app_context.console.print(
                 style(error_msg, cs.Color.YELLOW, cs.StyleModifier.NONE)
             )

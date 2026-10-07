@@ -101,7 +101,8 @@ def test_doctor_names_the_missing_grammars(monkeypatch: pytest.MonkeyPatch) -> N
     result = HealthChecker().check_tree_sitter_grammars()
     assert not result.passed, result
     assert result.error is not None
-    assert "go" in result.error and "typescript" in result.error, result.error
+    assert "go" in result.error, result.error
+    assert "typescript" in result.error, result.error
     assert "treesitter-full" in result.error, result.error
 
 
