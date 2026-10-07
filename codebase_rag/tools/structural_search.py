@@ -6,6 +6,7 @@ import asyncio
 from pydantic_ai import Tool
 
 from .. import constants as cs
+from .. import tool_errors as te
 from ..taint import ReadContentRecord
 from ..types_defs import StructuralSearchMatch
 from ..utils.dependencies import has_ast_grep
@@ -32,8 +33,10 @@ def create_structural_search_tool(
 
     async def structural_search(pattern: str, language: str | None = None) -> str:
         """Search by AST pattern, recording the matched source it returns."""
+        # A refusal is a ToolFailure, as in structural_replace, so the MCP
+        # server reports it with `isError: true` (issue #2785).
         if not has_ast_grep():
-            return cs.AST_GREP_NOT_AVAILABLE
+            return te.ToolFailure(cs.AST_GREP_NOT_AVAILABLE)
         try:
             # offload to a thread: search does blocking os.walk + file reads
             # and CPU-bound AST parsing, which would stall the event loop.
@@ -43,7 +46,7 @@ def create_structural_search_tool(
         # catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
         # (RuntimeError and others); report it rather than crash the turn.
         except Exception as e:
-            return str(e)
+            return te.ToolFailure(str(e))
         if not matches:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)
         formatted = format_matches(matches)
