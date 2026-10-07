@@ -100,8 +100,9 @@ def test_a_keyless_provider_passes() -> None:
 def test_the_check_matches_what_the_runtime_accepts() -> None:
     # The runtime looks providers up as written, so `OLLAMA` passed the key
     # gate and then failed when the agent was built.
+    config = ModelConfig(provider="OLLAMA", model_id="llama3.2")
     with pytest.raises(ValueError) as exc_info:
-        ModelConfig(provider="OLLAMA", model_id="llama3.2").validate_api_key()
+        config.validate_api_key()
     assert "Did you mean 'ollama'?" in str(exc_info.value)
 
 
@@ -110,7 +111,8 @@ def test_a_name_far_from_any_provider_gets_no_suggestion() -> None:
     with pytest.raises(ValueError) as exc_info:
         config.validate_api_key()
     message = str(exc_info.value)
-    assert "Unknown provider 'zzz'" in message and "Did you mean" not in message
+    assert "Unknown provider 'zzz'" in message
+    assert "Did you mean" not in message
 
 
 def test_get_provider_suggests_the_same_way() -> None:
