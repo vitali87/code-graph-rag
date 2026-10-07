@@ -1692,6 +1692,18 @@ def _truthiness_operands(node: Node) -> list[Node | None]:
     return []
 
 
+def _go_written_type(value: Node) -> Node | None:
+    # The type a composite literal (`Box{}`) or a type assertion (`a.(*Dog)`)
+    # writes for its value. An asserted pointer is peeled to its pointee,
+    # whose methods a call on it binds.
+    type_node = value.child_by_field_name(cs.FIELD_TYPE)
+    if value.type != cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
+        return type_node
+    while type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
+        type_node = type_node.named_child(0)
+    return type_node
+
+
 def _go_asserted_receiver_call_name(selector: Node) -> str | None:
     # `a.(Dog).Fetch()` and `x.(*Cat).Purr()` name the receiver's concrete
     # type at the call site, so the call is `Dog.Fetch`, which the resolver
@@ -1709,9 +1721,7 @@ def _go_asserted_receiver_call_name(selector: Node) -> str | None:
         or method.text is None
     ):
         return None
-    type_node = operand.child_by_field_name(cs.FIELD_TYPE)
-    while type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
-        type_node = type_node.named_child(0)
+    type_node = _go_written_type(operand)
     if type_node is None:
         return None
     # `other.Dog` keeps its package: read as `Dog` alone it named the
@@ -5771,18 +5781,16 @@ class CallProcessor:
         if chain is None:
             return undecided
         root, methods = chain
-        if root.type == cs.TS_GO_COMPOSITE_LITERAL:
-            class_qn, owned = self._go_literal_receiver_class(
-                root.child_by_field_name(cs.FIELD_TYPE), ctx.module_qn
-            )
-        elif root.type == cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
-            # `a.(other.Dog).Fetch()` names the receiver's type, read in this
-            # file's imports like a literal's: `other.Dog` is the imported
+        if root.type in (
+            cs.TS_GO_COMPOSITE_LITERAL,
+            cs.TS_GO_TYPE_ASSERTION_EXPRESSION,
+        ):
+            # A literal or a type assertion writes the receiver's type, read in
+            # this file's imports: `a.(other.Dog).Fetch()` binds the imported
             # package's Dog, never this package's (Greptile, PR #2961).
-            asserted = root.child_by_field_name(cs.FIELD_TYPE)
-            while asserted is not None and asserted.type == cs.TS_GO_POINTER_TYPE:
-                asserted = asserted.named_child(0)
-            class_qn, owned = self._go_literal_receiver_class(asserted, ctx.module_qn)
+            class_qn, owned = self._go_literal_receiver_class(
+                _go_written_type(root), ctx.module_qn
+            )
         else:
             owned, class_qn = self._go_package_function_root(root, ctx.module_qn)
             if not owned:
