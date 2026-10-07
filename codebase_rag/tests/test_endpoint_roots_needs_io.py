@@ -102,10 +102,10 @@ def test_a_json_run_gets_no_empty_payload() -> None:
 
 def test_the_library_refuses_too() -> None:
     config = default_dead_code_config(include_tests=True, include_classes=False)
+    ingestor = _ingestor(HANDLERS)
+    no_endpoint_roots = config._replace(endpoint_roots=False)
     with pytest.raises(ex.EndpointDataMissingError) as exc_info:
-        collect_dead_code(
-            _ingestor(HANDLERS), PROJECT, config._replace(endpoint_roots=False)
-        )
+        collect_dead_code(ingestor, PROJECT, no_endpoint_roots)
     assert exc_info.value.handlers == 2
 
 
@@ -119,7 +119,8 @@ def test_with_endpoint_data_the_uncalled_handler_is_reported() -> None:
     result = _run(_ingestor(HANDLERS, links), "--no-endpoint-roots", "--format", "json")
     assert result.exit_code == 0, result.output
     reported = {row["qualified_name"] for row in json.loads(result.stdout)}
-    assert HEALTH in reported and GET_USER not in reported, reported
+    assert HEALTH in reported, reported
+    assert GET_USER not in reported, reported
 
 
 def test_a_project_with_no_route_handlers_runs_as_before() -> None:
