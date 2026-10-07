@@ -107,7 +107,8 @@ def test_a_deleted_folder_is_still_pruned(tmp_path: Path) -> None:
     shutil.rmtree(root / "tests" / "sub")
     _sync(store, root, frozenset())
     folders = _paths(store, cs.NodeLabel.FOLDER)
-    assert "tests/sub" not in folders and "tests" in folders, folders
+    assert "tests/sub" not in folders, folders
+    assert "tests" in folders, folders
 
 
 @pytest.mark.parametrize("label", [cs.NodeLabel.MODULE, cs.NodeLabel.FILE])
