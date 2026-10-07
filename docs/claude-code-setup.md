@@ -53,8 +53,8 @@ git clone https://github.com/vitali87/code-graph-rag.git
 cd code-graph-rag
 uv sync
 
-# 2. Start Memgraph
-docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
+# 2. Start Memgraph (the pinned 3.x server, bound to localhost)
+cgr daemon up
 ```
 
 ## Usage

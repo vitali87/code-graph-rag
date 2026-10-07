@@ -23,6 +23,17 @@ HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
 HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
 HEALTH_CHECK_GRAPH_ERROR = "{engine} error: {error}"
 HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
+# Memgraph 2.x cannot parse the label alternation (`MATCH (n:A|B)`) the
+# graph, dead-code and duplicates queries use (issue #2906).
+MEMGRAPH_MIN_MAJOR_VERSION = 3
+CYPHER_SHOW_VERSION = "SHOW VERSION"
+MEMGRAPH_VERSION_SEPARATOR = "."
+HEALTH_CHECK_MEMGRAPH_UNSUPPORTED = "Memgraph {version} is not supported"
+HEALTH_CHECK_MEMGRAPH_UNSUPPORTED_MSG = "Connected, but the server is too old"
+HEALTH_CHECK_MEMGRAPH_UNSUPPORTED_ERROR = (
+    "cgr needs Memgraph {major}.x or later; run `cgr daemon up` to start "
+    "the supported server"
+)
 
 # Display names for the engines the ingestor can talk to.
 HEALTH_ENGINE_NAMES = {"memgraph": "Memgraph", "neo4j": "Neo4j"}

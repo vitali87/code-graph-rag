@@ -465,6 +465,12 @@ SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
+MG_UNSUPPORTED_VERSION = (
+    "Memgraph {version} at {host}:{port} is not supported: cgr needs "
+    "{major}.x or later, and its graph, dead-code and duplicates queries fail "
+    "on this server (\"mismatched input '|'\"). Run `cgr daemon up` to start "
+    "the supported server."
+)
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"
