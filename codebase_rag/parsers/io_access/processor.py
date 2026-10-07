@@ -1117,23 +1117,7 @@ class IOAccessProcessor:
         # (subscript) read env var X. Match on the object prefix; skip when the prefix
         # head (`process`) is shadowed by a local binding or a non-global import,
         # mirroring the call-sink shadow rules.
-        if node.type == cs.TS_DART_SELECTOR:
-            # `Platform.environment['K']` is a sibling chain: the `.environment`
-            # selector names the member, a following index selector the key.
-            obj_text = dart_member_read_name(node)
-        else:
-            obj = node.child_by_field_name(descriptor.object_field)
-            if obj is None and node.type == descriptor.subscript_type:
-                # PHP `$_GET["q"]` is a FIELDLESS subscript: the indexed object
-                # is the first named child, as the flow walk reads it.
-                obj = next(
-                    (c for c in node.named_children if c.type != cs.TS_COMMENT), None
-                )
-            obj_text = (
-                obj.text.decode(cs.ENCODING_UTF8)
-                if obj is not None and obj.text is not None
-                else None
-            )
+        obj_text = self._member_object_text(node, descriptor)
         if obj_text is None:
             return
         for prefix, kind in member_reads:
@@ -1148,6 +1132,25 @@ class IOAccessProcessor:
             for direction in self._member_directions(node, descriptor):
                 self._emit(caller_spec, direction, kind, identity)
             return
+
+    @staticmethod
+    def _member_object_text(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        # The accessed object's source text (`process.env`), matched against the
+        # member-read prefixes; None when the node has no readable object.
+        if node.type == cs.TS_DART_SELECTOR:
+            # `Platform.environment['K']` is a sibling chain: the `.environment`
+            # selector names the member, a following index selector the key.
+            return dart_member_read_name(node)
+        obj = node.child_by_field_name(descriptor.object_field)
+        if obj is None and node.type == descriptor.subscript_type:
+            # PHP `$_GET["q"]` is a FIELDLESS subscript: the indexed object
+            # is the first named child, as the flow walk reads it.
+            obj = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
+        if obj is None or obj.text is None:
+            return None
+        return obj.text.decode(cs.ENCODING_UTF8)
 
     @staticmethod
     def _member_directions(
