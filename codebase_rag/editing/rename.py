@@ -314,6 +314,10 @@ def _names_something(
     return re.search(_ANY_IDENTIFIER_RE, callee) is not None
 
 
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
 def _outer_call_paren(text: str) -> int:
     """Index of the `(` opening the argument list `text` ends with, else of
     its last `(`; -1 when it has none."""
@@ -696,6 +700,41 @@ class Renamer:
         )
         sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
 
+    def _add_unspelled_site(
+        self,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        source: bytes,
+        *,
+        owner: str,
+        path: str,
+        line: int,
+        col: int,
+        end_line: int | None,
+        end_col: int | None,
+        resolution_text: str | None,
+    ) -> None:
+        """A site whose span does not spell the old name: an alias, or a
+        mislocated span."""
+        if _names_something(source, line, col, end_line, end_col):
+            # The site spells the symbol under an alias (`h(1, 2)` for
+            # `import helper as h`); the alias keeps binding, so nothing
+            # to rewrite here.
+            return
+        # A span with no name in it at all is a mislocated site, not an
+        # alias: dropping it would leave the caller under the old name
+        # and the plan silent about it (issue #2769).
+        self._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=owner,
+            path=path,
+            line=line,
+            col=col,
+            resolution=resolution_text or "unknown",
+            site_resolution=resolution_text or _SITELESS,
+        )
+
     def _add_site(
         self,
         sites: list[RenameSite],
@@ -708,7 +747,8 @@ class Renamer:
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
-        end_line, end_col = row.get("end_line"), row.get("end_col")
+        end_line = _int_or_none(row.get("end_line"))
+        end_col = _int_or_none(row.get("end_col"))
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -750,8 +790,8 @@ class Renamer:
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else None,
-            end_col if isinstance(end_col, int) else None,
+            end_line,
+            end_col,
             old_name,
             get_language_for_extension(Path(path).suffix),
             is_call=kind == "call",
@@ -769,29 +809,17 @@ class Renamer:
             )
             return
         if token is None:
-            if _names_something(
-                source,
-                line,
-                col,
-                end_line if isinstance(end_line, int) else None,
-                end_col if isinstance(end_col, int) else None,
-            ):
-                # The site spells the symbol under an alias (`h(1, 2)` for
-                # `import helper as h`); the alias keeps binding, so nothing
-                # to rewrite here.
-                return
-            # A span with no name in it at all is a mislocated site, not an
-            # alias: dropping it would leave the caller under the old name
-            # and the plan silent about it (issue #2769).
-            self._record_unlocatable(
+            self._add_unspelled_site(
                 sites,
                 unlocatable,
+                source,
                 owner=owner,
                 path=path,
                 line=line,
                 col=col,
-                resolution=resolution_text or "unknown",
-                site_resolution=resolution_text or _SITELESS,
+                end_line=end_line,
+                end_col=end_col,
+                resolution_text=resolution_text,
             )
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
