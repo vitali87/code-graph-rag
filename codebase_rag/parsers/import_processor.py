@@ -424,13 +424,12 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
                 yield local, name
 
 
-def _is_js_star_reexport(site: PropertyDict | None) -> bool:
-    # `export * from` records `*` as its imported name and binds no alias,
-    # where `import * as ns` binds one.
+def _names_js_module(site: PropertyDict | None) -> bool:
+    # `export * from "./x"` and `import * as ns from "./x"` both record `*`
+    # as their imported name: what they store is the module itself, never a
+    # `module.symbol` pair (issues #2464, #2934).
     return (
-        site is not None
-        and site.get(cs.KEY_IMPORTED_NAME) == cs.IMPORTED_NAME_WILDCARD
-        and cs.KEY_ALIAS not in site
+        site is not None and site.get(cs.KEY_IMPORTED_NAME) == cs.IMPORTED_NAME_WILDCARD
     )
 
 
@@ -2180,10 +2179,13 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _is_js_star_reexport(entry.site):
+        if entry.language in cs.JS_TS_LANGUAGES and _names_js_module(entry.site):
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
-            # of the `math` barrel: the barrel itself (issue #2464).
+            # of the `math` barrel: the barrel itself (issue #2464). A
+            # namespace import beside an `index.ts` or a same-named file read
+            # the same way, so `import * as m from "./utils/math"` imported
+            # `utils.index` (issue #2934).
             module_path = (
                 self._verify_internal_import_target(
                     entry.full_name,
