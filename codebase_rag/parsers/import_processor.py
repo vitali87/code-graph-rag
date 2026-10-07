@@ -4080,24 +4080,31 @@ class ImportProcessor:
             import_path, current_module, require
         ).module_qn
 
+    def _resolve_js_bare_import_target(
+        self, import_path: str, current_module: str, require: bool
+    ) -> JsImportTarget:
+        if aliased := self._ts_alias_module_qn(import_path):
+            return JsImportTarget(aliased, False)
+        # TypeScript tries `baseUrl` after `paths` and before node_modules,
+        # which the workspace mapping stands in for.
+        if based := self._js_base_url_module_qn(import_path, current_module):
+            return JsImportTarget(based, False)
+        if workspace := self._map_js_workspace_import(import_path, require):
+            dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+            return JsImportTarget(
+                f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
+            )
+        return JsImportTarget(
+            import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
+            not _has_aliased_scheme(import_path),
+        )
+
     def _resolve_js_import_target(
         self, import_path: str, current_module: str, require: bool = False
     ) -> JsImportTarget:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
-            if aliased := self._ts_alias_module_qn(import_path):
-                return JsImportTarget(aliased, False)
-            # TypeScript tries `baseUrl` after `paths` and before node_modules,
-            # which the workspace mapping stands in for.
-            if based := self._js_base_url_module_qn(import_path, current_module):
-                return JsImportTarget(based, False)
-            if workspace := self._map_js_workspace_import(import_path, require):
-                dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                return JsImportTarget(
-                    f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
-                )
-            return JsImportTarget(
-                import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
-                not _has_aliased_scheme(import_path),
+            return self._resolve_js_bare_import_target(
+                import_path, current_module, require
             )
         import_path = self._strip_js_extension(import_path)
 
