@@ -5613,18 +5613,7 @@ class CallProcessor:
                         cs.RelationshipType.CALLS,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, sibling_qn),
                     )
-        if callee_info is not None and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET:
-            engine = self._resolver.type_inference.csharp_type_inference
-            if not engine.semantic_fact_resolved(call_node, ctx.module_qn):
-                # An extension call bound to one of an overload set whose
-                # members differ only in parameter types reaches the whole
-                # set, as the bare-call family above does (issue #2839).
-                for overload_qn in engine.csharp_extension_overloads(callee_info[1]):
-                    ctx.ensure_rel(
-                        ctx.caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, overload_qn),
-                    )
+        self._ensure_csharp_extension_overloads(ctx, call_node, callee_info)
         if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
             # Provably external (base.X() with an external base, a
             # static call on an unregistered type, an object
@@ -5650,6 +5639,27 @@ class CallProcessor:
                 constructing=call_node.type in _OBJECT_CREATION_NODE_TYPES,
             )
         return callee_info
+
+    def _ensure_csharp_extension_overloads(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        callee_info: tuple[str, str] | None,
+    ) -> None:
+        if callee_info is None or callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
+            return
+        engine = self._resolver.type_inference.csharp_type_inference
+        if engine.semantic_fact_resolved(call_node, ctx.module_qn):
+            return
+        # An extension call bound to one of an overload set whose members
+        # differ only in parameter types reaches the whole set, as the
+        # bare-call same-arity family does (issue #2839).
+        for overload_qn in engine.csharp_extension_overloads(callee_info[1]):
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, overload_qn),
+            )
 
     def _resolve_python_callee(
         self,
