@@ -205,6 +205,9 @@ class TestRunAllChecksMeasuresOnlyWhatMatters:
             HealthChecker, "check_memgraph_connection", lambda self: _FAIL
         )
         monkeypatch.setattr(HealthChecker, "check_graph_integrity", lambda self: [])
+        monkeypatch.setattr(
+            HealthChecker, "check_tree_sitter_grammars", lambda self: _PASS
+        )
         probed: list[str] = []
 
         def fake_tool(

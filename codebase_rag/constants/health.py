@@ -101,6 +101,15 @@ HEALTH_MARK_PASS_ASCII = "PASS"
 HEALTH_MARK_FAIL_ASCII = "FAIL"
 
 HEALTH_CHECK_TOOL_INSTALLED = "{tool_name} is installed"
+# Tree-sitter grammars (issue #2905): the base package ships Python's only.
+HEALTH_CHECK_GRAMMARS_INSTALLED = "Tree-sitter grammars installed ({count})"
+HEALTH_CHECK_GRAMMARS_MISSING = "Tree-sitter grammars missing ({missing} of {count})"
+HEALTH_CHECK_GRAMMARS_MISSING_MSG = "Files in these languages index as bare File nodes"
+HEALTH_CHECK_GRAMMARS_MISSING_ERROR = (
+    "not installed: {languages}. Install them with "
+    'pip install "code-graph-rag[treesitter-full]"'
+)
+HEALTH_CHECK_GRAMMARS_LIST_SEPARATOR = ", "
 HEALTH_CHECK_TOOL_NOT_INSTALLED = "{tool_name} is not installed"
 HEALTH_CHECK_TOOL_INSTALLED_MSG = "Installed ({path})"
 HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG = "'{cmd}' not found in PATH"

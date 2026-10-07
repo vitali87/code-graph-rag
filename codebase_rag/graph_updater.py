@@ -9,7 +9,7 @@ import secrets
 import stat
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -1283,6 +1283,9 @@ class GraphUpdater:
         # and evicts on large repos, so Pass 3 must iterate this full list (not
         # the cache) and re-parse evicted files, or their calls are dropped.
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
+        # Per run: files of a supported language whose grammar is not
+        # installed, reported once the run has seen every file (#2905).
+        self._missing_grammar_files: Counter[cs.SupportedLanguage] = Counter()
         # Rel-path -> registered qns for FRONTEND registrations, which have
         # no tree-sitter span records; the watch prefix sweep reads this to
         # spare foreign files' entries (issue #1025).
@@ -2133,6 +2136,7 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
+        self._missing_grammar_files.clear()
         # Per-run for the same reason: the set records what THIS run parsed,
         # so a reused updater must not treat a previous run's interfaces as
         # unflushed writes that rehydration has to preserve.
@@ -2339,6 +2343,7 @@ class GraphUpdater:
             self.factory.definition_processor.module_qn_to_file_path
         )
 
+        self._warn_missing_grammars()
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
         # After that flush: the carry reads the static edges Pass 3 just
@@ -6596,7 +6601,34 @@ class GraphUpdater:
         if self.document_tier.handles(filepath.suffix):
             self.document_tier.process_file(filepath, structural_elements)
             return True
+        self._note_missing_grammar(filepath)
         return False
+
+    def _note_missing_grammar(self, filepath: Path) -> None:
+        # A file no tier took is a bare File node; count it when its
+        # language is one a grammar would have parsed (issue #2905).
+        lang_config = get_language_spec(filepath.suffix)
+        if (
+            lang_config is not None
+            and isinstance(lang_config.language, cs.SupportedLanguage)
+            and lang_config.language not in self.parsers
+        ):
+            self._missing_grammar_files[lang_config.language] += 1
+
+    def _warn_missing_grammars(self) -> None:
+        if not self._missing_grammar_files:
+            return
+        logger.warning(
+            ls.GRAMMARS_MISSING_FILES.format(
+                count=self._missing_grammar_files.total(),
+                languages=cs.HEALTH_CHECK_GRAMMARS_LIST_SEPARATOR.join(
+                    ls.GRAMMARS_MISSING_LANGUAGE_COUNT.format(
+                        language=language, count=count
+                    )
+                    for language, count in sorted(self._missing_grammar_files.items())
+                ),
+            )
+        )
 
     def _ast_for(self, file_path: Path) -> Node | None:
         """The cached AST root for a file, or None when it is not cached."""
@@ -7542,6 +7574,7 @@ class GraphUpdater:
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
         self.reingest_scope = ()
+        self._missing_grammar_files.clear()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
             logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))
@@ -7720,6 +7753,7 @@ class GraphUpdater:
             skipped=tuple(sorted(skipped)),
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
         )
+        self._warn_missing_grammars()
         logger.info(
             ls.REINGEST_DONE,
             reparsed=len(report.reparsed),

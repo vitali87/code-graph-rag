@@ -66,7 +66,7 @@ After adding or changing `CGR_CAPTURE`, restart the server and run
 ```bash
 git clone https://github.com/vitali87/code-graph-rag.git
 cd code-graph-rag
-uv sync
+uv sync --extra treesitter-full
 
 cgr daemon up
 ```

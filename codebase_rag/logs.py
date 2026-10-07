@@ -323,6 +323,15 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+# Once per sync, after every file was seen: files of a supported language
+# indexed as bare File nodes for want of its grammar (issue #2905).
+GRAMMARS_MISSING_FILES = (
+    "{count} file(s) ({languages}) were indexed as plain File nodes, with no "
+    "modules, functions, classes or imports: their tree-sitter grammars are "
+    "not installed. Install them, e.g. "
+    'pip install "code-graph-rag[treesitter-full]", then sync again.'
+)
+GRAMMARS_MISSING_LANGUAGE_COUNT = "{language}: {count}"
 LANG_LIST_AST_GREP_UNREADABLE = (
     "Cannot read the ast-grep tier's language configs, so its languages are "
     "left out of the list: {error}"

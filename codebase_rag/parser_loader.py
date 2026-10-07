@@ -375,6 +375,16 @@ def _create_highlights_query(
     return None
 
 
+def missing_grammars() -> list[cs.SupportedLanguage]:
+    """Supported languages whose grammar package is not importable.
+
+    The base package ships Python's grammar only; the rest come from the
+    `treesitter-full` extra (issue #2905). An import check, so a grammar
+    that is installed but fails to load still counts as present here.
+    """
+    return sorted(lang for lang in LANGUAGE_SPECS if not _get_language_library(lang))
+
+
 COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
 COMBINED_FUNC_CLASS_IMPORT_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
 

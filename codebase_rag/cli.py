@@ -19,6 +19,7 @@ import click
 import typer
 from loguru import logger
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -1860,7 +1861,9 @@ def doctor() -> None:
         status_color = cs.Color.GREEN if result.passed else cs.Color.RED
         status_text = style(status, status_color, cs.StyleModifier.NONE)
 
-        check_name = f"{status_text} {result.name}"
+        # Escaped: a name or error naming an extra (`[treesitter-full]`) is
+        # text, not Rich markup to swallow (issue #2905).
+        check_name = f"{status_text} {escape(result.name)}"
         table.add_row(check_name)
 
     panel = Panel(
@@ -1884,7 +1887,7 @@ def doctor() -> None:
         app_context.console.print()
         app_context.console.print(style("Failed checks details:", cs.Color.YELLOW))
         for result in failed_checks:
-            error_msg = f"  {result.name}: {result.error}"
+            error_msg = f"  {escape(result.name)}: {escape(result.error or '')}"
             app_context.console.print(
                 style(error_msg, cs.Color.YELLOW, cs.StyleModifier.NONE)
             )
