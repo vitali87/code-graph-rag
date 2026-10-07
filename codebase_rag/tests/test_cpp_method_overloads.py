@@ -1745,6 +1745,7 @@ def test_punctuation_spaces_agree_with_the_rule_on_random_text() -> None:
         ("a" + " " * 25_000 + "," + " " * 25_000 + "b", "a,b"),
         (" " * 50_000, " " * 50_000),
     ],
+    ids=["no-punctuation", "around-a-comma", "spaces-only"],
 )
 def test_punctuation_spaces_on_a_long_run_of_spaces(text: str, expected: str) -> None:
     assert cpp_overloads._drop_punctuation_spaces(text) == expected
