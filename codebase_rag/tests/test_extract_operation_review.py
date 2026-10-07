@@ -47,12 +47,13 @@ def test_extract_refuses_a_class_body(temp_repo: Path) -> None:
     source = "class Config:\n    a = 1\n    b = a + 1\n    c = b * 2\n"
     root = _repo(temp_repo, {"pkg/__init__.py": "", "pkg/config.py": source})
     store, _updater = _index(root)
+    qualified_name = _project_qn("pkg.config.Config")
     with pytest.raises(ExtractRefused, match="not a function or method"):
         extract(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.config.Config"),
+            qualified_name,
             (3, 3),
             "derive",
             dry_run=True,
@@ -162,12 +163,13 @@ def test_extract_refuses_this_or_arguments_in_a_standalone_js_function(
 ) -> None:
     root = _repo(temp_repo, {"src/scaled.js": SCALED_JS})
     store, _updater = _index(root)
+    qualified_name = _project_qn("src.scaled.scaled")
     with pytest.raises(ExtractRefused, match=f"`{word}`"):
         extract(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("src.scaled.scaled"),
+            qualified_name,
             span,
             "part",
             dry_run=True,
@@ -203,12 +205,13 @@ def test_extract_refuses_arguments_in_a_js_method(temp_repo: Path) -> None:
     )
     root = _repo(temp_repo, {"src/args.js": source})
     store, _updater = _index(root)
+    qualified_name = _project_qn("src.args.Args.count")
     with pytest.raises(ExtractRefused, match="`arguments`"):
         extract(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("src.args.Args.count"),
+            qualified_name,
             (3, 3),
             "part",
             dry_run=True,
@@ -264,9 +267,10 @@ def test_extract_refuses_a_span_that_awaits(
 ) -> None:
     root = _repo(temp_repo, {"pkg/__init__.py": "", rel: source})
     store, _updater = _index(root)
+    qualified_name = _project_qn(qn)
     with pytest.raises(ExtractRefused, match="await"):
         extract(
-            root, store.fetch_all, PROJECT, _project_qn(qn), span, "part", dry_run=True
+            root, store.fetch_all, PROJECT, qualified_name, span, "part", dry_run=True
         )
 
 
@@ -433,9 +437,10 @@ def _refused(
 ) -> str:
     root = _repo(temp_repo, {rel: source})
     store, _updater = _index(root)
+    qualified_name = _project_qn(qn)
     with pytest.raises(ExtractRefused) as refused:
         extract(
-            root, store.fetch_all, PROJECT, _project_qn(qn), span, "part", dry_run=True
+            root, store.fetch_all, PROJECT, qualified_name, span, "part", dry_run=True
         )
     assert (root / rel).read_text() == source
     return str(refused.value)
@@ -628,9 +633,10 @@ def test_extract_refuses_writes_to_global_or_nonlocal_names(
 ) -> None:
     root = _repo(temp_repo, SHARED_FILES)
     store, _updater = _index(root)
+    qualified_name = _project_qn(qn)
     with pytest.raises(ExtractRefused, match=word):
         extract(
-            root, store.fetch_all, PROJECT, _project_qn(qn), span, "part", dry_run=True
+            root, store.fetch_all, PROJECT, qualified_name, span, "part", dry_run=True
         )
     assert (root / "pkg/shared.py").read_text() == SHARED_FILES["pkg/shared.py"]
 
@@ -935,7 +941,8 @@ def test_extracted_typescript_helper_keeps_its_type_parameters(
     )
     assert report.applied, report.message
     text = (root / "src/build.ts").read_text()
-    assert header in text and call in text, text
+    assert header in text, text
+    assert call in text, text
     if _TSC is not None:
         done = subprocess.run(
             [_TSC, "--strict", "--noEmit", "--target", "es2020", "src/build.ts"],

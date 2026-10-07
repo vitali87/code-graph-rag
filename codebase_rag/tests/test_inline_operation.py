@@ -41,7 +41,8 @@ def test_inline_trivial_wrapper_with_three_callers_removes_the_definition(
     assert "def three():\n    return ((other()) * 2 + 1) + other()\n" in app
     util = (root / "pkg/util.py").read_text()
     assert util == "def other():\n    return 2\n"
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     _smoke(root)
 
 
@@ -49,12 +50,13 @@ def test_inline_refuses_guessed_callers_and_multi_statement_bodies(
     extract_inline_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = extract_inline_repo
+    build = _project_qn("pkg.report.build")
     with pytest.raises(InlineRefused, match="single-return"):
         inline(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.report.build"),
+            build,
             dry_run=True,
         )
     # Every site of the caller's CALLS edge: the store keys one edge per site.
@@ -65,12 +67,13 @@ def test_inline_refuses_guessed_callers_and_multi_statement_bodies(
             and edge[4] == _project_qn("pkg.util.wrapper")
         ):
             props[cs.KEY_RESOLUTION] = cs.EdgeResolution.DYNAMIC.value
+    wrapper = _project_qn("pkg.util.wrapper")
     with pytest.raises(InlineRefused) as excinfo:
         inline(
             root,
             store.fetch_all,
             PROJECT,
-            _project_qn("pkg.util.wrapper"),
+            wrapper,
             dry_run=True,
         )
     assert excinfo.value.sites == ["pkg/app.py:9"]
@@ -85,5 +88,7 @@ def test_inline_dry_run_writes_nothing(
     report = inline(
         root, store.fetch_all, PROJECT, _project_qn("pkg.util.wrapper"), dry_run=True
     )
-    assert not report.applied and len(report.sites) == 3 and report.definition_removed
+    assert not report.applied
+    assert len(report.sites) == 3
+    assert report.definition_removed
     assert (root / "pkg/util.py").read_text() == FIXTURE["pkg/util.py"]

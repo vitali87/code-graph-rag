@@ -91,8 +91,9 @@ def test_inline_refuses_async_and_generator_definitions(
     temp_repo: Path, rel: str
 ) -> None:
     root, store = _build(temp_repo, _ASYNC_FILES)
+    qualified_name = _project_qn(rel)
     with pytest.raises(InlineRefused, match="async|generator"):
-        inline(root, store.fetch_all, PROJECT, _project_qn(rel))
+        inline(root, store.fetch_all, PROJECT, qualified_name)
     assert (root / "pkg/defs.py").read_text() == _ASYNC_FILES["pkg/defs.py"]
     assert (root / "web/defs.js").read_text() == _ASYNC_FILES["web/defs.js"]
 
@@ -244,10 +245,12 @@ def test_inline_leaves_splat_calls_unchanged_and_keeps_the_definition(
 ) -> None:
     root, store = _build(temp_repo, _SPLAT_FILES)
     report = _inline(root, store, "pkg.ident.identity")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert not report.definition_removed
     text = (root / "pkg/ident.py").read_text()
-    assert "identity(*values)" in text and "identity(**named)" in text
+    assert "identity(*values)" in text
+    assert "identity(**named)" in text
     assert "def plain():\n    return 4\n" in text
     assert (
         _python(
@@ -258,10 +261,12 @@ def test_inline_leaves_splat_calls_unchanged_and_keeps_the_definition(
         == "3 5 4"
     )
     report = _inline(root, store, "web.ident.identity")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert not report.definition_removed
     js = (root / "web/ident.js").read_text()
-    assert "identity(...values)" in js and "function identity(x)" in js
+    assert "identity(...values)" in js
+    assert "function identity(x)" in js
     assert _node(root, "web/ident.js") in (None, "3 4")
 
 
@@ -344,7 +349,8 @@ _IMPORT_FILES = {
 def test_inline_keeps_an_import_whose_binding_is_still_live(temp_repo: Path) -> None:
     root, store = _build(temp_repo, _IMPORT_FILES)
     report = _inline(root, store, "pkg.util.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert not report.definition_removed
     assert "def use():\n    return (1 + 1)\n" in (root / "pkg/app.py").read_text()
     assert (
@@ -376,7 +382,8 @@ def test_inline_keeps_a_definition_still_referenced_as_a_value(
 ) -> None:
     root, store = _build(temp_repo, _REFERENCE_FILES)
     report = _inline(root, store, "pkg.util.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert not report.definition_removed
     assert "def use():\n    return (1 + 1)\n" in (root / "pkg/app.py").read_text()
     assert (
@@ -406,7 +413,8 @@ def test_inline_rewrites_the_inner_call_of_a_chained_site(temp_repo: Path) -> No
     )
     report = _inline(root, store, "pkg.util.helper")
 
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert "str(2).upper()" in (root / "pkg/app.py").read_text()
     assert _python(root, "from pkg.app import run; print(run())") == "2"
 
@@ -469,8 +477,9 @@ _DECORATED_FILES = {
 
 def test_inline_refuses_a_decorated_definition(temp_repo: Path) -> None:
     root, store = _build(temp_repo, _DECORATED_FILES)
+    qualified_name = _project_qn("pkg.greet.greet")
     with pytest.raises(InlineRefused, match="decorat"):
-        inline(root, store.fetch_all, PROJECT, _project_qn("pkg.greet.greet"))
+        inline(root, store.fetch_all, PROJECT, qualified_name)
     assert (root / "pkg/greet.py").read_text() == _DECORATED_FILES["pkg/greet.py"]
     assert _python(root, "from pkg.greet import use; print(use())") == "HI BOB"
 
@@ -490,7 +499,8 @@ def test_inline_keeps_code_sharing_a_line_with_the_definition(
     before = _node(root, "web/ready.js")
     assert before == "ready\n2"
     report = _inline(root, store, "web.ready.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert "console.log('ready');" in (root / "web/ready.js").read_text()
     assert _node(root, "web/ready.js") == before
 
@@ -546,7 +556,8 @@ def test_inline_keeps_code_sharing_a_line_with_a_removed_import(
     before = _python(root, probe)
     assert before == "ready\n2"
     report = _inline(root, store, qn)
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert report.definition_removed
     assert "helper" not in (root / "pkg/app.py").read_text()
     assert _python(root, probe) == before
@@ -573,7 +584,8 @@ def test_inline_keeps_js_code_sharing_a_line_with_a_removed_import(
     before = _node(root, "web/app.js")
     assert before == "ready\n2 [ 'util' ]"
     report = _inline(root, store, "web.util.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert report.definition_removed
     assert "helper" not in (root / "web/app.js").read_text()
     assert _node(root, "web/app.js") == before
@@ -597,7 +609,8 @@ def test_inline_still_loads_the_module_of_a_removed_import(
     before = _python(root, probe)
     assert before == "2 ['util']"
     report = _inline(root, store, "pkg.util.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert report.definition_removed
     assert "def helper" not in (root / "pkg/util.py").read_text()
     assert _python(root, probe) == before
@@ -614,7 +627,8 @@ def test_inline_keeps_the_import_when_the_module_name_is_taken(
     )
     root, store = _build(temp_repo, {**_HOOK_FILES, "pkg/app.py": app})
     report = _inline(root, store, "pkg.util.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert not report.definition_removed
     probe = "from pkg import app, hooks\nprint(app.use(), hooks.loaded)"
     assert _python(root, probe) == "(2, 'mine') ['util']"
@@ -686,7 +700,8 @@ def test_inline_does_not_read_a_js_name_argument_after_a_call_may_rebind_it(
     before = _node(root, "web/state.js")
     assert before == "11\n11"
     report = _inline(root, store, "web.state.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     assert _node(root, "web/state.js") == before
     # A `const` cannot be rebound, so its read may move past the call.
     assert "console.log((advance() + k));" in (root / "web/state.js").read_text()
@@ -713,7 +728,8 @@ def test_inline_keeps_the_default_import_beside_a_removed_named_one(
     root, store = _build(temp_repo, _DEFAULT_IMPORT_FILES)
     before = _node(root, "web/app.js")
     report = _inline(root, store, "web.util.helper")
-    assert report is not None and report.applied, report
+    assert report is not None, report
+    assert report.applied, report
     text = (root / "web/app.js").read_text()
     assert text.startswith("import defaultFn from './util.js';\n"), text
     assert _node(root, "web/app.js") == before
@@ -742,6 +758,7 @@ def test_inline_refuses_a_return_naming_the_callee_type_parameter(
     # argument leaves nothing to put in its place.
     rel, source, qn = _GENERIC_RETURNS[shape]
     root, store = _build(temp_repo, {rel: source})
+    qualified_name = _project_qn(qn)
     with pytest.raises(InlineRefused, match="type parameter `T`"):
-        inline(root, store.fetch_all, PROJECT, _project_qn(qn))
+        inline(root, store.fetch_all, PROJECT, qualified_name)
     assert (root / rel).read_text() == source
