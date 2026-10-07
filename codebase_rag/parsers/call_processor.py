@@ -2647,35 +2647,39 @@ class CallProcessor:
         for class_node in class_nodes:
             ctors = java_utils.class_constructors(class_node)
             for ctor in ctors:
-                invocation = java_utils.this_constructor_invocation(ctor)
-                caller = (
-                    self._recorded_caller(ctor, module_qn)
-                    if invocation is not None
-                    else None
-                )
-                if invocation is None or caller is None:
-                    continue
-                arg_count = java_utils.argument_count(invocation)
-                targets = [
-                    loc
-                    for target in ctors
-                    if target.id != ctor.id
-                    and java_utils.accepts_argument_count(target, arg_count)
-                    and (loc := self._recorded_caller(target, module_qn)) is not None
-                ]
-                self._site_node = invocation
-                self._resolution = (
-                    cs.EdgeResolution.EXACT
-                    if len(targets) == 1
-                    else cs.EdgeResolution.OVERLOAD
-                )
-                for target in targets:
-                    self._emit_rel(
-                        (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
-                        cs.RelationshipType.CALLS,
-                        (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
-                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
-                    )
+                self._emit_java_this_ctor_call(ctor, ctors, module_qn)
+
+    def _emit_java_this_ctor_call(
+        self, ctor: Node, ctors: list[Node], module_qn: str
+    ) -> None:
+        # The CALLS edges of one constructor's `this(...)`, if it has one;
+        # `ctors` are its class's constructors. Runs inside the @_site_scoped
+        # pass above, which restores the site and resolution it sets.
+        invocation = java_utils.this_constructor_invocation(ctor)
+        caller = (
+            self._recorded_caller(ctor, module_qn) if invocation is not None else None
+        )
+        if invocation is None or caller is None:
+            return
+        arg_count = java_utils.argument_count(invocation)
+        targets = [
+            loc
+            for target in ctors
+            if target.id != ctor.id
+            and java_utils.accepts_argument_count(target, arg_count)
+            and (loc := self._recorded_caller(target, module_qn)) is not None
+        ]
+        self._site_node = invocation
+        self._resolution = (
+            cs.EdgeResolution.EXACT if len(targets) == 1 else cs.EdgeResolution.OVERLOAD
+        )
+        for target in targets:
+            self._emit_rel(
+                (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
+                cs.RelationshipType.CALLS,
+                (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
+                {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+            )
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
