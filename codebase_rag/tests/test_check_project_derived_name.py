@@ -81,5 +81,6 @@ def test_a_named_run_still_answers_to_its_name(tmp_path: Path) -> None:
     _index(root, "chosen", named=True)
 
     assert indexed_scope(root, "chosen", explicit=True) == (_EXCLUDED, None)
+    derived = derive_project_name(root.resolve())
     with pytest.raises(CheckError):
-        indexed_scope(root, derive_project_name(root.resolve()), explicit=True)
+        indexed_scope(root, derived, explicit=True)

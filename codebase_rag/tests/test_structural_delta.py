@@ -1079,7 +1079,8 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
     assert indexed_scope(root, project_name) == (None, None)
     # The check left the stamp as the unnamed run wrote it.
     stamp = _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME)
-    assert stamp is not None and not stamp.get("named"), stamp
+    assert stamp is not None, stamp
+    assert not stamp.get("named"), stamp
     with pytest.raises(CheckError):
         indexed_scope(root, "explicit-project", explicit=True)
 
