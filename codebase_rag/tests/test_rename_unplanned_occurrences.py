@@ -2382,8 +2382,9 @@ def test_a_companion_stub_refuses_the_rename_by_default(
     store, _updater = _indexed(root, STUBBED)
     before = _tree(root)
 
+    graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, _query(store), PROJECT, qn, new_name)
+        rename(root, graph, PROJECT, qn, new_name)
 
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
         ("pkg/widget.pyi", line, col, "unplanned") for line, col in positions
@@ -2442,8 +2443,9 @@ def test_a_stub_is_held_to_the_module_it_declares(tmp_path: Path, where: str) ->
     }
     store, _updater = _indexed(root, files)
 
+    graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, _query(store), PROJECT, qn, "assist", dry_run=True)
+        rename(root, graph, PROJECT, qn, "assist", dry_run=True)
 
     assert [(s.path, s.line, s.col) for s in refused.value.unplanned] == [(stub, 1, 4)]
 
@@ -3035,8 +3037,9 @@ def test_a_declaration_file_beside_the_module_refuses_by_default(
     root.mkdir()
     store, _updater = _indexed(root, _declared_module(language))
 
+    graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, _query(store), PROJECT, qn, new_name, dry_run=True)
+        rename(root, graph, PROJECT, qn, new_name, dry_run=True)
 
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
         ("src/util.d.ts", line, col, "unplanned") for line, col in positions
@@ -3122,10 +3125,11 @@ def test_a_declaration_file_alone_is_its_own_module(tmp_path: Path) -> None:
     root.mkdir()
     store, _updater = _indexed(root, {"src/util.d.ts": TS_DECLARATIONS})
 
+    graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _query(store),
+            graph,
             PROJECT,
             f"{PROJECT}.src.util.helper",
             "assist",
@@ -3239,10 +3243,11 @@ def test_the_targets_class_bound_by_an_import_still_counts(
     )
     store, _updater = _indexed(root, {**TWO_WIDGETS, "app.py": user})
 
+    graph = _unseen(store, "app.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _unseen(store, "app.py"),
+            graph,
             PROJECT,
             f"{PROJECT}.pkg.widget.Widget",
             "Gadget",
@@ -3263,10 +3268,11 @@ def test_a_class_through_a_star_import_from_elsewhere_is_held_uncertain(
     user = "from other.widget import *" + PY_CLASS_BODY
     store, _updater = _indexed(root, {**TWO_WIDGETS, "app.py": user})
 
+    graph = _unseen(store, "app.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _unseen(store, "app.py"),
+            graph,
             PROJECT,
             f"{PROJECT}.pkg.widget.Widget",
             "Gadget",
@@ -3491,10 +3497,11 @@ def test_a_use_through_a_namespace_named_like_the_function_still_counts(
     root.mkdir()
     store, _updater = _indexed(root, files)
 
+    graph = _missing(store, "src/app.ts")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/app.ts"),
+            graph,
             PROJECT,
             TS_MUL_QN,
             "product",

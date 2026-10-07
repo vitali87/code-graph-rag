@@ -465,13 +465,13 @@ class ImportReader:
             bindings[alias.group(1) if alias else segments[-1]] = named
         return ImportRead(tuple(paths), bindings, tuple(wildcards))
 
-    def _specifier(self, spec: str) -> tuple[ModulePath, ...]:
+    def _specifier(self, spec: str) -> list[ModulePath]:
         if not spec.startswith(cs.SEPARATOR_DOT):
             return self._bare_specifier(spec)
         joined = posixpath.normpath(posixpath.join(*self.directory, spec))
         if joined.startswith(".."):
-            return ()
-        return (self._module_at(joined),)
+            return []
+        return [self._module_at(joined)]
 
     def _module_at(self, joined: str) -> ModulePath:
         # A normalised repo-relative path, as the module it names.
@@ -483,30 +483,30 @@ class ImportReader:
             segments = segments[:-1]
         return ModulePath(segments, PathKind.EXACT)
 
-    def _bare_specifier(self, spec: str) -> tuple[ModulePath, ...]:
+    def _bare_specifier(self, spec: str) -> list[ModulePath]:
         """A specifier that is not relative: through the nearest config's
         `paths`, then its `baseUrl` (a package of the name may still be
         meant there), as a package's path otherwise."""
         segments = tuple(part for part in spec.split("/") if part)
         if not segments:
-            return ()
+            return []
         package = ModulePath(_without_suffix(segments), PathKind.TAIL)
         if self.scripts is None or self.language not in cs.JS_TS_LANGUAGES:
-            return (package,)
+            return [package]
         config = self.scripts.nearest(self.directory)
         if config is not None and (found := _ts_alias_candidates(spec, config.paths)):
             # The longest pattern wins, as TypeScript picks it.
             target = _ts_alias_target(max(found, key=lambda pair: pair[0])[1])
             if target is not None:
-                return (self._module_at(target),)
-            return (ModulePath(segments, PathKind.UNKNOWN),)
+                return [self._module_at(target)]
+            return [ModulePath(segments, PathKind.UNKNOWN)]
         if config is not None and config.base is not None:
             based = posixpath.normpath(posixpath.join(*config.base, spec))
             if not based.startswith(cs.PATH_PARENT_DIR):
-                return self._module_at(based), package
+                return [self._module_at(based), package]
         if _ts_alias_candidates(spec, self.scripts.paths):
-            return (ModulePath(segments, PathKind.UNKNOWN),)
-        return (package,)
+            return [ModulePath(segments, PathKind.UNKNOWN)]
+        return [package]
 
     def _rooted(self, segments: tuple[str, ...]) -> tuple[ModulePath, ...]:
         # `crate::a::b::Item`: every prefix may be the module, since the

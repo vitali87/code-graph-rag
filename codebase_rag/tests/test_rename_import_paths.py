@@ -445,6 +445,16 @@ _LONG = 50_000
         (partial(_RUST_GROUP.sub, _expand_group), "a::" * _LONG, "a::" * _LONG),
         (_WILDCARD_IMPORT.findall, b"import" + b" " * _LONG, []),
     ],
+    # Short ids: the default spells the whole input into the test id, which
+    # overflows the environment variable pytest stores it in on Windows.
+    ids=[
+        "python-from-spaces",
+        "python-from-dots",
+        "go-specs",
+        "rust-group-words",
+        "rust-group-paths",
+        "wildcard-import",
+    ],
 )
 def test_a_long_statement_is_read_without_backtracking(
     read: Callable[[Any], object], text: str | bytes, expected: object

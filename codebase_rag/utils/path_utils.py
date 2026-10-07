@@ -473,7 +473,7 @@ def python_stub_has_implementation(
     )
 
 
-def declaration_implementations[P: PurePath](path: P) -> tuple[P, ...]:
+def declaration_implementations[P: PurePath](path: P) -> list[P]:
     """The files that may implement the module a declaration file declares,
     by path alone, as the indexer pairs them: a `.pyi` stub's (see
     `python_stub_implementations`), and for a TypeScript declaration
@@ -484,19 +484,19 @@ def declaration_implementations[P: PurePath](path: P) -> tuple[P, ...]:
     if declaration_extension(path.name) is None:
         return python_stub_implementations(path)
     stem = module_stem(path.name)
-    return tuple(path.with_name(f"{stem}{ext}") for ext in _IMPLEMENTATION_EXTS)
+    return [path.with_name(f"{stem}{ext}") for ext in _IMPLEMENTATION_EXTS]
 
 
-def python_stub_implementations[P: PurePath](path: P) -> tuple[P, ...]:
+def python_stub_implementations[P: PurePath](path: P) -> list[P]:
     """The files that may implement the module a `.pyi` stub declares, by
     path alone: `x.py` or the package `x/__init__.py` for `x.pyi`, and the
     `__init__.py` beside it for `__init__.pyi`. Nothing for any other file.
     """
     if path.suffix != cs.EXT_PYI:
-        return ()
+        return []
     if path.name == cs.INIT_PYI:
-        return (path.with_name(cs.INIT_PY),)
-    return (path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY)
+        return [path.with_name(cs.INIT_PY)]
+    return [path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY]
 
 
 def base_module_qn(rel_path: Path, project_name: str) -> str:
