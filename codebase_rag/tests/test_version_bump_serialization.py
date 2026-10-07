@@ -16,6 +16,15 @@ SHA = "a" * 40
 NEWER = "b" * 40
 OLDER = "c" * 40
 PUSHED = "steps.commit.outputs.pushed == 'true'"
+# The workflow runs on Ubuntu, where jq ends lines with LF. A native jq.exe
+# ends them with CRLF, and Git Bash keeps the CR inside the last word of each
+# line, so `for SHA in $COMMITS` would build `commits/<sha>\r/pulls`. Strip it
+# on Windows, keeping jq's own exit status for the `if ! X=$(jq ...)` checks.
+CRLF_SAFE_JQ = (
+    'jq() { command jq "$@" | tr -d \'\\r\'; return "${PIPESTATUS[0]}"; }\n'
+    if os.name == "nt"
+    else ""
+)
 
 
 class Step(TypedDict, total=False):
@@ -44,7 +53,14 @@ def _run(
     output = tmp_path / "output"
     output.touch()
     result = subprocess.run(
-        [bash, "--noprofile", "--norc", "-e", "-c", stubs + "\n" + _step(name)["run"]],
+        [
+            bash,
+            "--noprofile",
+            "--norc",
+            "-e",
+            "-c",
+            CRLF_SAFE_JQ + stubs + "\n" + _step(name)["run"],
+        ],
         cwd=tmp_path,
         env={
             **os.environ,
