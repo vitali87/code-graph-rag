@@ -1659,62 +1659,77 @@ def _operator_dunder_dispatches(node: Node) -> list[_DunderDispatch]:
     """
     match node.type:
         case cs.TS_PY_SUBSCRIPT:
-            parent = node.parent
-            left = (
-                parent.child_by_field_name(cs.TS_FIELD_LEFT)
-                if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
-                else None
-            )
-            is_write = left is not None and left.id == node.id
-            return [
-                [
-                    (
-                        node.child_by_field_name(cs.FIELD_VALUE),
-                        cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
-                    )
-                ]
-            ]
+            return _subscript_dispatches(node)
         case cs.TS_PY_COMPARISON_OPERATOR:
             return _comparison_dispatches(node)
         case cs.TS_PY_CALL:
             return _call_dispatches(node)
         case cs.TS_PY_BINARY_OPERATOR:
-            operator = node.child_by_field_name(cs.FIELD_OPERATOR)
-            dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
-                safe_decode_text(operator) or "" if operator is not None else ""
-            )
-            if dunder is None:
-                return []
-            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-            return [[(left, dunder), (right, _reflected(dunder))]]
+            return _binary_dispatches(node)
         case cs.TS_PY_AUGMENTED_ASSIGNMENT:
-            operator = node.child_by_field_name(cs.FIELD_OPERATOR)
-            text = safe_decode_text(operator) if operator is not None else None
-            dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
-                (text or "").removesuffix(cs.PY_AUGMENTED_OPERATOR_SUFFIX)
-            )
-            if dunder is None:
-                return []
-            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-            return [
-                [(left, _inplace(dunder)), (left, dunder), (right, _reflected(dunder))]
-            ]
+            return _augmented_dispatches(node)
         case cs.TS_PY_UNARY_OPERATOR:
-            operator = node.child_by_field_name(cs.FIELD_OPERATOR)
-            dunder = cs.PY_UNARY_OPERATOR_DUNDERS.get(
-                safe_decode_text(operator) or "" if operator is not None else ""
-            )
-            if dunder is None:
-                return []
-            return [[(node.child_by_field_name(cs.TS_FIELD_ARGUMENT), dunder)]]
+            return _unary_dispatches(node)
         case cs.TS_PY_FOR_STATEMENT | cs.TS_PY_FOR_IN_CLAUSE:
             dunder = cs.PY_DUNDER_AITER if _is_async(node) else cs.PY_DUNDER_ITER
             return [[(node.child_by_field_name(cs.TS_FIELD_RIGHT), dunder)]]
         case cs.TS_PY_WITH_STATEMENT:
             return _with_dispatches(node)
     return []
+
+
+def _subscript_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `x[k] = v` is `__setitem__`; every other `x[k]` is `__getitem__`.
+    parent = node.parent
+    left = (
+        parent.child_by_field_name(cs.TS_FIELD_LEFT)
+        if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
+        else None
+    )
+    is_write = left is not None and left.id == node.id
+    return [
+        [
+            (
+                node.child_by_field_name(cs.FIELD_VALUE),
+                cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
+            )
+        ]
+    ]
+
+
+def _binary_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
+        safe_decode_text(operator) or "" if operator is not None else ""
+    )
+    if dunder is None:
+        return []
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(left, dunder), (right, _reflected(dunder))]]
+
+
+def _augmented_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    text = safe_decode_text(operator) if operator is not None else None
+    dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
+        (text or "").removesuffix(cs.PY_AUGMENTED_OPERATOR_SUFFIX)
+    )
+    if dunder is None:
+        return []
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(left, _inplace(dunder)), (left, dunder), (right, _reflected(dunder))]]
+
+
+def _unary_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    dunder = cs.PY_UNARY_OPERATOR_DUNDERS.get(
+        safe_decode_text(operator) or "" if operator is not None else ""
+    )
+    if dunder is None:
+        return []
+    return [[(node.child_by_field_name(cs.TS_FIELD_ARGUMENT), dunder)]]
 
 
 def _comparison_dispatches(node: Node) -> list[_DunderDispatch]:
@@ -1760,11 +1775,17 @@ def _with_dispatches(node: Node) -> list[_DunderDispatch]:
         for item in clause.named_children:
             if item.type != cs.TS_PY_WITH_ITEM:
                 continue
-            manager = item.child_by_field_name(cs.FIELD_VALUE)
-            if manager is not None and manager.type == cs.TS_PY_AS_PATTERN:
-                manager = manager.named_children[0] if manager.named_children else None
+            manager = _with_item_manager(item)
             dispatches.extend([[(manager, enter)], [(manager, exit_)]])
     return dispatches
+
+
+def _with_item_manager(item: Node) -> Node | None:
+    # `with open(p) as f`: the manager is the `as` pattern's expression.
+    manager = item.child_by_field_name(cs.FIELD_VALUE)
+    if manager is not None and manager.type == cs.TS_PY_AS_PATTERN:
+        return manager.named_children[0] if manager.named_children else None
+    return manager
 
 
 def _truthiness_operands(node: Node) -> list[Node | None]:
