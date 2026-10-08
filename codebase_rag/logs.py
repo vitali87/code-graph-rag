@@ -399,6 +399,7 @@ REINGEST_UNREADABLE = (
 TYPE_EDGES_EMITTED = "Emitted {count} RETURNS/ACCEPTS edges from type annotations"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
 WATCHER_REINGEST_REFUSED = "Re-ingest refused for {path}: {error}"
+WATCHER_SYMLINK_IGNORED = "Ignoring a change to symlink {path}: links are not followed"
 # A refusal and an abort leave the graph untouched; anything else may have
 # deleted the affected subtrees without rebuilding them, so the retained
 # updater describes a graph that no longer exists (issue #1681).
@@ -1253,13 +1254,25 @@ HASH_CACHE_SKIPPED_SINGLE_FILE = (
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
-FILE_UNREADABLE = (
-    "Skipping unreadable file (broken symlink or removed): {path} ({error})"
-)
-INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
+FILE_UNREADABLE = "Skipping unreadable file (removed or not readable): {path} ({error})"
+INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (removed or not readable)"
 INCREMENTAL_UNREADABLE_RETRY = (
     "{count} unreadable file(s) are marked in the cache, so the next update "
     "retries them whatever their directories' mtimes say"
+)
+# Symlinks are never followed by a repository walk (issue #2451).
+SYMLINK_SKIPPED_OUTSIDE = (
+    "Skipping symlink {path}: its target {target} is outside the repository "
+    "and is never read"
+)
+SYMLINK_SKIPPED_INSIDE = (
+    "Skipping symlink {path}: its target {target} is in the repository and is "
+    "indexed only under its own path"
+)
+SYMLINKS_SKIPPED = (
+    "Skipped {count} symlink(s): links are not followed, so a target outside "
+    "the repository is never read and one inside it is indexed only under its "
+    "own path (each is logged at DEBUG)"
 )
 
 # Exclude prompt logs
