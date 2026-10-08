@@ -17,6 +17,7 @@ from ...types_defs import (
 )
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
+from .forward_refs import unquote_forward_refs
 from .utils import resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
@@ -175,7 +176,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        local_var_types[param_name] = param_type
+        local_var_types[param_name] = unquote_forward_refs(param_type)
 
     def _process_typed_default_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -191,7 +192,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        local_var_types[param_name] = param_type
+        local_var_types[param_name] = unquote_forward_refs(param_type)
 
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
