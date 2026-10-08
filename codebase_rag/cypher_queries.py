@@ -768,6 +768,16 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.name AS name, n.namespace AS namespace"""
+# Which of $paths the project holds (issue #2611), asked only once a
+# location matched no definition, or when `x:a:b` could name two files: `[]`
+# for a file the graph never saw read as "no definition spans that line".
+# Held means a Module of this project at the path (a source file or a
+# document). File and Folder nodes are keyed by absolute path, so projects
+# indexed from one root share them, and a containment walk from one Project
+# reaches files only another project indexed (bot review).
+CYPHER_GRAPH_LOCATION_FILES = f"""MATCH (m:{NodeLabel.MODULE.value})
+WHERE m.qualified_name STARTS WITH $project_prefix AND m.path IN $paths
+RETURN m.path AS path, m.qualified_name AS qualified_name"""
 # Every definition registered under one natural name: the name itself and
 # its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
 # tell a property's getter, setter and deleter apart (issue #1808).

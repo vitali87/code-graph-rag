@@ -249,7 +249,7 @@ graph cannot answer, and a refusal prints nothing on stdout:
 |--------|---------|
 | `0` | The JSON answer. `[]` means the name is in the graph and nothing matches it. |
 | `3` | The project is not indexed, or, without `--project`, the directory was never indexed. The message on stderr names close matches. |
-| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold. The message names close matches, or points at `cgr graph resolve`. |
+| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold, or a `path:line` target that names no indexed file or that two indexed files share. The message names close matches, or points at `cgr graph resolve`. |
 
 `resolve` answers `[]` when no name matches, and `definition` answers
 `{"found": false, ...}` for a qualified name it does not find; neither exits

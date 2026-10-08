@@ -46,6 +46,7 @@ ARG_DRY_RUN = "dry_run"
 
 SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
+SEPARATOR_BACKSLASH = "\\"
 # Splits "provider:model" both in user-supplied settings and in the model
 # names pydantic-ai enumerates.
 MODEL_STRING_SEPARATOR = ":"
