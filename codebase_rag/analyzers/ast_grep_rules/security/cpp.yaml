@@ -33,7 +33,7 @@ rules:
       any:
         - kind: init_declarator
           all:
-            - has: { field: declarator, regex: '(?i)(password|secret|api_key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: declarator, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: value
                 all:
@@ -45,7 +45,7 @@ rules:
                         - regex: '%[sdrifeEgGxXoc(]'
         - kind: assignment_expression
           all:
-            - has: { field: left, regex: '(?i)(password|secret|api_key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 all:

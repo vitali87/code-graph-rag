@@ -65,7 +65,7 @@ rules:
       any:
         - kind: short_var_declaration
           all:
-            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 kind: expression_list
@@ -82,7 +82,7 @@ rules:
                           - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: assignment_statement
           all:
-            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 kind: expression_list
@@ -99,7 +99,7 @@ rules:
                           - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: var_spec
           all:
-            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: expression_list
                 has:
@@ -115,7 +115,7 @@ rules:
                           - regex: '%[sdrifeEgGxXoqvtbc]'
         - kind: const_spec
           all:
-            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|apikey|token|access_?key)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: expression_list
                 has:

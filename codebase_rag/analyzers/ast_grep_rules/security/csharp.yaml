@@ -52,7 +52,7 @@ rules:
         # field: private string password = "....";
         - kind: variable_declarator
           all:
-            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: string_literal
                 all:
@@ -64,7 +64,7 @@ rules:
         # property: public string ApiKey { get; set; } = "....";
         - kind: property_declaration
           all:
-            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: string_literal
                 all:
@@ -76,7 +76,7 @@ rules:
         # assignment: token = "....";
         - kind: assignment_expression
           all:
-            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: string_literal
                 all:
