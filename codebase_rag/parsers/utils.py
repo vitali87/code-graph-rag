@@ -11,6 +11,7 @@ from tree_sitter import Language, Node, Query, QueryCursor
 from .. import constants as cs
 from .. import logs
 from ..language_spec import decode_node_text
+from ..query_predicates import compile_query, query_captures
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -114,7 +115,7 @@ def get_cached_query(language_obj: Language, query_text: str) -> Query:
     if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
         return _QUERY_LAST[1]
     if key not in _QUERY_CACHE:
-        _QUERY_CACHE[key] = Query(language_obj, query_text)
+        _QUERY_CACHE[key] = compile_query(language_obj, query_text)
     result = _QUERY_CACHE[key]
     _QUERY_LAST = (key, result)
     return result
@@ -130,7 +131,7 @@ def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNod
     # sort by (start_byte, end_byte) for reproducibility. start_byte alone leaves
     # nested same-start captures (the outer `Greeter().greet()` chain and its
     # inner `Greeter()` call) in raw order, flipping between runs.
-    raw = cursor.captures(node)
+    raw = query_captures(cursor, node)
     result: dict[str, list[ASTNode]] = {}
     for name, nodes in raw.items():
         if len(nodes) <= 1:
@@ -1941,7 +1942,12 @@ def _node_source_bytes(node: Node) -> bytes | None:
     while (parent := getattr(root, "parent", None)) is not None:
         root = parent
     raw = getattr(root, "text", None)
-    return raw if isinstance(raw, bytes) else None
+    if not isinstance(raw, bytes):
+        return None
+    # The root starts at the first token, not at byte 0: leading whitespace is
+    # padding outside every node, so the root's text is the file minus it.
+    # Restore that width, or every probe reads bytes shifted by the padding.
+    return b" " * root.start_byte + raw
 
 
 def written_simple_name(name: str) -> str:

@@ -136,6 +136,8 @@ CYPHER_BLOCK_COMMENT_OPEN = "/*"
 CYPHER_BLOCK_COMMENT_CLOSE = "*/"
 CYPHER_MASKED_LITERAL = "''"
 CYPHER_MASKED_COMMENT = " "
+# A backtick name, for a check that reads structure rather than names.
+CYPHER_MASKED_IDENTIFIER = "_"
 CYPHER_LINE_END = "\n"
 CYPHER_PLAN_OPERATOR_PATTERN = r"[A-Za-z]+"
 CYPHER_PLAN_PROCEDURE_PATTERN = r"CallProcedure<([^>]*)>"
@@ -1171,6 +1173,16 @@ SHELL_SYSTEM_DIRECTORIES = frozenset(
 )
 
 # Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
+SHELL_XARGS_DESTRUCTIVE_REASON = "xargs with destructive command"
+
+# The programs the xargs pattern below names, matched on the launched argv
+# rather than the raw text: a backslash-escaped `\r\m` is the same argv to
+# exec but not the same characters to a regex. A dotted suffix (`mkfs.ext4`)
+# names the same program.
+SHELL_XARGS_DESTRUCTIVE_PROGRAMS = frozenset(
+    {"chmod", "chown", "dd", "mkfs", "mv", "rm", "rmdir"}
+)
+
 SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
     (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
@@ -1236,7 +1248,7 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     # flag, so `sed -n '/start/,/end/p'` -- an ordinary range print -- was
     # refused. _sed_exec_construct covers s///e structurally, on a skeleton
     # with the substitution bodies blanked, so nothing is lost.
-    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
+    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", SHELL_XARGS_DESTRUCTIVE_REASON),
     (r"xargs\s+-I.*sh", "xargs shell execution"),
     (r"xargs\s+.*bash", "xargs bash execution"),
 )

@@ -9,6 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
+from ...query_predicates import query_captures
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..utils import get_cached_query, safe_decode_text
 from . import utils as ut
@@ -182,7 +183,7 @@ class JsTypeInferenceEngine:
                 try:
                     q = get_cached_query(lang_queries["language"], _JS_DECLARATOR_QUERY)
                     cursor = QueryCursor(q)
-                    captures = cursor.captures(caller_node)
+                    captures = query_captures(cursor, caller_node)
                     return captures.get("declarator", [])
                 except Exception:  # noqa: S112 - a failed query falls through to the next language
                     continue

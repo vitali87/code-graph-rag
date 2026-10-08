@@ -10,6 +10,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
+from ...query_predicates import query_captures
 from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
@@ -1059,7 +1060,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = query_captures(cursor, node)
                 if return_stmts := captures.get("return_stmt"):
                     self._return_stmt_cache[node] = return_stmts
                 return (
@@ -1741,7 +1742,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = query_captures(cursor, node)
                 return_nodes.extend(captures.get("return_stmt", []))
                 return
             except Exception:  # noqa: S110 - a failed query falls back to the walk below

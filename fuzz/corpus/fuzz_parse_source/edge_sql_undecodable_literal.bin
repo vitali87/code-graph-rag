@@ -1,0 +1,6 @@
+CREATE FUNCTION greet(name TEXT) RETURNS TEXT AS $$
+  SELECT 'a­';
+$$ LANGUAGE sql;
+
+SELECT greet('b­');
+

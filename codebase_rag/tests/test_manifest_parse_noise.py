@@ -343,16 +343,28 @@ class TestPartialManifest:
     #2613)."""
 
     def test_valid_cargo_dependency_survives_a_wrong_type_dev_dependency(
-        self, tmp_path: Path, records: list[tuple[str, str]]
+        self,
+        tmp_path: Path,
+        records: list[tuple[str, str]],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # A wrong-typed entry now reads as unversioned rather than crashing
+        # the parser, so a fault at that entry is simulated: what came before
+        # it is kept, and the fault is still reported as one.
+        real_version = dependency_parser._version
+
+        def _faults_on_a_number(value: object) -> str:
+            if not isinstance(value, str):
+                raise TypeError(f"not a version: {value!r}")
+            return real_version(value)
+
+        monkeypatch.setattr(dependency_parser, "_version", _faults_on_a_number)
         manifest = _write(
             tmp_path / "Cargo.toml",
             '[dependencies]\nserde = "1.0"\n\n[dev-dependencies]\nbroken = 1\n',
         )
 
         assert parse_dependencies(manifest) == [Dependency("serde", "1.0")]
-        # A wrong-typed entry is a fault the parser cannot read past, and it
-        # is still reported as one.
         errors = [msg for lvl, msg in records if lvl == "ERROR"]
         assert len(errors) == 1, records
         assert errors[0].startswith("Error parsing Cargo.toml ")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import re
 import shlex
@@ -204,6 +205,23 @@ def _rm_operands(args: list[str]) -> list[str]:
     return []
 
 
+# Python 3.12's Path.resolve raises RuntimeError on a symlink loop, so a loop
+# inside the project must be caught alongside the OS errors or it escapes the
+# guard as an exception.
+_UNRESOLVABLE_PATH_ERRORS = (OSError, RuntimeError, ValueError)
+
+
+def _resolve(path: Path) -> Path:
+    # From 3.13 Path.resolve no longer raises on a loop: it returns one of the
+    # loop's own links unresolved. A result that is still a symlink is that
+    # loop, so it raises here as 3.12 does, and a loop gets the same verdict
+    # on every supported interpreter.
+    resolved = path.resolve()
+    if resolved.is_symlink():
+        raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), str(path))
+    return resolved
+
+
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
@@ -222,8 +240,8 @@ def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
     # drive-less target such as `/x` would resolve on the Python process's
     # drive rather than the root's, the drive rm runs on.
     try:
-        resolved = (project_root / path_arg).resolve()
-    except (OSError, ValueError):
+        resolved = _resolve(project_root / path_arg)
+    except _UNRESOLVABLE_PATH_ERRORS:
         return f"rm with invalid path: {path_arg}"
     if resolved == project_root:
         return "rm targeting the project root"
@@ -284,8 +302,8 @@ def _git_target_escape(target: str, project_root: Path) -> str | None:
     # drive rather than the root's, which is the drive git itself runs on
     # (its cwd is the root).
     try:
-        resolved = (project_root / target).resolve()
-    except (OSError, ValueError):
+        resolved = _resolve(project_root / target)
+    except _UNRESOLVABLE_PATH_ERRORS:
         return f"git pointed at an unresolvable path: {target}"
     try:
         resolved.relative_to(project_root)
@@ -1502,6 +1520,13 @@ def _validate_xargs_launch(
                 "the program it would launch cannot be checked"
             ),
         )
+    launched = cmd_parts[launched_index].partition(".")[0]
+    if launched in cs.SHELL_XARGS_DESTRUCTIVE_PROGRAMS:
+        # xargs appends operands read from stdin, so no check of the visible
+        # arguments bounds what the launched program acts on.
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=cmd_parts[0], reason=cs.SHELL_XARGS_DESTRUCTIVE_REASON
+        )
     # Validate the launched command as a segment in its own right, in BOTH
     # modes. Checking only its name lets a launcher through, since every
     # launcher is itself allowlisted -- and nesting hides `git -c`, the
@@ -1763,28 +1788,36 @@ class ShellCommander:
 
         The tool asks this BEFORE any approval prompt: a command the allowlist
         or a danger check rejects is refused whatever the user answers, so
-        prompting for it only interrupts them (issue #2359, comment).
+        prompting for it only interrupts them (issue #2359, comment). It is
+        the whole pre-spawn decision `execute` makes -- subshell syntax,
+        pipeline patterns, an empty command, then per-segment validation --
+        so the fuzz harness checks production rather than a mirror of it.
         """
+        return self._screen(command)[0]
+
+    def _screen(self, command: str) -> tuple[str | None, list[CommandGroup]]:
+        # Returns the parsed groups alongside the verdict so `execute` spawns
+        # exactly the parse that was validated.
         if subshell_pattern := _has_subshell(command):
-            return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern)
+            return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern), []
         if pattern_reason := _check_pipeline_patterns(command):
-            return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
+            return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason), []
         groups = _parse_command(command)
         if not groups:
-            return te.COMMAND_EMPTY
-        return self._validation_error(groups)
+            return te.COMMAND_EMPTY, []
+        return self._validation_error(groups), groups
 
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
-            if err_msg := self.refusal(command):
+            err_msg, groups = self._screen(command)
+            if err_msg:
                 logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
-            groups = _parse_command(command)
 
             last_return_code, final_stdout, final_stderr = await self._run_groups(
                 groups
@@ -2222,7 +2255,12 @@ def _option_value_escapes(arg: str, root: Path) -> bool:
 
 
 def _escapes_root(candidate: Path, root: Path) -> bool:
-    return os.path.lexists(candidate) and not candidate.resolve().is_relative_to(root)
+    if not os.path.lexists(candidate):
+        return False
+    try:
+        return not _resolve(candidate).is_relative_to(root)
+    except _UNRESOLVABLE_PATH_ERRORS:
+        return True
 
 
 def create_noninteractive_shell_command_tool(

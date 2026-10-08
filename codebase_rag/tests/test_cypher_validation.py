@@ -213,6 +213,34 @@ class TestValidateNoUnboundedPaths:
             _validate_no_unbounded_paths(query)
         assert query in str(exc_info.value)
 
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (a)-[`r]x`*]->(b) RETURN a;",
+            "MATCH (a)-[:`CALLS]`*1..]->(b) RETURN a;",
+            "MATCH (a)-[`]`:CALLS*..]->(b) RETURN a;",
+        ],
+        ids=["variable", "type", "variable-then-type"],
+    )
+    def test_a_bracket_inside_a_backtick_name_does_not_hide_the_range(
+        self, query: str
+    ) -> None:
+        # A backtick name is a name, whatever it holds: its `]` does not
+        # close the relationship, so the `*` after it is still the range.
+        with pytest.raises(ex.LLMGenerationError, match="unbounded"):
+            _validate_no_unbounded_paths(query)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (a)-[`*`*1..3]->(b) RETURN a;",
+            "MATCH (a)-[`x*]`:CALLS]->(b) RETURN a;",
+        ],
+        ids=["star-in-name", "star-then-bracket-in-name"],
+    )
+    def test_a_star_inside_a_backtick_name_is_not_a_range(self, query: str) -> None:
+        _validate_no_unbounded_paths(query)
+
 
 class TestValidateCallProcedures:
     @pytest.mark.parametrize(

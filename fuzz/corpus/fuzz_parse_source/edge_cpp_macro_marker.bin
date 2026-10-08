@@ -1,0 +1,6 @@
+class Foo {
+ public:
+  MY_EXPORT
+  void f();
+};
+

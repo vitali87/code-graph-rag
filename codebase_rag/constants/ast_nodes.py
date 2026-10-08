@@ -154,6 +154,16 @@ QUERY_CONFIG = "config"
 QUERY_LANGUAGE = "language"
 QUERY_HIGHLIGHTS = "highlights"
 
+# py-tree-sitter evaluates `#match?` through a strict UTF-8 conversion that
+# leaves its error pending on undecodable bytes. A renamed predicate is a
+# generic one, which the binding hands to a Python callback instead.
+QUERY_PREDICATE_REWRITE_PREFIX = "cgr-"
+QUERY_MATCH_PREDICATE_PATTERN = r"(\(\s*#)((?:any-)?(?:not-)?match\?)(?=\s)"
+QUERY_PREDICATE_ANY = "any-"
+QUERY_PREDICATE_NOT = "not-"
+QUERY_PREDICATE_ARG_CAPTURE = "capture"
+QUERY_PREDICATE_ARG_STRING = "string"
+
 CAPTURE_FUNCTION = "function"
 CAPTURE_CLASS = "class"
 CAPTURE_CALL = "call"

@@ -48,14 +48,19 @@ RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \
 
 # atheris and pyinstaller belong to the base image's 3.11 and are invisible to
 # 3.12, so install them for the interpreter that will actually freeze the
-# targets. atheris links the image's libFuzzer rather than building its own,
-# the same way base-builder's install_python.sh does it.
+# targets. atheris 3.1.0 is published only as manylinux wheels carrying their
+# own libFuzzer, so nothing here is compiled against the image's.
 # uv's standalone interpreters ship an EXTERNALLY-MANAGED marker; this image
 # has no other Python for 3.12, so installing into it directly is intended.
-RUN LIBFUZZER_LIB=$(echo /usr/local/lib/clang/*/lib/x86_64-unknown-linux-gnu/libclang_rt.fuzzer_no_main.a) \
-    PYI_STATIC_ZLIB=1 \
+#
+# Every tool is pinned: an unpinned atheris is a different fuzzing engine
+# from one day to the next. coverage is here for the coverage build, whose
+# stub runs `import coverage` inside the frozen target; it is a dev
+# dependency, so the lockfile install in build.sh does not bring it, and the
+# pin matches the version uv.lock resolves for development.
+RUN PYI_STATIC_ZLIB=1 \
     python3 -m pip install --no-cache-dir --break-system-packages \
-        "atheris>=2.3.0" "pyinstaller==6.10.0"
+        "atheris==3.1.0" "pyinstaller==6.10.0" "coverage==7.16.2"
 
 COPY . $SRC/code-graph-rag
 WORKDIR $SRC/code-graph-rag
