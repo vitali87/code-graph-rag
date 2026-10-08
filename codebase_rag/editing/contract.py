@@ -142,6 +142,40 @@ def _carried_by_ancestor(
     return False
 
 
+def _anonymous_row(segment: str) -> str | None:
+    """The row of an `anonymous_<row>_<col>` segment, else None."""
+    if not segment.startswith(cs.PREFIX_ANONYMOUS):
+        return None
+    row, sep, col = segment.removeprefix(cs.PREFIX_ANONYMOUS).partition(
+        cs.CHAR_UNDERSCORE
+    )
+    return row if sep and row.isdigit() and col.isdigit() else None
+
+
+def _renumbered(pair: tuple[str, str], expected: tuple[tuple[str, str], ...]) -> bool:
+    """Is this rename only an inline function's position renumbering?
+
+    An inline arrow or closure is named `anonymous_<row>_<col>` from where it
+    starts, so renaming a token earlier on its line shifts its column and
+    the delta pairs the two names as a rename (issue #2924). It is the same
+    definition when every segment that differs is such a name on the same
+    row, under a parent that is itself unchanged, renumbered, or renamed as
+    expected.
+    """
+    old, new = pair
+    if old == new or pair in expected or _carried_by_ancestor(pair, expected):
+        return True
+    old_parent, _, old_leaf = old.rpartition(cs.SEPARATOR_DOT)
+    new_parent, _, new_leaf = new.rpartition(cs.SEPARATOR_DOT)
+    if not (old_parent and new_parent):
+        return False
+    if old_leaf != new_leaf:
+        row = _anonymous_row(old_leaf)
+        if row is None or row != _anonymous_row(new_leaf):
+            return False
+    return _renumbered((old_parent, new_parent), expected)
+
+
 def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str]:
     failures: list[str] = []
     symbols = delta["symbols"]
@@ -166,6 +200,7 @@ def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str
         pair
         for pair in renamed - set(expectation.renames)
         if not _carried_by_ancestor(pair, expectation.renames)
+        and not _renumbered(pair, expectation.renames)
     )
     if expectation.no_unexpected_rename and unexpected_renames:
         failures.append(
