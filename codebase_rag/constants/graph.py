@@ -1185,7 +1185,26 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
     "AND n.qualified_name STARTS WITH $project_prefix "
     "AND n.path ENDS WITH '.cs' "
     "RETURN n.qualified_name AS qualified_name, n.path AS path, "
-    "n.start_line AS start_line"
+    "n.start_line AS start_line, n.modifiers AS modifiers"
+)
+
+# The labels a C# `partial` declaration registers under: a partial class,
+# struct or record is a Class and a partial interface an Interface; an enum
+# or a delegate cannot be partial (issue #2469).
+CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
+    {NodeLabel.CLASS, NodeLabel.INTERFACE}
+)
+# A project's types of those labels under one name, with their modifiers: a
+# rename reads which of them are the parts of one `partial` type by the key
+# parsing groups them under (`csharp_partial_key_from_graph`).
+_CSHARP_PARTIAL_LABELS = "|".join(
+    sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
+)
+CYPHER_SAME_NAMED_CSHARP_TYPES = (
+    f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
+    "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
+    "n.path AS path, n.modifiers AS modifiers"
 )
 
 # Col-keyed location rehydration fetches (issue #1240). Both guard for

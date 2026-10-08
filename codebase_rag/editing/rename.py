@@ -37,7 +37,7 @@ from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
 from ..graph_updater import ReingestAborted
-from ..language_spec import get_language_for_extension
+from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
@@ -135,6 +135,14 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
+def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+    """`qn`, every other part of the C# partial type `qn` is a part of, and
+    every method `qn` overrides or is overridden by, transitively."""
+    seen: list[str] = [qn, *_csharp_partial_parts(fetch_all, project, qn)]
+    seen += [m for m in hierarchy(fetch_all, project, qn) if m not in seen]
+    return seen
+
+
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     names = {
@@ -144,6 +152,48 @@ def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str
         and name.startswith(requested_prefix)
     }
     return tuple(sorted(names))
+
+
+def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+    """The other parts of the C# `partial` type `qn`; [] for anything else.
+
+    Each file declaring a partial type holds its own node, joined into one
+    type only while parsing, so renaming the part asked for alone left
+    `partial class Order` in the other files as a second type holding the
+    rest of the members, and the build broke (issue #2469). The parts are
+    the ones parsing groups: declared `partial`, of one kind and name, in one
+    directory under one namespace-qualified name.
+    """
+    definition = graph_query.definition(fetch_all, project, qn, None)
+    path, name, label = definition["path"], definition["name"], definition["label"]
+    if (
+        not path
+        or not name
+        or label not in cs.CSHARP_PARTIAL_TYPE_LABELS
+        or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.CSHARP
+    ):
+        return []
+    key = csharp_partial_key_from_graph(qn, path, project)
+    owns = graph_query._owner_check(fetch_all, project)
+    parts = {
+        part
+        for row in fetch_all(
+            cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
+            {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+        )
+        if isinstance(part := row.get(cs.KEY_QUALIFIED_NAME), str)
+        and isinstance(part_path := row.get(cs.KEY_PATH), str)
+        and isinstance(modifiers := row.get(cs.KEY_MODIFIERS), list)
+        and cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers
+        and row.get(cs.KEY_LABEL) == label
+        and owns(part)
+        and csharp_partial_key_from_graph(part, part_path, project) == key
+    }
+    # `qn` is among them only when it is declared `partial` itself; a type
+    # that is not has no other parts, whatever shares its name.
+    if key is None or qn not in parts:
+        return []
+    return sorted(parts - {qn})
 
 
 def _name_token(
@@ -813,7 +863,7 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        members = hierarchy(self.fetch_all, self.project, qn)
+        members = _hierarchy(self.fetch_all, self.project, qn)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
