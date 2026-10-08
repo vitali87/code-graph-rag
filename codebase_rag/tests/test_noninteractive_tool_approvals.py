@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -82,13 +81,6 @@ def _text_agent() -> Agent[None, str | DeferredToolRequests]:
     )
 
 
-@pytest.fixture
-def confirm_edits() -> Iterator[None]:
-    before = app_context.session.confirm_edits
-    yield
-    app_context.session.confirm_edits = before
-
-
 def _single_query(
     agent: Agent[None, str | DeferredToolRequests],
     output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
@@ -121,9 +113,9 @@ def _registry(agent: Agent[None, str | DeferredToolRequests]) -> MCPToolsRegistr
 
 
 def test_ask_agent_with_no_confirm_applies_the_edit(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], confirm_edits: None
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app_context.session.confirm_edits = False
+    monkeypatch.setattr(app_context.session, "confirm_edits", False)
 
     _single_query(_agent(tmp_path))
 
@@ -132,9 +124,9 @@ def test_ask_agent_with_no_confirm_applies_the_edit(
 
 
 def test_ask_agent_without_no_confirm_denies_the_edit_and_still_answers(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], confirm_edits: None
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app_context.session.confirm_edits = True
+    monkeypatch.setattr(app_context.session, "confirm_edits", True)
 
     _single_query(_agent(tmp_path))
 
@@ -143,9 +135,9 @@ def test_ask_agent_without_no_confirm_denies_the_edit_and_still_answers(
 
 
 def test_ask_agent_json_never_carries_the_repr(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], confirm_edits: None
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app_context.session.confirm_edits = True
+    monkeypatch.setattr(app_context.session, "confirm_edits", True)
 
     _single_query(_agent(tmp_path), cs.QueryFormat.JSON)
 
@@ -154,9 +146,9 @@ def test_ask_agent_json_never_carries_the_repr(
 
 
 def test_a_model_that_never_stops_asking_ends_in_an_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], confirm_edits: None
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app_context.session.confirm_edits = True
+    monkeypatch.setattr(app_context.session, "confirm_edits", True)
     agent = _agent(tmp_path, insist=True)
 
     with pytest.raises(RuntimeError, match="approval"):
@@ -187,9 +179,9 @@ async def test_mcp_ask_agent_reports_a_model_that_never_stops_asking(
 
 
 def test_ask_agent_text_answer_is_printed_as_before(
-    capsys: pytest.CaptureFixture[str], confirm_edits: None
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app_context.session.confirm_edits = True
+    monkeypatch.setattr(app_context.session, "confirm_edits", True)
 
     _single_query(_text_agent())
 
