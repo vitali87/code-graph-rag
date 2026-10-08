@@ -673,6 +673,21 @@ def _rust_exported(node: Node) -> bool:
     # as a root. Bare `pub` is a lone keyword child; a restriction adds `(...)`.
     if node.type == cs.TS_RS_MACRO_DEFINITION:
         return _rust_macro_exported(node)
+    if _rust_bare_pub(node):
+        return True
+    # A trait's methods take no `pub`: they are exactly as visible as the
+    # trait, so a `pub trait`'s required and default methods are its API, and
+    # dead-code reaches their impls through them (issue #2846).
+    body = node.parent
+    trait = body.parent if body is not None else None
+    return (
+        trait is not None
+        and trait.type == cs.TS_RS_TRAIT_ITEM
+        and _rust_bare_pub(trait)
+    )
+
+
+def _rust_bare_pub(node: Node) -> bool:
     modifier = next(
         (c for c in node.children if c.type == cs.TS_PHP_VISIBILITY_MODIFIER), None
     )
