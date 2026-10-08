@@ -464,11 +464,12 @@ MCP_FLOW_VERDICT = (
     "gaps exist. The path may cross a service boundary: a NETWORK resource "
     "that resolves to another project's endpoint continues into that "
     "handler, `remote_hops` lists the (from, to) pairs where it does, and "
-    "the coverage of every project entered counts towards the verdict. "
-    "FLOWS_TO coverage requires indexing with the `io` capture group. For "
-    "an MCP server, set `CGR_CAPTURE=io` in the server environment before "
-    "running index_repository or update_repository, then reindex after "
-    "changing it."
+    "the coverage of every project entered counts towards the verdict. A "
+    "source or sink that is not in the graph, or a source of another "
+    "project, is refused with an error rather than answered. FLOWS_TO "
+    "coverage requires indexing with the `io` capture group. For an MCP "
+    "server, set `CGR_CAPTURE=io` in the server environment before running "
+    "index_repository or update_repository, then reindex after changing it."
 )
 
 MCP_PARAM_PROJECT = (
