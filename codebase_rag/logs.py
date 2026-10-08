@@ -180,6 +180,13 @@ DEF_NO_PARSER = "No parser available for {language}"
 DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
+# A notebook with no Python cells to parse keeps its File node (issue #2480).
+NOTEBOOK_NOT_PYTHON = (
+    "{path}: the notebook's kernel language is {language!r}, not Python; its "
+    "cells are not indexed"
+)
+NOTEBOOK_UNREADABLE = "{path}: {reason}; its cells are not indexed"
+NOTEBOOK_INDEXED = "Indexed {cells} code cells of notebook {path}"
 
 # Semantic/embedding logs
 SEMANTIC_NOT_AVAILABLE = (
