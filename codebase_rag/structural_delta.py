@@ -156,6 +156,10 @@ class ArityAtSite(TypedDict):
     kwarg_names: list[str]
     declared_count: int
     verdict: str
+    # The definition the site was judged against and how its edge was bound
+    # (issue #2639): a finding against a guess can be told from a real one.
+    callee: str
+    resolution: str
 
 
 class RemoteCaller(TypedDict):
@@ -1798,6 +1802,12 @@ def _site_finding(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> ArityAtSite:
     declared_count, verdict = _arity_verdict(site, definition, repo_root)
+    if site.resolution in cs.DELTA_GUESSED_RESOLUTIONS and verdict != cs.DELTA_ARITY_OK:
+        # The callee is a guess from the name alone, or one of several
+        # same-named candidates: the site may not call it at all, so a
+        # failure against it says nothing certain (issue #2639). A count
+        # that fits stays `ok`, as the declared-arity path answers it.
+        verdict = cs.DELTA_ARITY_UNKNOWN
     return ArityAtSite(
         caller=site.caller,
         path=site.caller_path,
@@ -1807,6 +1817,8 @@ def _site_finding(
         kwarg_names=list(site.kwarg_names),
         declared_count=declared_count,
         verdict=verdict,
+        callee=site.callee,
+        resolution=site.resolution or cs.EdgeResolution.EXACT.value,
     )
 
 
@@ -1980,6 +1992,7 @@ def _flipped_site(
         or call is None
         or Path(definition.path).suffix != cs.EXT_PY
         or finding["verdict"] in cs.DELTA_ARITY_DEFINITE
+        or finding["resolution"] in cs.DELTA_GUESSED_RESOLUTIONS
     ):
         return finding
     parent, child = _value_parent(call)

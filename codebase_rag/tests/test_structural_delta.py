@@ -210,6 +210,9 @@ def test_two_arg_call_to_one_arg_function_is_an_arity_finding(
             "kwarg_names": [],
             "declared_count": 1,
             "verdict": cs.DELTA_ARITY_TOO_MANY,
+            # The callee judged and how its edge was bound (issue #2639).
+            "callee": _qn("pkg.util.helper"),
+            "resolution": cs.EdgeResolution.EXACT.value,
         }
     ]
     assert delta["signature_changes"] == []
