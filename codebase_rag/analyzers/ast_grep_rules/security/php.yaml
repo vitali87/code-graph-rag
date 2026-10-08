@@ -12,12 +12,15 @@ rules:
       has: { field: function, regex: '^eval$' }
   - id: command_exec
     # Shell/process execution sinks: user-controlled args risk command injection.
-    message: "Command execution sink (system/exec/shell_exec/passthru/proc_open/popen)"
+    # The backtick operator IS shell_exec (issue #2868).
+    message: "Command execution sink (system/exec/shell_exec/passthru/proc_open/popen/backtick)"
     rule:
-      kind: function_call_expression
-      has:
-        field: function
-        regex: '^(system|exec|shell_exec|passthru|proc_open|popen)$'
+      any:
+        - kind: function_call_expression
+          has:
+            field: function
+            regex: '^(system|exec|shell_exec|passthru|proc_open|popen)$'
+        - kind: shell_command_expression
   - id: sqli_concat
     # SQL built by string concatenation (binary '.') passed to a query sink.
     # Favour recall: match either a bare mysqli_query call or any ->query() method
@@ -45,19 +48,63 @@ rules:
     # surface. Ceiling: without entropy scoring, ordinary word/URL literals bound
     # to a credential-named variable still surface as review prompts; that
     # residual is the known limit of regex-only secret detection, not a defect.
+    # `define('NAME', '...')` (how wp-config.php stores its secrets) and
+    # `const NAME = '...'` (top-level or in a class) bind a name to a value
+    # as an assignment does, with the same name and value guards (#2868).
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
-      kind: assignment_expression
-      all:
-        - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
-        - has:
-            field: right
-            all:
-              - any:
-                  - kind: encapsed_string  # double-quoted
-                  - kind: string           # single-quoted
-              - regex: '^.{10,}$'
-              - not:
-                  any:
-                    - regex: '\{[^{}]*\}'
-                    - regex: '%[sdrifeEgGxXoc(]'
+      any:
+        - kind: assignment_expression
+          all:
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has:
+                field: right
+                all:
+                  - any:
+                      - kind: encapsed_string  # double-quoted
+                      - kind: string           # single-quoted
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: function_call_expression
+          all:
+            - has: { field: function, regex: '^\\?define$' }
+            - has:
+                field: arguments
+                all:
+                  - has:
+                      kind: argument
+                      nthChild: 1
+                      has:
+                        any:
+                          - kind: encapsed_string
+                          - kind: string
+                        regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)'
+                  - has:
+                      kind: argument
+                      nthChild: 2
+                      has:
+                        all:
+                          - any:
+                              - kind: encapsed_string
+                              - kind: string
+                          - regex: '^.{10,}$'
+                          - not:
+                              any:
+                                - regex: '\{[^{}]*\}'
+                                - regex: '%[sdrifeEgGxXoc(]'
+        - kind: const_element
+          all:
+            - has: { kind: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has:
+                all:
+                  - any:
+                      - kind: encapsed_string
+                      - kind: string
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'

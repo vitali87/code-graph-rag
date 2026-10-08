@@ -78,9 +78,19 @@ rules:
       pattern: "os.system($A + $B)"
   - id: subprocess_shell
     message: "subprocess called with shell=True enables command injection"
+    # The call's OWN `shell=True` keyword argument: the text anywhere under
+    # the call also matched a string argument (`["grep", "shell=True"]`), a
+    # comment between the arguments or another call's keyword, none of which
+    # runs a shell (issue #2869).
     rule:
       pattern: "subprocess.$M($$$)"
-      has: { regex: 'shell\s*=\s*True', stopBy: end }
+      has:
+        field: arguments
+        has:
+          kind: keyword_argument
+          all:
+            - has: { field: name, regex: '^shell$' }
+            - has: { field: value, kind: 'true' }
   - id: yaml_load
     message: "yaml.load() without SafeLoader can execute arbitrary code"
     # A SafeLoader or CSafeLoader, by keyword or as the second positional
