@@ -28,8 +28,11 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
 
 
 def _load_toml(file_path: Path) -> dict:
-    with file_path.open("rb") as f:
-        return tomllib.load(f)
+    # Decoded as utf-8-sig, like every text manifest here: a manifest saved
+    # with a byte-order mark (Windows Notepad, older Visual Studio) is read
+    # as its package manager reads it, where the BOM failed the whole parse
+    # (issue #2921).
+    return tomllib.loads(file_path.read_bytes().decode(cs.ENCODING_UTF8_SIG))
 
 
 # What a manifest's own content raises: not valid JSON, TOML or XML, not
@@ -136,7 +139,7 @@ class RequirementsTxtParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_REQUIREMENTS
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or line.startswith("-"):
@@ -152,7 +155,7 @@ class PackageJsonParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_PACKAGE_JSON
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
             data = json.load(f)
 
         dependencies.extend(
@@ -197,7 +200,7 @@ class GoModParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_GOMOD
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
             in_require_block = False
             for line in f:
                 line = line.strip()
@@ -241,7 +244,7 @@ class GemfileParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_GEMFILE
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
             for line in f:
                 line = line.strip()
                 if line.startswith(cs.GEMFILE_GEM_PREFIX):
@@ -259,7 +262,7 @@ class ComposerJsonParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_COMPOSER
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
             data = json.load(f)
 
         deps = data.get(cs.DEP_KEY_REQUIRE, {})
@@ -304,7 +307,7 @@ class PubspecYamlParser(DependencyParser):
         # (`flutter:`) has no inline scalar, so it is recorded name-only
         # (spec = "").
         scanner = _PubspecScanner()
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
             for raw in f:
                 if (dependency := scanner.feed(raw.rstrip())) is not None:
                     dependencies.append(dependency)
