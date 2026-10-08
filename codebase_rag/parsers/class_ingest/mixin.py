@@ -972,6 +972,29 @@ class ClassIngestMixin:
             if self.function_registry.get(qn) in bt.base_target_kinds(entry.language):
                 return qn
 
+    def _js_reexport_target(self, entry: DeferredInherit) -> str | None:
+        """The class a JS/TS base reaches through its module's exports.
+
+        `export { Animal as AnimalBase }` publishes the class under a name
+        nothing is registered under, so `extends AnimalBase` imported from
+        that module names `base.AnimalBase` (issue #2894). The export table
+        says which binding the name stands for, through any barrels that
+        rename it again; only what a class can extend (a type, or in JS a
+        constructor function) is a base at the end.
+        """
+        if entry.language not in cs.JS_TS_LANGUAGES:
+            return None
+        followed = self.import_processor.follow_js_reexports(
+            entry.parent_qn, self.module_qn_to_file_path, self.function_registry
+        )
+        # A subclass may take the base's declared name (hono's `Hono extends
+        # HonoBase`); a chain ending on the child itself names no base.
+        if followed != entry.child_qn and self.function_registry.get(
+            followed
+        ) in bt.base_target_kinds(entry.language):
+            return followed
+        return None
+
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
     ) -> tuple[str, bool] | None:
@@ -996,6 +1019,8 @@ class ClassIngestMixin:
         if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
+            return followed, False
+        if (followed := self._js_reexport_target(entry)) is not None:
             return followed, False
         if entry.alt_parent_qn is not None:
             # The written path was exact and still landed on nothing, which a

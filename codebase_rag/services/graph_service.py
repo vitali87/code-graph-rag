@@ -830,10 +830,11 @@ class MemgraphIngestor:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
             return len(params_list), 0
         lock = self._conn_lock if conn is None else nullcontext()
+        indexed = [
+            RelBatchRow(**row, row_index=index) for index, row in enumerate(params_list)
+        ]
         with lock:
-            results = self._execute_batch_with_return_on(
-                target_conn, query, params_list
-            )
+            results = self._execute_batch_with_return_on(target_conn, query, indexed)
             batch_successful = _created_count(results)
             failed_rows = (
                 self._missing_endpoint_rows(target_conn, pattern, params_list)
@@ -871,19 +872,19 @@ class MemgraphIngestor:
             return
 
         if self._executor and len(self._rel_groups) > 1:
-            total_attempted, total_successful, first_error = (
-                self._flush_rel_groups_parallel(self._executor)
+            _attempted, total_successful, first_error = self._flush_rel_groups_parallel(
+                self._executor
             )
         else:
-            total_attempted, total_successful, first_error = (
-                self._flush_rel_groups_serial()
-            )
+            _attempted, total_successful, first_error = self._flush_rel_groups_serial()
 
+        # Failed is what the total lacks, so the rows of a group whose write
+        # raised (never attempted) count too, and the three numbers add up.
         logger.info(
             ls.MG_RELS_FLUSHED.format(
                 total=self._rel_count,
                 success=total_successful,
-                failed=total_attempted - total_successful,
+                failed=self._rel_count - total_successful,
             )
         )
         self._rel_count = 0

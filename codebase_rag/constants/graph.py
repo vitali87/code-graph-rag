@@ -164,6 +164,9 @@ KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+# A relationship row's ordinal in its batch: the flush counts the rows it
+# wrote by it, so two identical rows stay two (issue #2879).
+KEY_ROW_INDEX = "row_index"
 # Columns of the endpoint lookup a relationship flush runs when rows were lost:
 # whether each failed row's source/target node was absent (issue #2438).
 KEY_FROM_MISSING = "from_missing"
