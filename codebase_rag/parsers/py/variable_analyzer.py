@@ -17,7 +17,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import annotation_text, resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -172,7 +172,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and param_name_node.text
             and param_type_node.text
             and (param_name := safe_decode_text(param_name_node))
-            and (param_type := safe_decode_text(param_type_node))
+            and (param_type := annotation_text(param_type_node))
         ):
             return
         local_var_types[param_name] = unquote_forward_refs(param_type)
@@ -188,7 +188,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and param_name_node.text
             and param_type_node.text
             and (param_name := safe_decode_text(param_name_node))
-            and (param_type := safe_decode_text(param_type_node))
+            and (param_type := annotation_text(param_type_node))
         ):
             return
         local_var_types[param_name] = unquote_forward_refs(param_type)
@@ -547,12 +547,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 name_node
                 and (name_text := name_node.text)
                 and return_node
-                and (return_text := return_node.text)
+                and (return_type := annotation_text(return_node))
             ):
                 continue
             # The return_type field wraps a type node; only a bare class name (not
             # a union, subscripted generic, or string forward ref) seeds a type.
-            return_type = return_text.decode(cs.ENCODING_UTF8)
             if return_type.isidentifier():
                 out.setdefault(
                     f"{cs.PY_SELF_PREFIX}{name_text.decode(cs.ENCODING_UTF8)}",
@@ -588,7 +587,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 and left_node.type == cs.TS_PY_IDENTIFIER
                 and type_node
                 and (name := safe_decode_text(left_node))
-                and (type_text := safe_decode_text(type_node))
+                and (type_text := annotation_text(type_node))
                 and type_text.isidentifier()
             ):
                 continue

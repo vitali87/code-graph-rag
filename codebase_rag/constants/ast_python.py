@@ -80,6 +80,18 @@ TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # `typing` names a literal-versus-annotation check understands.
 PY_TYPING_OPTIONAL = "Optional"
 PY_TYPING_UNION = "Union"
+# `Annotated[T, metadata]` (PEP 593), however it is imported: its type is `T`
+# and the rest is metadata (issue #2873).
+PY_ANNOTATED_NAMES = frozenset(
+    {"Annotated", "typing.Annotated", "typing_extensions.Annotated"}
+)
+TS_PY_TYPE = "type"
+TS_PY_GENERIC_TYPE = "generic_type"
+TS_PY_TYPE_PARAMETER = "type_parameter"
+# The annotation of an annotated assignment (`v: T = x`), which a function
+# body never evaluates (issue #2873).
+CAPTURE_PY_ANNOTATION = "annotation"
+PY_ANNOTATED_ASSIGNMENT_QUERY = f"(assignment type: (type) @{CAPTURE_PY_ANNOTATION})"
 # The first parameter of a method that names the instance or class; a
 # signature change keeps it in place and never remaps it.
 PY_RECEIVER_NAMES = frozenset({"self", "cls"})

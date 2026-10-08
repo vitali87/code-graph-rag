@@ -59,6 +59,7 @@ from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .php import utils as php_utils
+from .py import utils as py_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
@@ -4327,6 +4328,22 @@ class CallProcessor:
             captures = sorted_captures(cursor, caller_node)
             call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
+        if language == cs.SupportedLanguage.PYTHON and (
+            spans := py_utils.unrun_annotation_spans(
+                caller_node, queries[language][cs.QUERY_LANGUAGE]
+            )
+        ):
+            # A call in the caller's own annotations runs when its `def` does,
+            # and one in a local's annotation never runs: neither is a call
+            # the caller makes (issue #2873).
+            call_nodes = [
+                node
+                for node in call_nodes
+                if not any(
+                    start <= node.start_byte and node.end_byte <= end
+                    for start, end in spans
+                )
+            ]
         if not call_nodes:
             return
 
