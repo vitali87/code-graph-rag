@@ -1905,15 +1905,19 @@ class GraphUpdater:
         logger.info(ls.CPP_FRONTEND_EXPANSION_CALLS.format(count=emitted))
 
     def _repo_has_c_or_cpp_files(self) -> bool:
-        # Cheap early-exit scan: the frontend (and its warnings) only make
-        # sense when there is C/C++ to index.
+        # Early-exit scan: the frontend (and its warnings) only make sense
+        # when there is C/C++ to index. The indexer's own walk, not the raw
+        # tree: a `.c` under an excluded `vendor/` or a default-ignored
+        # `node_modules/` is never parsed, so there is no fidelity to lose
+        # and nothing to warn about (issue #2883).
         extensions = set(cs.CPP_EXTENSIONS) | set(cs.C_EXTENSIONS)
-        for _root, dirs, files in os.walk(self.repo_path):
-            dirs[:] = [d for d in dirs if not d.startswith(cs.SEPARATOR_DOT)]
-            # splitext, not Path(): no object allocation per repo file.
-            if any(os.path.splitext(f)[1].lower() in extensions for f in files):
-                return True
-        return False
+        # splitext, not Path(): no object allocation per repo file.
+        return any(
+            os.path.splitext(fname)[1].lower() in extensions
+            for _dirpath, fname, _rel in walk_eligible_files(
+                self.repo_path, self.exclude_paths, self.unignore_paths
+            )
+        )
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
