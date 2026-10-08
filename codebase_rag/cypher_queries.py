@@ -1444,4 +1444,13 @@ CYPHER_GRAPH_REFERENCES = """MATCH (src)-[r:REFERENCES|INSTANTIATES]->(target)
 WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
 RETURN labels(src)[0] AS label, src.qualified_name AS qualified_name,
        src.path AS path, type(r) AS rel_type, r.line AS line, r.col AS col,
-       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution"""
+       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution,
+       r.via_param AS via_param"""
+# The CALLS sites where a function runs `$qn` after receiving it as an
+# argument (issue #2459). Each spells the parameter, not `$qn`'s name, so a
+# rename must leave it alone even where the two are spelled alike.
+CYPHER_GRAPH_CALLBACK_SITES = """MATCH (src)-[r:CALLS]->(target)
+WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
+  AND r.via_param IS NOT NULL
+RETURN src.qualified_name AS qualified_name, r.line AS line, r.col AS col,
+       r.via_param AS via_param"""

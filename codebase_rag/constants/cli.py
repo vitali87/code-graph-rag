@@ -759,6 +759,11 @@ RENAME_AMBIGUOUS = (
 )
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
+RENAME_RESOLUTION_CLASS_VIA_PARAM = (
+    "constructed through parameter {param}; where the class is passed is "
+    "not recorded against it"
+)
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"

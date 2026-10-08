@@ -64,6 +64,7 @@ from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    callable_parameter_invocations,
     cpp_parameter_names,
     enclosing_class_node,
     function_span_key,
@@ -102,16 +103,31 @@ class _FactoryCall(NamedTuple):
     keyword: tuple[tuple[str, str], ...]
 
 
+class _PassedCallback(NamedTuple):
+    # A callback one call site hands to a callable parameter, resolved there.
+    # Its edge is written in finalize at the receiver's own invocations of the
+    # parameter, whose file the walk may not have reached yet (issue #2459).
+    source_spec: tuple[str, str, str]
+    param_name: str
+    rel_type: str
+    target_spec: tuple[str, str, str]
+    resolution: str
+
+
 class _FileCallableFlow:
     # One file's callable-flow records. Kept per file because the processor
     # outlives a pass: a re-walk must replace only that file's records, while
     # a file the pass leaves alone still seeds slots finalize resolves.
-    __slots__ = ("args", "returned_callables", "factory_calls")
+    __slots__ = ("args", "returned_callables", "factory_calls", "invocations", "passed")
 
     def __init__(self) -> None:
         self.args: list[_CallableFlowArg] = []
         self.returned_callables: dict[str, set[str]] = {}
         self.factory_calls: list[_FactoryCall] = []
+        # (function, parameter) -> the edge site of each place this file's
+        # function invokes that parameter: where a callback it receives runs.
+        self.invocations: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
+        self.passed: list[_PassedCallback] = []
 
 
 class _RefEmitScope(NamedTuple):
@@ -4401,6 +4417,7 @@ class CallProcessor:
             # flow cb into the returned closure regardless of source language.
             self._flow_param_names[caller_qn] = ordered_params
             caller_params = frozenset(ordered_params)
+            self._record_param_invocations(caller_node, caller_qn, language)
             self._collect_returned_callables(
                 caller_node,
                 caller_qn,
@@ -6329,7 +6346,6 @@ class CallProcessor:
                 ctx.local_var_types,
                 ctx.class_context,
                 ctx.resolve_func,
-                ctx.ensure_rel,
                 ctx.caller_qn,
             )
 
@@ -9067,7 +9083,6 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         resolve_func,
-        ensure_rel,
         caller_qn: str | None = None,
     ) -> None:
         if not (params := self._resolver.function_registry.callable_params(callee_qn)):
@@ -9086,9 +9101,45 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                     resolve_func,
-                    ensure_rel,
+                    self._passed_callback_recorder(param_name),
                     caller_qn,
                 )
+
+    def _passed_callback_recorder(self, param_name: str) -> Callable[..., None]:
+        # Stands in for ensure_rel: the edge's source is the callee, which runs
+        # the callback where it invokes `param_name`, so the edge waits for
+        # finalize and that site instead of taking the argument's, a position
+        # in this file rather than the callee's (issue #2459). The verdict is
+        # the one the callback resolution set for this edge (#1543 review).
+        passed = self._flow_bucket.passed
+
+        def record(
+            source_spec: tuple[str, str, str],
+            rel_type: str,
+            target_spec: tuple[str, str, str],
+        ) -> None:
+            passed.append(
+                _PassedCallback(
+                    source_spec, param_name, rel_type, target_spec, self._resolution
+                )
+            )
+
+        return record
+
+    def _record_param_invocations(
+        self, caller_node: Node, caller_qn: str, language: cs.SupportedLanguage
+    ) -> None:
+        # Only a function the registry marked as invoking a parameter is ever
+        # the source of a callable-parameter edge, so no other body is scanned
+        # a second time.
+        if not self._resolver.function_registry.callable_params(caller_qn):
+            return
+        invocations = callable_parameter_invocations(caller_node, language)
+        for param_name, nodes in invocations.items():
+            self._flow_bucket.invocations[(caller_qn, param_name)] = tuple(
+                {**node_site_properties(node), cs.KEY_VIA_PARAM: param_name}
+                for node in nodes
+            )
 
     @_preserves_verdict
     def _collect_callable_flow(
@@ -9154,16 +9205,68 @@ class CallProcessor:
         # parameter-taint the same way (issue #1142).
         self._flow_processor.finalize()
 
+    @_site_scoped
     def finalize_callable_param_flow(self) -> None:
         # Resolve the recorded call-site argument bindings to a fixpoint and emit a
         # CALLS edge from every function that invokes a callable parameter to each
         # concrete function that can reach it (directly or via pass-through params).
+        # No walk is running, so an edge with no recorded site carries none rather
+        # than the last node a walk left behind (Go's 1:0-7, issue #2459).
+        self._site_node = None
         returned_callables = self._merged_returned_callables()
         seeds, edges = self._callable_flow_slots()
         self._emit_returned_closure_calls(returned_callables)
         self._emit_factory_closure_calls(returned_callables, seeds)
         bindings = self._propagate_flow_bindings(seeds, edges)
-        self._emit_callable_param_calls(bindings)
+        invocations = self._merged_param_invocations()
+        self._emit_callable_param_calls(bindings, invocations)
+        self._emit_passed_callbacks(invocations)
+
+    def _merged_param_invocations(
+        self,
+    ) -> dict[tuple[str, str], tuple[PropertyDict, ...]]:
+        merged: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
+        for flow in self._callable_flow.values():
+            merged.update(flow.invocations)
+        return merged
+
+    @staticmethod
+    def _param_invocation_sites(
+        invocations: dict[tuple[str, str], tuple[PropertyDict, ...]],
+        func_qn: str,
+        param_name: str,
+    ) -> tuple[PropertyDict, ...]:
+        # A receiver whose walk recorded no invocation still invokes the
+        # parameter (the registry says so): keep the edge, without a site and
+        # so without `via_param`, since a site-less row merges on its endpoints
+        # alone and would stamp it on a direct call joining the same pair.
+        return invocations.get((func_qn, param_name)) or ({},)
+
+    def _emit_passed_callbacks(
+        self, invocations: dict[tuple[str, str], tuple[PropertyDict, ...]]
+    ) -> None:
+        # After the propagated bindings, so where both reach one site the
+        # direct argument's own verdict is the one that stays (#1543 review).
+        registry = self._resolver.function_registry
+        file_flows = self._callable_flow.values()
+        for passed in (p for flow in file_flows for p in flow.passed):
+            source_qn = passed.source_spec[2]
+            # A record outlives the walk that made it, and either end may have
+            # been deleted by a later pass that did not re-walk this file.
+            invoked = registry.callable_params(source_qn)
+            if (
+                not invoked
+                or passed.param_name not in invoked
+                or passed.target_spec[2] not in registry
+            ):
+                continue
+            self._resolution = passed.resolution
+            for site in self._param_invocation_sites(
+                invocations, source_qn, passed.param_name
+            ):
+                self._emit_rel(
+                    passed.source_spec, passed.rel_type, passed.target_spec, site
+                )
 
     def _merged_returned_callables(self) -> dict[str, set[str]]:
         returned_callables: dict[str, set[str]] = defaultdict(set)
@@ -9292,7 +9395,9 @@ class CallProcessor:
         return bindings
 
     def _emit_callable_param_calls(
-        self, bindings: dict[tuple[str, str], set[str]]
+        self,
+        bindings: dict[tuple[str, str], set[str]],
+        invocations: dict[tuple[str, str], tuple[PropertyDict, ...]],
     ) -> None:
         registry = self._resolver.function_registry
         for func_qn, invoked in (
@@ -9303,13 +9408,16 @@ class CallProcessor:
             source_spec = (func_type, cs.KEY_QUALIFIED_NAME, func_qn)
             for param_name in invoked:
                 self._emit_bound_target_calls(
-                    source_spec, bindings.get((func_qn, param_name), ())
+                    source_spec,
+                    bindings.get((func_qn, param_name), ()),
+                    self._param_invocation_sites(invocations, func_qn, param_name),
                 )
 
     def _emit_bound_target_calls(
         self,
         source_spec: tuple[str, str, str],
         target_qns: set[str] | tuple[()],
+        sites: tuple[PropertyDict, ...],
     ) -> None:
         registry = self._resolver.function_registry
         for target_qn in target_qns:
@@ -9317,11 +9425,13 @@ class CallProcessor:
             if target_type is None:
                 continue
             for variant in registry.variants(target_qn):
-                self._emit_rel(
-                    source_spec,
-                    cs.RelationshipType.CALLS,
-                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+                for site in sites:
+                    self._emit_rel(
+                        source_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                        site,
+                    )
 
     def _ingest_callable_field_calls(
         self,

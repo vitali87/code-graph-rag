@@ -146,6 +146,17 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_GRAPH_CALLBACK_SITES:
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_LINE: props.get(cs.KEY_LINE),
+                    cs.KEY_COL: props.get(cs.KEY_COL),
+                    cs.KEY_VIA_PARAM: props[cs.KEY_VIA_PARAM],
+                }
+                for src, rel, dst, props in self.edges
+                if rel == "CALLS" and dst == qn and props.get(cs.KEY_VIA_PARAM)
+            ]
         raise AssertionError(f"unexpected query: {query[:50]}")
 
 

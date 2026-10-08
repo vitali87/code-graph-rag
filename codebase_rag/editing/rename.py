@@ -369,6 +369,9 @@ class Renamer:
         # (issue #1531): the delta of what it wrote is measured and the
         # transaction undone when the contract fails.
         self.reingest = reingest
+        # Per renamed symbol: (owner, line, col) of each CALLS site that runs
+        # it through a parameter, and that parameter (issue #2459).
+        self._callback_sites: dict[str, dict[tuple[str, int, int], str]] = {}
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
@@ -648,8 +651,9 @@ class Renamer:
     ) -> None:
         """Record a graph-known occurrence that cannot be rewritten.
 
-        Both refusal paths in `_add_site` -- a row with no usable position,
-        and a file the patcher cannot read -- append the same pair. Sharing
+        Every refusal path of a site -- a row with no usable position, a
+        file the patcher cannot read, a position that file does not have, a
+        class run through a parameter -- appends the same pair. Sharing
         them keeps `_add_site` under the cognitive complexity limit (S3776)
         by removing a whole branch body rather than straight-line setup,
         which is the part that actually counts.
@@ -658,6 +662,135 @@ class Renamer:
             cs.RENAME_UNLOCATABLE_SITE.format(owner=owner, resolution=resolution)
         )
         sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
+
+    def _via_param(self, row: ResultRow | graph_query.CallSiteRow) -> str | None:
+        """The parameter the row's owner runs the renamed symbol through.
+
+        A reference row carries it. A callers row is matched against the
+        callback sites of the symbol it reaches, `through`, read once per
+        symbol (issue #2459).
+        """
+        if isinstance(via_param := row.get(cs.KEY_VIA_PARAM), str):
+            return via_param
+        through = row.get("through")
+        if not isinstance(through, str):
+            return None
+        if through not in self._callback_sites:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: through,
+            }
+            self._callback_sites[through] = {
+                (str(site[cs.KEY_QUALIFIED_NAME]), line, col): str(
+                    site[cs.KEY_VIA_PARAM]
+                )
+                for site in self.fetch_all(cq.CYPHER_GRAPH_CALLBACK_SITES, params)
+                if isinstance(line := site.get(cs.KEY_LINE), int)
+                and isinstance(col := site.get(cs.KEY_COL), int)
+            }
+        key = (str(row.get("qualified_name") or ""), row.get("line"), row.get("col"))
+        return self._callback_sites[through].get(key)
+
+    @staticmethod
+    def _span_in_file(
+        source: bytes, line: int, col: int, end_line: int, end_col: int
+    ) -> bool:
+        """Whether both ends of a site span are positions `source` has."""
+        try:
+            line_col_to_byte(source, line, col)
+            line_col_to_byte(source, end_line, end_col)
+        except PatcherError:
+            return False
+        return True
+
+    @classmethod
+    def _add_callback_site(
+        cls,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        row: ResultRow | graph_query.CallSiteRow,
+        via_param: str,
+    ) -> None:
+        """A site where the owner runs what it was handed (`f(y)` in `apply(f, x)`).
+
+        The name written there is the parameter's, so nothing is rewritten
+        (issue #2459). A function is named where it is passed, a REFERENCES
+        edge of its own that joins the plan. A class passed as a value is
+        recorded there only against its constructor, if at all, so its rename
+        cannot see that site and refuses rather than leave it under the old
+        name.
+        """
+        if row.get(cs.KEY_REL_TYPE) != cs.RelationshipType.INSTANTIATES:
+            return
+        line, col = row.get("line"), row.get("col")
+        cls._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=str(row.get("qualified_name") or ""),
+            path=str(row.get("path") or ""),
+            line=line if isinstance(line, int) else 0,
+            col=col if isinstance(col, int) else 0,
+            resolution=cs.RENAME_RESOLUTION_CLASS_VIA_PARAM.format(param=via_param),
+            site_resolution=_SITELESS,
+        )
+
+    @staticmethod
+    def _site_end(
+        row: ResultRow | graph_query.CallSiteRow, line: int, col: int, old_name: str
+    ) -> tuple[int, int]:
+        """Where a site ends: its recorded end, else `old_name` written at its start."""
+        end_line, end_col = row.get("end_line"), row.get("end_col")
+        return (
+            end_line if isinstance(end_line, int) else line,
+            end_col if isinstance(end_col, int) else col + len(old_name),
+        )
+
+    @classmethod
+    def _site_source(
+        cls,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        patcher: Patcher,
+        *,
+        owner: str,
+        path: str,
+        span: tuple[int, int, int, int],
+    ) -> bytes | None:
+        """The file holding a site's `span`, else None once recorded unlocatable."""
+        line, col = span[0], span[1]
+        try:
+            source = patcher.source(path)
+        except PatcherError:
+            # The graph knows this occurrence but its file cannot be read:
+            # renaming around it would leave it under the old name.
+            cls._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="missing file",
+                site_resolution=_SITELESS,
+            )
+            return None
+        if not cls._span_in_file(source, *span):
+            # A position the file does not have: an index older than the
+            # file, or a site recorded against another file (issue #2459).
+            # It cannot be rewritten, so it refuses instead of escaping as a
+            # PatcherError.
+            cls._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution=cs.RENAME_RESOLUTION_BAD_POSITION,
+                site_resolution=_SITELESS,
+            )
+            return None
+        return source
 
     def _add_site(
         self,
@@ -668,10 +801,12 @@ class Renamer:
         old_name: str,
         patcher: Patcher,
     ) -> None:
+        if via_param := self._via_param(row):
+            self._add_callback_site(sites, unlocatable, row, via_param)
+            return
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
-        end_line, end_col = row.get("end_line"), row.get("end_col")
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -693,22 +828,13 @@ class Renamer:
                 site_resolution=resolution_text or _SITELESS,
             )
             return
-        try:
-            source = patcher.source(path)
-        except PatcherError:
-            # The graph knows this occurrence but its file cannot be read:
-            # renaming around it would leave it under the old name.
-            self._record_unlocatable(
-                sites,
-                unlocatable,
-                owner=owner,
-                path=path,
-                line=line,
-                col=col,
-                resolution="missing file",
-                site_resolution=_SITELESS,
-            )
+        span = (line, col, *self._site_end(row, line, col, old_name))
+        source = self._site_source(
+            sites, unlocatable, patcher, owner=owner, path=path, span=span
+        )
+        if source is None:
             return
+        end_line, end_col = row.get("end_line"), row.get("end_col")
         token = _last_identifier(
             source,
             line,
