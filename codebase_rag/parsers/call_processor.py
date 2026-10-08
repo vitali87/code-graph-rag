@@ -3969,7 +3969,7 @@ class CallProcessor:
                 # gets INSTANTIATES (+ CALLS to its constructor), and an inline
                 # callback argument (`new CancelablePromise(cb)`) is referenced so
                 # it is not reported as dead.
-                ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+                ctor = js_ts_utils.constructor_of(call_node)
                 if ctor is not None and ctor.text is not None:
                     return decode_node_text(ctor.text)
             case cs.TS_OBJECT_CREATION_EXPRESSION if language in (

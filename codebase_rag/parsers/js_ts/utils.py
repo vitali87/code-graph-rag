@@ -132,11 +132,36 @@ def find_return_statements(
         stack.extend(reversed(current.children))
 
 
+_CONSTRUCTOR_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+_NAMED_CONSTRUCTOR_TYPES = frozenset({cs.TS_IDENTIFIER, cs.TS_MEMBER_EXPRESSION})
+
+
+def constructor_of(new_expr_node: Node) -> Node | None:
+    """The constructor a `new` expression names, under any parentheses or casts.
+
+    `new (X)(...)`, `new (X as any)(...)`, `new (X satisfies T)(...)` and
+    `new (X!)(...)` all construct `X`, as `new X(...)` does; reading the
+    sub-expression as written named nothing (zod's
+    `new (Internals as any)(def)`, issue #2874). Unwrapping stops at a name
+    or a member path: `new (getCtor())()` or `new (flag ? A : B)()`
+    constructs a computed value, so the node is returned as written.
+    """
+    constructor_node = new_expr_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+    current = constructor_node
+    while current is not None and current.type in _CONSTRUCTOR_WRAPPER_TYPES:
+        current = next(
+            (c for c in current.named_children if c.type != cs.TS_COMMENT), None
+        )
+    if current is not None and current.type in _NAMED_CONSTRUCTOR_TYPES:
+        return current
+    return constructor_node
+
+
 def extract_constructor_name(new_expr_node: Node) -> str | None:
     if new_expr_node.type != cs.TS_NEW_EXPRESSION:
         return None
 
-    constructor_node = new_expr_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+    constructor_node = constructor_of(new_expr_node)
     if constructor_node and constructor_node.type == cs.TS_IDENTIFIER:
         constructor_text = constructor_node.text
         if constructor_text:
