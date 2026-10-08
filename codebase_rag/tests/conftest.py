@@ -771,6 +771,13 @@ def create_and_run_updater(
         unignore_paths=unignore_paths,
         capture=capture,
     )
+    # The autouse `_skip_when_grammar_missing` wraps `run` per test, so a
+    # module-scoped fixture, set up before it, ran over a repo of a missing
+    # grammar on a base install and failed on an empty graph instead of
+    # skipping. The check is made here too, where every caller passes.
+    if missing := _grammars_missing_for(updater):
+        names = ", ".join(sorted(str(lang.value) for lang in missing))
+        pytest.skip(f"{names} parser not available")
     updater.run()
     _audit_recorded_graph(mock_ingestor)
     return updater
