@@ -1059,7 +1059,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = sorted_captures(cursor, node)
                 if return_stmts := captures.get("return_stmt"):
                     self._return_stmt_cache[node] = return_stmts
                 return (
@@ -1741,7 +1741,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = sorted_captures(cursor, node)
                 return_nodes.extend(captures.get("return_stmt", []))
                 return
             except Exception:  # noqa: S110 - a failed query falls back to the walk below
