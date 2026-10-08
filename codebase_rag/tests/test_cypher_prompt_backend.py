@@ -194,3 +194,28 @@ def test_the_neo4j_ranking_example_restricts_every_aggregated_alias() -> None:
         assert f"{alias}.qualified_name STARTS WITH" in ranking, (
             f"alias {alias!r} is aggregated but never restricted: {ranking}"
         )
+
+
+@pytest.mark.parametrize(
+    "build",
+    [prompts.build_cypher_system_prompt, prompts.build_local_cypher_system_prompt],
+)
+def test_cypher_prompt_opening_does_not_name_another_engine(
+    build, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The opening line called the target "Neo4j Cypher" on every backend,
+    two lines above a preamble naming the configured engine."""
+    monkeypatch.setattr(prompts.settings, "GRAPH_BACKEND", DIALECT_MEMGRAPH)
+
+    opening = build().strip().splitlines()[0]
+
+    assert "Neo4j" not in opening
+
+
+def test_cypher_examples_carry_no_language_prefix() -> None:
+    """Each example sat under a `cypher//` line, the remnant of a lost code
+    fence. Models copy the shape of examples, and the response cleaner has to
+    strip a leading `cypher` again; a plain `//` comment is valid Cypher."""
+    prompt = prompts.build_cypher_system_prompt()
+
+    assert not re.search(r"^\s*cypher\s*//", prompt, re.MULTILINE)
