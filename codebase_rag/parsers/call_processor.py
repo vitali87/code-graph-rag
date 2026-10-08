@@ -30,6 +30,7 @@ from ..types_defs import (
     LanguageQueries,
     NodeType,
     PropertyDict,
+    ScalaBinding,
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
@@ -61,6 +62,7 @@ from .lua import utils as lua_utils
 from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
+from .scala import utils as scala_utils
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -171,6 +173,7 @@ class _CallScanContext:
     resolve_cpp_op: Callable[[str, str], tuple[str, str] | None] | None
     ensure_rel: Callable[..., None]
     arg_ref_rel: cs.RelationshipType
+    scala_bindings: dict[str, list[ScalaBinding]] | None = None
     alias_map: dict[str, str] | None = None
     factory_aliases: dict[str, str] | None = None
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
@@ -534,7 +537,12 @@ _OBJECT_CREATION_NODE_TYPES = frozenset(
     {
         cs.TS_OBJECT_CREATION_EXPRESSION,
         cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
+        cs.TS_SCALA_INSTANCE_EXPRESSION,
     }
+)
+# Languages whose `new X(...)` names a TYPE, never a method or function.
+_NEW_CONSTRUCTS_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.SCALA}
 )
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
@@ -3962,6 +3970,12 @@ class CallProcessor:
         call_node: Node, language: cs.SupportedLanguage | None
     ) -> str | None:
         match call_node.type:
+            case cs.TS_SCALA_INSTANCE_EXPRESSION if (
+                language == cs.SupportedLanguage.SCALA
+            ):
+                # Scala `new C(...)` holds its type as an unnamed child, so
+                # it fell through nameless and emitted nothing (issue #2450).
+                return scala_utils.scala_instance_type_name(call_node)
             case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
                 # JS/TS `new Foo(...)` names the class via the `constructor` field
                 # (no `function` field). Returning the constructor name routes
@@ -4769,6 +4783,12 @@ class CallProcessor:
             self._ingest_java_method_reference(ctx, call_node)
             return
         call_name = self._scan_call_name(ctx, call_node)
+        if (
+            ctx.language == cs.SupportedLanguage.SCALA
+            and call_node.type == cs.TS_SCALA_FIELD_EXPRESSION
+        ):
+            self._ingest_scala_selection(ctx, call_node)
+            return
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
         # edge stops at the dispatcher and the routine looks unreachable.
@@ -4883,6 +4903,53 @@ class CallProcessor:
                     ctx.caller_spec,
                     cs.RelationshipType.CALLS,
                     (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _ingest_scala_selection(self, ctx: _CallScanContext, node: Node) -> None:
+        # `c.size` with no parentheses: a parameterless method call, or a
+        # field read spelled the same way. It binds only through a receiver
+        # whose class is known (issue #2450); the selection that is a call's
+        # callee is left to the call node, which names it with its args.
+        selection = scala_utils.scala_selection(node)
+        if selection is None:
+            return
+        if ctx.scala_bindings is None:
+            ctx.scala_bindings = scala_utils.scala_bindings(ctx.caller_node)
+        receiver, member = selection
+        binding = scala_utils.scala_binding_at(
+            ctx.scala_bindings, receiver, node.start_byte
+        )
+        # A local's binding types it; an unbound name is an object named
+        # outright. A local of unknown type is neither, so it binds nothing.
+        receiver_type = binding.type_name if binding is not None else receiver
+        if receiver_type is None:
+            return
+        callee_info = self._resolver.resolve_scala_selection(
+            receiver_type, member, ctx.module_qn, ctx.class_context, node.start_byte
+        )
+        if callee_info is None:
+            return
+        call_name = f"{receiver}{cs.SEPARATOR_DOT}{member}"
+        self._ingest_resolved_call(ctx, node, call_name, callee_info)
+
+    def _emit_scala_auxiliary_ctor_calls(
+        self, ctx: _CallScanContext, class_variants: list[str]
+    ) -> None:
+        # A Scala class's primary constructor is its body, which has no node
+        # of its own; an auxiliary `def this(...)` is a method, and any of
+        # them may be the one `new C(...)` runs.
+        registry = self._resolver.function_registry
+        for class_variant in class_variants:
+            ctor_qn = (
+                f"{class_variant}{cs.SEPARATOR_DOT}{cs.SCALA_AUXILIARY_CONSTRUCTOR}"
+            )
+            if registry.get(ctor_qn) != NodeType.METHOD:
+                continue
+            for variant in registry.variants(ctor_qn):
+                ctx.ensure_rel(
+                    ctx.caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, variant),
                 )
 
     def _ingest_js_call_site(
@@ -5045,6 +5112,19 @@ class CallProcessor:
         call_name: str,
         call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
+        if ctx.language == cs.SupportedLanguage.SCALA:
+            # Named the way the compiler looks it up: the imports in scope at
+            # the call, the file, its package's other files. A path-qualified
+            # `new shop.Cart()` names no import, so only the package index
+            # reaches it.
+            decided, scala_callee = self._resolver.resolve_scala_callee(
+                call_name,
+                ctx.module_qn,
+                call_node.start_byte,
+                constructing=call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION,
+            )
+            if decided:
+                return scala_callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
             return self._resolve_java_callee(ctx, call_node)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
@@ -5071,9 +5151,8 @@ class CallProcessor:
             ctx.caller_qn,
             ctx.language,
             call_point=call_node.start_byte,
-            # A Java/C# `new X(...)` names a type, never a method.
-            constructing=ctx.language
-            in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
+            # A Java/C#/Scala `new X(...)` names a type, never a method.
+            constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
         if ctx.is_js_ts and callee_info is not None:
@@ -6334,12 +6413,8 @@ class CallProcessor:
             )
 
         if (
-            ctx.language in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
-            and call_node.type
-            in (
-                cs.TS_OBJECT_CREATION_EXPRESSION,
-                cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
-            )
+            ctx.language in _NEW_CONSTRUCTS_LANGUAGES
+            and call_node.type in _OBJECT_CREATION_NODE_TYPES
             and callee_type != cs.NodeLabel.CLASS
         ):
             # `new X(...)` where X resolves to a non-class: a Java interface
@@ -6435,6 +6510,7 @@ class CallProcessor:
             cs.SupportedLanguage.CSHARP,
             cs.SupportedLanguage.CPP,
             cs.SupportedLanguage.DART,
+            cs.SupportedLanguage.SCALA,
         ):
             # A Java/C#/C++/Dart constructor is a method named like its
             # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
@@ -6472,6 +6548,9 @@ class CallProcessor:
     ) -> None:
         if ctx.language == cs.SupportedLanguage.CPP:
             self._emit_cpp_ctor_calls(ctx.caller_spec, callee_qn)
+            return
+        if ctx.language == cs.SupportedLanguage.SCALA:
+            self._emit_scala_auxiliary_ctor_calls(ctx, class_variants)
             return
         # Every class variant INSTANTIATES above, so every one
         # takes its constructors too: `Box@8` for `class Box<T>`

@@ -1042,6 +1042,97 @@ class DeferredImportEdge(NamedTuple):
     site: PropertyDict | None = None
 
 
+class ScalaPackageBlock(NamedTuple):
+    """The body of one `package p { ... }` block, as a byte span."""
+
+    start: int
+    end: int
+    # The packages its body opens, innermost first, for relative lookups.
+    enclosing: tuple[str, ...]
+
+
+class ScalaClassBases(NamedTuple):
+    """A Scala class's `extends ... with ...` bases, as written, and its start."""
+
+    point: int
+    bases: tuple[str, ...]
+
+
+class ScalaPackageScan(NamedTuple):
+    """What one Scala file declares and mentions (issue #2450).
+
+    Scala packages need not mirror directories, so the package clauses are
+    the only answer to "does this repo define the package an import names".
+    """
+
+    # Each package the file opens -> the names it declares directly in it.
+    packages: dict[str, frozenset[str]]
+    # Packages whose members the file's imports may name relatively,
+    # innermost first: `package a` then `package b` opens `a.b` and `a`.
+    enclosing: tuple[str, ...]
+    # Every name the file writes outside its import and package clauses: the
+    # evidence that pins a wildcard import to the modules actually used.
+    mentions: frozenset[str]
+    # Every `package p { ... }` block: sibling blocks see different packages.
+    blocks: tuple[ScalaPackageBlock, ...]
+    # Class qn relative to the module -> where it sits and its bases as
+    # written, so a base resolves through the imports of its own block.
+    class_bases: dict[str, ScalaClassBases]
+
+
+class ScalaImportBinding(NamedTuple):
+    """One name a Scala import binds, where it is visible, and its site."""
+
+    local_name: str
+    path: str
+    # The packages the import sits in, innermost first.
+    enclosing: tuple[str, ...]
+    # The package block the import is visible in; None for the whole file.
+    block: ScalaPackageBlock | None
+    site: PropertyDict | None
+
+
+class ScalaBlockImports(NamedTuple):
+    """The resolved import map of one package block."""
+
+    block: ScalaPackageBlock
+    mapping: dict[str, str]
+
+
+class ScalaBinding(NamedTuple):
+    """A name a Scala caller binds: the type it holds, and where it holds it.
+
+    The scope is a byte span, so an inner block's `c` hides an outer `c`
+    only inside that block (issue #2450).
+    """
+
+    name: str
+    # None when the type is unknown without inference, or when one scope
+    # binds the name twice to different types.
+    type_name: str | None
+    scope_start: int
+    scope_end: int
+
+
+class ScalaImportTarget(NamedTuple):
+    """A Scala import path resolved against the project's own packages."""
+
+    # The project qn of the imported member, or None when the path names a
+    # package, whose members are spread over the declaring modules.
+    member_qn: str | None
+    # Declaring module qn -> the names it declares under the resolved package.
+    declaring: dict[str, frozenset[str]]
+
+
+class ScalaPackageIndex(NamedTuple):
+    """Every Scala package the project declares, from both directions."""
+
+    # package -> {declaring module qn -> the names it declares there}
+    modules: dict[str, dict[str, frozenset[str]]]
+    # package -> {declared name -> the module qns declaring it}
+    owners: dict[str, dict[str, tuple[str, ...]]]
+
+
 LanguageFamily = frozenset[SupportedLanguage]
 # {bare module qn: {language family: its file's module qn}} for a stem whose
 # files carry their extension, the name each family's importers land on.
