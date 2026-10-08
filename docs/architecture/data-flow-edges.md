@@ -274,6 +274,19 @@ Within a function body, taint moves and disappears by these rules:
   `isinstance`, `issubclass`, `callable`, `hasattr`, `any`, `all`, the
   `hashlib` / `hmac` digests and `compare_digest`, and the `str` predicate and
   lookup methods (`startswith`, `endswith`, `is*`, `count`, `find`, `index`).
+  Those methods clear only on a receiver known to be a string: a literal or
+  f-string, or a name every binding of which in its scope is a string. That
+  is a `str` annotation, or a plain `name = value` whose value is a string:
+  an env read such as `os.getenv(...)` or `os.environ[...]` with no default
+  or a string default, an unshadowed `str(...)` / `repr(...)` / `input()`,
+  or a str method such as `.strip()` on a string. Any other binding form
+  (unpacking, `+=`, a walrus, a for / with / except target, a match capture,
+  an import, a nested def or class, `del`, a type parameter or alias, a
+  `global` / `nonlocal` declaration), a name read inside a lambda or
+  comprehension, and a name whose own bindings refer back to it
+  (`t = t.strip()`) leave the name unknown. On any receiver not known to be
+  a string, such as `client.find(secret)` or a `str` parameter rebound to a
+  client, the receiver and the arguments keep their taint.
   A comparison (`t == "x"`) or `not t` yields a bool and is clean too.
   Escaping and quoting (`html.escape`, `shlex.quote`) deliberately stay
   transforms: `FLOWS_TO` tracks where a value came from, and an escaped secret
