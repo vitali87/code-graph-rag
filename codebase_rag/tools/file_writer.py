@@ -10,6 +10,7 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..schemas import FileCreationResult
+from ..types_defs import AfterWrite
 from . import tool_descriptions as td
 
 
@@ -41,9 +42,16 @@ class FileWriter:
             return FileCreationResult(file_path=str(file_path), error_message=err_msg)
 
 
-def create_file_writer_tool(file_writer: FileWriter) -> Tool:
+def create_file_writer_tool(
+    file_writer: FileWriter, after_write: AfterWrite | None = None
+) -> Tool:
     async def create_new_file(file_path: str, content: str) -> FileCreationResult:
-        return await file_writer.create_file(file_path, content)
+        result = await file_writer.create_file(file_path, content)
+        # The chat session re-ingests what it writes, so its next question
+        # reads the new file (issue #2916).
+        if result.success and after_write is not None:
+            result.graph_update = await after_write([file_path]) or None
+        return result
 
     return Tool(
         function=create_new_file,

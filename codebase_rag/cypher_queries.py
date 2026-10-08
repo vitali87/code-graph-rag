@@ -32,6 +32,7 @@ from .constants import (
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
+    KEY_ROW_INDEX,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
@@ -370,8 +371,14 @@ RETURN id(n) as from_id, id(b) as to_id, type(r) as type, properties(r) as prope
 """
 )
 
-CYPHER_RETURN_COUNT = "RETURN count(r) as created"
-CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
+# Rows written, not edges matched: a MERGE without the per-site keys matches
+# every parallel edge between its endpoints, so `count(r)` let one row count
+# several times and a flush report more writes than rows (issue #2879). A row
+# without its ordinal (one built outside the flush) counts as itself.
+CYPHER_RETURN_COUNT = (
+    f"RETURN count(DISTINCT coalesce(row.{KEY_ROW_INDEX}, row)) as created"
+)
+CYPHER_SET_PROPS_RETURN_COUNT = f"SET r += row.props\n{CYPHER_RETURN_COUNT}"
 
 CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
 MATCH (m:Module)-[:DEFINES]->(n)
