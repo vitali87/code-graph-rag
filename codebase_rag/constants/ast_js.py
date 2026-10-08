@@ -275,6 +275,10 @@ TS_GENERIC_TYPE = "generic_type"
 TS_UNION_TYPE = "union_type"
 TS_TYPE_IDENTIFIER = "type_identifier"
 TS_NESTED_TYPE_IDENTIFIER = "nested_type_identifier"
+# What a TS `implements` or interface `extends` entry may name (issue #2560):
+# a bare type, or a namespace member (`r.Plain`). A generic_type (`Router<T>`)
+# names one of these through its `name` field.
+TS_HERITAGE_TYPE_NAME_TYPES = (TS_TYPE_IDENTIFIER, TS_NESTED_TYPE_IDENTIFIER)
 TS_JS_OPERATOR_OF = "of"
 TS_NULLISH_TYPE_TEXTS = frozenset({"null", "undefined"})
 TS_ARRAY_GENERIC_NAMES = frozenset(

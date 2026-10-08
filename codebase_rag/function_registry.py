@@ -29,6 +29,7 @@ class FunctionRegistryTrie:
         "_property_names",
         "_object_members",
         "_abstracts",
+        "_module_private",
         "_body_scoped_names",
         "_callable_params",
         "_reserved",
@@ -50,6 +51,10 @@ class FunctionRegistryTrie:
         self._property_names: set[str] = set()
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
+        # JS/TS declarations their module does not export. `export * from`
+        # passes on only exported names, so a private one in a star source is
+        # not a candidate for the barrel's member (follow_reexports).
+        self._module_private: set[QualifiedName] = set()
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
@@ -97,6 +102,12 @@ class FunctionRegistryTrie:
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._abstracts
+
+    def mark_module_private(self, qualified_name: QualifiedName) -> None:
+        self._module_private.add(qualified_name)
+
+    def is_module_private(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._module_private
 
     def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None:
         self._body_scoped_names.add(qualified_name)
@@ -196,6 +207,7 @@ class FunctionRegistryTrie:
                 self._property_names.discard(simple_name)
         self._object_members.discard(qualified_name)
         self._abstracts.discard(qualified_name)
+        self._module_private.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 
