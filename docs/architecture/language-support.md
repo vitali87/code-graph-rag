@@ -104,6 +104,13 @@ required: `--clean` on its own deletes the graph and returns without
 rebuilding. Note that it clears **every** project in a shared graph, so
 re-index the others afterwards.
 
+Without the `ast-grep` extra these files are still indexed, but only as
+`File` nodes. A sync that meets any of them ends with one warning giving the
+number of files per language and the install command; a repository with none
+of them gets no warning. Whether the extra is installed is part of the parser
+fingerprint, so the first sync after installing it re-parses those files
+without `--clean`.
+
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
 | Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
