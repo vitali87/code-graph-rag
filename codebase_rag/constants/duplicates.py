@@ -143,6 +143,10 @@ DELTA_ARITY_DEFINITE = frozenset(
         DELTA_ARITY_ASYNC_CHANGED,
     }
 )
+# Edges whose callee is a guess, by name or by fan-out: an arity verdict
+# against one judges a function the site may not call, so it reads
+# `unknown` and never fails `--fail-on-found` (issue #2639).
+DELTA_GUESSED_RESOLUTIONS = frozenset({"heuristic", "overload"})
 # A signature change's `async_change`: the definition became async, or
 # stopped being so (issue #2860).
 DELTA_ASYNC_ADDED = "added"

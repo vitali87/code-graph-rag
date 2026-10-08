@@ -115,6 +115,13 @@ both trip `--fail-on-found` (issues #2845, #2853):
   may carry it. Adding `channel` to `send(msg)` makes `send("hi")` read
   `too_few`; adding `channel=None` leaves it `possibly_missing`.
 
+Each site names the `callee` it was judged against and the `resolution`
+of its edge. A site whose edge is a guess (`heuristic`: the callee matched
+by its last name segment alone; `overload`: one of several same-named
+candidates) reads `unknown` whatever its arguments, since it may not call
+that callee at all. So `options.pop("k", None)` on a dict, bound by name to
+some no-parameter `pop()`, never fails `--fail-on-found` (issue #2639).
+
 A def wrapped by a decorator other than `@staticmethod`, `@classmethod`,
 `@abstractmethod` or `@override` is not judged from its header, since the
 decorator may change what a caller passes.
