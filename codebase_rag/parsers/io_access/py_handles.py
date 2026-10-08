@@ -62,6 +62,27 @@ def python_binding_from_node(
     return target_name, HandleBinding(kind=ctor.kind, identity=identity)
 
 
+def inline_python_handle(
+    call_node: Node,
+    import_map: dict[str, str],
+    ctor_by_name: dict[str, HandleConstructor],
+) -> HandleBinding | None:
+    # The handle a method is called on when the receiver is the constructor
+    # call itself (`Path("/x").read_text()`, `open(p).read()`, issue #2778):
+    # the binding the bound form `p = Path("/x")` would have made.
+    fn = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if fn is None or fn.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    receiver = fn.child_by_field_name(cs.FIELD_OBJECT)
+    if receiver is None or receiver.type != cs.TS_PY_CALL:
+        return None
+    ctor = registry_match(ctor_by_name, call_name(receiver), import_map)
+    if ctor is None:
+        return None
+    identity = literal_target(receiver, ctor.target_arg, ctor.target_kw)
+    return HandleBinding(kind=ctor.kind, identity=identity)
+
+
 def _derived_python_binding(
     raw: str | None, handles: dict[str, HandleBinding]
 ) -> HandleBinding | None:
