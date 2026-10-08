@@ -18,6 +18,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .ast_analyzer import _homogeneous_element
+from .forward_refs import unquote_forward_refs
 from .utils import reduce_optional_annotation, resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
@@ -200,8 +201,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
         # `Optional[Repo]` and `"Repo"` type the parameter as `Repo`, as the
         # return-annotation reader already does; stored verbatim they name no
-        # class and the call on the parameter got no edge (issue #2646).
-        local_var_types[param_name] = reduce_optional_annotation(param_type)
+        # class and the call on the parameter got no edge (issue #2646). Forward
+        # references are read first (#2837), so `Dict[str, "Repo"]` unquotes too.
+        local_var_types[param_name] = reduce_optional_annotation(
+            unquote_forward_refs(param_type)
+        )
 
     def _process_typed_default_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -219,8 +223,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
         # `Optional[Repo]` and `"Repo"` type the parameter as `Repo`, as the
         # return-annotation reader already does; stored verbatim they name no
-        # class and the call on the parameter got no edge (issue #2646).
-        local_var_types[param_name] = reduce_optional_annotation(param_type)
+        # class and the call on the parameter got no edge (issue #2646). Forward
+        # references are read first (#2837), so `Dict[str, "Repo"]` unquotes too.
+        local_var_types[param_name] = reduce_optional_annotation(
+            unquote_forward_refs(param_type)
+        )
 
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
