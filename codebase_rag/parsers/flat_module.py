@@ -42,12 +42,7 @@ def emit_flat_module(
     of every module a tier emits.
     """
     relative_path = cached_relative_path(file_path, repo_path)
-    parts = list(relative_path.with_suffix("").parts)
-    if distinguish_suffix and relative_path.suffix and parts:
-        # "guide.md" -> "guide_md": the dot would read as another level of
-        # hierarchy to every consumer that splits a qn on it.
-        parts[-1] = f"{parts[-1]}_{relative_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
-    module_qn = cs.SEPARATOR_DOT.join([project_name, *parts])
+    module_qn = flat_module_qn(project_name, relative_path, distinguish_suffix)
     module_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: module_qn,
         cs.KEY_NAME: file_path.name,
@@ -66,6 +61,23 @@ def emit_flat_module(
         (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
     )
     return module_qn
+
+
+def flat_module_qn(
+    project_name: str, relative_path: Path, distinguish_suffix: bool = False
+) -> str:
+    """The qualified name `emit_flat_module` gives the file at `relative_path`.
+
+    Separate so a tier can name another file's module without emitting it:
+    a Markdown link resolves its anchor against the linked document's
+    sections, whose qns start with that document's module qn (issue #2458).
+    """
+    parts = list(relative_path.with_suffix("").parts)
+    if distinguish_suffix and relative_path.suffix and parts:
+        # "guide.md" -> "guide_md": the dot would read as another level of
+        # hierarchy to every consumer that splits a qn on it.
+        parts[-1] = f"{parts[-1]}_{relative_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
+    return cs.SEPARATOR_DOT.join([project_name, *parts])
 
 
 def _parent_ref(

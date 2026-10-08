@@ -49,7 +49,7 @@ from .parsers.cpp_frontend import (
 )
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
-from .parsers.document_tier import DocumentTier
+from .parsers.document_tier import DocumentTier, broken_link_keys
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
     CYPHER_PROJECT_PY_MODULES,
@@ -3818,7 +3818,45 @@ class GraphUpdater:
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
             }
+            | self._linking_document_keys(reindexed_keys)
         )
+
+    def _linking_document_keys(self, reindexed_keys: list[str]) -> set[str]:
+        """Documents whose links end in a re-indexed or deleted file.
+
+        A link that names a heading ends at its Section, which the linked
+        document's re-parse recreates without the edge; a link to a deleted
+        file has lost its File and is now broken. Re-parsing the linking
+        document re-resolves both, as a clean index would (issue #2458). A
+        link to a File that still exists needs nothing: the node, and the
+        edge with it, outlive its file's re-parse.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_LINKING_DOCUMENT_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="linking documents")
+            return set()
+        return {
+            path
+            for row in rows
+            if isinstance(path := row.get(cs.KEY_CALLER_PATH), str)
+            and path
+            and (
+                row.get(cs.KEY_TARGET_LABEL) == cs.NodeLabel.SECTION
+                or not (
+                    isinstance(target := row.get(cs.KEY_TARGET_PATH), str)
+                    and (self.repo_path / target).is_file()
+                )
+            )
+        }
 
     def _module_names_for(self, keys: list[str]) -> list[str]:
         """Import spellings a file could be named by, from its relative path.
@@ -3897,6 +3935,7 @@ class GraphUpdater:
                 if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
             }
             | self._specifier_waiter_keys(present_keys)
+            | self._broken_link_waiter_keys(present_keys)
         )
 
     def _unresolved_reference_waiters(
@@ -4165,6 +4204,37 @@ class GraphUpdater:
                 waiters.add(caller)
         return waiters
 
+    def _broken_link_waiter_keys(self, present_keys: list[str]) -> set[str]:
+        """Documents with a broken link to one of these files.
+
+        A link to a file that did not exist yet left no edge to find the
+        document by, only the path on its Module's `broken_links`, so a
+        created file is matched against those (issue #2458). Without this
+        the document keeps listing the link as broken, and keeps lacking the
+        edge, until it is edited itself.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_BROKEN_LINK_DOCUMENTS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="broken links")
+            return set()
+        wanted = set(present_keys)
+        waiters: set[str] = set()
+        for row in rows:
+            document = row.get(cs.KEY_CALLER_PATH)
+            links = row.get(cs.KEY_BROKEN_LINKS)
+            if not isinstance(document, str) or not isinstance(links, list):
+                continue
+            written = [link for link in links if isinstance(link, str)]
+            if not wanted.isdisjoint(broken_link_keys(document, written)):
+                waiters.add(document)
+        return waiters
+
     def _package_paths(self) -> set[str] | None:
         """Relative paths of this project's Package nodes, None if unreadable."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -4294,8 +4364,7 @@ class GraphUpdater:
             and isinstance(target_qn, str)
         ):
             return None
-        module_label = cs.NodeLabel.MODULE.value
-        if target_label != module_label and target_qn not in self.function_registry:
+        if not self._restore_target_exists(target_label, target_qn):
             return None
         caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
         target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
@@ -4306,6 +4375,22 @@ class GraphUpdater:
             rel,
             (target_label, target_key, target_qn),
         )
+
+    def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
+        """Whether a captured edge's target is back after the re-parse.
+
+        A Section is not a definition, so the function registry never holds
+        one; the document tier answers for the headings it emitted. A File
+        target is never restored: its node outlives the re-parse, and so
+        does the edge (issue #2458).
+        """
+        match label:
+            case cs.NodeLabel.MODULE:
+                return True
+            case cs.NodeLabel.SECTION:
+                return self.document_tier.emitted_section(qualified_name)
+            case _:
+                return qualified_name in self.function_registry
 
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the

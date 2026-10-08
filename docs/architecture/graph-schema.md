@@ -17,7 +17,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
 | Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
@@ -45,7 +45,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 
 `Resource` is a synthetic node standing for an external I/O target (a file, environment variable, network endpoint, database, standard stream, socket). Its `qualified_name` has the form `resource::<KIND>::<identity>`, where `identity` is a static string literal when one is available and `<dynamic>` otherwise, and `kind` is one of `FILE`, `NETWORK`, `DATABASE`, `STDIN`, `STDOUT`, `STDERR`, `ENV`, `SOCKET`. Resource nodes are captured only when the `io` capture group is enabled (see below).
 
-`Section` is a heading in a document (Markdown), holding the heading's text, its level (1-6) and its line span. Sections nest through `CONTAINS_SECTION` by heading level, so a subheading hangs off the heading above it rather than off the file; a top-level heading hangs off the document's `Module`. The span covers the heading and the prose beneath it, ending at the line before the next heading at the same or a shallower level (or at end of file), so a parent section's span contains its subsections.
+`Section` is a heading in a document (Markdown), holding the heading's text, its level (1-6) and its line span. Links in the document start at the section they sit in, and a link whose anchor names a heading ends at that heading's section (see [Document links](#document-links)). Sections nest through `CONTAINS_SECTION` by heading level, so a subheading hangs off the heading above it rather than off the file; a top-level heading hangs off the document's `Module`. The span covers the heading and the prose beneath it, ending at the line before the next heading at the same or a shallower level (or at end of file), so a parent section's span contains its subsections.
 
 `Pattern`, `CodeSmell`, and `SecurityIssue` are ast-grep finding nodes, captured only when the `findings` capture group is enabled.
 
@@ -74,7 +74,7 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | Function, Method | ACCEPTS | Class, Interface, Enum, Type, Union |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
-| Module | LINKS_TO | File |
+| Module, Section | LINKS_TO | File, Section |
 | Module, Function, Method | CALLS | Function, Method, Enum, Type |
 | Module, Function, Method | REFERENCES | Function, Method, Class |
 | Module, Function, Method | INSTANTIATES | Class |
@@ -119,6 +119,41 @@ Sites are stored as **one edge per site**: a function that calls `g` twice has t
 Edges emitted without a syntactic site (and trace-written edges without a dispatch literal, those marked `unlocatable`) carry none of these properties and keep collapsing on their endpoints: libclang macro uses and `#include` edges, Roslyn-only facts, inferred C# namespace imports, interprocedural callable-parameter flow edges, and edges written back by dynamic tracing. For a Go grouped `import ( ... )` block the site is the individual spec line, which is the unit an import rewrite edits. `cgr diff` treats these properties as location, not structure: a line shift never reports as a changed relationship.
 
 `CALLS` edges are otherwise created by static analysis with no further properties. [Dynamic call tracing](../guide/dynamic-tracing.md) decorates them with runtime provenance (`dynamic`, `dynamic_call_count`, `dynamic_workloads`, `dynamic_workload_count`, `dynamic_receiver_types`) and creates runtime-only edges flagged `static_missed: true` when no matching static edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes. Ingest also upgrades every observed static edge's `resolution` to `trace_confirmed` in place (on each of its sites) and tags the runtime-only edges `dynamic`; `cgr dead-code --min-resolution` and the `callers`/`callees` tools read the label. An incremental sync that re-parses an endpoint keeps these edges, re-applied by qualified name, and sets `dynamic_stale: true` on the ones whose caller or callee definition changed since the trace was ingested.
+
+### Document links
+
+`LINKS_TO` is a relative link in a Markdown document to a file of the repository: an inline `[text](path)`, or a reference-style `[text][label]` resolved through its `[label]: path` definition. It belongs to the `imports` capture group, and is written once per link, carrying where the link is, its `text` and its `anchor`: a document that links one file twice has two edges to it (issue #2458).
+
+- **Source**: the innermost `Section` the link sits in, which is the last heading at or before the link's line. A link above the document's first heading starts at the document's `Module`.
+- **Target**: when the link carries a fragment (`guide.md#setup`, or `#usage` for a heading of the same document) and the linked file is a Markdown document with a heading whose anchor matches it, that heading's `Section`. Otherwise the linked `File`: a fragment that names no heading, and any fragment into a file that is not Markdown (`core.py#L1`), keeps the `File` as the target, with the fragment in `anchor`.
+
+| Property | Meaning |
+|---|---|
+| `line: int`, `col: int`, `end_line: int`, `end_col: int` | Span of the link as written, from its opening `[` to its closing bracket or parenthesis, with the edge-site conventions above. `line` and `col` are the write-time `MERGE` key. |
+| `text: string` | The link text, whitespace collapsed; `""` for `[](x.md)`. |
+| `anchor: string?` | The fragment as written, without the `#`. Absent when the link has none. |
+
+Anchors match the way GitHub renders them, from the heading's rendered text: a link or image contributes only its text or alt text, an autolink its address, inline code its content, and emphasis markers and HTML tags nothing. That text is lower-cased, every character except letters, digits, `-`, `_` and spaces is dropped, each space becomes `-`, and a repeated heading is numbered `-1`, `-2`, ... in document order. The fragment is percent-decoded and lower-cased before it is compared.
+
+A link produces no edge when it is external (a URL with a scheme such as `https:` or `mailto:`, or a scheme-relative `//host/path`), when it is a bare `#`, when its path resolves outside the repository or to a directory, or when its path names nothing in the repository. Images (`![alt](src)`) are not links. A file that exists but is not indexed (ignored or excluded) has no `File` node, so a link to it is not written either.
+
+A link whose path names nothing in the repository is broken, and the document's `Module` lists it in `broken_links` (`list[string]`): the path part as written (percent escapes kept, fragment dropped), once, in source order, and `[]` when every link resolves. Each sync logs one INFO line counting the broken links in the documents it parsed. An incremental sync keeps both in step with a clean index: a document is re-parsed when a file it links to is deleted, when a document it links into by anchor is re-parsed, and when a file one of its broken links names is created.
+
+```cypher
+// Documents that link to a file, from any of their sections
+MATCH (m:Module)-[:CONTAINS_SECTION*0..]->()-[:LINKS_TO]->(f:File {path: $path})
+RETURN DISTINCT m.path
+// Sections that link to a heading, and from where
+MATCH (s:Section)-[r:LINKS_TO]->(t:Section {qualified_name: $qn})
+RETURN s.qualified_name, s.path, r.line, r.text
+// Anchors into Markdown documents that name no heading
+MATCH (src)-[r:LINKS_TO]->(f:File)
+WHERE r.anchor IS NOT NULL AND f.extension IN ['.md', '.markdown']
+RETURN src.qualified_name, r.line, r.anchor, f.path
+// Documents with broken links
+MATCH (m:Module) WHERE size(m.broken_links) > 0
+RETURN m.path, m.broken_links
+```
 
 ### Type facts on definitions
 

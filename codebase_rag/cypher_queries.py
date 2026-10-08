@@ -1307,9 +1307,14 @@ CYPHER_CONTEXT_TYPES = """MATCH (n)-[r:RETURNS|ACCEPTS]->(t)
 WHERE n.qualified_name = $qn AND t.qualified_name STARTS WITH $project_prefix
 RETURN DISTINCT type(r) AS rel_type, t.qualified_name AS qualified_name, t.path AS path,
        t.start_line AS start_line, t.end_line AS end_line"""
-CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (doc:Module)-[:LINKS_TO]->(f:File {absolute_path: $absolute_path})
-MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
+# A link starts at the innermost Section holding it, or at the document's
+# Module above its first heading (issue #2458), so the document is found
+# through any depth of its sections; one row per document however many links.
+CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (f:File {absolute_path: $absolute_path})<-[:LINKS_TO]-(link_source)
+MATCH (doc:Module)-[:CONTAINS_SECTION*0..]->(link_source)
 WHERE doc.qualified_name STARTS WITH $project_prefix
+WITH DISTINCT doc
+MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
 RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
        s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
