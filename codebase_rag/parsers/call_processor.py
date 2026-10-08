@@ -4538,10 +4538,12 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.PYTHON:
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
-            # selector = identity as any)`, zustand) references it: the default
-            # is invoked through the parameter when the caller omits the
-            # argument, never by a visible call.
+            # selector = identity as any)`, zustand; Python's
+            # `def run(self, conv=_via_default)`, issue #2838) references it:
+            # the default is invoked through the parameter when the caller
+            # omits the argument, never by a visible call.
             self._ingest_default_param_references(
                 caller_node,
                 caller_spec,
@@ -6594,10 +6596,17 @@ class CallProcessor:
                 if ctx.is_python:
                     self._emit_python_binding_twin(ctx, target_qn, target_type)
                 continue
+            # A callable variant takes its OWN label: a Scala method's local
+            # def or anonymous-object member registers as a Function beside
+            # the class's same-named Method, and the primary's label on the
+            # other is the same phantom (issue #2848).
+            label = (
+                callee_type if target_type is None else cs.NodeLabel(target_type.value)
+            )
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
     def _emit_python_binding_twin(
