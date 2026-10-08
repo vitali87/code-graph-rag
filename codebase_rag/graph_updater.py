@@ -40,6 +40,7 @@ from .language_spec import (
 )
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
@@ -168,6 +169,24 @@ def _persisted_int(value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None
+
+
+def _stored_strings(value: object) -> list[str]:
+    # A stored list property; absent, or of another type, reads as empty.
+    return (
+        [item for item in value if isinstance(item, str)]
+        if isinstance(value, list)
+        else []
+    )
+
+
+def _stored_language(path: object) -> cs.SupportedLanguage | None:
+    # The language of a stored definition, from its file's extension.
+    return (
+        get_language_for_extension(PurePosixPath(path).suffix)
+        if isinstance(path, str)
+        else None
+    )
 
 
 def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
@@ -3272,6 +3291,16 @@ class GraphUpdater:
         # @property defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_PROPERTY):
             self.function_registry.mark_property(qn)
+        # Restore the abstract mark of a member that never runs (a TS
+        # `abstract` member, an @abstractmethod stub): without it, an untyped
+        # call that sees it beside its one override reads as ambiguous after a
+        # caller-only sync and loses the edge a fresh index gives it (#2524).
+        if parser_utils.is_stored_abstract_member(
+            _stored_strings(row.get(cs.KEY_DECORATORS)),
+            _stored_strings(row.get(cs.KEY_MODIFIERS)),
+            _stored_language(row.get(cs.KEY_PATH)),
+        ):
+            self.function_registry.mark_abstract(qn)
         # Restore the object-member set for unchanged files, or a re-parsed
         # file's bare call binds by name to a JS/TS object literal's function
         # value that only its object reaches (issue #2435).

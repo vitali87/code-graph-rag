@@ -6318,6 +6318,19 @@ class CallProcessor:
             # (a call on a member, not on self).
             self._emit_python_self_dispatch(ctx, ctx.class_context, call_name)
 
+        if (
+            ctx.is_js_ts
+            and ctx.class_context
+            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
+            and self._resolver.function_registry.is_abstract(callee_qn)
+            and self._js_this_is_class_instance(call_node)
+        ):
+            # `this.m()` bound to an `abstract m()` declaration (issue #2524)
+            # runs a subclass override, never the declaration. Before the
+            # declaration had a node the call went unresolved and dispatched
+            # to those overrides; keep those edges beside the static one.
+            self._emit_js_this_dispatch(ctx, ctx.class_context, call_name)
+
         if ctx.is_flow_lang:
             # f(...) invoked through a parameter: the edge runs from the
             # callee to whatever each call site binds to that parameter.

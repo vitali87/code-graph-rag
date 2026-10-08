@@ -39,6 +39,7 @@ from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
+from ..js_ts import utils as js_ts_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..py import external_stdlib_base_method_names, resolve_class_name
@@ -1971,9 +1972,17 @@ class ClassIngestMixin:
             self._method_override_context(class_qn, language)
         )
         scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
+        # Gated on language: Dart spells its ordinary members `method_signature`.
+        seen_signatures: set[str] | None = (
+            set() if language in cs.JS_TS_LANGUAGES else None
+        )
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
+                continue
+            if seen_signatures is not None and js_ts_utils.repeats_member_signature(
+                method_node, seen_signatures
+            ):
                 continue
 
             method_qualified_name = _signatured_method_qn(
