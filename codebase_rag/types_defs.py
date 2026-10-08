@@ -130,6 +130,15 @@ type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
 type FunctionRegistry = dict[QualifiedName, NodeType]
 
 
+class OverloadSignature(NamedTuple):
+    # What tells one C++ member overload from another: the parameter types
+    # plus the cv/ref qualifiers (`(const std::string&) const`), and the
+    # parameter count for pairing a definition spelled differently from its
+    # declaration.
+    text: str
+    arity: int
+
+
 class FunctionRegistryTrieProtocol(Protocol):
     def __contains__(self, qualified_name: QualifiedName) -> bool: ...
     def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
@@ -156,6 +165,26 @@ class FunctionRegistryTrieProtocol(Protocol):
     ) -> QualifiedName: ...
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
+
+    def register_overload_qn(
+        self,
+        natural_qn: QualifiedName,
+        signature: OverloadSignature,
+        start_line: int,
+        start_col: int = 0,
+        declared_in_class: bool = False,
+    ) -> QualifiedName: ...
+
+    def overload_signature(
+        self, qualified_name: QualifiedName
+    ) -> OverloadSignature | None: ...
+
+    def restore_overload(
+        self,
+        qualified_name: QualifiedName,
+        signature_text: str,
+        declared_in_class: bool,
+    ) -> None: ...
 
     def mark_property(self, qualified_name: QualifiedName) -> None: ...
 
@@ -1173,7 +1202,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

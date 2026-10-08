@@ -57,9 +57,64 @@ class CppNodeType(StrEnum):
     TYPE_DEFINITION = "type_definition"
     ALIAS_DECLARATION = "alias_declaration"
     TYPE_DESCRIPTOR = "type_descriptor"
+    REF_QUALIFIER = "ref_qualifier"
 
 
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
+
+# An optional parameter's `= value`, which is not part of its type.
+CPP_FIELD_DEFAULT_VALUE = "default_value"
+# `f(void)` declares no parameter: the same overload as `f()`.
+CPP_VOID_PARAMETER = "void"
+# Names no typedef can stand behind: the built-in type keywords and the cv
+# words written with them. Two parameter types spelled only with these, and
+# differently, are two types; one written with any other name may be an
+# alias of the other.
+CPP_BUILTIN_TYPE_WORDS = frozenset(
+    {
+        "void",
+        "bool",
+        "char",
+        "wchar_t",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "signed",
+        "unsigned",
+        "const",
+        "volatile",
+    }
+)
+# A standard library type that is its own type, bare or as `std::name`.
+# `size_t`, `ptrdiff_t` and the <cstdint> names are left out on purpose: each
+# is an implementation-defined alias of a built-in integer type.
+CPP_STD_FIXED_TYPE_NAMES = frozenset({"nullptr_t"})
+# Standard string aliases, the template each instantiates and its character
+# type: `std::string` is `std::basic_string<char>`, so it is that spelling's
+# alias and no other type's.
+CPP_STD_STRING_ALIAS_TEMPLATES: dict[str, tuple[str, str]] = {
+    "string": ("basic_string", "char"),
+    "wstring": ("basic_string", "wchar_t"),
+    "u8string": ("basic_string", "char8_t"),
+    "u16string": ("basic_string", "char16_t"),
+    "u32string": ("basic_string", "char32_t"),
+    "string_view": ("basic_string_view", "char"),
+    "wstring_view": ("basic_string_view", "wchar_t"),
+    "u8string_view": ("basic_string_view", "char8_t"),
+    "u16string_view": ("basic_string_view", "char16_t"),
+    "u32string_view": ("basic_string_view", "char32_t"),
+}
+CPP_STD_NAMESPACE = "std"
+# The cv-qualifiers: on a by-value parameter they are no part of the
+# function's type; on what a pointer or reference refers to they are.
+CPP_CV_QUALIFIER_WORDS = frozenset({"const", "volatile"})
+# The pointer declarator: a `const` after it qualifies the pointer itself.
+CPP_POINTER_DECLARATOR = "*"
 
 # C++ module declaration prefixes
 CPP_EXPORT_MODULE_PREFIX = "export module "

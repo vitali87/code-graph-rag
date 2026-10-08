@@ -2326,7 +2326,9 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
 
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
 
         # Deferred endpoint emission: every module is parsed now, so router
         # mount prefixes (possibly cross-module) can resolve (issue #877).
@@ -3262,6 +3264,8 @@ class GraphUpdater:
             return False
         if qn in self.function_registry:
             return False
+        if self._is_reread_cpp_definition(row):
+            return False
         try:
             node_type = NodeType(label)
         except ValueError:
@@ -3277,6 +3281,13 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # Restore a C++ member's overload signature for unchanged headers, or
+        # a re-parsed out-of-class definition cannot tell which overload it
+        # defines and lands every one on the plain-named node (issue #2455).
+        if isinstance(signature := row.get(cs.KEY_SIGNATURE), str):
+            self.function_registry.restore_overload(
+                qn, signature, bool(row.get(cs.KEY_DECLARED_IN_CLASS))
+            )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
@@ -3293,6 +3304,22 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _is_reread_cpp_definition(self, row: ResultRow) -> bool:
+        """A C++ member known only from a definition this run re-parses.
+
+        Its node hangs off a class in an unchanged header, so the graph still
+        holds it, but its definition is being read again and will register
+        whatever it is now. Read back as well, it would be the name a changed
+        or newly added overload is measured against, and a clean index has
+        no such stale entry (issue #2455). A member its class body declared
+        stays: that declaration is not re-read.
+        """
+        return (
+            isinstance(row.get(cs.KEY_SIGNATURE), str)
+            and not row.get(cs.KEY_DECLARED_IN_CLASS)
+            and row.get(cs.KEY_PATH) in self._reparsed_file_keys
+        )
 
     def _rehydrate_definition_path(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
@@ -7398,7 +7425,9 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
         # AST, which on a fresh updater means re-parsing most of the repo.

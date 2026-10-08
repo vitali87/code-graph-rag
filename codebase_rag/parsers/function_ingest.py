@@ -22,6 +22,7 @@ from ..types_defs import (
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     NodeType,
+    OverloadSignature,
     PendingTypeFact,
     PropertyDict,
     SimpleNameLookup,
@@ -33,6 +34,7 @@ from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
+from .cpp.overloads import cpp_overload_signature
 from .dart import dart_definition_end_point, dart_return_type_name
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
@@ -211,6 +213,9 @@ class _DeferredMethod(NamedTuple):
     start_col: int
     end_line: int
     lang_queries: LanguageQueries | None = None
+    # Read while the tree is alive: the definition is matched to the overload
+    # its class declares only once that class is known (issue #2455).
+    signature: OverloadSignature | None = None
 
 
 class _DeferredGoMethod(NamedTuple):
@@ -819,7 +824,7 @@ class FunctionIngestMixin:
         return_type: str | None,
         lang_queries: LanguageQueries | None,
     ) -> None:
-        ingest_method(
+        ingested_qn = ingest_method(
             method_node=func_node,
             container_qn=class_qn,
             container_type=cs.NodeLabel.CLASS,
@@ -834,8 +839,10 @@ class FunctionIngestMixin:
         )
         if bound_name := cpp_utils.extract_function_name(func_node):
             # Record the binding so Pass-3 call attribution reuses this exact
-            # decision rather than re-resolve and diverge.
-            bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
+            # decision rather than re-resolve and diverge. The registered qn,
+            # not the plain one: an overload's body belongs to its `@line`
+            # node (issue #2455).
+            bound_qn = ingested_qn or f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
             self.cpp_out_of_class_methods[(module_qn, func_node.start_point[0] + 1)] = (
                 bound_qn,
                 class_qn,
@@ -917,6 +924,7 @@ class FunctionIngestMixin:
                 start_col=func_node.start_point[1],
                 end_line=func_node.end_point[0] + 1,
                 lang_queries=lang_queries,
+                signature=cpp_overload_signature(func_node),
             )
         )
 
@@ -935,6 +943,10 @@ class FunctionIngestMixin:
         for entry in deferred:
             class_qn, resolved = self._resolve_deferred_cpp_class(entry)
             method_qn = f"{class_qn}.{entry.method_name}"
+            if entry.signature is not None:
+                method_qn = self.function_registry.register_overload_qn(
+                    method_qn, entry.signature, entry.start_line, entry.start_col
+                )
             # Record the binding so Pass-3 call attribution reuses this exact
             # decision rather than re-resolve and diverge.
             self.cpp_out_of_class_methods[(entry.module_qn, entry.start_line)] = (
@@ -951,6 +963,8 @@ class FunctionIngestMixin:
 
             props = dict(entry.method_props)
             props[cs.KEY_QUALIFIED_NAME] = method_qn
+            if entry.signature is not None:
+                props[cs.KEY_SIGNATURE] = entry.signature.text
             if isinstance(path := props.get(cs.KEY_PATH), str):
                 self.cpp_definition_spans.setdefault(path, []).append(
                     CppDefinitionSpan(

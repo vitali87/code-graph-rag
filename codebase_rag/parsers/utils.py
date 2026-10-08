@@ -19,6 +19,7 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
     NodeType,
+    OverloadSignature,
     PropertyDict,
     SimpleNameLookup,
     TreeSitterNodeProtocol,
@@ -1392,6 +1393,68 @@ def _record_method_overrides(
         )
 
 
+class _CppMember(NamedTuple):
+    qualified_name: str
+    signature: OverloadSignature | None
+    declared_in_class: bool
+
+
+def _register_cpp_member_qn(
+    method_node: ASTNode,
+    natural_qn: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    start_line: int,
+    start_col: int,
+) -> _CppMember:
+    # A C++ member is seen twice, in-class and out of it, so the plain
+    # `@line` dedup would split one member in two; the signature keeps one
+    # node per overload instead (issue #2455). Without a readable parameter
+    # list the plain name stands, as it did for every member before.
+    # Local import: cpp.overloads imports this module for its decode helper.
+    from .cpp.overloads import cpp_overload_signature, declared_in_class_body
+
+    declared = declared_in_class_body(method_node)
+    signature = cpp_overload_signature(method_node)
+    if signature is None:
+        return _CppMember(natural_qn, None, declared)
+    qualified_name = function_registry.register_overload_qn(
+        natural_qn,
+        signature,
+        start_line,
+        start_col,
+        declared_in_class=declared,
+    )
+    return _CppMember(qualified_name, signature, declared)
+
+
+def _register_method_qn(
+    method_node: ASTNode,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    function_registry: FunctionRegistryTrieProtocol,
+    start_line: int,
+    start_col: int,
+) -> tuple[str, _CppMember | None]:
+    # The registered qn, and for C++ the member it names (issue #2455).
+    if language == cs.SupportedLanguage.CPP:
+        cpp_member = _register_cpp_member_qn(
+            method_node, method_qn, function_registry, start_line, start_col
+        )
+        return cpp_member.qualified_name, cpp_member
+    return function_registry.register_unique_qn(method_qn, start_line, start_col), None
+
+
+def _cpp_member_props(cpp_member: _CppMember | None) -> PropertyDict:
+    if cpp_member is None or cpp_member.signature is None:
+        return {}
+    props: PropertyDict = {cs.KEY_SIGNATURE: cpp_member.signature.text}
+    # Written only by the class body, never as False: node writes merge,
+    # so the definition written after its declaration leaves it standing.
+    if cpp_member.declared_in_class:
+        props[cs.KEY_DECLARED_IN_CLASS] = True
+    return props
+
+
 def _method_positional_params_props(
     method_node: ASTNode, language: cs.SupportedLanguage
 ) -> PropertyDict:
@@ -1451,10 +1514,14 @@ def ingest_method(
     warn_if_name_truncated(method_node, method_name, file_path)
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
-        )
+    method_qn, cpp_member = _register_method_qn(
+        method_node,
+        method_qn,
+        language,
+        function_registry,
+        method_start_line,
+        method_start_col,
+    )
 
     decorators = []
     modifiers = []
@@ -1488,6 +1555,7 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    method_props.update(_cpp_member_props(cpp_member))
     method_props.update(_method_positional_params_props(method_node, language))
     # Local import: type_facts imports this module for safe_decode_with_fallback.
     from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
