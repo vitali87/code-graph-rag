@@ -81,6 +81,7 @@ from .tools.duplicate_detection import create_find_duplicates_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.graph_refresh import GraphRefresher
 from .tools.research import create_research_tool
 from .tools.semantic_search import (
     create_get_function_source_tool,
@@ -93,6 +94,7 @@ from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
+    AfterWrite,
     AgentLoopUI,
     CancelledResult,
     ConfirmationToolNames,
@@ -106,7 +108,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.interruptible_thread import run_in_interruptible_thread
-from .utils.path_utils import is_symlink_entry
+from .utils.path_utils import derive_project_name, is_symlink_entry
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -2021,6 +2023,7 @@ def _initialize_services_and_agent(
     repo_path: str,
     ingestor: ReadOnlyQueryProtocol,
     active_projects: list[str] | None = None,
+    after_write: AfterWrite | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
     """Build the orchestrator, its tools, and the shared session services.
 
@@ -2058,8 +2061,8 @@ def _initialize_services_and_agent(
     )
     code_tool = create_code_retrieval_tool(code_retriever, read_record)
     file_reader_tool = create_file_reader_tool(file_reader, read_record)
-    file_writer_tool = create_file_writer_tool(file_writer)
-    file_editor_tool = create_file_editor_tool(file_editor)
+    file_writer_tool = create_file_writer_tool(file_writer, after_write)
+    file_editor_tool = create_file_editor_tool(file_editor, after_write)
     shell_command_tool = create_shell_command_tool(shell_commander, read_record)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     semantic_search_tool = create_semantic_search_tool(ingestor)
@@ -2161,6 +2164,8 @@ async def main_async(
     show_config_table: bool = True,
     pre_chat_sync: Callable[[], None] | None = None,
     pre_chat_sync_message: str = cs.MSG_SYNCING_KNOWLEDGE_GRAPH,
+    project_name: str | None = None,
+    project_named: bool = False,
 ) -> None:
     project_root = _setup_common_initialization(repo_path)
 
@@ -2177,8 +2182,19 @@ async def main_async(
             )
         )
 
+        # The agent's approved writes reach the graph the way the MCP edit
+        # tools' do, so later questions read the edited code (issue #2916).
+        refresher = GraphRefresher(
+            ingestor,
+            project_root,
+            project_name or derive_project_name(project_root),
+            project_named,
+        )
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
-            repo_path, ingestor, active_projects=active_projects
+            repo_path,
+            ingestor,
+            active_projects=active_projects,
+            after_write=refresher.after_write,
         )
         _prime_context_token_counter(system_prompt)
 
