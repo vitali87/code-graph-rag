@@ -585,9 +585,9 @@ def _last_assignment(region: Node, after: int, before: int, name: str) -> bool |
         if (
             node.start_byte >= after
             and (kind := _assigned_kind(node, name)) is not None
+            and (last is None or node.start_byte > last[0])
         ):
-            if last is None or node.start_byte > last[0]:
-                last = (node.start_byte, kind)
+            last = (node.start_byte, kind)
         stack.extend(node.named_children)
     return None if last is None else last[1]
 
