@@ -89,7 +89,8 @@ class EdgeResolution(StrEnum):
 
     `exact`: the resolver bound the target through scope, import, type or
     signature. `overload`: one edge per same-named candidate. `heuristic`:
-    a name-only match (trie suffix, wildcard import, package member).
+    a name-only match (trie suffix, wildcard import, package member, a
+    receiver typed only by its parameter's name).
     `trace_confirmed`: a static edge a runtime trace observed. `dynamic`: a
     call only a trace saw, with the dispatch literal's site when found.
     """
