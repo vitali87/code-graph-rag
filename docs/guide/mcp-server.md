@@ -76,7 +76,7 @@ cgr daemon up
 <!-- SECTION:mcp_tools -->
 | Tool | Description |
 |----|-----------|
-| `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. |
+| `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. A server scoped to a workspace lists the workspace's indexed projects, and names the ones the graph does not hold in `not_indexed`, with a `hint` saying how to index them. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
 | `index_repository` | WARNING: Clears all data for the current project including its embeddings. Parse and ingest the repository into the Memgraph knowledge graph. Use update_repository for incremental updates. Only use when explicitly requested. |
@@ -201,6 +201,8 @@ claude mcp add --transport stdio code-graph-rag-workspace \
 ![A workspace server for the backend workspace added and connected, then list_projects showing only the workspace's two projects and resolve refusing a project outside it](../assets/demos/mcp-server-workspace.gif)
 
 A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace.
+
+`list_projects` names a workspace repo the graph does not hold under its project name in `not_indexed`, with a `hint` giving the command that indexes each one as its own project: `cgr start --repo-path PATH --project-name PROJECT --update-graph`. When the repo's code is in the graph under another project, the hint names it: a project indexed from the directory holding the repos (one project for all of them) or from the repo under another name.
 
 ## Troubleshooting
 

@@ -723,6 +723,9 @@ class ReingestToolResult(TypedDict, total=False):
 class ListProjectsSuccessResult(TypedDict):
     projects: list[str]
     count: int
+    # A workspace server's projects the graph does not hold, and why (#2867).
+    not_indexed: NotRequired[list[str]]
+    hint: NotRequired[str]
 
 
 class ListProjectsErrorResult(TypedDict):
