@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import functools
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -10,22 +10,17 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from http.client import HTTPMessage
-from typing import IO, Protocol
+from typing import IO, NamedTuple, Protocol
 
 import mgclient
 from loguru import logger
 
 from .. import constants as root_cs
+from .. import mgclient_probe
+from ..types_defs import MgclientProbeReport, MgclientProbeRequest
 from . import constants as cs
-
-if sys.platform == "win32":  # pragma: no cover - platform
-    import _winapi
-    import ctypes
-
-    # The standard library's msvcrt module wraps the UCRT, not msvcrt.dll.
-    import msvcrt
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
@@ -68,7 +63,7 @@ _NATIVE_STDERR_LOCK = threading.Lock()
 class _CRuntime(Protocol):
     # A C runtime's descriptor table. POSIX has one per process, the kernel's;
     # on Windows each C runtime DLL keeps its own, so fd 2 in one is not fd 2
-    # in another.
+    # in another, though both start out naming the same OS handle.
     def dup(self, fd: int) -> int: ...
 
     def dup2(self, fd: int, fd2: int) -> None: ...
@@ -96,63 +91,111 @@ class _PythonCRuntime:
 _PYTHON_C_RUNTIME = _PythonCRuntime()
 
 
-def _c_runtime_result(result: int) -> int:
-    if result == -1:
-        raise OSError(cs.ERR_C_RUNTIME_CALL_FAILED)
-    return result
+class _CRuntimeLibrary(NamedTuple):
+    # A C runtime by the name its library loads under.
+    name: str
 
 
-if sys.platform == "win32":  # pragma: no cover - platform
+def _mgclient_own_c_runtime() -> _CRuntimeLibrary | None:
+    """The C runtime besides Python's that mgclient prints through, if any.
 
-    class _MsvcrtCRuntime:
-        # mgclient's perror() and fprintf(stderr) go through msvcrt.dll there,
-        # to msvcrt.dll's fd 2, which os.dup2 on the UCRT's fd 2 never reaches.
-        def __init__(self, crt: ctypes.CDLL) -> None:
-            crt._open_osfhandle.argtypes = (ctypes.c_ssize_t, ctypes.c_int)
-            self._crt = crt
-
-        def dup(self, fd: int) -> int:
-            return _c_runtime_result(self._crt._dup(fd))
-
-        def dup2(self, fd: int, fd2: int) -> None:
-            # msvcrt.dll fully buffers stderr whenever fd 2 is not a console,
-            # as the capture file is not. Flushing before fd 2 moves sends
-            # each message to the file fd 2 named when it was printed.
-            self._crt.fflush(None)
-            _c_runtime_result(self._crt._dup2(fd, fd2))
-
-        def close(self, fd: int) -> None:
-            # Closing fd 2 itself would otherwise strand what stderr still
-            # buffers for it.
-            self._crt.fflush(None)
-            _c_runtime_result(self._crt._close(fd))
-
-        def open_file(self, file: IO[bytes]) -> int:
-            # A descriptor closes its handle with it, so this one gets its own
-            # handle rather than sharing the one Python's descriptor closes.
-            process = _winapi.GetCurrentProcess()
-            handle = _winapi.DuplicateHandle(
-                process,
-                msvcrt.get_osfhandle(file.fileno()),
-                process,
-                0,
-                False,
-                _winapi.DUPLICATE_SAME_ACCESS,
-            )
-            fd = self._crt._open_osfhandle(handle, os.O_BINARY)
-            if fd == -1:
-                _winapi.CloseHandle(handle)
-            return _c_runtime_result(fd)
-
-
-@functools.cache
-def _mgclient_own_c_runtime() -> _CRuntime | None:
-    # The C runtime besides Python's that mgclient prints through, if any.
+    pymgclient's Windows extension imports perror, fprintf and its other stdio
+    from msvcrt.dll, not the UCRT. Neither runtime duplicates the process's
+    standard handles when it starts, so their fd 2 name one OS handle, and
+    each runtime's `_dup2` onto fd 2 closes the handle fd 2 named, unless fd 1
+    names the same one (lowio/close.cpp in the UCRT sources). Moving fd 2 in
+    both runtimes therefore closes that handle twice: the second close finds
+    it gone, or closes whatever has since been given its number. A worker
+    process that pytest or execnet already moved fd 2 in starts the same way,
+    with msvcrt.dll's fd 2 naming a closed handle. No order of the two moves
+    avoids that, so probes on Windows run mgclient in a child instead.
+    """
     if sys.platform != "win32":
         return None
-    return _MsvcrtCRuntime(  # pragma: no cover - platform
-        ctypes.CDLL(cs.MGCLIENT_WINDOWS_C_RUNTIME)
+    return _CRuntimeLibrary(cs.MGCLIENT_WINDOWS_C_RUNTIME)
+
+
+def _log_mgclient_output(output: str) -> None:
+    # Kept rather than dropped, for whoever is chasing a Memgraph that never
+    # answers; the probe's own result is what reports it.
+    if output := output.strip():
+        logger.debug(cs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
+
+
+def _mgclient_probe_command() -> list[str]:
+    if getattr(sys, cs.FROZEN_APP_ATTR, False):
+        return [sys.executable, root_cs.MGCLIENT_PROBE_CHILD_ARG]
+    # -P keeps the working directory off the child's sys.path, so a
+    # codebase_rag checkout there cannot stand in for the installed package.
+    return [
+        sys.executable,
+        cs.PYTHON_SAFE_PATH_FLAG,
+        cs.PYTHON_RUN_MODULE_FLAG,
+        mgclient_probe.__name__,
+    ]
+
+
+def _mgclient_session_in_child(
+    runtime: _CRuntimeLibrary,
+    host: str,
+    port: int,
+    credentials: tuple[str, str] | None,
+    query: str | None,
+) -> MgclientProbeReport:
+    # The child's stderr is a pipe from the moment it starts, so neither
+    # process moves a descriptor; the login travels on stdin, not argv.
+    request = MgclientProbeRequest(
+        host=host,
+        port=port,
+        credentials=None if credentials is None else list(credentials),
+        query=query,
+        c_runtime=runtime.name,
     )
+    try:
+        child = subprocess.run(
+            _mgclient_probe_command(),
+            input=json.dumps(request),
+            capture_output=True,
+            encoding=root_cs.ENCODING_UTF8,
+            errors="replace",
+            timeout=cs.MGCLIENT_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        # run() has killed and reaped the child before raising. What it means
+        # depends on the probe, so each caller decides.
+        _log_mgclient_output(_printed_before_the_timeout(e))
+        logger.debug(
+            cs.MSG_MEMGRAPH_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S)
+        )
+        raise
+    if child.returncode != 0:
+        # Not reported as no answer: the anonymous-access probe guards the
+        # stack's authentication, and a probe that could not run must not
+        # pass for a Memgraph that refused it.
+        raise ChildProcessError(
+            cs.ERR_MGCLIENT_PROBE_CHILD_FAILED.format(
+                code=child.returncode, output=child.stderr.strip()
+            )
+        )
+    _log_mgclient_output(child.stderr)
+    return json.loads(child.stdout)
+
+
+def _printed_before_the_timeout(error: subprocess.TimeoutExpired) -> str:
+    # Text on Windows, where run() reads the pipes to their end after the
+    # kill; elsewhere the bytes read before the timeout, if any.
+    printed = error.stderr
+    if isinstance(printed, bytes):
+        return printed.decode(root_cs.ENCODING_UTF8, errors="replace")
+    return printed or ""
+
+
+def _login_refused(report: MgclientProbeReport) -> bool:
+    # Memgraph refuses a login at connect, with the same exception type as a
+    # refused connection, so only the message tells the two apart.
+    error = report["connect_error"]
+    return error is not None and cs.MEMGRAPH_AUTH_FAILURE in error
 
 
 @contextmanager
@@ -160,10 +203,9 @@ def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
     try:
         saved: int | None = runtime.dup(cs.NATIVE_STDERR_FD)
     except OSError:
-        # fd 2 is closed, or, in msvcrt.dll under a test runner, holds a
-        # handle closed under it once the UCRT's fd 2 was moved. There is no
-        # terminal to put back, but the message still belongs in the capture
-        # rather than nowhere.
+        # fd 2 is closed, or holds a handle that can no longer be duplicated.
+        # There is no terminal to put back, but the message still belongs in
+        # the capture rather than nowhere.
         saved = None
     redirected = False
     try:
@@ -197,23 +239,33 @@ def _mgclient_stderr_to_debug_log() -> Iterator[None]:
         if sys.stderr is not None:
             sys.stderr.flush()
         try:
-            with ExitStack() as redirects:
-                redirects.enter_context(_stderr_into(_PYTHON_C_RUNTIME, capture))
-                if (own_runtime := _mgclient_own_c_runtime()) is not None:
-                    redirects.enter_context(_stderr_into(own_runtime, capture))
+            with _stderr_into(_PYTHON_C_RUNTIME, capture):
                 yield
         finally:
-            # Kept rather than dropped, for whoever is chasing a Memgraph that
-            # never answers; the probe's own result is what reports it.
             capture.seek(0)
-            output = capture.read().decode(root_cs.ENCODING_UTF8, errors="replace")
-            if output := output.strip():
-                logger.debug(cs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
+            _log_mgclient_output(
+                capture.read().decode(root_cs.ENCODING_UTF8, errors="replace")
+            )
+
+
+def _bolt_reachable(
+    host: str, port: int, credentials: tuple[str, str] | None = None
+) -> bool:
+    if (runtime := _mgclient_own_c_runtime()) is None:
+        return _bolt_reachable_in_process(host, port, credentials)
+    try:
+        report = _mgclient_session_in_child(
+            runtime, host, port, credentials, cs.BOLT_PROBE_QUERY
+        )
+    except subprocess.TimeoutExpired:
+        # Not reachable yet, like a refused connection: the wait asks again.
+        return False
+    return report["succeeded"]
 
 
 @_mgclient_stderr_to_debug_log()
-def _bolt_reachable(
-    host: str, port: int, credentials: tuple[str, str] | None = None
+def _bolt_reachable_in_process(
+    host: str, port: int, credentials: tuple[str, str] | None
 ) -> bool:
     try:
         if credentials:
@@ -263,8 +315,29 @@ def memgraph_accepts_anonymous(host: str, port: int) -> bool:
     return memgraph_anonymous_access(host, port) is cs.AnonymousAccess.ALLOWED
 
 
-@_mgclient_stderr_to_debug_log()
 def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
+    if (runtime := _mgclient_own_c_runtime()) is None:
+        return _anonymous_access_in_process(host, port)
+    try:
+        report = _mgclient_session_in_child(
+            runtime, host, port, None, cs.BOLT_PROBE_QUERY
+        )
+    except subprocess.TimeoutExpired as e:
+        # A Memgraph that took the connection and never answered may still
+        # accept anonymous logins. Like a child that failed, this has no
+        # answer to give the check that the stack enforces its credentials.
+        raise ChildProcessError(
+            cs.ERR_MGCLIENT_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S)
+        ) from e
+    if report["succeeded"]:
+        return cs.AnonymousAccess.ALLOWED
+    if _login_refused(report):
+        return cs.AnonymousAccess.REFUSED
+    return cs.AnonymousAccess.NO_ANSWER
+
+
+@_mgclient_stderr_to_debug_log()
+def _anonymous_access_in_process(host: str, port: int) -> cs.AnonymousAccess:
     # Memgraph refuses a login at connect, with the same exception type as a
     # refused connection, so only the message tells the two apart.
     try:
@@ -286,8 +359,21 @@ def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
     return cs.AnonymousAccess.ALLOWED
 
 
-@_mgclient_stderr_to_debug_log()
 def memgraph_rejects_credentials(
+    host: str, port: int, credentials: tuple[str, str]
+) -> bool:
+    if (runtime := _mgclient_own_c_runtime()) is None:
+        return _rejects_credentials_in_process(host, port, credentials)
+    try:
+        report = _mgclient_session_in_child(runtime, host, port, credentials, None)
+    except subprocess.TimeoutExpired:
+        # No answer is no refusal, and this probe only reports a refusal.
+        return False
+    return _login_refused(report)
+
+
+@_mgclient_stderr_to_debug_log()
+def _rejects_credentials_in_process(
     host: str, port: int, credentials: tuple[str, str]
 ) -> bool:
     username, password = credentials

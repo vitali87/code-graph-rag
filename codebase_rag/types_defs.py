@@ -68,6 +68,25 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
+class MgclientProbeRequest(TypedDict):
+    """One Memgraph probe, as the parent hands it to the probe's own process."""
+
+    host: str
+    port: int
+    credentials: list[str] | None
+    # Run after connecting, or None to connect and close.
+    query: str | None
+    # The C runtime whose stdio buffers mgclient's stderr, by library name.
+    c_runtime: str
+
+
+class MgclientProbeReport(TypedDict):
+    succeeded: bool
+    # The message of the mgclient error connect raised, which is all that
+    # tells a refused login from a refused connection; None otherwise.
+    connect_error: str | None
+
+
 class StructuralSearchMatch(TypedDict):
     file: str
     line: int

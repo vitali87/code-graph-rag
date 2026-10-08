@@ -937,3 +937,16 @@ def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -
         f"filter returned nothing proves little: {reason} (#1859). Add the "
         "missing values, or the test passes whatever the code does."
     )
+
+
+@pytest.fixture
+def mgclient_in_this_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the Memgraph probes in this process, where a patched mgclient is.
+
+    On Windows each probe runs mgclient in a child process (issue #2356),
+    which a patch of `mgclient.connect` made here never reaches. Everywhere
+    else the probes already run here, so this changes nothing there.
+    """
+    from codebase_rag.stack import health
+
+    monkeypatch.setattr(health, "_mgclient_own_c_runtime", lambda: None)
