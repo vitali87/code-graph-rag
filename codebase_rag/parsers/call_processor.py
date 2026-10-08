@@ -58,6 +58,7 @@ from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -142,6 +143,14 @@ class _GoPackageFunctionLookup(NamedTuple):
     packages: tuple[tuple[str, bool], ...]
 
 
+class _PhpClassCallee(NamedTuple):
+    # What a PHP call whose class the site shows binds to. `decided` False
+    # leaves the call to the name-based resolver; True means `callee` is the
+    # answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
+
+
 @dataclass(slots=True)
 class _CallScanContext:
     # Per-invocation state _ingest_function_calls hands every call node it
@@ -174,6 +183,7 @@ class _CallScanContext:
     alias_map: dict[str, str] | None = None
     factory_aliases: dict[str, str] | None = None
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
+    php_scope_classes: php_class_names.ScopeCache | None = None
     cpp_indirection: dict[str, int] | None = None
 
 
@@ -3986,6 +3996,16 @@ class CallProcessor:
                     return decode_node_text(type_node.text).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
+            case cs.TS_PHP_OBJECT_CREATION_EXPRESSION if (
+                language == cs.SupportedLanguage.PHP
+            ):
+                # PHP `new Box(...)` writes the class as an unfielded child, so
+                # no case above named it and construction emitted nothing
+                # (issue #2466). The class's own simple name, after `use`
+                # aliases, is what a file added later would define; the
+                # resolver reads the full namespace path off the node.
+                if path := php_class_names.new_expression_class_path(call_node):
+                    return path[-1]
         return None
 
     def _operator_call_name(
@@ -5063,6 +5083,13 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
+        if (
+            ctx.language == cs.SupportedLanguage.PHP
+            and (
+                php := self._resolve_php_class_callee(ctx, call_node, call_name)
+            ).decided
+        ):
+            return php.callee
         callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
@@ -5530,6 +5557,45 @@ class CallProcessor:
                     return current.parent is None
             current = current.parent
         return None
+
+    def _resolve_php_class_callee(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> _PhpClassCallee:
+        # `new C(...)` is always decided here; a member call only when its
+        # receiver's class is known, so a miss keeps the name-only fallback.
+        if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
+            return _PhpClassCallee(True, self._resolve_php_new_callee(ctx, call_node))
+        if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
+            typed := self._resolve_php_typed_member(ctx, call_node, call_name)
+        ):
+            return _PhpClassCallee(True, typed)
+        return _PhpClassCallee(False, None)
+
+    def _resolve_php_new_callee(
+        self, ctx: _CallScanContext, call_node: Node
+    ) -> tuple[str, str] | None:
+        # `new C(...)` names a class through PHP's namespace and `use` rules
+        # alone; the generic resolver would judge a `use`d namespace path
+        # external, or rebind the bare name to a function (issue #2466).
+        path = php_class_names.new_expression_class_path(call_node)
+        if not path:
+            return None
+        return self._resolver.resolve_php_class_path(path, ctx.module_qn)
+
+    def _resolve_php_typed_member(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> tuple[str, str] | None:
+        # A receiver the site shows was built by `new C` has class C, so the
+        # method binds on C (or what C inherits) rather than by bare name. A
+        # miss here leaves the name-only fallback exactly as it was.
+        if ctx.php_scope_classes is None:
+            ctx.php_scope_classes = {}
+        path = php_class_names.receiver_class_path(call_node, ctx.php_scope_classes)
+        if not path:
+            return None
+        return self._resolver.resolve_php_method_on_class_path(
+            path, call_name, ctx.module_qn
+        )
 
     def _resolve_java_callee(
         self, ctx: _CallScanContext, call_node: Node
@@ -6450,6 +6516,10 @@ class CallProcessor:
             # label is a hash-randomized StrEnum, so sort for determinism.
             self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
+        if ctx.language == cs.SupportedLanguage.PHP:
+            # A PHP `new X(...)` runs `__construct`, X's own or, when X
+            # declares none, the one it inherits (issue #2466).
+            return self._resolver.php_constructor(callee_qn)
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
         # edge there so an explicitly-declared constructor is reachable.
