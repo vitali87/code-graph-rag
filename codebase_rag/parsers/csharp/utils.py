@@ -171,6 +171,25 @@ def annotate_type_ref(text: str) -> str:
     return type_ref(_normalize_type_name(text), generic_arity_of_type_text(text))
 
 
+def collection_element_text(type_text: str) -> str | None:
+    """The element type a `foreach` over a value of `type_text` binds:
+    `T[]` and a known one-argument collection (`List<T>`, `IEnumerable<T>`)
+    give `T`; anything else gives None (issue #2938)."""
+    text = type_text.strip().removesuffix(cs.CHAR_QUESTION_MARK)
+    if text.endswith(cs.CSHARP_ARRAY_SUFFIX):
+        return text[: -len(cs.CSHARP_ARRAY_SUFFIX)].strip() or None
+    head, angle, rest = text.partition(cs.CHAR_ANGLE_OPEN)
+    if (
+        not angle
+        or not rest.endswith(cs.CHAR_ANGLE_CLOSE)
+        or head.strip().rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        not in cs.CSHARP_ENUMERABLE_GENERICS
+        or generic_arity_of_type_text(text) != 1
+    ):
+        return None
+    return rest[: -len(cs.CHAR_ANGLE_CLOSE)].strip() or None
+
+
 def type_ref(name: str, arity: int) -> str:
     return f"{name}{GENERIC_ARITY_MARKER}{arity}" if arity else name
 
