@@ -432,11 +432,13 @@ class JavaMethodReferenceParts(NamedTuple):
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
-    tail takes extra arguments, and whether it is static."""
+    tail takes extra arguments, whether it is static, and the type
+    parameters it declares itself (`M<T, U>` -> ("T", "U"))."""
 
     required: int
     variadic: bool
     is_static: bool
+    type_parameters: tuple[str, ...] = ()
 
 
 class CancelledResult(NamedTuple):
@@ -1007,6 +1009,23 @@ class RustTraitImpl(NamedTuple):
     entry: DeferredInherit
     spelling: str
     method_qns: list[str]
+
+
+class CSharpGenericBase(NamedTuple):
+    """A base written with type arguments: `Inline<Person>` is
+    ("Inline", ("Person",)); the arity is the argument count."""
+
+    name: str
+    arguments: tuple[str, ...]
+
+
+class CSharpGenericShape(NamedTuple):
+    """What a C# type contributes to substituting type arguments down its
+    hierarchy: its own type parameters (`T` of `Validator<T>`) and the
+    arguments it passes to each generic base (issue #2619)."""
+
+    parameters: tuple[str, ...]
+    bases: tuple[CSharpGenericBase, ...]
 
 
 class PendingTypeFact(NamedTuple):

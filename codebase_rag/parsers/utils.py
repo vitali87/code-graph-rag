@@ -1350,6 +1350,19 @@ def _method_is_property(
     )
 
 
+def _named_by_its_bare_name(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> bool:
+    # A C# explicit interface implementation (`int IValidator.Validate(Ctx)`)
+    # is reachable only through an `IValidator` receiver, never by its bare
+    # name, so no name-only fallback may offer it (issue #2619). The registry
+    # still finds it under its own `IValidator#Validate(Ctx)` leaf.
+    return language != cs.SupportedLanguage.CSHARP or not any(
+        child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER
+        for child in method_node.children
+    )
+
+
 def _method_container_label(
     function_registry: FunctionRegistryTrieProtocol,
     container_qn: str,
@@ -1389,6 +1402,31 @@ def _record_method_overrides(
     ):
         annotated_override_sink.setdefault(container_qn, []).append(
             (method_qn, method_name)
+        )
+
+
+def _ingest_method_endpoints(
+    ingestor: IngestorProtocol,
+    pending_endpoints: list | None,
+    method_qn: str,
+    decorators: object,
+    module_qn: str | None,
+) -> None:
+    if pending_endpoints is not None:
+        # Deferred so router mount prefixes can resolve after Pass 2 (#877).
+        queue_endpoints(
+            pending_endpoints,
+            cs.NodeLabel.METHOD,
+            method_qn,
+            decorators,
+            module_qn,
+        )
+    else:
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.METHOD,
+            method_qn,
+            decorators,
         )
 
 
@@ -1539,22 +1577,13 @@ def ingest_method(
         method_props,
         has_receiver=not _is_static_decorator(decorators),
     )
-    if pending_endpoints is not None:
-        # Deferred so router mount prefixes can resolve after Pass 2 (#877).
-        queue_endpoints(
-            pending_endpoints,
-            cs.NodeLabel.METHOD,
-            method_qn,
-            method_props.get(cs.KEY_DECORATORS),
-            module_qn,
-        )
-    else:
-        emit_endpoints(
-            ingestor,
-            cs.NodeLabel.METHOD,
-            method_qn,
-            method_props.get(cs.KEY_DECORATORS),
-        )
+    _ingest_method_endpoints(
+        ingestor,
+        pending_endpoints,
+        method_qn,
+        method_props.get(cs.KEY_DECORATORS),
+        module_qn,
+    )
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
@@ -1563,7 +1592,8 @@ def ingest_method(
     function_registry.mark_callable_params(
         method_qn, callable_parameter_indices(method_node, language)
     )
-    simple_name_lookup[method_name].add(method_qn)
+    if _named_by_its_bare_name(method_node, language):
+        simple_name_lookup[method_name].add(method_qn)
 
     # A container that may never register (a Rust impl on a primitive type)
     # defers so the edge is verified once every pass has run, falling back

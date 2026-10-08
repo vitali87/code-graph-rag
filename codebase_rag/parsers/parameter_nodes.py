@@ -18,6 +18,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
+from .csharp.utils import type_parameter_names
 from .utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -457,7 +458,8 @@ def csharp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
 
 
 def csharp_call_shape(func_node: Node) -> CSharpCallShape:
-    """The arity bounds and staticness C# bare-call binding checks."""
+    """The arity bounds and staticness C# bare-call binding checks, and the
+    type parameters a generic method declares, which shadow its class's."""
     params = csharp_declared_parameters(func_node)
     return CSharpCallShape(
         required=sum(not (p.has_default or p.is_variadic) for p in params),
@@ -466,6 +468,9 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
             child.type == cs.TS_CSHARP_MODIFIER
             and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_STATIC
             for child in func_node.children
+        ),
+        type_parameters=type_parameter_names(
+            func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
         ),
     )
 

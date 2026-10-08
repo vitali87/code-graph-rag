@@ -15,6 +15,21 @@ TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION = "file_scoped_namespace_declaration
 # or member (default `private`) for export detection.
 TS_CSHARP_DECLARATION_LIST = "declaration_list"
 TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER = "explicit_interface_specifier"
+# An explicit interface implementation (`int IValidator.Validate(Ctx)`) is
+# reachable only through an `IValidator` receiver, so it registers under its
+# own leaf, `IValidator#Validate(Ctx)`: the documentation-ID spelling, where a
+# dot of the interface path becomes `#` so the leaf stays one qn segment
+# (issue #2619).
+CSHARP_EXPLICIT_IMPL_SEPARATOR = "#"
+# Inside generic arguments a space next to one of these is noise, so a
+# signature drops it and `Map< K ,V >` and `Map<K, V>` spell one overload.
+CSHARP_SIGNATURE_TIGHT_CHARS = "<>,"
+# A simple name in a type, not one a dot qualifies: what a type parameter
+# looks like where a signature spells it (`T` in `Ctx<T>`, not in `N.T`).
+CSHARP_TYPE_IDENTIFIER_PATTERN = r"(?<![\w.@])[A-Za-z_]\w*"
+# Brackets a type argument may contain, whose commas are not its own.
+CSHARP_NESTED_OPEN = "(["
+CSHARP_NESTED_CLOSE = ")]"
 
 # Type declarations -> Class nodes.
 TS_CSHARP_CLASS_DECLARATION = "class_declaration"

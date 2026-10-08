@@ -15,6 +15,7 @@ from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
     CSharpCallShape,
+    CSharpGenericShape,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocations,
@@ -193,6 +194,11 @@ class DefinitionProcessor(
         # `proj.Core.Util`. No prefix rule on the qn can recover the
         # declarer, so the prune reads this map (#1769).
         self.csharp_class_owner_module: dict[str, str] = {}
+        # {class qn: its type parameters and the arguments it passes to each
+        # generic base}, so a call on `PersonValidator : Inline<Person>`
+        # ranks `Validator<T>.Validate(T)` as taking a Person (issue #2619).
+        # Only types that take or pass a type argument are recorded.
+        self.csharp_generic_shapes: dict[str, CSharpGenericShape] = {}
         # {class qn: namespace-qualified name (`N1.Outer.Widget`)} for every
         # C# type, read from the declaration at ingest: the qn leaves out a
         # namespace the module's directory already spells (issue #1629), so

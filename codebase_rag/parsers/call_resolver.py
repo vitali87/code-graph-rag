@@ -15,6 +15,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
+from .csharp import utils as csharp_utils
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -563,7 +564,7 @@ class CallResolver:
         # PRIVATE attribute so a project with no C# does not build an engine
         # just to clear an empty dict.
         if (csharp := self.type_inference._csharp_type_inference) is not None:
-            csharp._call_memo.clear()
+            csharp.clear_call_memo()
 
     def resolve_function_call(
         self,
@@ -1478,9 +1479,40 @@ class CallResolver:
         impl_qn = self._interface_impl_map().get(class_qn)
         if impl_qn is None:
             return set()
+        # A C# class that implements the member explicitly runs that body for
+        # an interface-typed call, even beside a public same-signature one.
+        if result := self._explicit_implementation(impl_qn, class_qn, method_name):
+            return {result}
         if result := self._try_resolve_method(impl_qn, method_name):
             return {result}
         return set()
+
+    def _explicit_implementation(
+        self, impl_qn: str, interface_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A C# implementer that implements the member EXPLICITLY registers it
+        # as `IValidator#Validate(Ctx)` (issue #2619), and that body is the one
+        # an interface-typed call runs. Its spelling must name this interface,
+        # so `A.IRun.Go` and `B.IRun.Go` on one class stay apart.
+        if self._module_language(impl_qn) != cs.SupportedLanguage.CSHARP:
+            return None
+        inference = self.type_inference
+        path = inference.csharp_class_namespaced.get(
+            interface_qn
+        ) or qn_markers.natural_qn(interface_qn)
+        arity = inference.csharp_class_generic_arity.get(interface_qn, 0)
+        prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
+        for qn, node_type in self.function_registry.find_with_prefix(impl_qn):
+            if not qn.startswith(prefix):
+                continue
+            explicit = csharp_utils.split_explicit_member(qn[len(prefix) :])
+            if (
+                explicit is not None
+                and explicit[1] == method_name
+                and csharp_utils.names_interface(explicit[0], path, arity)
+            ):
+                return node_type, qn
+        return None
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None

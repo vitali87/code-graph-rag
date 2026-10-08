@@ -6,6 +6,7 @@ from .. import constants as cs
 from ..types_defs import (
     ASTNode,
     CSharpCallShape,
+    CSharpGenericShape,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
@@ -76,6 +77,7 @@ class TypeInferenceEngine:
         "csharp_class_namespaced",
         "csharp_namespaced_qns",
         "csharp_method_return_types",
+        "csharp_generic_shapes",
         "function_locations",
         "_java_type_inference",
         "_csharp_type_inference",
@@ -131,6 +133,7 @@ class TypeInferenceEngine:
         csharp_class_namespaced: dict[str, str] | None = None,
         csharp_namespaced_qns: dict[str, set[str]] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
+        csharp_generic_shapes: dict[str, CSharpGenericShape] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
         dart_constructor_qns: set[str] | None = None,
@@ -223,6 +226,7 @@ class TypeInferenceEngine:
         self.csharp_class_namespaced = _shared(csharp_class_namespaced, dict)
         self.csharp_namespaced_qns = _shared(csharp_namespaced_qns, dict)
         self.csharp_method_return_types = _shared(csharp_method_return_types, dict)
+        self.csharp_generic_shapes = _shared(csharp_generic_shapes, dict)
         self.function_locations = _shared(function_locations, dict)
         # Shared reference (as with class_field_types): Dart `extends Base<T>`
         # type arguments per class qn, read by the resolver's undeclared
@@ -313,6 +317,7 @@ class TypeInferenceEngine:
                 csharp_class_namespaced=self.csharp_class_namespaced,
                 csharp_namespaced_qns=self.csharp_namespaced_qns,
                 csharp_method_return_types=self.csharp_method_return_types,
+                csharp_generic_shapes=self.csharp_generic_shapes,
                 method_return_types=self.method_return_types,
                 function_locations=self.function_locations,
             )
