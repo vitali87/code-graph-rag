@@ -478,3 +478,177 @@ def _identifiers(nodes: list[Node]) -> set[str]:
         for node in nodes
         if node.type == cs.TS_LUA_IDENTIFIER and (text := safe_decode_text(node))
     }
+
+
+def _name_value_pairs(assignment: Node) -> list[tuple[Node, Node | None]]:
+    # Each target of `a, b = x, y` with the expression assigned to it, or
+    # None past the end of the expression list (a bare `local a`).
+    variables = next(
+        (
+            child
+            for child in assignment.named_children
+            if child.type == cs.TS_LUA_VARIABLE_LIST
+        ),
+        None,
+    )
+    if variables is None:
+        return []
+    expressions = next(
+        (
+            child
+            for child in assignment.named_children
+            if child.type == cs.TS_LUA_EXPRESSION_LIST
+        ),
+        None,
+    )
+    values = (
+        expressions.children_by_field_name(cs.FIELD_VALUE)
+        if expressions is not None
+        else []
+    )
+    names = variables.children_by_field_name(cs.FIELD_NAME)
+    return [
+        (target, values[idx] if idx < len(values) else None)
+        for idx, target in enumerate(names)
+    ]
+
+
+def _paired_names(assignment: Node, function_valued: bool) -> set[str]:
+    return {
+        text
+        for target, value in _name_value_pairs(assignment)
+        if target.type == cs.TS_LUA_IDENTIFIER
+        and (value is not None and value.type == cs.TS_LUA_FUNCTION_DEFINITION)
+        == function_valued
+        and (text := safe_decode_text(target))
+    }
+
+
+def _local_value_names(declaration: Node) -> set[str]:
+    # Names a `local a, b = x, y` (or bare `local a`) binds to a VALUE. A
+    # name paired with a function expression binds a function the
+    # definition pass registers under that name, so it hides nothing.
+    assignment = next(
+        (
+            child
+            for child in declaration.named_children
+            if child.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+        ),
+        declaration,
+    )
+    return _paired_names(assignment, function_valued=False)
+
+
+def _assigned_kind(node: Node, name: str) -> bool | None:
+    """Whether `node` assigns `name` a function (True), another value
+    (False), or does not assign it at all (None).
+
+    `name = function ... end`, or a non-local `function name() ... end`,
+    stores a function in the local `name` already names, which the
+    definition pass registers under that name; `name = "text"` a value.
+    """
+    if node.type == cs.TS_LUA_FUNCTION_DECLARATION:
+        first = node.children[0] if node.children else None
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        if (
+            first is not None
+            and first.type != cs.TS_LUA_LOCAL_KEYWORD
+            and target is not None
+            and target.type == cs.TS_LUA_IDENTIFIER
+            and safe_decode_text(target) == name
+        ):
+            return True
+        return None
+    parent = node.parent
+    if node.type != cs.TS_LUA_ASSIGNMENT_STATEMENT or (
+        parent is not None and parent.type == cs.TS_LUA_VARIABLE_DECLARATION
+    ):
+        return None
+    if name in _paired_names(node, function_valued=True):
+        return True
+    if name in _paired_names(node, function_valued=False):
+        return False
+    return None
+
+
+def _last_assignment(region: Node, after: int, before: int, name: str) -> bool | None:
+    """What the last assignment to `name` in `region` between the byte
+    offsets `after` and `before` stores: True for a function, False for
+    another value, None when there is none. That assignment, not the
+    binding, is what the read at `before` sees."""
+    last: tuple[int, bool] | None = None
+    stack = [region]
+    while stack:
+        node = stack.pop()
+        if node.end_byte <= after or node.start_byte >= before:
+            continue
+        if (
+            node.start_byte >= after
+            and (kind := _assigned_kind(node, name)) is not None
+            and (last is None or node.start_byte > last[0])
+        ):
+            last = (node.start_byte, kind)
+        stack.extend(node.named_children)
+    return None if last is None else last[1]
+
+
+def _last_declaration(block: Node, before: int, name: str) -> Node | None:
+    # The latest `local` statement of `block` ahead of `before` that
+    # declares `name`: a later one shadows an earlier one.
+    found = None
+    for statement in block.named_children:
+        if statement.start_byte >= before:
+            break
+        if name in _local_names(statement):
+            found = statement
+    return found
+
+
+def _binding_at(scope: Node, child: Node, name: str) -> Node | None:
+    """What binds `name` in `scope`, the parent of `child`, as `child` sees
+    it: the nearest `local` ahead of it in a block (or, from a `repeat`'s
+    `until` condition, anywhere in the loop's body, whose locals stay in
+    scope there), or a function or `for` loop whose body `child` is and
+    which binds it as a parameter or loop variable."""
+    if scope.type in (cs.TS_LUA_BLOCK, cs.TS_LUA_CHUNK):
+        return _last_declaration(scope, child.start_byte, name)
+    if scope.type == cs.TS_LUA_REPEAT_STATEMENT and child.type != cs.TS_LUA_BLOCK:
+        body = next(
+            (c for c in scope.named_children if c.type == cs.TS_LUA_BLOCK), None
+        )
+        return _last_declaration(body, child.start_byte, name) if body else None
+    if child.type == cs.TS_LUA_BLOCK and name in _scope_names(scope):
+        return scope
+    return None
+
+
+def is_local_value(identifier: Node) -> bool:
+    """Whether the nearest Lua binding of the name `identifier` reads is a
+    local VALUE -- a value-bound `local`, a parameter or a loop variable --
+    hiding any same-name function.
+
+    Lua scoping is lexical: a `local` is visible from the statement after it
+    to the end of its block (through the `until` of a `repeat`), a parameter
+    throughout its function, and a loop variable throughout the loop body.
+    Only the nearest binding counts, and a `local function`, or a local a
+    function is assigned to before the read, binds the function the
+    definition pass registers under that name, so it hides nothing.
+    """
+    name = safe_decode_text(identifier)
+    if not name:
+        return False
+    child, scope = identifier, identifier.parent
+    while scope is not None:
+        binding = _binding_at(scope, child, name)
+        if binding is not None:
+            after = binding.end_byte if binding != scope else child.start_byte
+            # The last assignment before the read decides, whatever the
+            # binding first held (CodeRabbit, PR #2974).
+            assigned = _last_assignment(scope, after, identifier.start_byte, name)
+            if assigned is not None:
+                return not assigned
+            if binding.type == cs.TS_LUA_FUNCTION_DECLARATION and binding != scope:
+                return False
+            return binding == scope or name in _local_value_names(binding)
+        child, scope = scope, scope.parent
+    return False
