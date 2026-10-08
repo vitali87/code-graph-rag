@@ -267,7 +267,12 @@ class PythonWithBindingMixin(_WithBase):
         package re-exports, else None. `scope` is where the name is read."""
         import_mapping = self.import_processor.import_mapping
         if cs.SEPARATOR_DOT in type_name:
-            qn = follow_reexports(type_name, import_mapping, self.function_registry)
+            qn = follow_reexports(
+                type_name,
+                import_mapping,
+                self.function_registry,
+                self.import_processor.python_module_all,
+            )
             if self.function_registry.get(qn) == NodeType.CLASS:
                 return qn
             return resolve_dotted_class(
@@ -284,5 +289,10 @@ class PythonWithBindingMixin(_WithBase):
         )
         if not qn:
             return None
-        qn = follow_reexports(qn, import_mapping, self.function_registry)
+        qn = follow_reexports(
+            qn,
+            import_mapping,
+            self.function_registry,
+            self.import_processor.python_module_all,
+        )
         return qn if self.function_registry.get(qn) == NodeType.CLASS else None

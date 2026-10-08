@@ -48,13 +48,38 @@ def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
     function_registry: FunctionRegistryTrieProtocol,
+    python_star_exports: Mapping[str, frozenset[str]] | None = None,
 ) -> str:
     # `from .pkg import sym` records the importer's name against the re-export
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    seen: set[str] = set()
-    current = qn
+    # `python_star_exports` (each Python module's literal `__all__`) also
+    # follows `from mod import *`, which Python callers pass.
+    return _follow_reexports(
+        qn, import_mapping, function_registry, python_star_exports, set()
+    )
+
+
+def _star_binds(
+    source: str, name: str, python_star_exports: Mapping[str, frozenset[str]]
+) -> bool | None:
+    """Whether `from source import *` binds `name`: True when `source`'s
+    `__all__` lists it, False when it leaves it out, and None when `source`
+    has no `__all__`, where a public name MAY be bound (if the module defines
+    or imports it) and a private one is not."""
+    if (exported := python_star_exports.get(source)) is not None:
+        return name in exported
+    return None if not name.startswith(cs.PY_PRIVATE_PREFIX) else False
+
+
+def _follow_reexports(
+    current: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    python_star_exports: Mapping[str, frozenset[str]] | None,
+    seen: set[str],
+) -> str:
     while (
         current
         and current not in seen
@@ -63,11 +88,64 @@ def follow_reexports(
     ):
         seen.add(current)
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
-        following = import_mapping.get(module_qn, {}).get(name)
+        module_map = import_mapping.get(module_qn, {})
+        following = module_map.get(name)
+        if python_star_exports is not None:
+            # `from ._client import *` is one wildcard entry, not a name per
+            # export, so `pkg.Client` matched nothing and httpx's
+            # `client = httpx.Client()` stayed untyped (issue #2928). Python
+            # keeps a name's LAST binding, named or star, so the module's
+            # bindings are read latest first (bot review on PR #2989); `seen`
+            # bounds a cycle of stars. Python-only: other languages' stars
+            # bind differently.
+            following, found = _python_latest_binding(
+                name,
+                module_map,
+                import_mapping,
+                function_registry,
+                python_star_exports,
+                seen,
+            )
+            if found is not None:
+                return found
         if not following or following == current:
             break
         current = following
     return current
+
+
+def _python_latest_binding(
+    name: str,
+    module_map: dict[str, str],
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    python_star_exports: Mapping[str, frozenset[str]],
+    seen: set[str],
+) -> tuple[str | None, str | None]:
+    """`name`'s LAST binding among a Python module's imports, latest first:
+    `(target, None)` for a named import, followed on by the caller;
+    `(None, found)` when a star import binds it, `found` being where that
+    star leads; `(None, None)` when no import binds it."""
+    for key, target in reversed(module_map.items()):
+        if key == name:
+            return target, None
+        if not key.startswith(cs.IMPORT_MAPPING_WILDCARD_PREFIX):
+            continue
+        binds = _star_binds(target, name, python_star_exports)
+        if binds is False:
+            continue
+        found = _follow_reexports(
+            f"{target}{cs.SEPARATOR_DOT}{name}",
+            import_mapping,
+            function_registry,
+            python_star_exports,
+            seen,
+        )
+        if found in function_registry or binds:
+            # A name the source's `__all__` lists is bound by this
+            # star even when it leads outside the project.
+            return None, found
+    return None, None
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
