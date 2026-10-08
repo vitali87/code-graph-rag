@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import re
 import shlex
@@ -204,10 +205,21 @@ def _rm_operands(args: list[str]) -> list[str]:
     return []
 
 
-# Python 3.12's Path.resolve raises RuntimeError on a symlink loop (3.13
-# stopped raising), so a loop inside the project must be caught alongside
-# the OS errors or it escapes the guard as an exception.
+# Python 3.12's Path.resolve raises RuntimeError on a symlink loop, so a loop
+# inside the project must be caught alongside the OS errors or it escapes the
+# guard as an exception.
 _UNRESOLVABLE_PATH_ERRORS = (OSError, RuntimeError, ValueError)
+
+
+def _resolve(path: Path) -> Path:
+    # From 3.13 Path.resolve no longer raises on a loop: it returns one of the
+    # loop's own links unresolved. A result that is still a symlink is that
+    # loop, so it raises here as 3.12 does, and a loop gets the same verdict
+    # on every supported interpreter.
+    resolved = path.resolve()
+    if resolved.is_symlink():
+        raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), str(path))
+    return resolved
 
 
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
@@ -228,7 +240,7 @@ def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
     # drive-less target such as `/x` would resolve on the Python process's
     # drive rather than the root's, the drive rm runs on.
     try:
-        resolved = (project_root / path_arg).resolve()
+        resolved = _resolve(project_root / path_arg)
     except _UNRESOLVABLE_PATH_ERRORS:
         return f"rm with invalid path: {path_arg}"
     if resolved == project_root:
@@ -290,7 +302,7 @@ def _git_target_escape(target: str, project_root: Path) -> str | None:
     # drive rather than the root's, which is the drive git itself runs on
     # (its cwd is the root).
     try:
-        resolved = (project_root / target).resolve()
+        resolved = _resolve(project_root / target)
     except _UNRESOLVABLE_PATH_ERRORS:
         return f"git pointed at an unresolvable path: {target}"
     try:
@@ -2246,7 +2258,7 @@ def _escapes_root(candidate: Path, root: Path) -> bool:
     if not os.path.lexists(candidate):
         return False
     try:
-        return not candidate.resolve().is_relative_to(root)
+        return not _resolve(candidate).is_relative_to(root)
     except _UNRESOLVABLE_PATH_ERRORS:
         return True
 
