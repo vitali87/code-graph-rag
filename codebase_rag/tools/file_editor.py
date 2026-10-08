@@ -19,7 +19,7 @@ from ..language_spec import get_language_for_extension, get_language_spec
 from ..models import LanguageSpec
 from ..parser_loader import load_parsers
 from ..schemas import EditResult
-from ..types_defs import FunctionMatch
+from ..types_defs import AfterWrite, FunctionMatch
 from . import tool_descriptions as td
 
 _LINE_BREAK = re.compile(r"\r\n?")
@@ -405,18 +405,25 @@ class FileEditor:
             return EditResult(file_path=str(file_path), error_message=error_msg)
 
 
-def create_file_editor_tool(file_editor: FileEditor) -> Tool:
+def create_file_editor_tool(
+    file_editor: FileEditor, after_write: AfterWrite | None = None
+) -> Tool:
     async def replace_code_surgically(
         file_path: str, target_code: str, replacement_code: str
     ) -> str:
         result = await file_editor.replace_code_block_async(
             file_path, target_code, replacement_code
         )
-        if result.success:
-            return cs.MSG_SURGICAL_SUCCESS.format(path=file_path)
-        return te.ToolFailure(
-            result.error_message or cs.MSG_SURGICAL_FAILED.format(path=file_path)
-        )
+        if not result.success:
+            return te.ToolFailure(
+                result.error_message or cs.MSG_SURGICAL_FAILED.format(path=file_path)
+            )
+        message = cs.MSG_SURGICAL_SUCCESS.format(path=file_path)
+        # The chat session re-ingests what it writes, so its next question
+        # reads the edited code (issue #2916).
+        if after_write is not None:
+            message += await after_write([file_path])
+        return message
 
     return Tool(
         function=replace_code_surgically,
