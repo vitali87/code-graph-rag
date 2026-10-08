@@ -4538,10 +4538,12 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.PYTHON:
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
-            # selector = identity as any)`, zustand) references it: the default
-            # is invoked through the parameter when the caller omits the
-            # argument, never by a visible call.
+            # selector = identity as any)`, zustand; Python's
+            # `def run(self, conv=_via_default)`, issue #2838) references it:
+            # the default is invoked through the parameter when the caller
+            # omits the argument, never by a visible call.
             self._ingest_default_param_references(
                 caller_node,
                 caller_spec,
@@ -6280,8 +6282,16 @@ class CallProcessor:
         callee_type: str,
         callee_qn: str,
     ) -> None:
-        if ctx.is_python and (
-            dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+        if (
+            ctx.is_python
+            # A stub the name-only fallback merely guessed (a dict literal's
+            # `.get(...)`) says nothing about the receiver: fanning it out
+            # turned one guess into exact edges to every conformer, test
+            # doubles included (issue #2931). It stays one heuristic edge.
+            and self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC
+            and (
+                dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+            )
         ):
             # The call resolved to a Protocol stub; the stub never runs, so emit
             # edges to the method on every conformer instead of the stub.
@@ -6357,13 +6367,25 @@ class CallProcessor:
     def _emit_protocol_conformer_edges(
         self, ctx: _CallScanContext, dispatch_targets: set[tuple[str, str]]
     ) -> None:
-        for conformer_type, conformer_qn in dispatch_targets:
-            for target_qn in self._resolver.function_registry.variants(conformer_qn):
-                ctx.ensure_rel(
-                    ctx.caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        edges = [
+            (conformer_type, target_qn)
+            for conformer_type, conformer_qn in dispatch_targets
+            for target_qn in self._resolver.function_registry.variants(conformer_qn)
+        ]
+        # The receiver is one of the conformers, so with several the call is
+        # a fan-out like any other same-named candidate set (issue #1526):
+        # renaming one conformer must not rewrite the shared call site.
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for conformer_type, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str
@@ -6594,10 +6616,17 @@ class CallProcessor:
                 if ctx.is_python:
                     self._emit_python_binding_twin(ctx, target_qn, target_type)
                 continue
+            # A callable variant takes its OWN label: a Scala method's local
+            # def or anonymous-object member registers as a Function beside
+            # the class's same-named Method, and the primary's label on the
+            # other is the same phantom (issue #2848).
+            label = (
+                callee_type if target_type is None else cs.NodeLabel(target_type.value)
+            )
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
     def _emit_python_binding_twin(

@@ -211,7 +211,7 @@ _POSITIVE_FIXTURES = {
         "from abc import ABC\n"
         "class Base(ABC): pass\n"
         "def make_widget(): return 1\n"
-        "def bad(x=[], y={}):\n"
+        "def bad(x=[], y={}, z=set()):\n"
         "    global COUNTER\n"
         "    try: pass\n    except: pass\n"
         "    try: pass\n    except Exception: pass\n"
