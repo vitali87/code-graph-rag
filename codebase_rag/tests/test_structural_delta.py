@@ -26,6 +26,7 @@ from codebase_rag.structural_delta import (
     observe,
     strongly_connected,
 )
+from codebase_rag.types_defs import PropertyParams, ReingestReport, ResultRow
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "delta_fixture"
@@ -209,6 +210,9 @@ def test_two_arg_call_to_one_arg_function_is_an_arity_finding(
             "kwarg_names": [],
             "declared_count": 1,
             "verdict": cs.DELTA_ARITY_TOO_MANY,
+            # The callee judged and how its edge was bound (issue #2639).
+            "callee": _qn("pkg.util.helper"),
+            "resolution": cs.EdgeResolution.EXACT.value,
         }
     ]
     assert delta["signature_changes"] == []
@@ -401,6 +405,36 @@ def test_signature_change_lists_the_remote_callers_of_its_endpoint(
             "endpoint": "Greeter",
         },
     ]
+
+
+def test_an_async_only_flip_lists_no_remote_callers(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A handler turning `async` serves the same route with the same
+    parameters, so its remote callers are not broken by the flip alone and
+    must not fail the check (Greptile, PR #2951)."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "async def helper(a):"),
+    )
+
+    def apply() -> ReingestReport:
+        report = updater.reingest(["pkg/util.py"], deleted=[])
+        _link_remote_callers(store)
+        return report
+
+    def fetch(query: str, params: PropertyParams | None) -> list[ResultRow]:
+        return store.fetch_all(query, dict(params) if params is not None else None)
+
+    delta = observe(fetch, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+
+    (change,) = delta["signature_changes"]
+    assert change["async_change"] == cs.DELTA_ASYNC_ADDED
+    assert change["remote_callers"] == []
+    # `return helper(1)` hands the coroutine on: a hint, not a finding.
+    assert not has_findings(delta)
 
 
 def test_a_caller_both_query_shapes_return_is_listed_once() -> None:

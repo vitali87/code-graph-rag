@@ -56,6 +56,9 @@ class Definition(NamedTuple):
     fingerprint: str
     fingerprint_nodes: int
     branches: frozenset[str]
+    # The shape fingerprint drops the keyword, so a `def` <-> `async def`
+    # flip is told apart by this alone (issue #2860).
+    is_async: bool = False
 
 
 class CallSite(NamedTuple):
@@ -153,6 +156,10 @@ class ArityAtSite(TypedDict):
     kwarg_names: list[str]
     declared_count: int
     verdict: str
+    # The definition the site was judged against and how its edge was bound
+    # (issue #2639): a finding against a guess can be told from a real one.
+    callee: str
+    resolution: str
 
 
 class RemoteCaller(TypedDict):
@@ -171,6 +178,9 @@ class SignatureChange(TypedDict):
     before: list[str] | None
     after: list[str] | None
     sites: list[ArityAtSite]
+    # `added` or `removed` when the definition turned `async` or back
+    # (issue #2860), else None.
+    async_change: str | None
     # Call sites across the network that reach this definition's endpoint
     # (issue #1603): a signature change on a handler is a contract change
     # for them, and no CALLS edge would ever list them.
@@ -290,6 +300,7 @@ def _definition(row: ResultRow) -> Definition:
         fingerprint=_text(row.get(cs.KEY_AST_FINGERPRINT)),
         fingerprint_nodes=_int(row.get(cs.KEY_AST_FINGERPRINT_NODES)),
         branches=frozenset(_strings(row.get(cs.KEY_AST_BRANCH_FINGERPRINTS))),
+        is_async=cs.TS_PY_ASYNC in _strings(row.get(cs.KEY_MODIFIERS)),
     )
 
 
@@ -633,7 +644,11 @@ def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     changed: list[str] = []
     for qn in sorted(set(before.definitions) & set(after.definitions)):
         old, new = before.definitions[qn], after.definitions[qn]
-        if old.fingerprint != new.fingerprint or _params_moved(old, new):
+        if (
+            old.fingerprint != new.fingerprint
+            or _params_moved(old, new)
+            or old.is_async != new.is_async
+        ):
             changed.append(qn)
     return changed
 
@@ -1799,6 +1814,12 @@ def _site_finding(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> ArityAtSite:
     declared_count, verdict = _arity_verdict(site, definition, repo_root)
+    if site.resolution in cs.DELTA_GUESSED_RESOLUTIONS and verdict != cs.DELTA_ARITY_OK:
+        # The callee is a guess from the name alone, or one of several
+        # same-named candidates: the site may not call it at all, so a
+        # failure against it says nothing certain (issue #2639). A count
+        # that fits stays `ok`, as the declared-arity path answers it.
+        verdict = cs.DELTA_ARITY_UNKNOWN
     return ArityAtSite(
         caller=site.caller,
         path=site.caller_path,
@@ -1808,6 +1829,8 @@ def _site_finding(
         kwarg_names=list(site.kwarg_names),
         declared_count=declared_count,
         verdict=verdict,
+        callee=site.callee,
+        resolution=site.resolution or cs.EdgeResolution.EXACT.value,
     )
 
 
@@ -1893,16 +1916,34 @@ def _signature_changes(
         qn
         for qn in symbols["changed"]
         if _params_moved(before.definitions[qn], after.definitions[qn])
+        or before.definitions[qn].is_async != after.definitions[qn].is_async
     ]
+    # A handler that only turned `async` or back serves the same route with
+    # the same parameters, so its remote callers are not broken by the flip
+    # (Greptile, PR #2951); only a parameter change is looked up for them.
     remote = (
-        _remote_callers(fetch_all, project_name, changed)
+        _remote_callers(
+            fetch_all,
+            project_name,
+            [
+                qn
+                for qn in changed
+                if _params_moved(before.definitions[qn], after.definitions[qn])
+            ],
+        )
         if fetch_all is not None
         else {}
     )
     for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
+        async_change = _async_change(old, new)
         sites = [
-            _site_finding(site, new, repo_root)
+            _flipped_site(
+                _site_finding(site, new, repo_root),
+                new,
+                async_change,
+                _site_call(site, repo_root),
+            )
             for site in after.sites
             if site.callee == qn and site.rel == cs.RelationshipType.CALLS.value
         ]
@@ -1913,10 +1954,107 @@ def _signature_changes(
                 before=list(old.positional_params) if old.positional_params else None,
                 after=list(new.positional_params) if new.positional_params else None,
                 sites=sorted(sites, key=_site_order),
+                async_change=async_change,
                 remote_callers=remote.get(qn, []),
             )
         )
     return out
+
+
+# Nodes that use a call's value where it stands, so a coroutine there is
+# never run (issue #2860); an attribute or subscript reads its object.
+_PY_SYNC_VALUE_READERS = frozenset(
+    {
+        cs.TS_PY_EXPRESSION_STATEMENT,
+        cs.TS_PY_BINARY_OPERATOR,
+        cs.TS_PY_COMPARISON_OPERATOR,
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_PY_NOT_OPERATOR,
+        cs.TS_PY_UNARY_OPERATOR,
+    }
+)
+_PY_READ_OBJECT_FIELDS = {
+    cs.TS_PY_ATTRIBUTE: cs.TS_FIELD_OBJECT,
+    cs.TS_PY_SUBSCRIPT: cs.FIELD_VALUE,
+}
+
+
+def _async_change(old: Definition, new: Definition) -> str | None:
+    if old.is_async == new.is_async:
+        return None
+    return cs.DELTA_ASYNC_ADDED if new.is_async else cs.DELTA_ASYNC_REMOVED
+
+
+def _flipped_site(
+    finding: ArityAtSite,
+    definition: Definition,
+    async_change: str | None,
+    call: Node | None,
+) -> ArityAtSite:
+    # A call written for the old kind of a Python def fails (issue #2860):
+    # its value read synchronously once the def turned `async` (a coroutine
+    # whose body never runs), or awaited once it stopped being so. How the
+    # call is written decides it, so a caller already migrated is fine and
+    # one handing the value on (returned, assigned, `asyncio.run(...)`) is
+    # left to the change's `async_change` hint (Greptile, PR #2951). An
+    # arity verdict that already fails is the more precise word. Elsewhere
+    # (a JS Promise still runs) the flip is listed, not judged.
+    if (
+        async_change is None
+        or call is None
+        or Path(definition.path).suffix != cs.EXT_PY
+        or finding["verdict"] in cs.DELTA_ARITY_DEFINITE
+        or finding["resolution"] in cs.DELTA_GUESSED_RESOLUTIONS
+    ):
+        return finding
+    parent, child = _value_parent(call)
+    awaited = parent is not None and parent.type == cs.TS_PY_AWAIT
+    if async_change == cs.DELTA_ASYNC_ADDED:
+        breaks = not awaited and _read_synchronously(parent, child)
+    else:
+        breaks = awaited
+    if not breaks:
+        return finding
+    flipped = finding.copy()
+    flipped["verdict"] = cs.DELTA_ARITY_ASYNC_CHANGED
+    return flipped
+
+
+def _site_call(site: CallSite, repo_root: Path | None) -> Node | None:
+    """The call a Python site records, read back from its source, or None."""
+    if (
+        repo_root is None
+        or site.line is None
+        or site.col is None
+        or Path(site.caller_path).suffix != cs.EXT_PY
+    ):
+        return None
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return None
+    return _call_starting_at(tree.root_node, site.line - 1, site.col)
+
+
+def _value_parent(call: Node) -> tuple[Node | None, Node]:
+    """The node that receives a call's value, past any parentheses, and the
+    child of it the value arrives through."""
+    child = call
+    parent = call.parent
+    while parent is not None and parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        child, parent = parent, parent.parent
+    return parent, child
+
+
+def _read_synchronously(parent: Node | None, child: Node) -> bool:
+    """Whether the value is used on the spot: discarded as a statement, an
+    operand, or the object of an attribute or subscript read."""
+    if parent is None:
+        return False
+    if parent.type in _PY_SYNC_VALUE_READERS:
+        return True
+    field = _PY_READ_OBJECT_FIELDS.get(parent.type)
+    target = parent.child_by_field_name(field) if field else None
+    return target is not None and target.id == child.id
 
 
 # --- new duplicates -----------------------------------------------------------
