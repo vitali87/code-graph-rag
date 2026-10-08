@@ -95,8 +95,13 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _csharp_exported(node)
         case cs.SupportedLanguage.RUST:
             return _rust_exported(node)
+        case cs.SupportedLanguage.C:
+            return _c_exported(node)
         case cs.SupportedLanguage.CPP:
-            return cpp_utils.is_exported(node)
+            # A C++20 module `export`, or ordinary code's public API.
+            return cpp_utils.is_exported(node) or _cpp_public_api(node)
+        case cs.SupportedLanguage.SCALA:
+            return _scala_exported(node)
         case cs.SupportedLanguage.DART:
             return _dart_exported(node, name)
         case cs.SupportedLanguage.LUA:
@@ -697,6 +702,286 @@ def _rust_macro_exported(node: Node) -> bool:
             return True
         prev = prev.prev_named_sibling
     return False
+
+
+def _c_exported(node: Node) -> bool:
+    # A C function without `static` has external linkage: any translation
+    # unit may call it, so it is the library's API (issue #2707). A `static`
+    # declaration earlier in the file gives the definition internal linkage
+    # though it does not repeat the keyword (Greptile, PR #2952).
+    return (
+        node.type == cs.TS_CPP_FUNCTION_DEFINITION
+        and not _cpp_static(node)
+        and not _declared_static_before(node)
+    )
+
+
+def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
+    # A C++ declaration names the same function only in the same namespace
+    # (reopened blocks included) and with the same parameter types: `static
+    # void process(int)` leaves `process(double)` external (bot review on PR
+    # #2952). C has one namespace and no overloads.
+    name = _cpp_declared_name(definition)
+    if name is None:
+        return False
+    namespace = _cpp_namespace_path(definition) if cpp else ()
+    parameters = _cpp_parameter_types(definition) if cpp else ()
+    root = definition
+    while root.parent is not None:
+        root = root.parent
+    pending = list(reversed(root.children))
+    while pending:
+        node = pending.pop()
+        if node.start_byte >= definition.start_byte:
+            return False
+        if node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES or (
+            cpp and node.type == cs.TS_NAMESPACE_DEFINITION
+        ):
+            pending.extend(reversed(node.children))
+        elif (
+            node.type == cs.TS_CPP_DECLARATION
+            and _cpp_static(node)
+            and _cpp_declared_name(node) == name
+            and (
+                not cpp
+                or (
+                    _cpp_namespace_path(node) == namespace
+                    and _cpp_parameter_types(node) == parameters
+                )
+            )
+        ):
+            return True
+    return False
+
+
+def _cpp_namespace_path(node: Node) -> tuple[str, ...]:
+    # The names of the namespaces around a node, outermost first.
+    path: list[str] = []
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_NAMESPACE_DEFINITION:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            path[:0] = (named or "").split(cs.SEPARATOR_DOUBLE_COLON)
+        current = current.parent
+    return tuple(path)
+
+
+def _cpp_parameter_types(node: Node) -> tuple[str, ...]:
+    # Each parameter's type as written, without its name or default value,
+    # whitespace dropped; `(void)` is `()`.
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    parameters = (
+        declarator.child_by_field_name(cs.FIELD_PARAMETERS)
+        if declarator is not None
+        else None
+    )
+    if parameters is None:
+        return ()
+    types: list[str] = []
+    for parameter in parameters.named_children:
+        if parameter.text is None or parameter.type == cs.TS_COMMENT:
+            continue
+        types.append(_cpp_written_parameter_type(parameter, parameter.text))
+    return () if types == ["void"] else tuple(types)
+
+
+def _cpp_written_parameter_type(parameter: Node, text: bytes) -> str:
+    # One parameter's type as written (`text` is the parameter's source):
+    # its name and default value cut out, whitespace dropped.
+    end = len(text)
+    default = parameter.child_by_field_name(cs.TS_CPP_FIELD_DEFAULT_VALUE)
+    if default is not None:
+        end = default.start_byte - parameter.start_byte
+    named = parameter.child_by_field_name(cs.FIELD_DECLARATOR)
+    while named is not None and named.type != cs.TS_CPP_IDENTIFIER:
+        named = named.child_by_field_name(cs.FIELD_DECLARATOR)
+    written = text[:end]
+    if named is not None and named.end_byte - parameter.start_byte <= end:
+        start = named.start_byte - parameter.start_byte
+        written = written[:start] + written[named.end_byte - parameter.start_byte :]
+    return "".join(written.decode(cs.ENCODING_UTF8).split()).rstrip("=")
+
+
+def _cpp_declared_name(node: Node) -> str | None:
+    # The plain name a function definition or declaration declares.
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    name = (
+        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is not None
+        else None
+    )
+    return safe_decode_text(name) if name is not None else None
+
+
+def _cpp_static(node: Node) -> bool:
+    return any(
+        child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
+        and child.text == cs.CPP_KEYWORD_STATIC.encode()
+        for child in node.children
+    )
+
+
+def _cpp_public_api(node: Node) -> bool:
+    # Outside a module, a C++ function is API when another translation unit
+    # can call it: a non-`static` namespace-scope function outside an
+    # anonymous namespace, or a non-`private` member of a class that is not
+    # local to a function (issue #2707). An out-of-line member definition
+    # (`int Box::f() {}`) is left alone: its access is in the class, which is
+    # usually in another file.
+    #
+    # A function template is registered as its `template_declaration`, so
+    # the definition is read inside it; template and preprocessor wrappers
+    # open no scope, so the scope is the one around them. `static` makes a
+    # namespace-scope function file-private, but a member `static` only
+    # means it needs no instance (bot review, PR #2952).
+    definition = _cpp_function_definition(node)
+    if definition is None:
+        return False
+    member = definition
+    while member.parent is not None and (
+        member.parent.type == cs.TS_CPP_TEMPLATE_DECLARATION
+        or member.parent.type in cs.CPP_PREPROC_CONDITIONAL_TYPES
+    ):
+        member = member.parent
+    scope = member.parent
+    if scope is None or _cpp_local_or_anonymous(scope):
+        return False
+    if scope.type == cs.TS_FIELD_DECLARATION_LIST:
+        return _cpp_member_access(member, scope) != cs.CPP_ACCESS_PRIVATE
+    return (
+        scope.type
+        in (
+            cs.TS_CPP_TRANSLATION_UNIT,
+            cs.TS_CPP_DECLARATION_LIST,
+            cs.TS_CPP_LINKAGE_SPECIFICATION,
+        )
+        and not _cpp_static(definition)
+        and not _declared_static_before(definition, cpp=True)
+        and not _cpp_defined_out_of_line(definition)
+    )
+
+
+def _cpp_function_definition(node: Node) -> Node | None:
+    current: Node | None = node
+    while current is not None and current.type == cs.TS_CPP_TEMPLATE_DECLARATION:
+        current = next(
+            (
+                child
+                for child in current.named_children
+                if child.type
+                in (cs.TS_CPP_FUNCTION_DEFINITION, cs.TS_CPP_TEMPLATE_DECLARATION)
+            ),
+            None,
+        )
+    if current is None or current.type != cs.TS_CPP_FUNCTION_DEFINITION:
+        return None
+    return current
+
+
+def _cpp_local_or_anonymous(scope: Node) -> bool:
+    # Inside a function body (a local class) or an unnamed namespace: no
+    # other translation unit can name it.
+    current: Node | None = scope
+    while current is not None:
+        if current.type in (cs.TS_CPP_COMPOUND_STATEMENT, cs.TS_CPP_LAMBDA_EXPRESSION):
+            return True
+        if (
+            current.type == cs.CppNodeType.NAMESPACE_DEFINITION
+            and current.child_by_field_name(cs.FIELD_NAME) is None
+        ):
+            return True
+        current = current.parent
+    return False
+
+
+def _cpp_member_access(member: Node, body: Node) -> str:
+    # The access a member falls under: the last `public:` / `protected:` /
+    # `private:` label before it, else its class kind's default.
+    access: str | None = None
+    for child in body.children:
+        if child.id == member.id:
+            break
+        if child.type == cs.TS_ACCESS_SPECIFIER and child.text is not None:
+            access = child.text.decode(cs.ENCODING_UTF8).strip()
+    if access is not None:
+        return access
+    owner = body.parent
+    if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT:
+        return cs.CPP_ACCESS_PRIVATE
+    return cs.CPP_ACCESS_PUBLIC
+
+
+def _cpp_defined_out_of_line(node: Node) -> bool:
+    # `int Box::f() {}` defines a class member outside its class; `void
+    # V::f() {}` with `V` a namespace of the file is a namespace function
+    # and keeps its linkage (bot review on PR #2952).
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    name = (
+        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is not None
+        else None
+    )
+    if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        return False
+    scope = safe_decode_text(name.child_by_field_name(cs.FIELD_SCOPE)) or ""
+    owner = scope.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+    namespaces, classes = _cpp_file_scope_names(node)
+    return not (owner in namespaces and owner not in classes)
+
+
+def _cpp_file_scope_names(node: Node) -> tuple[set[str], set[str]]:
+    # The namespace names and class names a file defines.
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    namespaces: set[str] = set()
+    classes: set[str] = set()
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_NAMESPACE_DEFINITION:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            namespaces.update((named or "").split(cs.SEPARATOR_DOUBLE_COLON))
+        elif current.type in cs.CPP_CLASS_TYPES:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            if named:
+                classes.add(named)
+        if current.type not in (cs.TS_CPP_FUNCTION_DEFINITION,):
+            stack.extend(current.named_children)
+    return namespaces, classes
+
+
+def _scala_exported(node: Node) -> bool:
+    # A Scala member or top-level definition is public unless declared
+    # `private` (or `private[pkg]`, visible in that package alone);
+    # `protected` stays API, as it does for Java. A def local to another
+    # def's body is no API at all (issue #2707).
+    parent = node.parent
+    if parent is None or parent.type not in cs.SCALA_API_SCOPES:
+        return False
+    # Nor is a member of an object or class declared inside a def's body:
+    # nothing outside that body can name it (Greptile, PR #2952).
+    ancestor = parent.parent
+    while ancestor is not None:
+        if ancestor.type in (cs.TS_SCALA_FUNCTION_DEFINITION, cs.TS_SCALA_BLOCK):
+            return False
+        ancestor = ancestor.parent
+    modifiers = next(
+        (c for c in node.children if c.type == cs.TS_SCALA_MODIFIERS), None
+    )
+    if modifiers is None:
+        return True
+    return not any(
+        access.type == cs.TS_SCALA_ACCESS_MODIFIER
+        and any(c.type == cs.TS_SCALA_PRIVATE for c in access.children)
+        for access in modifiers.children
+    )
 
 
 _LUA_FUNCTION_TYPES = frozenset(cs.SPEC_LUA_FUNCTION_TYPES)

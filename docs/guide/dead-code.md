@@ -152,7 +152,20 @@ so no name or path is cut to fit 80 columns.
 1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
    decorated handlers, dunder/lifecycle methods, program entry points (`main`
    in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
-   plus any `--entry-point` and `--decorator-root` you add.
+   plus any `--entry-point` and `--decorator-root` you add. Each language's
+   own visibility rule decides what is public:
+   - **C:** a function without `static`.
+   - **C++:** besides a C++20 module `export`:
+     - a non-`static` function at namespace scope, outside an anonymous
+       namespace;
+     - a member defined inside a class under `public:` or `protected:` (a
+       `struct` starts public, a `class` private), unless the class is local
+       to a function.
+
+     An out-of-line member definition (`int Box::f() {}`) takes its access
+     from a class declaration in another file, so it is not counted.
+   - **Scala:** a member or top-level `def` that is not `private` or
+     `private[pkg]`.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class
