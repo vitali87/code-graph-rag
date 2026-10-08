@@ -93,6 +93,8 @@ class RelBatchRow(TypedDict):
     from_val: PropertyValue
     to_val: PropertyValue
     props: PropertyDict
+    # Set by the flush, which counts written rows by it (issue #2879).
+    row_index: NotRequired[int]
 
 
 BatchParams = NodeBatchRow | RelBatchRow | PropertyDict
@@ -1044,6 +1046,11 @@ LanguageFamily = frozenset[SupportedLanguage]
 # {bare module qn: {language family: its file's module qn}} for a stem whose
 # files carry their extension, the name each family's importers land on.
 StemSiblingModules = dict[str, dict[LanguageFamily, str]]
+
+
+# A write tool's post-write step (issue #2916): the written paths in, a note
+# for the tool's result out ("" for nothing to say).
+AfterWrite = Callable[[list[str]], Awaitable[str]]
 
 
 class ReingestReport(NamedTuple):

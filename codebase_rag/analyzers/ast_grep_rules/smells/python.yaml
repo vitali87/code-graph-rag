@@ -27,16 +27,41 @@ rules:
                 - { kind: tuple, has: { kind: identifier, regex: '^Exception$' } }
   # An annotated default (`items: list = []`) is a typed_default_parameter
   # (issue #2693).
+  # A default built by calling a mutable builtin (`x=list()`, `x=set()`) is
+  # evaluated once and shared exactly like the literal (issue #2864). The
+  # callee is matched by name, bare or through `collections.`.
   - id: mutable_default_list
     message: "Mutable default argument (list) is shared across calls"
     rule:
       any: [{ kind: default_parameter }, { kind: typed_default_parameter }]
-      has: { field: value, kind: list }
+      has:
+        field: value
+        any:
+          - kind: list
+          - kind: call
+            has: { field: function, kind: identifier, regex: '^list$' }
   - id: mutable_default_dict
     message: "Mutable default argument (dict) is shared across calls"
     rule:
       any: [{ kind: default_parameter }, { kind: typed_default_parameter }]
-      has: { field: value, kind: dictionary }
+      has:
+        field: value
+        any:
+          - kind: dictionary
+          - kind: call
+            has:
+              field: function
+              regex: '^(dict|(collections\.)?(defaultdict|OrderedDict))$'
+  - id: mutable_default_set
+    message: "Mutable default argument (set) is shared across calls"
+    rule:
+      any: [{ kind: default_parameter }, { kind: typed_default_parameter }]
+      has:
+        field: value
+        any:
+          - kind: set
+          - kind: call
+            has: { field: function, kind: identifier, regex: '^set$' }
   - id: wildcard_import
     message: "Wildcard import pollutes the namespace"
     rule:

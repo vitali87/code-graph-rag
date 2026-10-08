@@ -325,3 +325,13 @@ PY_DUNDER_ALL = "__all__"
 PY_LIST_EXTEND = "extend"
 PY_LIST_APPEND = "append"
 PY_PRIVATE_PREFIX = "_"
+
+# Forward references in an annotation (`n: "Node"`, issue #2837): the quotes
+# that mark one, the `ast.parse` mode that reads the expression it spells, and
+# the two subscripts whose string arguments are values, not types
+# (`Literal["a"]`, the metadata of `Annotated[T, "doc"]`).
+PY_DOUBLE_QUOTE = '"'
+PY_SINGLE_QUOTE = "'"
+PY_AST_EVAL_MODE = "eval"
+PY_TYPING_LITERAL = "Literal"
+PY_TYPING_ANNOTATED = "Annotated"
