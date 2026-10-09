@@ -51,9 +51,10 @@ def mock_memgraph_connect(
         mock_ingestor = MagicMock()
         mock_ingestor_roots.clear()
         mock_ingestor_roots.update(roots)
-        # Two graph reads per prune: the listing, then the current-root
-        # re-read inside the delete path.
-        mock_ingestor.list_project_roots.side_effect = [dict(roots), dict(roots)]
+        mock_ingestor.list_project_roots.side_effect = [dict(roots)]
+        # delete_project is conditional now: the fixture's default is a
+        # purge that fired (the repoint test overrides it).
+        mock_ingestor.delete_project.return_value = True
         # The verification read after a purge: the pruned project is gone.
         mock_ingestor.list_projects.side_effect = [["live__11111111"]]
         mock_ingestor.fetch_all.side_effect = _fake_fetch_all
@@ -180,18 +181,22 @@ class TestCandidateSelection:
 
         assert result.exit_code == 0, result.output
         ingestor = _ingestor(mock_memgraph_connect)
-        ingestor.delete_project.assert_called_once_with("dead__22222222")
+        ingestor.delete_project.assert_called_once_with(
+            "dead__22222222", expected_root=roots["dead__22222222"]
+        )
 
 
 class TestPruneDeletion:
     def test_removes_only_the_missing_root_project(
-        self, mock_memgraph_connect: MagicMock
+        self, mock_memgraph_connect: MagicMock, roots: dict[str, str]
     ) -> None:
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 0, result.output
         ingestor = _ingestor(mock_memgraph_connect)
-        ingestor.delete_project.assert_called_once_with("dead__22222222")
+        ingestor.delete_project.assert_called_once_with(
+            "dead__22222222", expected_root=roots["dead__22222222"]
+        )
         assert "Pruned project 'dead__22222222'" in result.output
 
     def test_cleans_embeddings_before_deleting(
@@ -221,22 +226,21 @@ class TestPruneDeletion:
         self, tmp_path: Path, mock_memgraph_connect: MagicMock
     ) -> None:
         # While the prompt was open a sync moved the project's root_path to
-        # its new live location: the delete path must re-read the graph's
-        # current root and only purge the project it still names (Greptile
-        # P1 on PR #3221).
+        # its new live location: the conditional delete must purge the
+        # project only when the graph still names the checked root
+        # (Greptile P1 on PR #3221).
         moved = tmp_path / "moved"
         moved.mkdir()
         ingestor = _ingestor(mock_memgraph_connect)
-        ingestor.list_project_roots.side_effect = [
-            dict(mock_ingestor_roots),
-            {**mock_ingestor_roots, "dead__22222222": str(moved)},
-        ]
+        ingestor.delete_project.return_value = False
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 0, result.output
         assert "has changed" in result.output
         assert "Pruned" not in result.output
-        ingestor.delete_project.assert_not_called()
+        ingestor.delete_project.assert_called_once_with(
+            "dead__22222222", expected_root=mock_ingestor_roots["dead__22222222"]
+        )
 
 
 class TestPruneSyncRecord:
@@ -338,13 +342,13 @@ class TestPruneConfirmation:
         _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
 
     def test_accepted_confirmation_prunes(
-        self, mock_memgraph_connect: MagicMock
+        self, mock_memgraph_connect: MagicMock, roots: dict[str, str]
     ) -> None:
         with patch("codebase_rag.cli._stdin_is_interactive", return_value=True):
             result = runner.invoke(app, ["prune"], input="y\n")
 
         assert result.exit_code == 0, result.output
         _ingestor(mock_memgraph_connect).delete_project.assert_called_once_with(
-            "dead__22222222"
+            "dead__22222222", expected_root=roots["dead__22222222"]
         )
         assert "Pruned 1 project(s)" in result.output

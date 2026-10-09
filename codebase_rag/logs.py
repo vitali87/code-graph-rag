@@ -489,6 +489,9 @@ MG_LIST_PROJECTS_FAILED = (
 )
 MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
+MG_PROJECT_NOT_DELETED = (
+    "--- Project {project_name} not deleted: its root no longer matches. ---"
+)
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
 MG_LEGACY_PURGE = (

@@ -3025,16 +3025,14 @@ def _prune_projects(
     Returns the names verified as purged and the names whose removal could
     not be verified; the caller reports the second list as failures, never
     as successes, and a root that came back is neither (it is skipped
-    without entering either). The existence re-check runs inside the delete
-    path, so a checkout recreated between the listing and the purge is
-    skipped, not destroyed -- the window narrows to the re-check itself,
-    it does not close (#2479). A concurrent sync can also repoint the
-    project's `root_path` at its new location while the prompt is open, so
-    the graph's CURRENT root is re-read in the delete path and the purge
-    fires only when it still matches the path that was checked (Greptile
-    P1 on PR #3221). A purge that cannot be proven complete -- the project
-    still listed, or a non-zero residual count from the same traversal the
-    delete ran -- is a failure, never a success (#2479).
+    without entering either). The delete is conditional on the project
+    still naming the root this run checked -- check and delete are one
+    statement (Greptile P1 on PR #3221), so a concurrent sync repointing
+    the project's root_path is skipped, not destroyed, with no window to
+    close. A checkout recreated at the old path is still only narrowed by
+    the existence re-check. A purge that cannot be proven complete -- the
+    project still listed, or a non-zero residual count from the same
+    traversal the delete ran -- is a failure, never a success (#2479).
     """
     pruned: list[str] = []
     failures: list[str] = []
@@ -3048,16 +3046,12 @@ def _prune_projects(
             )
             continue
         try:
-            if ingestor.list_project_roots().get(project_name) != root:
-                app_context.console.print(
-                    style(
-                        cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(
-                            project_name=project_name
-                        ),
-                        cs.Color.YELLOW,
-                    )
-                )
-                continue
+            # The vector ids are read while the project is still in the
+            # graph; embeddings go only when the conditional delete fires.
+            node_rows = ingestor.fetch_all(
+                cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
             _info(
                 style(
                     cs.CLI_MSG_PRUNING_PROJECT.format(
@@ -3066,8 +3060,34 @@ def _prune_projects(
                     cs.Color.YELLOW,
                 )
             )
-            _cleanup_project_embeddings(ingestor, project_name)
-            ingestor.delete_project(project_name)
+            fired = ingestor.delete_project(project_name, expected_root=root)
+        except Exception as e:
+            app_context.console.print(
+                style(
+                    cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e),
+                    cs.Color.RED,
+                )
+            )
+            logger.exception(
+                cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e)
+            )
+            failures.append(project_name)
+            continue
+        if not fired:
+            app_context.console.print(
+                style(
+                    cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+            continue
+        node_ids = [
+            row[cs.KEY_NODE_ID]
+            for row in node_rows
+            if isinstance(row.get(cs.KEY_NODE_ID), int)
+        ]
+        delete_project_embeddings(project_name, node_ids)
+        try:
             remaining = ingestor.list_projects()
             residual_rows = ingestor.fetch_all(
                 cq.CYPHER_COUNT_PROJECT_NODES,

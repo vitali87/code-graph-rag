@@ -208,6 +208,21 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 RETURN count(DISTINCT p) + count(DISTINCT container) + count(DISTINCT defined) AS residual
 """
 
+# The same traversal with the delete made conditional on the project still
+# naming the root the run checked (#2479): the WHERE and the DELETE are one
+# statement, so a concurrent sync repointing `root_path` cannot lose the
+# project between the check and the purge. `deleted` is 1 when the project
+# was purged and 0 when it was not (implicit aggregation over no match
+# yields one row with 0, live-verified on Memgraph and Neo4j).
+CYPHER_DELETE_PROJECT_IF_ROOT = """
+MATCH (p:Project {name: $project_name})
+WHERE p.root_path = $expected_root
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+DETACH DELETE p, container, defined
+RETURN count(DISTINCT p) AS deleted
+"""
+
 # Retires a project whose checkout was just re-indexed under another name
 # (issue #2412). Both projects index the same files, so they share every
 # Folder and File node (keyed on absolute path), and the walk above would

@@ -27,6 +27,8 @@ from ..constants import (
     ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
     KEY_CREATED,
+    KEY_DELETED_COUNT,
+    KEY_EXPECTED_ROOT,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_NAME,
@@ -50,6 +52,7 @@ from ..cypher_queries import (
     CYPHER_ANY_SHARED_STRUCTURE,
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
+    CYPHER_DELETE_PROJECT_IF_ROOT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_PROJECT_NODES,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
@@ -514,14 +517,37 @@ class MemgraphIngestor:
     def list_project_roots(self) -> dict[str, str | None]:
         return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
 
-    def delete_project(self, project_name: str) -> None:
+    def delete_project(
+        self, project_name: str, expected_root: str | None = None
+    ) -> bool:
+        """Delete one project; when `expected_root` is given, only if it still
+        names that root (issue #2479). The conditional form makes the check
+        and the delete one statement -- a concurrent sync repointing the
+        project's root cannot lose it between check and purge -- and returns
+        whether the project was actually deleted; the unconditional form
+        keeps returning True for every caller that ignores the answer."""
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
-        self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+        if expected_root is None:
+            self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+        else:
+            rows = self.fetch_all(
+                CYPHER_DELETE_PROJECT_IF_ROOT,
+                {
+                    KEY_PROJECT_NAME: project_name,
+                    KEY_EXPECTED_ROOT: expected_root,
+                },
+            )
+            if not rows or rows[0].get(KEY_DELETED_COUNT) != 1:
+                # Unprovable reads as not deleted: the purge may not have
+                # fired, so the caller must not treat the project as gone.
+                logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
+                return False
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
         self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
+        return True
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
