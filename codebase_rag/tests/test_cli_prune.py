@@ -33,9 +33,6 @@ def roots(tmp_path: Path) -> dict[str, str]:
     }
 
 
-mock_ingestor_roots: dict[str, str] = {}
-
-
 @pytest.fixture(autouse=True)
 def _isolated_cgr_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "cgr-home"
