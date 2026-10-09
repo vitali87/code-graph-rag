@@ -128,8 +128,9 @@ def test_a_concrete_request_finds_the_route_serving_it() -> None:
 def test_a_target_naming_no_endpoint_is_refused(target: str, tail: str) -> None:
     # The closest identity or handler comes first; with none close, the
     # hint points at `endpoints`.
+    graph = FakeGraph()
     with pytest.raises(graph_query.UnknownEndpointError) as refused:
-        graph_query.endpoint_callers(FakeGraph(), P, target)
+        graph_query.endpoint_callers(graph, P, target)
     head = cs.MCP_UNKNOWN_ENDPOINT.format(target=target, project=P)
     assert str(refused.value).startswith(head + tail), str(refused.value)
 
@@ -143,8 +144,9 @@ def test_an_endpoint_nobody_calls_is_an_empty_list() -> None:
 def test_an_rpc_identity_matches_only_as_written() -> None:
     # Negative: a non-HTTP identity has no path parameters to unify.
     assert _callers("users.UserService/GetUser") == ["web.rpc.Client.get_user"]
+    graph = FakeGraph()
     with pytest.raises(graph_query.UnknownEndpointError):
-        graph_query.endpoint_callers(FakeGraph(), P, "users.userservice/getuser")
+        graph_query.endpoint_callers(graph, P, "users.userservice/getuser")
 
 
 @pytest.fixture
