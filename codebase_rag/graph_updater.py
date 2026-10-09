@@ -1214,6 +1214,14 @@ def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> 
         progress.advance(task, scan.skipped_count + scan.unreadable_count)
 
 
+def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
+    # The module qns that are a package's `__init__.py`: a relative import
+    # there resolves against the package itself (issue #3192).
+    return frozenset(
+        qn for qn, path in module_files.items() if path.name in cs.PY_PACKAGE_INIT_FILES
+    )
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -2578,7 +2586,9 @@ class GraphUpdater:
         self._drop_stale_handler_exposes(
             [qn for _label, qn, _decorators, _module in entries]
         )
-        registry = build_router_registry(module_asts)
+        registry = build_router_registry(
+            module_asts, _package_modules({**known_files, **module_files})
+        )
         for label, qn, decorators, module_qn in entries:
             # Test modules stay in the stale-EXPOSES drop above (so a
             # legacy graph sheds their endpoints) but emit nothing: a route
@@ -2620,7 +2630,12 @@ class GraphUpdater:
             asts[qn] = loaded[qn]
             pending.extend(
                 target
-                for target in imported_module_qns(qn, loaded[qn], module_qns)
+                for target in imported_module_qns(
+                    qn,
+                    loaded[qn],
+                    module_qns,
+                    is_package=known[qn].name in cs.PY_PACKAGE_INIT_FILES,
+                )
                 if target not in files
             )
         return files, asts

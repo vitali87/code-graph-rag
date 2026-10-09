@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 from .. import constants as cs
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from tree_sitter import Node
 
 # The template segment marking an unresolvable mount prefix; matching treats
@@ -176,23 +178,29 @@ def _plain_import_targets(node: Node) -> dict[str, str]:
     return out
 
 
-def _from_import_base(module_qn: str, base: str) -> str:
+def _from_import_base(module_qn: str, base: str, is_package: bool = False) -> str:
     # A relative base resolves against the importing module's own qn, so it
     # comes back fully qualified; an absolute base resolves later by suffix.
+    # A package's `__init__.py` IS the package's qn, so its leading dot names
+    # the package itself and drops one fewer level, as the import processor
+    # resolves it (issue #3192).
     if not base.startswith(cs.SEPARATOR_DOT):
         return base
     level = len(base) - len(base.lstrip(cs.SEPARATOR_DOT))
     rest = base[level:]
-    parts = module_qn.split(cs.SEPARATOR_DOT)[:-level]
+    parts = module_qn.split(cs.SEPARATOR_DOT)
+    parts = parts[: len(parts) - level + int(is_package)]
     return cs.SEPARATOR_DOT.join(parts + ([rest] if rest else []))
 
 
-def _from_import_targets(module_qn: str, node: Node) -> dict[str, str]:
+def _from_import_targets(
+    module_qn: str, node: Node, is_package: bool = False
+) -> dict[str, str]:
     base_node = node.child_by_field_name(cs.FIELD_MODULE_NAME)
     base = _decode(base_node)
     if base is None:
         return {}
-    base = _from_import_base(module_qn, base)
+    base = _from_import_base(module_qn, base, is_package)
     out: dict[str, str] = {}
     for child in node.named_children:
         # `==` not `is`: py-tree-sitter builds a fresh wrapper per lookup, so
@@ -212,12 +220,14 @@ def _from_import_targets(module_qn: str, node: Node) -> dict[str, str]:
     return out
 
 
-def _import_targets(module_qn: str, node: Node) -> dict[str, str]:
+def _import_targets(
+    module_qn: str, node: Node, is_package: bool = False
+) -> dict[str, str]:
     # local name -> dotted target.
     if node.type == cs.TS_PY_IMPORT_STATEMENT:
         return _plain_import_targets(node)
     if node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
-        return _from_import_targets(module_qn, node)
+        return _from_import_targets(module_qn, node, is_package)
     return {}
 
 
@@ -249,7 +259,9 @@ def _resolve_import_module(
     return _resolve_module(modules, importer_qn, head) if head else None
 
 
-def imported_module_qns(module_qn: str, root: Node, modules: set[str]) -> set[str]:
+def imported_module_qns(
+    module_qn: str, root: Node, modules: set[str], is_package: bool = False
+) -> set[str]:
     """The known modules `module_qn` imports, resolved as the registry does.
 
     A scoped re-ingest uses this to find the router modules a mounting
@@ -262,7 +274,7 @@ def imported_module_qns(module_qn: str, root: Node, modules: set[str]) -> set[st
     while stack:
         node = stack.pop()
         if node.type in (cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT):
-            for dotted in _import_targets(module_qn, node).values():
+            for dotted in _import_targets(module_qn, node, is_package).values():
                 target = _resolve_import_module(modules, module_qn, dotted)
                 if target is not None and target != module_qn:
                     found.add(target)
@@ -420,7 +432,9 @@ class _Collector:
         self.raw_mounts: list[_RawMount] = []
         self.raw_imports: dict[str, dict[str, str]] = {}
 
-    def collect_module(self, module_qn: str, root: Node) -> None:
+    def collect_module(
+        self, module_qn: str, root: Node, is_package: bool = False
+    ) -> None:
         module_imports: dict[str, str] = {}
         stack: list[tuple[Node, str]] = [(root, "")]
         while stack:
@@ -439,7 +453,7 @@ class _Collector:
                 cs.TS_PY_IMPORT_STATEMENT,
                 cs.TS_PY_IMPORT_FROM_STATEMENT,
             ):
-                module_imports.update(_import_targets(module_qn, node))
+                module_imports.update(_import_targets(module_qn, node, is_package))
             elif node.type == cs.TS_PY_ASSIGNMENT:
                 self._record_assignment(module_qn, scope, node)
             elif node.type == cs.TS_PY_CALL:
@@ -509,11 +523,16 @@ def _resolve_import_bindings(
     return imports
 
 
-def build_router_registry(module_asts: dict[str, Node]) -> RouterRegistry:
-    """Collect router definitions, mounts and imports from module ASTs."""
+def build_router_registry(
+    module_asts: dict[str, Node], packages: Collection[str] = ()
+) -> RouterRegistry:
+    """Collect router definitions, mounts and imports from module ASTs.
+
+    `packages` names the modules that are a package's `__init__.py`.
+    """
     collector = _Collector()
     for module_qn, root in module_asts.items():
-        collector.collect_module(module_qn, root)
+        collector.collect_module(module_qn, root, module_qn in packages)
     imports = _resolve_import_bindings(set(module_asts), collector.raw_imports)
     registry = RouterRegistry(collector.routers, {}, imports, collector.ambiguous)
     mounts: dict[_RouterKey, list[_Mount]] = registry._mounts
