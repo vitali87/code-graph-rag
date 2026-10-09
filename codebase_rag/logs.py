@@ -160,6 +160,9 @@ EXCLUSION_STATE_NOT_RECORDED = (
 # Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"
 REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolution"
+IMPORT_STATE_RESTORED = (
+    "Restored the imports of {count} unchanged modules the re-parsed files reach"
+)
 INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
 ANALYSIS_COMPLETE = "\n--- Analysis complete. Flushing all data to database... ---"
 REMOVING_STATE = "Removing in-memory state for: {path}"

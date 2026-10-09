@@ -3,7 +3,7 @@ import posixpath
 import re
 from collections.abc import Iterable, Sequence
 
-from tree_sitter import Node
+from tree_sitter import Node, Parser
 
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol
@@ -263,6 +263,23 @@ def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | 
     if return_type is None:
         return None
     return _rust_return_type_name(return_type, impl_target)
+
+
+def return_type_name_from_annotation(
+    parser: Parser, annotation: str, impl_target: str | None
+) -> str | None:
+    # `extract_return_type_name` for a fn known only by the annotation text the
+    # graph persisted (an unchanged file on an incremental run): re-parsed in a
+    # stub fn, the text yields the same node, so `Self`, `Result<T>` and `&T`
+    # reduce exactly as they did when the file itself was parsed.
+    stub = cs.RS_RETURN_TYPE_STUB.format(annotation=annotation)
+    root = parser.parse(stub.encode(cs.ENCODING_UTF8)).root_node
+    func_node = next(
+        (c for c in root.named_children if c.type == cs.TS_RS_FUNCTION_ITEM), None
+    )
+    if func_node is None:
+        return None
+    return extract_return_type_name(func_node, impl_target)
 
 
 def tuple_group_inner(node: Node) -> Node | None:

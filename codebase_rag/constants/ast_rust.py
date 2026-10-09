@@ -159,6 +159,9 @@ RS_MACRO_CHAIN_SEPARATORS = (TS_RS_TOKEN_DOT, TS_RS_TOKEN_SCOPE)
 RS_MACRO_PATH_SEGMENT_TYPES = (TS_IDENTIFIER, KEYWORD_SELF, TS_RS_CRATE, KEYWORD_SUPER)
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
+# A bodied fn around a persisted return annotation, so the text parses back
+# into the `return_type` node the extraction at parse time reads (issue #2559).
+RS_RETURN_TYPE_STUB = "fn stub() -> {annotation} {{}}"
 # Transparent smart pointers that auto-deref to their inner type: a method call
 # on the pointer dispatches to the inner type's method, so strip them from any
 # type name (receiver OR return) to reach the real type.
