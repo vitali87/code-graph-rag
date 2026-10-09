@@ -135,7 +135,8 @@ def test_methods_and_functions_keep_their_signature_facts(
         (repo / rel).write_text(text, encoding="utf-8")
     payloads = _index(repo, tmp_path / "idx")
     run = payloads["w.W.run"]
-    assert run.overrides_external is True and run.path == "w.py", run
+    assert run.overrides_external is True, run
+    assert run.path == "w.py", run
     assert payloads["w.W.p"].is_property is True
     assert list(payloads["w.helper"].positional_params) == ["a", "b"]
     assert "static" in payloads["u.h"].modifiers
