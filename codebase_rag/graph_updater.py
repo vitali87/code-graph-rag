@@ -3,6 +3,7 @@
 import errno
 import hashlib
 import json
+import math
 import os
 import posixpath
 import secrets
@@ -1076,6 +1077,26 @@ def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
     return files, dirs
 
 
+def _last_changed(info: os.stat_result) -> float:
+    """When a file's bytes last changed, as far as the cache watermark can trust.
+
+    `st_mtime` alone is not it: `cp -p`, `rsync -a`, `tar -x`, `unzip` and file
+    sync tools write new content under the source's OLD mtime, so a change
+    copied in after the last sync sat below the watermark, was never hashed,
+    and every later sync said "already in sync" (issue #2834). The inode
+    change time is set by the kernel on every write and cannot be backdated
+    from user space, so the later of the two catches all of them. A chmod or a
+    hard link moves it too, which only costs a hash: the hash comparison stays
+    the authority. Windows has no inode change time, and its creation time
+    is kept when a file is overwritten in place, so no timestamp there says
+    the bytes changed: a cached file is always hashed (bot review on PR
+    #2910).
+    """
+    if sys.platform == "win32":
+        return math.inf
+    return max(info.st_mtime, info.st_ctime)
+
+
 def _cached_file_unchanged(
     file_path_str: str, old_hash: str, cache_mtime: float
 ) -> bool:
@@ -1087,7 +1108,7 @@ def _cached_file_unchanged(
         stat = os.stat(file_path_str)
     except OSError:
         return False
-    if stat.st_mtime <= cache_mtime:
+    if _last_changed(stat) <= cache_mtime:
         return True
     try:
         current_hash = _hash_file(Path(file_path_str))
@@ -5234,7 +5255,7 @@ class GraphUpdater:
                 stale.unlink(missing_ok=True)
             except OSError as e:
                 # Failing to DELETE the file must not resurrect TRUSTING it.
-                # The mtime fast path (`file_mtime <= cache_mtime`) skips a
+                # The mtime fast path (`changed_at <= cache_mtime`) skips a
                 # file before its hash is ever compared, and a real run stamps
                 # the cache at or after its sources, so a surviving cache makes
                 # every file look unchanged against hashes already known dead:
@@ -5989,7 +6010,7 @@ class GraphUpdater:
     ) -> bool:
         """Settle a cached file without hashing it; True when it was settled."""
         try:
-            file_mtime = filepath.stat().st_mtime
+            changed_at = _last_changed(filepath.stat())
         except OSError as stat_error:
             # The stat's own error decides: a missing path is a
             # deletion, any other failure an unreadable file.
@@ -6014,7 +6035,7 @@ class GraphUpdater:
         # comparison below sees a change and the file is re-parsed
         # as a KNOWN file, its old subtree deleted first (#1983).
         if (
-            file_mtime <= baseline.cache_mtime
+            changed_at <= baseline.cache_mtime
             and baseline.old_hashes[file_key] != cs.HASH_CACHE_UNREADABLE
         ):
             scan.new_hashes[file_key] = baseline.old_hashes[file_key]
@@ -6451,7 +6472,7 @@ class GraphUpdater:
             # than stamping this run's instant. The merged entries are mostly
             # the previous run's hashes, so stamping now would assert every
             # sibling was observed just now: a sibling edited before this run
-            # then satisfies `file_mtime <= cache_mtime` with a hash that
+            # then satisfies `changed_at <= cache_mtime` with a hash that
             # still matches, and the next project run reports "already in
             # sync" and never indexes the edit (#1619 review).
             #
