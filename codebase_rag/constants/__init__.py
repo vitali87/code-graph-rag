@@ -23,6 +23,7 @@ from .fqn_specs import *  # noqa: F403
 from .graph import *  # noqa: F403
 from .graph import _NODE_LABEL_UNIQUE_KEYS as _NODE_LABEL_UNIQUE_KEYS
 from .health import *  # noqa: F403
+from .identifiers import *  # noqa: F403
 from .lang_tooling import *  # noqa: F403
 from .languages import *  # noqa: F403
 from .mcp import *  # noqa: F403
