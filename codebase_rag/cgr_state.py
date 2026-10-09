@@ -63,23 +63,35 @@ def _locked(path: Path):
     Every writer rewrites the file from a read of it, so two concurrent
     writers can silently drop each other's update -- a sync finishing while
     a prune forgets the purged project would resurrect the ghost record.
+    A lock that cannot be taken (an unwritable home, a filesystem without
+    the lock call) degrades to the unlocked write with a warning: the state
+    was never guaranteed against a broken home, and `record_sync` must not
+    grow a new way to fail a sync whose graph commit already succeeded.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.parent / f"{path.name}.lock"
-    with lock_path.open("a") as lock_file:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = lock_path.open("a")
         if sys.platform == "win32":
             os.lseek(lock_file.fileno(), 0, os.SEEK_SET)
             msvcrt.locking(lock_file.fileno(), msvcrt.LK_RLCK, 1)
         else:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    except OSError as e:
+        logger.warning(f"State write proceeding without a lock: {e}")
+        yield
+        return
+    try:
+        yield
+    finally:
         try:
-            yield
-        finally:
             if sys.platform == "win32":
                 os.lseek(lock_file.fileno(), 0, os.SEEK_SET)
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
 
 def record_sync(project_name: str, home: Path | None = None) -> None:

@@ -169,3 +169,8 @@ A project is pruned only when its root is provably absent -- an unreadable
 directory (a permissions error, an unavailable mount) is treated as live --
 the checkout `cgr` itself runs from is never pruned, and every purge is
 verified against a fresh read of the graph before it is reported.
+
+Prune judges `root_path`s on the machine it runs on: a shared graph whose
+projects were indexed inside containers or on other hosts reads those roots
+as missing from here. Prune only a graph whose checkouts live on the machine
+asking.
