@@ -72,10 +72,19 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> tuple[_Edges, dict[str, d
     return edges, resources
 
 
+@pytest.fixture
+def javascript() -> None:
+    # server.js needs the javascript grammar, which the base install lacks;
+    # client.py's flow test still runs there.
+    if "javascript" not in load_parsers()[0]:
+        pytest.skip("javascript parser not available")
+
+
 def _target(edges: _Edges, caller: str, rel: cs.RelationshipType) -> set[str]:
     return {to for frm, kind, to in edges if frm == caller and kind == rel.value}
 
 
+@pytest.mark.usefixtures("javascript")
 def test_a_rootful_url_is_a_resource_of_its_project(
     graph: tuple[_Edges, dict[str, dict]],
 ) -> None:
@@ -88,6 +97,7 @@ def test_a_rootful_url_is_a_resource_of_its_project(
     assert resources[qn][cs.KEY_NAME] == "/carts/7"
 
 
+@pytest.mark.usefixtures("javascript")
 @pytest.mark.parametrize(
     ("caller", "url"),
     [
