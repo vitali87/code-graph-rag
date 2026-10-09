@@ -568,6 +568,8 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
     default: str | int | float | bool
+    # JSON Schema's lower bound for a number, enforced by the MCP layer.
+    minimum: int
     items: dict[str, str]
     # JSON Schema's key for the value type of an object used as a map.
     additionalProperties: dict[str, str]

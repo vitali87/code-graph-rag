@@ -1150,6 +1150,15 @@ class _StatefulIngestor:
                 return self._delta_rows(query, params or {})
             case cq.CYPHER_PROJECT_ROOT_PATH:
                 return self._project_root_rows(params or {})
+            case cq.CYPHER_GRAPH_NODE_EXISTS:
+                # Any node in any project: the unknown-target refusal asks
+                # whether the name is in the graph at all (issue #3244).
+                wanted = _str((params or {}).get(cs.KEY_QN))
+                return [
+                    {cs.KEY_QUALIFIED_NAME: wanted}
+                    for props in self.nodes.values()
+                    if props.get(cs.KEY_QUALIFIED_NAME) == wanted
+                ][:1]
             case (
                 cq.CYPHER_GRAPH_DEFINITION
                 | cq.CYPHER_GRAPH_CALLERS

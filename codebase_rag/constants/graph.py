@@ -712,6 +712,9 @@ KEY_TYPE_PARAMETERS = "type_parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
+# The largest line a `path:line` target is looked up at: past it no source
+# file has the line, and the value would overflow a Bolt integer.
+GRAPH_MAX_SOURCE_LINE = 2**31 - 1
 # Return and parameter annotations as written (issue #1527). `return_type` is
 # absent when the definition has none; `param_types` is parallel to the
 # declared parameters ("" for an unannotated one) and absent, not empty, for
