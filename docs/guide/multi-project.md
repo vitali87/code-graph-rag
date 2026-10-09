@@ -169,8 +169,9 @@ A project is pruned only when its root is provably absent -- an unreadable
 directory (a permissions error, an unavailable mount) is treated as live --
 the checkout `cgr` itself runs from is never pruned, every purge is
 verified against a fresh read of the graph before it is reported, and the
-graph's current `root_path` is re-read inside the delete path, so a
-concurrent sync repointing the project is skipped, not destroyed.
+purge itself is conditional on the project still naming the root that was
+checked, so a concurrent sync repointing the project is skipped, not
+destroyed.
 
 Prune judges `root_path`s on the machine it runs on: a shared graph whose
 projects were indexed inside containers or on other hosts reads those roots
