@@ -16,8 +16,8 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.cypher_queries import (
     CYPHER_TRACE_CALLABLES,
-    CYPHER_TRACE_CONFIRM_CALLS,
     CYPHER_TRACE_EXISTING_CALLS,
+    build_trace_confirm_calls_query,
 )
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.tests.conftest import create_and_run_updater
@@ -254,7 +254,9 @@ def test_trace_confirmation_leaves_trace_only_edges_alone() -> None:
     # A static edge and an earlier run's trace-only edge can share a pair;
     # confirming the pair must not relabel the `dynamic` one. No Cypher
     # engine runs here, so the filter is pinned on the query text.
-    assert "coalesce(r.static_missed, false) = false" in CYPHER_TRACE_CONFIRM_CALLS
+    assert "coalesce(r.static_missed, false) = false" in (
+        build_trace_confirm_calls_query("Function", "Method")
+    )
 
 
 def test_schema_and_query_column_carry_resolution() -> None:
@@ -289,6 +291,14 @@ def test_callers_rows_surface_resolution() -> None:
 # --- trace write-back ------------------------------------------------------------
 
 
+_CALLABLE_LABELS = ("Function", "Method", "Module")
+_CONFIRM_QUERIES = {
+    build_trace_confirm_calls_query(a, b)
+    for a in _CALLABLE_LABELS
+    for b in _CALLABLE_LABELS
+}
+
+
 class _Graph:
     def __init__(self, callables: list[dict], existing: list[dict]) -> None:
         self.callables = callables
@@ -304,9 +314,7 @@ class _Graph:
         raise AssertionError(query)
 
     def execute_write(self, query: str, params: dict | None = None) -> None:
-        assert query == CYPHER_TRACE_CONFIRM_CALLS, (
-            "only the in-place upgrade may write"
-        )
+        assert query in _CONFIRM_QUERIES, "only the in-place upgrade may write"
         self.writes.append((query, dict(params or {})))
 
     def ensure_node_batch(self, label: str, properties: dict) -> None:
@@ -402,7 +410,7 @@ def test_trace_upgrades_observed_edges_and_tags_dynamic_ones(tmp_path: Path) -> 
     # The observed static edge is upgraded in place, on every site.
     assert graph.writes == [
         (
-            CYPHER_TRACE_CONFIRM_CALLS,
+            build_trace_confirm_calls_query("Function", "Function"),
             {
                 cs.KEY_FROM_QN: f"{PROJECT}.pkg.app.run",
                 cs.KEY_TO_QN: f"{PROJECT}.pkg.svc.known",
