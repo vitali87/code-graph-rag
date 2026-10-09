@@ -1361,6 +1361,11 @@ class _StatefulIngestor:
                         cs.KEY_IS_OBJECT_MEMBER: bool(
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
+                        cs.KEY_FIELD_TYPES: [_text(f) for f in raw_field_types]
+                        if isinstance(
+                            raw_field_types := props.get(cs.KEY_FIELD_TYPES), list
+                        )
+                        else None,
                     }
                     defs.append(row)
                 return defs

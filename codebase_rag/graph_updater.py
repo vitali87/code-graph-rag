@@ -3287,12 +3287,28 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        # Restore an unchanged class's field types: only parsing records them,
+        # and a re-parsed file's field-hop receiver (`args.mode.update()`)
+        # types through them (issue #3004).
+        if isinstance(fields := row.get(cs.KEY_FIELD_TYPES), list):
+            self._rehydrate_class_field_types(qn, fields)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_class_field_types(self, qn: str, fields: list[object]) -> None:
+        field_types: dict[str, str] = {}
+        for entry in fields:
+            name, sep, type_name = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
+            if sep and name and type_name:
+                field_types[name] = type_name
+        if field_types:
+            self.factory.definition_processor.class_field_types.setdefault(
+                qn, field_types
+            )
 
     def _rehydrate_definition_path(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow

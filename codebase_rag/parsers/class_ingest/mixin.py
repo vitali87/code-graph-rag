@@ -1443,6 +1443,7 @@ class ClassIngestMixin:
             modifiers,
             file_path,
         )
+        self._persist_class_field_types(node_type, class_qn)
         self._ingest_class_methods(
             member_node,
             class_qn,
@@ -1587,6 +1588,26 @@ class ClassIngestMixin:
             self._record_csharp_class_members(
                 member_node, class_qn, module_qn, modifiers, file_path
             )
+
+    def _persist_class_field_types(self, node_type: NodeType, class_qn: str) -> None:
+        # Only parsing fills `class_field_types`, so an incremental run that
+        # re-parses `defs.rs` but not `lowargs.rs` lost `LowArgs.mode: Mode`
+        # and `args.mode.update()` fell to a by-name guess (issue #3004).
+        # Store the map on the class node for the rehydration to read back.
+        if node_type != NodeType.CLASS or not (
+            fields := self.class_field_types.get(class_qn)
+        ):
+            return
+        self.ingestor.ensure_node_batch(
+            node_type,
+            {
+                cs.KEY_QUALIFIED_NAME: class_qn,
+                cs.KEY_FIELD_TYPES: [
+                    f"{name}{cs.FIELD_TYPE_SEPARATOR}{type_name}"
+                    for name, type_name in sorted(fields.items())
+                ],
+            },
+        )
 
     def _record_rust_class_field_types(self, class_node: Node, class_qn: str) -> None:
         # Record Rust struct field types so a field-hop receiver

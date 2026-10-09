@@ -756,6 +756,10 @@ KEY_CALL_QUALIFIER = "call_qualifier"
 # file module win over another target's gate (src/lib.rs gating what
 # src/main.rs compiles for real).
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
+# A class's field types (`mode\tMode`), read back on an incremental run so a
+# re-parsed file's `args.mode.update()` still types the field (issue #3004).
+KEY_FIELD_TYPES = "field_types"
+FIELD_TYPE_SEPARATOR = "\t"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
 # The namespace a C# type is declared in, kept apart from the qualified
@@ -1021,7 +1025,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.field_types AS field_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
