@@ -67,7 +67,7 @@ class TestBuildMergeRelationshipQueryUnit:
             "MATCH (a:Module {qualified_name: row.from_val}), "
             "(b:Function {qualified_name: row.to_val})\n"
             "MERGE (a)-[r:DEFINES]->(b)\n"
-            "RETURN count(r) as created"
+            "RETURN count(DISTINCT coalesce(row.row_index, row)) as created"
         )
         assert result == expected
 
@@ -86,7 +86,7 @@ class TestBuildMergeRelationshipQueryUnit:
             "(b:Function {qualified_name: row.to_val})\n"
             "MERGE (a)-[r:CALLS]->(b)\n"
             "SET r += row.props\n"
-            "RETURN count(r) as created"
+            "RETURN count(DISTINCT coalesce(row.row_index, row)) as created"
         )
         assert result == expected
 
@@ -106,7 +106,7 @@ class TestBuildMergeRelationshipQueryUnit:
             "(b:Function {qualified_name: row.to_val})\n"
             "MERGE (a)-[r:FLOWS_TO {via: row.props.via, kind: row.props.kind}]->(b)\n"
             "SET r += row.props\n"
-            "RETURN count(r) as created"
+            "RETURN count(DISTINCT coalesce(row.row_index, row)) as created"
         )
         assert result == expected
 
@@ -446,16 +446,16 @@ class TestBuildMergeRelationshipQueryIntegration:
 
 class TestTestPathPatternsUnit:
     def test_test_patterns_cover_js_ts_convention(self) -> None:
-        from codebase_rag.constants import TEST_PATH_PATTERNS
+        from codebase_rag.path_filters import matches_test_path
 
         # *.test.ts / *.spec.tsx / __tests__/ are test files; without these
-        # substrings every symbol in them is wrongly reported as dead.
+        # rules every symbol in them is wrongly reported as dead.
         for path in (
             "src/solution.test.ts",
             "app/foo.spec.tsx",
             "src/__tests__/helper.ts",
         ):
-            assert any(p in path for p in TEST_PATH_PATTERNS), path
+            assert matches_test_path(path), path
 
 
 def _dead_code_config(
@@ -469,7 +469,6 @@ def _dead_code_config(
         include_classes=include_classes,
         root_decorators=frozenset(root_decorators),
         entry_points=entry_points,
-        test_patterns=("test_", "_test", "conftest", "/tests/"),
     )
 
 
