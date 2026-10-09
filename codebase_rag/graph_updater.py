@@ -94,7 +94,7 @@ from .parsers.java_lombok import (
 )
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import sorted_captures
+from .parsers.utils import has_internal_linkage, sorted_captures
 from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
@@ -3287,6 +3287,17 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        # Restore C/C++ internal linkage for unchanged files: a re-parsed
+        # file's bare call must not bind another file's `static` (#3154).
+        path = row.get(cs.KEY_PATH)
+        if (
+            node_type == NodeType.FUNCTION
+            and isinstance(path, str)
+            and get_language_for_extension(PurePosixPath(path).suffix)
+            in cs.C_FAMILY_LANGUAGES
+            and has_internal_linkage(row)
+        ):
+            self.function_registry.mark_internal_linkage(qn)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).

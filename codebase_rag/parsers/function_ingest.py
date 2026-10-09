@@ -52,6 +52,7 @@ from .utils import (
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
+    has_internal_linkage,
     ingest_method,
     is_method_node,
     python_positional_parameter_names,
@@ -1421,6 +1422,8 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        if language in cs.C_FAMILY_LANGUAGES and has_internal_linkage(func_props):
+            self.function_registry.mark_internal_linkage(resolution.qualified_name)
         func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
@@ -1592,6 +1595,14 @@ class FunctionIngestMixin:
         modifiers, decorators = extract_modifiers_and_decorators(
             func_node, lang_queries
         )
+        # The C++ highlights query captures no storage class, so a file-scope
+        # `static` went unrecorded and its internal linkage with it (#3154).
+        if (
+            language == cs.SupportedLanguage.CPP
+            and cs.CPP_KEYWORD_STATIC not in modifiers
+            and cpp_utils.cpp_has_static_storage(func_node)
+        ):
+            modifiers.append(cs.CPP_KEYWORD_STATIC)
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,

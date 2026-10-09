@@ -818,16 +818,20 @@ def is_cpp_vexing_parse_construction(decl_node: Node) -> bool:
     return any(name in in_scope for name in names)
 
 
-def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
-    # `static int helper();` or a declaration inside an anonymous
-    # namespace: internal linkage marks a TU-local function, so no
-    # cross-module definition can ever be its definition.
-    if any(
+def cpp_has_static_storage(decl_node: Node) -> bool:
+    return any(
         child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
         and child.text is not None
         and safe_decode_text(child) == cs.CPP_KEYWORD_STATIC
         for child in decl_node.children
-    ):
+    )
+
+
+def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
+    # `static int helper();` or a declaration inside an anonymous
+    # namespace: internal linkage marks a TU-local function, so no
+    # cross-module definition can ever be its definition.
+    if cpp_has_static_storage(decl_node):
         return True
     current = decl_node.parent
     while current is not None:
