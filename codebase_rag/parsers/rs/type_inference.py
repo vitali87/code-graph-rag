@@ -34,7 +34,11 @@ class RustTypeInferenceEngine:
             self._collect_bindings(body, var_types)
         # `other: &Self`, `let s: Self = ..`, `let p = Self { .. }` name the
         # enclosing impl's type; left as `Self`, no receiver typed (#3168).
-        if (impl_type := _enclosing_impl_type(caller_node)) is not None:
+        # Only a `Self` local needs the impl, so only then walk up to it.
+        if (
+            cs.RS_SELF_TYPE in var_types.values()
+            and (impl_type := _enclosing_impl_type(caller_node)) is not None
+        ):
             for name, type_name in var_types.items():
                 if type_name == cs.RS_SELF_TYPE:
                     var_types[name] = impl_type
