@@ -145,18 +145,22 @@ class RustTypeInferenceEngine:
         scope: tuple[int, int],
         entries: list[tuple[str, str, int, int, int]],
     ) -> None:
-        if node.type == cs.TS_RS_FUNCTION_ITEM:
-            # A nested fn item shares no scope with the enclosing body:
-            # its lets must not leak out (closures DO share attribution
-            # scope and keep descending, span-gated by their block).
-            return
-        if node.type == cs.TS_RS_LET_DECLARATION:
-            self._element_let_entry(node, scope, entries)
-        child_scope = (
-            (node.start_byte, node.end_byte) if node.type == cs.TS_RS_BLOCK else scope
-        )
-        for child in node.children:
-            self._collect_element_lets(child, child_scope, entries)
+        stack = [(node, scope)]
+        while stack:
+            current, current_scope = stack.pop()
+            if current.type == cs.TS_RS_FUNCTION_ITEM:
+                # A nested fn item shares no scope with the enclosing body:
+                # its lets must not leak out (closures DO share attribution
+                # scope and keep descending, span-gated by their block).
+                continue
+            if current.type == cs.TS_RS_LET_DECLARATION:
+                self._element_let_entry(current, current_scope, entries)
+            child_scope = (
+                (current.start_byte, current.end_byte)
+                if current.type == cs.TS_RS_BLOCK
+                else current_scope
+            )
+            stack.extend((child, child_scope) for child in reversed(current.children))
 
     def _element_let_entry(
         self,
@@ -580,10 +584,14 @@ class RustTypeInferenceEngine:
         # param) would clobber the entry with the wrong (last) type. They come
         # per-arm-scoped via collect_match_arm_bindings, overlaid by the resolver at
         # each call's position.
-        if node.type == cs.TS_RS_LET_DECLARATION:
-            self._collect_let_binding(node, var_types)
-        for child in node.children:
-            self._collect_bindings(child, var_types)
+        # An explicit stack, not recursion: a generated `else if` chain or a
+        # long `||` condition nests ~1,000 levels deep (issue #3173).
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_RS_LET_DECLARATION:
+                self._collect_let_binding(current, var_types)
+            stack.extend(reversed(current.children))
 
     def _collect_let_binding(self, node: Node, var_types: dict[str, str]) -> None:
         # `let x: T = ...` (explicit annotation) and `let x = T { .. }` (struct
@@ -650,10 +658,12 @@ class RustTypeInferenceEngine:
     def _collect_call_bindings(
         self, node: Node, bindings: list[tuple[str, list[str], int]]
     ) -> None:
-        if node.type == cs.TS_RS_LET_DECLARATION:
-            self._collect_call_binding(node, bindings)
-        for child in node.children:
-            self._collect_call_bindings(child, bindings)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_RS_LET_DECLARATION:
+                self._collect_call_binding(current, bindings)
+            stack.extend(reversed(current.children))
 
     def _collect_call_binding(
         self, node: Node, bindings: list[tuple[str, list[str], int]]
@@ -730,14 +740,12 @@ class RustTypeInferenceEngine:
 
     def _descendants_of_type(self, node: Node, node_type: str) -> list[Node]:
         found: list[Node] = []
-
-        def walk(n: Node) -> None:
-            if n.type == node_type:
-                found.append(n)
-            for child in n.children:
-                walk(child)
-
-        walk(node)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == node_type:
+                found.append(current)
+            stack.extend(reversed(current.children))
         return found
 
 

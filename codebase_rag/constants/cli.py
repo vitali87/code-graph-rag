@@ -128,6 +128,12 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_CALL_PASS_FAILURES = (
+    "Call analysis failed in {count} file(s); their CALLS edges may be "
+    "incomplete (see the errors above): {files}"
+)
+CLI_CALL_PASS_FAILURES_SHOWN = 10
+CLI_MSG_AND_MORE = "... {count} more"
 CLI_MSG_SYNC_INTERRUPTED = (
     "Interrupted: the graph for '{project}' is incomplete; re-run "
     "'cgr start --update-graph' with the same options to finish it."

@@ -200,13 +200,17 @@ class GoTypeInferenceEngine:
                     var_types[name] = type_name
 
     def _collect_body_declarations(self, node: Node, var_types: dict[str, str]) -> None:
-        match node.type:
-            case cs.TS_GO_VAR_DECLARATION:
-                self._collect_var_declaration(node, var_types)
-            case cs.TS_GO_SHORT_VAR_DECLARATION:
-                self._collect_short_var_declaration(node, var_types)
-        for child in node.children:
-            self._collect_body_declarations(child, var_types)
+        # An explicit stack, not recursion: a generated `else if` chain or a
+        # long `||` condition nests ~1,000 levels deep (issue #3173).
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            match current.type:
+                case cs.TS_GO_VAR_DECLARATION:
+                    self._collect_var_declaration(current, var_types)
+                case cs.TS_GO_SHORT_VAR_DECLARATION:
+                    self._collect_short_var_declaration(current, var_types)
+            stack.extend(reversed(current.children))
 
     def _collect_var_declaration(self, node: Node, var_types: dict[str, str]) -> None:
         # `var a, b T` binds every name in the spec to the declared type.
@@ -256,10 +260,12 @@ class GoTypeInferenceEngine:
     def _collect_call_bindings(
         self, node: Node, bindings: list[tuple[str, list[str]]]
     ) -> None:
-        if node.type == cs.TS_GO_SHORT_VAR_DECLARATION:
-            self._collect_call_binding(node, bindings)
-        for child in node.children:
-            self._collect_call_bindings(child, bindings)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_GO_SHORT_VAR_DECLARATION:
+                self._collect_call_binding(current, bindings)
+            stack.extend(reversed(current.children))
 
     def _collect_call_binding(
         self, node: Node, bindings: list[tuple[str, list[str]]]

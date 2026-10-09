@@ -692,6 +692,17 @@ FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of projec
 # Call processor logs
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
+# One caller's failure is contained to that caller (issue #3173): a pathological
+# function no longer costs the rest of its file every call edge. Both keep a
+# prefix the test harness's pass-failure gate watches.
+CALLER_CALLS_FAILED = (
+    "Failed to process calls in {caller} ({path}); the file's other callers "
+    "are kept: {error}"
+)
+CALLER_LOCAL_TYPES_FAILED = (
+    "Failed to infer local types in {caller} ({path}); its calls resolve "
+    "untyped: {error}"
+)
 # Re-reading a file evicted from the bounded AST cache is tolerate-and-continue,
 # not a pass failure, and must not borrow the message above: the test harness
 # fails a run on that one (issue #1070).

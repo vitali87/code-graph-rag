@@ -849,8 +849,31 @@ def _run_graph_sync(
                 cs.StyleModifier.NONE,
             )
         )
+        _report_call_pass_failures(repo, list(updater.call_pass_failures))
     if interrupted is not None:
         raise interrupted
+
+
+def _report_call_pass_failures(repo: Path, failed: list[Path]) -> None:
+    # A file whose call pass failed lost edges while the sync still reads
+    # "done": the error lines scroll away, so the summary counts them (#3173).
+    if not failed:
+        return
+    names = sorted(
+        path.relative_to(repo).as_posix() if path.is_relative_to(repo) else str(path)
+        for path in failed
+    )
+    shown = names[: cs.CLI_CALL_PASS_FAILURES_SHOWN]
+    if len(names) > len(shown):
+        shown.append(cs.CLI_MSG_AND_MORE.format(count=len(names) - len(shown)))
+    app_context.console.print(
+        style(
+            cs.CLI_MSG_CALL_PASS_FAILURES.format(
+                count=len(names), files=", ".join(shown)
+            ),
+            cs.Color.YELLOW,
+        )
+    )
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
