@@ -78,7 +78,8 @@ def test_two_names_on_one_checkout_survive_another_sync(
     ing.ensure_constraints()
     _index(ing, other, "unrelated")
 
-    assert (_structure(ing, "shopsvc"), _structure(ing, "shop-svc")) == before
+    after = (_structure(ing, "shopsvc"), _structure(ing, "shop-svc"))
+    assert after == before
 
 
 def test_a_cross_directory_merge_is_still_purged(
