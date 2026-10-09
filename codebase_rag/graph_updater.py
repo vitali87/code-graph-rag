@@ -1139,6 +1139,11 @@ class _PruneTally:
     registry_skipped: int = 0
 
 
+# This run's derivation, as repo-relative paths: the package directories, and
+# every directory the walk admitted.
+type _StructureNow = tuple[set[str], set[str]]
+
+
 def _reindexed_keys(changed_entries: list[tuple[Path, str, bool, bytes]]) -> list[str]:
     """The changed files that were indexed before this run, sorted."""
     return sorted(
@@ -7905,11 +7910,12 @@ class GraphUpdater:
         # A directory is represented by exactly one of Folder and Package,
         # decided by identify_structure this run; the node of the other kind
         # is stale even though the directory exists (issue #1570).
-        packages_now = {
-            rel.as_posix()
-            for rel, qn in self.factory.structure_processor.structural_elements.items()
-            if qn
-        }
+        structure = self.factory.structure_processor.structural_elements
+        packages_now = {rel.as_posix() for rel, qn in structure.items() if qn}
+        # Every directory this run's walk admitted. One still on disk but now
+        # excluded (`.cgrignore`, `--exclude`) is not among them, and a fresh
+        # index of the tree has no node for it (issue #2884).
+        directories_now = {rel.as_posix() for rel in structure}
 
         read_failed = False
         for query_all, scope, delete_query, label in prune_specs:
@@ -7921,7 +7927,9 @@ class GraphUpdater:
                 logger.warning(ls.PRUNE_QUERY_FAILED, label=label)
                 read_failed = True
                 continue
-            orphans = self._orphan_rows(rows, label, repo_abs, packages_now, tally)
+            orphans = self._orphan_rows(
+                rows, label, repo_abs, (packages_now, directories_now), tally
+            )
             total_pruned += self._delete_orphans(
                 self.ingestor, orphans, label, delete_query
             )
@@ -7960,13 +7968,13 @@ class GraphUpdater:
         rows: list[ResultRow],
         label: str,
         repo_abs: str,
-        packages_now: set[str],
+        structure_now: _StructureNow,
         tally: _PruneTally,
     ) -> list[tuple[str, str]]:
         """The (path, delete key) of every orphan among one label's rows."""
         orphans = []
         for r in rows:
-            orphan = self._orphan_row(r, label, repo_abs, packages_now, tally)
+            orphan = self._orphan_row(r, label, repo_abs, structure_now, tally)
             if orphan is not None:
                 orphans.append(orphan)
         return orphans
@@ -7976,7 +7984,7 @@ class GraphUpdater:
         r: ResultRow,
         label: str,
         repo_abs: str,
-        packages_now: set[str],
+        structure_now: _StructureNow,
         tally: _PruneTally,
     ) -> tuple[str, str] | None:
         """The (path, delete key) of one row when its node is an orphan."""
@@ -8011,7 +8019,7 @@ class GraphUpdater:
                 return None
             if not owned:
                 return None
-        key = self._stale_orphan_key(path, abs_path, label, packages_now)
+        key = self._stale_orphan_key(path, abs_path, label, structure_now)
         return None if key is None else (path, key)
 
     @staticmethod
@@ -8030,12 +8038,13 @@ class GraphUpdater:
         path: str,
         abs_path: ResultValue | None,
         label: str,
-        packages_now: set[str],
+        structure_now: _StructureNow,
     ) -> str | None:
         """The delete key of a node that is stale or whose path is gone."""
-        stale_kind = (label == "Folder" and path in packages_now) or (
-            label == "Package" and path not in packages_now
-        )
+        packages_now, directories_now = structure_now
+        stale_kind = (
+            label == "Folder" and (path in packages_now or path not in directories_now)
+        ) or (label == "Package" and path not in packages_now)
         # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
         # re-raises PermissionError instead of reading it as
         # absence, so a link whose target sits behind an
