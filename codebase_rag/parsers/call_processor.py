@@ -61,6 +61,7 @@ from .lua import utils as lua_utils
 from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
+from .sql_ddl import ddl_routine_references
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -2629,6 +2630,28 @@ class CallProcessor:
             self._ingest_java_enum_constant_ctor_calls(
                 module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
             )
+        if language == cs.SupportedLanguage.SQL:
+            # A trigger, aggregate, cast, type or handler clause runs the
+            # routine it names without an `invocation`; a schema file often
+            # holds no call at all (issue #3181).
+            self._ingest_sql_ddl_references(root_node, module_qn)
+
+    @_site_scoped
+    def _ingest_sql_ddl_references(self, root_node: Node, module_qn: str) -> None:
+        # The module runs the DDL, so it is the caller, as for a CHECK
+        # constraint's `invocation`. The site is the routine's name in the
+        # clause; no node spans it when the statement did not parse.
+        text = root_node.text
+        if not text:
+            return
+        self._site_node = None
+        module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+        row, col = root_node.start_point
+        for reference in ddl_routine_references(text, row, col):
+            self._resolution = cs.EdgeResolution.EXACT
+            self._link_sql_routine(
+                module_qn, module_spec, reference.name, reference.site
+            )
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
@@ -4842,6 +4865,15 @@ class CallProcessor:
         self._ingest_named_call(ctx, call_node, call_name)
 
     def _ingest_sql_routine_call(self, ctx: _CallScanContext, call_name: str) -> None:
+        self._link_sql_routine(ctx.module_qn, ctx.caller_spec, call_name)
+
+    def _link_sql_routine(
+        self,
+        module_qn: str,
+        caller_spec: tuple[str, str, str],
+        call_name: str,
+        site: PropertyDict | None = None,
+    ) -> None:
         # A SQL routine call has no receiver, import or type to resolve
         # through. The generic resolver reads `billing.fee` as a receiver and
         # a method, drops the receiver and binds `fee` by bare name, so a
@@ -4854,7 +4886,7 @@ class CallProcessor:
         # that file to this caller, so only the waiter list (issue #1568) can
         # send it back for a re-parse. The whole normalized name is recorded:
         # `billing.fee` waits on that routine only, never on `audit.fee`.
-        self._note_unresolved(ctx.module_qn, call_name)
+        self._note_unresolved(module_qn, call_name)
         targets = self._resolver.sql_routine_targets(call_name)
         if not targets:
             # A builtin (`count`, `now`) or a routine no indexed file defines.
@@ -4867,10 +4899,11 @@ class CallProcessor:
             # One routine with overloads the call site's types would choose.
             self._resolution = cs.EdgeResolution.OVERLOAD
         for target_qn in targets:
-            ctx.ensure_rel(
-                ctx.caller_spec,
+            self._emit_rel(
+                caller_spec,
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                site,
             )
 
     def _scan_call_name(self, ctx: _CallScanContext, call_node: Node) -> str | None:
