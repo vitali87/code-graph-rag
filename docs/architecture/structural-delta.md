@@ -76,7 +76,7 @@ records it next to the re-ingest itself.
 |----------------------|---------------------------------------------------------------------------------------------------|
 | `symbols.renamed`    | A symbol that disappeared while one with the same whole-skeleton fingerprint appeared in the same file. Paired one-to-one. |
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
-| `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. A module-level symbol whose own module still binds its name after the edit leaves none (issue #3248): a move that keeps `from new_home import name` behind, or a rename that keeps `old = new`, still serves every caller reaching it through that module, as for `dangling_importers` below. The `line`/`col` are the site's recorded position. |
+| `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
 | `dangling_importers` | Import statements and Python `__all__` entries that still name a removed or renamed symbol (issue #2516): a package `__init__` re-exporting it, say, with no call site to go with the import. `kind` is `import` (the statement's position; `name` is the imported name) or `__all__` (the string entry's position; `name` is the name the module exported it under). An importer the edit did not touch is always listed; one it touched only if it still names the symbol. Nothing is listed while the old module still binds the name, as it does after a move that leaves `from new_home import name` behind. A replacement import is followed to its target, into modules the edit did not touch as well, so one naming nothing there does not count, while a wildcard import of a module that defines the name does; a Python module's assignments are read from its source, and a target outside the project is taken at its word. A string in a comment inside `__all__` exports nothing. |
 | `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
 | `arity_findings`     | Call sites in the edited files the callee's language rejects: more positional arguments than the callee declares (`too_many`), the only verdict that needs no knowledge of defaults, and, where the signature declares which parameters are optional, fewer than it requires (`too_few`, see [signatures outside Python](#signatures-outside-python)). |
@@ -84,6 +84,16 @@ records it next to the re-ingest itself.
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
 | `stale_importers`    | Modules that still import a module every moved symbol left empty. Only a move (a rename across modules) produces one; the `move` operation's contract reads it. |
 | `tests_reaching`     | Test functions from which any symbol of the edited files is reachable through the call graph, with the shortest distance and the symbol it is reached through. |
+
+A removed or renamed module-level symbol whose own module still binds its
+name after the edit leaves no dangling caller (issue #3248): a move that
+keeps `from new_home import name` behind, or a rename that keeps
+`old = new`, still serves every caller reaching the name through that
+module, whether it imported the name, imported the module, or sits in the
+module itself. The binding is read as for `dangling_importers`, following
+re-exports into modules the edit left alone. A method is reached through
+its class, which no module binding stands in for, so its callers are
+listed as before.
 
 ### Arity verdicts
 
