@@ -4425,14 +4425,12 @@ class CallProcessor:
         self, message: str, caller: str, error: Exception
     ) -> None:
         path = self._call_file
+        rel_path = None
         if path is not None:
             self.failed_call_files.add(path)
-        logger.error(
-            message,
-            caller=caller,
-            path=cached_relative_path(path, self.repo_path) if path else None,
-            error=error,
-        )
+            # POSIX on every OS, like the other paths the logs name.
+            rel_path = cached_relative_path(path, self.repo_path).as_posix()
+        logger.error(message, caller=caller, path=rel_path, error=error)
 
     def _record_python_shadowed_imports(
         self, caller_node: Node, caller_qn: str, module_qn: str
