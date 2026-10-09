@@ -35,6 +35,14 @@ generation of the graph. Measured overhead on top of the re-ingest is
 reported per call as `delta_ms`; the benchmark (`benchmarks/bench_reingest.py`)
 records it next to the re-ingest itself.
 
+A caller the edit touched is judged by its new body (issue #3246). If that
+body no longer names a removed or renamed symbol, the call went with it: a
+callback replaced by a loop, a named function expression swapped for an
+arrow, a nested helper inlined. Such a caller is no dangling caller. An
+anonymous function is never named, so a caller re-parsed without it no
+longer calls it. A body that still names the symbol, or one that cannot be
+read, keeps the caller listed.
+
 ## What it reports
 
 ```json
