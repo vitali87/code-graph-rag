@@ -262,19 +262,29 @@ def _chain_links(
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point in starts:
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            member = func.children[-1] if func is not None and func.children else None
-            if (
-                member is not None
-                and member.type in _MEMBER_NAME_TYPES
-                and member.text is not None
-                and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-            ):
-                found.append((member.start_point[0] + 1, member.start_point[1]))
+        if (
+            node.start_point in starts
+            and (member := _called_member(node, name)) is not None
+        ):
+            found.append((member.start_point[0] + 1, member.start_point[1]))
         if any(node.start_point[0] <= row <= node.end_point[0] for row, _ in starts):
             stack.extend(node.children)
     return sorted(found)
+
+
+def _called_member(call: Node, name: str) -> Node | None:
+    # The member name a call invokes (`name` in `obj.name(...)`), if it is
+    # `name`; None for a bare call or another member.
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    member = func.children[-1] if func is not None and func.children else None
+    if (
+        member is not None
+        and member.type in _MEMBER_NAME_TYPES
+        and member.text is not None
+        and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+    ):
+        return member
+    return None
 
 
 def _chain_link_sites(
