@@ -1338,10 +1338,15 @@ class CallResolver:
             # sharing the directory. Production code can never call a function defined
             # in a `_test.go` file, so exclude such siblings; else a genuinely
             # test-only dead function would be masked as live.
+            # A module qn drops its file's extension, so a `gen.py` or
+            # `preview.js` beside the package's `.go` files looked like another
+            # build variant and `main` called their `render` too (#3026). Only
+            # Go code is in a Go package.
             if (
                 d2
                 and other_pkg == pkg_dir
                 and not other_file.endswith(cs.GO_TEST_FILE_SUFFIX)
+                and self._module_language(qn) == cs.SupportedLanguage.GO
             ):
                 targets.add((label, qn))
         return targets
