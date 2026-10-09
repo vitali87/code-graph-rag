@@ -9,9 +9,8 @@ neighbours included, while the sync still reported "done".
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +25,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.types_defs import ASTNode
+from codebase_rag.types_defs import ASTNode, LanguageQueries
 
 # Past Python's default recursion limit of 1,000 frames in all three grammars.
 BRANCHES = 1200
@@ -239,11 +238,31 @@ def test_a_failed_caller_costs_only_its_own_calls(
     original = CallProcessor._ingest_function_calls
 
     def explode(
-        self: CallProcessor, caller_node: Node, caller_qn: str, *a: Any, **kw: Any
+        self: CallProcessor,
+        caller_node: Node,
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None = None,
+        call_nodes: list[Node] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
     ) -> None:
         if caller_qn.endswith(".dispatch"):
             raise RuntimeError("caller pass exploded")
-        original(self, caller_node, caller_qn, *a, **kw)
+        original(
+            self,
+            caller_node,
+            caller_qn,
+            caller_type,
+            module_qn,
+            language,
+            queries,
+            class_context,
+            call_nodes,
+            call_name_cache,
+        )
 
     with patch.object(CallProcessor, "_ingest_function_calls", explode):
         updater = _index(temp_repo, _SHALLOW["go"](), mock_ingestor)
@@ -341,7 +360,13 @@ def test_a_rerun_does_not_report_the_previous_runs_failures(
     # run finds the repo in sync walks no calls and has nothing to report.
     original = TypeInferenceEngine.build_local_variable_type_map
 
-    def overflow(self: TypeInferenceEngine, *args: Any, **kw: Any) -> dict[str, str]:
+    def overflow(
+        self: TypeInferenceEngine,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None = None,
+    ) -> dict[str, str]:
         raise RecursionError("maximum recursion depth exceeded")
 
     with patch.object(TypeInferenceEngine, "build_local_variable_type_map", overflow):
