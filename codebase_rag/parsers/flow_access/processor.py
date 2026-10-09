@@ -37,6 +37,7 @@ from ..io_access import (
     definition_header_nodes,
     first_token_arg_string,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     lean_binding_targets,
@@ -293,6 +294,10 @@ type _TaintMap = dict[str, Taint]
 # handles it may hold. Set-valued so a name bound to different handles on
 # different branches writes to ALL of them at a later method call (issue #1204).
 type _HandleMap = dict[str, frozenset[HandleBinding]]
+
+
+def _always_own_pass(_node: Node) -> bool:
+    return True
 
 
 class _LeanState(NamedTuple):
@@ -905,6 +910,11 @@ class FlowProcessor:
         # call processor drives one caller at a time).
         self._acc_returns_taint = False
         self._acc_return_taint = _EMPTY_TAINT
+        # Whether a nested inline callable gets a caller pass of its own, set
+        # per caller, and how deep the walk is inside callbacks it walks inline
+        # (a `return` there leaves the callback, not the caller; issue #2772).
+        self._has_own_pass: Callable[[Node], bool] = _always_own_pass
+        self._inline_callback_depth = 0
         # Forward parameter-taint (issue #1142). A function's parameter is seeded
         # as a pseudo-origin during the walk; where it reaches a write sink or is
         # handed to another callee we record it here and compose at finalize, so
@@ -952,12 +962,14 @@ class FlowProcessor:
         language: cs.SupportedLanguage,
         class_context: str | None,
         local_var_types: dict[str, str] | None = None,
+        has_own_pass: Callable[[Node], bool] | None = None,
     ) -> None:
         if not self._enabled:
             return
         sinks = IO_SINKS.get(language, ())
         if not sinks:
             return
+        self._has_own_pass = has_own_pass or _always_own_pass
         ctx = _FlowCtx(
             caller_spec=caller_spec,
             caller_qn=caller_qn,
@@ -1141,6 +1153,60 @@ class FlowProcessor:
             self._acc_returns_taint = True
             self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
+    def _walk_inline_callback(
+        self,
+        node: Node,
+        state: _LeanState,
+        jc: _JsCtx,
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> None:
+        # An inline callback no caller pass walks alone (`items.forEach(x =>
+        # console.log(secret))`, issue #2772) runs as part of this caller, as a
+        # Python lambda does: what it reads from the enclosing scope flows into
+        # its sinks and callees. It runs zero or more times, possibly later, so
+        # it gets a copy of the state with its own parameters untainted, and its
+        # bindings are dropped afterwards. A `return` in it leaves the callback,
+        # so it adds nothing to this caller's return summary.
+        params = self._inline_callback_params(node, jc.descriptor)
+        inner = state.copy()
+        for name in params:
+            inner.taint.pop(name, None)
+            inner.handles.pop(name, None)
+        shadows = set(jc.local_names)
+        jc.local_names.update(params)
+        self._inline_callback_depth += 1
+        try:
+            for stmt in self._lean_body_statements(node, jc.flow, jc.descriptor):
+                inner = walk(stmt, inner, jc)
+        finally:
+            self._inline_callback_depth -= 1
+            self._restore_shadows(shadows, jc)
+
+    def _inline_callback_params(
+        self, node: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # A callback's parameters: a list (`(a, b) =>`, `|a, b|`, Go's
+        # parameter_list) or a lone one (`x =>`, Java `x ->`, C# `x =>`).
+        names: set[str] = set()
+        params = node.child_by_field_name(descriptor.params_field)
+        if params is not None and params.type in (
+            descriptor.identifier_type,
+            cs.TS_CSHARP_IMPLICIT_PARAMETER,
+        ):
+            if params.text:
+                names.add(params.text.decode(cs.ENCODING_UTF8))
+        elif params is not None:
+            for child in params.named_children:
+                target = (
+                    child.child_by_field_name(cs.TS_FIELD_PATTERN)
+                    or child.child_by_field_name(cs.TS_FIELD_NAME)
+                    or child
+                )
+                self._js_binding_names(target, descriptor, names)
+        if (single := node.child_by_field_name(cs.TS_FIELD_PARAMETER)) is not None:
+            self._js_binding_names(single, descriptor, names)
+        return names
+
     def _walk_flat_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
         # C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
@@ -1152,6 +1218,8 @@ class FlowProcessor:
             # THIS scope; walk them, then leave the body to its own caller pass.
             for header in lean_definition_header_nodes(node, jc.descriptor):
                 state = self._walk_flat_stmt(header, state, jc)
+            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
+                self._walk_inline_callback(node, state, jc, self._walk_flat_stmt)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -1510,6 +1578,8 @@ class FlowProcessor:
             # THIS scope; walk them, then leave the body to its own caller pass.
             for header in lean_definition_header_nodes(node, jc.descriptor):
                 state = self._walk_js_stmt(header, state, jc)
+            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
+                self._walk_inline_callback(node, state, jc, self._walk_js_stmt)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -1678,7 +1748,10 @@ class FlowProcessor:
             self._flow_stream(node, tainted, handles, jc)
         elif node_type in (d.keyword_stdout_write_types or ()):
             self._flow_keyword_write(node, tainted, jc)
-        elif node_type in (cs.TS_RETURN_STATEMENT, cs.TS_RS_RETURN_EXPRESSION):
+        elif (
+            node_type in (cs.TS_RETURN_STATEMENT, cs.TS_RS_RETURN_EXPRESSION)
+            and not self._inline_callback_depth
+        ):
             # Rust names this node return_expression, so matching only
             # return_statement dropped every Rust return summary (issue #1365).
             self._accumulate_return_taint(self._js_return_taint(node, tainted, jc))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from tree_sitter import Node
 
@@ -284,6 +284,40 @@ def rust_unwrap_result(node: Node) -> Node:
                 node = receiver
                 continue
         return node
+
+
+# Wrappers between a callable and the declaration that binds it: `let g = (||
+# ...)`, and Go's expression_list (`g := func() {...}`).
+_BOUND_CALLABLE_WRAPPERS = frozenset(
+    {cs.TS_PARENTHESIZED_EXPRESSION, cs.TS_GO_EXPRESSION_LIST}
+)
+
+
+def is_inline_callback(
+    node: Node,
+    descriptor: LanguageDescriptor,
+    has_own_pass: Callable[[Node], bool],
+) -> bool:
+    # An inline callable (an arrow or lambda passed as an argument, an invoked
+    # Go func literal) that gets no caller pass of its own runs as part of the
+    # enclosing caller, so the lean walks credit its I/O there (issue #2772).
+    # One bound to a local (`let g = || ...`, `g := func() {...}`, `Runnable r
+    # = () -> ...`) is a named callback, like JS `const handler = ...`: it runs
+    # only where that name is called, so the enclosing caller is not credited.
+    if node.type not in descriptor.inline_callable_types or has_own_pass(node):
+        return False
+    return not _bound_to_local(node, descriptor)
+
+
+def _bound_to_local(node: Node, descriptor: LanguageDescriptor) -> bool:
+    parent = node.parent
+    while parent is not None and parent.type in _BOUND_CALLABLE_WRAPPERS:
+        parent = parent.parent
+    if parent is None:
+        return False
+    # A loop clause binds the loop variable, not the callable it iterates.
+    binders = descriptor.extra_declarator_types - descriptor.loop_declarator_types
+    return parent.type == descriptor.declarator_type or parent.type in binders
 
 
 def lean_definition_header_nodes(
