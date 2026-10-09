@@ -1355,6 +1355,12 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_FIRST_RETURN_TYPE: _text(
+                            props.get(cs.KEY_FIRST_RETURN_TYPE)
+                        ),
+                        cs.KEY_CHAIN_RETURN_TYPE: _text(
+                            props.get(cs.KEY_CHAIN_RETURN_TYPE)
+                        ),
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
@@ -1447,6 +1453,7 @@ class _StatefulIngestor:
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
                         cs.KEY_LABEL: label,
+                        cs.KEY_GO_PACKAGE: _text(props.get(cs.KEY_GO_PACKAGE)),
                     }
                     module_rows.append(module_row)
                 return module_rows

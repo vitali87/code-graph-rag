@@ -1494,6 +1494,13 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    if language == cs.SupportedLanguage.GO:
+        # Local import for the same reason: the Go helpers import this module.
+        from .go.utils import extract_return_type_name
+
+        # Only the chained-call name: the first-result map is free functions'.
+        if chain := extract_return_type_name(method_node):
+            method_props[cs.KEY_CHAIN_RETURN_TYPE] = chain
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,
