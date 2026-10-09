@@ -1283,24 +1283,14 @@ class CallResolver:
         # `View.prototype.lookup = function lookup(...)` registers TWO nodes for
         # one method: the prototype path's `View.lookup` and the fn-expr's
         # own-name module-flat `view.lookup`. A call binds one twin and the
-        # other reports dead. Return the same-name twin(s) whose parent chain
-        # extends (or is extended by) the callee's parent, i.e. the same
-        # module's flat/member pair, so the caller can edge both (the
-        # duplicate-QN keep-both design). Never crosses modules.
-        parent_qn, sep, leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return set()
+        # other reports dead, so the caller edges both (the duplicate-QN
+        # keep-both design). Only the same definition is a twin: matching a
+        # same-name function by its parent's path paired `Store.get` with the
+        # module's own `function get()`, so `s.get()` called both (#3174).
+        leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)[2]
         twins: set[tuple[str, str]] = set()
-        for qn in self.function_registry.find_ending_with(leaf):
-            if qn == callee_qn:
-                continue
-            other_parent, d, other_leaf = qn.rpartition(cs.SEPARATOR_DOT)
-            if not d or other_leaf != leaf:
-                continue
-            if not (
-                other_parent.startswith(f"{parent_qn}{cs.SEPARATOR_DOT}")
-                or parent_qn.startswith(f"{other_parent}{cs.SEPARATOR_DOT}")
-            ):
+        for qn in self.function_registry.same_definition(callee_qn):
+            if qn.rpartition(cs.SEPARATOR_DOT)[2] != leaf:
                 continue
             label = self.function_registry.get(qn)
             if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
