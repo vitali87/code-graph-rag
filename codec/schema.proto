@@ -523,6 +523,8 @@ message GraphCodeIndex {
     bool is_exported = 7;
     // The namespace a C# type is declared in (issue #1629).
     string namespace = 8;
+    // `name<TAB>type` per field, read back by incremental runs (issue #3004).
+    repeated string field_types = 9;
   }
 
   message Interface {
