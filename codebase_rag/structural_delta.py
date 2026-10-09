@@ -1996,13 +1996,6 @@ def structural_delta(
         else longer_project_prefixes
     )
     symbols = _symbols(before, after, declared_renames)
-    load = _module_loader(
-        fetch_all,
-        {
-            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
-        },
-    )
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
@@ -2011,6 +2004,13 @@ def structural_delta(
     touched = fresh | {
         qn for qn, d in after.definitions.items() if d.path in after.paths
     }
+    load = _module_loader(
+        fetch_all,
+        {
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+        },
+    )
     return StructuralDelta(
         paths=sorted(before.paths | after.paths),
         reparsed=list(report.reparsed) if report else [],
