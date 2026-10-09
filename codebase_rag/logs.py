@@ -615,7 +615,7 @@ EDITOR_FILE_NOT_FOUND = "File not found: {path}"
 EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
 EDITOR_LOOKING_FOR = "Looking for: {block}"
 EDITOR_MULTIPLE_OCCURRENCES = (
-    "Multiple occurrences of target block found. Only replacing first occurrence."
+    "Target block occurs {count} times in {path}; nothing was replaced"
 )
 EDITOR_NO_CHANGES_IDENTICAL = (
     "No changes detected - target and replacement are identical"
