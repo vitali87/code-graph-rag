@@ -1206,7 +1206,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.RESOURCE,
-        "{qualified_name: string, name: string, kind: string}",
+        "{qualified_name: string, name: string, kind: string, project: string?}",
     ),
     NodeSchema(
         NodeLabel.SECTION,

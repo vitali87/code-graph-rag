@@ -29,7 +29,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
-| Resource (opt-in: [`io`](#capture-groups)) | `{qualified_name: string, name: string, kind: string}` |
+| Resource (opt-in: [`io`](#capture-groups)) | `{qualified_name: string, name: string, kind: string, project: string?}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
 | Pattern (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
 | CodeSmell (opt-in: [`findings`](#capture-groups)) | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
@@ -220,7 +220,7 @@ writes, exposes or calls. Its `kind` is one of:
 | ENV | An environment variable |
 | SOCKET | A socket address |
 | PROCESS | A command run as a subprocess |
-| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO` |
+| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO`. Its `project` property names the project that serves it, which scopes its qualified name and endpoint lookups. |
 | CONTRACT | A codegen contract operation shared by client stubs and server implementations |
 | RPC | An RPC method a handler exposes; callers join it directly |
 | DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly, or through `RESOLVES_TO` from a `key/deployment` variant of the key |
