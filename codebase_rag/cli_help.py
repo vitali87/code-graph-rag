@@ -431,7 +431,8 @@ HELP_OUTPUT_GRAPH = (
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
 HELP_EXPORT_PROJECT_NAME = (
     "Export only this project: what it owns, the relationships that start "
-    "there and the nodes they reach. Repeatable; without it the whole shared "
+    "there, the nodes they reach, and the links between the resources it "
+    "holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared "
     "graph is exported."
 )
 HELP_EXPORT_WORKSPACE = "Export only the projects defined in workspace NAME."
