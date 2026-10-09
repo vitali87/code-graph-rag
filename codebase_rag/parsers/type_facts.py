@@ -375,9 +375,19 @@ class TypeReferenceResolver:
             return None
         return ranked[0]
 
-    def resolve_annotation(self, annotation: str, module_qn: str) -> list[str]:
+    def resolve_annotation(
+        self,
+        annotation: str,
+        module_qn: str,
+        resolved_targets: frozenset[str] = frozenset(),
+    ) -> list[str]:
+        # Names already bound through the file's imports at its last parse;
+        # see PendingTypeFact.resolved_targets (issue #3007).
+        bound = {t.rpartition(cs.SEPARATOR_DOT)[2] for t in resolved_targets}
         found: dict[str, None] = {}
         for name in type_reference_names(annotation):
+            if name.rpartition(cs.SEPARATOR_DOT)[2] in bound:
+                continue
             qn = self.resolve(name, module_qn)
             if qn is not None:
                 found.setdefault(qn, None)
@@ -401,7 +411,9 @@ def _emit_returns(
 ) -> int:
     if fact.return_type is None:
         return 0
-    targets = resolver.resolve_annotation(fact.return_type, fact.module_qn)
+    targets = resolver.resolve_annotation(
+        fact.return_type, fact.module_qn, fact.resolved_targets
+    )
     for target_qn in targets:
         ingestor.ensure_relationship_batch(
             source, cs.RelationshipType.RETURNS, _target_spec(resolver, target_qn)
@@ -419,7 +431,9 @@ def _emit_accepts(
     for annotation in fact.param_types or ():
         if not annotation:
             continue
-        for target_qn in resolver.resolve_annotation(annotation, fact.module_qn):
+        for target_qn in resolver.resolve_annotation(
+            annotation, fact.module_qn, fact.resolved_targets
+        ):
             accepted.setdefault(target_qn, None)
     for target_qn in accepted:
         ingestor.ensure_relationship_batch(

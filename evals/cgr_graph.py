@@ -1364,6 +1364,22 @@ class _StatefulIngestor:
                     }
                     defs.append(row)
                 return defs
+            case cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS:
+                # The type edges an incremental run leaves resolved on its
+                # requeued annotations (issue #3007).
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                callables = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
+                type_rels = {
+                    cs.RelationshipType.RETURNS.value,
+                    cs.RelationshipType.ACCEPTS.value,
+                }
+                return [
+                    {cs.KEY_QUALIFIED_NAME: _text(fv), cs.KEY_TARGET_QN: _text(tv)}
+                    for (fl, fv, rel, _tl, tv) in sorted(self.edges, key=str)
+                    if fl in callables
+                    and rel in type_rels
+                    and _str(fv).startswith(prefix)
+                ]
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
