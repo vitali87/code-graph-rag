@@ -3690,25 +3690,54 @@ class CallProcessor:
         return self._resolver.cpp_operand_class_qn(name, var_types, ctx.module_qn)
 
     def _macro_call_name(self, ident: Node) -> str | None:
-        # Reconstruct a `<recv>.method` chain from a macro token stream by walking
-        # the method identifier's preceding siblings over `("." <ident|self>)*`.
-        # `server . run` -> "server.run"; `self . shutdown . recv` ->
-        # "self.shutdown.recv". A method with no preceding `.` stays bare.
+        # Rebuild the callee a macro token stream spells, walking the method
+        # identifier's preceding siblings, into the name the same call gets
+        # outside a macro: `server . run` -> "server.run", `Config :: load` ->
+        # "Config::load", `Circle :: new ( 2.0 ) . area` ->
+        # "Circle::new(2.0).area". Stopping at `::` dropped `Type::assoc()` and
+        # anything chained on it, since a bare method name never binds (issue
+        # #2698). A method with no preceding `.` or `::` stays bare.
         if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
             return None
         parts = [method]
         cur = ident.prev_sibling
-        while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
-            if (recv := cur.prev_sibling) is None or (
-                recv.type not in cs.RS_MACRO_RECEIVER_TYPES
-            ):
+        while cur is not None and cur.type in cs.RS_MACRO_CHAIN_SEPARATORS:
+            if (receiver := self._macro_receiver(cur)) is None:
                 break
-            if not recv.text:
-                break
-            parts.append(recv.text.decode(cs.ENCODING_UTF8))
-            cur = recv.prev_sibling
+            text, head = receiver
+            parts += [cur.type, text]
+            cur = head.prev_sibling
         parts.reverse()
-        return cs.SEPARATOR_DOT.join(parts)
+        return "".join(parts)
+
+    @staticmethod
+    def _macro_receiver(sep: Node) -> tuple[str, Node] | None:
+        # The receiver token(s) just before a `.` / `::` in a macro token
+        # stream, as (text, first token): a path segment (`Config`, `Self`,
+        # `crate`, `super`) before `::`; before `.`, an identifier or `self`,
+        # or a call result `new ( 2.0 )` (callee plus its argument group).
+        if (recv := sep.prev_sibling) is None or not recv.text:
+            return None
+        if sep.type == cs.TS_RS_TOKEN_SCOPE:
+            if recv.type not in cs.RS_MACRO_PATH_SEGMENT_TYPES:
+                return None
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if recv.type in cs.RS_MACRO_RECEIVER_TYPES:
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if (
+            recv.type == cs.TS_RS_TOKEN_TREE
+            and recv.child_count > 0
+            and recv.children[0].type == cs.CHAR_PAREN_OPEN
+            and (callee := recv.prev_sibling) is not None
+            and callee.type == cs.TS_IDENTIFIER
+            and callee.text
+        ):
+            return (
+                callee.text.decode(cs.ENCODING_UTF8)
+                + recv.text.decode(cs.ENCODING_UTF8),
+                callee,
+            )
+        return None
 
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
