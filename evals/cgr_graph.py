@@ -1444,9 +1444,13 @@ class _StatefulIngestor:
                         props.get(cs.KEY_QUALIFIED_NAME)
                     ).startswith(prefix):
                         continue
+                    raw_exports = props.get(cs.KEY_JS_EXPORTS)
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
                         cs.KEY_LABEL: label,
+                        cs.KEY_JS_EXPORTS: [str(entry) for entry in raw_exports]
+                        if isinstance(raw_exports, list)
+                        else None,
                     }
                     module_rows.append(module_row)
                 return module_rows
@@ -1803,6 +1807,13 @@ class _StatefulIngestor:
                 node = self.nodes.get((_MODULE_LABEL, qn))
                 if node is not None and isinstance(names, list):
                     node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
+            case cs.CYPHER_SET_JS_EXPORTS:
+                # One module's export table, replaced as a whole.
+                qn = params.get(cs.KEY_QN) if params else None
+                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                node = self.nodes.get((_MODULE_LABEL, qn))
+                if node is not None and isinstance(names, list):
+                    node[cs.KEY_JS_EXPORTS] = list(names)
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(
                     path,

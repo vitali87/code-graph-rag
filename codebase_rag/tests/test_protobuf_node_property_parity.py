@@ -67,10 +67,14 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # `unresolved_references` (issue #1568) degrades the same way as
     # `unresolved_specifiers`: absent reads as "nothing waited", and the next
     # parse of the module rewrites the list.
+    # `js_exports` (issue #3274) is read back only by an incremental run's
+    # rehydration; absent reads as "no stored table", which is how every run
+    # behaved before #3274, and the next parse of the module rewrites it.
     "Module": frozenset(
         {
             "absolute_path",
             "end_line",
+            "js_exports",
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",

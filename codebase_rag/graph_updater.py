@@ -92,6 +92,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.js_ts.reexports import decode_js_exports, encode_js_exports
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
@@ -2325,6 +2326,7 @@ class GraphUpdater:
         # function-location registry (both ends must be registered nodes).
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
+        self._write_js_export_bindings()
 
         self.factory.definition_processor.process_all_method_overrides()
 
@@ -3253,6 +3255,11 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged JS/TS module's export table, which only a parse of
+            # it records (issue #3274). A module this run re-parsed has a new
+            # node with no table yet, so its own recorded one stands.
+            if exports := decode_js_exports(row.get(cs.KEY_JS_EXPORTS)):
+                self.factory.import_processor.js_export_bindings[qn] = exports
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""
@@ -4081,6 +4088,46 @@ class GraphUpdater:
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+
+    def _write_js_export_bindings(self) -> None:
+        """Store each re-parsed JS/TS module's export table on its node.
+
+        Only a parse of the exporting module records what `export default f`
+        or `export { trim as strip }` stands for, so a later incremental run
+        that re-parses an importer alone reads it back from the graph (issue
+        #3274). A property SET after a flush, as `_write_unresolved_references`
+        writes. An empty table is not written: the re-parse deleted the node
+        and its old table with it.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        exports = self.factory.import_processor.js_export_bindings
+        pending: list[tuple[str, list[str]]] = []
+        for (
+            module_qn,
+            path,
+        ) in self.factory.definition_processor.module_qn_to_file_path.items():
+            if get_language_for_extension(path.suffix) not in cs.JS_TS_LANGUAGES:
+                continue
+            try:
+                key = path.relative_to(self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if key not in self._reparsed_file_keys:
+                continue
+            if entries := encode_js_exports(exports.get(module_qn, {})):
+                pending.append((module_qn, entries))
+        if not pending:
+            return
+        self.ingestor.flush_all()
+        try:
+            for module_qn, entries in pending:
+                self.ingestor.execute_write(
+                    cs.CYPHER_SET_JS_EXPORTS,
+                    {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: entries},
+                )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="js export bindings write")
 
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
@@ -7398,6 +7445,7 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
+        self._write_js_export_bindings()
         self.factory.definition_processor.process_all_method_overrides()
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
