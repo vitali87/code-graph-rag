@@ -150,7 +150,8 @@ def test_rename_of_the_free_function_leaves_the_method_calls(
     assert report.applied, report.message
     use = (temp_repo / "src/use.ts").read_text()
     assert 'return fetchValue("c");' in use, use
-    assert 's.get("a")' in use and 'new Store().get("b")' in use, use
+    assert 's.get("a")' in use, use
+    assert 'new Store().get("b")' in use, use
     assert "  get(key: string)" in (temp_repo / "src/store.ts").read_text()
 
 

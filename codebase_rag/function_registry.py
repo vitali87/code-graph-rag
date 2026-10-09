@@ -211,11 +211,7 @@ class FunctionRegistryTrie:
         self._abstracts.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
-        for other in self._same_definition.pop(qualified_name, set()):
-            if partners := self._same_definition.get(other):
-                partners.discard(qualified_name)
-                if not partners:
-                    del self._same_definition[other]
+        self._forget_same_definition(qualified_name)
 
         self._invalidate_ending_with_cache(simple_name)
 
@@ -225,6 +221,13 @@ class FunctionRegistryTrie:
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
+
+    def _forget_same_definition(self, qualified_name: QualifiedName) -> None:
+        for other in self._same_definition.pop(qualified_name, set()):
+            if partners := self._same_definition.get(other):
+                partners.discard(qualified_name)
+                if not partners:
+                    del self._same_definition[other]
 
     def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:
