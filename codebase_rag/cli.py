@@ -1839,11 +1839,11 @@ def status_command() -> None:
     incomplete = (
         _projects_with_incomplete_runs() if status.memgraph_reachable else set()
     )
-    roots = _graph_project_roots() if status.memgraph_reachable else {}
-    missing_roots = _missing_root_candidates(roots)
     if not timestamps and not incomplete:
         app_context.console.print("syncs:    (no projects synced via cgr yet)")
         return
+    roots = _graph_project_roots() if status.memgraph_reachable else {}
+    missing_roots = _missing_root_candidates(roots)
     app_context.console.print("syncs:")
     for project in sorted(timestamps.keys() | incomplete):
         ts = timestamps.get(project)
@@ -3015,16 +3015,20 @@ def _report_prune_candidates(candidates: dict[str, str]) -> None:
 
 def _prune_projects(
     ingestor: MemgraphIngestor, candidates: dict[str, str]
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Prune each candidate and verify the purge against a fresh graph read.
 
-    Returns the names whose removal could not be verified, which the caller
-    reports as failures instead of successes. The existence re-check runs
-    inside the delete path: a checkout recreated between the listing and the
-    purge is not destroyed (#2479). A purge that cannot be proven complete --
+    Returns the names verified as purged and the names whose removal could
+    not be verified; the caller reports the second list as failures, never
+    as successes, and a root that came back is neither (it is skipped
+    without entering either). The existence re-check runs inside the delete
+    path, so a checkout recreated between the listing and the purge is
+    skipped, not destroyed -- the window narrows to the re-check itself,
+    it does not close (#2479). A purge that cannot be proven complete --
     the project still listed, or a non-zero residual count from the same
     traversal the delete ran -- is a failure, never a success (#2479).
     """
+    pruned: list[str] = []
     failures: list[str] = []
     for project_name, root in sorted(candidates.items()):
         if not root_proven_missing(root):
@@ -3075,13 +3079,17 @@ def _prune_projects(
             )
             failures.append(project_name)
             continue
+        # The purge is proven: the local sync record for a project no
+        # longer in the graph would keep `cgr status` listing a ghost.
+        cgr_state.forget_sync(project_name)
         app_context.console.print(
             style(
                 cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name),
                 cs.Color.GREEN,
             )
         )
-    return failures
+        pruned.append(project_name)
+    return pruned, failures
 
 
 @app.command(
@@ -3093,7 +3101,7 @@ def _prune_projects(
 )
 def prune(
     dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_PRUNE_DRY_RUN),
-    yes: bool = typer.Option(False, "--yes", help=ch.HELP_PRUNE_YES),
+    yes: bool = typer.Option(False, "--yes", "-y", help=ch.HELP_PRUNE_YES),
 ) -> None:
     effective_batch_size = settings.resolve_batch_size(None)
 
@@ -3125,12 +3133,11 @@ def prune(
                         style(cs.CLI_MSG_PRUNE_ABORTED, cs.Color.CYAN)
                     )
                     raise typer.Exit(1)
-            failures = _prune_projects(ingestor, candidates)
-            pruned = len(candidates) - len(failures)
+            pruned, failures = _prune_projects(ingestor, candidates)
             if pruned:
                 _info(
                     style(
-                        cs.CLI_MSG_PRUNE_DONE.format(count=pruned),
+                        cs.CLI_MSG_PRUNE_DONE.format(count=len(pruned)),
                         cs.Color.GREEN,
                     )
                 )

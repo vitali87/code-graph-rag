@@ -567,7 +567,7 @@ HELP_DUPLICATES_OPEN = (
 
 HELP_DELETE_PROJECT_NAME = "Project name to delete from the graph."
 HELP_DELETE_PROJECT_REPO_PATH = (
-    "Path the project was indexed from; its hash cache is removed too."
+    "Optional repo path. If set, the local hash cache is removed too."
 )
 HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
 HELP_PRUNE_YES = "Prune without asking for confirmation."

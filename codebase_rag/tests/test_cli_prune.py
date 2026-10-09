@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.config import settings
 
 runner = CliRunner()
 
@@ -30,6 +31,13 @@ def roots(tmp_path: Path) -> dict[str, str]:
         "live__11111111": str(live),
         "dead__22222222": str(tmp_path / "gone"),
     }
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cgr_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "cgr-home"
+    monkeypatch.setattr(settings, "CGR_HOME", home)
+    return home
 
 
 @pytest.fixture
@@ -53,8 +61,33 @@ def _fake_fetch_all(
     if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
         return [{cs.KEY_NODE_ID: 1}]
     if query == cq.CYPHER_COUNT_PROJECT_NODES:
+        assert params == {cs.KEY_PROJECT_NAME: "dead__22222222"}
         return [{cs.KEY_RESIDUAL_NODES: 0}]
     return []
+
+
+def _empty_residual_fetch_all(
+    query: str, params: dict[str, object] | None = None
+) -> list[dict[str, object]]:
+    if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
+        return [{cs.KEY_NODE_ID: 1}]
+    if query == cq.CYPHER_COUNT_PROJECT_NODES:
+        return []
+    return []
+
+
+def _residual_fetch_all(
+    query: str, params: dict[str, object] | None = None
+) -> list[dict[str, object]]:
+    if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
+        return [{cs.KEY_NODE_ID: 1}]
+    if query == cq.CYPHER_COUNT_PROJECT_NODES:
+        return [{cs.KEY_RESIDUAL_NODES: 7}]
+    return []
+
+
+def test_residual_row_key_agrees_with_query_alias() -> None:
+    assert f"AS {cs.KEY_RESIDUAL_NODES}" in cq.CYPHER_COUNT_PROJECT_NODES
 
 
 def _ingestor(mock_connect: MagicMock) -> MagicMock:
@@ -160,7 +193,37 @@ class TestPruneDeletion:
 
         assert result.exit_code == 0, result.output
         assert "no longer a prune candidate" in result.output
+        assert "Pruned" not in result.output
         _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
+
+
+class TestPruneSyncRecord:
+    def test_forgets_the_sync_record_of_a_verified_purge(
+        self, mock_memgraph_connect: MagicMock, _isolated_cgr_home: Path
+    ) -> None:
+        from codebase_rag import cgr_state
+
+        cgr_state.record_sync("dead__22222222", home=_isolated_cgr_home)
+        result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        assert cgr_state.read_sync_timestamps(home=_isolated_cgr_home) == {}
+
+    def test_keeps_the_sync_record_when_verification_fails(
+        self, mock_memgraph_connect: MagicMock, _isolated_cgr_home: Path
+    ) -> None:
+        from codebase_rag import cgr_state
+
+        cgr_state.record_sync("dead__22222222", home=_isolated_cgr_home)
+        _ingestor(mock_memgraph_connect).fetch_all.side_effect = _residual_fetch_all
+        result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 1, result.output
+        assert cgr_state.read_sync_timestamps(home=_isolated_cgr_home) == {
+            "dead__22222222": cgr_state.read_sync_timestamps(home=_isolated_cgr_home)[
+                "dead__22222222"
+            ]
+        }
 
 
 class TestPruneVerification:
@@ -189,6 +252,19 @@ class TestPruneVerification:
         assert "could not be verified" in result.output
         assert "Pruned project" not in result.output
 
+    def test_empty_verification_read_fails(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # A purge that cannot be proven complete is a failure, never a
+        # success: an unreadable residual count must not read as zero.
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.fetch_all.side_effect = _empty_residual_fetch_all
+        result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 1, result.output
+        assert "could not be verified" in result.output
+        assert "Pruned project" not in result.output
+
 
 def _residual_fetch_all(
     query: str, params: dict[str, object] | None = None
@@ -196,6 +272,7 @@ def _residual_fetch_all(
     if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
         return [{cs.KEY_NODE_ID: 1}]
     if query == cq.CYPHER_COUNT_PROJECT_NODES:
+        assert params == {cs.KEY_PROJECT_NAME: "dead__22222222"}
         return [{cs.KEY_RESIDUAL_NODES: 7}]
     return []
 

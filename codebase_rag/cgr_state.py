@@ -55,3 +55,20 @@ def record_sync(project_name: str, home: Path | None = None) -> None:
 def read_sync_timestamps(home: Path | None = None) -> dict[str, str]:
     state = _load(state_path(home))
     return dict(state.get("last_sync", {}))
+
+
+def forget_sync(project_name: str, home: Path | None = None) -> None:
+    """Drop the project's sync record, for a purge verified complete (#2479).
+
+    The record outlived the graph before: `cgr status` kept listing a
+    project that no longer exists, with a recent `last sync` and nothing
+    else, which reads as healthier than the `(missing)` state it replaced.
+    """
+    path = state_path(home)
+    state = _load(path)
+    last_sync = state.get("last_sync", {})
+    if project_name not in last_sync:
+        return
+    del last_sync[project_name]
+    state["last_sync"] = last_sync
+    _save(path, state)
