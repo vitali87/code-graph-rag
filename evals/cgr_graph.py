@@ -1447,6 +1447,7 @@ class _StatefulIngestor:
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
                         cs.KEY_LABEL: label,
+                        cs.KEY_PHP_NAMESPACE: _text(props.get(cs.KEY_PHP_NAMESPACE)),
                     }
                     module_rows.append(module_row)
                 return module_rows

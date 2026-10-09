@@ -48,6 +48,7 @@ from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .module_docstring import extract_module_docstring
 from .parameter_nodes import PendingParameterType
+from .php.namespaces import declared_namespace
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -648,6 +649,10 @@ class DefinitionProcessor(
         }
         if docstring := self._get_module_docstring(root_node, language):
             module_props[cs.KEY_DOCSTRING] = docstring
+        if language == cs.SupportedLanguage.PHP and (
+            namespace := declared_namespace(root_node)
+        ):
+            module_props[cs.KEY_PHP_NAMESPACE] = namespace
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):
