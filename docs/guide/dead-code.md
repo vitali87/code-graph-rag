@@ -160,6 +160,17 @@ so no name or path is cut to fit 80 columns.
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
 
+Annotated Java methods count as decorated handlers too. A method carrying a
+container or runtime annotation is a root even when it is package-private, as
+a C# method with `[HttpGet]` or `[Fact]` is. That covers:
+
+- `@PostConstruct` and `@PreDestroy`;
+- Spring's `@Bean`, `@Scheduled`, `@EventListener`, `@ExceptionHandler` and the
+  `@...Mapping` request mappings;
+- the Kafka, Rabbit, JMS and SQS `@...Listener` annotations;
+- JAX-RS resource methods;
+- JPA entity callbacks such as `@PrePersist`.
+
 ### What counts as test code
 
 `--include-tests`, `--no-include-tests`, `cgr graph tests-reaching` and
