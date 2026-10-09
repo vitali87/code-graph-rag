@@ -12,10 +12,13 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_for_extension
-from ..types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
+from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
+from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .parameter_nodes import c_family_parameter_list
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -270,6 +273,7 @@ class CallResolver:
         "_subclass_map_cache",
         "_protocol_classes_cache",
         "_struct_impl_cache",
+        "_cpp_free_operators",
         "_ctor_params",
         "_ctor_param_attrs",
         "_pending_field_bindings",
@@ -334,6 +338,10 @@ class CallResolver:
         self._subclass_map_cache: dict[str, set[str]] | None = None
         self._protocol_classes_cache: set[str] | None = None
         self._struct_impl_cache: dict[str, set[str]] = {}
+        # {module qn: {free operator qn: its declarations' signatures}}.
+        self._cpp_free_operators: dict[
+            str, dict[str, tuple[CppOperatorSignature, ...]]
+        ] = {}
         # Ordered constructor parameter names per class (explicit __init__
         # params, or annotated class-body fields for NamedTuple/dataclass),
         # plus the param -> stored-attribute renames found in __init__ bodies
@@ -536,6 +544,7 @@ class CallResolver:
         self._subclass_map_cache = None
         self._protocol_classes_cache = None
         self._struct_impl_cache.clear()
+        self._cpp_free_operators.clear()
         # The qn -> language memo goes too: after a same-stem replacement
         # across languages (`util.rs` deleted, `util.py` added) the bare qn
         # `proj.util` now names a Python module, and a stale RUST answer
@@ -1180,19 +1189,56 @@ class CallResolver:
     def protocol_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # A call resolved to a Protocol stub method (P.M) never runs the stub: the
         # runtime receiver is some conformer, so the sound call graph emits an edge
-        # to M on every non-Protocol class that defines it. Gating on the resolved
-        # target being a Protocol method keeps this from firing on ordinary calls.
+        # to M on every class that implements P. Gating on the resolved target
+        # being a Protocol method keeps this from firing on ordinary calls.
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or class_qn not in self._protocol_classes():
             return set()
         protocols = self._protocol_classes()
+        # The receiver is a class that implements the Protocol: one defining
+        # every method it declares, or its XxxProtocol -> Xxx implementer. A
+        # class that merely shares this method's name (an LRU cache's `get`
+        # beside a client Protocol's `get`/`set`) is not one (issue #2931).
+        conformers = set(self._protocol_structural_implementers(class_qn))
+        if named_impl := self._protocol_impl_map().get(class_qn):
+            conformers.add(named_impl)
+        methods = {
+            resolved[1]
+            for conformer in conformers
+            if (resolved := self._try_resolve_method(conformer, method_name))
+        }
+        # The definers of a same-named method, read from the registry, which
+        # an incremental run holds whole: the class hierarchy those scans
+        # walk holds only the re-parsed files' classes then (issue #532).
+        required = self._protocol_method_names(class_qn)
+        definers = {
+            definer: qn
+            for qn in self.function_registry.find_ending_with(method_name)
+            if (parts := qn.rpartition(cs.SEPARATOR_DOT))[1]
+            and parts[2] == method_name
+            and (definer := parts[0]) not in protocols
+        }
+        # The XxxProtocol -> Xxx convention, held to the uniqueness
+        # `_protocol_impl_map` asks of it.
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        named = [
+            definer
+            for definer in definers
+            if simple != cs.PY_PROTOCOL
+            and simple.endswith(cs.PY_PROTOCOL)
+            and definer.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            == simple.removesuffix(cs.PY_PROTOCOL)
+        ]
+        for definer, qn in definers.items():
+            if (len(named) == 1 and definer == named[0]) or all(
+                self._try_resolve_method(definer, m) for m in required
+            ):
+                methods.add(qn)
         targets: set[tuple[str, str]] = set()
-        # Conformers are found by method name, so the same reachability bound
-        # the simple-name fallback uses applies: nothing written in a language
-        # the Protocol's own cannot call into conforms to it (issue #945).
-        for qn in self._nameable_candidates(
-            self.function_registry.find_ending_with(method_name), class_qn
-        ):
+        # The same reachability bound the simple-name fallback uses applies:
+        # nothing written in a language the Protocol's own cannot call into
+        # conforms to it (issue #945).
+        for qn in self._nameable_candidates(sorted(methods), class_qn):
             definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if dot and name == method_name and definer not in protocols:
                 targets.add((self.function_registry[qn], qn))
@@ -1711,7 +1757,9 @@ class CallResolver:
         if self._is_super_call(call_name):
             return True, self._resolve_super_call(call_name, call.class_context)
 
-        if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
+        if cs.SEPARATOR_DOT in call_name and self._is_method_chain(
+            call_name, call.language
+        ):
             # A chained call resolves via return-type inference only; it does NOT
             # fall through to the trie fallback, because a hop returning a container
             # (`Kids() []Command`) or an unknown type must drop the edge rather than
@@ -1933,6 +1981,13 @@ class CallResolver:
             ):
                 return True, result
             result = self._resolve_js_member_call_unique(call_name, module_qn)
+            if result is not None and language in cs.JS_TS_LANGUAGES:
+                # Chosen because no other visible class defines the name, not
+                # because anything says the receiver is that class (issue
+                # #2609). Only the call site's AST can say that, so the call
+                # processor confirms or drops the pick from the receiver's
+                # declaration; this caller-independent verdict is what caches.
+                self.last_resolution = cs.EdgeResolution.HEURISTIC
             self._remember_cacheable(cache_key, result)
             return True, result
 
@@ -2428,26 +2483,18 @@ class CallResolver:
         (or a default, named or `require` binding of a package) names a member
         of that package, which the project never indexes, so its last segment
         is no licence to bind a same-named first-party symbol (issue #2535).
-        First-party imports are written project-rooted (relative, tsconfig
-        alias and workspace specifiers all are). An aliased-scheme import
-        (deno `ext:`) stands for first-party code, and a target the registry
-        holds under the project prefix is a bare first-party path, so neither
-        counts as external: both keep today's resolution.
+        Only the import processor can tell a package from project code: a
+        bare `react` resolves to the qn `react`, which a project named
+        `react` or a repo-root `react.tsx` also spells, so the head's target
+        qn is never compared with project paths. Relative, tsconfig-alias,
+        workspace and aliased-scheme (deno `ext:`) imports are first-party
+        and keep today's resolution.
         """
         head, sep, _member = member_name.partition(cs.SEPARATOR_DOT)
         if not sep:
             return False
-        target = self.import_processor.import_mapping.get(module_qn, {}).get(head)
-        if not target:
-            return False
-        bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
-        if bare_imports and head in bare_imports:
-            return False
-        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
-        if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
-            return False
-        prefixed = f"{project_root}{cs.SEPARATOR_DOT}{target}"
-        return not self.function_registry.find_with_prefix(prefixed)
+        package_imports = self.import_processor.js_ts_package_imports.get(module_qn)
+        return bool(package_imports) and head in package_imports
 
     def _two_part_receiver_type(
         self, call_name: str, local_var_types: dict[str, str] | None
@@ -4123,6 +4170,12 @@ class CallResolver:
                 language,
             ):
                 return result
+            if language == cs.SupportedLanguage.DART and (
+                extension := self._dart_extension_member(
+                    class_qn, method_name, module_qn
+                )
+            ):
+                return extension
 
         if var_type in cs.JS_BUILTIN_TYPES:
             return (
@@ -4547,17 +4600,41 @@ class CallResolver:
         # Protocol/implementer names don't follow the XxxProtocol convention.
         if protocol_qn in self._struct_impl_cache:
             return self._struct_impl_cache[protocol_qn]
-        sep = cs.SEPARATOR_DOT
-        protocol_methods = {
-            qn.rsplit(sep, 1)[-1]
-            for qn, node_type in self.function_registry.find_with_prefix(protocol_qn)
-            if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == protocol_qn
-        }
+        protocol_methods = self._protocol_method_names(protocol_qn)
         result: set[str] = set()
         if protocol_methods:
             result = self._classes_defining_all(protocol_methods)
         self._struct_impl_cache[protocol_qn] = result
         return result
+
+    def _protocol_method_names(self, protocol_qn: str) -> set[str]:
+        """The names of the methods a Protocol and its Protocol bases declare.
+
+        An inherited method is required as much as an own one, and the
+        `@overload` stubs of one method are one name, though the registry
+        keeps each under its own `@<line>` marker.
+        """
+        sep = cs.SEPARATOR_DOT
+        protocols = self._protocol_classes()
+        names: set[str] = set()
+        pending = [protocol_qn]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            names.update(
+                qn_markers.strip_dup_marker(qn.rsplit(sep, 1)[-1])
+                for qn, node_type in self.function_registry.find_with_prefix(current)
+                if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == current
+            )
+            pending.extend(
+                base
+                for base in self.class_inheritance.get(current, ())
+                if base in protocols
+            )
+        return names
 
     def _classes_defining_all(self, protocol_methods: set[str]) -> set[str]:
         result: set[str] = set()
@@ -4592,29 +4669,115 @@ class CallResolver:
 
         return None
 
-    def cpp_operator_for_type(
+    def cpp_member_operator(
         self, call_name: str, operand_type_qn: str
     ) -> tuple[str, str] | None:
         # Operand-type-directed operator binding: the overload is either a
-        # member of the operand's own class or a free overload in that
-        # class's module (the beside-the-class convention). A typed operand
-        # with NEITHER is a builtin operation (enum/int comparison) with no
-        # first-party callee; nlohmann's `token == token_type::x` must
-        # not rebind to an unrelated class's operator== and fan out to all
-        # its overload variants.
+        # member of the operand's own class or a free overload beside it. A
+        # typed operand with NEITHER is a builtin operation (enum/int
+        # comparison) with no first-party callee; nlohmann's
+        # `token == token_type::x` must not rebind to an unrelated class's
+        # operator== and fan out to all its overload variants.
         # _try_resolve_method covers both the direct member and one
         # INHERITED from a base (Derived : Base with Base::operator==).
-        if member := self._try_resolve_method(operand_type_qn, call_name):
-            return member
+        return self._try_resolve_method(operand_type_qn, call_name)
+
+    def cpp_free_operator_for_type(
+        self, call_name: str, operand_type_qn: str, position: int, arity: int
+    ) -> tuple[str, str] | None:
         # ADL: a free overload may live in ANY enclosing namespace of the
-        # operand's type, not only its immediate parent scope.
+        # operand's type, not only its immediate parent scope. Sharing the
+        # name is not enough: `1 + v` with V converting to int is built-in
+        # `+` even beside an unrelated `operator+(W, W)`, so an overload set
+        # counts only when one of its declarations takes the operand's class
+        # at the operand's position (issue #2554 review).
         parts = operand_type_qn.split(cs.SEPARATOR_DOT)
         for depth in range(len(parts) - 1, 0, -1):
             scope = cs.SEPARATOR_DOT.join(parts[:depth])
             free_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-            if free_qn in self.function_registry:
+            if free_qn in self.function_registry and any(
+                self._cpp_operator_accepts(signature, operand_type_qn, position, arity)
+                for signature in self._cpp_free_operator_signatures(free_qn)
+            ):
                 return (self.function_registry[free_qn], free_qn)
         return None
+
+    def _cpp_operator_accepts(
+        self,
+        signature: CppOperatorSignature,
+        operand_type_qn: str,
+        position: int,
+        arity: int,
+    ) -> bool:
+        # The parameter at the operand's position takes its class by value
+        # or reference (a base class too), or is a template parameter that
+        # deduces to it; a pointer parameter never takes a class value.
+        if len(signature.parameters) != arity:
+            return False
+        param = signature.parameters[position]
+        if param.indirection or not param.type_name:
+            return False
+        if param.type_name in signature.template_params:
+            return True
+        import_map = self.import_processor.import_mapping.get(signature.module_qn, {})
+        param_qn = self._resolve_class_qn_from_type(
+            param.type_name, import_map, signature.module_qn
+        )
+        return bool(param_qn) and param_qn in self._mro(operand_type_qn)
+
+    def _cpp_free_operator_signatures(
+        self, free_qn: str
+    ) -> tuple[CppOperatorSignature, ...]:
+        # Parameter types are not stored on C++ Function nodes, so they are
+        # read from the declaring module's AST: one walk per module collects
+        # every free operator it declares, a prototype included. The AST
+        # rather than the definition pass's span records, so an incremental
+        # run that did not re-parse the module reads the same signatures.
+        module_qn = free_qn
+        module_paths = self.type_inference.module_qn_to_file_path
+        while module_qn and module_qn not in module_paths:
+            module_qn = module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if not module_qn:
+            return ()
+        if (by_qn := self._cpp_free_operators.get(module_qn)) is None:
+            by_qn = self._cpp_free_operators[module_qn] = (
+                self._collect_cpp_free_operators(module_qn)
+            )
+        return by_qn.get(free_qn, ())
+
+    def _collect_cpp_free_operators(
+        self, module_qn: str
+    ) -> dict[str, tuple[CppOperatorSignature, ...]]:
+        found: dict[str, list[CppOperatorSignature]] = {}
+        root = self._cached_module_root(module_qn)
+        if root is None:
+            return {}
+        engine = self.type_inference.cpp_type_inference
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_CPP_COMPOUND_STATEMENT:
+                continue
+            stack.extend(node.children)
+            if (
+                node.type not in cs.CPP_FREE_FUNCTION_DECLARATION_TYPES
+                or node.parent is None
+                or node.parent.type == cs.CppNodeType.FIELD_DECLARATION_LIST
+                or not (name := cpp_utils.extract_function_name(node))
+                or not name.startswith(cs.OPERATOR_PREFIX)
+                or (params := c_family_parameter_list(node)) is None
+            ):
+                continue
+            found.setdefault(
+                cpp_utils.build_qualified_name(node, module_qn, name), []
+            ).append(
+                CppOperatorSignature(
+                    module_qn,
+                    engine.parameter_types(params),
+                    engine.collect_template_param_names(node),
+                )
+            )
+        return {qn: tuple(signatures) for qn, signatures in found.items()}
 
     def cpp_operand_class_qn(
         self,
@@ -4624,8 +4787,7 @@ class CallResolver:
     ) -> str | None:
         # A bare-identifier operand with a locally inferred type resolves
         # to a REGISTERED first-party type qn, or nothing: only a known
-        # type may direct or suppress the operator binding; anything
-        # uninferable keeps the caller on the legacy best-candidate path.
+        # class type can select an operator overload (issue #2554).
         if not operand_name or not local_var_types:
             return None
         var_type = local_var_types.get(operand_name)
@@ -4720,11 +4882,182 @@ class CallResolver:
             if not current_type or cs.CHAR_PAREN_OPEN not in part:
                 return None
             method = part.split(cs.CHAR_PAREN_OPEN, 1)[0]
+            if language == cs.SupportedLanguage.DART:
+                current_type = self._dart_member_return_type(
+                    self.resolve_dart_written_type(current_type, module_qn),
+                    method,
+                    module_qn,
+                )
+                continue
             class_qn = self._chain_class_qn(current_type, module_qn)
             current_type = self.type_inference.method_return_types.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
         return current_type
+
+    def _dart_member_return_type(
+        self, class_qn: str, member: str, module_qn: str
+    ) -> str | None:
+        """The class a Dart hop `.member()` on a `class_qn` receiver returns.
+
+        The member is the class's own, else an inherited one, else an
+        extension's (Dart's lookup order). Its return type is recorded under
+        the DECLARING qn, so a hop through an inherited or extension member
+        ended the chain (`o.move(1).sum()` on a subclass of Point, issue
+        #2482). It is also written in the DECLARING library, so it resolves
+        there: read in the caller's file instead, a bare `Result` bound to
+        whichever `Result` the CALLER sees (Greptile, PR #2804).
+        """
+        return_types = self.type_inference.method_return_types
+        own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member}"
+        if own_qn in return_types or own_qn in self.function_registry:
+            # An own member shadows every inherited and extension one, even
+            # when it records no return type.
+            member_qn = own_qn
+        elif found := self._resolve_inherited_method(
+            class_qn, member
+        ) or self._dart_extension_member(class_qn, member, module_qn):
+            member_qn = found[1]
+        else:
+            return None
+        returned = return_types.get(member_qn)
+        if not returned:
+            return None
+        # Dart has no nested types: a member sits in a top-level class, mixin,
+        # enum or extension, so its library is two segments up.
+        declaring_module = member_qn.rsplit(cs.SEPARATOR_DOT, 2)[0]
+        return self.resolve_dart_written_type(returned, declaring_module)
+
+    def resolve_dart_written_type(self, written: str, module_qn: str) -> str:
+        """A Dart type as written in `module_qn` -> its qn, else as written.
+
+        Dart scopes a type name to the library it is written in (Greptile,
+        PR #2804): `p.Point` names Point through `module_qn`'s OWN `import
+        ... as p` (read as a qualified name it matched nothing), and a bare
+        `Result` is the library's own declaration, else the ONE its imports
+        expose, before any project-wide guess. A name that is already a
+        registered qn (an earlier hop's result) is kept.
+        """
+        if written in self.function_registry:
+            return written
+        prefix, dot, name = written.partition(cs.SEPARATOR_DOT)
+        if dot:
+            hit = self._unique_prefixed_definition(
+                self._dart_prefix_targets(prefix, module_qn), name
+            )
+            if hit is not None:
+                return hit[1]
+        else:
+            own = f"{module_qn}{cs.SEPARATOR_DOT}{written}"
+            if own in self.function_registry:
+                return own
+            imported = [
+                qn
+                for library in self._dart_visible_libraries(module_qn) - {module_qn}
+                if (qn := f"{library}{cs.SEPARATOR_DOT}{written}")
+                in self.function_registry
+            ]
+            if len(imported) == 1:
+                return imported[0]
+        return self._chain_class_qn(written, module_qn)
+
+    def _dart_extension_member(
+        self, class_qn: str, member: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """The extension member a Dart receiver of `class_qn` reaches, if any.
+
+        Dart consults extensions only after the receiver's own and inherited
+        members miss, applies only those the caller's library can see, and
+        among them the one on the most specific type wins: one `on` the
+        receiver's class beats one `on` an ancestor. Two at the same level are
+        ambiguous (a compile error in Dart) and bind nothing.
+        """
+        on_types = self.type_inference.dart_extension_on_types
+        if not on_types:
+            return None
+        # The `on` type is resolved from the extension's own library, where it
+        # was written (`on p.Point` through ITS `as p` import); an extension
+        # is always a top-level declaration.
+        candidates = [
+            (
+                member_qn,
+                ext_qn,
+                self.resolve_dart_written_type(on_types[ext_qn], ext_module),
+                ext_module,
+            )
+            for member_qn in self.function_registry.find_ending_with(member)
+            if (ext_qn := member_qn.rpartition(cs.SEPARATOR_DOT)[0]) in on_types
+            and (ext_module := ext_qn.rpartition(cs.SEPARATOR_DOT)[0])
+        ]
+        if not candidates:
+            return None
+        levels = self._class_and_ancestor_levels(class_qn)
+        receiver_types = set().union(*levels)
+        # Applicability, then visibility, then specificity. Only an extension
+        # `on` the receiver's class or an ancestor competes at all: filtering
+        # by visibility first let a visible extension on an UNRELATED type
+        # push out the applicable one (Greptile, PR #2804).
+        applicable = [
+            candidate for candidate in candidates if candidate[2] in receiver_types
+        ]
+        if not applicable:
+            return None
+        # Among those, an unimported one `on Derived` must not beat an
+        # imported one `on Base` (Greptile, PR #2804). A `package:` import is
+        # kept verbatim and proves nothing, so when no applicable candidate is
+        # provably visible they all stay in play rather than the call being
+        # dropped. A provable one also wins a same-level tie against an
+        # unprovable one: were both visible, Dart would reject the call as
+        # ambiguous, so in code that compiles the unprovable one is not.
+        visible_libraries = self._dart_visible_libraries(module_qn)
+        pool = [
+            candidate for candidate in applicable if candidate[3] in visible_libraries
+        ] or applicable
+        for level in levels:
+            matches = [
+                member_qn for member_qn, _ext, on_qn, _module in pool if on_qn in level
+            ]
+            if len(matches) == 1:
+                return self.function_registry[matches[0]], matches[0]
+            if matches:
+                return None
+        return None
+
+    def _class_and_ancestor_levels(self, class_qn: str) -> list[set[str]]:
+        # The class, then each breadth-first generation of its ancestors.
+        levels: list[set[str]] = [{class_qn}]
+        seen = {class_qn}
+        frontier = [class_qn]
+        while frontier:
+            parents = {
+                self._follow_reexports(parent)
+                for child in frontier
+                for parent in self.class_inheritance.get(child, [])
+            } - seen
+            if not parents:
+                break
+            levels.append(parents)
+            seen |= parents
+            frontier = list(parents)
+        return levels
+
+    def _dart_visible_libraries(self, module_qn: str) -> set[str]:
+        """The libraries whose top-level names `module_qn` can see: itself,
+        every library it imports (prefixed or not), and whatever those hand
+        on through `export` / `part`, transitively. A library a dependency
+        merely IMPORTS stays hidden (issue #2482)."""
+        processor = self.import_processor
+        imported = set(processor.import_mapping.get(module_qn, {}).values())
+        for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
+            imported.update(libraries)
+        visible = {module_qn, *imported}
+        frontier = list(imported)
+        while frontier:
+            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
+                if exposed not in visible:
+                    visible.add(exposed)
+                    frontier.append(exposed)
+        return visible
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but
@@ -4926,6 +5259,38 @@ class CallResolver:
             or type_name
         )
 
+    def _infer_js_construction_base_type(
+        self,
+        base: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        call_point: int | None,
+    ) -> str | None:
+        # `new Box().bump()`, `(new Box()).bump()`: the base is neither a
+        # local, an import nor a factory with a recorded return, so the chain
+        # stayed untyped and the call bound nothing beside INSTANTIATES Box
+        # (issue #2465). It types the way `const b = new Box()` types `b`, so
+        # both spellings of one construction reach the same class. The
+        # receiver starts where the call does; without that site in the
+        # file's tree, a `Box` the caller binds itself cannot be ruled out.
+        if language not in cs.JS_TS_LANGUAGES or call_point is None:
+            return None
+        root = self._cached_module_root(module_qn)
+        if root is None:
+            return None
+        construction = js_ts_utils.construction_at(root, call_point, base)
+        if construction is None:
+            return None
+        var_type = (
+            self.type_inference.js_type_inference._infer_js_variable_type_from_value(
+                construction, module_qn, language
+            )
+        )
+        if not var_type:
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return self._resolve_class_qn_from_type(var_type, import_map, module_qn) or None
+
     def _infer_call_base_type(
         self,
         base: str,
@@ -4942,7 +5307,14 @@ class CallResolver:
         # CONSTRUCTOR TEMPORARY (`Reader<decltype(ia)>(...)`, nlohmann's
         # from_cbor): the callee names the receiver's class itself. The callee is
         # cut at `<` or `(`, whichever comes first, since template args can carry
-        # their own parens.
+        # their own parens. A JS/TS construction (`new Box()`) has no callee to
+        # resolve: it is the instance it builds.
+        if (
+            constructed := self._infer_js_construction_base_type(
+                base, module_qn, language, call_point
+            )
+        ) is not None:
+            return constructed
         cut = len(base)
         for bracket in (cs.CHAR_ANGLE_OPEN, cs.CHAR_PAREN_OPEN):
             idx = base.find(bracket)
@@ -5063,14 +5435,30 @@ class CallResolver:
             )
         return ret
 
-    def _is_method_chain(self, call_name: str) -> bool:
+    def _is_method_chain(
+        self, call_name: str, language: cs.SupportedLanguage | None = None
+    ) -> bool:
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
             return False
         parts = call_name.split(cs.SEPARATOR_DOT)
+        # Rust: split between hops only. The `.` in a float argument cut
+        # `Circle::new(2.0).area` into `Circle::new(2` and `0)`, so no hop held
+        # both parens and `area` fell to a by-name guess (issue #2698).
+        if language == cs.SupportedLanguage.RUST:
+            parts = _split_receiver_chain(call_name) or parts
         method_calls = sum(
             cs.CHAR_PAREN_OPEN in part and cs.CHAR_PAREN_CLOSE in part for part in parts
         )
         return method_calls >= 1 and len(parts) >= 2
+
+    def _qualify_chained_object_type(self, object_type: str, module_qn: str) -> str:
+        full_object_type = object_type
+        if cs.SEPARATOR_DOT not in object_type:
+            # Honor imports (Rust `use` targets are raw `::`-paths) so an
+            # imported chained type (`Get::new(k).into_frame()`) resolves.
+            if resolved_class := self._chain_class_qn(object_type, module_qn):
+                full_object_type = resolved_class
+        return full_object_type
 
     def _resolve_chained_call(
         self,
@@ -5105,12 +5493,7 @@ class CallResolver:
             )
         )
         if object_type:
-            full_object_type = object_type
-            if cs.SEPARATOR_DOT not in object_type:
-                # Honor imports (Rust `use` targets are raw `::`-paths) so an
-                # imported chained type (`Get::new(k).into_frame()`) resolves.
-                if resolved_class := self._chain_class_qn(object_type, module_qn):
-                    full_object_type = resolved_class
+            full_object_type = self._qualify_chained_object_type(object_type, module_qn)
 
             method_qn = f"{full_object_type}.{final_method}"
 
@@ -5135,6 +5518,13 @@ class CallResolver:
                     obj_type=object_type,
                 )
                 return inherited_method
+
+            if language == cs.SupportedLanguage.DART and (
+                extension := self._dart_extension_member(
+                    full_object_type, final_method, module_qn
+                )
+            ):
+                return extension
 
         # C/C++ only, and ONLY when the receiver type was never inferred: its return
         # type is unrecordable (`auto`/trailing/decltype, e.g. fmt's

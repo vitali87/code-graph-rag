@@ -32,6 +32,7 @@ from .constants import (
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
+    KEY_ROW_INDEX,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
@@ -197,6 +198,25 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
+# Retires a project whose checkout was just re-indexed under another name
+# (issue #2412). Both projects index the same files, so they share every
+# Folder and File node (keyed on absolute path), and the walk above would
+# cross those into the new project's modules. Only containers carrying the
+# old project's qualified name go, with what they define; the shared Folder
+# and File nodes stay with the project that still contains them. A
+# repository-root `__init__.py` makes the root Package and Module's qn the
+# bare project name, so the prefix test alone would miss them (review of PR
+# 2497); the trailing dot of the prefix still keeps a project whose name only
+# starts with this one (`acme.webapp` beside `acme.web`).
+CYPHER_RETIRE_PROJECT = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+WHERE container.qualified_name = $project_name
+   OR container.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+DETACH DELETE p, container, defined
+"""
+
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a
 # single-hop signature: the topmost merged node has containment parents in
@@ -351,8 +371,14 @@ RETURN id(n) as from_id, id(b) as to_id, type(r) as type, properties(r) as prope
 """
 )
 
-CYPHER_RETURN_COUNT = "RETURN count(r) as created"
-CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
+# Rows written, not edges matched: a MERGE without the per-site keys matches
+# every parallel edge between its endpoints, so `count(r)` let one row count
+# several times and a flush report more writes than rows (issue #2879). A row
+# without its ordinal (one built outside the flush) counts as itself.
+CYPHER_RETURN_COUNT = (
+    f"RETURN count(DISTINCT coalesce(row.{KEY_ROW_INDEX}, row)) as created"
+)
+CYPHER_SET_PROPS_RETURN_COUNT = f"SET r += row.props\n{CYPHER_RETURN_COUNT}"
 
 CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
 MATCH (m:Module)-[:DEFINES]->(n)

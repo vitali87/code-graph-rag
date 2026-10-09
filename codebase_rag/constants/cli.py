@@ -76,6 +76,11 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_WORKSPACE_PROJECT_NAME = (
+    "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
+    "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
+    "`cgr workspace add-repo {workspace} {path} --project-name <name>`."
+)
 CLI_ERR_CAPTURE_UNKNOWN = (
     "unknown capture group or type: {tokens}. Use a group ({groups}), all or "
     "none, or +TYPE/-TYPE with a relationship type such as -CALLS."
@@ -123,6 +128,13 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_SYNC_INTERRUPTED = (
+    "Interrupted: the graph for '{project}' is incomplete; re-run "
+    "'cgr start --update-graph' with the same options to finish it."
+)
+# 128 + SIGINT: what a shell reports for a command Ctrl+C stopped, so scripts
+# can tell an interrupted sync from a failed one (exit 1).
+CLI_EXIT_INTERRUPTED = 130
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 # The CLI sync's incomplete-run marker (issue #2219). One run id for every CLI
 # sync of a project, not one per run: a CLI sync never publishes its hash cache
@@ -656,6 +668,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+# Appended to a chat write tool's result by its re-ingest (issue #2916).
+MSG_CHAT_GRAPH_UPDATED = (
+    " The knowledge graph now reflects this change: re-ingested {files} "
+    "file(s) and {dependents} dependent file(s)."
+)
+MSG_CHAT_GRAPH_NOT_UPDATED = (
+    " The knowledge graph was NOT updated ({error}): graph queries still "
+    "describe the code before this change until `cgr start --update-graph` runs."
+)
 # Span-preserving patchers (issue #1529).
 PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
 PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"
@@ -921,6 +942,10 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 DICT_KEY_ERROR = "error"
+# The fields a JSON tool result reports completed work in: an applied rename or
+# a deleted project that also carries an error did its work (issue #2802).
+DICT_KEY_APPLIED = "applied"
+DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
