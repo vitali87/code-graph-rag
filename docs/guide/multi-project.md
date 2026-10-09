@@ -120,7 +120,10 @@ Three deterministic MCP tools read these edges, all project-scoped like the
 other graph tools: `endpoints` lists what a project exposes with how many
 call sites in the whole graph reach each one; `endpoint_callers` lists the
 call sites in any project that reach one endpoint, by handler name or by
-identity (`GET /users/{id}`); `remote_dependencies` lists every network
+identity (`GET /users/{id}`, in any parameter syntax: `:id` and `<id>` name
+the same route; a concrete `GET /users/42` names the routes serving it), and
+refuses a target that names no endpoint, suggesting the close ones;
+`remote_dependencies` lists every network
 access a project makes with the handler it resolves to, keeping the
 unresolved ones. `cgr dead-code --no-endpoint-roots` stops rooting a
 decorator-routed handler (FastAPI, Flask) by its decorator alone: such a

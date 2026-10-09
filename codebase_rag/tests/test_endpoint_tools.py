@@ -79,6 +79,9 @@ def test_endpoints_carry_their_handler_and_caller_count() -> None:
 
 def test_endpoint_callers_join_the_resolved_and_the_direct_rows() -> None:
     graph = FakeGraph()
+    graph.rows[cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS] = [
+        {"endpoint": ENDPOINT, "handler": HANDLER}
+    ]
     graph.rows[cq.CYPHER_GRAPH_ENDPOINT_CALLERS] = [
         {
             "label": "Function",
@@ -108,7 +111,11 @@ def test_endpoint_callers_join_the_resolved_and_the_direct_rows() -> None:
     ]
     assert rows[1]["url"] == "http://users:8000/users/42"
     # The target is passed as `$qn`, matched against handler OR identity.
-    assert all(params[cs.KEY_QN] == ENDPOINT for _q, params in graph.calls)
+    assert all(
+        params[cs.KEY_QN] == ENDPOINT
+        for query, params in graph.calls
+        if query != cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS
+    )
 
 
 def test_remote_dependencies_keep_unresolved_rows() -> None:
