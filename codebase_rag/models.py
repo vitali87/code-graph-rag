@@ -52,10 +52,17 @@ class SessionState:
         return self.permission_mode
 
 
+def _stderr_console() -> Console:
+    return terminal_aware_console(stderr=True)
+
+
 @dataclass
 class AppContext:
     session: SessionState = field(default_factory=SessionState)
     console: Console = field(default_factory=terminal_aware_console)
+    # Errors and status lines of report commands: their stdout is the report
+    # a CI step redirects to a file or a JSON parser (issue #2642).
+    err_console: Console = field(default_factory=_stderr_console)
 
 
 @dataclass

@@ -2035,7 +2035,7 @@ def stats(
         )
         raise typer.Exit(1)
 
-    app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
+    app_context.err_console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
     missing: list[str] = []
     projects: list[str] = []
@@ -2049,7 +2049,7 @@ def stats(
                     ingestor, requested, len(projects)
                 )
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.STATS_ERROR.format(error=e))
@@ -2058,7 +2058,7 @@ def stats(
     # Outside the connection, as dead-code does: a typo must not look like a
     # failed query to the service layer's error logging.
     if missing:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_STATS_UNKNOWN_PROJECTS.format(
                     missing=", ".join(missing), projects=", ".join(sorted(projects))
@@ -2320,16 +2320,13 @@ def _emit_dead_code(
         app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
-def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
+def _notice_single_project_endpoint_roots() -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
-    reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), so the notice goes to stderr then."""
-    if show_progress:
-        app_context.console.print(
-            style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
-        )
-    else:
-        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
+    reads as uncalled. Stdout carries the report (local review P1), so the
+    notice goes to stderr, as the command's errors do (issue #2642)."""
+    app_context.err_console.print(
+        style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
+    )
 
 
 def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str:
@@ -2338,7 +2335,7 @@ def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str
     # gained this guard first). Raised OUTSIDE the connection context so a
     # user typo never trips the service layer's error logging on exit.
     if resolved is not None and resolved not in projects:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DEADCODE_UNKNOWN_PROJECT.format(
                     project=resolved, projects=projects
@@ -2354,7 +2351,7 @@ def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str
             if not projects
             else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
         )
-        app_context.console.print(style(message, cs.Color.RED))
+        app_context.err_console.print(style(message, cs.Color.RED))
         raise typer.Exit(1)
     return resolved
 
@@ -2409,7 +2406,7 @@ def dead_code(
 
     show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
     if show_progress:
-        app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
+        app_context.err_console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
     projects: list[str] = []
     resolved: str | None = None
@@ -2434,9 +2431,9 @@ def dead_code(
                     ),
                 )
                 if not endpoint_roots and len(projects) <= 1:
-                    _notice_single_project_endpoint_roots(show_progress)
+                    _notice_single_project_endpoint_roots()
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
@@ -2702,7 +2699,7 @@ def _open_duplicate_group(
 ) -> None:
     """Open a group's first two members side by side in the user's editor."""
     if number > len(groups):
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_UNKNOWN_GROUP.format(
                     number=number, count=len(groups)
@@ -2712,7 +2709,7 @@ def _open_duplicate_group(
         )
         raise typer.Exit(1)
     if root_path is None:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_ROOT.format(project=project_name),
                 cs.Color.RED,
@@ -2725,10 +2722,10 @@ def _open_duplicate_group(
     try:
         argv = diff_command(left, right)
     except EditorTemplateError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
+        app_context.err_console.print(style(str(e), cs.Color.RED))
         raise typer.Exit(1) from e
     if argv is None:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=resolve_editor()),
                 cs.Color.RED,
@@ -2740,7 +2737,7 @@ def _open_duplicate_group(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
     except OSError as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=argv[0]), cs.Color.RED
             )
@@ -2807,7 +2804,9 @@ def duplicates(
 
     show_progress = output_format == cs.DuplicatesFormat.TABLE and output is None
     if show_progress:
-        app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
+        app_context.err_console.print(
+            style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN)
+        )
 
     projects: list[str] = []
     resolved: str | None = None
@@ -2833,7 +2832,7 @@ def duplicates(
                     ),
                 )
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DUPLICATES_ERROR.format(error=e))
@@ -2844,7 +2843,7 @@ def duplicates(
     # connection context: a user typo is not a connection failure and must
     # not trip the service layer's error logging on exit.
     if resolved is not None and resolved not in projects:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
                     project=resolved, projects=projects
@@ -2860,7 +2859,7 @@ def duplicates(
             if not projects
             else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
         )
-        app_context.console.print(style(message, cs.Color.RED))
+        app_context.err_console.print(style(message, cs.Color.RED))
         raise typer.Exit(1)
 
     root = roots.get(resolved)
