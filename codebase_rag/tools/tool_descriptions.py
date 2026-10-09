@@ -365,10 +365,16 @@ _MCP_DELTA_NOTE = (
     "nothing, and a failed analysis appends an error note instead of a delta. "
     "Read it before the next edit."
 )
+# The two writes that know the file's content before it (issue #3232).
+_MCP_PARSE_NOTE = (
+    " A write that leaves the file unparsable leads its result with the parse "
+    "error, and the delta lists it in parse_errors."
+)
 MCP_SURGICAL_REPLACE_CODE = (
     "Surgically replace an exact code block in a file using diff-match-patch. "
     "Only modifies the exact target block, leaving the rest unchanged."
     + _MCP_DELTA_NOTE
+    + _MCP_PARSE_NOTE
 )
 
 MCP_READ_FILE = (
@@ -376,7 +382,9 @@ MCP_READ_FILE = (
 )
 
 MCP_WRITE_FILE = (
-    "Write content to a file, creating it if it doesn't exist." + _MCP_DELTA_NOTE
+    "Write content to a file, creating it if it doesn't exist."
+    + _MCP_DELTA_NOTE
+    + _MCP_PARSE_NOTE
 )
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."

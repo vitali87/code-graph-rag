@@ -373,6 +373,21 @@ def _measure_then_restore(
         store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
 
 
+def base_content(repo_root: Path, base: str, path: str) -> bytes | None:
+    """`path` as committed at `base`, or None when it did not exist there.
+
+    `./` makes git read the path relative to `repo_root`, which may sit below
+    the git toplevel, as `changed_since` lists it (issue #3232).
+    """
+    shown = subprocess.run(
+        [cs.SHELL_CMD_GIT, "show", f"{base}:./{path}"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    return shown.stdout if shown.returncode == 0 else None
+
+
 def run_check(
     repo_root: Path,
     base: str,
@@ -415,7 +430,12 @@ def run_check(
 
     def measure(apply: Callable[[], ReingestReport]) -> StructuralDelta:
         return observe(
-            fetch_all, project_name, [*changed, *deleted], apply, repo_root=repo_root
+            fetch_all,
+            project_name,
+            [*changed, *deleted],
+            apply,
+            repo_root=repo_root,
+            base_source=lambda path: base_content(repo_root, base, path),
         )
 
     if not isolated:
