@@ -751,6 +751,14 @@ RENAME_DEFINITION_UNREADABLE = (
     "The index names a file the tree no longer has; re-index and retry."
 )
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
+# A plain `def` after a property's accessors replaces the property, and once
+# they are renamed it would take the plain qualified name they held, so the
+# re-index could not tell the rename from a different definition (bot review
+# on PR #2725).
+RENAME_PROPERTY_REDEFINED = (
+    "{qn} is redefined by a plain def on line {line}, which replaces the "
+    "property; rename or remove that def first"
+)
 # `{option}` is the opt-in as the caller spells it: `--allow-heuristic` on the
 # command line, `allow_heuristic` in MCP (issue #2886).
 RENAME_AMBIGUOUS = (
