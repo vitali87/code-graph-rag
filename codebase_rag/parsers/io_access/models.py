@@ -25,6 +25,10 @@ class IOSink:
     # fetch-style calls carry the HTTP verb in an options object at this
     # positional index ({method: 'POST'}); the verb overrides `direction`.
     method_options_arg: int | None = None
+    # A keyword naming the stream the call writes to (Python `print(file=)`):
+    # absent or None keeps `kind`, a standard stream or a bound handle
+    # replaces it.
+    stream_kw: str | None = None
 
     def effective_direction(self, mode_literal: str | None) -> IODirection:
         if self.mode_arg is None or mode_literal is None:

@@ -18,6 +18,7 @@ from ..dart.utils import dart_body_node, dart_call_name, dart_member_read_name
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
+    IO_HANDLE_CONSTRUCTORS,
     IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
@@ -45,7 +46,9 @@ from ..io_access import (
     match_normalised,
     normalise,
     positional_arg_node,
+    python_handles_before,
     python_name_shadowed_at,
+    python_stream_target,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -4028,9 +4031,19 @@ class FlowProcessor:
             return
         sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
         if sink is not None:
-            dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
-            for taint, _via in arg_taints:
-                self._flow_taint_into_sink(taint, sink.kind, dst_identity, ctx)
+            dst = self._write_sink_target(node, sink, ctx)
+            if dst is None:
+                return
+            kind, dst_identity = dst
+            # The stream argument is where the data goes, not data itself.
+            stream_via = (
+                None
+                if sink.stream_kw is None
+                else VIA_KW_FORMAT.format(name=sink.stream_kw)
+            )
+            for taint, via in arg_taints:
+                if via != stream_via:
+                    self._flow_taint_into_sink(taint, kind, dst_identity, ctx)
             return
         callee = self._resolve(
             raw,
@@ -4044,6 +4057,25 @@ class FlowProcessor:
             return
         for taint, via in arg_taints:
             self._flow_arg_into_callee(taint, via, callee, node, ctx)
+
+    @staticmethod
+    def _write_sink_target(
+        node: Node, sink: IOSink, ctx: _FlowCtx
+    ) -> tuple[ResourceKind, str] | None:
+        if sink.stream_kw is None:
+            return sink.kind, literal_target(node, sink.target_arg, sink.target_kw)
+        # `print(x, file=...)` writes where `file=` says (issue #2776); the
+        # walk keeps no handle map, so a named stream's binding is looked up
+        # in the enclosing scope only when it is needed.
+        ctor_by_name = {
+            c.callee: c for c in IO_HANDLE_CONSTRUCTORS.get(ctx.language, ())
+        }
+        return python_stream_target(
+            node,
+            sink,
+            ctx.import_map,
+            lambda: python_handles_before(node, ctx.import_map, ctor_by_name),
+        )
 
     def _flow_taint_into_sink(
         self, taint: Taint, kind: ResourceKind, dst_identity: str, ctx: _FlowCtx

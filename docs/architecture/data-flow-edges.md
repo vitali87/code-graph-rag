@@ -43,25 +43,38 @@ qualified name has the form `resource::<KIND>::<identity>`:
   path, an environment variable name) and `<dynamic>` when the target is not a
   compile-time constant (for example `open(path)` where `path` is a variable,
   or standard streams that have no literal target).
-- `KIND` is one of eight values. The table shows what each represents and, for
+- `KIND` is one of the values below. The table shows what each represents and, for
   the current Python registry, which calls produce it and in which direction.
 
 | `KIND` | Represents | Detected from (Python) | Direction |
 |--------|------------|------------------------|-----------|
-| `FILE` | A file on disk | `open(...)` and its handle methods (`.read`, `.write`, …); `json.load` / `json.dump` | read + write |
-| `ENV` | An environment variable | `os.getenv(...)`, `os.environ.get(...)` | read |
+| `FILE` | A file on disk | `open(...)` and `pathlib.Path(...)`, and their handle methods (`.read`, `.write`, `.read_text`, …), bound (`p = Path(x); p.read_text()`) or inline (`Path(x).read_text()`); `json.load` / `json.dump` | read + write |
+| `ENV` | An environment variable | `os.getenv(...)`, `os.environ.get(...)`, `os.environ["K"]` (read); `os.environ["K"] = v` (write); `os.environ.setdefault(...)` (read + write) | read + write |
 | `NETWORK` | A network endpoint / URL | `requests.get` / `.head`, `urllib.request.urlopen`, `httpx.get` (read); `requests.post` / `.put` / `.patch` / `.delete`, `httpx.post` (write); `httpx.Client` / `AsyncClient` and `aiohttp.ClientSession` handle methods | read + write |
 | `DATABASE` | A database connection | `sqlite3.connect(...)` handle methods (`.execute`, `.fetchone`, `.commit`, …) | read + write |
 | `SOCKET` | A network socket | `socket.socket(...)` handle methods (`.recv`, `.send`, …) | read + write |
-| `STDOUT` | Standard output | `print(...)` | write |
+| `STDOUT` | Standard output | `print(...)`, `print(..., file=sys.stdout)`, `sys.stdout.write` / `.writelines` | write |
 | `STDIN` | Standard input | *(defined in the schema; no Python source registered yet)* | — |
-| `STDERR` | Standard error | *(defined in the schema; no Python source registered yet)* | — |
+| `STDERR` | Standard error | `print(..., file=sys.stderr)`, `sys.stderr.write` / `.writelines` | write |
+| `PROCESS` | A command being run; a tainted value reaching it models command injection | `subprocess.run` / `call` / `check_call` / `check_output` / `Popen`, `os.system`, `os.popen` | write |
+| `ENDPOINT` | An HTTP route a handler serves | *(not an I/O call: written by endpoint detection)* | — |
+| `RPC` | A codegen contract operation, shared by its client stubs and server implementations | *(not an I/O call: written by RPC linking)* | — |
+| `DISPATCH` | A string key that task-queue and workflow handlers are registered under | *(not an I/O call: written by dispatch linking)* | — |
+| `CONTRACT` | An operation a contract file declares | *(not an I/O call: written by contract linking)* | — |
 
 Example: `os.getenv("K")` refers to `resource::ENV::K`; `print(x)` refers to
 `resource::STDOUT::<dynamic>`. The registry is extended in
 `codebase_rag/parsers/io_access/registry.py`. The Python registry does not yet
-register `STDIN` or `STDERR` sources/sinks, but other languages emit them
-(for example C `scanf`, C++ `std::cerr`, Java `System.err`, C# `Console.Error`).
+register `STDIN` sources, but other languages emit them (for example C
+`scanf`).
+
+`print(x, file=...)` writes where its `file=` argument says:
+- `sys.stdout` or `sys.stderr` (also through `from sys import stderr`) is that
+  stream;
+- a name or `self.<attr>` bound to a handle (`f = open("out.txt", "w")`) is
+  that handle's resource, `FILE::out.txt`;
+- any other stream, such as a parameter, records no edge rather than claiming
+  stdout.
 
 ## READS_FROM and WRITES_TO
 
@@ -72,6 +85,7 @@ by the call and (for file handles) its mode:
 |------|------|
 | `os.getenv("K")` | `Function -READS_FROM-> Resource(ENV::K)` |
 | `print(x)` | `Function -WRITES_TO-> Resource(STDOUT::<dynamic>)` |
+| `print(x, file=sys.stderr)` | `Function -WRITES_TO-> Resource(STDERR::<dynamic>)` |
 | `open("out.txt", "w")` | `Function -WRITES_TO-> Resource(FILE::out.txt)` |
 | `open("cfg.yaml")` | `Function -READS_FROM-> Resource(FILE::cfg.yaml)` |
 
