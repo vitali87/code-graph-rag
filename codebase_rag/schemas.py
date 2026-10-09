@@ -79,6 +79,8 @@ class FileCreationResult(BaseModel):
     file_path: str
     success: bool = True
     error_message: str | None = None
+    # What the session's re-ingest of the new file did (issue #2916).
+    graph_update: str | None = None
 
     @model_validator(mode="after")
     def _set_success_on_error(self) -> FileCreationResult:

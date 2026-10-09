@@ -152,6 +152,11 @@ TS_RS_TOKEN_DOT = "."
 # both for macro-token receiver reconstruction and value-chain base flattening).
 RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
 RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
+# The tokens that join a callee to its receiver or path in a macro body
+# (`server . run`, `Config :: load`), and the segments a `::` path takes
+# (`Self` is an identifier token; `crate`, `super`, `self` are keywords).
+RS_MACRO_CHAIN_SEPARATORS = (TS_RS_TOKEN_DOT, TS_RS_TOKEN_SCOPE)
+RS_MACRO_PATH_SEGMENT_TYPES = (TS_IDENTIFIER, KEYWORD_SELF, TS_RS_CRATE, KEYWORD_SUPER)
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
 # Transparent smart pointers that auto-deref to their inner type: a method call
