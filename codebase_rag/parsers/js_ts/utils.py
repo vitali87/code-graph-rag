@@ -368,3 +368,85 @@ def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
 
         case _:
             return None
+
+
+_JS_TS_DECLARATION_NAMED = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_CLASS_DECLARATION,
+    }
+)
+_JS_TS_PATTERN_CONTAINERS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_JS_FORMAL_PARAMETERS,
+        cs.TS_REQUIRED_PARAMETER,
+        cs.TS_OPTIONAL_PARAMETER,
+    }
+)
+
+
+def js_ts_pattern_names(target: Node) -> set[str]:
+    # The names a binding target binds. Binding positions only: a default's
+    # right side, a computed key and a pair key read the enclosing scope.
+    names: set[str] = set()
+    stack: list[Node] = [target]
+    while stack:
+        node = stack.pop()
+        if node.type in (
+            cs.TS_IDENTIFIER,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if name := safe_decode_text(node):
+                names.add(name)
+        elif node.type in (cs.TS_ASSIGNMENT_PATTERN, cs.TS_OBJECT_ASSIGNMENT_PATTERN):
+            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
+                stack.append(left)
+        elif node.type == cs.TS_PAIR_PATTERN:
+            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                stack.append(value)
+        elif node.type in _JS_TS_PATTERN_CONTAINERS:
+            stack.extend(node.named_children)
+    return names
+
+
+def js_ts_own_scope_names(func_node: Node) -> frozenset[str]:
+    """Every name a function binds itself rather than reads from the
+    function around it: its parameters, its declarations, loop and catch
+    variables, the functions and classes it declares, and a plain name it
+    assigns (which may hold another type by the time it is read). Nested
+    functions are their own scopes and are not entered (issue #3200)."""
+    names: set[str] = set()
+    for field in (cs.FIELD_PARAMETERS, cs.TS_FIELD_PARAMETER):
+        if (params := func_node.child_by_field_name(field)) is not None:
+            names |= js_ts_pattern_names(params)
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    stack: list[Node] = list(body.children) if body is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type in _JS_TS_DECLARATION_NAMED:
+            if (name_node := node.child_by_field_name(cs.FIELD_NAME)) is not None and (
+                name := safe_decode_text(name_node)
+            ):
+                names.add(name)
+        if node.type in cs.JS_TS_FUNCTION_NODES:
+            continue
+        if node.type == cs.TS_VARIABLE_DECLARATOR:
+            if (target := node.child_by_field_name(cs.FIELD_NAME)) is not None:
+                names |= js_ts_pattern_names(target)
+        elif node.type == cs.TS_JS_FOR_IN_STATEMENT:
+            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
+                names |= js_ts_pattern_names(left)
+        elif node.type == cs.TS_JS_CATCH_CLAUSE:
+            if (param := node.child_by_field_name(cs.FIELD_PARAMETER)) is not None:
+                names |= js_ts_pattern_names(param)
+        elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            left = node.child_by_field_name(cs.FIELD_LEFT)
+            if left is not None and left.type == cs.TS_IDENTIFIER:
+                if name := safe_decode_text(left):
+                    names.add(name)
+        stack.extend(node.children)
+    return frozenset(names)
