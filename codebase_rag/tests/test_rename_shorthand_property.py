@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.tests.test_rename_op import _index, _write
 
 _NODE = shutil.which("node")
@@ -114,3 +114,145 @@ def test_a_commonjs_exports_object_renames_its_key_with_its_readers(
     assert "module.exports = { padLeft };" in (temp_repo / "u.js").read_text()
     assert 'u.padLeft("q")' in (temp_repo / "main.js").read_text()
     assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
+def test_a_namespace_destructure_renames_its_key_and_keeps_its_binding(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `const { pad } = U` reads the export `pad` into a local `pad`: the key
+    # follows the rename and the local, with every use of it, stays.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "main.js": (
+            'import * as U from "./u.js";\nconst { pad } = U;\n'
+            "const { pad: p, missing = 1 } = U;\n"
+            'console.log(pad("y") + p("z") + missing);\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    assert (temp_repo / "main.js").read_text() == (
+        'import * as U from "./u.js";\nconst { padLeft: pad } = U;\n'
+        "const { padLeft: p, missing = 1 } = U;\n"
+        'console.log(pad("y") + p("z") + missing);\n'
+    )
+    assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
+def test_a_required_module_destructure_renames_its_key(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    files = {
+        "u.js": 'function pad(s) { return " " + s; }\nmodule.exports = { pad };\n',
+        "main.js": (
+            'const U = require("./u");\nconst { pad = null } = U;\n'
+            'console.log(pad("y"));\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    assert "module.exports = { padLeft };" in (temp_repo / "u.js").read_text()
+    assert "const { padLeft: pad = null } = U;" in (temp_repo / "main.js").read_text()
+    assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
+def test_a_destructure_of_another_object_keeps_its_key(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: only a read out of the defining module's own namespace
+    # follows the rename; `other.pad` and the default export's `pad` are
+    # different properties.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": (
+            'export function pad(s) { return " " + s; }\n'
+            'export default { pad: (s) => "d" + s };\n'
+        ),
+        "main.js": (
+            'import def, * as U from "./u.js";\n'
+            'const other = { pad: (s) => "o" + s };\nconst { pad: p } = other;\n'
+            "const { pad: q } = U;\nconst { pad: r } = def;\n"
+            'console.log(p("y") + q("z") + r("x"));\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    main = (temp_repo / "main.js").read_text()
+    assert "const { pad: p } = other;" in main, main
+    assert "const { padLeft: q } = U;" in main, main
+    assert "const { pad: r } = def;" in main, main
+    assert _node(temp_repo, "main.js") == before
+
+
+def test_a_renamed_key_does_not_bind_the_old_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `{ pad: p } = U` binds `p`, never `pad`, so a bare `pad(...)`
+    # in that file is still only a guess and the rename refuses it.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "main.js": (
+            'import * as U from "./u.js";\nconst { pad: p } = U;\n'
+            'console.log(p("z"), globalThis.pad ? pad("w") : "");\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    graph = _index(temp_repo, mock_ingestor)
+
+    with pytest.raises(RenameRefused):
+        rename(
+            temp_repo,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.u.pad",
+            "padLeft",
+        )
+    assert (temp_repo / "main.js").read_text() == files["main.js"]
+
+
+def test_a_method_rename_leaves_a_namespace_destructure_alone(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `U.pad` is the module's function, not the method `C.pad`;
+    # only a module-level member is read out of the namespace by its name.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": (
+            'export function pad(s) { return " " + s; }\n'
+            "export class C {\n  pad(s) { return s; }\n}\n"
+        ),
+        "main.js": 'import * as U from "./u.js";\nconst { pad } = U;\nexport { pad };\n',
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    graph = _index(temp_repo, mock_ingestor)
+
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.u.C.pad",
+        "padLeft",
+    )
+
+    assert report.applied, report.message
+    assert "  padLeft(s) { return s; }" in (temp_repo / "u.js").read_text()
+    assert (temp_repo / "main.js").read_text() == files["main.js"]

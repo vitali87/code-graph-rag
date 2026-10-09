@@ -124,6 +124,7 @@ _IDENTIFIER_TYPES = frozenset(
         cs.TS_TYPE_IDENTIFIER,
         cs.TS_PROPERTY_IDENTIFIER,
         cs.TS_SHORTHAND_PROPERTY_IDENTIFIER,
+        cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
         cs.TS_PRIVATE_PROPERTY_IDENTIFIER,
         cs.TS_GO_FIELD_IDENTIFIER,
         cs.TS_GO_PACKAGE_IDENTIFIER,
@@ -179,22 +180,28 @@ def _identifier_at(root: Node, start: int, end: int) -> Node | None:
     return None
 
 
-def _keeps_its_key(node: Node) -> bool:
-    """Whether a renamed shorthand property must keep its key (issue #3252).
+def _shorthand_replacement(node: Node, old: str, new: str) -> str:
+    """The text that renames `old` to `new` at a shorthand (issue #3252).
 
-    `{ pad }` is `{ pad: pad }`: a key and a value, and the rename is about
-    the value. Renaming the token moves the key too, which breaks every
-    consumer that reads `obj.pad`, so the edit spells both out. The one
-    exception is `module.exports = { pad }`: that object is the module's
+    `{ pad }` is `{ pad: pad }`: a key and a value. In an object literal the
+    rename is about the value, and renaming the token would move the key
+    under every consumer reading `obj.pad`, so the key is spelled out. The
+    one exception is `module.exports = { pad }`: that object is the module's
     export list, its readers (`require("./u").pad`) are linked to the
-    function and renamed with it, so the key moves with them.
+    function and renamed with it, so the key moves with them. In a
+    destructuring pattern (`const { pad } = U`) it is the other way round:
+    the key names the renamed export, and the local keeps its name.
     """
+    if node.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
+        return new + cs.PATCH_SHORTHAND_KEY_SEPARATOR + old
     if node.type != cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
-        return False
+        return new
     # identifier -> object -> `module.exports = <object>`, when that holds it.
     holder = node.parent.parent if node.parent is not None else None
     left = holder.child_by_field_name(cs.FIELD_LEFT) if holder is not None else None
-    return left is None or not is_module_exports(left)
+    if left is not None and is_module_exports(left):
+        return new
+    return old + cs.PATCH_SHORTHAND_KEY_SEPARATOR + new
 
 
 @lru_cache(maxsize=8)
@@ -373,8 +380,7 @@ class Patcher:
                 raise PatcherError(
                     cs.PATCH_NOT_AN_IDENTIFIER.format(path=key, line=line, col=col)
                 )
-            if _keeps_its_key(node):
-                replacement = old + cs.PATCH_SHORTHAND_KEY_SEPARATOR + new
+            replacement = _shorthand_replacement(node, old, new)
         self._edits.setdefault(key, []).append(
             SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
         )
