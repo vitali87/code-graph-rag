@@ -55,6 +55,18 @@ def extract_return_type_name(node: Node) -> str | None:
     return name
 
 
+def return_type_props(node: Node) -> dict[str, str]:
+    # The names the call pass records for this definition's result, stored on
+    # its node so an incremental run restores them for a file it does not
+    # re-parse (issue #3272). Exactly the extractors ingest records with.
+    props: dict[str, str] = {}
+    if first := extract_first_return_type_name(node):
+        props[cs.KEY_FIRST_RETURN_TYPE] = first
+    if chain := extract_return_type_name(node):
+        props[cs.KEY_CHAIN_RETURN_TYPE] = chain
+    return props
+
+
 def extract_first_return_type_name(node: Node) -> str | None:
     # FIRST return type of a Go function, for typing `v, err := f()` bindings under
     # the (T, error) idiom. Unlike extract_return_type_name (chaining, where a

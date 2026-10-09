@@ -1624,6 +1624,8 @@ class FunctionIngestMixin:
         elif (declared := declared_positional_params(func_node, language)) is not None:
             props[cs.KEY_POSITIONAL_PARAMS] = declared
         props.update(type_facts_props(extract_type_facts(func_node, language)))
+        if language == cs.SupportedLanguage.GO:
+            props.update(go_utils.return_type_props(func_node))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
         return props

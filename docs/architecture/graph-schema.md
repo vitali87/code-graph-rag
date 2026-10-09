@@ -17,10 +17,10 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, go_package: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
-| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
-| Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
+| Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
 | Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}` |
 | Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?}` |
@@ -130,6 +130,15 @@ source order, one entry per parameter and `""` for an unannotated one; it is
 absent, not empty, for languages the extractor does not read (Python,
 TypeScript/JavaScript, Go, Java, Rust, C# and, return type only, C/C++ are
 read). Receivers (`self`, `&self`) count as a parameter with `""`.
+
+Go definitions also store the type names the call pass reads from their
+result (issue #3272): `first_return_type` on a function names its first
+result's type (`NewBox() (*Box, error)` gives `Box`, which types `b` in
+`b, err := NewBox()`), and `chain_return_type` on a function or method names a
+single result's type, which a chained call dispatches on (`MakeBox().Size()`).
+A Go Module stores its `package` clause as `go_package`. An incremental sync
+reads all three back for files it does not re-parse, so a re-parsed caller
+types its locals exactly as a fresh index does.
 
 `positional_params` lists a Python definition's positional parameter names
 as CPython counts them, receiver included (issue #227). TypeScript,

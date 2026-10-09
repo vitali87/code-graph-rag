@@ -648,6 +648,8 @@ class DefinitionProcessor(
         }
         if docstring := self._get_module_docstring(root_node, language):
             module_props[cs.KEY_DOCSTRING] = docstring
+        if package := self.go_package_names.get(module_qn):
+            module_props[cs.KEY_GO_PACKAGE] = package
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):

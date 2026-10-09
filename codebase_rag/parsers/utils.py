@@ -1392,6 +1392,21 @@ def _record_method_overrides(
         )
 
 
+def _go_chain_return_props(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> PropertyDict:
+    # A Go method's chained-call return type; only that name, the first-result
+    # map is free functions'.
+    if language != cs.SupportedLanguage.GO:
+        return {}
+    # Local import, like type_facts': the Go helpers import this module.
+    from .go.utils import extract_return_type_name
+
+    if chain := extract_return_type_name(method_node):
+        return {cs.KEY_CHAIN_RETURN_TYPE: chain}
+    return {}
+
+
 def _method_positional_params_props(
     method_node: ASTNode, language: cs.SupportedLanguage
 ) -> PropertyDict:
@@ -1494,6 +1509,7 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    method_props.update(_go_chain_return_props(method_node, language))
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,

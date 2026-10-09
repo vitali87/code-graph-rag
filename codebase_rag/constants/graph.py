@@ -718,6 +718,16 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# The type names a Go definition's result binds, as the call pass reads them:
+# the FIRST result's (`b, err := NewBox()` types `b`) and the single result's
+# that a chained call dispatches on (`MakeBox().Size()`). Stored so a re-parsed
+# caller in an incremental run still reads them from unchanged files, which
+# would otherwise have to be parsed again to give them (issue #3272).
+KEY_FIRST_RETURN_TYPE = "first_return_type"
+KEY_CHAIN_RETURN_TYPE = "chain_return_type"
+# A Go file's `package` clause, on its Module: same-package visibility reads
+# it for both ends, and an unchanged file is not parsed to give it (#3272).
+KEY_GO_PACKAGE = "go_package"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -1021,6 +1031,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.first_return_type AS first_return_type, "
+    "n.chain_return_type AS chain_return_type, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member"
 )
 
@@ -1030,7 +1042,8 @@ CYPHER_ALL_DEFINITION_QNS = (
 CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.go_package AS go_package"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one

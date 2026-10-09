@@ -3253,6 +3253,11 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged Go file's package clause, which same-package
+            # visibility compares a re-parsed requester against (#3272).
+            # setdefault: a file this run re-parsed recorded its own.
+            if isinstance(package := row.get(cs.KEY_GO_PACKAGE), str) and package:
+                dp.go_package_names.setdefault(qn, package)
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""
@@ -3287,12 +3292,28 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        self._rehydrate_return_type_names(qn, row)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_return_type_names(self, qn: str, row: ResultRow) -> None:
+        # The result type names ingest records only while parsing the
+        # definition's own file: a re-parsed Go caller of an unchanged
+        # `NewBox` typed `b, _ := NewBox(2)` from nothing, and `b.Size()`
+        # bound by name to another type's `Size` (issue #3272). Only rows
+        # this run did not parse reach here (the caller skips registered
+        # qns), so a re-parsed definition keeps what it recorded itself.
+        type_inference = self.factory.type_inference
+        first = row.get(cs.KEY_FIRST_RETURN_TYPE)
+        if isinstance(first, str) and first:
+            type_inference.go_function_return_types[qn] = first
+        chain = row.get(cs.KEY_CHAIN_RETURN_TYPE)
+        if isinstance(chain, str) and chain:
+            type_inference.method_return_types[qn] = chain
 
     def _rehydrate_definition_path(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
