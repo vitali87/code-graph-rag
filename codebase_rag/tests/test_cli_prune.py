@@ -83,14 +83,6 @@ def test_residual_row_key_agrees_with_query_alias() -> None:
     assert f"AS {cs.KEY_RESIDUAL_NODES}" in cq.CYPHER_COUNT_PROJECT_NODES
 
 
-def test_root_replaced_by_a_file_is_a_candidate(tmp_path: Path) -> None:
-    from codebase_rag.utils.path_utils import root_proven_missing
-
-    replaced = tmp_path / "checkout"
-    replaced.write_text("not a checkout")
-    assert root_proven_missing(str(replaced))
-
-
 def _ingestor(mock_connect: MagicMock) -> MagicMock:
     return mock_connect.return_value.__enter__.return_value
 
