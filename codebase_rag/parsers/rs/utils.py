@@ -482,6 +482,34 @@ def _rust_mod_chain_parts(node: Node) -> tuple[list[str], bool]:
     return parts, pure
 
 
+def inline_mod_path(node: Node) -> list[str]:
+    """Names of the inline `mod` blocks enclosing `node`, outermost first.
+
+    Only `mod` blocks open a module level: an impl block adds none, since a
+    bare call inside a method never means `Self::f`. Empty when a fn, const
+    or static body intervenes, since items nested in a body are the
+    block-item lookup's to scope (issue #2942).
+    """
+    parts: list[str] = []
+    current = node.parent
+    while current is not None and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type in (
+            cs.TS_RS_FUNCTION_ITEM,
+            cs.TS_RS_CONST_ITEM,
+            cs.TS_RS_STATIC_ITEM,
+        ):
+            return []
+        if (
+            current.type == cs.TS_RS_MOD_ITEM
+            and (name_node := current.child_by_field_name(cs.FIELD_NAME)) is not None
+            and name_node.text
+        ):
+            parts.append(name_node.text.decode(cs.RS_ENCODING_UTF8))
+        current = current.parent
+    parts.reverse()
+    return parts
+
+
 def _rust_scope_segment(scope: Node) -> str | None:
     # The qn segment an impl block or class-like/mod scope contributes.
     if scope.type == cs.TS_IMPL_ITEM:
