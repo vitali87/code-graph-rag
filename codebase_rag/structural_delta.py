@@ -653,12 +653,35 @@ def _symbols(
 # --- dangling callers ---------------------------------------------------------
 
 
+def _still_bound(before: Snapshot, still: _AfterBindings) -> Callable[[str], bool]:
+    """Whether a gone module-level symbol's own module still binds its name.
+
+    A move that leaves `from new_home import name` behind, or a rename that
+    keeps `old = new`, leaves every caller reaching the name through that
+    module working, whether it imported the name, the module, or sits in
+    the module itself (issue #3248). A method is reached through its class,
+    which no module binding stands in for.
+    """
+    answers: dict[str, bool] = {}
+
+    def bound(qn: str) -> bool:
+        if qn not in answers:
+            module, _sep, name = qn.rpartition(cs.SEPARATOR_DOT)
+            answers[qn] = module not in before.definitions and still.binds(
+                module, before.definitions[qn].path, name
+            )
+        return answers[qn]
+
+    return bound
+
+
 def _dangling(
-    before: Snapshot, after: Snapshot, symbols: SymbolDelta
+    before: Snapshot, after: Snapshot, symbols: SymbolDelta, still: _AfterBindings
 ) -> list[DanglingCaller]:
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
+    still_bound = _still_bound(before, still)
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
@@ -666,11 +689,14 @@ def _dangling(
             continue
         new_name = renamed_to.get(site.callee)
         # A caller re-parsed in this pass that now binds to the renamed
-        # symbol was updated; every other caller still names what is gone.
+        # symbol was updated; every other caller still names what is gone,
+        # unless the name it reaches it by is still bound there.
         if site.caller_path in after.paths and (
             (new_name is not None and (site.caller, new_name) in after_pairs)
             or site.caller not in after.definitions
         ):
+            continue
+        if still_bound(site.callee):
             continue
         key = (site.caller, site.callee, site.line, site.col)
         if key in seen:
@@ -1212,7 +1238,7 @@ def _dangling_importers(
     after: Snapshot,
     symbols: SymbolDelta,
     repo_root: Path | None,
-    load: _ModuleLoader,
+    still: _AfterBindings,
 ) -> list[DanglingImporter]:
     """Import statements and `__all__` entries naming a removed symbol.
 
@@ -1227,7 +1253,6 @@ def _dangling_importers(
     if not gone:
         return []
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
-    still = _AfterBindings(after, gone, load, repo_root)
     found = _import_findings(before, after, gone, renamed_to, still)
     if repo_root is not None:
         found.extend(_all_findings(before, after, gone, renamed_to, still))
@@ -1970,6 +1995,20 @@ def structural_delta(
         else longer_project_prefixes
     )
     symbols = _symbols(before, after, declared_renames)
+    # What the project's modules still bind after the edit, read lazily: the
+    # dangling callers and importers both ask it of a gone symbol's name.
+    still = _AfterBindings(
+        after,
+        set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]},
+        _module_loader(
+            fetch_all,
+            {
+                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+            },
+        ),
+        repo_root,
+    )
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
@@ -1984,19 +2023,9 @@ def structural_delta(
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols),
+        dangling_callers=_dangling(before, after, symbols, still),
         dangling_importers=_dangling_importers(
-            before,
-            after,
-            symbols,
-            repo_root,
-            _module_loader(
-                fetch_all,
-                {
-                    cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                    cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
-                },
-            ),
+            before, after, symbols, repo_root, still
         ),
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
