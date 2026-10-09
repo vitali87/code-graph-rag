@@ -111,7 +111,7 @@ re-index the others afterwards.
 | Swift | .swift | functions, initializers, protocol requirements, extension members | classes, structs, enums, protocols | import |
 | Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
 | Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
-| Solidity | .sol | functions, constructors, modifiers | contracts, interfaces, libraries | import |
+| Solidity | .sol | functions, constructors, modifiers, `receive`/`fallback` | contracts, interfaces, libraries | import |
 | Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
 | Nix | .nix | lambda bindings | - | import |
 

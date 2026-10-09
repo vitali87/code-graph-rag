@@ -583,6 +583,13 @@ class DefinitionProcessor(
                 )
             if language == cs.SupportedLanguage.PYTHON:
                 self.python_overload_stubs[module_qn] = folded_overload_stubs(root_node)
+            self._ingest_inline_modules(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
             self._ingest_all_functions(
                 root_node,
                 module_qn,

@@ -3682,25 +3682,54 @@ class CallProcessor:
         return self._resolver.cpp_operand_class_qn(name, var_types, ctx.module_qn)
 
     def _macro_call_name(self, ident: Node) -> str | None:
-        # Reconstruct a `<recv>.method` chain from a macro token stream by walking
-        # the method identifier's preceding siblings over `("." <ident|self>)*`.
-        # `server . run` -> "server.run"; `self . shutdown . recv` ->
-        # "self.shutdown.recv". A method with no preceding `.` stays bare.
+        # Rebuild the callee a macro token stream spells, walking the method
+        # identifier's preceding siblings, into the name the same call gets
+        # outside a macro: `server . run` -> "server.run", `Config :: load` ->
+        # "Config::load", `Circle :: new ( 2.0 ) . area` ->
+        # "Circle::new(2.0).area". Stopping at `::` dropped `Type::assoc()` and
+        # anything chained on it, since a bare method name never binds (issue
+        # #2698). A method with no preceding `.` or `::` stays bare.
         if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
             return None
         parts = [method]
         cur = ident.prev_sibling
-        while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
-            if (recv := cur.prev_sibling) is None or (
-                recv.type not in cs.RS_MACRO_RECEIVER_TYPES
-            ):
+        while cur is not None and cur.type in cs.RS_MACRO_CHAIN_SEPARATORS:
+            if (receiver := self._macro_receiver(cur)) is None:
                 break
-            if not recv.text:
-                break
-            parts.append(recv.text.decode(cs.ENCODING_UTF8))
-            cur = recv.prev_sibling
+            text, head = receiver
+            parts += [cur.type, text]
+            cur = head.prev_sibling
         parts.reverse()
-        return cs.SEPARATOR_DOT.join(parts)
+        return "".join(parts)
+
+    @staticmethod
+    def _macro_receiver(sep: Node) -> tuple[str, Node] | None:
+        # The receiver token(s) just before a `.` / `::` in a macro token
+        # stream, as (text, first token): a path segment (`Config`, `Self`,
+        # `crate`, `super`) before `::`; before `.`, an identifier or `self`,
+        # or a call result `new ( 2.0 )` (callee plus its argument group).
+        if (recv := sep.prev_sibling) is None or not recv.text:
+            return None
+        if sep.type == cs.TS_RS_TOKEN_SCOPE:
+            if recv.type not in cs.RS_MACRO_PATH_SEGMENT_TYPES:
+                return None
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if recv.type in cs.RS_MACRO_RECEIVER_TYPES:
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if (
+            recv.type == cs.TS_RS_TOKEN_TREE
+            and recv.child_count > 0
+            and recv.children[0].type == cs.CHAR_PAREN_OPEN
+            and (callee := recv.prev_sibling) is not None
+            and callee.type == cs.TS_IDENTIFIER
+            and callee.text
+        ):
+            return (
+                callee.text.decode(cs.ENCODING_UTF8)
+                + recv.text.decode(cs.ENCODING_UTF8),
+                callee,
+            )
+        return None
 
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
@@ -4538,10 +4567,12 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.PYTHON:
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
-            # selector = identity as any)`, zustand) references it: the default
-            # is invoked through the parameter when the caller omits the
-            # argument, never by a visible call.
+            # selector = identity as any)`, zustand; Python's
+            # `def run(self, conv=_via_default)`, issue #2838) references it:
+            # the default is invoked through the parameter when the caller
+            # omits the argument, never by a visible call.
             self._ingest_default_param_references(
                 caller_node,
                 caller_spec,
@@ -6280,8 +6311,16 @@ class CallProcessor:
         callee_type: str,
         callee_qn: str,
     ) -> None:
-        if ctx.is_python and (
-            dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+        if (
+            ctx.is_python
+            # A stub the name-only fallback merely guessed (a dict literal's
+            # `.get(...)`) says nothing about the receiver: fanning it out
+            # turned one guess into exact edges to every conformer, test
+            # doubles included (issue #2931). It stays one heuristic edge.
+            and self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC
+            and (
+                dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+            )
         ):
             # The call resolved to a Protocol stub; the stub never runs, so emit
             # edges to the method on every conformer instead of the stub.
@@ -6357,13 +6396,25 @@ class CallProcessor:
     def _emit_protocol_conformer_edges(
         self, ctx: _CallScanContext, dispatch_targets: set[tuple[str, str]]
     ) -> None:
-        for conformer_type, conformer_qn in dispatch_targets:
-            for target_qn in self._resolver.function_registry.variants(conformer_qn):
-                ctx.ensure_rel(
-                    ctx.caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        edges = [
+            (conformer_type, target_qn)
+            for conformer_type, conformer_qn in dispatch_targets
+            for target_qn in self._resolver.function_registry.variants(conformer_qn)
+        ]
+        # The receiver is one of the conformers, so with several the call is
+        # a fan-out like any other same-named candidate set (issue #1526):
+        # renaming one conformer must not rewrite the shared call site.
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for conformer_type, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str
@@ -6594,10 +6645,17 @@ class CallProcessor:
                 if ctx.is_python:
                     self._emit_python_binding_twin(ctx, target_qn, target_type)
                 continue
+            # A callable variant takes its OWN label: a Scala method's local
+            # def or anonymous-object member registers as a Function beside
+            # the class's same-named Method, and the primary's label on the
+            # other is the same phantom (issue #2848).
+            label = (
+                callee_type if target_type is None else cs.NodeLabel(target_type.value)
+            )
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
     def _emit_python_binding_twin(
