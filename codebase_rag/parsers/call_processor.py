@@ -58,6 +58,7 @@ from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .php import references as php_references
 from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -639,7 +640,14 @@ _JSX_COMPONENT_TARGET_TYPES = frozenset(
 # Generator expressions are inline function values like the other two
 # (issue #994): a registered node with no reference path is an orphan.
 _INLINE_FUNC_VALUE_TYPES = frozenset(
-    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+    {
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+        # PHP closures use their own node. The arrow form shares the JS
+        # `arrow_function` name, so it was already in this set (issue #3117).
+        cs.TS_PHP_ANONYMOUS_FUNCTION,
+    }
 )
 # JS/TS scopes that bind their own parameters (and, for a named function
 # expression, their own name) for the lexical receiver resolution of #988.
@@ -4513,20 +4521,36 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
-        if (
-            language == cs.SupportedLanguage.PYTHON
-            or language in _JS_TS_LANGUAGES
-            or language == cs.SupportedLanguage.GO
+        if language in _JS_TS_LANGUAGES or language in (
+            cs.SupportedLanguage.PYTHON,
+            cs.SupportedLanguage.GO,
+            cs.SupportedLanguage.PHP,
         ):
+            # A PHP closure is registered, but it gets no caller pass. Keep
+            # walking through it so a function stored inside it is still
+            # referenced from the enclosing method (issue #3117).
+            boundaries = self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+            if language == cs.SupportedLanguage.PHP:
+                boundaries = frozenset(
+                    boundaries
+                    - {
+                        cs.TS_PHP_ANONYMOUS_FUNCTION,
+                        cs.TS_PHP_ARROW_FUNCTION,
+                    }
+                )
             self._ingest_assignment_function_references(
                 caller_node,
                 caller_spec,
                 module_qn,
                 local_var_types,
                 class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                boundaries,
                 caller_qn,
                 language=language,
+            )
+        if language == cs.SupportedLanguage.PHP:
+            php_references.ingest_php_callable_values(
+                self, caller_node, caller_spec, module_qn, class_context
             )
         if language in _JS_TS_LANGUAGES:
             self._ingest_jsx_component_references(
@@ -4767,6 +4791,10 @@ class CallProcessor:
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
         if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
             self._ingest_java_method_reference(ctx, call_node)
+            return
+        # `new self` has no name field, and `self::m()` is not a bare method.
+        # Handled here so the trie never binds the keyword (issue #3117).
+        if php_references.ingest_php_call(self, ctx, call_node):
             return
         call_name = self._scan_call_name(ctx, call_node)
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
@@ -6450,6 +6478,13 @@ class CallProcessor:
             # label is a hash-randomized StrEnum, so sort for determinism.
             self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
+        if ctx.language == cs.SupportedLanguage.PHP:
+            # PHP runs `__construct`, never Python's `__init__`. Case folds
+            # the same way the rest of PHP name resolution does (issue #3117).
+            ctor_qn = php_references.php_constructor_qn(self._resolver, callee_qn)
+            if ctor_qn is None:
+                return None
+            return (cs.NodeLabel.METHOD, ctor_qn)
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
         # edge there so an explicitly-declared constructor is reachable.

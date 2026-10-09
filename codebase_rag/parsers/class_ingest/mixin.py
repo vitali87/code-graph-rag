@@ -1326,7 +1326,9 @@ class ClassIngestMixin:
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         if language == cs.SupportedLanguage.PHP:
-            self._record_php_namespace(class_node, class_props)
+            self._record_php_namespace(
+                class_node, class_props, class_name, class_qn, module_qn
+            )
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
         # a member edit is a change under it. It makes a class note gradable
@@ -1485,14 +1487,24 @@ class ClassIngestMixin:
             )
 
     def _record_php_namespace(
-        self, class_node: Node, class_props: PropertyDict
+        self,
+        class_node: Node,
+        class_props: PropertyDict,
+        class_name: str,
+        class_qn: str,
+        module_qn: str,
     ) -> None:
         # A PHP class's qn follows its path, but other files `use` it by the
         # namespace around its declaration; the dead-code walk needs that name
         # to tell an imported project base from a vendor class of the same
-        # name (issue #2472).
-        if namespace := php_namespaces.enclosing_namespace(class_node):
+        # name (issue #2472). The same pair keys the FQCN index that callable
+        # arrays and `Class::method` strings resolve through (issue #3117).
+        namespace = php_namespaces.enclosing_namespace(class_node)
+        if namespace:
             class_props[cs.KEY_NAMESPACE] = namespace
+        self.import_processor.register_php_class(
+            namespace, class_name, class_qn, module_qn
+        )
 
     def _record_csharp_namespace(
         self, class_node: Node, class_qn: str, class_props: PropertyDict
