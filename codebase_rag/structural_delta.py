@@ -1238,7 +1238,7 @@ def _dangling_importers(
     after: Snapshot,
     symbols: SymbolDelta,
     repo_root: Path | None,
-    still: _AfterBindings,
+    load: _ModuleLoader,
 ) -> list[DanglingImporter]:
     """Import statements and `__all__` entries naming a removed symbol.
 
@@ -1253,6 +1253,7 @@ def _dangling_importers(
     if not gone:
         return []
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
+    still = _AfterBindings(after, gone, load, repo_root)
     found = _import_findings(before, after, gone, renamed_to, still)
     if repo_root is not None:
         found.extend(_all_findings(before, after, gone, renamed_to, still))
@@ -1995,19 +1996,12 @@ def structural_delta(
         else longer_project_prefixes
     )
     symbols = _symbols(before, after, declared_renames)
-    # What the project's modules still bind after the edit, read lazily: the
-    # dangling callers and importers both ask it of a gone symbol's name.
-    still = _AfterBindings(
-        after,
-        set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]},
-        _module_loader(
-            fetch_all,
-            {
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
-            },
-        ),
-        repo_root,
+    load = _module_loader(
+        fetch_all,
+        {
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+        },
     )
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
@@ -2023,10 +2017,20 @@ def structural_delta(
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols, still),
-        dangling_importers=_dangling_importers(
-            before, after, symbols, repo_root, still
+        dangling_callers=_dangling(
+            before,
+            after,
+            symbols,
+            # What the project's modules still bind after the edit, read
+            # lazily, as the importer check reads it.
+            _AfterBindings(
+                after,
+                set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]},
+                load,
+                repo_root,
+            ),
         ),
+        dangling_importers=_dangling_importers(before, after, symbols, repo_root, load),
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
         ),
