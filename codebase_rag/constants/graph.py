@@ -813,6 +813,19 @@ CYPHER_QUERY_PROJECT_NODE_IDS = (
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
+# The tail of the module and project deletes: `owned` lists every node the
+# delete removes. A resource-to-resource FLOWS_TO joins two shared Resource
+# nodes, so detaching the owned nodes never reaches it; the flows whose
+# `scope` names an owned node go first (issue #2746).
+CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS = (
+    "WITH owned, [n IN owned | n.qualified_name] AS owners "
+    f"OPTIONAL MATCH (:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    f"(:{NodeLabel.RESOURCE.value}) "
+    "WHERE rf.scope IN owners "
+    "WITH owned, collect(rf) AS flows "
+    "FOREACH (r IN flows | DELETE r) "
+    "FOREACH (n IN owned | DETACH DELETE n)"
+)
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
@@ -848,7 +861,8 @@ CYPHER_DELETE_MODULE = (
     # gloss is written into the graph and must survive a rebuild.
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
     "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c) "
-    "DETACH DELETE m, c"
+    # The walk starts at length 0, so `owned` includes the module itself.
+    "WITH m, collect(DISTINCT c) AS owned " + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
 # projects, and a path-only delete would take the sibling's node (issue #897).
@@ -1346,9 +1360,10 @@ REL_ENDPOINT_JOINER = " and "
 # same node pair; these props join the MERGE key so parallel edges are not
 # collapsed at write time (issue #722). Props absent from a batch's rows are
 # dropped from the key at flush time, so resource-level FLOWS_TO (no `via`)
-# still dedups on endpoints.
+# dedups on its endpoints and its `scope`: one edge per function that
+# produced the flow, so each goes away with its own owner (issue #2746).
 MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
-    RelationshipType.FLOWS_TO.value: ("via", "kind"),
+    RelationshipType.FLOWS_TO.value: ("via", "kind", "scope"),
     # One edge per call/reference/instantiation site (issue #1522); a row
     # without a site still merges on its endpoints alone.
     RelationshipType.CALLS.value: (KEY_LINE, KEY_COL),
