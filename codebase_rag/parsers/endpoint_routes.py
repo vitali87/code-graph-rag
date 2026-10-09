@@ -29,9 +29,10 @@ itself, so the endpoint always stays anchored and the trace lands at the
 wiring site.
 
 Ceilings (each simply yields nothing, never a wrong template): sub-router
-mounting (``app.use('/prefix', router)``), gorilla mux ``.Methods()``
-chains, JS handlers referenced through imports or attributes, factories and
-consts bound in a different module.
+mounting (``app.use('/prefix', router)``), a gorilla mux ``.Methods()``
+argument that is not a literal verb or an ``http.Method<Verb>`` constant,
+JS handlers referenced through imports or attributes, factories and consts
+bound in a different module.
 """
 
 from __future__ import annotations
@@ -107,6 +108,10 @@ _GO_VERB_METHODS = {m: m for m in _HTTP_METHODS} | {
     m.capitalize(): m for m in _HTTP_METHODS
 }
 _GO_HANDLE_METHODS = frozenset({"HandleFunc", "Handle"})
+# gorilla/mux's verb restriction, and net/http's verb constants.
+_GO_METHODS_LINK = "Methods"
+_GO_HTTP_PACKAGE = "http"
+_GO_METHOD_CONST = "Method"
 _GO_FRAMEWORK_FACTORIES = frozenset(
     {
         "echo.New",
@@ -435,7 +440,60 @@ def _go_registrations(
     call: Node, scope: str, evidence: _ModuleEvidence
 ) -> list[RouteRegistration]:
     single = _go_registration(call, scope, evidence)
-    return [] if single is None else [single]
+    if single is None:
+        return []
+    if single.method != METHOD_ANY:
+        return [single]
+    # gorilla/mux keeps the verb on the chain: `r.HandleFunc(p, h).Methods(
+    # "GET")`. Read as ANY, a GET and a POST handler on one path became one
+    # endpoint exposed by both (issue #3195).
+    verbs = _go_methods_chain(call)
+    if verbs is None:
+        return [single]
+    return [
+        RouteRegistration(verb, single.path, single.handler_name, single.scope)
+        for verb in verbs
+    ]
+
+
+def _go_methods_chain(call: Node) -> list[str] | None:
+    # The verbs a `.Methods(...)` link further up `call`'s chain names; None
+    # when the chain has no such link. An argument that is not a literal
+    # verb or an `http.Method<Verb>` constant leaves the verbs unknown, and
+    # the empty list then yields nothing, never a wrong ANY template.
+    node = call
+    for _ in range(_CHAIN_DEPTH_LIMIT):
+        selector = node.parent
+        outer = selector.parent if selector is not None else None
+        if (
+            selector is None
+            or selector.type != cs.TS_GO_SELECTOR_EXPRESSION
+            or selector.child_by_field_name(cs.FIELD_OPERAND) != node
+            or outer is None
+            or outer.type != cs.TS_GO_CALL_EXPRESSION
+            or outer.child_by_field_name(cs.FIELD_FUNCTION) != selector
+        ):
+            return None
+        if _decode(selector.child_by_field_name(cs.FIELD_FIELD)) == _GO_METHODS_LINK:
+            verbs = [_go_verb(arg) for arg in _call_args(outer)]
+            if not verbs or None in verbs:
+                return []
+            return [verb for verb in verbs if verb is not None]
+        node = outer
+    return None
+
+
+def _go_verb(node: Node) -> str | None:
+    # `"GET"`, `` `get` `` or `http.MethodGet`.
+    if node.type == cs.TS_GO_SELECTOR_EXPRESSION:
+        package = _decode(node.child_by_field_name(cs.FIELD_OPERAND))
+        name = _decode(node.child_by_field_name(cs.FIELD_FIELD)) or ""
+        if package != _GO_HTTP_PACKAGE or not name.startswith(_GO_METHOD_CONST):
+            return None
+        verb = name.removeprefix(_GO_METHOD_CONST).upper()
+    else:
+        verb = (_literal_path(node, _GO_PATH_LITERALS) or "").upper()
+    return verb if verb in _HTTP_METHODS else None
 
 
 def _wrapper_in_scope(
