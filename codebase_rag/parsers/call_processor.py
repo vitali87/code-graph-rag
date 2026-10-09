@@ -7535,6 +7535,7 @@ class CallProcessor:
                 scope.class_context,
                 scope.resolve_func,
                 scope.ensure_rel,
+                scope.caller_qn,
             )
 
     @_site_scoped
@@ -8250,6 +8251,7 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
+        caller_qn: str | None = None,
     ) -> None:
         # A value cast for typing (`persistImpl as unknown as Persist`) is
         # transparent for reference resolution, and `fn.bind(ctx)` /
@@ -8277,6 +8279,9 @@ class CallProcessor:
         # Go selector, JS/TS member expression).
         if node.type not in _FLOW_ARG_REF_TYPES:
             return
+        # Resolved in the enclosing scope, as a call or a callback argument
+        # is: a function declared a few lines above binds before a same-named
+        # one in an unimported module (issue #3199).
         self._emit_callback_edge(
             caller_spec,
             node,
@@ -8285,6 +8290,7 @@ class CallProcessor:
             class_context,
             resolve_func,
             ensure_rel,
+            caller_qn,
         )
 
     def _unwrap_ts_value(self, node: Node) -> Node:
