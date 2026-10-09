@@ -45,6 +45,11 @@ _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 CSHARP_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
+def _method_base(method_qn: str) -> str:
+    """A signature-suffixed qn without its signature: `N.Exts.Ext(Calc,int)` -> `N.Exts.Ext`."""
+    return method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+
+
 def _arity(leaf: str) -> int:
     # Parameter count of a (possibly signatured) method leaf: `M(int, string)`
     # -> 2, `M` / `M()` -> 0. Only depth-0 commas separate parameters, so a
@@ -1480,9 +1485,38 @@ class CSharpTypeInferenceEngine:
                 receiver_type_name, recv_type, ext_namespace, ambiguous_unqualified
             ):
                 matches.append(qn)
-        # Bind only on a unique match; an ambiguous name across static classes
-        # is left unresolved rather than guessed.
-        return matches[0] if len(matches) == 1 else None
+        # Matches from different static classes are a name colliding across
+        # them and are left unresolved rather than guessed. Several from ONE
+        # class are an overload set of that extension, differing in types
+        # arity cannot tell apart: bind one, and the call site fans out to
+        # the rest (csharp_extension_overloads), as a bare call's same-arity
+        # family does (issue #2839).
+        owners = {_method_base(qn) for qn in matches}
+        return min(matches) if len(owners) == 1 else None
+
+    def csharp_extension_overloads(self, ext_qn: str) -> list[str]:
+        """The other overloads a call bound to extension `ext_qn` may run.
+
+        Same static class, same `this` receiver type and same arity: the set
+        `_find_extension_method` chose one of. An overload extending another
+        type is not one a receiver of this type can bind.
+        """
+        base = _method_base(ext_qn)
+        candidates = self.csharp_extension_methods.get(
+            base.rsplit(cs.SEPARATOR_DOT, 1)[-1], []
+        )
+        receiver = next((c[1] for c in candidates if c[0] == ext_qn), None)
+        if receiver is None:
+            return []
+        arity = _arity(ext_qn)
+        return [
+            qn
+            for qn, recv_type, _namespace, _recv_arity in candidates
+            if qn != ext_qn
+            and recv_type == receiver
+            and _method_base(qn) == base
+            and _arity(qn) == arity
+        ]
 
     def _count_arguments(self, call_node: Node) -> int:
         arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
