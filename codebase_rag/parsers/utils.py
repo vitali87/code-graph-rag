@@ -254,6 +254,55 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return decode_node_text(text_bytes)
 
 
+# The member-name fields a call's callee carries: JS/TS `property`, Python
+# `attribute`, Rust/Go/C++/Scala `field`.
+_MEMBER_NAME_FIELDS = (cs.FIELD_PROPERTY, cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_FIELD)
+
+
+def member_call_name(node: Node) -> Node | None:
+    """The method name a member call invokes, or None for any other call."""
+    # Java `method_invocation` / PHP `member_call_expression`: the call
+    # itself holds the receiver and the name.
+    if node.child_by_field_name(cs.FIELD_OBJECT) is not None and (
+        name := node.child_by_field_name(cs.FIELD_NAME)
+    ):
+        return name
+    func = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is not None and func.type == cs.TS_GENERIC_FUNCTION:
+        # Rust turbofish `x.parse::<u64>()`.
+        func = func.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is None:
+        return None
+    if func.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        return func.child_by_field_name(cs.FIELD_NAME)
+    if func.type == cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
+        binding = next(
+            (
+                c
+                for c in func.children
+                if c.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
+            ),
+            None,
+        )
+        return binding.child_by_field_name(cs.FIELD_NAME) if binding else None
+    for field in _MEMBER_NAME_FIELDS:
+        if (member := func.child_by_field_name(field)) is not None:
+            return member
+    return None
+
+
+def call_site_start(node: Node) -> tuple[int, int]:
+    """Where a call's edge site starts: a member call's name, else the node.
+
+    Shared by indexing and by the edit operations that find a call again
+    from its recorded (line, col) (issue #3166).
+    """
+    name = member_call_name(node)
+    if name is not None and name.start_byte > node.start_byte:
+        return name.start_point
+    return node.start_point
+
+
 def node_site_properties(node: Node) -> PropertyDict:
     """Edge-site span of a tree-sitter node (issue #1522).
 
