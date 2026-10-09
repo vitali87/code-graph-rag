@@ -155,6 +155,18 @@ class FunctionRegistryTrie:
         current[cs.TRIE_TYPE_KEY] = func_type
         current[cs.TRIE_QN_KEY] = qualified_name
 
+    def index_name(self, qualified_name: QualifiedName, name: str) -> None:
+        """Make `qualified_name` findable by `name` too.
+
+        `insert` indexes a qn's last segment, which for a signature-suffixed
+        qn (`ILog.Info(string)`) or a duplicate's variant (`sep@7`) is not
+        the definition's name. Parsing indexes the name as well; a definition
+        read back from the graph comes through here (issue #3261).
+        """
+        if self._simple_name_lookup is not None:
+            self._simple_name_lookup[name].add(qualified_name)
+        self._invalidate_ending_with_cache(name)
+
     def get(
         self, qualified_name: QualifiedName, default: NodeType | None = None
     ) -> NodeType | None:
