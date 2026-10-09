@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
+from ... import constants as cs
 from ...constants import SEPARATOR_DOT
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import follow_reexports
@@ -215,3 +217,45 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         if isinstance(base, type):
             names.update(dir(base))
     return frozenset(names)
+
+
+def reduce_optional_annotation(text: str) -> str:
+    """`T` for an annotation that says "a T or None": `Optional[T]`,
+    `typing.Optional[T]`, `Union[T, None]`, `T | None`, any of them quoted as
+    a forward reference. Anything else (a container, a union of two classes)
+    keeps its text, so the type readers downstream see what they did before.
+    """
+    current = text.strip()
+    while (reduced := _reduce_optional_once(current)) != current:
+        current = reduced
+    return current
+
+
+def _reduce_optional_once(text: str) -> str:
+    text = text.strip().strip(cs.PY_ANNOTATION_QUOTES).strip()
+    members = _split_top_level(text, cs.PY_UNION_SEPARATOR)
+    if len(members) == 1:
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, text):
+            return optional.group("inner")
+        union = re.match(cs.PY_UNION_PATTERN, text)
+        if union is None:
+            return text
+        members = _split_top_level(union.group("inner"), cs.CHAR_COMMA)
+    non_none = [member for member in members if member and member != cs.PY_NONE]
+    return non_none[0] if len(non_none) == 1 else text
+
+
+def _split_top_level(text: str, separator: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(text):
+        if char in cs.PY_ANNOTATION_OPEN_BRACKETS:
+            depth += 1
+        elif char in cs.PY_ANNOTATION_CLOSE_BRACKETS:
+            depth -= 1
+        elif char == separator and depth == 0:
+            parts.append(text[start:index].strip())
+            start = index + 1
+    parts.append(text[start:].strip())
+    return parts

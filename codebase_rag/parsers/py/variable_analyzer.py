@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -16,8 +17,9 @@ from ...types_defs import (
 )
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
+from .ast_analyzer import _homogeneous_element
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import reduce_optional_annotation, resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -88,6 +90,28 @@ def _union_members(type_str: str) -> list[str]:
 def _non_none_members(type_str: str) -> frozenset[str]:
     """`Widget | None` and `Widget` name the same receiver; compare them as such."""
     return frozenset(_union_members(type_str))
+
+
+def _attribute_annotation_type(annotation: str) -> str | None:
+    """The type a class-level annotation gives `self.<name>`: a class name,
+    or the `list[<element>]` marker loop-variable inference reads for a
+    homogeneous container. `Optional[Repo]`, `Repo | None` and `"Repo"` are
+    a `Repo`; left untyped, a call on the attribute fell back to a guess by
+    method name and bound to an unrelated class (issue #2742)."""
+    text = reduce_optional_annotation(annotation)
+    if container := re.match(cs.PY_GENERIC_CONTAINER_PATTERN, text):
+        element = _homogeneous_element(
+            container.group("name"), container.group("inner")
+        )
+        if element is None:
+            return None
+        element = reduce_optional_annotation(element)
+        return (
+            cs.PY_LIST_TYPE_FORMAT.format(element=element)
+            if element.isidentifier()
+            else None
+        )
+    return text if text.isidentifier() else None
 
 
 class _DunderLookup(NamedTuple):
@@ -175,7 +199,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        local_var_types[param_name] = unquote_forward_refs(param_type)
+        # `Optional[Repo]` and `"Repo"` type the parameter as `Repo`, as the
+        # return-annotation reader already does; stored verbatim they name no
+        # class and the call on the parameter got no edge (issue #2646). Forward
+        # references are read first (#2837), so `Dict[str, "Repo"]` unquotes too.
+        local_var_types[param_name] = reduce_optional_annotation(
+            unquote_forward_refs(param_type)
+        )
 
     def _process_typed_default_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -191,7 +221,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        local_var_types[param_name] = unquote_forward_refs(param_type)
+        # `Optional[Repo]` and `"Repo"` type the parameter as `Repo`, as the
+        # return-annotation reader already does; stored verbatim they name no
+        # class and the call on the parameter got no edge (issue #2646). Forward
+        # references are read first (#2837), so `Dict[str, "Repo"]` unquotes too.
+        local_var_types[param_name] = reduce_optional_annotation(
+            unquote_forward_refs(param_type)
+        )
 
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
@@ -588,8 +624,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 and left_node.type == cs.TS_PY_IDENTIFIER
                 and type_node
                 and (name := safe_decode_text(left_node))
-                and (type_text := safe_decode_text(type_node))
-                and type_text.isidentifier()
+                and (raw_type := safe_decode_text(type_node))
+                and (type_text := _attribute_annotation_type(raw_type))
             ):
                 continue
             out.setdefault(f"{cs.PY_SELF_PREFIX}{name}", type_text)

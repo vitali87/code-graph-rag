@@ -261,6 +261,13 @@ PY_TUPLE_CONTAINERS = frozenset({"tuple", "Tuple"})
 PY_GENERATOR_ARG_LIMITS = {"Generator": 3, "AsyncGenerator": 2}
 PY_ELLIPSIS = "..."
 PY_OPTIONAL_PATTERN = r"^(?:typing\.)?Optional\[(?P<inner>.+)\]$"
+PY_UNION_PATTERN = r"^(?:typing\.)?Union\[(?P<inner>.+)\]$"
+# A forward reference is the annotation as a string literal (`"Repo"`).
+PY_ANNOTATION_QUOTES = "\"'"
+# Brackets that nest inside an annotation; a `|` or `,` inside them belongs to
+# a nested type (`dict[str, int | None]`), not to the outer union.
+PY_ANNOTATION_OPEN_BRACKETS = "[("
+PY_ANNOTATION_CLOSE_BRACKETS = "])"
 PY_LIST_TYPE_PREFIX = "list["
 PY_LIST_TYPE_FORMAT = "list[{element}]"
 
