@@ -327,6 +327,30 @@ def _binding(row: ResultRow) -> ImportBinding:
     )
 
 
+def _touched_modules(
+    fetch_all: QueryFn, params: PropertyDict
+) -> frozenset[tuple[str, str]]:
+    """The (qualified name, path) of each Module at a touched path."""
+    return frozenset(
+        (qn, _text(row.get(cs.KEY_PATH)))
+        for row in fetch_all(cq.CYPHER_DELTA_MODULES, params)
+        if (qn := _text(row.get(cs.KEY_QUALIFIED_NAME)))
+    )
+
+
+def _module_import_bindings(
+    fetch_all: QueryFn, params: PropertyDict
+) -> tuple[ImportBinding, ...]:
+    """Every import of a Module at a touched path."""
+    return tuple(
+        binding
+        for binding in (
+            _binding(row) for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTERS, params)
+        )
+        if binding.importer and binding.module
+    )
+
+
 def _named_import_bindings(
     fetch_all: QueryFn, params: PropertyDict
 ) -> tuple[ImportBinding, ...]:
@@ -423,19 +447,8 @@ def snapshot(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
         bindings=_named_import_bindings(fetch_all, params),
-        modules=frozenset(
-            (qn, _text(row.get(cs.KEY_PATH)))
-            for row in fetch_all(cq.CYPHER_DELTA_MODULES, params)
-            if (qn := _text(row.get(cs.KEY_QUALIFIED_NAME)))
-        ),
-        module_bindings=tuple(
-            binding
-            for binding in (
-                _binding(row)
-                for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTERS, params)
-            )
-            if binding.importer and binding.module
-        ),
+        modules=_touched_modules(fetch_all, params),
+        module_bindings=_module_import_bindings(fetch_all, params),
     )
 
 
