@@ -508,6 +508,11 @@ class CallResolver:
         return non_none[0] if len(non_none) == 1 else var_type
 
     def _follow_reexports(self, class_qn: str) -> str:
+        # A JS/TS default import names `<module>.default`; the module's export
+        # table says which class that is (issue #3179).
+        class_qn = self.import_processor.follow_js_default_import(
+            class_qn, self.type_inference.module_qn_to_file_path, self.function_registry
+        )
         followed = follow_reexports(
             class_qn, self.import_processor.import_mapping, self.function_registry
         )
@@ -2374,6 +2379,16 @@ class CallResolver:
         # candidate's parent may equal an import or sit anywhere under one.
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         imported = set(import_map.values())
+        # A default import names `<module>.default`; the class the module
+        # default-exports is what it makes visible (issue #3179).
+        imported |= {
+            self.import_processor.follow_js_default_import(
+                value,
+                self.type_inference.module_qn_to_file_path,
+                self.function_registry,
+            )
+            for value in imported
+        }
         visible = [
             qn
             for qn in candidates

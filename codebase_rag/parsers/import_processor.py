@@ -4374,6 +4374,25 @@ class ImportProcessor:
             function_registry,
         )
 
+    def follow_js_default_import(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """The definition a default import names, or `qn` unchanged.
+
+        `import Store from "./Store"` maps `Store` to `<module>.default`,
+        where only an anonymous `export default class {}` is registered; the
+        module's export table says which named class or function is its
+        default. Read as `<module>.default`, a default-imported class typed
+        nothing and was visible to no fallback (issue #3179).
+        """
+        if not qn.endswith(cs.IMPORT_DEFAULT_SUFFIX) or qn in function_registry:
+            return qn
+        followed = self.follow_js_reexports(qn, module_paths, function_registry)
+        return followed if followed in function_registry else qn
+
     def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
         """Record what each name an `export` statement publishes stands for.
 
