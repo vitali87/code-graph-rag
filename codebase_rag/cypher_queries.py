@@ -218,15 +218,33 @@ DETACH DELETE p, container, defined
 """
 
 
-# Damage detectors for the issue #897 migration. Sharing always leaves a
-# single-hop signature: the topmost merged node has containment parents in
-# two projects (Project roots are never merged, so the parents are distinct
-# nodes). Keyless rows match the second purge's predicate directly.
+# Damage detectors for the issue #897 migration. The superseded key merged
+# projects in DIFFERENT directories that share a relative layout, so a merged
+# node lies outside one owner's tree. The current key (absolute_path) shares a
+# node only between projects over the SAME files -- one checkout under two
+# names, or a project nested in another -- and the node lies inside every
+# owner's tree, so it is not damage (issue #3025). A parent's tree is a
+# Project's root_path or a Folder's own absolute_path; a parent that records
+# neither predates both and counts as legacy.
+def _outside_tree(root: str) -> str:
+    return (
+        f"({root} IS NULL OR NOT (n.absolute_path = {root} "
+        f"OR n.absolute_path STARTS WITH ({root} + '/') "
+        f"OR n.absolute_path STARTS WITH ({root} + '\\\\')))"
+    )
+
+
+# Sharing always leaves a single-hop signature: the topmost merged node has
+# containment parents in two projects (Project roots are never merged, so the
+# parents are distinct nodes). Keyless rows match the second purge's predicate
+# directly.
 CYPHER_ANY_SHARED_STRUCTURE = (
     "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
-    "WHERE (n:Folder OR n:File) "
-    "WITH n, count(parent) AS parents "
+    "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
+    "WITH n, collect(coalesce(parent.root_path, parent.absolute_path)) AS roots, "
+    "count(parent) AS parents "
     "WHERE parents > 1 "
+    f"AND any(root IN roots WHERE {_outside_tree('root')}) "
     "RETURN 1 AS damaged LIMIT 1"
 )
 
@@ -235,16 +253,29 @@ CYPHER_ANY_KEYLESS_STRUCTURE = (
     "RETURN 1 AS damaged LIMIT 1"
 )
 
-# The superseded relative-path key merged same-layout projects onto shared
-# Folder/File nodes (issue #897). A merged node cannot be split, so anything
-# the containment walk reaches from more than one Project is purged; the
-# next re-index rebuilds it with per-project identity.
+# While a legacy constraint is still in force, every node was written by the
+# old key: anything the containment walk reaches from more than one Project is
+# a merge, which cannot be split, so it is purged and the next re-index
+# rebuilds it with per-project identity.
 CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
     "MATCH (p:Project)"
     "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
     "WHERE (n:Folder OR n:File) "
     "WITH n, count(DISTINCT p) AS owners "
     "WHERE owners > 1 "
+    "DETACH DELETE n RETURN count(n) AS purged"
+)
+
+# Once the constraints are gone, current data shares nodes legitimately, so
+# only a node outside some owner's tree (or under an owner that records no
+# root) is the old key's merge.
+CYPHER_PURGE_CROSS_ROOT_STRUCTURE = (
+    "MATCH (p:Project)"
+    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
+    "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
+    "WITH n, collect(DISTINCT p) AS owners "
+    "WHERE size(owners) > 1 "
+    f"AND any(owner IN owners WHERE {_outside_tree('owner.root_path')}) "
     "DETACH DELETE n RETURN count(n) AS purged"
 )
 
