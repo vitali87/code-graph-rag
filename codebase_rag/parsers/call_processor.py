@@ -7002,6 +7002,15 @@ class CallProcessor:
             self._emit_conditional_rhs_refs(value, scope)
             return
         if (
+            value.type in _INLINE_FUNC_VALUE_TYPES
+            and node.type == cs.TS_VARIABLE_DECLARATOR
+        ):
+            # `const foo = () => {}` is foo's own definition, not a use of
+            # it: referencing it from the scope rooted every arrow const and
+            # dead-code never reported one (issue #2857). Its uses reference
+            # it by name like any function's.
+            return
+        if (
             value.type in _ASSIGNMENT_RHS_REF_TYPES
             or value.type in _INLINE_FUNC_VALUE_TYPES
         ):
