@@ -54,8 +54,39 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "hybrid_property",
         "setter",
         "deleter",
+        # Registration idioms whose handler the framework or the interpreter
+        # calls with no call site in the code (issue #2736): Celery's
+        # `@shared_task`, Flask's error handler and request hooks, FastAPI /
+        # Starlette's exception handler and middleware, Django's signal
+        # `@receiver`, SQLAlchemy's `@event.listens_for`, `@atexit.register`
+        # and Django's `@admin.register`. Those two are dotted, so a bare
+        # `@registry.register` of the project's own is not rooted by default;
+        # a singledispatch implementation's `@generic.register` lives with its
+        # generic (SINGLEDISPATCH_DECORATORS).
+        "shared_task",
+        "errorhandler",
+        "before_request",
+        "after_request",
+        "teardown_request",
+        "before_app_request",
+        "after_app_request",
+        "teardown_app_request",
+        "exception_handler",
+        "middleware",
+        "receiver",
+        "listens_for",
+        "atexit.register",
+        "admin.register",
     }
 )
+
+# A function decorated with one of these dispatches to the implementations
+# registered with `@<it>.register`, so each implementation is reachable exactly
+# when the generic is (issue #2736).
+SINGLEDISPATCH_DECORATORS: frozenset[str] = frozenset(
+    {"singledispatch", "singledispatchmethod"}
+)
+DISPATCH_REGISTER_DECORATOR = "register"
 
 # Go functions the runtime invokes with no explicit call site: `func init()`
 # runs at package load (any number per package), `func main()` is the program
