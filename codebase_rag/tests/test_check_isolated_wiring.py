@@ -27,7 +27,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import (
     CheckError,
     _FileSnapshot,
-    _refuse_graph_holding_io_links,
+    _refuse_project_holding_io_links,
     _refuse_unrestorable_capture,
     run_check,
 )
@@ -167,11 +167,13 @@ class _IoStore:
     def __init__(self, rows: list[ResultRow]) -> None:
         self._rows = rows
         self.queries: list[str] = []
+        self.params: list[PropertyDict | None] = []
 
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
         self.queries.append(query)
+        self.params.append(params)
         return self._rows
 
 
@@ -179,12 +181,13 @@ def test_a_graph_already_holding_an_io_link_is_refused() -> None:
     store = _IoStore([{cs.KEY_REL: cs.RelationshipType.FLOWS_TO.value}])
 
     with pytest.raises(CheckError, match=cs.RelationshipType.FLOWS_TO.value):
-        _refuse_graph_holding_io_links(store)
-    assert store.queries == [cq.CYPHER_CHECK_GRAPH_IO_LINKS]
+        _refuse_project_holding_io_links(store, PROJECT)
+    assert store.queries == [cq.CYPHER_CHECK_PROJECT_IO_LINKS]
+    assert store.params == [{cs.KEY_PROJECT_PREFIX: f"{PROJECT}."}]
 
 
 def test_a_graph_without_io_links_is_accepted() -> None:
-    _refuse_graph_holding_io_links(_IoStore([]))
+    _refuse_project_holding_io_links(_IoStore([]), PROJECT)
 
 
 def test_an_isolated_check_refuses_before_writing_over_io_links(

@@ -261,8 +261,8 @@ CHECK_NOT_INDEXED = (
 # before rebuilding them from the edited tree, so those edges cannot be put
 # back. Refused rather than silently lost (greptile-local, #1718).
 CHECK_ISOLATED_GRAPH_HAS_IO = (
-    "--isolated cannot restore the IO resource links this graph already "
-    "holds ({groups}): cutting a changed file's subtree can leave a resource "
+    "--isolated cannot restore the IO resource links project {project}'s code "
+    "anchors ({groups}): cutting a changed file's subtree can leave a resource "
     "chain unanchored, and the re-ingest's repo-wide resource prune would "
     "delete it. Re-run without --isolated on a graph you can rebuild."
 )
