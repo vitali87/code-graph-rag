@@ -146,6 +146,41 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_RENAME_GO_INTERFACES:
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: name,
+                    **{
+                        k: node.get(k)
+                        for k in (cs.KEY_PATH, cs.KEY_START_LINE, cs.KEY_END_LINE)
+                    },
+                }
+                for name, node in self.nodes.items()
+                if node[cs.KEY_LABEL] == cs.NodeLabel.INTERFACE
+                and str(node.get(cs.KEY_PATH) or "").endswith(cs.EXT_GO)
+            ]
+        if query == cq.CYPHER_RENAME_GO_RECEIVER:
+            owners = [
+                src
+                for src, rel, dst, _props in self.edges
+                if rel == "DEFINES_METHOD" and dst == qn
+            ]
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: owner,
+                    cs.KEY_METHODS: sorted(
+                        str(self.nodes.get(dst, {}).get(cs.KEY_NAME))
+                        for src, rel, dst, _props in self.edges
+                        if src == owner and rel == "DEFINES_METHOD"
+                    ),
+                    cs.KEY_INTERFACES: sorted(
+                        dst
+                        for src, rel, dst, _props in self.edges
+                        if src == owner and rel == "IMPLEMENTS"
+                    ),
+                }
+                for owner in owners
+            ]
         raise AssertionError(f"unexpected query: {query[:50]}")
 
 

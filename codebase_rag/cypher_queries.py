@@ -1139,6 +1139,21 @@ CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
        impl.path AS path, type(r) AS rel_type"""
+# A Go method's receiver type, the names of every method that type defines,
+# and the interfaces go/types proved it implements: Go satisfies interfaces
+# implicitly, so a rename must see the method set it belongs to (issue #3253).
+CYPHER_RENAME_GO_RECEIVER = """MATCH (t)-[:DEFINES_METHOD]->(m:Method)
+WHERE m.qualified_name = $qn AND t.qualified_name STARTS WITH $project_prefix
+MATCH (t)-[:DEFINES_METHOD]->(s:Method)
+WITH t, collect(DISTINCT s.name) AS methods
+OPTIONAL MATCH (t)-[:IMPLEMENTS]->(i)
+RETURN t.qualified_name AS qualified_name, methods,
+       collect(DISTINCT i.qualified_name) AS interfaces"""
+# The project's Go interfaces, with the span their method set is read from.
+CYPHER_RENAME_GO_INTERFACES = """MATCH (i:Interface)
+WHERE i.qualified_name STARTS WITH $project_prefix AND i.path ENDS WITH '.go'
+RETURN i.qualified_name AS qualified_name, i.path AS path,
+       i.start_line AS start_line, i.end_line AS end_line"""
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,

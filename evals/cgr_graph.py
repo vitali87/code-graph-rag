@@ -949,6 +949,51 @@ class _StatefulIngestor:
                         )
         return rows
 
+    # --- Go method sets for rename (issue #3253) ------------------------------
+
+    def _rename_go_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        if query == cq.CYPHER_RENAME_GO_INTERFACES:
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: uid,
+                    cs.KEY_PATH: props.get(cs.KEY_PATH),
+                    cs.KEY_START_LINE: props.get(cs.KEY_START_LINE),
+                    cs.KEY_END_LINE: props.get(cs.KEY_END_LINE),
+                }
+                for (label, uid), props in self.nodes.items()
+                if label == cs.NodeLabel.INTERFACE.value
+                and uid.startswith(prefix)
+                and _str(props.get(cs.KEY_PATH)).endswith(cs.EXT_GO)
+            ]
+        defines_method = cs.RelationshipType.DEFINES_METHOD.value
+        rows: list[ResultRow] = []
+        for method in self._graph_node_ids(_str(params.get(cs.KEY_QN))):
+            if method[0] != cs.NodeLabel.METHOD.value:
+                continue
+            for edge in self._in.get(method, ()):
+                owner = (edge[0], edge[1])
+                if edge[2] != defines_method or not edge[1].startswith(prefix):
+                    continue
+                names = {
+                    _str(self.nodes.get((out[3], out[4]), {}).get(cs.KEY_NAME))
+                    for out in self._out.get(owner, ())
+                    if out[2] == defines_method and out[3] == cs.NodeLabel.METHOD.value
+                }
+                interfaces = sorted(
+                    out[4]
+                    for out in self._out.get(owner, ())
+                    if out[2] == cs.RelationshipType.IMPLEMENTS.value
+                )
+                rows.append(
+                    {
+                        cs.KEY_QUALIFIED_NAME: edge[1],
+                        cs.KEY_METHODS: sorted(names),
+                        cs.KEY_INTERFACES: interfaces,
+                    }
+                )
+        return rows
+
     # --- context slice reads (issue #1536) -----------------------------------
 
     def _context_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
@@ -1170,6 +1215,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_CONTEXT_DOC_SECTIONS
             ):
                 return self._context_rows(query, params or {})
+            case cq.CYPHER_RENAME_GO_RECEIVER | cq.CYPHER_RENAME_GO_INTERFACES:
+                return self._rename_go_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_ALL_PACKAGE_PATHS:
