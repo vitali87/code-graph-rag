@@ -120,10 +120,12 @@ def test_a_member_the_expansion_cannot_handle_is_skipped(
     # the sync completes and the other member is still mapped.
     original = Path.glob
 
-    def glob(self: Path, pattern: str) -> Iterator[Path]:
+    # Keywords pass through: Python 3.13's rglob calls glob with
+    # case_sensitive and recurse_symlinks.
+    def glob(self: Path, pattern: str, **kwargs: bool | None) -> Iterator[Path]:
         if pattern == "crates/a":
             raise RuntimeError("unexpandable")
-        return original(self, pattern)
+        return original(self, pattern, **kwargs)
 
     monkeypatch.setattr(Path, "glob", glob)
     calls = _calls(tmp_path / "rsws", '[".", "crates/a", "crates/b"]')
