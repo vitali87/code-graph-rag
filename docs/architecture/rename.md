@@ -53,6 +53,16 @@ rename cannot rewrite that import, so rewriting the use would leave it naming
 what the barrel no longer exports. Any other use with no such import is
 reported as `heuristic` and refuses like a guessed site (issue #2464).
 
+A destructure that reads the name out of the module is such an import:
+`const { pad } = U` after `import * as U from "./u"` (or
+`const U = require("./u")`) binds `pad` exactly, so the rename rewrites the
+key with its uses (`const { padLeft } = U`), and `{ pad: p }` keeps its own
+local (`{ padLeft: p }`). An object literal's shorthand property keeps its
+key: `export default { pad }` becomes `{ pad: padLeft }`, so every consumer
+reading `.pad` keeps working. The exception is `module.exports = { pad }`,
+the module's own export list, whose key moves with the `require("./u").pad`
+readers the rename rewrites (issue #3252).
+
 ## Refusal
 
 The graph tags each call edge with how it was resolved (issue #1526). A
@@ -80,7 +90,7 @@ name token cannot be found at the recorded position (a stale graph).
 
 An applied rename is measured through the [structural
 delta](structural-delta.md) and held to its
-[contract](postcondition-contract.md): the symbol set and call-site count
+[contract](postcondition-contract.md): the symbol set and call/reference site count
 must be unchanged apart from the renamed hierarchy, no caller may be left
 dangling, no site resolved by guesswork may have been rewritten without
 `--allow-heuristic`, and no duplicate group or import cycle may appear.

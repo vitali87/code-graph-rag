@@ -273,7 +273,45 @@ _JS_NAMED = re.compile(r"\{(?P<names>[^}]*)\}")
 _JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 
 
+# `const { pad, pad: p } = U` (or `= require("./u")`): a destructure that
+# reads exports by key. An entry with a default or a nested pattern is never
+# a site the index binds, so only the two plain shapes are matched.
+_JS_DESTRUCTURE = re.compile(r"\s*(?:const|let|var)\s*\{(?P<names>[^}]*)\}")
+_JS_DESTRUCTURE_ENTRY = re.compile(
+    r"(?P<lead>\s*)(?P<key>[\w$]+)(?P<rest>\s*(?::\s*(?P<local>[\w$]+))?\s*)"
+)
+
+
+def _js_destructure_rewrite(statement: str, move: SymbolMove) -> str | None:
+    """The destructure with the renamed symbol's key renamed (issue #3252).
+
+    `{ pad: p }` keeps its local `p`; a shorthand `{ pad }` rebinds with
+    its uses, as a bare `import { pad }` does, or keeps its local by
+    spelling the key out (`{ padLeft: pad }`). A move cannot retarget a
+    namespace the statement does not name, so only a rename is rewritten.
+    """
+    match = _JS_DESTRUCTURE.match(statement)
+    if match is None or move.old_module != ANY_MODULE or move.new_name is None:
+        return None
+    entries = match.group("names").split(",")
+    for index, entry in enumerate(entries):
+        parts = _JS_DESTRUCTURE_ENTRY.fullmatch(entry)
+        if parts is None or parts.group("key") != move.symbol:
+            continue
+        key = move.new_name
+        if parts.group("local") is None and not move.rebind:
+            key += cs.PATCH_SHORTHAND_KEY_SEPARATOR + move.symbol
+        entries[index] = parts.group("lead") + key + parts.group("rest")
+    return (
+        statement[: match.start("names")]
+        + ",".join(entries)
+        + statement[match.end("names") :]
+    )
+
+
 def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:
+    if (destructured := _js_destructure_rewrite(statement, move)) is not None:
+        return destructured
     spec_match = _JS_SPEC.search(statement)
     if spec_match is None or not _module_matches(spec_match.group("spec"), move):
         return None

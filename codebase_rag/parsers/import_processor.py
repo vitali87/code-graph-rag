@@ -3934,6 +3934,7 @@ class ImportProcessor:
         return cs.SEPARATOR_DOT.join(target_parts)
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
+        declarations: list[Node] = []
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
@@ -3943,10 +3944,41 @@ class ImportProcessor:
                 cs.TS_VARIABLE_DECLARATION,
             ):
                 self._parse_js_require(import_node, module_qn)
+                declarations.append(import_node)
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+        # Once every namespace of the file is bound, wherever it was written.
+        for decl_node in declarations:
+            self._parse_js_namespace_destructure(decl_node, module_qn)
+
+    def _parse_js_namespace_destructure(
+        self, decl_node: Node, current_module: str
+    ) -> None:
+        # `const { pad } = U` with `U` an imported binding reads `pad` out
+        # of what `U` names: out of a whole module (`import * as U`,
+        # `const U = require(...)`) that is the export, as `import { pad }`
+        # would bind it (issue #3252); out of an imported object, its member.
+        bindings = self.import_mapping[current_module]
+        for declarator in decl_node.children:
+            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+                continue
+            name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+            value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+            if name_node is None or value_node is None:
+                continue
+            # A plain name (`const x = U`) or an array pattern destructures
+            # no key, and only a bare `U` can be the imported name itself.
+            namespace = safe_decode_text(value_node)
+            module = bindings.get(namespace) if namespace else None
+            if module is None:
+                continue
+            is_package = namespace in self.js_ts_package_imports.get(current_module, ())
+            for local, imported in _js_destructured_names(name_node):
+                bindings[local] = f"{module}{cs.SEPARATOR_DOT}{imported}"
+                self._record_import_site(current_module, local, decl_node, imported)
+                self._note_js_package_import(current_module, local, is_package)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the

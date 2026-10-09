@@ -187,52 +187,6 @@ def _name_token(
     return None
 
 
-def _destructured_keys(
-    source: bytes, language: cs.SupportedLanguage | None, objects: set[str], name: str
-) -> tuple[list[tuple[int, int]], bool]:
-    """(line, col) of each key `name` that a destructuring declaration reads
-    out of one of `objects`, and whether one such read binds `name` itself.
-
-    `const { pad } = U` and `const { pad: p } = U` read the export by its
-    key into a local of their own (issue #3252).
-    """
-    if language is None:
-        return [], False
-    parsers, _queries = load_parsers()
-    parser = parsers.get(language)
-    if parser is None:
-        return [], False
-    keys: list[tuple[int, int]] = []
-    binds = False
-    stack: list[Node] = [parser.parse(source).root_node]
-    while stack:
-        node = stack.pop()
-        stack.extend(node.named_children)
-        # A declarator (`const { pad } = U`): its name is the pattern.
-        pattern = node.child_by_field_name(cs.FIELD_NAME)
-        value = node.child_by_field_name(cs.FIELD_VALUE)
-        if pattern is None or value is None or _node_text(value) not in objects:
-            continue
-        for entry in pattern.named_children:
-            # `{ pad = fallback }` reads `pad` as `{ pad }` does.
-            if entry.type == cs.TS_OBJECT_ASSIGNMENT_PATTERN:
-                entry = entry.child_by_field_name(cs.FIELD_LEFT) or entry
-            key = (
-                entry.child_by_field_name(cs.FIELD_KEY)
-                if entry.type == cs.TS_PAIR_PATTERN
-                else entry
-            )
-            if key is None or _node_text(key) != name:
-                continue
-            keys.append((key.start_point[0] + 1, key.start_point[1]))
-            binds = binds or key.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN
-    return keys, binds
-
-
-def _node_text(node: Node) -> str:
-    return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
-
-
 def _callee_span(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -489,7 +443,6 @@ class Renamer:
         longer exports, whatever leave the caller gives. Any other is a guess.
         """
         bindings: tuple[set[str], set[str], dict[str, str]] | None = None
-        reads, binding = self._js_namespace_reads(qn, old_name, patcher)
         kept: list[RenameSite] = []
         starred: list[RenameSite] = []
         barrels: set[str] = set()
@@ -511,10 +464,6 @@ class Renamer:
             elif (barrel := star_bound.get(site.path)) is not None:
                 starred.append(site._replace(resolution=cs.RENAME_SITE_STAR_REEXPORT))
                 barrels.add(barrel)
-            elif site.path in binding:
-                # `const { pad } = U`: the use names that local, which keeps
-                # its name while its key follows the rename.
-                continue
             elif site.path not in aliased:
                 kept.append(site._replace(resolution=cs.EdgeResolution.HEURISTIC.value))
         if starred:
@@ -525,53 +474,7 @@ class Renamer:
                 starred,
                 [],
             )
-        return kept + reads
-
-    def _js_namespace_reads(
-        self, qn: str, old_name: str, patcher: Patcher
-    ) -> tuple[list[RenameSite], set[str]]:
-        """Sites for the keys that destructuring reads the definition by out
-        of its module's namespace, and the files where such a read binds the
-        old name itself (issue #3252).
-
-        `import * as U from "./u"` (or `const U = require("./u")`) then
-        `const { pad } = U` reads the export `pad` into a local `pad`: the
-        key follows the rename (`{ padLeft: pad }`), while the local and
-        every use of it keep their name.
-        """
-        module_qn, _path = self._module_of(qn)
-        if qn != f"{module_qn}{cs.SEPARATOR_DOT}{old_name}":
-            return [], set()
-        objects: dict[str, tuple[str, set[str]]] = {}
-        for row in graph_query.importers(self.fetch_all, self.project, module_qn):
-            path, alias = row["path"], row["alias"]
-            if (
-                path
-                and alias
-                and row["imported_name"] in (cs.IMPORTED_NAME_WILDCARD, None)
-            ):
-                objects.setdefault(path, (row["module"], set()))[1].add(alias)
-        reads: list[RenameSite] = []
-        binding: set[str] = set()
-        for path, (module, aliases) in objects.items():
-            language = get_language_for_extension(Path(path).suffix)
-            # Only JS/TS destructures; any other importer is not worth a parse.
-            if language not in cs.JS_TS_LANGUAGES:
-                continue
-            try:
-                source = patcher.source(path)
-            except PatcherError:
-                continue
-            keys, binds = _destructured_keys(source, language, aliases, old_name)
-            reads.extend(
-                RenameSite(
-                    "reference", path, line, col, module, cs.EdgeResolution.EXACT.value
-                )
-                for line, col in keys
-            )
-            if binds:
-                binding.add(path)
-        return reads, binding
+        return kept
 
     @staticmethod
     def _is_member_token(patcher: Patcher, site: RenameSite) -> bool:

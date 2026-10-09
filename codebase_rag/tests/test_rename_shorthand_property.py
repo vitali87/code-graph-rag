@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 from codebase_rag.tests.test_rename_op import _index, _write
 
 _NODE = shutil.which("node")
@@ -101,9 +102,16 @@ def test_a_commonjs_exports_object_renames_its_key_with_its_readers(
     # Negative: `module.exports = { pad }` is the module's export list, and
     # the readers `require("./u").pad` are linked to the function, so the
     # rename moves the key and every reader together, as it did before.
+    # Any other object assigned on it (`module.exports.helpers = { pad }`)
+    # is a value like any other and keeps its key.
     files = {
-        "u.js": 'function pad(s) { return " " + s; }\nmodule.exports = { pad };\n',
-        "main.js": 'const u = require("./u");\nconsole.log(u.pad("q"));\n',
+        "u.js": (
+            'function pad(s) { return " " + s; }\nmodule.exports = { pad };\n'
+            "module.exports.helpers = { pad };\n"
+        ),
+        "main.js": (
+            'const u = require("./u");\nconsole.log(u.pad("q"), u.helpers.pad("h"));\n'
+        ),
     }
     for rel, text in files.items():
         _write(temp_repo, rel, text)
@@ -111,17 +119,20 @@ def test_a_commonjs_exports_object_renames_its_key_with_its_readers(
 
     _rename_pad(temp_repo, mock_ingestor, "u")
 
-    assert "module.exports = { padLeft };" in (temp_repo / "u.js").read_text()
+    u_js = (temp_repo / "u.js").read_text()
+    assert "module.exports = { padLeft };" in u_js, u_js
+    assert "module.exports.helpers = { pad: padLeft };" in u_js, u_js
     assert 'u.padLeft("q")' in (temp_repo / "main.js").read_text()
     assert _node(temp_repo, "main.js") == before
 
 
 @needs_node
-def test_a_namespace_destructure_renames_its_key_and_keeps_its_binding(
+def test_a_namespace_destructure_renames_with_its_uses(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # `const { pad } = U` reads the export `pad` into a local `pad`: the key
-    # follows the rename and the local, with every use of it, stays.
+    # `const { pad } = U` reads the export `pad` as `import { pad }` does:
+    # the key follows the rename and the local is rebound with its uses;
+    # `{ pad: p }` keeps its own local `p`.
     files = {
         "package.json": '{"type": "module"}\n',
         "u.js": 'export function pad(s) { return " " + s; }\n',
@@ -138,9 +149,9 @@ def test_a_namespace_destructure_renames_its_key_and_keeps_its_binding(
     _rename_pad(temp_repo, mock_ingestor, "u")
 
     assert (temp_repo / "main.js").read_text() == (
-        'import * as U from "./u.js";\nconst { padLeft: pad } = U;\n'
+        'import * as U from "./u.js";\nconst { padLeft } = U;\n'
         "const { padLeft: p, missing = 1 } = U;\n"
-        'console.log(pad("y") + p("z") + missing);\n'
+        'console.log(padLeft("y") + p("z") + missing);\n'
     )
     assert _node(temp_repo, "main.js") == before
 
@@ -149,11 +160,14 @@ def test_a_namespace_destructure_renames_its_key_and_keeps_its_binding(
 def test_a_required_module_destructure_renames_its_key(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
+    # The same through CommonJS, and `{ pad: p } = require(...)`, whose key
+    # the rename used to leave behind.
     files = {
         "u.js": 'function pad(s) { return " " + s; }\nmodule.exports = { pad };\n',
         "main.js": (
-            'const U = require("./u");\nconst { pad = null } = U;\n'
-            'console.log(pad("y"));\n'
+            'const U = require("./u");\nconst { pad } = U;\n'
+            'const { pad: p } = require("./u");\n'
+            'console.log(pad("y") + p("z"));\n'
         ),
     }
     for rel, text in files.items():
@@ -163,7 +177,11 @@ def test_a_required_module_destructure_renames_its_key(
     _rename_pad(temp_repo, mock_ingestor, "u")
 
     assert "module.exports = { padLeft };" in (temp_repo / "u.js").read_text()
-    assert "const { padLeft: pad = null } = U;" in (temp_repo / "main.js").read_text()
+    assert (temp_repo / "main.js").read_text() == (
+        'const U = require("./u");\nconst { padLeft } = U;\n'
+        'const { padLeft: p } = require("./u");\n'
+        'console.log(padLeft("y") + p("z"));\n'
+    )
     assert _node(temp_repo, "main.js") == before
 
 
@@ -178,13 +196,15 @@ def test_a_destructure_of_another_object_keeps_its_key(
         "package.json": '{"type": "module"}\n',
         "u.js": (
             'export function pad(s) { return " " + s; }\n'
-            'export default { pad: (s) => "d" + s };\n'
+            'function shout(s) { return "d" + s; }\n'
+            "export default { pad: shout };\nexport const api = { pad };\n"
         ),
         "main.js": (
-            'import def, * as U from "./u.js";\n'
+            'import def, * as U from "./u.js";\nimport { api } from "./u.js";\n'
             'const other = { pad: (s) => "o" + s };\nconst { pad: p } = other;\n'
             "const { pad: q } = U;\nconst { pad: r } = def;\n"
-            'console.log(p("y") + q("z") + r("x"));\n'
+            "const { pad: s } = api;\n"
+            'console.log(p("y") + q("z") + r("x") + s("w"));\n'
         ),
     }
     for rel, text in files.items():
@@ -197,6 +217,7 @@ def test_a_destructure_of_another_object_keeps_its_key(
     assert "const { pad: p } = other;" in main, main
     assert "const { padLeft: q } = U;" in main, main
     assert "const { pad: r } = def;" in main, main
+    assert "const { pad: s } = api;" in main, main
     assert _node(temp_repo, "main.js") == before
 
 
@@ -256,3 +277,43 @@ def test_a_method_rename_leaves_a_namespace_destructure_alone(
     assert report.applied, report.message
     assert "  padLeft(s) { return s; }" in (temp_repo / "u.js").read_text()
     assert (temp_repo / "main.js").read_text() == files["main.js"]
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param(_ESM, id="shorthand-object"),
+        pytest.param(
+            {
+                "package.json": '{"type": "module"}\n',
+                "u.js": 'export function pad(s) { return " " + s; }\n',
+                "main.js": (
+                    'import * as U from "./u.js";\nconst { pad } = U;\n'
+                    'console.log(pad("y"));\n'
+                ),
+            },
+            id="namespace-destructure",
+        ),
+    ],
+)
+def test_the_rename_passes_its_postcondition(
+    temp_repo: Path, files: dict[str, str]
+) -> None:
+    # Through the re-index check `cgr rename` runs: `{ pad: padLeft }` links
+    # its value as `{ pad }` did, and `padLeft` read out of `U` binds as
+    # `pad` did, so no site is lost and nothing is rolled back.
+    root = temp_repo / PROJECT
+    store, updater = _real_project(root, files)
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.u.pad",
+        "padLeft",
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict.failures

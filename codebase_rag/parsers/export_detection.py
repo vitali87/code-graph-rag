@@ -557,7 +557,7 @@ def _commonjs_export_local_names(statement: Node) -> list[str]:
     value = assignment.child_by_field_name(cs.FIELD_RIGHT)
     if target is None or value is None:
         return []
-    if is_module_exports(target):
+    if _is_module_exports(target):
         if value.type == cs.TS_OBJECT:
             return _object_identifier_values(value)
         return _identifier_names(value)
@@ -568,7 +568,7 @@ def _commonjs_export_local_names(statement: Node) -> list[str]:
     return []
 
 
-def is_module_exports(node: Node) -> bool:
+def _is_module_exports(node: Node) -> bool:
     if node.type != cs.TS_MEMBER_EXPRESSION:
         return False
     obj = node.child_by_field_name(cs.FIELD_OBJECT)
@@ -586,7 +586,7 @@ def _is_exports_object(node: Node | None) -> bool:
         return False
     if node.type == cs.TS_IDENTIFIER:
         return node.text == _JS_EXPORTS_KEYWORD_BYTES
-    return is_module_exports(node)
+    return _is_module_exports(node)
 
 
 def _object_identifier_values(obj: Node) -> list[str]:
