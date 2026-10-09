@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 from codebase_rag.tests.test_rename_op import _index, _write
@@ -26,7 +27,12 @@ needs_node = pytest.mark.skipif(_NODE is None, reason="node is not installed")
 def _node(root: Path, entry: str) -> str:
     assert _NODE is not None
     result = subprocess.run(
-        [_NODE, entry], cwd=root, capture_output=True, text=True, check=False
+        [_NODE, entry],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
