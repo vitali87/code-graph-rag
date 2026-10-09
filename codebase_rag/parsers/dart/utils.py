@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -757,16 +757,32 @@ def dart_import_prefix(import_node: Node) -> str | None:
     return None
 
 
-def dart_resolve_import(uri: str, module_qn: str) -> str:
+def dart_resolve_import(
+    uri: str, module_qn: str, packages: Mapping[str, str] | None = None
+) -> str:
     """Full import target: external URIs kept verbatim, relative paths resolved.
 
-    `dart:` and `package:` targets are external and returned unchanged. A
-    relative path is resolved against the importing module's package to a
-    project-internal module qn (`../utils/helper.dart` -> `project.lib.utils.helper`).
+    `dart:` targets are external and returned unchanged, and so is a
+    `package:` target unless `packages` maps its package name to that
+    package's `lib/` qn: then it names a project module, as a relative path
+    does (issue #3278). A relative path is resolved against the importing
+    module's package to a project-internal module qn
+    (`../utils/helper.dart` -> `project.lib.utils.helper`).
     """
+    if uri.startswith(cs.DART_SCHEME_PACKAGE) and packages:
+        name, sep, rest = uri[len(cs.DART_SCHEME_PACKAGE) :].partition(
+            cs.SEPARATOR_SLASH
+        )
+        if sep and rest and (lib_qn := packages.get(name)):
+            return _dart_path_qn(lib_qn.split(cs.SEPARATOR_DOT), rest)
     if uri.startswith(cs.DART_SCHEME_DART) or uri.startswith(cs.DART_SCHEME_PACKAGE):
         return uri
-    parts = module_qn.split(cs.SEPARATOR_DOT)[:-1]
+    return _dart_path_qn(module_qn.split(cs.SEPARATOR_DOT)[:-1], uri)
+
+
+def _dart_path_qn(base: list[str], uri: str) -> str:
+    # `base` (a directory's qn parts) walked along a `/`-separated path.
+    parts = list(base)
     for segment in uri.replace("\\", cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH):
         if segment in ("", cs.PATH_CURRENT_DIR):
             continue

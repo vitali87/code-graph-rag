@@ -46,6 +46,7 @@ from .dart import (
     dart_import_prefix,
     dart_local_name,
     dart_resolve_import,
+    discover_dart_packages,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
@@ -958,6 +959,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_dart_packages",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -1243,6 +1245,10 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # The repo's own Dart packages, pubspec `name:` -> qn of its `lib/`,
+        # found on the first `package:` import so a project with no Dart
+        # pays no extra walk (issue #3278).
+        self._dart_packages: dict[str, str] | None = None
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -5592,7 +5598,12 @@ class ImportProcessor:
             uri = dart_extract_uri(import_node)
             if not uri:
                 continue
-            if full_name := dart_resolve_import(uri, module_qn):
+            packages = (
+                self._dart_package_libs()
+                if uri.startswith(cs.DART_SCHEME_PACKAGE)
+                else None
+            )
+            if full_name := dart_resolve_import(uri, module_qn, packages):
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
@@ -5621,6 +5632,16 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _dart_package_libs(self) -> dict[str, str]:
+        # `package:<name>/<path>` with `<name>` a pubspec in this repository
+        # names a module of the project, not a dependency (issue #3278).
+        if self._dart_packages is None:
+            self._dart_packages = {
+                name: f"{self.project_name}{cs.SEPARATOR_DOT}{lib}"
+                for name, lib in discover_dart_packages(self.repo_path).items()
+            }
+        return self._dart_packages
 
     def _bind_dart_import_prefix(
         self,
