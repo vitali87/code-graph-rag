@@ -258,6 +258,12 @@ message GraphCodeIndex {
     // The file's own documentation (issue #1789): a Python module docstring,
     // a Rust `//!` block, a Go package comment, Javadoc/JSDoc, and so on.
     string docstring = 11;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    int32 start_line = 20;
+    int32 end_line = 21;
+    repeated string unresolved_specifiers = 22;
+    repeated string unresolved_references = 23;
   }
 
   message ExternalModule {
@@ -276,6 +282,9 @@ message GraphCodeIndex {
     string name = 2;
     string path = 3;
     string implements_module = 4;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string module_type = 20;
   }
 
   // C++20 only
@@ -285,6 +294,9 @@ message GraphCodeIndex {
 
     string name = 2;
     string path = 3;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string module_type = 20;
   }
 
   message ExternalPackage {
@@ -491,6 +503,17 @@ message GraphCodeIndex {
     // A JS/TS object literal's function value (#2435): reached through its
     // object, never by its key alone, so a bare call must not bind to it.
     bool is_object_member = 13;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string path = 20;
+    repeated string modifiers = 21;
+    int32 start_col = 22;
+    int32 name_start_line = 23;
+    int32 name_start_col = 24;
+    string anchor_hash = 25;
+    repeated string positional_params = 26;
+    bool is_body_scoped_name = 27;
+    bool is_macro = 28;
   }
 
   message Method {
@@ -509,6 +532,18 @@ message GraphCodeIndex {
     // Annotations as written (#1527); absent return_type is the empty string.
     string return_type = 10;
     repeated string param_types = 11;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string path = 20;
+    repeated string modifiers = 21;
+    int32 start_col = 22;
+    int32 name_start_line = 23;
+    int32 name_start_col = 24;
+    string anchor_hash = 25;
+    repeated string positional_params = 26;
+    bool is_exported = 27;
+    bool is_property = 28;
+    bool overrides_external = 29;
   }
 
   message Class {
@@ -523,6 +558,12 @@ message GraphCodeIndex {
     bool is_exported = 7;
     // The namespace a C# type is declared in (issue #1629).
     string namespace = 8;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string path = 20;
+    repeated string modifiers = 21;
+    int32 start_col = 22;
+    string anchor_hash = 23;
   }
 
   message Interface {
@@ -533,6 +574,16 @@ message GraphCodeIndex {
     string path = 3;
     string absolute_path = 4;
     string namespace = 5;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
   }
 
   message Enum {
@@ -543,6 +594,16 @@ message GraphCodeIndex {
     string path = 3;
     string absolute_path = 4;
     string namespace = 5;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
   }
 
   message Type {
@@ -550,6 +611,17 @@ message GraphCodeIndex {
     string qualified_name = 1;
 
     string name = 2;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
+    string path = 28;
   }
 
   message Union {
@@ -557,4 +629,15 @@ message GraphCodeIndex {
     string qualified_name = 1;
 
     string name = 2;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
+    string path = 28;
   }
