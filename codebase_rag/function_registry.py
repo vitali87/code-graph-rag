@@ -32,6 +32,7 @@ class FunctionRegistryTrie:
         "_body_scoped_names",
         "_callable_params",
         "_reserved",
+        "_internal_linkage",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -53,6 +54,9 @@ class FunctionRegistryTrie:
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
+        # C/C++ functions with internal linkage (`static` at file scope):
+        # callable only from their own translation unit (issue #3154).
+        self._internal_linkage: set[QualifiedName] = set()
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -103,6 +107,12 @@ class FunctionRegistryTrie:
 
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._body_scoped_names
+
+    def mark_internal_linkage(self, qualified_name: QualifiedName) -> None:
+        self._internal_linkage.add(qualified_name)
+
+    def has_internal_linkage(self, qualified_name: QualifiedName) -> bool:
+        return qualified_name in self._internal_linkage
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
@@ -197,6 +207,7 @@ class FunctionRegistryTrie:
         self._object_members.discard(qualified_name)
         self._abstracts.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
+        self._internal_linkage.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 
         self._invalidate_ending_with_cache(simple_name)

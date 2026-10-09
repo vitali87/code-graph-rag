@@ -3925,6 +3925,8 @@ class CallResolver:
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
                 or qn.startswith(own_module)
             ]
+        if language in cs.C_FAMILY_LANGUAGES:
+            possible_matches = self._linkable_from(possible_matches, module_qn)
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
@@ -3937,6 +3939,38 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _linkable_from(self, candidates: list[str], module_qn: str) -> list[str]:
+        # A `static` C/C++ function has internal linkage: only its own
+        # translation unit can call it, i.e. its own file or one that
+        # `#include`s it, directly or through other headers. A bare `now()` in
+        # main.c bound a.c's private `static now()` over the extern one it
+        # links against (redis: every cross-file `mstime()` landed on
+        # quicklist.c's static copy, issue #3154).
+        own = f"{module_qn}{cs.SEPARATOR_DOT}"
+        private = {
+            qn
+            for qn in candidates
+            if self.function_registry.has_internal_linkage(qn)
+            and not qn.startswith(own)
+        }
+        if not private:
+            return candidates
+        units = tuple(
+            f"{unit}{cs.SEPARATOR_DOT}" for unit in self._include_closure(module_qn)
+        )
+        return [qn for qn in candidates if qn not in private or qn.startswith(units)]
+
+    def _include_closure(self, module_qn: str) -> set[str]:
+        import_mapping = self.import_processor.import_mapping
+        seen = {module_qn}
+        pending = [module_qn]
+        while pending:
+            for target in import_mapping.get(pending.pop(), {}).values():
+                if target not in seen:
+                    seen.add(target)
+                    pending.append(target)
+        return seen
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:

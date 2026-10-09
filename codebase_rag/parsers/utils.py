@@ -254,6 +254,16 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return decode_node_text(text_bytes)
 
 
+def has_internal_linkage(props: Mapping[str, object]) -> bool:
+    """A C/C++ function declared `static` at file scope (issue #3154).
+
+    Only its own translation unit can call it. Read from the node's
+    `modifiers`, so ingest and an incremental rehydration agree.
+    """
+    modifiers = props.get(cs.KEY_MODIFIERS)
+    return isinstance(modifiers, list) and cs.CPP_KEYWORD_STATIC in modifiers
+
+
 def node_site_properties(node: Node) -> PropertyDict:
     """Edge-site span of a tree-sitter node (issue #1522).
 
