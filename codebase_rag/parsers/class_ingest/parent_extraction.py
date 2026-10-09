@@ -243,6 +243,18 @@ def extract_parent_classes(
             if (parent_name := php_base_simple_name(child))
         )
 
+    # A PHP `use Describes;` in a class body copies the trait's methods into
+    # the class, so `$this->describe()` reaches them as a mixin's would
+    # (issue #3169).
+    if body := find_child_by_type(class_node, cs.TS_PHP_DECLARATION_LIST):
+        parent_classes.extend(
+            resolve_to_qn(trait_name, module_qn)
+            for use in body.children
+            if use.type == cs.TS_PHP_USE_DECLARATION
+            for child in use.children
+            if (trait_name := php_base_simple_name(child))
+        )
+
     if class_node.type == cs.TS_RS_TRAIT_ITEM:
         parent_classes.extend(
             _rust_supertrait_parents(class_node, module_qn, resolve_to_qn)
