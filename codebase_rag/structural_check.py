@@ -38,7 +38,7 @@ from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_st
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
-from .utils.path_utils import derive_project_name
+from .utils.path_utils import derive_project_name, should_skip_path
 
 _GIT_DELETED = "D"
 
@@ -394,8 +394,24 @@ def run_check(
     the re-ingest is measured and then undone (see `check_isolation`).
     """
     changed, deleted = changed_since(repo_root, base)
-    changed = normalise_paths(changed, repo_root)
-    deleted = normalise_paths(deleted, repo_root)
+
+    def indexed(rel: str) -> bool:
+        # git lists every untracked file `.gitignore` leaves in, and a new
+        # repo's `.venv` or `node_modules` is all of them: the files a sync
+        # would skip are not the edit (issue #3264). Skipped before anything
+        # resolves them, so an interpreter symlink leaving the repository
+        # cannot abort the check, and before the snapshots, whose path
+        # filters scale with the list.
+        return not should_skip_path(
+            repo_root / rel,
+            repo_root,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        )
+
+    changed = [p for p in normalise_paths(changed, repo_root) if indexed(p)]
+    deleted = [p for p in normalise_paths(deleted, repo_root) if indexed(p)]
     updater = GraphUpdater(
         ingestor=ingestor,
         repo_path=repo_root,
