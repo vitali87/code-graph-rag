@@ -232,6 +232,12 @@ def _impl_type_node_name(type_node: Node) -> tuple[bool, str | None]:
     # (decided, name) for one impl target/trait type node; not decided means
     # the node carries no name here and the caller keeps scanning.
     match type_node.type:
+        case cs.TS_RS_REFERENCE_TYPE | cs.TS_RS_POINTER_TYPE:
+            # `impl Serializer for &'a mut Ser` is on `Ser`: the reference only
+            # changes how `self` is held. Skipping it dropped every method of
+            # serde's Serializer/Deserializer impls (issue #3175).
+            inner = type_node.child_by_field_name(cs.FIELD_TYPE)
+            return _impl_type_node_name(inner) if inner is not None else (False, None)
         case cs.TS_GENERIC_TYPE:
             ident = next(
                 (c for c in type_node.children if c.type == cs.TS_TYPE_IDENTIFIER),
