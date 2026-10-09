@@ -146,6 +146,20 @@ class TestCandidateSelection:
         assert "nothing to prune" in result.output
         mock_ingestor.delete_project.assert_not_called()
 
+    def test_undeterminable_cwd_prunes_nothing(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # A shell can outlive its own directory: with no cwd to exempt or
+        # compare against, no project may be a candidate (#2479).
+        with patch(
+            "codebase_rag.cli.Path.cwd", side_effect=FileNotFoundError("cwd gone")
+        ):
+            result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        assert "nothing to prune" in result.output
+        _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
+
     def test_legacy_project_without_root_is_not_a_candidate(
         self, mock_memgraph_connect: MagicMock, roots: dict[str, str]
     ) -> None:

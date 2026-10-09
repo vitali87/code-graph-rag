@@ -42,7 +42,9 @@ def _load(path: Path) -> _StateShape:
             logger.warning(f"Ignoring malformed cgr state in {path}: last_sync")
             return _StateShape()
         return _StateShape(last_sync=last_sync)
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, ValueError) as e:
+        # ValueError covers both a broken JSON body and an invalid-UTF-8 one
+        # (UnicodeDecodeError); the state is best-effort by contract.
         logger.warning(f"Failed to load cgr state from {path}: {e}")
     return _StateShape()
 

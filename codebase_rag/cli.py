@@ -2987,10 +2987,14 @@ def _missing_root_candidates(roots: dict[str, str | None]) -> dict[str, str]:
     """Projects whose recorded root is provably gone (issue #2479).
 
     The checkout cgr itself runs from is never a candidate, whatever the
-    stat says: the directory of the process asking the question cannot be
-    missing while that process is alive.
+    stat says. A shell can survive its own directory being deleted, so a
+    dead cwd reads as an unknown, not as an exemption: the question is
+    undeterminable and nothing is a candidate.
     """
-    cwd = Path.cwd().resolve()
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return {}
     missing: dict[str, str] = {}
     for project_name, root in roots.items():
         if not root:

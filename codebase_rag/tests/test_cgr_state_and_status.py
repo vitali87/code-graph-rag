@@ -51,6 +51,13 @@ class TestRecordSync:
         cgr_state.record_sync("alpha")
         assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
 
+    def test_undecodable_state_is_ignored(self, _temp_home: Path) -> None:
+        _temp_home.mkdir(parents=True, exist_ok=True)
+        cgr_state.state_path().write_bytes(b"\xff\xfe\x00not utf-8")
+        assert cgr_state.read_sync_timestamps() == {}
+        cgr_state.record_sync("alpha")
+        assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
+
     def test_concurrent_writers_do_not_lose_updates(self, _temp_home: Path) -> None:
         import threading
 
