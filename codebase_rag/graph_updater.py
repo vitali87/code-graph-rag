@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple, cast
@@ -3299,7 +3299,7 @@ class GraphUpdater:
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
 
-    def _rehydrate_class_field_types(self, qn: str, fields: list[object]) -> None:
+    def _rehydrate_class_field_types(self, qn: str, fields: Sequence[object]) -> None:
         field_types: dict[str, str] = {}
         for entry in fields:
             name, sep, type_name = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
