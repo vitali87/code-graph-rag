@@ -96,6 +96,30 @@ def _decode(source: bytes, codec: str, path: Path) -> str | None:
         return None
 
 
+# Checked longest first: the UTF-32 LE mark begins with the UTF-16 LE one.
+_WIDE_BOMS = (
+    (codecs.BOM_UTF32_LE, cs.ENCODING_UTF32),
+    (codecs.BOM_UTF32_BE, cs.ENCODING_UTF32),
+    (codecs.BOM_UTF16_LE, cs.ENCODING_UTF16),
+    (codecs.BOM_UTF16_BE, cs.ENCODING_UTF16),
+)
+
+
+def decode_wide_source(source: bytes, path: Path) -> str | None:
+    """The text of a UTF-16 or UTF-32 source marked by its BOM, in any language.
+
+    tree-sitter read such a file's NUL-interleaved bytes as UTF-8 and found no
+    declarations, so a UTF-16 `.cs`, `.java` or `.cpp` was indexed as an
+    empty module (issue #3153). The BOM-aware codecs strip the mark and pick
+    the byte order from it. Newlines decode to newlines, so the text has the
+    file's lines. None for any other file, or one that fails to decode.
+    """
+    for bom, codec in _WIDE_BOMS:
+        if source.startswith(bom):
+            return _decode(source, codec, path)
+    return None
+
+
 def decode_python_source(source: bytes, path: Path) -> str | None:
     """The text of a Python source that declares its encoding, BOM included.
 
@@ -112,11 +136,14 @@ def grammar_bytes(
 ) -> bytes:
     """The bytes to hand tree-sitter for `source`.
 
-    A Python source declaring a non-UTF-8 encoding comes back re-encoded as
-    UTF-8. Everything else is returned as the same object: other languages
-    have no such declaration, and a UTF-8 file (BOM or not) is already what
-    the grammar reads.
+    A UTF-16 or UTF-32 source with a BOM, in any language, and a Python source
+    declaring a non-UTF-8 encoding come back re-encoded as UTF-8. Everything
+    else is returned as the same object: other languages have no encoding
+    declaration, and a UTF-8 file (BOM or not) is already what the grammar
+    reads.
     """
+    if (wide := decode_wide_source(source, path)) is not None:
+        return wide.encode(cs.ENCODING_UTF8, errors="surrogatepass")
     if language != cs.SupportedLanguage.PYTHON:
         return source
     codec = _declared_codec(source, path)
