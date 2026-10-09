@@ -123,6 +123,12 @@ TS_PY_FINALLY_CLAUSE = "finally_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
+# An annotation's wrapper and the shapes of an optional one (`X | None`,
+# `Optional[X]`).
+TS_PY_TYPE = "type"
+TS_PY_NONE = "none"
+TS_PY_GENERIC_TYPE = "generic_type"
+TS_PY_TYPE_PARAMETER = "type_parameter"
 TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
@@ -300,6 +306,45 @@ PY_SCORE_SUFFIX_MATCH = 90
 PY_SCORE_CONTAINS_BASE = 80
 
 TYPE_INFERENCE_LIST = "list"
+# The builtin a Python literal evaluates to (issue #2859): a method called on
+# one is the builtin's (`"-".join` is `str.join`), never a first-party method
+# that shares its name. A list comprehension is left out of assignment typing,
+# which types it by its element for loop inference.
+TS_PY_INTEGER = "integer"
+TS_PY_FLOAT = "float"
+TS_PY_STRING_START = "string_start"
+PY_TYPE_STR = "str"
+PY_TYPE_BYTES = "bytes"
+PY_TYPE_DICT = "dict"
+PY_TYPE_SET = "set"
+PY_TYPE_TUPLE = "tuple"
+PY_TYPE_INT = "int"
+PY_TYPE_FLOAT = "float"
+PY_BYTES_PREFIX_CHAR = "b"
+PY_LITERAL_BUILTIN_TYPES: dict[str, str] = {
+    TS_PY_STRING: PY_TYPE_STR,
+    TS_PY_CONCATENATED_STRING: PY_TYPE_STR,
+    TS_PY_DICTIONARY: PY_TYPE_DICT,
+    TS_PY_DICTIONARY_COMPREHENSION: PY_TYPE_DICT,
+    TS_PY_LIST: TYPE_INFERENCE_LIST,
+    TS_PY_SET: PY_TYPE_SET,
+    TS_PY_SET_COMPREHENSION: PY_TYPE_SET,
+    TS_PY_TUPLE: PY_TYPE_TUPLE,
+    TS_PY_INTEGER: PY_TYPE_INT,
+    TS_PY_FLOAT: PY_TYPE_FLOAT,
+}
+# A receiver literal written inline (`"-".join`, `[x for x in y].count`) is
+# its builtin too, a list comprehension included.
+PY_RECEIVER_LITERAL_TYPES: dict[str, str] = {
+    **PY_LITERAL_BUILTIN_TYPES,
+    TS_PY_LIST_COMPREHENSION: TYPE_INFERENCE_LIST,
+}
+PY_BUILTIN_VALUE_TYPES = frozenset(PY_LITERAL_BUILTIN_TYPES.values()) | {PY_TYPE_BYTES}
+# Opens a generic annotation's arguments: `dict[str, int]` names `dict`.
+PY_GENERIC_ARGS_OPEN = "["
+# Only these can open a literal receiver's text: a quote, a bracket, a digit,
+# or a string prefix (`b"`, `rf'`). Anything else is never parsed.
+PY_LITERAL_RECEIVER_RE = r"""(?:[rRbBuUfF]{1,2})?["']|[\[{(0-9]"""
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"

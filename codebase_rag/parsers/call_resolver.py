@@ -19,7 +19,7 @@ from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .parameter_nodes import c_family_parameter_list
-from .py import resolve_class_name
+from .py import python_literal_text_type, resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -1559,6 +1559,12 @@ class CallResolver:
         if self._receiver_is_external_python_module(call):
             self._remember_cacheable(cache_key, None)
             return None
+        # `"-".join(...)`, `self.cache.get(k)` on `self.cache = {}`: the
+        # builtin's method. The probes below match the name alone, and bound
+        # it to any first-party method that shares it (issue #2859).
+        if self._receiver_is_python_builtin_value(call):
+            self._remember_cacheable(cache_key, None)
+            return None
         handled, result = self._resolve_imported_or_module_member(call, cache_key)
         if handled:
             return result
@@ -2642,6 +2648,31 @@ class CallResolver:
         # pre-pass cache the very guess the scan is meant to refuse.
         language = call.language or self._module_language(call.module_qn)
         return language == cs.SupportedLanguage.PYTHON
+
+    def _receiver_is_python_builtin_value(self, call: _CallSite) -> bool:
+        # A literal receiver (`"-"`, `{}`, `[x for x in y]`), or one whose
+        # type is a builtin's: a local or attribute assigned a literal, or
+        # annotated as one. `rpartition`, so `self.cache` is the receiver of
+        # `self.cache.get` and `"a.b"` of `"a.b".join`.
+        if call.constructing or not self._is_python_call(call):
+            return False
+        receiver, sep, _method = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return False
+        typed = (call.local_var_types or {}).get(receiver)
+        if typed is not None:
+            # A builtin's name the module binds itself (`from lib import Bag
+            # as dict`) is that binding, not the builtin (Greptile, PR #2912).
+            return typed in cs.PY_BUILTIN_VALUE_TYPES and not self._module_binds(
+                call.module_qn, typed
+            )
+        return python_literal_text_type(receiver) is not None
+
+    def _module_binds(self, module_qn: str, name: str) -> bool:
+        return (
+            name in self.import_processor.import_mapping.get(module_qn, {})
+            or f"{module_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+        )
 
     def _receiver_is_external_python_module(self, call: _CallSite) -> bool:
         # True for a Python `mod.attr(...)` whose `mod` is bound by an import

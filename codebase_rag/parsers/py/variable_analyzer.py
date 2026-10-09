@@ -17,7 +17,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import python_literal_type, resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -111,6 +111,47 @@ def _container_element_type(type_str: str | None) -> str | None:
     ):
         return type_str[len(cs.PY_LIST_TYPE_PREFIX) : -1] or None
     return None
+
+
+def _optional_member(annotation: ASTNode) -> ASTNode | None:
+    """The one type an optional annotation allows besides None (`X` of
+    `X | None`, `None | X`, `Optional[X]`), the annotation itself when it is
+    no union, or None for any other union."""
+    node = annotation
+    if node.type == cs.TS_PY_TYPE and node.named_children:
+        node = node.named_children[0]
+    if node.type == cs.TS_PY_BINARY_OPERATOR:
+        members = [
+            node.child_by_field_name(cs.TS_FIELD_LEFT),
+            node.child_by_field_name(cs.TS_FIELD_RIGHT),
+        ]
+        others = [m for m in members if m is not None and m.type != cs.TS_PY_NONE]
+        return others[0] if len(others) == 1 and None not in members else None
+    if node.type == cs.TS_PY_GENERIC_TYPE:
+        head = next(iter(node.named_children), None)
+        params = next(
+            (c for c in node.named_children if c.type == cs.TS_PY_TYPE_PARAMETER), None
+        )
+        if (
+            head is None
+            or safe_decode_text(head) != cs.PY_TYPING_OPTIONAL
+            or params is None
+        ):
+            return node
+        return params.named_children[0] if len(params.named_children) == 1 else None
+    return node
+
+
+def _builtin_annotation(annotation: ASTNode) -> str | None:
+    """The builtin an attribute annotation names (`dict`, `list[int]`, and
+    `dict | None` or `Optional[dict]`: the value is that builtin whenever it
+    is not None), or None for any other type."""
+    member = _optional_member(annotation)
+    if member is None:
+        return None
+    text = (safe_decode_text(member) or "").split(cs.PY_GENERIC_ARGS_OPEN, 1)[0]
+    name = text.strip()
+    return name if name in cs.PY_BUILTIN_VALUE_TYPES else None
 
 
 class PythonVariableAnalyzerMixin(_VarBase):
@@ -381,6 +422,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # (already-seeded) parameter or local, so flow it onto the attribute.
             ident = safe_decode_text(right_node)
             assigned_type = local_var_types.get(ident) if ident else None
+        if not assigned_type:
+            # `self.cache = {}`: the builtin, so `self.cache.get(k)` is
+            # `dict.get` (issue #2859). An annotation says more, and wins:
+            # `self.cache: dict = {}` is the builtin its annotation names
+            # (CodeRabbit, PR #2912), and any other annotation is no builtin.
+            annotation = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+            assigned_type = (
+                python_literal_type(right_node)
+                if annotation is None
+                else _builtin_annotation(annotation)
+            )
         if not assigned_type:
             return
         local_var_types[attr_name] = assigned_type
@@ -1000,10 +1052,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
+        if local_var_types.get(var_name) == cs.PY_TYPE_STR:
+            # A string iterates as one-character strings (CodeRabbit, PR #2912).
+            return cs.PY_TYPE_STR
         if (
             var_name in local_var_types
             and (var_type := local_var_types[var_name])
-            and var_type != cs.TYPE_INFERENCE_LIST
+            # A builtin value (`d = {}`) does not iterate as itself.
+            and var_type not in cs.PY_BUILTIN_VALUE_TYPES
         ):
             # A container-marked variable (`widgets = load_widgets()` with a
             # `-> list[Widget]` annotation) iterates as its element type.
