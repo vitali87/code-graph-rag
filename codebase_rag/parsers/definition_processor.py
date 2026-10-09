@@ -774,6 +774,7 @@ class DefinitionProcessor(
             module_qn, self._pending_direct_module_exports
         )
         self._pending_direct_module_exports = []
+        self._record_esm_default_export(root_node, module_qn)
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))

@@ -927,6 +927,7 @@ class ImportProcessor:
         "csharp_static_imports",
         "csharp_global_static_imports",
         "commonjs_direct_exports",
+        "esm_default_exports",
         "conditional_imports",
         "python_import_rebinds",
         "php_function_imports",
@@ -1022,6 +1023,10 @@ class ImportProcessor:
         # exported function's qn, so a whole-module require alias called
         # directly (`const f = require('./m'); f(x)`) resolves to it.
         self.commonjs_direct_exports: dict[str, str] = {}
+        # JS/TS modules with an `export default`: module qn -> the definition
+        # it names, so a default import (mapped to `<module>.default`) called
+        # directly resolves to it (issue #2724).
+        self.esm_default_exports: dict[str, str] = {}
         # Names bound by a CONDITIONAL Python import (nested under if/try --
         # click's `if WIN: from ._winconsole import X`): the dead-code fan-out
         # treats a same-named local def as the mutually-exclusive fallback
@@ -1557,6 +1562,7 @@ class ImportProcessor:
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
+        self.esm_default_exports.pop(module_qn, None)
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
