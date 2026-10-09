@@ -63,21 +63,28 @@ def _locked(path: Path):
     Every writer rewrites the file from a read of it, so two concurrent
     writers can silently drop each other's update -- a sync finishing while
     a prune forgets the purged project would resurrect the ghost record.
-    A lock that cannot be taken (an unwritable home, a filesystem without
-    the lock call) degrades to the unlocked write with a warning: the state
-    was never guaranteed against a broken home, and `record_sync` must not
-    grow a new way to fail a sync whose graph commit already succeeded.
+    A lock that cannot be taken or released (an unwritable home, a
+    filesystem without the lock call, an NFS close raising) degrades to the
+    unlocked write with a warning: the state was never guaranteed against a
+    broken home, and `record_sync` must not grow a new way to fail a sync
+    whose graph commit already succeeded.
     """
     lock_path = path.parent / f"{path.name}.lock"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = lock_path.open("a")
+    except OSError as e:
+        logger.warning(f"State write proceeding without a lock: {e}")
+        yield
+        return
+    try:
         if sys.platform == "win32":
             os.lseek(lock_file.fileno(), 0, os.SEEK_SET)
             msvcrt.locking(lock_file.fileno(), msvcrt.LK_RLCK, 1)
         else:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
     except OSError as e:
+        lock_file.close()
         logger.warning(f"State write proceeding without a lock: {e}")
         yield
         return
@@ -90,6 +97,8 @@ def _locked(path: Path):
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except OSError as e:
+            logger.warning(f"State lock could not be released: {e}")
         finally:
             lock_file.close()
 
