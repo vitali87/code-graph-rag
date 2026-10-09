@@ -9592,7 +9592,6 @@ class CallProcessor:
         attr_type = cs.TS_PY_ATTRIBUTE
         function_types = lang_config.function_node_types
         class_types = lang_config.class_node_types
-        seen: set[str] = set()
 
         stack = list(caller_node.children)
         while stack:
@@ -9611,7 +9610,6 @@ class CallProcessor:
                         module_qn,
                         local_var_types,
                         class_context,
-                        seen,
                     )
             stack.extend(node.children)
 
@@ -9624,7 +9622,6 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
-        seen: set[str],
     ) -> None:
         # One property-named attribute access: a CALLS edge to the getter it
         # invokes, unless the attribute is itself a call's function.
@@ -9665,12 +9662,7 @@ class CallProcessor:
         if callee_info is None:
             return
         callee_qn = callee_info[1]
-        if (
-            registry.is_property(callee_qn)
-            and callee_qn != caller_qn
-            and callee_qn not in seen
-        ):
-            seen.add(callee_qn)
+        if registry.is_property(callee_qn) and callee_qn != caller_qn:
             targets = registry.variants(callee_qn)
             self._resolution = (
                 cs.EdgeResolution.OVERLOAD

@@ -194,6 +194,41 @@ def test_python_property_read_preserves_heuristic_resolution(
     assert by_callee["name"] == {cs.EdgeResolution.HEURISTIC}
 
 
+def test_python_property_reads_keep_each_site_and_resolution(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    from codebase_rag.dead_code import resolution_at_least
+
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n'
+        "    def read(self, value):\n"
+        "        return self.name, value.name\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    reads = [
+        props
+        for src, dst, props in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if src.endswith(".models.Local.read") and dst.endswith(".models.Local.name")
+    ]
+    assert len(reads) == 2
+    assert {str(props[cs.KEY_RESOLUTION]) for props in reads} == {
+        cs.EdgeResolution.EXACT,
+        cs.EdgeResolution.HEURISTIC,
+    }
+    assert len({(props[cs.KEY_LINE], props[cs.KEY_COL]) for props in reads}) == 2
+    kept = [
+        props
+        for props in reads
+        if resolution_at_least(props.get(cs.KEY_RESOLUTION), cs.EdgeResolution.EXACT)
+    ]
+    assert len(kept) == 1
+    assert kept[0][cs.KEY_RESOLUTION] == cs.EdgeResolution.EXACT
+
+
 def test_an_engine_bound_call_does_not_inherit_the_previous_label(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
