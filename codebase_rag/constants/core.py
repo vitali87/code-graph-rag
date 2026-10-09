@@ -10,6 +10,9 @@ PY_PACKAGE_INIT_FILES: tuple[str, ...] = (INIT_PY, INIT_PYI)
 
 ENCODING_UTF8 = "utf-8"
 ENCODING_UTF8_SIG = "utf-8-sig"
+# BOM-aware: decoding picks the byte order from the mark and drops it.
+ENCODING_UTF16 = "utf-16"
+ENCODING_UTF32 = "utf-32"
 ENCODING_ASCII = "ascii"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.
