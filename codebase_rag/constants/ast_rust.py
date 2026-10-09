@@ -156,6 +156,9 @@ RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
 # (`server . run`, `Config :: load`), and the segments a `::` path takes
 # (`Self` is an identifier token; `crate`, `super`, `self` are keywords).
 RS_MACRO_CHAIN_SEPARATORS = (TS_RS_TOKEN_DOT, TS_RS_TOKEN_SCOPE)
+# How far each token moves the nesting of a turbofish's generic arguments in a
+# macro token stream, where `Vec<Vec<u8>>` closes with one `>>` token.
+RS_MACRO_ANGLE_DEPTH = {"<": 1, ">": -1, ">>": -2}
 RS_MACRO_PATH_SEGMENT_TYPES = (TS_IDENTIFIER, KEYWORD_SELF, TS_RS_CRATE, KEYWORD_SUPER)
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
