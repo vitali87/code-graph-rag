@@ -64,6 +64,22 @@ _RS_OWNER_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.UNION, NodeType.INTERFACE}
 )
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+# Languages whose `label()` / `this->label()` / `$this->label()` inside a method
+# reach the resolver as a bare name with the class as context (issue #3169).
+_INHERITED_BARE_CALL_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.SCALA,
+        cs.SupportedLanguage.DART,
+        cs.SupportedLanguage.PHP,
+    }
+)
+# Of those, the ones where a top-level function the module can see wins over
+# an inherited member: Dart looks a bare name up lexically first, and a PHP
+# bare `label()` is a function call, never a method.
+_LEXICAL_FIRST_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.DART, cs.SupportedLanguage.PHP}
+)
 
 
 class _CallSite(NamedTuple):
@@ -1696,6 +1712,8 @@ class CallResolver:
             )
         ) and (not call.constructing or result[0] == cs.NodeLabel.CLASS.value):
             return True, result
+        if result := self._resolve_inherited_bare_call(call):
+            return True, result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
         # method of the same prototype target (Date.prototype.strftime calling
@@ -1707,6 +1725,31 @@ class CallResolver:
         ):
             return True, result
         return False, None
+
+    def _resolve_inherited_bare_call(self, call: _CallSite) -> tuple[str, str] | None:
+        # A method calling one its class inherits (`label()`, `this->label()`)
+        # names its own class's member first; only the class itself was
+        # searched, so the name-only fallback bound a same-named method of an
+        # unrelated class (aria2: 713 of 1,693 such calls; every bloc
+        # `Cubit.emit` -> `Bloc.emit`). Walk the class's bases before it.
+        name, class_qn = call.call_name, call.class_context
+        if (
+            call.language not in _INHERITED_BARE_CALL_LANGUAGES
+            or not class_qn
+            or call.constructing
+            or cs.SEPARATOR_DOT in name
+            or f"{class_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+        ):
+            return None
+        if call.language in _LEXICAL_FIRST_LANGUAGES and (
+            f"{call.module_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+            or name in self.import_processor.import_mapping.get(call.module_qn, {})
+        ):
+            return None
+        hit = self._resolve_inherited_method(class_qn, name)
+        if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
+            return None
+        return hit
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
