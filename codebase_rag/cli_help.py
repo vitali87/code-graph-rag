@@ -177,6 +177,10 @@ HELP_RENAME_NEW_NAME = "The new identifier."
 HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites as well."
 )
+HELP_RENAME_ALLOW_EXTERNAL_OVERRIDE = (
+    "Rename a method that overrides a base outside the project, carries an "
+    "unmatched @Override/override, or is a Python protocol method."
+)
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CONTEXT = (
     "Print a graph-ranked context slice for a symbol, location or task within "

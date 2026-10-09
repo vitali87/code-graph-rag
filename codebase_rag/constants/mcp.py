@@ -122,6 +122,7 @@ class MCPParamName(StrEnum):
     MODULE_QN = "module_qualified_name"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    ALLOW_EXTERNAL_OVERRIDE = "allow_external_override"
     BUDGET_TOKENS = "budget_tokens"
 
 

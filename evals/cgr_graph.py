@@ -893,6 +893,26 @@ class _StatefulIngestor:
                     row[key] = _result(props.get(key))
                 return [row]
             return []
+        if query == cq.CYPHER_RENAME_OVERRIDE_FACTS:
+            for target in targets:
+                props = self.nodes[target]
+                row = {
+                    key: _result(props.get(key))
+                    for key in (
+                        cs.KEY_QUALIFIED_NAME,
+                        cs.KEY_NAME,
+                        cs.KEY_PATH,
+                        cs.KEY_OVERRIDES_EXTERNAL,
+                        cs.KEY_DECORATORS,
+                        cs.KEY_MODIFIERS,
+                    )
+                }
+                row["bases"] = sum(
+                    edge[2] == cs.RelationshipType.OVERRIDES.value
+                    for edge in self._out.get(target, ())
+                )
+                return [row]
+            return []
         rows: list[ResultRow] = []
         if query in (
             cq.CYPHER_GRAPH_CALLERS,
@@ -1152,6 +1172,7 @@ class _StatefulIngestor:
                 return self._project_root_rows(params or {})
             case (
                 cq.CYPHER_GRAPH_DEFINITION
+                | cq.CYPHER_RENAME_OVERRIDE_FACTS
                 | cq.CYPHER_GRAPH_CALLERS
                 | cq.CYPHER_GRAPH_REFERENCES
                 | cq.CYPHER_GRAPH_TYPE_EDGES

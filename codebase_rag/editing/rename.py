@@ -69,6 +69,12 @@ _CHAIN = "chain"
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
+# A Python `__name__` method is called by the interpreter (`str()`, `with`,
+# `len()`), never by a site the graph records.
+_PY_PROTOCOL_NAME = re.compile(r"__\w+__")
+# `@Override` / `@java.lang.Override` (Java, Kotlin, Scala, Dart `@override`)
+# and the `override` modifier (Kotlin, C#, TypeScript, Swift).
+_OVERRIDE_MARKER = "override"
 
 
 # The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
@@ -359,6 +365,8 @@ class Renamer:
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+        allow_external_override: bool = False,
+        external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
@@ -372,6 +380,8 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        self.allow_external_override = allow_external_override
+        self.external_override_opt_in = external_override_opt_in
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -814,6 +824,8 @@ class Renamer:
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
         members = hierarchy(self.fetch_all, self.project, qn)
+        if not self.allow_external_override:
+            self._refuse_external_overrides(qn, members)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
@@ -890,6 +902,39 @@ class Renamer:
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
+
+    def _refuse_external_overrides(self, qn: str, members: list[str]) -> None:
+        """Refuse a rename that would silently stop an override (issue #3226).
+
+        The graph's override hierarchy holds project methods only, so
+        renaming it whole keeps those consistent. A member that overrides a
+        library base (`Thread.run`, `TestCase.setUp`), declares an override
+        the project does not define (`@Override toString()`), or is a Python
+        protocol method is called by code outside the project under its old
+        name: after the rename nothing calls it, and no site shows why.
+        """
+        reasons = [
+            reason
+            for member in members
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_OVERRIDE_FACTS,
+                {
+                    cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                    cs.KEY_QN: member,
+                },
+            )[:1]
+            if (reason := _external_override_reason(member, row)) is not None
+        ]
+        if reasons:
+            raise RenameRefused(
+                cs.RENAME_EXTERNAL_OVERRIDE.format(
+                    qn=qn,
+                    reasons="; ".join(reasons),
+                    option=self.external_override_opt_in,
+                ),
+                [],
+                [],
+            )
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
@@ -1403,6 +1448,30 @@ class Renamer:
         )
 
 
+def _external_override_reason(qn: str, row: ResultRow) -> str | None:
+    if row.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
+        return cs.RENAME_OVERRIDES_EXTERNAL.format(qn=qn)
+    name = str(row.get(cs.KEY_NAME) or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    path = row.get(cs.KEY_PATH)
+    if (
+        isinstance(path, str)
+        and get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON
+        and _PY_PROTOCOL_NAME.fullmatch(name)
+    ):
+        return cs.RENAME_PROTOCOL_METHOD.format(qn=qn, name=name)
+    if row.get("bases"):
+        return None
+    decorators = row.get(cs.KEY_DECORATORS)
+    for decorator in decorators if isinstance(decorators, list) else ():
+        text = str(decorator).lstrip("@").split("(", 1)[0].strip()
+        if text.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() == _OVERRIDE_MARKER:
+            return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=decorator)
+    modifiers = row.get(cs.KEY_MODIFIERS)
+    if isinstance(modifiers, list) and _OVERRIDE_MARKER in modifiers:
+        return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=_OVERRIDE_MARKER)
+    return None
+
+
 def rename(
     repo_root: Path,
     fetch_all: QueryFn,
@@ -1415,6 +1484,8 @@ def rename(
     after_apply: Callable[[list[str]], None] | None = None,
     reingest: Reingest | None = None,
     heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+    allow_external_override: bool = False,
+    external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
@@ -1429,6 +1500,8 @@ def rename(
         after_apply=after_apply,
         reingest=reingest,
         heuristic_opt_in=heuristic_opt_in,
+        allow_external_override=allow_external_override,
+        external_override_opt_in=external_override_opt_in,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)
