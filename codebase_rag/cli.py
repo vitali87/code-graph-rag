@@ -1265,7 +1265,10 @@ def diff_index_command(
         Path(json_out).write_text(rendered + "\n", encoding="utf-8")
         _info(style(cs.CLI_MSG_DIFF_WRITTEN.format(path=json_out), cs.Color.CYAN))
     else:
-        app_context.console.print(rendered)
+        # Data, not console text: Rich would read `[id]` path segments as
+        # markup and highlight the JSON, so stdout would differ from the
+        # --json-out file (issue #2662).
+        typer.echo(rendered)
     if diff_is_empty(diff):
         _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
 
@@ -2254,6 +2257,8 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     for row in candidates:
         table.add_row(
             row["label"],
+            # Text, not str: a plain str cell is parsed as markup, which drops
+            # route segments like `[id]` from the name (issue #2662).
             Text(row["qualified_name"]),
             Text(row["path"]),
             cs.CLI_DEADCODE_LINE_RANGE.format(
@@ -2488,9 +2493,7 @@ def _exact_copy_cells(
     return [numbers.get(member["qualified_name"], "")] if shown else []
 
 
-def _duplicates_location_cell(
-    member: DuplicateMember, root_path: Path | None
-) -> Text | str:
+def _duplicates_location_cell(member: DuplicateMember, root_path: Path | None) -> Text:
     """Location as an OSC 8 hyperlink into the editor, plain when rootless.
 
     Rich drops hyperlinks on non-terminal sinks, so file/JSON outputs are
@@ -2502,12 +2505,13 @@ def _duplicates_location_cell(
         start=member["start_line"],
         end=member["end_line"],
     )
+    # Always Text: a str cell would be read as markup (issue #2662).
+    cell = Text(location)
     if root_path is None:
-        return location
+        return cell
     url = editor_url(root_path / member["path"], member["start_line"])
     if url is None:
-        return location
-    cell = Text(location)
+        return cell
     cell.stylize(cs.STYLE_LINK.format(url=url))
     return cell
 
@@ -2574,7 +2578,7 @@ def _build_duplicates_table(
                 _duplicates_group_cell(number, group, root_path) if at == 0 else "",
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
-                member["qualified_name"].removeprefix(prefix),
+                Text(member["qualified_name"].removeprefix(prefix)),
                 _duplicates_location_cell(member, root_path),
                 *_exact_copy_cells(copy_numbers[number - 1], member, show_copies),
             )
