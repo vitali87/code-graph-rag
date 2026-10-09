@@ -472,6 +472,16 @@ module is re-exported under its own name. A project that does
   registry tables the `READS_FROM`/`WRITES_TO` walk uses. Every catalogued
   handle-write shape across the lean languages now emits a flow edge rather than a
   false `NO_FLOW`.
+- **Python** handles start and end flows too (issue #2751). The flow walk binds
+  the same handles the `READS_FROM`/`WRITES_TO` walk does: `f = open(p)`,
+  `with open(p) as f`, `conn = sqlite3.connect(p)`, a derived `cur =
+  conn.cursor()`, a `socket.socket()`, and `self.<attr>` handles set in another
+  method. A read through a handle is a source (`f.read()`, `s.recv(n)`,
+  `cur.fetchall()`, `conn.execute("SELECT ..").fetchall()`, `open(p).read()`).
+  A write through one is a sink, so `f.write(token)` gives `ENV::K -> FILE::p`.
+  An `execute` call's direction follows its SQL verb. Handles are tracked in
+  source order, not per branch, and rebinding a name to anything else drops
+  its handle.
 - Nested factory **identity resolution** (`Files.newBufferedWriter(Path.of("cfg"))`
   and the static-imported `of("cfg")` spelling) is a lightweight registry-membership
   check, not shadow-aware (issue #1216): a same-class or inherited method named
