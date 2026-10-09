@@ -515,12 +515,11 @@ def test_deleting_sibling_on_incremental_path_drops_cross_language_calls(
     (updater if reuse else _updater(store, root)).run(force=False)
 
     calls_after = _edges(store, cs.RelationshipType.CALLS)
-    assert not any(
-        "util.py" in dst for src, dst in calls_after if "main.js" in src
-    ), calls_after
+    assert not any("util.py" in dst for src, dst in calls_after if "main.js" in src), (
+        calls_after
+    )
 
     imports_after = _edges(store, cs.RelationshipType.IMPORTS)
     assert not any(
         "util.py" in dst for src, dst in imports_after if "main.js" in src
     ), imports_after
-
