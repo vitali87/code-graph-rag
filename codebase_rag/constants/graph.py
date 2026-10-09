@@ -1334,6 +1334,14 @@ class GlossAnchorState(StrEnum):
     LOST = "LOST"
 
 
+# Anchor states in which a gloss is attached to no definition on purpose: its
+# name is gone and nothing, or more than one thing, carries its hash. Such a
+# note is retained with no ANNOTATES edge, so the structural audit must not
+# read it as an orphan (issue #2652).
+GLOSS_UNATTACHED_STATES = frozenset(
+    {GlossAnchorState.AMBIGUOUS.value, GlossAnchorState.LOST.value}
+)
+
 REL_TYPE_CALLS = "CALLS"
 # How many lost rows of one flushed relationship batch the warning names, and
 # the words it names their missing endpoints with (issue #2438).
