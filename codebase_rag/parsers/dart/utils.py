@@ -915,3 +915,133 @@ def dart_binding_spans(
                 spans.setdefault(name, []).append(span)
         stack.extend(node.children)
     return spans
+
+
+# Dart has no call-expression node: a call is a `selector` holding an
+# `argument_part`, and a binding's value is a flat sibling chain. These read
+# both shapes for the I/O and flow walks alike (issues #1173, #2761).
+_DART_ASSIGN_OP = "="
+
+
+def dart_binding_name_and_rhs(node: Node) -> tuple[str | None, list[Node]]:
+    """The bound name and the value chain of `var k = <rhs...>` / `k = <rhs...>`.
+
+    The name is the last identifier before `=` (unwrapping an
+    `assignable_expression` LHS); the value is the named children after `=`.
+    """
+    eq_index = next(
+        (i for i, c in enumerate(node.children) if c.type == _DART_ASSIGN_OP),
+        None,
+    )
+    if eq_index is None:
+        return None, []
+    name: str | None = None
+    for child in node.children[:eq_index]:
+        target = child
+        if target.type == cs.TS_DART_ASSIGNABLE_EXPRESSION:
+            target = next(
+                (c for c in target.named_children if c.type == cs.TS_DART_IDENTIFIER),
+                target,
+            )
+        if target.type == cs.TS_DART_IDENTIFIER and target.text is not None:
+            name = target.text.decode(cs.ENCODING_UTF8)
+    rhs = [c for c in node.children[eq_index + 1 :] if c.is_named]
+    return name, rhs
+
+
+def dart_arguments(selector: Node) -> Node | None:
+    """The `arguments` node inside a call selector's `argument_part`."""
+    argpart = next(
+        (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
+        None,
+    )
+    if argpart is None:
+        return None
+    return next(
+        (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
+    )
+
+
+def dart_named_arg(arg: Node) -> tuple[str | None, list[Node]]:
+    """A `named_argument`'s label and its value chain.
+
+    The value may be a selector chain such as
+    `message: Platform.environment['K']`.
+    """
+    name: str | None = None
+    value: list[Node] = []
+    for child in arg.named_children:
+        if child.type == cs.TS_DART_LABEL:
+            ident = next(
+                (c for c in child.named_children if c.type == cs.TS_DART_IDENTIFIER),
+                None,
+            )
+            if ident is not None and ident.text is not None:
+                name = ident.text.decode(cs.ENCODING_UTF8)
+        elif child.type != cs.TS_COMMENT:
+            value.append(child)
+    return name, value
+
+
+def dart_string_literal(node: Node, dynamic: str) -> str:
+    """A Dart string literal's text, or `dynamic` when it is interpolated.
+
+    The literal has no content child: its text, quotes included, is inline.
+    """
+    if node.text is None:
+        return dynamic
+    if any(c.type == cs.TS_DART_TEMPLATE_SUBSTITUTION for c in node.named_children):
+        return dynamic
+    return node.text.decode(cs.ENCODING_UTF8).strip(cs.DART_QUOTE_CHARS)
+
+
+def dart_first_string_arg(selector: Node, dynamic: str) -> str:
+    """The first string-literal argument of a call selector, else `dynamic`."""
+    arguments = dart_arguments(selector)
+    if arguments is None:
+        return dynamic
+    for arg in arguments.named_children:
+        if arg.type == cs.TS_DART_ARGUMENT:
+            chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
+        elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
+            _, chain = dart_named_arg(arg)
+        else:
+            continue
+        first = chain[0] if chain else None
+        if first is not None and first.type == cs.TS_DART_STRING_LITERAL:
+            return dart_string_literal(first, dynamic)
+    return dynamic
+
+
+def dart_parameter_names(signature: Node) -> list[str]:
+    """The names a Dart signature's parameters bind, optional ones included.
+
+    The `formal_parameter_list` is a plain child, not a field; each
+    parameter's name is its `name` field, or its last identifier.
+    """
+    params = next(
+        (
+            c
+            for c in signature.named_children
+            if c.type == cs.TS_DART_FORMAL_PARAMETER_LIST
+        ),
+        None,
+    )
+    names: list[str] = []
+    stack = [params] if params is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type != cs.TS_DART_FORMAL_PARAMETER:
+            stack.extend(reversed(node.named_children))
+            continue
+        name = node.child_by_field_name(cs.FIELD_NAME) or next(
+            (
+                c
+                for c in reversed(node.named_children)
+                if c.type == cs.TS_DART_IDENTIFIER
+            ),
+            None,
+        )
+        if name is not None and name.text is not None:
+            names.append(name.text.decode(cs.ENCODING_UTF8))
+    return names

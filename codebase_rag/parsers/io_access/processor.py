@@ -11,6 +11,15 @@ from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ...types_defs import ASTCacheProtocol
+from ..dart.utils import (
+    dart_binding_name_and_rhs,
+    dart_body_node,
+    dart_call_name,
+    dart_first_string_arg,
+    dart_member_read_name,
+    dart_parameter_names,
+    dart_string_literal,
+)
 from ..import_processor import ImportProcessor
 from ..utils import cpp_declarator_name, safe_decode_text
 from .constants import (
@@ -109,6 +118,30 @@ def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
     ):
         return list(node.named_children)
     return []
+
+
+# The call hop `dart_call_name` keeps in a receiver (`File().read`).
+_DART_CALL_HOP = "()"
+
+
+def _dart_index_key(following: Node | None) -> str:
+    # The string key of the index selector right after a Dart member read
+    # (`Platform.environment['K']` -> `K`), else <dynamic>.
+    stack = [following] if following is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_DART_INDEX_SELECTOR:
+            literal = next(
+                (c for c in node.named_children if c.type == cs.TS_DART_STRING_LITERAL),
+                None,
+            )
+            return (
+                dart_string_literal(literal, DYNAMIC_TARGET)
+                if literal is not None
+                else DYNAMIC_TARGET
+            )
+        stack.extend(node.named_children)
+    return DYNAMIC_TARGET
 
 
 class _LeanHandles(NamedTuple):
@@ -570,7 +603,9 @@ class IOAccessProcessor:
         # blocks, never a sibling/outer use. A function/method caller exposes its
         # statements under the `body` field; the module root (top-level calls) has
         # no body field, so seed from its own children.
-        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        body = caller_node.child_by_field_name(cs.FIELD_BODY) or dart_body_node(
+            caller_node
+        )
         if body is None:
             # Module root (top-level calls): its own children are the statements.
             statements = list(caller_node.named_children)
@@ -878,6 +913,12 @@ class IOAccessProcessor:
                 in_scope,
                 lean_handles,
             )
+            # A Dart `selector` is a call or a member access: the
+            # `.environment` of `Platform.environment['K']` is a read.
+            if member_reads and node.type == cs.TS_DART_SELECTOR:
+                self._emit_member_read(
+                    node, caller_spec, member_reads, in_scope, import_map, descriptor
+                )
         elif descriptor.macro_type is not None and node.type == descriptor.macro_type:
             # A macro sink (`println!`) writes STDOUT AND may inline a real call
             # sink in its args (`println!("{}", env::var("X"))`); tree-sitter
@@ -910,6 +951,13 @@ class IOAccessProcessor:
         ):
             self._emit_member_read(
                 node, caller_spec, member_reads, in_scope, import_map, descriptor
+            )
+        elif node.type in descriptor.keyword_stdout_write_types:
+            # PHP `echo $x;` / `print $x`: a keyword, not a call, that writes
+            # its operands to STDOUT (issue #2761; the flow walk's
+            # _flow_keyword_write). Descend for calls in the operands.
+            self._emit(
+                caller_spec, IODirection.WRITE, ResourceKind.STDOUT, DYNAMIC_TARGET
             )
         return True
 
@@ -1069,10 +1117,9 @@ class IOAccessProcessor:
         # (subscript) read env var X. Match on the object prefix; skip when the prefix
         # head (`process`) is shadowed by a local binding or a non-global import,
         # mirroring the call-sink shadow rules.
-        obj = node.child_by_field_name(descriptor.object_field)
-        if obj is None or obj.text is None:
+        obj_text = self._member_object_text(node, descriptor)
+        if obj_text is None:
             return
-        obj_text = obj.text.decode(cs.ENCODING_UTF8)
         for prefix, kind in member_reads:
             if obj_text != prefix:
                 continue
@@ -1085,6 +1132,25 @@ class IOAccessProcessor:
             for direction in self._member_directions(node, descriptor):
                 self._emit(caller_spec, direction, kind, identity)
             return
+
+    @staticmethod
+    def _member_object_text(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        # The accessed object's source text (`process.env`), matched against the
+        # member-read prefixes; None when the node has no readable object.
+        if node.type == cs.TS_DART_SELECTOR:
+            # `Platform.environment['K']` is a sibling chain: the `.environment`
+            # selector names the member, a following index selector the key.
+            return dart_member_read_name(node)
+        obj = node.child_by_field_name(descriptor.object_field)
+        if obj is None and node.type == descriptor.subscript_type:
+            # PHP `$_GET["q"]` is a FIELDLESS subscript: the indexed object
+            # is the first named child, as the flow walk reads it.
+            obj = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
+        if obj is None or obj.text is None:
+            return None
+        return obj.text.decode(cs.ENCODING_UTF8)
 
     @staticmethod
     def _member_directions(
@@ -1119,12 +1185,21 @@ class IOAccessProcessor:
     def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
         # The accessed key: a member's `property` (`process.env.SECRET` -> SECRET), or
         # a subscript's string index (`process.env['T']` -> T); else <dynamic>.
+        if node.type == cs.TS_DART_SELECTOR:
+            return _dart_index_key(node.next_named_sibling)
         if node.type == descriptor.member_expression_type:
             prop = node.child_by_field_name(descriptor.property_field)
             if prop is not None and prop.text is not None:
                 return prop.text.decode(cs.ENCODING_UTF8)
             return DYNAMIC_TARGET
         index = node.child_by_field_name(descriptor.subscript_index_field)
+        if index is None:
+            # Fieldless subscript (PHP `$_GET["q"]`): the key is the first
+            # string-literal child.
+            index = next(
+                (c for c in node.named_children if c.type == descriptor.string_type),
+                None,
+            )
         if index is not None and index.type == descriptor.string_type:
             return string_literal(
                 index, descriptor.string_type, descriptor.string_content_type
@@ -1201,6 +1276,9 @@ class IOAccessProcessor:
             for child in params.named_children:
                 target = child.child_by_field_name(cs.TS_FIELD_PATTERN) or child
                 self._pattern_names(target, descriptor, names)
+        elif caller_node.type in cs.DART_SIGNATURE_TYPES:
+            # A Dart signature's parameter list is a plain child (#2761).
+            names.update(dart_parameter_names(caller_node))
         return names
 
     def _enclosing_scope_names(
@@ -1253,6 +1331,16 @@ class IOAccessProcessor:
             return
         raw = call_name(node)
         if raw is None:
+            if node.type == cs.TS_DART_SELECTOR:
+                self._emit_dart_call(
+                    node,
+                    caller_spec,
+                    import_map,
+                    sink_by_name,
+                    descriptor,
+                    local_names,
+                    lean_handles,
+                )
             return
         if lean_handles is not None and self._emit_lean_handle_method(
             node, caller_spec, raw, descriptor, lean_handles
@@ -1301,6 +1389,98 @@ class IOAccessProcessor:
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
         self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _emit_dart_call(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+        local_names: frozenset[str],
+        lean_handles: _LeanHandles | None,
+    ) -> None:
+        # Dart has no call node: a `selector` holding an `argument_part` is the
+        # call, named by its sibling chain as the flow walk names it (issue
+        # #2761). A method on a handle, bound (`f.readAsString()`) or built
+        # inline (`File(p).readAsStringSync()`), is I/O on its resource; any
+        # other call matches the sink table, keyed by its first string arg.
+        if not any(c.type == cs.TS_DART_ARGUMENT_PART for c in node.named_children):
+            return
+        raw = dart_call_name(node)
+        if raw is None:
+            return
+        if lean_handles is not None and (
+            self._emit_dart_inline_handle(
+                node,
+                raw,
+                caller_spec,
+                import_map,
+                descriptor,
+                local_names,
+                lean_handles,
+            )
+            or self._emit_lean_handle_method(
+                node, caller_spec, raw, descriptor, lean_handles
+            )
+        ):
+            return
+        sink = self._resolve_sink(
+            raw,
+            import_map,
+            sink_by_name,
+            local_names,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
+        )
+        if sink is None:
+            return
+        identity = (
+            dart_first_string_arg(node, DYNAMIC_TARGET)
+            if sink.target_arg == 0
+            else DYNAMIC_TARGET
+        )
+        self._emit(caller_spec, sink.direction, sink.kind, identity)
+
+    def _emit_dart_inline_handle(
+        self,
+        node: Node,
+        raw: str,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        local_names: frozenset[str],
+        lean_handles: _LeanHandles,
+    ) -> bool:
+        # `File('a.txt').readAsStringSync()` is named `File().readAsStringSync`:
+        # the constructor's call selector sits two siblings back, past the
+        # `.readAsStringSync` member selector.
+        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        ctor_name = receiver.removesuffix(_DART_CALL_HOP)
+        if not sep or ctor_name == receiver or _DART_CALL_HOP in ctor_name:
+            return False
+        ctor = self._resolve_sink(
+            ctor_name,
+            import_map,
+            lean_handles.ctors,
+            local_names,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
+        )
+        if ctor is None:
+            return False
+        direction = lean_handles.methods.get(ctor.kind, {}).get(method)
+        member = node.prev_named_sibling
+        ctor_call = member.prev_named_sibling if member is not None else None
+        if direction is None or ctor_call is None:
+            return False
+        identity = (
+            dart_first_string_arg(ctor_call, DYNAMIC_TARGET)
+            if ctor.target_arg == 0
+            else DYNAMIC_TARGET
+        )
+        self._emit(caller_spec, direction, ctor.kind, identity)
+        return True
 
     def _emit_object_url_client_call(
         self,
@@ -1478,6 +1658,14 @@ class IOAccessProcessor:
         # seeded with connect-client evidence for Go (issue #912).
         descriptor = LANGUAGE_DESCRIPTORS.get(language)
         if descriptor is None:
+            return
+        # A Dart caller's body is the signature's SIBLING `function_body`. The
+        # module itself holds every function body, so, as in the flow walk, it
+        # is walked by none of its own (issue #2761).
+        if (
+            language == cs.SupportedLanguage.DART
+            and dart_body_node(caller_node) is None
+        ):
             return
         lean_handles = _lean_handles_for(language)
         if lean_handles is not None and lean_handles.rpc_clients:
@@ -1667,6 +1855,9 @@ class IOAccessProcessor:
         if lean_handles.type_ctors and node.type == cs.TS_CPP_DECLARATION:
             self._bind_type_decl_handle(node, descriptor, lean_handles)
             return
+        if node.type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION:
+            self._bind_dart_handle(node, in_scope, import_map, descriptor, lean_handles)
+            return
         if (
             node.type != descriptor.declarator_type
             and node.type not in _LEAN_ASSIGNMENT_TYPES
@@ -1678,6 +1869,46 @@ class IOAccessProcessor:
             self._apply_lean_binding(
                 name, value, in_scope, import_map, descriptor, lean_handles
             )
+
+    def _bind_dart_handle(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> None:
+        # `var f = File('out.txt');` binds `f` to the file, read off the value
+        # chain's last call selector (issue #2761); any other value unbinds
+        # the name, as a rebind does in the other lean grammars.
+        name, rhs = dart_binding_name_and_rhs(node)
+        if name is None:
+            return
+        lean_handles.bindings.pop(name, None)
+        call = rhs[-1] if rhs else None
+        if call is None or call.type != cs.TS_DART_SELECTOR:
+            return
+        raw = dart_call_name(call)
+        ctor = (
+            None
+            if raw is None
+            else self._resolve_sink(
+                raw,
+                import_map,
+                lean_handles.ctors,
+                in_scope,
+                descriptor.sinks_require_import,
+                descriptor.scope_separator,
+            )
+        )
+        if ctor is None:
+            return
+        identity = (
+            dart_first_string_arg(call, DYNAMIC_TARGET)
+            if ctor.target_arg == 0
+            else DYNAMIC_TARGET
+        )
+        lean_handles.bindings[name] = HandleBinding(kind=ctor.kind, identity=identity)
 
     @staticmethod
     def _paired_binding_values(
