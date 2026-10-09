@@ -664,6 +664,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             name: (identifier) @name) @function
         (constructor_declaration
             name: (identifier) @name) @function
+        (compact_constructor_declaration
+            name: (identifier) @name) @function
         """,
         class_query="""
         (class_declaration

@@ -276,7 +276,10 @@ def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
 
 
 def _get_method_type(method_node: ASTNode) -> str:
-    if method_node.type == cs.TS_CONSTRUCTOR_DECLARATION:
+    if method_node.type in (
+        cs.TS_CONSTRUCTOR_DECLARATION,
+        cs.TS_COMPACT_CONSTRUCTOR_DECLARATION,
+    ):
         return cs.JAVA_TYPE_CONSTRUCTOR
     return cs.JAVA_TYPE_METHOD
 
@@ -337,8 +340,26 @@ def _extract_spread_param_type(spread_node: ASTNode) -> str | None:
     return None
 
 
-def _extract_method_parameters(method_node: ASTNode) -> list[str]:
+def method_parameters_node(method_node: ASTNode) -> ASTNode | None:
+    """A method's `formal_parameters`.
+
+    A record's compact canonical constructor (`public Range { ... }`) has
+    none of its own: it takes the record header's components, `(int lo,
+    int hi)` (issue #2703).
+    """
     params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    if params_node is not None or (
+        method_node.type != cs.TS_COMPACT_CONSTRUCTOR_DECLARATION
+    ):
+        return params_node
+    record = method_node.parent.parent if method_node.parent is not None else None
+    if record is None or record.type != cs.TS_RECORD_DECLARATION:
+        return None
+    return record.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+
+
+def _extract_method_parameters(method_node: ASTNode) -> list[str]:
+    params_node = method_parameters_node(method_node)
     if not params_node:
         return []
 
@@ -552,6 +573,49 @@ def enum_constructors(enum_node: ASTNode) -> list[ASTNode]:
     ]
 
 
+def class_constructors(class_node: ASTNode) -> list[ASTNode]:
+    """The constructors a class, record or enum declares directly.
+
+    A record's compact canonical constructor counts (issue #2703); a nested
+    type's constructors sit one body deeper and are not this type's.
+    """
+    body = class_node.child_by_field_name(cs.TS_FIELD_BODY)
+    if body is None:
+        return []
+    members = [
+        member
+        for child in body.named_children
+        for member in (
+            child.named_children
+            if child.type == cs.TS_JAVA_ENUM_BODY_DECLARATIONS
+            else (child,)
+        )
+    ]
+    return [
+        member
+        for member in members
+        if member.type
+        in (cs.TS_CONSTRUCTOR_DECLARATION, cs.TS_COMPACT_CONSTRUCTOR_DECLARATION)
+    ]
+
+
+def this_constructor_invocation(ctor_node: ASTNode) -> ASTNode | None:
+    """A constructor's `this(...)` delegation, which must be its first statement."""
+    body = ctor_node.child_by_field_name(cs.TS_FIELD_BODY)
+    first = next(
+        (
+            c
+            for c in (body.named_children if body is not None else [])
+            if c.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+        ),
+        None,
+    )
+    if first is None or first.type != cs.TS_JAVA_EXPLICIT_CONSTRUCTOR_INVOCATION:
+        return None
+    keyword = first.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+    return first if keyword is not None and keyword.type == cs.TS_THIS else None
+
+
 def argument_count(node: ASTNode) -> int:
     # A comment between arguments is a named child of the list, not an argument.
     args_node = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
@@ -567,7 +631,7 @@ def argument_count(node: ASTNode) -> int:
 def accepts_argument_count(callable_node: ASTNode, arg_count: int) -> bool:
     # JLS 15.12.2.1: a fixed-arity callable is a candidate only for its exact
     # arity; a variable-arity one for any count covering its fixed parameters.
-    params_node = callable_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    params_node = method_parameters_node(callable_node)
     params = (
         [
             c

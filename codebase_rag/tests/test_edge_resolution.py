@@ -556,10 +556,11 @@ def test_a_computed_callable_captured_from_an_enclosing_scope_is_computed(
 def test_a_constructor_fan_out_is_labelled_overload(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Java `new Svc(1)` takes an edge to every declared constructor because
-    # argument types are not used to pick one: several candidates, one call.
+    # Java `new Svc(1)` takes an edge to every declared constructor of its
+    # arity because argument types are not used to pick one: several
+    # candidates, one call (a different arity cannot run, issue #2703).
     (temp_repo / "Svc.java").write_text(
-        "public class Svc {\n    public Svc() {}\n    public Svc(int a) {}\n}\n"
+        "public class Svc {\n    public Svc(String s) {}\n    public Svc(int a) {}\n}\n"
     )
     (temp_repo / "Main.java").write_text(
         "public class Main {\n    void run() {\n        new Svc(1);\n    }\n}\n"
