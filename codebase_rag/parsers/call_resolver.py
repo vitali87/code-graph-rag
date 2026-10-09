@@ -66,6 +66,14 @@ _RS_OWNER_NODE_TYPES = frozenset(
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
 
+# Languages whose `recv.name()` member syntax reaches only methods, so the
+# name fallback never binds it to a free function (issue #3176). C is left
+# out: `ops->open()` through a function-pointer table names a free function.
+_MEMBER_SYNTAX_METHOD_ONLY = frozenset(
+    {cs.SupportedLanguage.RUST, cs.SupportedLanguage.CPP}
+)
+
+
 class _CallSite(NamedTuple):
     """One `_resolve_function_call` request, handed whole to its phases."""
 
@@ -3898,6 +3906,18 @@ class CallResolver:
             possible_matches = [
                 qn for qn in possible_matches if not self._name_hidden_in_body(qn)
             ]
+        if language in _MEMBER_SYNTAX_METHOD_ONLY and call_name[
+            : -len(search_name)
+        ].endswith(cs.SEPARATOR_DOT):
+            # `recv.name()` / `p->name()` can only call a method: a free
+            # function is never reachable with `.` syntax. With the receiver
+            # untyped, `s.is_none()` bound a `#[test] fn is_none` in another
+            # crate and `h->swap(x)` a namespace-level `swap` (issue #3176).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] == cs.NodeLabel.METHOD.value
+            ]
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
             # self./Self::/Type::), so a same-named method must not soak
@@ -4115,6 +4135,10 @@ class CallResolver:
         # Type and `recv.f()` a method, never the caller module's free `f`
         # (`String::new()` bound the file's own `fn new`, issue #2543).
         if language == cs.SupportedLanguage.RUST:
+            return None
+        # Neither has C++: `obj.f()` / `p->f()` calls a member, never the
+        # file's namespace-level `f` (`h->swap(x)` bound `swap`, #3176).
+        if language == cs.SupportedLanguage.CPP and separator == cs.SEPARATOR_DOT:
             return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
         if resolved is not None:
