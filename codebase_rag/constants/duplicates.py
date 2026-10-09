@@ -128,6 +128,37 @@ DELTA_ARITY_TOO_FEW = "too_few"
 DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
 
+# How a definition's decorators or modifiers changed the way it is called
+# (issue #3259): one entry per change in `convention_changes[].changes`.
+DELTA_CONVENTION_BECAME_ACCESSOR = "became_accessor"
+DELTA_CONVENTION_NO_LONGER_ACCESSOR = "no_longer_accessor"
+DELTA_CONVENTION_BECAME_STATIC = "became_static"
+DELTA_CONVENTION_NO_LONGER_STATIC = "no_longer_static"
+DELTA_CONVENTION_BECAME_CLASSMETHOD = "became_classmethod"
+DELTA_CONVENTION_NO_LONGER_CLASSMETHOD = "no_longer_classmethod"
+DELTA_CONVENTION_VISIBILITY_NARROWED = "visibility_narrowed"
+# Per-site verdicts of such a change; `ok` and `unknown` are the arity ones.
+# A call of what is now a property or getter.
+DELTA_CONVENTION_CALLS_ACCESSOR = "calls_accessor"
+# A read of what was a property and is now a method.
+DELTA_CONVENTION_READS_METHOD = "reads_method"
+# A call through the class of what is now an instance method.
+DELTA_CONVENTION_NEEDS_INSTANCE = "needs_instance"
+# A call through an instance of what is now static, where the language
+# rejects it.
+DELTA_CONVENTION_NEEDS_CLASS = "needs_class"
+# A Python call whose receiver is bound where it was not, or no longer bound
+# where it was, so every argument lands one parameter over.
+DELTA_CONVENTION_REBOUND = "rebound"
+# A caller outside what the narrower visibility admits.
+DELTA_CONVENTION_INACCESSIBLE = "inaccessible"
+# What a method binds as its receiver, and the receiver a call is written
+# with: an instance (`Cart().total()`, `this.total()`) or the class
+# (`Cart.tax(3)`).
+DELTA_RECEIVER_INSTANCE = "instance"
+DELTA_RECEIVER_CLASS = "class"
+DELTA_RECEIVER_NONE = "none"
+
 
 # What still names a removed or renamed symbol in a structural delta's
 # `dangling_importers` (issue #2516): an import statement binding it, or a
