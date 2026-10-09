@@ -879,6 +879,34 @@ def _body_function_nodes(
     return captures.get(cs.CAPTURE_FUNCTION, [])
 
 
+def _macro_turbofish_reaches_args(ident: Node) -> bool:
+    """Whether a macro-token identifier is a call, through any turbofish.
+
+    `make::<u64>()` in a macro is the flat stream `make :: < u64 > ( )`, so
+    the query's identifier-then-`(` shape missed it and every turbofish call
+    inside `assert!`/`println!` lost its edge (issue #3212). An identifier
+    followed by `::<` is a call only when the generic arguments close straight
+    into an argument group; `a::<B>::c()` continues the path instead.
+    """
+    scope = ident.next_sibling
+    if scope is None or scope.type != cs.TS_RS_TOKEN_SCOPE:
+        return True
+    depth = 0
+    token = scope.next_sibling
+    while token is not None:
+        depth += cs.RS_MACRO_ANGLE_DEPTH.get(token.type, 0)
+        if depth <= 0:
+            break
+        token = token.next_sibling
+    if token is None or depth != 0 or (args := token.next_sibling) is None:
+        return False
+    return (
+        args.type == cs.TS_RS_TOKEN_TREE
+        and args.child_count > 0
+        and args.children[0].type == cs.CHAR_PAREN_OPEN
+    )
+
+
 def _find_call_arguments_node(call_node: Node) -> Node | None:
     args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
     if args_node is not None:
@@ -3746,6 +3774,8 @@ class CallProcessor:
             # `#[instrument(skip(self))]`) but name no function; binding them
             # by bare name invented module-level CALLS (issue #2541).
             if rs_utils.in_attribute_arguments(call_node):
+                return None
+            if not _macro_turbofish_reaches_args(call_node):
                 return None
             return self._macro_call_name(call_node)
         # A SQL `invocation` names its routine through an unnamed
