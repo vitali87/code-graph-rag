@@ -648,6 +648,16 @@ def _is_conditional_import_node(import_node: Node) -> bool:
     return False
 
 
+def _rust_member_pattern(pattern: str) -> str:
+    # A workspace member glob relative to the root: leading `./` and a
+    # trailing `/` dropped, and the root itself (`.`) as the empty pattern.
+    pattern = pattern.strip()
+    while pattern.startswith(cs.RS_CURRENT_DIR_PREFIX):
+        pattern = pattern[len(cs.RS_CURRENT_DIR_PREFIX) :]
+    pattern = pattern.rstrip(cs.SEPARATOR_SLASH)
+    return "" if pattern == cs.RS_CURRENT_DIR else pattern
+
+
 def _rust_norm_manifest_path(path: str) -> str:
     # Cargo normalises manifest paths (a ./ prefix, backslashes); the
     # matcher compares against repo-relative posix form, so mirror it.
@@ -2838,9 +2848,21 @@ class ImportProcessor:
         for pattern in members:
             if not isinstance(pattern, str):
                 continue
+            # `"."` (or `"./"`) is the root package joining its own
+            # workspace, and the root is already listed; Python 3.12's
+            # `Path.glob` raises IndexError / AttributeError on those two
+            # rather than ValueError (issue #3167).
+            pattern = _rust_member_pattern(pattern)
+            if not pattern:
+                continue
             try:
                 matches = sorted(self.repo_path.glob(pattern))
-            except (ValueError, NotImplementedError):
+            except Exception as error:
+                # One member the manifest spells oddly is one crate left
+                # unmapped, never a failed sync.
+                logger.debug(
+                    ls.RUST_WORKSPACE_MEMBER_UNEXPANDED, pattern=pattern, error=error
+                )
                 continue
             dirs.extend(match for match in matches if match.is_dir())
         return dirs
