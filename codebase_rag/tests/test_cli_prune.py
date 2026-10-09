@@ -33,6 +33,9 @@ def roots(tmp_path: Path) -> dict[str, str]:
     }
 
 
+mock_ingestor_roots: dict[str, str] = {}
+
+
 @pytest.fixture(autouse=True)
 def _isolated_cgr_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "cgr-home"
@@ -46,7 +49,11 @@ def mock_memgraph_connect(
 ) -> Generator[MagicMock, None, None]:
     with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
         mock_ingestor = MagicMock()
-        mock_ingestor.list_project_roots.return_value = dict(roots)
+        mock_ingestor_roots.clear()
+        mock_ingestor_roots.update(roots)
+        # Two graph reads per prune: the listing, then the current-root
+        # re-read inside the delete path.
+        mock_ingestor.list_project_roots.side_effect = [dict(roots), dict(roots)]
         # The verification read after a purge: the pruned project is gone.
         mock_ingestor.list_projects.side_effect = [["live__11111111"]]
         mock_ingestor.fetch_all.side_effect = _fake_fetch_all
@@ -61,7 +68,8 @@ def _fake_fetch_all(
     if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
         return [{cs.KEY_NODE_ID: 1}]
     if query == cq.CYPHER_COUNT_PROJECT_NODES:
-        assert params == {cs.KEY_PROJECT_NAME: "dead__22222222"}
+        assert params is not None and set(params) == {cs.KEY_PROJECT_NAME}
+        assert isinstance(params[cs.KEY_PROJECT_NAME], str)
         return [{cs.KEY_RESIDUAL_NODES: 0}]
     return []
 
@@ -97,14 +105,15 @@ class TestCandidateSelection:
         self, tmp_path: Path, mock_memgraph_connect: MagicMock
     ) -> None:
         live = tmp_path / "live"
-        _ingestor(mock_memgraph_connect).list_project_roots.return_value = {
-            "live__11111111": str(live)
-        }
+        only_live = {"live__11111111": str(live)}
+        live.mkdir(exist_ok=True)
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.list_project_roots.side_effect = lambda *a, **k: dict(only_live)
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 0, result.output
         assert "nothing to prune" in result.output
-        _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
+        ingestor.delete_project.assert_not_called()
 
     def test_dry_run_lists_candidates_without_deleting(
         self, mock_memgraph_connect: MagicMock
@@ -208,6 +217,27 @@ class TestPruneDeletion:
         assert "Pruned" not in result.output
         _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
 
+    def test_repointed_root_is_skipped(
+        self, tmp_path: Path, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # While the prompt was open a sync moved the project's root_path to
+        # its new live location: the delete path must re-read the graph's
+        # current root and only purge the project it still names (Greptile
+        # P1 on this PR).
+        moved = tmp_path / "moved"
+        moved.mkdir()
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.list_project_roots.side_effect = [
+            dict(mock_ingestor_roots),
+            {**mock_ingestor_roots, "dead__22222222": str(moved)},
+        ]
+        result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        assert "has changed" in result.output
+        assert "Pruned" not in result.output
+        ingestor.delete_project.assert_not_called()
+
 
 class TestPruneSyncRecord:
     def test_forgets_the_sync_record_of_a_verified_purge(
@@ -282,7 +312,7 @@ def _residual_fetch_all(
     if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
         return [{cs.KEY_NODE_ID: 1}]
     if query == cq.CYPHER_COUNT_PROJECT_NODES:
-        assert params == {cs.KEY_PROJECT_NAME: "dead__22222222"}
+        assert params is not None and set(params) == {cs.KEY_PROJECT_NAME}
         return [{cs.KEY_RESIDUAL_NODES: 7}]
     return []
 

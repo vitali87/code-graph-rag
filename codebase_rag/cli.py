@@ -3028,9 +3028,13 @@ def _prune_projects(
     without entering either). The existence re-check runs inside the delete
     path, so a checkout recreated between the listing and the purge is
     skipped, not destroyed -- the window narrows to the re-check itself,
-    it does not close (#2479). A purge that cannot be proven complete --
-    the project still listed, or a non-zero residual count from the same
-    traversal the delete ran -- is a failure, never a success (#2479).
+    it does not close (#2479). A concurrent sync can also repoint the
+    project's `root_path` at its new location while the prompt is open, so
+    the graph's CURRENT root is re-read in the delete path and the purge
+    fires only when it still matches the path that was checked (Greptile
+    P1 on this PR). A purge that cannot be proven complete -- the project
+    still listed, or a non-zero residual count from the same traversal the
+    delete ran -- is a failure, never a success (#2479).
     """
     pruned: list[str] = []
     failures: list[str] = []
@@ -3044,6 +3048,16 @@ def _prune_projects(
             )
             continue
         try:
+            if ingestor.list_project_roots().get(project_name) != root:
+                app_context.console.print(
+                    style(
+                        cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(
+                            project_name=project_name
+                        ),
+                        cs.Color.YELLOW,
+                    )
+                )
+                continue
             _info(
                 style(
                     cs.CLI_MSG_PRUNING_PROJECT.format(
