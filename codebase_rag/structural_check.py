@@ -307,19 +307,26 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
         )
 
 
-def _refuse_graph_holding_io_links(ingestor: object) -> None:
-    """Refuse an isolated run over a graph that already holds IO links.
+def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> None:
+    """Refuse an isolated run over IO links the checked project anchors.
 
     The capture check above covers what THIS run would write. A graph built
     earlier with IO enabled can hold resource chains of its own; deleting a
     changed file's subtree can leave one unanchored, and the re-ingest's
     repo-wide resource prune then deletes it, chain edges included, which
-    the capture cannot put back (bot review, #1718).
+    the capture cannot put back (bot review, #1718). Only a resource the
+    project's own nodes touch can be unanchored by the run, so another
+    project's links do not refuse it (issue #3188).
     """
-    rows = cast(GraphStore, ingestor).fetch_all(cq.CYPHER_CHECK_GRAPH_IO_LINKS)
+    rows = cast(GraphStore, ingestor).fetch_all(
+        cq.CYPHER_CHECK_PROJECT_IO_LINKS,
+        {cs.KEY_PROJECT_PREFIX: project_name + cs.SEPARATOR_DOT},
+    )
     if rows:
         raise CheckError(
-            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(groups=rows[0].get(cs.KEY_REL))
+            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(
+                project=project_name, groups=rows[0].get(cs.KEY_REL)
+            )
         )
 
 
@@ -421,7 +428,7 @@ def run_check(
     if not isolated:
         return measure(lambda: updater.reingest(changed, deleted=deleted))
     _refuse_unrestorable_capture(capture or default_capture())
-    _refuse_graph_holding_io_links(ingestor)
+    _refuse_project_holding_io_links(ingestor, project_name)
     return _measure_then_restore(
         updater,
         ingestor,

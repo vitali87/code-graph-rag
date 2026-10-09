@@ -197,9 +197,10 @@ What `--isolated` does not promise:
   the marker stays, readers refuse, and the next full update repairs the
   graph.
 - **Some graphs are refused.** A capture that enables IO resource links, a
-  graph that already holds any, and a hash cache that exists but cannot be
-  read are all refused before anything is written, because the restore could
-  not undo them.
+  project whose own code anchors a resource holding one (another project's
+  links on a shared graph do not count: the run cannot unanchor them), and a
+  hash cache that exists but cannot be read are all refused before anything
+  is written, because the restore could not undo them.
 
 The capture and restore read the changed files' subgraph plus one
 graph-wide scan of the shared ExternalModule and Resource nodes, the same

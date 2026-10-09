@@ -1397,14 +1397,19 @@ OPTIONAL MATCH (x)-->(n)
 WITH n, count(x) AS inbound
 RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
 
-# Whether the graph already holds any IO resource link (FLOWS_TO,
-# RESOLVES_TO). An isolated check refuses on one: deleting a changed file's
-# subtree can leave a resource chain unanchored, and the re-ingest's
-# repo-wide `prune_unanchored_resources` would delete it, chain edges and all,
-# beyond what the capture holds (bot review, #1718). A typed pattern with
-# LIMIT 1 stops at the first such edge instead of scanning every relationship.
-CYPHER_CHECK_GRAPH_IO_LINKS = """MATCH ()-[r:FLOWS_TO|RESOLVES_TO]->()
-RETURN type(r) AS rel
+# An IO resource link (FLOWS_TO, RESOLVES_TO) the checked project anchors. An
+# isolated check refuses on one: deleting a changed file's subtree can leave
+# that resource unanchored, and the re-ingest's repo-wide
+# `prune_unanchored_resources` would delete it, chain edges and all, beyond
+# what the capture holds (bot review, #1718). Only a Resource one of the
+# project's own nodes touches can be unanchored by the run: the prune keeps
+# every Resource another node still anchors, and a resource reached only down
+# a FLOWS_TO chain puts a FLOWS_TO edge on the one the project touches. So
+# another project's links never refuse this one's check (issue #3188).
+CYPHER_CHECK_PROJECT_IO_LINKS = """MATCH (r:Resource)--(n)
+WHERE NOT n:Resource AND n.qualified_name STARTS WITH $project_prefix
+MATCH (r)-[l:FLOWS_TO|RESOLVES_TO]-()
+RETURN type(l) AS rel
 LIMIT 1"""
 
 # The shared nodes the isolated check created, by label and qualified name: the ones the scope reaches that the snapshot above did not hold.

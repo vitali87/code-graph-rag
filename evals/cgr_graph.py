@@ -1236,13 +1236,8 @@ class _StatefulIngestor:
                         key=lambda n: (n[0], _str(n[1])),
                     )
                 ]
-            case cq.CYPHER_CHECK_GRAPH_IO_LINKS:
-                io = {
-                    cs.RelationshipType.FLOWS_TO.value,
-                    cs.RelationshipType.RESOLVES_TO.value,
-                }
-                found = next((edge[2] for edge in self.edges if edge[2] in io), None)
-                return [] if found is None else [{cs.KEY_REL: found}]
+            case cq.CYPHER_CHECK_PROJECT_IO_LINKS:
+                return self._check_project_io_links(params or {})
             case cq.CYPHER_CHECK_SHARED_NODES:
                 return [
                     {
@@ -1914,6 +1909,30 @@ class _StatefulIngestor:
                 value = uid
             fields[prefix + key] = _result(value)
         return fields
+
+    def _check_project_io_links(self, params: PropertyDict) -> list[ResultRow]:
+        # A FLOWS_TO / RESOLVES_TO edge on a Resource one of the project's
+        # own (non-Resource) nodes touches.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        resource = cs.NodeLabel.RESOURCE.value
+        touched: set[_NodeId] = set()
+        for fl, fv, _rel, tl, tv in self.edges:
+            for (rl, rv), (ol, ov) in (((fl, fv), (tl, tv)), ((tl, tv), (fl, fv))):
+                if rl != resource or ol == resource:
+                    continue
+                qn = self.nodes.get((ol, ov), {}).get(cs.KEY_QUALIFIED_NAME)
+                if isinstance(qn, str) and qn.startswith(prefix):
+                    touched.add((rl, rv))
+        io = {cs.RelationshipType.FLOWS_TO.value, cs.RelationshipType.RESOLVES_TO.value}
+        found = next(
+            (
+                rel
+                for fl, fv, rel, tl, tv in sorted(self.edges, key=str)
+                if rel in io and ((fl, fv) in touched or (tl, tv) in touched)
+            ),
+            None,
+        )
+        return [] if found is None else [{cs.KEY_REL: found}]
 
     def _check_scope_edges(self, params: PropertyDict) -> list[ResultRow]:
         rows: list[ResultRow] = []
