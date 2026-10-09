@@ -130,6 +130,22 @@ class FunctionRegistryTrie:
             bucket.append(variant)
         return variant
 
+    def restore_variant(self, qualified_name: QualifiedName) -> None:
+        """Put a `natural@line` (or `@line_col`) variant back in its bucket.
+
+        Parsing a duplicate registers its variant through `reserve`; one read
+        back from the graph on an incremental run did not, so `variants` of
+        the natural qn missed it -- an enum constant's body, say, which a
+        call fanned out to (issue #3256). Any other qn is left alone.
+        """
+        natural, marker, suffix = qualified_name.rpartition(cs.DUP_QN_MARKER)
+        line = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
+        if not marker or not natural or not line.isdigit():
+            return
+        bucket = self._duplicates.setdefault(natural, [natural])
+        if qualified_name not in bucket:
+            bucket.append(qualified_name)
+
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])
 
