@@ -1065,6 +1065,7 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
 CLI_SYNC_MARKERS_UNREADABLE = (
     "Could not read incomplete-run markers for cgr status: {error}"
 )
+CLI_PROJECT_ROOTS_UNREADABLE = "Could not read project roots for cgr status: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
 MCP_HTTP_EXPOSURE_REFUSED = (

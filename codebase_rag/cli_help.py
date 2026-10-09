@@ -14,6 +14,7 @@ class CLICommandName(StrEnum):
     DEAD_CODE = "dead-code"
     DUPLICATES = "duplicates"
     DELETE_PROJECT = "delete-project"
+    PRUNE = "prune"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
     TRACE = "trace"
@@ -566,8 +567,12 @@ HELP_DUPLICATES_OPEN = (
 
 HELP_DELETE_PROJECT_NAME = "Project name to delete from the graph."
 HELP_DELETE_PROJECT_REPO_PATH = (
-    "Optional repo path. If set, the local hash cache is removed too."
+    "Path the project was indexed from; its hash cache is removed too."
 )
+HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
+HELP_PRUNE_YES = "Prune without asking for confirmation."
+CMD_PRUNE = "Prune projects whose repository root no longer exists"
+EXAMPLES_PRUNE = "EXAMPLE\n\n  cgr prune --dry-run\n\n  cgr prune --yes"
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 
 CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
@@ -584,6 +589,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
     CLICommandName.DUPLICATES: CMD_DUPLICATES,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.PRUNE: CMD_PRUNE,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,

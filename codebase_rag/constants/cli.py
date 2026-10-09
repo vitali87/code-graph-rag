@@ -178,6 +178,38 @@ CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: --name is required and must be a non-empty project name."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
+CLI_MSG_PRUNE_NO_CANDIDATES = "No indexed project has a missing root: nothing to prune."
+CLI_MSG_PRUNE_CANDIDATES = "Projects whose root no longer exists:"
+CLI_MSG_PRUNE_CANDIDATE = "  - {project_name}: {root}"
+CLI_MSG_PRUNE_DRY_RUN = (
+    "Dry run: {count} project(s) would be pruned. "
+    "Run cgr prune without --dry-run to remove them."
+)
+CLI_MSG_PRUNING_PROJECT = (
+    "Pruning project '{project_name}': root {root} no longer exists..."
+)
+CLI_MSG_PROJECT_PRUNED = "Pruned project '{project_name}'."
+CLI_MSG_PRUNE_DONE = "Pruned {count} project(s)."
+CLI_WARN_PRUNE_ROOT_BACK = (
+    "Root of '{project_name}' is reachable again -- skipping, it is no longer "
+    "a prune candidate."
+)
+CLI_ERR_PRUNE_FAILED = "Failed to prune project '{project_name}': {error}"
+CLI_ERR_PRUNE_RUN_FAILED = "Failed to prune: {error}"
+CLI_ERR_PRUNE_VERIFY_FAILED = (
+    "Project '{project_name}' could not be verified as fully removed; it may "
+    "still be present in the graph. Inspect it with 'cgr delete-project -n "
+    "{project_name}' before retrying."
+)
+CLI_PROMPT_PRUNE_CONFIRM = (
+    "Prune {count} project(s) whose root no longer exists from the graph?"
+)
+CLI_ERR_PRUNE_NEEDS_CONFIRMATION = (
+    "Refusing to prune without a terminal to confirm on. Re-run with --yes "
+    "to prune without asking."
+)
+CLI_MSG_PRUNE_ABORTED = "Aborted: the graph was left untouched."
+CLI_STATUS_ROOT_MISSING = "(missing)"
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."

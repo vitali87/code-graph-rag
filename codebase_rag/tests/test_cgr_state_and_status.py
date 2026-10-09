@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -95,3 +95,75 @@ class TestStopCommand:
             result = runner.invoke(app, ["stop"])
         assert result.exit_code == 0, result.output
         instance.down.assert_called_once()
+
+
+class TestStatusMissingRoots:
+    """The missing-root marks `cgr status` prints (issue #2479)."""
+
+    @pytest.fixture
+    def _stack_running(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        from codebase_rag.stack.constants import StackState
+        from codebase_rag.stack.manager import StackStatus
+
+        fake = StackStatus(
+            state=StackState.RUNNING,
+            memgraph_reachable=True,
+            qdrant_reachable=True,
+            compose_file=Path("/tmp/cgr/docker-compose.yaml"),
+            memgraph_endpoint="localhost:7687",
+            qdrant_endpoint="localhost:6333",
+        )
+        manager = MagicMock()
+        manager.status.return_value = fake
+        monkeypatch.setattr("codebase_rag.cli.StackManager", lambda: manager)
+        return manager
+
+    def test_marks_project_whose_root_is_missing(
+        self,
+        _temp_home: Path,
+        _stack_running: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cgr_state.record_sync("dead__22222222")
+        monkeypatch.setattr(
+            "codebase_rag.cli.connect_memgraph",
+            lambda *a, **k: _graph_mock({"dead__22222222": str(tmp_path / "gone")}),
+        )
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "dead__22222222" in result.output
+        assert "(missing)" in result.output
+        assert str(tmp_path / "gone") in result.output
+
+    def test_live_project_is_not_marked_missing(
+        self,
+        _temp_home: Path,
+        _stack_running: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        live = tmp_path / "live"
+        live.mkdir()
+        cgr_state.record_sync("live__11111111")
+        monkeypatch.setattr(
+            "codebase_rag.cli.connect_memgraph",
+            lambda *a, **k: _graph_mock({"live__11111111": str(live)}),
+        )
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "live__11111111" in result.output
+        assert "(missing)" not in result.output
+        assert str(live) in result.output
+
+
+def _graph_mock(roots: dict[str, str | None]) -> MagicMock:
+    ingestor = MagicMock()
+    ingestor.list_project_roots.return_value = roots
+    ingestor.fetch_all.return_value = []
+    context = MagicMock()
+    context.__enter__ = MagicMock(return_value=ingestor)
+    context.__exit__ = MagicMock(return_value=False)
+    return context

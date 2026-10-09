@@ -85,6 +85,7 @@ from .utils.path_utils import (
     project_name_error,
     project_roots_from_rows,
     resolve_repo_path,
+    root_proven_missing,
     unwritable_output_reason,
 )
 from .utils.terminal_console import terminal_aware_console
@@ -1838,6 +1839,8 @@ def status_command() -> None:
     incomplete = (
         _projects_with_incomplete_runs() if status.memgraph_reachable else set()
     )
+    roots = _graph_project_roots() if status.memgraph_reachable else {}
+    missing_roots = _missing_root_candidates(roots)
     if not timestamps and not incomplete:
         app_context.console.print("syncs:    (no projects synced via cgr yet)")
         return
@@ -1845,8 +1848,16 @@ def status_command() -> None:
     for project in sorted(timestamps.keys() | incomplete):
         ts = timestamps.get(project)
         line = f"  - {project}: last sync {ts}" if ts else f"  - {project}:"
+        root = roots.get(project)
+        if root is not None:
+            line = f"{line} ({root})"
         if project in incomplete:
             line = f"{line} ({cs.CLI_STATUS_SYNC_INCOMPLETE})"
+        if project in missing_roots:
+            app_context.console.print(
+                f"{line} " + style(cs.CLI_STATUS_ROOT_MISSING, cs.Color.RED)
+            )
+            continue
         app_context.console.print(line)
 
 
@@ -1862,6 +1873,19 @@ def _projects_with_incomplete_runs() -> set[str]:
         logger.warning(ls.CLI_SYNC_MARKERS_UNREADABLE.format(error=exc))
         return set()
     return {str(row["project"]) for row in rows if row.get("project")}
+
+
+def _graph_project_roots() -> dict[str, str | None]:
+    """Every project's recorded root, for the missing-root marks (#2479).
+
+    Best effort: status must still print when the graph cannot be read.
+    """
+    try:
+        with connect_memgraph(1) as ingestor:
+            return ingestor.list_project_roots()
+    except Exception as exc:
+        logger.warning(ls.CLI_PROJECT_ROOTS_UNREADABLE.format(error=exc))
+        return {}
 
 
 @app.command(
@@ -2957,6 +2981,169 @@ def delete_project(
             cs.Color.GREEN,
         )
     )
+
+
+def _missing_root_candidates(roots: dict[str, str | None]) -> dict[str, str]:
+    """Projects whose recorded root is provably gone (issue #2479).
+
+    The checkout cgr itself runs from is never a candidate, whatever the
+    stat says: the directory of the process asking the question cannot be
+    missing while that process is alive.
+    """
+    cwd = Path.cwd().resolve()
+    missing: dict[str, str] = {}
+    for project_name, root in roots.items():
+        if not root:
+            continue
+        if Path(root).resolve() == cwd:
+            continue
+        if root_proven_missing(root):
+            missing[project_name] = root
+    return missing
+
+
+def _report_prune_candidates(candidates: dict[str, str]) -> None:
+    if not candidates:
+        app_context.console.print(style(cs.CLI_MSG_PRUNE_NO_CANDIDATES, cs.Color.GREEN))
+        return
+    app_context.console.print(cs.CLI_MSG_PRUNE_CANDIDATES)
+    for project_name, root in sorted(candidates.items()):
+        app_context.console.print(
+            cs.CLI_MSG_PRUNE_CANDIDATE.format(project_name=project_name, root=root)
+        )
+
+
+def _prune_projects(
+    ingestor: MemgraphIngestor, candidates: dict[str, str]
+) -> list[str]:
+    """Prune each candidate and verify the purge against a fresh graph read.
+
+    Returns the names whose removal could not be verified, which the caller
+    reports as failures instead of successes. The existence re-check runs
+    inside the delete path: a checkout recreated between the listing and the
+    purge is not destroyed (#2479). A purge that cannot be proven complete --
+    the project still listed, or a non-zero residual count from the same
+    traversal the delete ran -- is a failure, never a success (#2479).
+    """
+    failures: list[str] = []
+    for project_name, root in sorted(candidates.items()):
+        if not root_proven_missing(root):
+            app_context.console.print(
+                style(
+                    cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+            continue
+        try:
+            _info(
+                style(
+                    cs.CLI_MSG_PRUNING_PROJECT.format(
+                        project_name=project_name, root=root
+                    ),
+                    cs.Color.YELLOW,
+                )
+            )
+            _cleanup_project_embeddings(ingestor, project_name)
+            ingestor.delete_project(project_name)
+            remaining = ingestor.list_projects()
+            residual_rows = ingestor.fetch_all(
+                cq.CYPHER_COUNT_PROJECT_NODES,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception as e:
+            app_context.console.print(
+                style(
+                    cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e),
+                    cs.Color.RED,
+                )
+            )
+            logger.exception(
+                cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e)
+            )
+            failures.append(project_name)
+            continue
+        residual: object = None
+        if residual_rows:
+            residual = residual_rows[0].get(cs.KEY_RESIDUAL_NODES)
+        if project_name in remaining or residual != 0:
+            app_context.console.print(
+                style(
+                    cs.CLI_ERR_PRUNE_VERIFY_FAILED.format(project_name=project_name),
+                    cs.Color.RED,
+                )
+            )
+            failures.append(project_name)
+            continue
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name),
+                cs.Color.GREEN,
+            )
+        )
+    return failures
+
+
+@app.command(
+    name=ch.CLICommandName.PRUNE,
+    help=ch.CMD_PRUNE,
+    short_help=ch.CMD_PRUNE,
+    epilog=ch.EXAMPLES_PRUNE,
+    rich_help_panel=ch.PANEL_MANAGE,
+)
+def prune(
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_PRUNE_DRY_RUN),
+    yes: bool = typer.Option(False, "--yes", help=ch.HELP_PRUNE_YES),
+) -> None:
+    effective_batch_size = settings.resolve_batch_size(None)
+
+    try:
+        with connect_memgraph(effective_batch_size) as ingestor:
+            candidates = _missing_root_candidates(ingestor.list_project_roots())
+            _report_prune_candidates(candidates)
+            if not candidates or dry_run:
+                if dry_run and candidates:
+                    _info(
+                        style(
+                            cs.CLI_MSG_PRUNE_DRY_RUN.format(count=len(candidates)),
+                            cs.Color.CYAN,
+                        )
+                    )
+                return
+            if not yes:
+                if not _stdin_is_interactive():
+                    app_context.console.print(
+                        style(cs.CLI_ERR_PRUNE_NEEDS_CONFIRMATION, cs.Color.RED)
+                    )
+                    raise typer.Exit(1)
+                confirmed = typer.confirm(
+                    cs.CLI_PROMPT_PRUNE_CONFIRM.format(count=len(candidates)),
+                    default=False,
+                )
+                if not confirmed:
+                    app_context.console.print(
+                        style(cs.CLI_MSG_PRUNE_ABORTED, cs.Color.CYAN)
+                    )
+                    raise typer.Exit(1)
+            failures = _prune_projects(ingestor, candidates)
+            pruned = len(candidates) - len(failures)
+            if pruned:
+                _info(
+                    style(
+                        cs.CLI_MSG_PRUNE_DONE.format(count=pruned),
+                        cs.Color.GREEN,
+                    )
+                )
+            if failures:
+                raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_PRUNE_RUN_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(cs.CLI_ERR_PRUNE_RUN_FAILED.format(error=e))
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

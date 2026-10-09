@@ -630,6 +630,26 @@ def project_roots_from_rows(
     return roots
 
 
+def root_proven_missing(root_path: str) -> bool:
+    """Whether a project root is provably gone, rather than unreadable.
+
+    Asked by `cgr prune` before it destroys a project (#2479): the cost of a
+    wrong answer is not a stale node but a lost graph. ``FileNotFoundError``
+    and ``NotADirectoryError`` establish absence -- a parent component that is
+    now a file makes the old directory unreachable by construction -- so those
+    prove the root can be pruned. Every other ``OSError`` (an EACCES on a
+    protected parent, an unavailable network mount) leaves the question open,
+    and open means live: such a project is never a prune candidate.
+    """
+    try:
+        os.stat(root_path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def project_root_for_qualified_name(
     qualified_name: str, roots: dict[str, str | None]
 ) -> Path | None:

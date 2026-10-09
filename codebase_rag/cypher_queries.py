@@ -198,6 +198,16 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
+# The same traversal CYPHER_DELETE_PROJECT deletes, read as a count (#2479):
+# `cgr prune` reports a purge done only when a fresh read answers 0, so a
+# delete that silently stopped halfway is an error rather than a success.
+CYPHER_COUNT_PROJECT_NODES = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
+RETURN count(DISTINCT p) + count(DISTINCT container) + count(DISTINCT defined) AS residual
+"""
+
 # Retires a project whose checkout was just re-indexed under another name
 # (issue #2412). Both projects index the same files, so they share every
 # Folder and File node (keyed on absolute path), and the walk above would

@@ -152,3 +152,20 @@ cgr delete-project --name user-service__a1b2c3d4
 ![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)
 
 Deleting a project also removes its embeddings from the vector store.
+
+A checkout that was moved, renamed or deleted leaves its project behind with a
+`root_path` that no longer exists; `cgr status` marks those `(missing)`. Sweep
+them in one pass:
+
+```bash
+# List the projects whose root is gone, removing nothing
+cgr prune --dry-run
+
+# Remove them, asking first
+cgr prune
+```
+
+A project is pruned only when its root is provably absent -- an unreadable
+directory (a permissions error, an unavailable mount) is treated as live --
+the checkout `cgr` itself runs from is never pruned, and every purge is
+verified against a fresh read of the graph before it is reported.
