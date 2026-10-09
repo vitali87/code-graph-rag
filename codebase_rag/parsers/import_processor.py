@@ -593,6 +593,46 @@ def _load_ts_base_urls(repo_path: Path) -> tuple[tuple[str, str | None], ...]:
     return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
 
 
+def _tsconfig_custom_conditions(
+    cfg: Path, repo_path: Path, seen: frozenset[Path] = frozenset()
+) -> frozenset[str] | None:
+    # `cfg`'s effective `customConditions`: its own list, or one inherited
+    # through `extends`. An array option is replaced, not merged, by the
+    # config that sets it. None when no config in the chain declares one.
+    data = _load_jsonc(cfg) if cfg not in seen else None
+    if not data:
+        return None
+    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+    if isinstance(options, dict) and isinstance(
+        declared := options.get(cs.TS_CUSTOM_CONDITIONS_KEY), list
+    ):
+        return frozenset(c for c in declared if isinstance(c, str))
+    for parent in _tsconfig_extends(data, cfg, repo_path):
+        inherited = _tsconfig_custom_conditions(parent, repo_path, seen | {cfg})
+        if inherited is not None:
+            return inherited
+    return None
+
+
+def _load_ts_custom_conditions(
+    repo_path: Path,
+) -> tuple[tuple[str, frozenset[str]], ...]:
+    # (config directory as a dotted module prefix, its effective
+    # `customConditions`), deepest directory first, governed exactly like
+    # `baseUrl` above: the nearest config holding a file decides which
+    # `exports` conditions that file's imports select (issue #2935).
+    governing: dict[str, frozenset[str]] = {}
+    for cfg in _find_tsconfig_files(repo_path):
+        dotted = _tsconfig_dir_prefix(cfg, repo_path).replace(
+            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+        )
+        if dotted not in governing:
+            governing[dotted] = _tsconfig_custom_conditions(cfg, repo_path) or (
+                frozenset()
+            )
+    return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
+
+
 def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
     # Aggregate `paths` aliases from every tsconfig at or below the repo root, each
     # target prefixed by the tsconfig's own directory so `@/util` resolves against
@@ -935,6 +975,7 @@ class ImportProcessor:
         "js_ts_package_imports",
         "js_path_aliases",
         "js_base_urls",
+        "js_custom_conditions",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -1281,6 +1322,9 @@ class ImportProcessor:
         self.js_base_urls: tuple[tuple[str, str | None], ...] = _load_ts_base_urls(
             repo_path
         )
+        self.js_custom_conditions: tuple[tuple[str, frozenset[str]], ...] = (
+            _load_ts_custom_conditions(repo_path)
+        )
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
@@ -1331,10 +1375,12 @@ class ImportProcessor:
 
         @lru_cache(maxsize=4096)
         def _map_js_workspace_import_cached(
-            import_path: str, require: bool = False
+            import_path: str,
+            require: bool = False,
+            conditions: frozenset[str] = frozenset(),
         ) -> str | None:
             return resolve_js_workspace_import(
-                js_workspace_packages, import_path, repo_path, require
+                js_workspace_packages, import_path, repo_path, require, conditions
             )
 
         self._map_js_workspace_import = _map_js_workspace_import_cached
@@ -4013,6 +4059,20 @@ class ImportProcessor:
             None,
         )
 
+    def _js_governing_custom_conditions(self, current_module: str) -> frozenset[str]:
+        # The `customConditions` of the nearest tsconfig whose directory
+        # holds the module, read the way `_js_governing_base_url` reads its
+        # `baseUrl`.
+        relative = current_module.removeprefix(f"{self.project_name}{cs.SEPARATOR_DOT}")
+        return next(
+            (
+                conditions
+                for directory, conditions in self.js_custom_conditions
+                if relative.startswith(directory)
+            ),
+            frozenset(),
+        )
+
     def _js_module_rel_on_disk(self, normalized: str) -> str | None:
         """The repo-relative module this path names on disk, or None.
 
@@ -4079,7 +4139,11 @@ class ImportProcessor:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             if aliased := self._ts_alias_module_qn(import_path):
                 return JsImportTarget(aliased, False)
-            if workspace := self._map_js_workspace_import(import_path, require):
+            if workspace := self._map_js_workspace_import(
+                import_path,
+                require,
+                self._js_governing_custom_conditions(current_module),
+            ):
                 dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
                 return JsImportTarget(
                     f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
