@@ -8,7 +8,7 @@ cannot be verified as complete is reported as a failure.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -49,40 +49,37 @@ def mock_memgraph_connect(
 ) -> Generator[MagicMock, None, None]:
     with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
         mock_ingestor = MagicMock()
-        mock_ingestor_roots.clear()
-        mock_ingestor_roots.update(roots)
         mock_ingestor.list_project_roots.side_effect = [dict(roots)]
         # delete_project is conditional now: the fixture's default is a
         # purge that fired (the repoint test overrides it).
         mock_ingestor.delete_project.return_value = True
         # The verification read after a purge: the pruned project is gone.
         mock_ingestor.list_projects.side_effect = [["live__11111111"]]
-        mock_ingestor.fetch_all.side_effect = _fake_fetch_all
+        mock_ingestor.fetch_all.side_effect = _fake_fetch_all(0)
         mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
         yield mock_connect
 
 
 def _fake_fetch_all(
-    query: str, params: dict[str, object] | None = None
-) -> list[dict[str, object]]:
-    if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
-        return [{cs.KEY_NODE_ID: 1}]
-    if query == cq.CYPHER_COUNT_PROJECT_NODES:
-        assert params is not None and set(params) == {cs.KEY_PROJECT_NAME}
-        assert isinstance(params[cs.KEY_PROJECT_NAME], str)
-        return [{cs.KEY_RESIDUAL_NODES: 0}]
-    return []
+    residual: object,
+) -> Callable[[str, dict[str, object] | None], list[dict[str, object]]]:
+    """One fake for every fetch: node ids read normally, the residual
+    count returning whatever the caller wants the verification to see —
+    a row with the given count, or an empty read for None."""
 
-
-def _empty_residual_fetch_all(
-    query: str, params: dict[str, object] | None = None
-) -> list[dict[str, object]]:
-    if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
-        return [{cs.KEY_NODE_ID: 1}]
-    if query == cq.CYPHER_COUNT_PROJECT_NODES:
+    def fetch_all(
+        query: str, params: dict[str, object] | None = None
+    ) -> list[dict[str, object]]:
+        if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
+            return [{cs.KEY_NODE_ID: 1}]
+        if query == cq.CYPHER_COUNT_PROJECT_NODES:
+            assert params is not None and set(params) == {cs.KEY_PROJECT_NAME}
+            assert isinstance(params[cs.KEY_PROJECT_NAME], str)
+            return [] if residual is None else [{cs.KEY_RESIDUAL_NODES: residual}]
         return []
-    return []
+
+    return fetch_all
 
 
 def test_residual_row_key_agrees_with_query_alias() -> None:
@@ -238,7 +235,7 @@ class TestPruneDeletion:
         _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
 
     def test_repointed_root_is_skipped(
-        self, tmp_path: Path, mock_memgraph_connect: MagicMock
+        self, tmp_path: Path, mock_memgraph_connect: MagicMock, roots: dict[str, str]
     ) -> None:
         # While the prompt was open a sync moved the project's root_path to
         # its new live location: the conditional delete must purge the
@@ -254,7 +251,7 @@ class TestPruneDeletion:
         assert "has changed" in result.output
         assert "Pruned" not in result.output
         ingestor.delete_project.assert_called_once_with(
-            "dead__22222222", expected_root=mock_ingestor_roots["dead__22222222"]
+            "dead__22222222", expected_root=roots["dead__22222222"]
         )
 
 
@@ -276,7 +273,7 @@ class TestPruneSyncRecord:
         from codebase_rag import cgr_state
 
         cgr_state.record_sync("dead__22222222", home=_isolated_cgr_home)
-        _ingestor(mock_memgraph_connect).fetch_all.side_effect = _residual_fetch_all
+        _ingestor(mock_memgraph_connect).fetch_all.side_effect = _fake_fetch_all(7)
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 1, result.output
@@ -304,7 +301,7 @@ class TestPruneVerification:
         self, mock_memgraph_connect: MagicMock
     ) -> None:
         ingestor = _ingestor(mock_memgraph_connect)
-        ingestor.fetch_all.side_effect = _residual_fetch_all
+        ingestor.fetch_all.side_effect = _fake_fetch_all(7)
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 1, result.output
@@ -317,23 +314,12 @@ class TestPruneVerification:
         # A purge that cannot be proven complete is a failure, never a
         # success: an unreadable residual count must not read as zero.
         ingestor = _ingestor(mock_memgraph_connect)
-        ingestor.fetch_all.side_effect = _empty_residual_fetch_all
+        ingestor.fetch_all.side_effect = _fake_fetch_all(None)
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 1, result.output
         assert "could not be verified" in result.output
         assert "Pruned project" not in result.output
-
-
-def _residual_fetch_all(
-    query: str, params: dict[str, object] | None = None
-) -> list[dict[str, object]]:
-    if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
-        return [{cs.KEY_NODE_ID: 1}]
-    if query == cq.CYPHER_COUNT_PROJECT_NODES:
-        assert params is not None and set(params) == {cs.KEY_PROJECT_NAME}
-        return [{cs.KEY_RESIDUAL_NODES: 7}]
-    return []
 
 
 class TestPruneConfirmation:

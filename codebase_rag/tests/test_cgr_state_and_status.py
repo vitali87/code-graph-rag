@@ -213,6 +213,25 @@ class TestStatusMissingRoots:
         assert "(missing)" not in result.output
         assert str(live) in result.output
 
+    def test_unreadable_graph_still_prints_status(
+        self,
+        _temp_home: Path,
+        _stack_running: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Status is best effort: an unreadable graph leaves the missing-root
+        # marks out rather than failing the command.
+        cgr_state.record_sync("live__11111111")
+        monkeypatch.setattr(
+            "codebase_rag.cli.connect_memgraph",
+            MagicMock(side_effect=ConnectionError("graph down")),
+        )
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "live__11111111" in result.output
+        assert "(missing)" not in result.output
+
 
 def _graph_mock(roots: dict[str, str | None]) -> MagicMock:
     ingestor = MagicMock()

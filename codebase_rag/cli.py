@@ -895,17 +895,28 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     return resolved
 
 
-def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
-    rows = ingestor.fetch_all(
-        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
-        {cs.KEY_PROJECT_NAME: project_name},
-    )
+def _cleanup_project_embeddings(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    node_rows: list[ResultRow] | None = None,
+) -> bool:
+    """Delete the project's vectors; False when the store reports a miss.
+
+    The rows may be supplied pre-fetched: prune reads the ids before the
+    conditional purge fires, because once the graph is deleted no query can
+    recover them.
+    """
+    if node_rows is None:
+        node_rows = ingestor.fetch_all(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
     node_ids: list[int] = []
-    for row in rows:
+    for row in node_rows:
         node_id = row.get(cs.KEY_NODE_ID)
         if isinstance(node_id, int):
             node_ids.append(node_id)
-    delete_project_embeddings(project_name, node_ids)
+    return delete_project_embeddings(project_name, node_ids)
 
 
 @app.command(
@@ -3085,12 +3096,9 @@ def _prune_projects(
         # fails or raises leaks vectors for dead node ids and is not
         # recoverable by a retry, so it warns and the prune still counts.
         try:
-            node_ids = [
-                row[cs.KEY_NODE_ID]
-                for row in node_rows
-                if isinstance(row.get(cs.KEY_NODE_ID), int)
-            ]
-            vectors_deleted = delete_project_embeddings(project_name, node_ids)
+            vectors_deleted = _cleanup_project_embeddings(
+                ingestor, project_name, node_rows
+            )
         except Exception as e:
             logger.warning(f"Embedding deletion failed for {project_name}: {e}")
             vectors_deleted = False
