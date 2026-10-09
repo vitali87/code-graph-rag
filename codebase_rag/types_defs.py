@@ -801,6 +801,10 @@ class DeferredParentLink(NamedTuple):
     # the parameterless sibling shadows the guess); the resolver prefers
     # this span's recorded location over the qn match.
     parent_span: tuple[str, int, int] | None = None
+    # Also emit a creation-site REFERENCES from the resolved parent: a C++
+    # lambda is a value used where it is written (issue #2732). Never from a
+    # module fallback, which would keep the child alive unconditionally.
+    reference_child: bool = False
 
 
 # (module_qn, 1-based start line, 0-based start column) of a function
