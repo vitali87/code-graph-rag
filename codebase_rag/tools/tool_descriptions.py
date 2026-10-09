@@ -323,7 +323,10 @@ MCP_RENAME = (
     "resolved heuristically, by overload fan-out, or only by a trace, unless "
     "`allow_heuristic` is true. A class referenced by an inheritance or type "
     "annotation edge that carries no rewrite location refuses regardless of "
-    "`allow_heuristic`. Every rewritten file must still parse; "
+    "`allow_heuristic`. A method that overrides or implements something "
+    "outside the project (a library base, `@Override`/`override` with no "
+    "project base, a Python `__dunder__`) refuses unless "
+    "`allow_external_override` is true. Every rewritten file must still parse; "
     "otherwise nothing is written. Set `dry_run` to see the plan and diff "
     "without touching the tree. Applied edits are recorded for `cgr edits "
     "undo`, and Markdown mentions of the old name are listed for a human to "
@@ -332,6 +335,10 @@ MCP_RENAME = (
 MCP_PARAM_NEW_NAME = "The new identifier."
 MCP_PARAM_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites too (default false)."
+)
+MCP_PARAM_ALLOW_EXTERNAL_OVERRIDE = (
+    "Rename a method even though it overrides or implements something outside "
+    "the project, so the override stops (default false)."
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
 

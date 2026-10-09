@@ -758,6 +758,20 @@ RENAME_AMBIGUOUS = (
     "fan-out, or only by a trace; pass {option} to rewrite through them"
 )
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
+# A method that overrides or implements something the project does not define
+# stops doing so when renamed, and nothing at a call site shows it (issue
+# #3226). `{option}` is spelled as for RENAME_AMBIGUOUS.
+RENAME_EXTERNAL_OVERRIDE = (
+    "Refusing to rename {qn}: {reasons}. The renamed method would no longer "
+    "override it, and nothing would call it in its place; pass {option} to "
+    "rename it anyway"
+)
+RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE = "--allow-external-override"
+RENAME_OVERRIDES_EXTERNAL = "{qn} overrides a method outside the project"
+RENAME_PROTOCOL_METHOD = "{qn} is the Python protocol method {name}"
+RENAME_UNMATCHED_OVERRIDE = (
+    "{qn} is marked {marker} but overrides no method in the project"
+)
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "

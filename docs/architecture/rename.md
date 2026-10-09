@@ -18,8 +18,8 @@ cgr rename myproj.pkg.util.helper assist             # apply
 *Real project names carry a path hash, so `myproj` reads `myproj__425345f0`; the JSON report is saved and read with `jq`.*
 
 The MCP tool of the same name takes `qualified_name`, `new_name`, and the
-optional `allow_heuristic`, `dry_run` and `project` fields, and returns the
-same report as JSON.
+optional `allow_heuristic`, `allow_external_override`, `dry_run` and
+`project` fields, and returns the same report as JSON.
 
 ## What gets rewritten
 
@@ -71,6 +71,16 @@ but records no position to rewrite, so renaming would leave that edge
 pointing at the old name. `--allow-heuristic` does NOT bypass this, because
 the problem is a missing location rather than an uncertain one. A class that
 is only instantiated or called renames normally.
+
+A method that overrides or implements something outside the project
+refuses too, naming why: code the project does not contain calls it by its
+old name, so after the rename the override silently stops, and no call site
+shows it. That covers a method the graph marks `overrides_external`
+(`Worker(threading.Thread).run`, `TestCase.setUp`), a Python `__dunder__`
+method, and a method carrying `@Override` or the `override` modifier (Java,
+C#, TypeScript, Dart) that overrides no method in the project. Pass
+`--allow-external-override` (`allow_external_override: true`) when renaming
+it is the intent (issue #3226).
 
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's

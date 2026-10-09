@@ -72,6 +72,24 @@ class RecordedGraph:
             return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
+        if query == cq.CYPHER_RENAME_OVERRIDE_FACTS:
+            if qn not in self.nodes:
+                return []
+            node = self.nodes[qn]
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_NAME: node.get(cs.KEY_NAME),
+                    cs.KEY_PATH: node.get(cs.KEY_PATH),
+                    cs.KEY_OVERRIDES_EXTERNAL: node.get(cs.KEY_OVERRIDES_EXTERNAL),
+                    cs.KEY_DECORATORS: node.get(cs.KEY_DECORATORS),
+                    cs.KEY_MODIFIERS: node.get(cs.KEY_MODIFIERS),
+                    "bases": sum(
+                        rel == "OVERRIDES" and src == qn
+                        for src, rel, _dst, _props in self.edges
+                    ),
+                }
+            ]
         if query in (
             cq.CYPHER_GRAPH_CALLERS,
             cq.CYPHER_GRAPH_REFERENCES,

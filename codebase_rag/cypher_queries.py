@@ -1139,6 +1139,16 @@ CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
        impl.path AS path, type(r) AS rel_type"""
+# What a rename must not silently break (issue #3226): whether a method
+# overrides something outside the project, the override markers it carries,
+# and how many project methods it overrides.
+CYPHER_RENAME_OVERRIDE_FACTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (n)-[:OVERRIDES]->(base)
+WITH n, count(base) AS bases
+RETURN n.qualified_name AS qualified_name, n.name AS name, n.path AS path,
+       n.overrides_external AS overrides_external, n.decorators AS decorators,
+       n.modifiers AS modifiers, bases"""
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
