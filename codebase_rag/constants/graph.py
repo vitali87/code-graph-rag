@@ -1174,6 +1174,16 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# The project's IMPLEMENTS edges for incremental runs: a call typed to an
+# interface binds its sole first-party implementer too, and an implementer in
+# a file the run does not re-parse must still count, both to give that edge
+# and to rule it out when there are two (issue #3256).
+CYPHER_ALL_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn"
+)
 
 # C# type declaration locations for incremental runs: _join_csharp_partials
 # resolves each Roslyn partial-declaration location against csharp_type_locations,

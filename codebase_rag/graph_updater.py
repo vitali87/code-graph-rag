@@ -3217,6 +3217,7 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
+        self._rehydrate_interface_implementers_from_graph()
         self._requeue_parameter_types(project_params)
         self._requeue_field_types(project_params)
 
@@ -3267,6 +3268,9 @@ class GraphUpdater:
         except ValueError:
             return False
         self.function_registry[qn] = node_type
+        # A duplicate's `@line` variant rejoins its natural qn's bucket, which
+        # a call fanning out to every variant reads (issue #3256).
+        self.function_registry.restore_variant(qn)
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
@@ -3598,6 +3602,35 @@ class GraphUpdater:
             rows, class_inheritance
         ).items():
             class_inheritance[child] = bases
+
+    def _rehydrate_interface_implementers_from_graph(self) -> None:
+        # Incremental runs fill interface_implementers only from the classes
+        # they ingest, so an interface whose implementer sits in an unchanged
+        # file looked unimplemented -- or, beside a new implementer, as if
+        # that one were the sole one (issue #3256). Restore them from the
+        # graph: a re-parsed file's classes were deleted with their old
+        # IMPLEMENTS edges, so a dropped `implements` is not read back.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        implementers = self.factory.definition_processor.interface_implementers
+        try:
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_IMPLEMENTS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in rows:
+            child = row.get(cs.KEY_CHILD_QN)
+            interface = row.get(cs.KEY_BASE_QN)
+            if isinstance(child, str) and isinstance(interface, str):
+                implementers.setdefault(interface, set()).add(child)
 
     @staticmethod
     def _rehydrated_bases_by_child(

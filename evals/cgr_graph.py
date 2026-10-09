@@ -1436,6 +1436,19 @@ class _StatefulIngestor:
                     )
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
+            case cs.CYPHER_ALL_IMPLEMENTS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_CHILD_QN: _text(from_val),
+                        cs.KEY_BASE_QN: _text(to_val),
+                    }
+                    for _from_label, from_val, rel_type, _to_label, to_val, _site in (
+                        self.keyed_edges
+                    )
+                    if rel_type == cs.RelationshipType.IMPLEMENTS.value
+                    and _str(from_val).startswith(prefix)
+                ]
             case cs.CYPHER_ALL_MODULE_QNS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 module_rows: list[ResultRow] = []
