@@ -435,6 +435,36 @@ def _is_js_side_effect_import(site: PropertyDict | None) -> bool:
     )
 
 
+def _js_side_effect_call(statement: Node) -> tuple[str, bool] | None:
+    # (specifier, is_require) of a statement that is only `require("./db")`
+    # or `import("./cache")`, awaited or not; None for anything else.
+    if statement.type != cs.TS_EXPRESSION_STATEMENT:
+        return None
+    call = statement.named_child(0)
+    if call is not None and call.type == cs.TS_AWAIT_EXPRESSION:
+        call = call.named_child(0)
+    if call is None or call.type != cs.TS_CALL_EXPRESSION:
+        return None
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if func is None or args is None:
+        return None
+    is_require = (
+        func.type == cs.TS_IDENTIFIER and safe_decode_text(func) == cs.IMPORT_REQUIRE
+    )
+    if not is_require and func.type != cs.TS_JS_DYNAMIC_IMPORT:
+        return None
+    arg = next((a for a in args.named_children if a.type == cs.TS_STRING), None)
+    if arg is None:
+        return None
+    return safe_decode_with_fallback(arg).strip("'\""), is_require
+
+
+def _is_js_whole_module_import(site: PropertyDict | None) -> bool:
+    # A star re-export or a side-effect import targets the module itself.
+    return _is_js_star_reexport(site) or _is_js_side_effect_import(site)
+
+
 def _is_js_star_reexport(site: PropertyDict | None) -> bool:
     # `export * from` records `*` as its imported name and binds no alias,
     # where `import * as ns` binds one.
@@ -2208,8 +2238,8 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and (
-            _is_js_star_reexport(entry.site) or _is_js_side_effect_import(entry.site)
+        if entry.language in cs.JS_TS_LANGUAGES and _is_js_whole_module_import(
+            entry.site
         ):
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
@@ -3976,27 +4006,9 @@ class ImportProcessor:
         # so it is imported for its side effects (issue #3267). Statements
         # binding the result are `_parse_js_require`'s.
         for statement in root_node.named_children:
-            if statement.type != cs.TS_EXPRESSION_STATEMENT:
+            if (call := _js_side_effect_call(statement)) is None:
                 continue
-            call = statement.named_child(0)
-            if call is not None and call.type == cs.TS_AWAIT_EXPRESSION:
-                call = call.named_child(0)
-            if call is None or call.type != cs.TS_CALL_EXPRESSION:
-                continue
-            func = call.child_by_field_name(cs.FIELD_FUNCTION)
-            args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
-            if func is None or args is None:
-                continue
-            is_require = (
-                func.type == cs.TS_IDENTIFIER
-                and safe_decode_text(func) == cs.IMPORT_REQUIRE
-            )
-            if not is_require and func.type != cs.TS_JS_DYNAMIC_IMPORT:
-                continue
-            arg = next((a for a in args.named_children if a.type == cs.TS_STRING), None)
-            if arg is None:
-                continue
-            specifier = safe_decode_with_fallback(arg).strip("'\"")
+            specifier, is_require = call
             target = self._resolve_js_import_target(specifier, module_qn, is_require)
             self._note_unresolved_js_specifier(module_qn, specifier)
             if target.module_qn:

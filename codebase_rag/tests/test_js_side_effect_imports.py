@@ -85,7 +85,8 @@ def test_a_side_effect_import_of_a_module_is_an_imports_edge(
     assert props is not None, sorted(imports)
     # Where the statement is, and no bound or imported name.
     assert props.get(cs.KEY_LINE) == line, props
-    assert cs.KEY_ALIAS not in props and cs.KEY_IMPORTED_NAME not in props, props
+    assert cs.KEY_ALIAS not in props, props
+    assert cs.KEY_IMPORTED_NAME not in props, props
 
 
 def test_a_side_effect_import_of_a_package_reaches_its_external_module(
