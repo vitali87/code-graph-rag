@@ -26,7 +26,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -146,35 +146,158 @@ def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str
     return tuple(sorted(names))
 
 
+def _nodes_in_span(root: Node, start_line: int, end_line: int) -> Iterator[Node]:
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
+            continue
+        yield node
+        stack.extend(node.children)
+
+
+def _spelling(node: Node | None, name: str, start_line: int) -> Node | None:
+    """`node` when it spells `name` and starts inside the span, else None."""
+    if (
+        node is not None
+        and node.text is not None
+        and node.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+        and node.start_point[0] + 1 >= start_line
+    ):
+        return node
+    return None
+
+
+def _declared_name(node: Node) -> Node | None:
+    """The name token of a definition that has no `name` field (issue #2768).
+
+    C and C++ name a function as the `declarator` of its `function_declarator`
+    (under any pointer or reference wrapper), a Lua `function M.f` names it as
+    the last `field` of an index expression whose whole text is `M.f`, and a
+    JS/TS object literal names a function value with the pair's `key`.
+    """
+    match node.type:
+        case cs.TS_CPP_FUNCTION_DECLARATOR:
+            return node.child_by_field_name(cs.FIELD_DECLARATOR)
+        case cs.TS_PAIR:
+            value = node.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None and value.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES:
+                return node.child_by_field_name(cs.FIELD_KEY)
+            return None
+    named = node.child_by_field_name(cs.FIELD_NAME)
+    if named is not None and named.type == cs.TS_DOT_INDEX_EXPRESSION:
+        return named.child_by_field_name(cs.FIELD_FIELD)
+    return None
+
+
+def _pair_key_of(
+    nodes: list[Node], start_line: int, end_line: int, name: str
+) -> Node | None:
+    """The key of the object pair whose function value is the definition
+    spanning exactly `start_line`..`end_line`, when it spells `name`."""
+    for node in nodes:
+        parent = node.parent
+        if (
+            node.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES
+            and node.start_point[0] + 1 == start_line
+            and node.end_point[0] + 1 == end_line
+            and parent is not None
+            and parent.type == cs.TS_PAIR
+            and parent.child_by_field_name(cs.FIELD_VALUE) == node
+        ):
+            key = parent.child_by_field_name(cs.FIELD_KEY)
+            if (
+                key is not None
+                and key.text is not None
+                and key.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+            ):
+                return key
+    return None
+
+
+def _definition_name_node(
+    nodes: list[Node], start_line: int, end_line: int, name: str
+) -> Node | None:
+    """The name token among `nodes` that a definition spells: an object
+    pair's key, else a `name` field."""
+    if (key := _pair_key_of(nodes, start_line, end_line, name)) is not None:
+        return key
+    for node in nodes:
+        if (
+            named := _spelling(
+                node.child_by_field_name(cs.FIELD_NAME), name, start_line
+            )
+        ) is not None:
+            return named
+    return None
+
+
+def _tree_name_token(
+    root: Node,
+    start_line: int,
+    end_line: int,
+    name: str,
+    start_col: int | None,
+) -> Node | None:
+    """The definition's own name token in the parsed tree, inside its span."""
+    in_span = list(_nodes_in_span(root, start_line, end_line))
+    anchored = [
+        node
+        for node in in_span
+        if start_col is not None and node.start_point == (start_line - 1, start_col)
+    ]
+    if anchored and (
+        token := _definition_name_node(anchored, start_line, end_line, name)
+    ):
+        return token
+    # A function that is a JS/TS object pair's value is the property its
+    # key names: the key comes first, though the value may start on the
+    # next line (outside the span) or spell the name itself, or declare
+    # a same-named function inside (bot review on PR #2895).
+    if (key := _pair_key_of(in_span, start_line, end_line, name)) is not None:
+        return key
+    for node in in_span:
+        named = _spelling(node.child_by_field_name(cs.FIELD_NAME), name, start_line)
+        if named is not None:
+            return named
+    # Only when no `name` field spells it, so every shape located before
+    # is located exactly as before. Earliest in the source, because the
+    # header comes before anything in the body that could spell it too.
+    declared = [
+        token
+        for node in in_span
+        if (token := _spelling(_declared_name(node), name, start_line)) is not None
+    ]
+    if declared:
+        return min(declared, key=lambda token: token.start_byte)
+    return None
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
     start_line: int,
     end_line: int,
     name: str,
+    start_col: int | None = None,
 ) -> tuple[int, int] | None:
-    """(line, col) of the definition's own name identifier inside its span."""
+    """(line, col) of the definition's own name identifier inside its span.
+
+    `start_col` is where the definition starts on `start_line`: two can share
+    a line span (`function foo() {}` and `{ foo: () => 1 }` on one line), so
+    the nodes starting exactly there are asked first (bot review on PR
+    #2895)."""
     parser = None
     if language is not None:
         parsers, _queries = load_parsers()
         parser = parsers.get(language)
     if parser is not None:
-        root = parser.parse(source).root_node
-        stack: list[Node] = [root]
-        while stack:
-            node = stack.pop()
-            if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
-                continue
-            named = node.child_by_field_name(cs.FIELD_NAME)
-            if (
-                named is not None
-                and named.text is not None
-                and named.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-                and named.start_point[0] + 1 >= start_line
-            ):
-                return named.start_point[0] + 1, named.start_point[1]
-            stack.extend(node.children)
-        return None
+        token = _tree_name_token(
+            parser.parse(source).root_node, start_line, end_line, name, start_col
+        )
+        if token is None:
+            return None
+        return token.start_point[0] + 1, token.start_point[1]
     # No grammar: the first whole-word occurrence inside the span.
     text = source.decode(cs.ENCODING_UTF8, errors="replace")
     lines = text.split("\n")
@@ -593,7 +716,12 @@ class Renamer:
         start = definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(
-            source, get_language_for_extension(Path(path).suffix), start, end, old_name
+            source,
+            get_language_for_extension(Path(path).suffix),
+            start,
+            end,
+            old_name,
+            definition.get("start_col"),
         )
         if token is None:
             raise RenameRefused(

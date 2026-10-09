@@ -786,7 +786,7 @@ CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
-       n.docstring AS docstring
+       n.start_col AS start_col, n.docstring AS docstring
 {_DEFINITION_TIEBREAK}
 LIMIT 1"""
 # Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS
