@@ -2783,9 +2783,18 @@ class CallResolver:
         # the definition, possibly through further barrels. Without this the
         # call fell to the name-only fallback, which found no `plus` at all,
         # or only guessed the right `add` (issue #2464).
-        if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
+        if language not in cs.JS_TS_LANGUAGES:
             return None
-        imported_qn = import_map[call_name]
+        if call_name in import_map:
+            imported_qn = import_map[call_name]
+        else:
+            # `math.add()` with `math` imported from a barrel that re-exports
+            # it as a namespace (`export * as math from "./math"`): the member
+            # is followed from the namespace's module (issue #3249).
+            head, dot, member = call_name.partition(cs.SEPARATOR_DOT)
+            if not dot or cs.SEPARATOR_DOT in member or head not in import_map:
+                return None
+            imported_qn = f"{import_map[head]}{cs.SEPARATOR_DOT}{member}"
         followed = self.import_processor.follow_js_reexports(
             imported_qn,
             self.type_inference.module_qn_to_file_path,

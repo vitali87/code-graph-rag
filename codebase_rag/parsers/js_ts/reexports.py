@@ -76,9 +76,17 @@ class _ReexportWalk:
 
     def _export(self, qn: str, seen: set[tuple[str, bool]]) -> tuple[str, bool] | None:
         module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
-        barrel = self._barrel(module_qn) if separator else None
-        if barrel is None:
+        if not separator:
             return None
+        barrel = self._barrel(module_qn)
+        if barrel is None:
+            # `math.add` where `math` is a namespace a barrel re-exports
+            # (`export * as math from "./math"`): the member is looked up in
+            # the module the namespace names (issue #3249).
+            namespace = self.follow(module_qn, seen)
+            if namespace == module_qn or self._barrel(namespace) is None:
+                return None
+            return f"{namespace}{cs.SEPARATOR_DOT}{name}", False
         if (export := self._exports.get(barrel, {}).get(name)) is not None:
             return export.target, export.local
         # `export *` passes on every name a source exports except `default`.
