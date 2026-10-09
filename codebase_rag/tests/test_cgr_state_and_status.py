@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import cgr_state
@@ -59,20 +60,23 @@ class TestRecordSync:
         assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
 
     def test_untakeable_lock_degrades_to_an_unlocked_write(
-        self, _temp_home: Path, caplog: pytest.LogCaptureFixture
+        self, _temp_home: Path
     ) -> None:
         # The lock is best effort: a home that refuses one must not fail a
-        # sync whose graph commit already succeeded (#2479).
+        # sync whose graph commit already succeeded (#2479). Loguru does not
+        # feed pytest's caplog, so the warning is read off a direct sink.
         _temp_home.mkdir(parents=True, exist_ok=True)
-        with (
-            caplog.at_level("WARNING", logger="codebase_rag.cgr_state"),
-            patch("codebase_rag.cgr_state.fcntl.flock", side_effect=OSError),
-        ):
-            cgr_state.record_sync("alpha")
-        assert any(
-            "proceeding without a lock" in record.getMessage()
-            for record in caplog.records
+        messages: list[str] = []
+        sink_id = logger.add(
+            lambda message: messages.append(message.record["message"]),
+            level="WARNING",
         )
+        try:
+            with patch("codebase_rag.cgr_state.fcntl.flock", side_effect=OSError):
+                cgr_state.record_sync("alpha")
+        finally:
+            logger.remove(sink_id)
+        assert any("proceeding without a lock" in message for message in messages)
         assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
 
     def test_concurrent_writers_do_not_lose_updates(self, _temp_home: Path) -> None:
