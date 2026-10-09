@@ -24,7 +24,6 @@ from ..io_access import (
     IO_STREAM_SINKS,
     LANGUAGE_DESCRIPTORS,
     PY_SCOPE_BOUNDARIES,
-    RESOURCE_QN_FORMAT,
     ArgHandleSink,
     HandleBinding,
     HandleConstructor,
@@ -63,6 +62,7 @@ from ..io_access.registry import (
     IO_TYPE_HANDLE_CONSTRUCTORS,
     LIBC_STD_STREAMS,
 )
+from ..io_access.resource_names import resource_qn
 from ..semantic_call_join import call_site_key
 from ..utils import (
     c_positional_parameter_slots,
@@ -860,9 +860,13 @@ class FlowProcessor:
         resolver: CallResolver,
         selection: CaptureSelection,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
+        project_name: str | None = None,
     ) -> None:
         self.ingestor = ingestor
         self._import_processor = import_processor
+        # Scopes a same-origin URL's resource exactly as the I/O pass does, so
+        # a flow reaches the node the request reads or writes.
+        self._project_name = project_name
         self._resolver = resolver
         self._selection = selection
         # Span-key -> registered FunctionLocation, so a nested def's capture record
@@ -4650,7 +4654,7 @@ class FlowProcessor:
         )
 
     def _ensure_resource(self, kind: ResourceKind, identity: str) -> str:
-        qn = RESOURCE_QN_FORMAT.format(kind=kind.value, identity=identity)
+        qn = resource_qn(kind, identity, self._project_name)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.RESOURCE,
             {

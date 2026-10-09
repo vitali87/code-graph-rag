@@ -1859,6 +1859,7 @@ class CallProcessor:
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
             go_package_names=self._go_package_names,
+            project_name=project_name,
         )
         self._dispatch_registry = DispatchRegistryProcessor(
             ingestor=ingestor,
@@ -1882,6 +1883,7 @@ class CallProcessor:
             self._resolver,
             selection=selection,
             function_locations=self.function_locations,
+            project_name=project_name,
         )
 
     def _emit_rel(

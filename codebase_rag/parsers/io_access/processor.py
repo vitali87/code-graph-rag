@@ -21,7 +21,6 @@ from .constants import (
     HTTP_WRITE_VERBS,
     KEY_KIND,
     PY_SCOPE_BOUNDARIES,
-    RESOURCE_QN_FORMAT,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
     IODirection,
@@ -68,6 +67,7 @@ from .registry import (
     IO_TYPE_HANDLE_CONSTRUCTORS,
     LIBC_STD_STREAMS,
 )
+from .resource_names import resource_qn
 
 _DIRECTION_REL = {
     IODirection.READ: cs.RelationshipType.READS_FROM,
@@ -314,8 +314,11 @@ class IOAccessProcessor:
         module_paths: Mapping[str, Path] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        project_name: str | None = None,
     ) -> None:
         self.ingestor = ingestor
+        # Scopes a same-origin URL's resource to the project requesting it.
+        self._project_name = project_name
         # import_processor owns import_mapping[module_qn][local] = full_name, used to
         # expand a callee head token to its imported module path.
         self._import_processor = import_processor
@@ -2209,11 +2212,11 @@ class IOAccessProcessor:
         rels = [r for r in self._rels(direction) if self._selection.rel_enabled(r)]
         if not rels:
             return
-        resource_qn = RESOURCE_QN_FORMAT.format(kind=kind.value, identity=identity)
+        qualified_name = resource_qn(kind, identity, self._project_name)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.RESOURCE,
             {
-                cs.KEY_QUALIFIED_NAME: resource_qn,
+                cs.KEY_QUALIFIED_NAME: qualified_name,
                 cs.KEY_NAME: identity,
                 KEY_KIND: kind.value,
             },
@@ -2222,7 +2225,7 @@ class IOAccessProcessor:
             self.ingestor.ensure_relationship_batch(
                 caller_spec,
                 rel,
-                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, qualified_name),
             )
 
     @staticmethod
