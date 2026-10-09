@@ -6231,7 +6231,9 @@ class ImportProcessor:
         )
         if rel_file is None and not over_climb and (depth > 0 or self_ref):
             rel_file = self._julia_find_by_name(
-                dotted.split(cs.SEPARATOR_DOT)[-1], module_qn, importer_root
+                dotted.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1],
+                module_qn,
+                importer_root,
             )
         if (
             rel_file is None
@@ -6242,7 +6244,9 @@ class ImportProcessor:
             # file stem: the declared-module index is the last first-party
             # link before externalising.
             rel_file = self._julia_find_by_declared_module(
-                dotted.split(cs.SEPARATOR_DOT)[-1], module_qn, importer_root
+                dotted.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1],
+                module_qn,
+                importer_root,
             )
         if rel_file is not None:
             rel_module = rel_file[: -len(cs.EXT_JL)].replace(
@@ -6260,16 +6264,18 @@ class ImportProcessor:
         return dotted  # external (stdlib / package)
 
     def _julia_current_package_prefix(self, dotted: str) -> bool:
-        # An absolute dotted import starts with this project's own name
-        # (which may itself be dotted; the `.jl` suffix is optional).
-        root = self.project_name.lower()
-        if not root:
-            return False
+        # An absolute dotted import starts with this package's own name: the
+        # project name, or the checkout directory's (conventionally `Pkg.jl`,
+        # the `.jl` optional). A dotted directory no longer shares its name
+        # with the project, which gets a derived one instead (#2412).
+        names = {self.project_name.lower(), self.repo_path.name.lower()} - {""}
+        suffix = cs.EXT_JL.lower()
+        prefixes = {p for name in names for p in (name, name.removesuffix(suffix))}
         dotted_l = dotted.lower()
-        for prefix in (root, root.removesuffix(cs.EXT_JL.lower())):
-            if dotted_l == prefix or dotted_l.startswith(prefix + cs.SEPARATOR_DOT):
-                return True
-        return False
+        return any(
+            dotted_l == prefix or dotted_l.startswith(prefix + cs.SEPARATOR_DOT)
+            for prefix in prefixes
+        )
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
         first_child = call_node.children[0] if call_node.children else None

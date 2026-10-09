@@ -135,16 +135,17 @@ end
         encoding="utf-8",
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    root = updater.project_name
 
-    module_qn = f"{project.name}.main"
+    module_qn = f"{root}.main"
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
-    assert mapping.get("Utils") == f"{project.name}.Utils", mapping
+    assert mapping.get("Utils") == f"{root}.Utils", mapping
 
     imports = {
         (c.args[0][2], c.args[2][2])
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
-    assert (module_qn, f"{project.name}.Utils") in imports, imports
+    assert (module_qn, f"{root}.Utils") in imports, imports
 
 
 def test_declared_module_name_differs_from_file(
@@ -177,18 +178,17 @@ end
         encoding="utf-8",
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    root = updater.project_name
 
-    module_qn = f"{project.name}.main"
+    module_qn = f"{root}.main"
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
-    assert mapping.get("SimulationModels") == f"{project.name}.src.router.models", (
-        mapping
-    )
+    assert mapping.get("SimulationModels") == f"{root}.src.router.models", mapping
 
     imports = {
         (c.args[0][2], c.args[2][2])
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
-    assert (module_qn, f"{project.name}.src.router.models") in imports, imports
+    assert (module_qn, f"{root}.src.router.models") in imports, imports
 
 
 def test_declared_module_nested_package_boundary(
@@ -232,12 +232,13 @@ end
         encoding="utf-8",
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    root = updater.project_name
 
-    module_qn = f"{project.name}.main"
+    module_qn = f"{root}.main"
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
     # The vendor's same-named declaration is out of the package boundary,
     # so the first-party file is the unique candidate.
-    assert mapping.get("Models") == f"{project.name}.src.models", mapping
+    assert mapping.get("Models") == f"{root}.src.models", mapping
 
 
 def test_external_module_name_kept_as_written(
