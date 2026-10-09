@@ -107,6 +107,7 @@ def _delta_with_sites(*verdicts: str) -> StructuralDelta:
             "signature_changes": [
                 {"sites": [{"verdict": v} for v in verdicts], "remote_callers": []}
             ],
+            "convention_changes": [],
             "arity_findings": [],
             "new_duplicates": [],
             "new_import_cycles": [],

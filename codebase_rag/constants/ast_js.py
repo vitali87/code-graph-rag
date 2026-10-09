@@ -92,6 +92,7 @@ TS_FUNCTION_EXPRESSION = "function_expression"
 # (`get thing() {...}`); its presence marks the method as a property whose
 # reads are member accesses, not invocations.
 TS_GET_ACCESSOR_KEYWORD = "get"
+TS_SET_ACCESSOR_KEYWORD = "set"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"

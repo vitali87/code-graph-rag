@@ -301,6 +301,50 @@ ARITY_REJECTS_MISSING = DECLARED_ARITY_LANGUAGES - {SupportedLanguage.JS}
 # Where a surplus argument fails too. PHP and JavaScript drop it at run time.
 ARITY_REJECTS_SURPLUS = ARITY_REJECTS_MISSING - {SupportedLanguage.PHP}
 
+# Languages whose decorators or modifiers the structural delta reads as a
+# calling convention (issue #3259): Python's `@property`, `@staticmethod` and
+# `@classmethod`, the JavaScript and TypeScript `get`, `set` and `static`,
+# and Java's `static`, each with the visibility below where it has one.
+CONVENTION_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.PYTHON,
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.JAVA,
+    }
+)
+# Where a call through an instance of a static method fails: TypeScript does
+# not type-check it and JavaScript finds no such member. Java allows it.
+STATIC_REJECTS_INSTANCE_CALL = frozenset(
+    {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
+)
+# Visibility modifiers ranked by reach. Java's `protected` reaches its whole
+# package as well as subclasses, so it outranks a member with no modifier,
+# which is package-private in a class but public in an interface; the node
+# does not say which, so a Java member with none is not ranked.
+VISIBILITY_PRIVATE = 0
+VISIBILITY_PROTECTED = 1
+VISIBILITY_PUBLIC = 2
+VISIBILITY_RANKS: dict[SupportedLanguage, dict[str, int]] = {
+    language: {
+        "private": VISIBILITY_PRIVATE,
+        "protected": VISIBILITY_PROTECTED,
+        "public": VISIBILITY_PUBLIC,
+    }
+    for language in (
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.JAVA,
+    )
+}
+# The rank of a member written with no visibility modifier, where the
+# language fixes it: a TypeScript member is public.
+VISIBILITY_DEFAULT: dict[SupportedLanguage, int] = {
+    SupportedLanguage.TS: VISIBILITY_PUBLIC,
+    SupportedLanguage.TSX: VISIBILITY_PUBLIC,
+}
+
 
 class LanguageStatus(StrEnum):
     FULL = "Fully Supported"

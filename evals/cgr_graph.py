@@ -411,6 +411,7 @@ class _StatefulIngestor:
         cs.KEY_AST_FINGERPRINT_NODES,
         cs.KEY_AST_BRANCH_FINGERPRINTS,
         cs.KEY_DECORATORS,
+        cs.KEY_MODIFIERS,
         cs.KEY_IS_EXPORTED,
         cs.KEY_RUST_CFG_TEST_MODS,
         cs.KEY_RUST_UNGATED_MODS,
