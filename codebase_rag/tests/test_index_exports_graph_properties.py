@@ -104,7 +104,8 @@ def test_a_type_keeps_its_span_docstring_and_export(
     shapes: Path, tmp_path: Path, qn: str, span: tuple[int, int], docstring: str
 ) -> None:
     payload = _index(shapes, tmp_path / "idx")[qn]
-    assert (payload.start_line, payload.end_line) == span, payload
+    lines = (payload.start_line, payload.end_line)
+    assert lines == span, payload
     assert docstring in payload.docstring, payload
     assert payload.is_exported is True, payload
     assert payload.path == "shapes.ts", payload
