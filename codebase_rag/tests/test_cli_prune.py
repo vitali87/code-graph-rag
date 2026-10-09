@@ -199,7 +199,7 @@ class TestPruneDeletion:
         )
         assert "Pruned project 'dead__22222222'" in result.output
 
-    def test_cleans_embeddings_before_deleting(
+    def test_cleans_embeddings_when_the_purge_fires(
         self, mock_memgraph_connect: MagicMock
     ) -> None:
         with patch("codebase_rag.cli.delete_project_embeddings") as mock_embeddings:
@@ -208,9 +208,24 @@ class TestPruneDeletion:
         assert result.exit_code == 0, result.output
         mock_embeddings.assert_called_once_with("dead__22222222", [1])
 
+    def test_keeps_vectors_when_their_deletion_fails(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # The graph purge is proven; unrecoverable vector leaks warn and
+        # still count, a silent success would not.
+        with patch(
+            "codebase_rag.cli.delete_project_embeddings", return_value=False
+        ) as mock_embeddings:
+            result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        mock_embeddings.assert_called_once()
+        assert "remain in the vector store" in result.output
+        assert "Pruned project 'dead__22222222'" in result.output
+
     def test_recreated_root_is_skipped(self, mock_memgraph_connect: MagicMock) -> None:
         # The listing saw the root missing, then the checkout came back: the
-        # re-check inside the delete path must refuse the purge (#2479).
+        # loop-top re-check must refuse the purge (#2479).
         with patch(
             "codebase_rag.cli.root_proven_missing",
             side_effect=[False, True, False],

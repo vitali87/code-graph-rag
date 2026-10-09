@@ -3081,12 +3081,26 @@ def _prune_projects(
                 )
             )
             continue
-        node_ids = [
-            row[cs.KEY_NODE_ID]
-            for row in node_rows
-            if isinstance(row.get(cs.KEY_NODE_ID), int)
-        ]
-        delete_project_embeddings(project_name, node_ids)
+        # The graph purge is proven either way; a vector deletion that
+        # fails or raises leaks vectors for dead node ids and is not
+        # recoverable by a retry, so it warns and the prune still counts.
+        try:
+            node_ids = [
+                row[cs.KEY_NODE_ID]
+                for row in node_rows
+                if isinstance(row.get(cs.KEY_NODE_ID), int)
+            ]
+            vectors_deleted = delete_project_embeddings(project_name, node_ids)
+        except Exception as e:
+            logger.warning(f"Embedding deletion failed for {project_name}: {e}")
+            vectors_deleted = False
+        if not vectors_deleted:
+            app_context.console.print(
+                style(
+                    cs.CLI_WARN_PRUNE_VECTORS_KEPT.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
         try:
             remaining = ingestor.list_projects()
             residual_rows = ingestor.fetch_all(

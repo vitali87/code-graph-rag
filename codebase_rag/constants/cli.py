@@ -198,6 +198,11 @@ CLI_WARN_PRUNE_ROOT_CHANGED = (
     "Root of '{project_name}' has changed -- skipping, the graph no longer "
     "names the root this run checked."
 )
+CLI_WARN_PRUNE_VECTORS_KEPT = (
+    "Vectors of '{project_name}' could not be deleted and remain in the "
+    "vector store -- the graph purge stands; clear the store if the orphans "
+    "matter."
+)
 CLI_ERR_PRUNE_FAILED = "Failed to prune project '{project_name}': {error}"
 CLI_ERR_PRUNE_RUN_FAILED = "Failed to prune: {error}"
 CLI_ERR_PRUNE_VERIFY_FAILED = (
