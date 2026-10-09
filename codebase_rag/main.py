@@ -108,7 +108,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.interruptible_thread import run_in_interruptible_thread
-from .utils.path_utils import derive_project_name
+from .utils.path_utils import derive_project_name, ordered_block_lines
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -1955,7 +1955,8 @@ def prompt_for_unignored_directories(
     detected = detect_excludable_directories(repo_path)
     cgrignore = load_ignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
-    pre_excluded = cli_patterns | cgrignore.exclude
+    # An ordered .gitignore block is offered by its exclude line, as before.
+    pre_excluded = cli_patterns | {ordered_block_lines(p)[0] for p in cgrignore.exclude}
 
     if not detected and not pre_excluded:
         return cgrignore.unignore

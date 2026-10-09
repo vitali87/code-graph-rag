@@ -17,6 +17,7 @@ from . import exceptions as ex
 from . import logs
 from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from .utils.path_utils import ordered_ignore_block
 
 # Load only the configuration file in the invocation directory.  The default
 # python-dotenv discovery walks parent directories, which can silently import
@@ -576,60 +577,79 @@ GITIGNORE_FILENAME = ".gitignore"
 EMPTY_CGRIGNORE = CgrignorePatterns(exclude=frozenset(), unignore=frozenset())
 
 
-def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
+def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
+    """The file's pattern lines in order, comments and blank lines dropped."""
     if not ignore_file.is_file():
-        return EMPTY_CGRIGNORE
-
-    exclude: set[str] = set()
-    unignore: set[str] = set()
+        return ()
     try:
         with ignore_file.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("!"):
-                    unignore.add(line[1:].strip())
-                else:
-                    exclude.add(line)
-        if exclude or unignore:
-            logger.info(
-                logs.CGRIGNORE_LOADED.format(
-                    exclude_count=len(exclude),
-                    unignore_count=len(unignore),
-                    path=ignore_file,
-                )
-            )
-        return CgrignorePatterns(
-            exclude=frozenset(exclude),
-            unignore=frozenset(unignore),
-        )
+            stripped = (line.strip() for line in f)
+            return tuple(line for line in stripped if line and not line.startswith("#"))
     except (OSError, ValueError) as e:
         logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
-        return EMPTY_CGRIGNORE
+        return ()
+
+
+def _split_ignore_lines(lines: tuple[str, ...], ignore_file: Path) -> CgrignorePatterns:
+    exclude = {line for line in lines if not line.startswith("!")}
+    unignore = {line[1:].strip() for line in lines if line.startswith("!")}
+    if exclude or unignore:
+        logger.info(
+            logs.CGRIGNORE_LOADED.format(
+                exclude_count=len(exclude),
+                unignore_count=len(unignore),
+                path=ignore_file,
+            )
+        )
+    return CgrignorePatterns(exclude=frozenset(exclude), unignore=frozenset(unignore))
+
+
+def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
+    return _split_ignore_lines(_read_ignore_lines(ignore_file), ignore_file)
 
 
 def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
     return _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
 
 
+def _gitignore_excludes(lines: tuple[str, ...], cancelled: frozenset[str]) -> set[str]:
+    """The root .gitignore's excludes, read the way git reads them.
+
+    Git lets a later `!` line re-include what an earlier line excluded, the
+    last matching line deciding (issue #2835). An exclude no later `!` line
+    follows is its own pattern, as before; one that a negation follows joins
+    those negations in an ordered block, so `src/gen/*.py` then
+    `!src/gen/handwritten.py` keeps the hand-written file. An exclude a
+    negation of the same string undoes, or that .cgrignore re-includes, is
+    dropped.
+    """
+    excludes: set[str] = set()
+    for index, line in enumerate(lines):
+        if line.startswith("!") or line in cancelled:
+            continue
+        later = [n for n in lines[index + 1 :] if n.startswith("!")]
+        if f"!{line}" in later:
+            continue
+        excludes.add(ordered_ignore_block((line, *later)) if later else line)
+    return excludes
+
+
 def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     # Merged exclude/unignore set for indexing: root .gitignore (gitignored
     # paths are build artifacts and generated output that pollute the graph and
     # dead-code report) plus .cgrignore, the authoritative cgr channel. The skip
-    # check gives excludes precedence, so a negation overrides a .gitignore
-    # exclude only by CANCELLING the exact pattern (`!generated/` drops
-    # `generated/`); .cgrignore excludes are never cancelled.
-    # ponytail: root .gitignore only, exact-string cancellation only; a
-    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
-    # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
-    # the upgrade path if real repos need it.
+    # check gives excludes precedence, so .cgrignore keeps its stricter rule: a
+    # `!` there rescues only a built-in exclusion, or cancels a .gitignore
+    # exclude of the same string. .gitignore's own `!` lines follow git
+    # (`_gitignore_excludes`), and also rescue built-in exclusions.
+    # ponytail: root .gitignore only.
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
-    git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
-    negations = cgr.unignore | git.unignore
+    git_file = repo_path / GITIGNORE_FILENAME
+    git_lines = _read_ignore_lines(git_file)
+    git = _split_ignore_lines(git_lines, git_file)
     return CgrignorePatterns(
-        exclude=cgr.exclude | (git.exclude - negations),
-        unignore=negations,
+        exclude=cgr.exclude | _gitignore_excludes(git_lines, cgr.unignore),
+        unignore=cgr.unignore | git.unignore,
     )
 
 

@@ -25,6 +25,7 @@ fixtures/**
 - A pattern containing a slash (`docs/*.md`, `/generated`) is anchored to the repository root
 - A trailing slash (`build/`) matches directories only
 - Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win; the name-ending rule under [Default Exclusions](#default-exclusions) is un-ignorable only for `.min.js` and `.min.css`, and only by a `!` line naming the file)
+- In the repository's `.gitignore`, a `!` line also re-includes what an earlier line of that file excluded, as git does: the last matching line wins, and a file whose parent directory is excluded stays excluded. So `src/gen/*.py` followed by `!src/gen/handwritten.py` keeps `handwritten.py` in the graph. A `.gitignore` `!` line never undoes a `.cgrignore` exclude
 - Lines starting with `#` are comments; blank lines are ignored
 - Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 
