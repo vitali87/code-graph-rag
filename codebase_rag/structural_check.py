@@ -140,10 +140,17 @@ def _stamp_belongs_to(
     owner = stored.get("project")
     if _stamp_is_named(stored):
         return owner == project_name
+    derived = derive_project_name(repo_root)
+    # `cgr start` without --project-name indexes under the derived name, which
+    # hashes this checkout's path: asking for it by name can only mean the
+    # graph that unnamed run wrote, so an explicit request is no reason to
+    # refuse (issue #2854). The bare directory name stays ambiguous below.
+    if owner == project_name == derived:
+        return True
     # The updater's default is the directory name, or the derived name for a
     # directory holding `.` (#2412); a stamp written before that still
     # carries the dotted name verbatim.
-    default_names = {derive_project_name(repo_root), repo_root.resolve().name}
+    default_names = {derived, repo_root.resolve().name}
     return not explicit and owner in default_names and project_name in default_names
 
 
@@ -219,11 +226,16 @@ def indexed_scope(
         # had stamped, and its scope is simply gone rather than inferable.
         mine = _stamp_belongs_to(stored, repo_root, project_name, explicit)
         if isinstance(owner, str) and not mine:
-            raise CheckError(
-                cs.CHECK_SCOPE_OF_OTHER_PROJECT.format(
+            # The same string on both sides is an unnamed run's stamp asked
+            # for by name: "belongs to X, not X" told the user nothing.
+            message = (
+                cs.CHECK_SCOPE_OF_UNNAMED_RUN.format(project=project_name)
+                if owner == project_name
+                else cs.CHECK_SCOPE_OF_OTHER_PROJECT.format(
                     project=project_name, other=owner
                 )
             )
+            raise CheckError(message)
         exclude = stored.get("exclude") or []
         unignore = stored.get("unignore") or []
         return (

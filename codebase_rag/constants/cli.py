@@ -251,6 +251,11 @@ CHECK_SCOPE_OF_OTHER_PROJECT = (
     "The exclusion scope stamped in this repository belongs to project {other}, "
     "not {project}; re-index {project} (or check {other}) before running the check"
 )
+CHECK_SCOPE_OF_UNNAMED_RUN = (
+    "The exclusion scope stamped in this repository was written by a run that "
+    "named no project, so it cannot stand for project {project}; re-index with "
+    "--project-name {project}, or run the check without --project"
+)
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
     "base ref first."
