@@ -229,6 +229,29 @@ _JS_FIELD_WRITE_TYPES = frozenset(
 )
 
 
+class _TsTypeArg(NamedTuple):
+    """A type argument of an alias reference, read where it was written."""
+
+    node: Node
+    module_qn: str
+    scope: _TsTypeScope
+
+
+class _TsTypeScope(NamedTuple):
+    """Type parameters bound while reading through aliases (issue #3276).
+
+    `Maybe<Box>` against `type Maybe<T> = T | null` reads `T | null` with
+    `T` bound to `Box`; `depth` counts the aliases followed, so a chain that
+    refers back to itself is abandoned.
+    """
+
+    bindings: Mapping[str, _TsTypeArg]
+    depth: int
+
+
+_NO_TS_SCOPE = _TsTypeScope({}, 0)
+
+
 class _ReceiverDeclaration(NamedTuple):
     """What a JS/TS call site declares its receiver to be (issue #2609).
 
@@ -5161,6 +5184,20 @@ class CallProcessor:
             return None
         if receiver.type == cs.TS_IDENTIFIER:
             return self._js_identifier_declaration(ctx, receiver)
+        if receiver.type == cs.TS_SUBSCRIPT_EXPRESSION:
+            # `xs[0]` is an element of what `xs` is declared as.
+            obj = receiver.child_by_field_name(cs.FIELD_OBJECT)
+            annotation = (
+                self._js_identifier_annotation(ctx, obj)
+                if obj is not None and obj.type == cs.TS_IDENTIFIER
+                else None
+            )
+            inner = next(iter(annotation.named_children), None) if annotation else None
+            return (
+                self._ts_element_declaration(inner, ctx.module_qn, _NO_TS_SCOPE)
+                if inner is not None
+                else None
+            )
         if receiver.type == cs.TS_MEMBER_EXPRESSION:
             return self._js_this_field_declaration(ctx, receiver)
         return None
@@ -5191,6 +5228,24 @@ class CallProcessor:
             kind, value, name, ctx.module_qn, depth=0
         )
         return _ReceiverDeclaration(class_qn, foreign=False) if class_qn else None
+
+    def _js_identifier_annotation(
+        self, ctx: _CallScanContext, ident: Node
+    ) -> Node | None:
+        """The type annotation `ident` was introduced with, if any."""
+        name = safe_decode_text(ident)
+        intro = self._js_innermost_introduction(ident, name) if name else None
+        if name is None or intro is None:
+            return None
+        kind, value = intro
+        if value is None:
+            return None
+        if kind == _JS_DECL_PARAM:
+            return self._js_param_annotation(value, name)
+        declarator = value.parent if kind == _JS_DECL_PLAIN else None
+        if declarator is not None and declarator.type == cs.TS_VARIABLE_DECLARATOR:
+            return declarator.child_by_field_name(cs.FIELD_TYPE)
+        return None
 
     def _js_param_declaration(
         self, ctx: _CallScanContext, callable_node: Node, name: str
@@ -5429,24 +5484,33 @@ class CallProcessor:
         return self._ts_type_declaration(inner, module_qn) if inner else None
 
     def _ts_type_declaration(
-        self, node: Node, module_qn: str
+        self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
     ) -> _ReceiverDeclaration | None:
         node_type = node.type
+        if scope.depth > cs.TS_ALIAS_MAX_DEPTH:
+            return None
         if node_type in (cs.TS_PREDEFINED_TYPE, cs.TS_ARRAY_TYPE, cs.TS_TUPLE_TYPE):
             # `any`, `unknown`, `string`, `A[]`: nothing the project defines.
             return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
-        if node_type == cs.TS_PARENTHESIZED_TYPE:
+        if node_type in (cs.TS_PARENTHESIZED_TYPE, cs.TS_READONLY_TYPE):
             inner = next(iter(node.named_children), None)
-            return self._ts_type_declaration(inner, module_qn) if inner else None
+            return self._ts_type_declaration(inner, module_qn, scope) if inner else None
         if node_type == cs.TS_UNION_TYPE:
-            return self._ts_union_declaration(node, module_qn)
+            return self._ts_union_declaration(node, module_qn, scope)
         if node_type == cs.TS_TYPE_IDENTIFIER:
             name = safe_decode_text(node)
+            if name is not None and name in scope.bindings:
+                arg = scope.bindings[name]
+                return self._ts_type_declaration(
+                    arg.node, arg.module_qn, arg.scope._replace(depth=scope.depth + 1)
+                )
             return (
-                self._ts_type_name_declaration(name, node, module_qn) if name else None
+                self._ts_type_name_declaration(name, node, module_qn, None, scope)
+                if name
+                else None
             )
         if node_type == cs.TS_GENERIC_TYPE:
-            return self._ts_generic_declaration(node, module_qn)
+            return self._ts_generic_declaration(node, module_qn, scope)
         if node_type == cs.TS_NESTED_TYPE_IDENTIFIER:
             name = safe_decode_text(node)
             return (
@@ -5454,8 +5518,53 @@ class CallProcessor:
             )
         return None
 
+    def _ts_element_declaration(
+        self, node: Node, module_qn: str, scope: _TsTypeScope
+    ) -> _ReceiverDeclaration | None:
+        """What `xs[i]` is, for `xs` declared as `node` (issue #3276): the
+        element of `T[]`, `readonly T[]`, `Array<T>` or an alias of one."""
+        if scope.depth > cs.TS_ALIAS_MAX_DEPTH:
+            return None
+        node_type = node.type
+        if node_type in (cs.TS_PARENTHESIZED_TYPE, cs.TS_READONLY_TYPE):
+            inner = next(iter(node.named_children), None)
+            return (
+                self._ts_element_declaration(inner, module_qn, scope) if inner else None
+            )
+        if node_type == cs.TS_ARRAY_TYPE:
+            element = next(iter(node.named_children), None)
+            return (
+                self._ts_type_declaration(element, module_qn, scope)
+                if element
+                else None
+            )
+        if node_type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_GENERIC_TYPE):
+            return None
+        name_node = (
+            node.child_by_field_name(cs.FIELD_NAME)
+            if node_type == cs.TS_GENERIC_TYPE
+            else node
+        )
+        name = safe_decode_text(name_node) if name_node is not None else None
+        if not name:
+            return None
+        arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+        if name in cs.TS_INDEXABLE_GENERIC_NAMES and arguments is not None:
+            element = next(iter(arguments.named_children), None)
+            return (
+                self._ts_type_declaration(element, module_qn, scope)
+                if element
+                else None
+            )
+        aliased = self._ts_aliased_type(name, node, module_qn, arguments, scope)
+        return (
+            self._ts_element_declaration(aliased[0], aliased[1], aliased[2])
+            if aliased is not None
+            else None
+        )
+
     def _ts_union_declaration(
-        self, node: Node, module_qn: str
+        self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
     ) -> _ReceiverDeclaration | None:
         # `A | null` declares A. A wider union declares nothing usable unless
         # no member is first-party (`string | number`).
@@ -5465,20 +5574,28 @@ class CallProcessor:
             if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
         ]
         if len(members) == 1:
-            return self._ts_type_declaration(members[0], module_qn)
-        declared = [self._ts_type_declaration(member, module_qn) for member in members]
+            return self._ts_type_declaration(members[0], module_qn, scope)
+        declared = [
+            self._ts_type_declaration(member, module_qn, scope) for member in members
+        ]
         if declared and all(d is not None and d.foreign for d in declared):
             return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
         return None
 
     def _ts_generic_declaration(
-        self, node: Node, module_qn: str
+        self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
     ) -> _ReceiverDeclaration | None:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         name = safe_decode_text(name_node) if name_node is not None else None
         if not name:
             return None
-        declared = self._ts_type_name_declaration(name, node, module_qn)
+        declared = self._ts_type_name_declaration(
+            name,
+            node,
+            module_qn,
+            node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS),
+            scope,
+        )
         # TypeScript's own utility types are no value type of their own and
         # are read through. A name the project defines or a package exports
         # (`Wrapper<Cache>`, or an imported `Readonly`) is that type, whatever
@@ -5489,10 +5606,55 @@ class CallProcessor:
             # `Readonly<A>` and friends keep A's members: A is the declaration.
             arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
             first = next(iter(arguments.named_children), None) if arguments else None
-            return self._ts_type_declaration(first, module_qn) if first else None
+            return self._ts_type_declaration(first, module_qn, scope) if first else None
         return None
 
     def _ts_type_name_declaration(
+        self,
+        name: str,
+        anchor: Node,
+        module_qn: str,
+        arguments: Node | None = None,
+        scope: _TsTypeScope = _NO_TS_SCOPE,
+    ) -> _ReceiverDeclaration | None:
+        # A first-party type alias is the type it stands for (issue #3276).
+        aliased = self._ts_aliased_type(name, anchor, module_qn, arguments, scope)
+        if aliased is not None:
+            return self._ts_type_declaration(*aliased)
+        return self._ts_named_type(name, anchor, module_qn)
+
+    def _ts_aliased_type(
+        self,
+        name: str,
+        anchor: Node,
+        module_qn: str,
+        arguments: Node | None,
+        scope: _TsTypeScope,
+    ) -> tuple[Node, str, _TsTypeScope] | None:
+        """The target of the first-party alias `name` names, with its type
+        parameters bound to `arguments` as written in `module_qn`."""
+        declared = self._ts_named_type(name, anchor, module_qn)
+        if declared is None:
+            return None
+        alias_module, _, alias_name = declared.qn.rpartition(cs.SEPARATOR_DOT)
+        alias = self._resolver.ts_type_alias(alias_module, alias_name)
+        value = alias.child_by_field_name(cs.FIELD_VALUE) if alias is not None else None
+        if alias is None or value is None:
+            return None
+        parameters = alias.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+        names = [
+            safe_decode_text(param.child_by_field_name(cs.FIELD_NAME))
+            for param in (parameters.named_children if parameters is not None else [])
+        ]
+        written = arguments.named_children if arguments is not None else []
+        bindings = {
+            param: _TsTypeArg(arg, module_qn, scope)
+            for param, arg in zip(names, written)
+            if param
+        }
+        return value, alias_module, _TsTypeScope(bindings, scope.depth + 1)
+
+    def _ts_named_type(
         self, name: str, anchor: Node, module_qn: str
     ) -> _ReceiverDeclaration | None:
         # A type name is first-party when an enclosing scope declares it, an
