@@ -822,12 +822,14 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor.csharp_static_imports = {}
     processor.csharp_global_static_imports = {}
     processor.js_export_bindings = {}
+    processor._julia_scope_map_keys = {"m": {"m.Inner"}}
 
     processor._clear_module_import_state("m")
 
     assert processor.dart_prefix_shadows.get("m") is None
     assert processor.dart_import_aliases.get("m") is None
     assert processor.dart_exposed_libraries.get("m") is None
+    assert processor._julia_scope_map_keys.get("m") is None
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}

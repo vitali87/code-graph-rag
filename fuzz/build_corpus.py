@@ -91,6 +91,10 @@ SOURCES: dict[str, str] = {
         "CREATE FUNCTION greet(name TEXT) RETURNS TEXT AS $$\n"
         "  SELECT name;\n$$ LANGUAGE sql;\n\nSELECT greet(name) FROM users;\n"
     ),
+    "julia": (
+        "using LinearAlgebra\n\nfunction greet(name)\n    return name\nend\n\n"
+        'greet("x")\n'
+    ),
 }
 
 # Degenerate inputs worth keeping as seeds in their own right: each has
