@@ -32,6 +32,12 @@ class RustTypeInferenceEngine:
         self._collect_parameters(caller_node, var_types)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_bindings(body, var_types)
+        # `other: &Self`, `let s: Self = ..`, `let p = Self { .. }` name the
+        # enclosing impl's type; left as `Self`, no receiver typed (#3168).
+        if (impl_type := _enclosing_impl_type(caller_node)) is not None:
+            for name, type_name in var_types.items():
+                if type_name == cs.RS_SELF_TYPE:
+                    var_types[name] = impl_type
         return var_types
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
@@ -600,10 +606,8 @@ class RustTypeInferenceEngine:
                 var_types[name] = type_name
             return
         value = node.child_by_field_name(cs.FIELD_VALUE)
-        if value is not None and value.type == cs.TS_RS_STRUCT_EXPRESSION:
-            struct_name = value.child_by_field_name(cs.FIELD_NAME)
-            if struct_name and (type_name := self._bare_type_name(struct_name)):
-                var_types[name] = type_name
+        if value is not None and (type_name := _constructed_type(value)):
+            var_types[name] = type_name
 
     def _tuple_struct_binding(self, pattern: Node) -> tuple[str, str] | None:
         # `Variant(x)`: bind x to the variant's payload type. Rust's newtype idiom
@@ -808,6 +812,64 @@ def _rust_generic_element_name(type_node: Node) -> str | None:
         return None if name == cs.CHAR_UNDERSCORE else name
     if outer_name in cs.RS_DEREF_WRAPPERS:
         return _rust_element_type_name(inner)
+    return None
+
+
+def _constructed_type(value: Node) -> str | None:
+    """The type a `let` initializer constructs, read from the syntax alone.
+
+    A struct literal was the only constructor typed: a unit struct
+    (`Widget`), a tuple struct (`Pair(1, 2)`), an enum variant
+    (`Shape::Circle(1)`, `Shape::Unit`, `Shape::Rect { .. }`, typed as the
+    enum) and any of them behind `&`/`&mut` left the local untyped, so the
+    name-only fallback picked a same-named method of another type (#3168).
+    """
+    while value.type == cs.TS_RS_REFERENCE_EXPRESSION:
+        inner = value.child_by_field_name(cs.FIELD_VALUE)
+        if inner is None:
+            return None
+        value = inner
+    if value.type == cs.TS_RS_STRUCT_EXPRESSION:
+        path = value.child_by_field_name(cs.FIELD_NAME)
+    elif value.type == cs.TS_RS_CALL_EXPRESSION:
+        path = value.child_by_field_name(cs.FIELD_FUNCTION)
+    elif value.type in (cs.TS_IDENTIFIER, cs.TS_SCOPED_IDENTIFIER):
+        path = value
+    else:
+        return None
+    return _constructor_path_type(path) if path is not None else None
+
+
+def _constructor_path_type(path: Node) -> str | None:
+    # `Point` / `Self` -> itself; `shapes::Point` -> Point; `Shape::Circle`
+    # (a type-named qualifier) -> Shape. A lowercase leaf is a function or an
+    # associated fn (`Type::new`), typed from its return type elsewhere.
+    if path.type in (cs.TS_IDENTIFIER, cs.TS_TYPE_IDENTIFIER):
+        text = safe_decode_text(path)
+        return text if text and _is_type_like(text) else None
+    if path.type not in (cs.TS_SCOPED_IDENTIFIER, cs.TS_RS_SCOPED_TYPE_IDENTIFIER):
+        return None
+    leaf = safe_decode_text(path.child_by_field_name(cs.FIELD_NAME))
+    if not leaf or not _is_type_like(leaf):
+        return None
+    qualifier = path.child_by_field_name(cs.TS_RS_FIELD_PATH)
+    owner = _constructor_path_type(qualifier) if qualifier is not None else None
+    return owner or leaf
+
+
+def _is_type_like(name: str) -> bool:
+    # UpperCamelCase, the convention for types and variants; SCREAMING_CASE
+    # names a const, not something constructed.
+    return name[0].isupper() and not name.isupper()
+
+
+def _enclosing_impl_type(node: Node) -> str | None:
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_RS_IMPL_ITEM:
+            target = current.child_by_field_name(cs.FIELD_TYPE)
+            return _rust_bare_type_name(target) if target is not None else None
+        current = current.parent
     return None
 
 
