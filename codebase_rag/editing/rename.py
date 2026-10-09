@@ -135,6 +135,16 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
+def renamed_qualified_name(member: str, new_name: str) -> str:
+    # Java and C# method names end in their parameter types, `greet(String)`,
+    # and a type may be dotted itself (`put(Map.Entry)`). Only the name before
+    # the signature changes; dropping the signature made the contract expect a
+    # name the graph never has, so every such rename was undone.
+    head, paren, signature = member.partition(cs.CHAR_PAREN_OPEN)
+    owner = head.rsplit(cs.SEPARATOR_DOT, 1)[0]
+    return f"{owner}{cs.SEPARATOR_DOT}{new_name}{paren}{signature}"
+
+
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     names = {
@@ -1266,10 +1276,7 @@ class Renamer:
         self, report: RenameReport, new_name: str
     ) -> list[tuple[str, str]]:
         parents = [
-            (
-                member,
-                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
-            )
+            (member, renamed_qualified_name(member, new_name))
             for member in report.hierarchy
         ]
         pairs = list(parents)
