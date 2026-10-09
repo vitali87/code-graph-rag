@@ -76,16 +76,6 @@ def _empty_residual_fetch_all(
     return []
 
 
-def _residual_fetch_all(
-    query: str, params: dict[str, object] | None = None
-) -> list[dict[str, object]]:
-    if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
-        return [{cs.KEY_NODE_ID: 1}]
-    if query == cq.CYPHER_COUNT_PROJECT_NODES:
-        return [{cs.KEY_RESIDUAL_NODES: 7}]
-    return []
-
-
 def test_residual_row_key_agrees_with_query_alias() -> None:
     assert f"AS {cs.KEY_RESIDUAL_NODES}" in cq.CYPHER_COUNT_PROJECT_NODES
 
@@ -219,10 +209,8 @@ class TestPruneSyncRecord:
         result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 1, result.output
-        assert cgr_state.read_sync_timestamps(home=_isolated_cgr_home) == {
-            "dead__22222222": cgr_state.read_sync_timestamps(home=_isolated_cgr_home)[
-                "dead__22222222"
-            ]
+        assert set(cgr_state.read_sync_timestamps(home=_isolated_cgr_home)) == {
+            "dead__22222222"
         }
 
 
