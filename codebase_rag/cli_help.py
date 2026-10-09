@@ -498,7 +498,8 @@ HELP_DEADCODE_PROJECT_NAME = (
     "Project to scan. If omitted, cgr uses the only indexed project."
 )
 HELP_DEADCODE_ENTRY_POINT = (
-    "Mark symbols ending with this qualified-name suffix as entry points. Repeatable."
+    "Mark symbols whose qualified name ends with these whole dotted segments "
+    "(main, cli.run) as entry points. Repeatable."
 )
 HELP_DEADCODE_DECORATOR_ROOT = (
     "Mark symbols with this decorator as entry points. Extends the built-in set."

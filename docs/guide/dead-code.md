@@ -119,7 +119,7 @@ Two rules keep a pattern from silently excluding nothing:
 | Option | Description |
 |--------|-------------|
 | `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
-| `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
+| `--entry-point`, `-e` | Treat symbols whose qualified name ends with these whole dotted segments as reachable roots: `-e main` matches `pkg.cli.main` but not `pkg.cli._remain`, and `-e cli.run` does not match `pkg.mycli.run`. Repeatable. |
 | `--decorator-root` | Treat symbols carrying this decorator as roots: a bare name matches the decorator's last segment, a dotted one (`plugins.register`) its trailing whole segments. Extends the built-in set. Repeatable. |
 | `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots so the production code it exercises is not reported. On by default. |

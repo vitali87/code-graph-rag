@@ -120,6 +120,16 @@ def _is_root_decorator(decorator: str, root_decorators: frozenset[str]) -> bool:
     )
 
 
+def _names_entry_point(qn: str, entry: str) -> bool:
+    """Whether `entry` is the qualified name or its trailing whole segments.
+
+    A plain suffix test let `-e main` root `_remain` and `domain`, and
+    `-e cli.run` root `mycli.run`, with everything they call, so the report
+    silently lost real dead code (issue #2641).
+    """
+    return qn == entry or qn.endswith(cs.SEPARATOR_DOT + entry)
+
+
 def _is_dunder(name: str) -> bool:
     # A __dunder__ method is invoked by the Python runtime (async with,
     # iteration, operators), never by an explicit call the graph can see, so it
@@ -766,7 +776,7 @@ def _is_root(
 
 
 def _is_named_entry_point(qn: str, config: DeadCodeConfig) -> bool:
-    return any(qn.endswith(entry) for entry in config.entry_points)
+    return any(_names_entry_point(qn, entry) for entry in config.entry_points)
 
 
 def _is_rooted_test_symbol(
