@@ -1422,12 +1422,26 @@ DETACH DELETE n"""
 # Only the static edge(s) of the pair are confirmed: a trace-only edge from
 # an earlier run can sit beside a static one on the same pair and must keep
 # its `dynamic` label.
-CYPHER_TRACE_CONFIRM_CALLS = """
-MATCH (a)-[r:CALLS]->(b)
-WHERE a.qualified_name = $from_qn AND b.qualified_name = $to_qn
-  AND coalesce(r.static_missed, false) = false
-SET r.resolution = $resolution
-"""
+# Both endpoints are labelled, so each confirmation is two label + property
+# index lookups: unlabelled, every one scanned every node of the whole shared
+# graph (issue #3187). A label cannot be a parameter, so only the labels a
+# trace frame resolves to (CYPHER_TRACE_CALLABLES) are formatted in.
+_TRACE_CALLABLE_LABELS = frozenset(
+    {NodeLabel.FUNCTION.value, NodeLabel.METHOD.value, NodeLabel.MODULE.value}
+)
+
+
+def build_trace_confirm_calls_query(from_label: str, to_label: str) -> str:
+    for label in (from_label, to_label):
+        if label not in _TRACE_CALLABLE_LABELS:
+            raise ValueError(f"not a callable label: {label!r}")
+    return (
+        f"MATCH (a:{from_label} {{qualified_name: $from_qn}})"
+        f"-[r:CALLS]->(b:{to_label} {{qualified_name: $to_qn}})\n"
+        "WHERE coalesce(r.static_missed, false) = false\n"
+        "SET r.resolution = $resolution"
+    )
+
 
 # Reference and construction sites of a definition (issue #1532): everything
 # but CALLS that names the symbol, with the site and its resolution.
