@@ -22,7 +22,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -124,6 +124,10 @@ class DanglingCaller(TypedDict):
     col: int | None
     target: str
     renamed_to: str | None
+    # Set to "base" when `line` is the call's line in the base ref because
+    # the edit changed the caller's body and the site could not be moved to
+    # its working-tree line (issue #3171).
+    line_from: NotRequired[str]
 
 
 class DanglingImporter(TypedDict):
@@ -676,19 +680,44 @@ def _dangling(
         if key in seen:
             continue
         seen.add(key)
-        out.append(
-            DanglingCaller(
-                caller=site.caller,
-                path=site.caller_path,
-                line=site.line,
-                col=site.col,
-                target=site.callee,
-                renamed_to=new_name,
-            )
+        dangling = DanglingCaller(
+            caller=site.caller,
+            path=site.caller_path,
+            line=site.line,
+            col=site.col,
+            target=site.callee,
+            renamed_to=new_name,
         )
+        if site.caller_path in after.paths:
+            _move_to_working_tree(dangling, before, after)
+        out.append(dangling)
     return sorted(
         out, key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["caller"])
     )
+
+
+def _move_to_working_tree(
+    dangling: DanglingCaller, before: Snapshot, after: Snapshot
+) -> None:
+    """Report a re-parsed caller's dangling call where it is now.
+
+    The site comes from the base graph, so it carried the base line: a
+    deletion above the caller reported the call past the end of the file
+    or at another function's line (issue #3171). A caller whose body the
+    edit left alone moved as a whole, so its call moved by the same
+    lines; one whose body changed keeps the base line, marked as such.
+    """
+    old = before.definitions.get(dangling["caller"])
+    new = after.definitions.get(dangling["caller"])
+    if old is None or new is None or dangling["line"] is None:
+        return
+    if (old.fingerprint, old.end_line - old.start_line) != (
+        new.fingerprint,
+        new.end_line - new.start_line,
+    ):
+        dangling["line_from"] = cs.DANGLING_LINE_FROM_BASE
+        return
+    dangling["line"] += new.start_line - old.start_line
 
 
 # --- dangling importers ------------------------------------------------------

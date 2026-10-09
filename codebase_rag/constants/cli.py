@@ -926,6 +926,9 @@ CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
 CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"
 CONTRACT_DANGLING = "dangling callers: {sites}"
+# A dangling caller's `line_from` when its line is the base ref's: the edit
+# changed the caller's body, so the call could not be moved (issue #3171).
+DANGLING_LINE_FROM_BASE = "base"
 CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
 CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"
 CONTRACT_NEW_CYCLE = "new import cycle: {cycles}"
