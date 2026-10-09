@@ -540,6 +540,44 @@ def dart_call_name(call_node: Node) -> str | None:
     return _assemble_chain(tokens)
 
 
+def dart_call_site_start(call_node: Node) -> Node:
+    """Where the site of a Dart call selector starts: its callee's name.
+
+    `dhelper(1)` is `identifier` + `selector(argument_part)`, and `a.b(1)`
+    adds a `.b` selector between them: the call node is only the argument
+    list, so a site that should cover the callee, as every other language's
+    does, starts earlier (issue #2769). At the callee's own name token, not
+    the chain's first node: the two calls of `a.grow().grow()` then keep
+    sites of their own instead of merging into one (bot review on PR
+    #2782). Any other callee (`(f)(1)`) starts at the chain's first node.
+    """
+    prev = call_node.prev_named_sibling
+    if prev is not None and prev.type == cs.TS_DART_IDENTIFIER:
+        return prev
+    if prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        accessor = next(iter(prev.named_children), None)
+        if accessor is not None and accessor.type in (
+            cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+        ):
+            name = next(
+                (
+                    c
+                    for c in reversed(accessor.named_children)
+                    if c.type == cs.TS_DART_IDENTIFIER
+                ),
+                None,
+            )
+            if name is not None:
+                return name
+    start = call_node
+    prev = call_node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        start = prev
+        prev = prev.prev_named_sibling
+    return prev if prev is not None else start
+
+
 def _construction_name(node: Node) -> str | None:
     # `new X(...)`, `const X(...)`, `X<T>.named(...)`: the type_identifier,
     # then the named-constructor identifier when there is one; type and

@@ -1013,6 +1013,12 @@ def call_site_properties(node: Node) -> PropertyDict:
     the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
+    if node.type == cs.TS_DART_SELECTOR:
+        # A Dart call node is the argument-list selector alone; the site
+        # starts at the callee so a rename finds the name in it (#2769).
+        start = dart_utils.dart_call_site_start(node)
+        props[cs.KEY_LINE] = start.start_point[0] + 1
+        props[cs.KEY_COL] = start.start_point[1]
     args_node = _find_call_arguments_node(node)
     if args_node is not None:
         positional, keyword = _split_call_arguments(args_node)

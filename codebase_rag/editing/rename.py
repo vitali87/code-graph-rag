@@ -57,6 +57,7 @@ from .transaction import (
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
+_ANY_IDENTIFIER_RE = r"[^\W\d]\w*"
 
 
 _STRUCTURAL = "structural"
@@ -295,6 +296,44 @@ def _chain_link_sites(
     ]
 
 
+def _names_something(
+    source: bytes,
+    line: int,
+    col: int,
+    end_line: int | None,
+    end_col: int | None,
+) -> bool:
+    """Whether a site's callee text holds any identifier at all."""
+    if end_line is None or end_col is None:
+        return True
+    start = line_col_to_byte(source, line, col)
+    end = line_col_to_byte(source, end_line, end_col)
+    text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
+    paren = text.find("(")
+    callee = text[:paren] if paren >= 0 else text
+    return re.search(_ANY_IDENTIFIER_RE, callee) is not None
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _outer_call_paren(text: str) -> int:
+    """Index of the `(` opening the argument list `text` ends with, else of
+    its last `(`; -1 when it has none."""
+    body = text.rstrip()
+    if body.endswith(cs.CHAR_PAREN_CLOSE):
+        depth = 0
+        for index in range(len(body) - 1, -1, -1):
+            if body[index] == cs.CHAR_PAREN_CLOSE:
+                depth += 1
+            elif body[index] == cs.CHAR_PAREN_OPEN:
+                depth -= 1
+                if depth == 0:
+                    return index
+    return text.rfind(cs.CHAR_PAREN_OPEN)
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -333,9 +372,11 @@ def _last_identifier(
         start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
     if callee is None:
-        # No grammar: cut at the last opening parenthesis so the arguments
-        # of a plain call are excluded (`helper(helper=2)`).
-        paren = text.rfind("(")
+        # No call node to read (no grammar, or Dart's, whose call is only a
+        # selector): cut where the argument list the span ends with opens,
+        # so the arguments are excluded (`helper(helper=2)`), even a nested
+        # call of the same name (`f(other.f(1))`, bot review on PR #2782).
+        paren = _outer_call_paren(text)
         if paren >= 0:
             text = text[:paren]
     matches = list(re.finditer(_IDENTIFIER_RE % re.escape(name), text))
@@ -659,6 +700,41 @@ class Renamer:
         )
         sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
 
+    def _add_unspelled_site(
+        self,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        source: bytes,
+        *,
+        owner: str,
+        path: str,
+        line: int,
+        col: int,
+        end_line: int | None,
+        end_col: int | None,
+        resolution_text: str | None,
+    ) -> None:
+        """A site whose span does not spell the old name: an alias, or a
+        mislocated span."""
+        if _names_something(source, line, col, end_line, end_col):
+            # The site spells the symbol under an alias (`h(1, 2)` for
+            # `import helper as h`); the alias keeps binding, so nothing
+            # to rewrite here.
+            return
+        # A span with no name in it at all is a mislocated site, not an
+        # alias: dropping it would leave the caller under the old name
+        # and the plan silent about it (issue #2769).
+        self._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=owner,
+            path=path,
+            line=line,
+            col=col,
+            resolution=resolution_text or "unknown",
+            site_resolution=resolution_text or _SITELESS,
+        )
+
     def _add_site(
         self,
         sites: list[RenameSite],
@@ -671,7 +747,8 @@ class Renamer:
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
-        end_line, end_col = row.get("end_line"), row.get("end_col")
+        end_line = _int_or_none(row.get("end_line"))
+        end_col = _int_or_none(row.get("end_col"))
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -713,8 +790,8 @@ class Renamer:
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else None,
-            end_col if isinstance(end_col, int) else None,
+            end_line,
+            end_col,
             old_name,
             get_language_for_extension(Path(path).suffix),
             is_call=kind == "call",
@@ -732,9 +809,18 @@ class Renamer:
             )
             return
         if token is None:
-            # The site spells the symbol under an alias (`h(1, 2)` for
-            # `import helper as h`); the alias keeps binding, so nothing to
-            # rewrite here.
+            self._add_unspelled_site(
+                sites,
+                unlocatable,
+                source,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                end_line=end_line,
+                end_col=end_col,
+                resolution_text=resolution_text,
+            )
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
         if kind == "call":
