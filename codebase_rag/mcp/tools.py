@@ -737,6 +737,25 @@ class MCPToolsRegistry:
                 handler=self.semantic_search,
                 returns_json=False,
             )
+            # Its node id comes only from semantic_search results; every other
+            # tool answers with qualified names, so without semantic_search an
+            # agent could never give it a valid argument (issue #2758).
+            self._tools[cs.MCPToolName.GET_FUNCTION_SOURCE] = ToolMetadata(
+                name=cs.MCPToolName.GET_FUNCTION_SOURCE,
+                description=td.MCP_TOOLS[cs.MCPToolName.GET_FUNCTION_SOURCE],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.NODE_ID: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_NODE_ID,
+                        )
+                    },
+                    required=[cs.MCPParamName.NODE_ID],
+                ),
+                handler=self.get_function_source,
+                returns_json=False,
+            )
 
         if self._structural_available:
             self._tools[cs.MCPToolName.STRUCTURAL_SEARCH] = ToolMetadata(
@@ -822,22 +841,6 @@ class MCPToolsRegistry:
                 required=[],
             ),
             handler=self.find_duplicate_code,
-            returns_json=False,
-        )
-        self._tools[cs.MCPToolName.GET_FUNCTION_SOURCE] = ToolMetadata(
-            name=cs.MCPToolName.GET_FUNCTION_SOURCE,
-            description=td.MCP_TOOLS[cs.MCPToolName.GET_FUNCTION_SOURCE],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.NODE_ID: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.INTEGER,
-                        description=td.MCP_PARAM_NODE_ID,
-                    )
-                },
-                required=[cs.MCPParamName.NODE_ID],
-            ),
-            handler=self.get_function_source,
             returns_json=False,
         )
 

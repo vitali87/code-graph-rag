@@ -391,7 +391,12 @@ MCP_SEMANTIC_SEARCH = (
 
 MCP_FIND_DUPLICATE_CODE = FIND_DUPLICATE_CODE
 
-MCP_GET_FUNCTION_SOURCE = GET_FUNCTION_SOURCE
+MCP_GET_FUNCTION_SOURCE = (
+    "Retrieves the source code for a specific function or method using its "
+    "internal node ID, as returned by semantic_search. Registered together "
+    "with semantic_search (requires the 'semantic' extra); to fetch source by "
+    "qualified name, use get_code_snippet."
+)
 
 MCP_PARAM_PROJECT_NAME = "Name of the project to delete (e.g., 'my-project')"
 MCP_PARAM_CONFIRM = "Must be true to confirm the wipe operation"
