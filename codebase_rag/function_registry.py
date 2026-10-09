@@ -32,6 +32,7 @@ class FunctionRegistryTrie:
         "_body_scoped_names",
         "_callable_params",
         "_reserved",
+        "_same_definition",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -53,6 +54,10 @@ class FunctionRegistryTrie:
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
+        # Names one source definition is registered under twice (JS
+        # `View.prototype.lookup = function lookup()` is `View.lookup` and
+        # module-flat `view.lookup`), each mapped to the other.
+        self._same_definition: dict[QualifiedName, set[QualifiedName]] = {}
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -103,6 +108,14 @@ class FunctionRegistryTrie:
 
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._body_scoped_names
+
+    def mark_same_definition(self, first: QualifiedName, second: QualifiedName) -> None:
+        if first != second:
+            self._same_definition.setdefault(first, set()).add(second)
+            self._same_definition.setdefault(second, set()).add(first)
+
+    def same_definition(self, qualified_name: QualifiedName) -> set[QualifiedName]:
+        return self._same_definition.get(qualified_name, set())
 
     def register_unique_qn(
         self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
@@ -198,6 +211,7 @@ class FunctionRegistryTrie:
         self._abstracts.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
+        self._forget_same_definition(qualified_name)
 
         self._invalidate_ending_with_cache(simple_name)
 
@@ -207,6 +221,13 @@ class FunctionRegistryTrie:
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
+
+    def _forget_same_definition(self, qualified_name: QualifiedName) -> None:
+        for other in self._same_definition.pop(qualified_name, set()):
+            if partners := self._same_definition.get(other):
+                partners.discard(qualified_name)
+                if not partners:
+                    del self._same_definition[other]
 
     def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:

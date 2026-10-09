@@ -574,13 +574,19 @@ class FunctionIngestMixin:
         self, module_qn: str, func_node: Node, label: str, qualified_name: str
     ) -> None:
         # First claim wins; a later pass deriving a different qn for the same
-        # source function skips registration rather than mint a twin.
+        # source function skips registration rather than mint a twin. One
+        # that did register (`X.prototype.m = function m()`) is that span's
+        # twin: a call bound to either name also reaches the other.
         key = function_span_key(module_qn, func_node)
-        if key not in self.function_locations:
+        if (loc := self.function_locations.get(key)) is None:
             self.function_locations[key] = FunctionLocation(
                 label=label,
                 qualified_name=qualified_name,
                 container_qn=None,
+            )
+        elif loc.qualified_name != qualified_name:
+            self.function_registry.mark_same_definition(
+                loc.qualified_name, qualified_name
             )
 
     def _flush_deferred_rust_body_local(self) -> None:
