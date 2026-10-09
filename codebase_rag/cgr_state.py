@@ -56,6 +56,13 @@ def _save(path: Path, data: _StateShape) -> None:
         logger.warning(f"Failed to save cgr state to {path}: {e}")
 
 
+def _close_quietly(lock_file) -> None:
+    try:
+        lock_file.close()
+    except OSError as e:
+        logger.warning(f"State lock file could not be closed: {e}")
+
+
 @contextmanager
 def _locked(path: Path):
     """Serialize whole-file read-modify-writes on the state (#2479).
@@ -84,7 +91,7 @@ def _locked(path: Path):
         else:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
     except OSError as e:
-        lock_file.close()
+        _close_quietly(lock_file)
         logger.warning(f"State write proceeding without a lock: {e}")
         yield
         return
@@ -100,7 +107,7 @@ def _locked(path: Path):
         except OSError as e:
             logger.warning(f"State lock could not be released: {e}")
         finally:
-            lock_file.close()
+            _close_quietly(lock_file)
 
 
 def record_sync(project_name: str, home: Path | None = None) -> None:
