@@ -931,6 +931,7 @@ class ImportProcessor:
         "python_import_rebinds",
         "php_function_imports",
         "php_const_imports",
+        "php_class_imports",
         "php_module_namespaces",
         "php_class_index",
         "php_class_module",
@@ -1256,6 +1257,10 @@ class ImportProcessor:
         # classes, but PHP keeps them in a different symbol table, so a
         # class lookup must ignore these (issue #3117 review).
         self.php_const_imports: dict[str, set[str]] = {}
+        # Class aliases only. A `use const` or `use function` of the same
+        # local name is legal and overwrites `import_mapping`, but it does
+        # not bind `new` (issue #3117 review).
+        self.php_class_imports: dict[str, dict[str, str]] = {}
         # The `namespace Vendor\Pkg` a PHP module declares, keyed by module qn,
         # stored dotted (`Vendor.Pkg`) to match how import targets are recorded.
         #
@@ -1621,6 +1626,7 @@ class ImportProcessor:
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
         self.php_const_imports.pop(module_qn, None)
+        self.php_class_imports.pop(module_qn, None)
         # A re-index that removes or edits the `namespace` declaration must not
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
@@ -5614,12 +5620,20 @@ class ImportProcessor:
                 use_node,
                 imported_path.split(cs.SEPARATOR_DOT)[-1],
             )
-            if decl_is_function or any(
+            clause_is_function = decl_is_function or any(
                 c.type == cs.TS_PHP_FUNCTION for c in child.children
-            ):
+            )
+            clause_is_const = decl_is_const or any(
+                c.type == cs.TS_PHP_CONST for c in child.children
+            )
+            if clause_is_function:
                 self.php_function_imports.setdefault(module_qn, set()).add(local_name)
-            if decl_is_const or any(c.type == cs.TS_PHP_CONST for c in child.children):
+            elif clause_is_const:
                 self.php_const_imports.setdefault(module_qn, set()).add(local_name)
+            else:
+                self.php_class_imports.setdefault(module_qn, {})[local_name] = (
+                    imported_path
+                )
 
     def _handle_php_include_require(self, node: Node, module_qn: str) -> None:
         for child in node.children:

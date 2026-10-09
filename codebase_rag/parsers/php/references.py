@@ -259,24 +259,14 @@ def _compile_class_name(host: _PhpEmitter, module_qn: str, node: Node) -> str | 
 
 
 def _class_import(host: _PhpEmitter, module_qn: str, name: str) -> str | None:
-    # `use function` and `use const` share the import map with class aliases,
-    # but they do not bind a class. `new Resolver` stays `App\Resolver`.
-    processor = host._resolver.import_processor
-    import_map = processor.import_mapping.get(module_qn, {})
-    head = host._resolver._php_import_key(name, import_map)
-    if head is None or _imports_non_class(host, module_qn, head):
+    # Class aliases live apart from `use function` and `use const`. Those
+    # may reuse the same local name, and the shared import map keeps only
+    # the later path, which is not what `new` means.
+    class_map = host._resolver.import_processor.php_class_imports.get(module_qn, {})
+    head = host._resolver._php_import_key(name, class_map)
+    if head is None:
         return None
-    return import_map[head]
-
-
-def _imports_non_class(host: _PhpEmitter, module_qn: str, local_name: str) -> bool:
-    processor = host._resolver.import_processor
-    folded = _php_fold(local_name)
-    names = (
-        *processor.php_function_imports.get(module_qn, ()),
-        *processor.php_const_imports.get(module_qn, ()),
-    )
-    return any(_php_fold(name) == folded for name in names)
+    return class_map[head]
 
 
 def _classes_for_fqcn(resolver: CallResolver, dotted: str) -> list[str]:
