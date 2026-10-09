@@ -25,7 +25,11 @@ from ..utils import (
     sorted_captures,
 )
 from .module_system import JsTsModuleSystemMixin
-from .utils import arrow_binding_name, get_js_ts_language_obj
+from .utils import (
+    arrow_binding_name,
+    get_js_ts_language_obj,
+    mark_js_ts_object_binding,
+)
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
@@ -418,7 +422,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
-        self._mark_object_member(method_props, method_qn)
+        self._mark_object_member(method_props, method_qn, method_func_node)
         logger.debug(
             lg.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
         )
@@ -662,7 +666,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             self.repo_path,
         )
         if object_member:
-            self._mark_object_member(function_props, function_qn)
+            self._mark_object_member(function_props, function_qn, function_node)
 
         logger.debug(log_message, function_name=function_name, function_qn=function_qn)
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
@@ -692,7 +696,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, function_qn),
             )
 
-    def _mark_object_member(self, props: PropertyDict, qualified_name: str) -> None:
+    def _mark_object_member(
+        self, props: PropertyDict, qualified_name: str, func_node: ASTNode
+    ) -> None:
         # The qn drops the object's own path (`{retry: {delay: () => 0}}` is
         # `<scope>.delay`), so by name alone it looks like a function the
         # scope declares. It is reached only through its object
@@ -701,6 +707,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         # rehydrated registry.
         props[cs.KEY_IS_OBJECT_MEMBER] = True
         self.function_registry.mark_object_member(qualified_name)
+        mark_js_ts_object_binding(
+            self.function_registry, props, qualified_name, func_node
+        )
 
     def _is_static_method_in_class(self, method_node: ASTNode) -> bool:
         if method_node.type == cs.TS_METHOD_DEFINITION:

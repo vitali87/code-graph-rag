@@ -491,6 +491,9 @@ message GraphCodeIndex {
     // A JS/TS object literal's function value (#2435): reached through its
     // object, never by its key alone, so a bare call must not bind to it.
     bool is_object_member = 13;
+    // The binding its object literal is assigned to (`const api = {...}` ->
+    // `<module>.api`), so `api.fetchUser()` finds it (issue #2763).
+    string object_binding = 14;
   }
 
   message Method {

@@ -1361,6 +1361,12 @@ class _StatefulIngestor:
                         cs.KEY_IS_OBJECT_MEMBER: bool(
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
+                        cs.KEY_OBJECT_BINDING: _text(props[cs.KEY_OBJECT_BINDING])
+                        if cs.KEY_OBJECT_BINDING in props
+                        else None,
+                        cs.KEY_NAME: _text(props[cs.KEY_NAME])
+                        if cs.KEY_NAME in props
+                        else None,
                     }
                     defs.append(row)
                 return defs

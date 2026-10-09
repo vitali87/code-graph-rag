@@ -1591,6 +1591,7 @@ class CallResolver:
             self._resolve_receiver_shadow,
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
+            self._resolve_js_local_object_member,
         ):
             handled, result = stage(call)
             if handled:
@@ -1707,6 +1708,70 @@ class CallResolver:
         ):
             return True, result
         return False, None
+
+    def _js_object_member_call(self, call: _CallSite) -> tuple[str, str, str] | None:
+        # `<receiver>.<key>(...)` split as (head, rest of the receiver, key)
+        # for a JS/TS call when some object literal is bound to a name; None
+        # otherwise. A receiver the type map holds is a typed value, which
+        # the typed paths own.
+        if (
+            call.language not in cs.JS_TS_LANGUAGES
+            or not self.function_registry.has_object_bindings()
+        ):
+            return None
+        receiver, sep, key = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return None
+        head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
+        if call.local_var_types and head in call.local_var_types:
+            return None
+        return head, rest, key
+
+    def _object_member_result(
+        self, binding_qn: str, key: str
+    ) -> tuple[str, str] | None:
+        member = self.function_registry.object_binding_member(binding_qn, key)
+        if member is None or member not in self.function_registry:
+            return None
+        return self.function_registry[member].value, member
+
+    def _resolve_js_local_object_member(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # `tools.build()` where `const tools = { build: () => 2 }` is written
+        # in the calling function or one enclosing it: the literal's own
+        # member (issue #2763). Caller-specific, so ahead of the cache; the
+        # module-level and imported bindings are resolved with the imports.
+        parts = self._js_object_member_call(call)
+        if parts is None or parts[1] or not call.caller_qn:
+            return False, None
+        head, _, key = parts
+        scope = call.caller_qn
+        while scope and scope != call.module_qn:
+            if result := self._object_member_result(
+                f"{scope}{cs.SEPARATOR_DOT}{head}", key
+            ):
+                return True, result
+            scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+        return False, None
+
+    def _try_resolve_js_bound_object_member(
+        self, call: _CallSite
+    ) -> tuple[str, str] | None:
+        # `api.fetchUser()` on an object literal bound at module level, here
+        # or in the module an import names (`import { api }`, `import * as
+        # ns` + `ns.api.fetchUser()`, a CommonJS destructure, or `import api`
+        # of an `export default { ... }`): that literal's member, which
+        # registers under its module without the object's name (issue
+        # #2763).
+        parts = self._js_object_member_call(call)
+        if parts is None:
+            return None
+        head, rest, key = parts
+        import_map = self.import_processor.import_mapping.get(call.module_qn, {})
+        base = import_map.get(head) or f"{call.module_qn}{cs.SEPARATOR_DOT}{head}"
+        binding_qn = f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
+        return self._object_member_result(binding_qn, key)
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
@@ -1876,6 +1941,9 @@ class CallResolver:
         self, call: _CallSite, cache_key: tuple[str, str, bool] | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
+        if result := self._try_resolve_js_bound_object_member(call):
+            self._remember_cacheable(cache_key, result)
+            return True, result
         if result := self._try_resolve_via_imports(
             call_name, module_qn, call.local_var_types, call.language
         ):
