@@ -197,6 +197,12 @@ def ingest_trace(
         callee = resolver.resolve(rebase.apply(record.callee), summary.resolution)
         if callee is None:
             continue
+        if callee.folded and callee == caller:
+            # A lambda body, anonymous function or closure folded into the very
+            # node that runs it: the call happens inside that node, not from it
+            # to itself (issue #2709). Genuine recursion names both frames.
+            summary.resolution.record(cs.TraceUnresolvedReason.INTRA_NODE)
+            continue
         edge = resolved_frames.setdefault((caller, callee), _EdgeStats())
         edge.count += record.count
         edge.workloads.update(record.workloads)
