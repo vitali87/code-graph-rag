@@ -30,6 +30,7 @@ from codebase_rag.parsers.java_frontend import frontend as java_frontend
 from codebase_rag.services import provenance
 from codebase_rag.stack import constants as stack_cs
 from codebase_rag.stack import manager as stack_manager
+from codebase_rag.trace import agents as trace_agents
 
 _ROOT = Path(__file__).resolve().parents[2]
 _CONFIG = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -79,6 +80,7 @@ def _runtime_data_files() -> list[Path]:
         *ast_grep_tier._PATTERNS_DIR.glob("*.yaml"),
         *ast_grep_analyzer._RULES_DIR.glob("*/*.yaml"),
         *highlights.glob("*.scm"),
+        *trace_agents.agent_files(),
     ]
     return sorted({path.resolve() for path in files})
 
@@ -205,8 +207,8 @@ def test_the_wheel_ships_no_data_the_package_does_not_read(
     wheel_names: frozenset[str],
 ) -> None:
     # The fix must name the schema, not widen package-data to "*" or turn on
-    # include-package-data: the package tree also holds a README, .gitignore
-    # files and trace-agent sources the code never reads.
+    # include-package-data: the package tree also holds a README and
+    # .gitignore files the code never reads.
     stray = sorted(
         name
         for name in wheel_names

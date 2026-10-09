@@ -100,6 +100,15 @@ codebase_rag = [
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
     "queries/highlights/*.scm",
+    # The tracer agents the dynamic-tracing guide builds or loads; `cgr trace
+    # agent <language>` prints where an installed copy keeps each (issue #2684).
+    "trace/c_agent/*.c",
+    "trace/lua_agent/*.lua",
+    "trace/dart_collector/pubspec.yaml",
+    "trace/dart_collector/pubspec.lock",
+    "trace/dart_collector/bin/*.dart",
+    "trace/jvm_agent/MANIFEST.MF",
+    "trace/jvm_agent/src/cgr/trace/*.java",
 ]
 # The provenance manifest hashes this file to stamp each index with its codec
 # schema; without it every installed build writes a null hash and
