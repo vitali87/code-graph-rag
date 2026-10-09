@@ -224,6 +224,28 @@ class JsTypeInferenceEngine:
         )
         return local_var_types
 
+    def own_scope_variable_types(
+        self,
+        func_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> dict[str, str]:
+        """Types of the variables a function declares itself, the ones a
+        nested function captures (issue #3200). Unlike the caller map, a
+        nested function's own declarations are left out: a same-named local
+        there is a different variable, and the last one walked would win."""
+        local_var_types: dict[str, str] = {}
+        body = func_node.child_by_field_name(cs.FIELD_BODY)
+        stack: list[ASTNode] = list(reversed(body.children)) if body else []
+        while stack:
+            current = stack.pop()
+            if current.type in cs.JS_TS_FUNCTION_NODES:
+                continue
+            if current.type == cs.TS_VARIABLE_DECLARATOR:
+                self._record_declarator(current, local_var_types, module_qn, language)
+            stack.extend(reversed(current.children))
+        return local_var_types
+
     def _record_declarator(
         self,
         declarator: ASTNode,
