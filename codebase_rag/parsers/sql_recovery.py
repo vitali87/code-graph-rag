@@ -69,6 +69,14 @@ class _Standalone(NamedTuple):
     clean_fallback: bytes | None
 
 
+class _Isolation(NamedTuple):
+    # Functions kept with a parse error, and their clean hollowed texts; the
+    # other statements that fail on their own; how many functions parse.
+    noisy: list[tuple[_Statement, bytes]]
+    failing_others: list[_Statement]
+    recoverable: int
+
+
 def parse_sql(parser: Parser, source: bytes) -> Tree:
     """The file's tree, re-parsed statement-safe only when that finds more."""
     tree = parser.parse(source)
@@ -80,6 +88,15 @@ def parse_sql(parser: Parser, source: bytes) -> Tree:
     if best_found == len(expected):
         return tree
     isolated = bytearray(_POSITIONAL_PARAM.sub(_PARAM_PLACEHOLDER, source))
+    isolation = _isolate(parser, statements, isolated)
+    return _quietest(parser, isolated, isolation, expected, best, best_found)
+
+
+def _isolate(
+    parser: Parser, statements: list[_Statement], isolated: bytearray
+) -> _Isolation:
+    # Stand each `CREATE FUNCTION` alone in `isolated` and note what else
+    # fails on its own, for the quieting steps.
     noisy: list[tuple[_Statement, bytes]] = []
     failing_others: list[_Statement] = []
     recoverable = 0
@@ -93,20 +110,31 @@ def parse_sql(parser: Parser, source: bytes) -> Tree:
                 noisy.append((statement, kept.clean_fallback))
         elif parser.parse(text).root_node.has_error:
             failing_others.append(statement)
+    return _Isolation(noisy, failing_others, recoverable)
+
+
+def _quietest(
+    parser: Parser,
+    isolated: bytearray,
+    isolation: _Isolation,
+    expected: list[int],
+    best: Tree,
+    best_found: int,
+) -> Tree:
     # Each step quiets more, at a cost: a hollowed body loses its calls, a
     # blanked statement its own content. Stop once every function that
     # parses on its own is found.
     for step in range(3):
         if step == 1:
-            for statement, fallback in noisy:
+            for statement, fallback in isolation.noisy:
                 isolated[statement.start : statement.end] = fallback
         elif step == 2:
-            for statement in failing_others:
+            for statement in isolation.failing_others:
                 _blank(isolated, statement.start, statement.end)
         retry = parser.parse(bytes(isolated))
         if (found := _found(retry, expected)) > best_found:
             best, best_found = retry, found
-        if best_found >= recoverable:
+        if best_found >= isolation.recoverable:
             break
     return best
 
@@ -178,42 +206,8 @@ def _statements(source: bytes) -> list[_Statement]:
     # Top-level statements split on `;` outside comments, strings, quoted
     # identifiers and dollar quotes; each with the content spans of its
     # dollar-quoted bodies.
-    masked = bytearray(source)
-    bodies: list[tuple[int, int]] = []
+    masked, bodies = _lex(source)
     n = len(source)
-    i = 0
-    while (lexical := _LEXICAL_START.search(source, i)) is not None:
-        i = lexical.start()
-        if source.startswith(b"--", i):
-            end = source.find(b"\n", i)
-            end = n if end < 0 else end
-            _blank(masked, i, end)
-            i = end
-        elif source.startswith(b"/*", i):
-            depth, j = 1, i + 2
-            while j < n and depth:
-                if source.startswith(b"/*", j):
-                    depth, j = depth + 1, j + 2
-                elif source.startswith(b"*/", j):
-                    depth, j = depth - 1, j + 2
-                else:
-                    j += 1
-            _blank(masked, i, j)
-            i = j
-        elif source[i] == 0x27:  # '
-            i = _skip_quoted(source, i, 0x27, escapes=_is_escape_string(source, i))
-            _blank(masked, lexical.start(), i)
-        elif source[i] == 0x22:  # "
-            i = _skip_quoted(source, i, 0x22, escapes=False)
-        elif (i == 0 or not _IDENT_BYTE.match(source, i - 1)) and (
-            tag := _DOLLAR_TAG.match(source, i)
-        ):
-            close = source.find(tag.group(), tag.end())
-            i = n if close < 0 else close + len(tag.group())
-            bodies.append((lexical.start(), i))
-            _blank(masked, lexical.start(), i)
-        else:
-            i += 1
     statements: list[_Statement] = []
     start = 0
     body_index = 0
@@ -237,6 +231,58 @@ def _statements(source: bytes) -> list[_Statement]:
             )
         start = end
     return statements
+
+
+def _lex(source: bytes) -> tuple[bytearray, list[tuple[int, int]]]:
+    # `source` with comments, strings and dollar quotes blanked, and the
+    # span of each dollar-quoted body, delimiters included.
+    masked = bytearray(source)
+    bodies: list[tuple[int, int]] = []
+    i = 0
+    while (lexical := _LEXICAL_START.search(source, i)) is not None:
+        start = lexical.start()
+        i, blanked, is_body = _lexical_end(source, start)
+        if is_body:
+            bodies.append((start, i))
+        if blanked:
+            _blank(masked, start, i)
+    return masked, bodies
+
+
+def _lexical_end(source: bytes, i: int) -> tuple[int, bool, bool]:
+    # Where the comment, string, quoted identifier or dollar quote starting
+    # at `i` ends, whether it is blanked and whether it is a dollar-quoted
+    # body; (i + 1, False, False) when the byte starts none of them.
+    if source.startswith(b"--", i):
+        end = source.find(b"\n", i)
+        return (len(source) if end < 0 else end), True, False
+    if source.startswith(b"/*", i):
+        return _block_comment_end(source, i), True, False
+    if source[i] == 0x27:  # '
+        escapes = _is_escape_string(source, i)
+        return _skip_quoted(source, i, 0x27, escapes=escapes), True, False
+    if source[i] == 0x22:  # "
+        return _skip_quoted(source, i, 0x22, escapes=False), False, False
+    if (i == 0 or not _IDENT_BYTE.match(source, i - 1)) and (
+        tag := _DOLLAR_TAG.match(source, i)
+    ):
+        close = source.find(tag.group(), tag.end())
+        return (len(source) if close < 0 else close + len(tag.group())), True, True
+    return i + 1, False, False
+
+
+def _block_comment_end(source: bytes, i: int) -> int:
+    # Block comments nest.
+    n = len(source)
+    depth, j = 1, i + 2
+    while j < n and depth:
+        if source.startswith(b"/*", j):
+            depth, j = depth + 1, j + 2
+        elif source.startswith(b"*/", j):
+            depth, j = depth - 1, j + 2
+        else:
+            j += 1
+    return j
 
 
 def _is_escape_string(source: bytes, quote: int) -> bool:
