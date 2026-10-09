@@ -44,6 +44,54 @@ class TestRecordSync:
     def test_read_when_no_state_returns_empty(self, _temp_home: Path) -> None:
         assert cgr_state.read_sync_timestamps() == {}
 
+    def test_malformed_last_sync_is_ignored(self, _temp_home: Path) -> None:
+        _temp_home.mkdir(parents=True, exist_ok=True)
+        cgr_state.state_path().write_text('{"last_sync": ["not", "a", "dict"]}')
+        assert cgr_state.read_sync_timestamps() == {}
+        cgr_state.record_sync("alpha")
+        assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
+
+    def test_concurrent_writers_do_not_lose_updates(self, _temp_home: Path) -> None:
+        import threading
+
+        def record_many(name: str) -> None:
+            for _ in range(50):
+                cgr_state.record_sync(name)
+
+        threads = [
+            threading.Thread(target=record_many, args=(name,)) for name in ("a", "b")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert set(cgr_state.read_sync_timestamps()) == {"a", "b"}
+
+    def test_forget_sync_keeps_a_concurrent_writers_record(
+        self, _temp_home: Path
+    ) -> None:
+        import threading
+
+        cgr_state.record_sync("ghost")
+        cgr_state.record_sync("live")
+
+        def forget_many() -> None:
+            for _ in range(50):
+                cgr_state.forget_sync("ghost")
+
+        def record_many() -> None:
+            for _ in range(50):
+                cgr_state.record_sync("live")
+
+        forget_thread = threading.Thread(target=forget_many)
+        record_thread = threading.Thread(target=record_many)
+        forget_thread.start()
+        record_thread.start()
+        forget_thread.join()
+        record_thread.join()
+        assert cgr_state.read_sync_timestamps().get("live") is not None
+        assert "ghost" not in cgr_state.read_sync_timestamps()
+
 
 class TestStatusCommand:
     def test_status_runs_clean(self, _temp_home: Path) -> None:
