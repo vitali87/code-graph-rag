@@ -72,6 +72,23 @@ class RecordedGraph:
             return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
+        if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
+            # The rename's cross-check asks for the symbol's namesakes, whose
+            # sites are theirs and not unplanned occurrences (issue #2564).
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            suffix = str(p.get(cs.KEY_SUFFIX, ""))
+            labels = {label.value for label in cs.DEFINITION_NODE_LABELS}
+            return [
+                self._node_row(name)
+                for name, node in self.nodes.items()
+                if name.startswith(prefix)
+                and node[cs.KEY_LABEL] in labels
+                and (
+                    name == qn
+                    or name.endswith(suffix)
+                    or node.get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+                )
+            ]
         if query in (
             cq.CYPHER_GRAPH_CALLERS,
             cq.CYPHER_GRAPH_REFERENCES,

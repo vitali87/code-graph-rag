@@ -11,7 +11,10 @@ The graph knows every site, so a rename is a graph operation:
 2. refuse when a site is ambiguous (`heuristic`, `overload`, `dynamic`)
    unless the caller accepts the risk with `allow_heuristic`; a graph-known
    site with no rewrite location refuses regardless, it cannot be rewritten
-   at all and applying would leave it under the old name;
+   at all and applying would leave it under the old name. The index misses
+   sites too, so the plan is cross-checked against the source: an
+   occurrence of the name in code that no site covers refuses the same way
+   (issue #2564);
 3. rewrite the identifier at every site through the span patcher (issue
    #1529) and the import statements through the import rewriter (issue
    #1530), stage the results in a transaction (issue #1528), verify that
@@ -27,7 +30,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 from loguru import logger
@@ -40,9 +43,20 @@ from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyParams, ResultRow
-from ..utils.path_utils import base_module_qn
+from ..utils.path_utils import (
+    base_module_qn,
+    declaration_implementations,
+    python_stub_implementations,
+)
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
+from .occurrences import (
+    Occurrence,
+    Target,
+    binding_scope,
+    declares_target,
+    find_occurrences,
+)
 from .patcher import Patcher, PatcherError, line_col_to_byte
 from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
@@ -66,6 +80,13 @@ _SITELESS = "siteless"
 _STALE_CALL = (-1, -1)
 # A same-named link of a fluent chain the index has no row for.
 _CHAIN = "chain"
+# An occurrence of the name in code that no graph site accounts for (#2564).
+_UNPLANNED = "unplanned"
+# One that may not even be the symbol: a method call through an object the
+# source does not show to be of its class. `allow_heuristic` never rewrites it.
+_RECEIVER_UNKNOWN = "receiver_unknown"
+# A file and the (line, col) start and exclusive end of a statement in it.
+_Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
@@ -104,11 +125,16 @@ class RenameRefused(ValueError):
     """The rename would rewrite through a guess; nothing was changed."""
 
     def __init__(
-        self, message: str, ambiguous: list[RenameSite], unlocatable: list[str]
+        self,
+        message: str,
+        ambiguous: list[RenameSite],
+        unlocatable: list[str],
+        unplanned: list[RenameSite] | None = None,
     ) -> None:
         super().__init__(message)
         self.ambiguous = ambiguous
         self.unlocatable = unlocatable
+        self.unplanned = unplanned or []
 
 
 class RenameReport(NamedTuple):
@@ -130,6 +156,13 @@ class RenameReport(NamedTuple):
     # the graph may hold a partial picture and must be rebuilt.
     graph_incomplete: bool = False
     undone: bool | None = None
+    # Occurrences of the old name the graph has no site for, rewritten as
+    # guessed sites under `allow_heuristic` (issue #2564).
+    unplanned: tuple[RenameSite, ...] = ()
+    # The graph's own symbols for the target's declaration in a `.d.ts`
+    # beside its module (`proj.src.util.d.ts.helper`), renamed with it
+    # through `unplanned`.
+    companions: tuple[str, ...] = ()
 
 
 # --- site collection -----------------------------------------------------------
@@ -817,11 +850,13 @@ class Renamer:
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
+        label: str | None = None
         for member in members:
-            member_sites, member_unlocatable, member_name, _label = self._collect(
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
                 member
             )
             old_name = old_name or member_name
+            label = label or member_label
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
         assert old_name is not None
@@ -851,26 +886,54 @@ class Renamer:
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
-        if ambiguous and not allow_heuristic:
+        imports = [
+            (site, module)
+            for member in members
+            for site, module in self._import_sites(member, old_name)
+        ]
+        unplanned, companions = self._unplanned(
+            sites, [site for site, _module in imports], members, old_name, label
+        )
+        unknown = [s for s in unplanned if s.resolution == _RECEIVER_UNKNOWN]
+        if unknown and allow_heuristic:
             raise RenameRefused(
-                cs.RENAME_AMBIGUOUS.format(
-                    qn=qn, count=len(ambiguous), option=self.heuristic_opt_in
+                cs.RENAME_RECEIVER_UNKNOWN.format(
+                    qn=qn,
+                    count=len(unknown),
+                    name=old_name,
+                    locations=_locations(unknown),
+                    option=self.heuristic_opt_in,
                 ),
                 ambiguous,
                 unlocatable,
+                unplanned,
             )
-        for member in members:
-            for site, module in self._import_sites(member, old_name):
-                sites.append(
-                    RenameSite(
-                        "import",
-                        site.path,
-                        site.line,
-                        site.col,
-                        module,
-                        cs.EdgeResolution.EXACT,
-                    )
-                )
+        if (ambiguous or unplanned) and not allow_heuristic:
+            raise RenameRefused(
+                _refusal_message(
+                    qn,
+                    old_name,
+                    ambiguous,
+                    unplanned,
+                    len(unknown),
+                    self.heuristic_opt_in,
+                ),
+                ambiguous,
+                unlocatable,
+                unplanned,
+            )
+        sites.extend(unplanned)
+        sites.extend(
+            RenameSite(
+                "import",
+                site.path,
+                site.line,
+                site.col,
+                module,
+                cs.EdgeResolution.EXACT,
+            )
+            for site, module in imports
+        )
         return RenameReport(
             qualified_name=qn,
             old_name=old_name,
@@ -889,11 +952,198 @@ class Renamer:
             hierarchy=tuple(members),
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
+            unplanned=tuple(unplanned),
+            companions=companions,
         )
+
+    def _unplanned(
+        self,
+        sites: list[RenameSite],
+        imports: list[ImportSite],
+        hierarchy: list[str],
+        old_name: str,
+        label: str | None,
+    ) -> tuple[list[RenameSite], tuple[str, ...]]:
+        """Occurrences of `old_name` in code that the plan does not cover,
+        and the graph's symbols for the target's declarations among them
+        (see `RenameReport.companions`).
+
+        The graph's sites are the plan, so an occurrence none of them covers
+        is one the index never saw: renaming around it leaves it under the
+        old name, and the build breaks while the rename reports success
+        (issue #2564). An occurrence the graph gives to ANOTHER symbol of the
+        same name is not one: that symbol keeps its name.
+        """
+        definitions = [s for s in sites if s.kind == "definition"]
+        definition = definitions[0].path
+        language = get_language_for_extension(Path(definition).suffix)
+        if language is None:
+            return [], ()
+        kind = _target_kind(label)
+        owners = _owners(hierarchy)
+        owner_paths = frozenset(s.path for s in definitions)
+        target = Target(
+            old_name,
+            language,
+            kind,
+            definition,
+            owners,
+            owner_paths,
+            self._rivals(hierarchy, owner_paths)
+            if kind is cs.RenameTargetKind.METHOD
+            else frozenset(),
+            frozenset((s.path, s.line, s.col) for s in definitions),
+        )
+        planned = {(s.path, s.line, s.col) for s in sites}
+        statements = [_statement(site) for site in imports]
+        leftover = [
+            occurrence
+            for occurrence in find_occurrences(self.repo_root, target)
+            if (occurrence.path, occurrence.line, occurrence.col) not in planned
+            and not _inside(occurrence, statements)
+        ]
+        if not leftover:
+            return [], ()
+        foreign = self._foreign_paths(hierarchy)
+        chosen = (
+            self._chosen_paths(hierarchy, old_name)
+            if language in cs.JS_TS_LANGUAGES and kind is not cs.RenameTargetKind.METHOD
+            else set()
+        )
+        namesakes = self._namesakes(old_name, hierarchy, target)
+        unplanned = [
+            RenameSite(
+                "call" if occurrence.called else "reference",
+                occurrence.path,
+                occurrence.line,
+                occurrence.col,
+                base_module_qn(Path(occurrence.path), self.project),
+                _UNPLANNED if occurrence.certain else _RECEIVER_UNKNOWN,
+            )
+            for occurrence in leftover
+            if occurrence.path not in foreign
+            and (occurrence.path, occurrence.line, occurrence.col)
+            not in namesakes.positions
+            and not _inside(occurrence, namesakes.statements)
+            and not (occurrence.bare and _inside(occurrence, namesakes.bound))
+            and not (occurrence.bare and occurrence.path in chosen)
+        ]
+        positions = {(s.path, s.line, s.col) for s in unplanned}
+        companions = tuple(
+            other
+            for other, position in namesakes.companions.items()
+            if position in positions
+        )
+        return unplanned, companions
+
+    def _rivals(
+        self, hierarchy: list[str], owner_paths: frozenset[str]
+    ) -> frozenset[tuple[str, str]]:
+        """Every other symbol of the project named like a class a method is
+        declared in, with its file: what `Cache` may mean when it is not
+        the method's class."""
+        classes = {_owner_class(member) for member in hierarchy}
+        rivals: set[tuple[str, str]] = set()
+        for name in _owners(hierarchy):
+            for symbol in graph_query.resolve(self.fetch_all, self.project, name):
+                path = symbol["path"]
+                if (
+                    path is not None
+                    and path not in owner_paths
+                    and symbol["qualified_name"] not in classes
+                    and not _declares_one_of(path, owner_paths)
+                ):
+                    rivals.add((name, path))
+        return frozenset(rivals)
+
+    def _chosen_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
+        """JS/TS files whose bare `old_name` is a name of their own for the
+        target: a default import (`import mul from`), or a barrel's chosen
+        name for it (`export { default as Widget } from`) imported from
+        that barrel. The plan leaves those files' sites as they are
+        (`_js_import_bound`), so the cross-check leaves their bare
+        occurrences too; a file that also imports the target by its own
+        name is still held to it."""
+        paths: set[str] = set()
+        for member in hierarchy:
+            by_name, aliased, _star_bound = self._js_name_bindings(member, old_name)
+            paths.update(aliased - by_name)
+        return paths
+
+    def _foreign_paths(self, hierarchy: list[str]) -> set[str]:
+        """Files whose sites the graph gives to a project whose name extends
+        this one: the plan leaves them alone (#1989), so its cross-check
+        does too."""
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        paths: set[str] = set()
+        for member in hierarchy:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: member,
+            }
+            for query in (
+                cq.CYPHER_GRAPH_CALLERS,
+                cq.CYPHER_GRAPH_REFERENCES,
+                cq.CYPHER_GRAPH_TYPE_EDGES,
+            ):
+                paths.update(
+                    path
+                    for row in self.fetch_all(query, params)
+                    if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+                    and isinstance(path := row.get(cs.KEY_PATH), str)
+                )
+        return paths
+
+    def _namesakes(
+        self, old_name: str, hierarchy: list[str], target: Target
+    ) -> _Namesakes:
+        """Where the graph writes `old_name` for a symbol outside `hierarchy`:
+        each same-named definition's own name, every site the graph gives it
+        and the import statements binding it, as a rename of that symbol
+        would collect them. A symbol that is the target's declaration in a
+        `.d.ts` beside its module is the target's, not another one."""
+        namesakes = _Namesakes(set(), [], [], {})
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+                other_imports = self._import_sites(other, old_name)
+            except (RenameRefused, PatcherError):
+                # Its definition or one of its sites cannot be located in the
+                # tree: what it would cover stays unplanned, since refusing
+                # over a namesake's stale graph is safer than crediting it
+                # with an occurrence that may be ours.
+                continue
+            declared = next((s for s in other_sites if s.kind == "definition"), None)
+            if declared is not None and declares_target(
+                self.repo_root, target, declared.path, declared.line, declared.col
+            ):
+                namesakes.companions[other] = (
+                    declared.path,
+                    declared.line,
+                    declared.col,
+                )
+                continue
+            namesakes.positions.update((s.path, s.line, s.col) for s in other_sites)
+            for site, _module in other_imports:
+                namesakes.statements.append(_statement(site))
+                # `from other import helper` makes every bare `helper` where
+                # it binds the other symbol's: the whole file at module
+                # level, the function around it inside one.
+                if site.alias == old_name and (
+                    scope := binding_scope(
+                        self.repo_root, site.path, site.line, site.col
+                    )
+                ):
+                    namesakes.bound.append((site.path, scope[0], scope[1]))
+        return namesakes
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
-        module of each module-level member, plus the modules importing it."""
+        module of each module-level member and its `.pyi` stubs, plus the
+        modules importing it."""
         paths: set[str] = set()
         for member in hierarchy:
             module_qn, module_path = self._module_of(member)
@@ -901,6 +1151,7 @@ class Renamer:
                 continue
             if module_path:
                 paths.add(module_path)
+                paths.update(_stubs_of(self.repo_root, module_path))
             paths.update(site.path for site, _m in self._import_sites(member, old_name))
         return {
             path
@@ -1270,7 +1521,7 @@ class Renamer:
                 member,
                 member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
             )
-            for member in report.hierarchy
+            for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
         longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
@@ -1401,6 +1652,117 @@ class Renamer:
             undone=True,
             message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
+
+
+class _Namesakes(NamedTuple):
+    positions: set[tuple[str, int, int]]
+    statements: list[_Span]
+    # Where an import binds the bare name to the other symbol.
+    bound: list[_Span]
+    # The symbols that are the target's own declaration in a `.d.ts`, each
+    # with where it is declared.
+    companions: dict[str, tuple[str, int, int]]
+
+
+def _declares_one_of(path: str, implementations: frozenset[str]) -> bool:
+    """Whether `path` is the declaration file (`.pyi`, `.d.ts`) of one of
+    `implementations`."""
+    return any(
+        candidate.as_posix() in implementations
+        for candidate in declaration_implementations(PurePosixPath(path))
+    )
+
+
+def _stubs_of(repo_root: Path, path: str) -> set[str]:
+    """The `.pyi` stubs on disk that declare the module `path` implements:
+    `x.pyi` for `x.py`, and `x/__init__.pyi` or `x.pyi` for `x/__init__.py`."""
+    implementation = PurePosixPath(path)
+    candidates = [implementation.with_suffix(cs.EXT_PYI)]
+    if implementation.parent.name:
+        candidates.append(implementation.parent.with_suffix(cs.EXT_PYI))
+    return {
+        stub.as_posix()
+        for stub in candidates
+        if implementation in python_stub_implementations(stub)
+        and (repo_root / stub).is_file()
+    }
+
+
+def _target_kind(label: str | None) -> cs.RenameTargetKind:
+    match label:
+        case cs.NodeLabel.FUNCTION.value:
+            return cs.RenameTargetKind.FUNCTION
+        case cs.NodeLabel.METHOD.value:
+            return cs.RenameTargetKind.METHOD
+        case _:
+            return cs.RenameTargetKind.TYPE
+
+
+def _owners(hierarchy: list[str]) -> frozenset[str]:
+    # The class segment of each member's name; a Java or C# signature may
+    # hold dots of its own (`put(Map.Entry)`), so it is cut off first.
+    owners: set[str] = set()
+    for member in hierarchy:
+        segments = member.partition(cs.CHAR_PAREN_OPEN)[0].split(cs.SEPARATOR_DOT)
+        if len(segments) > 1:
+            owners.add(segments[-2])
+    return frozenset(owners)
+
+
+def _owner_class(member: str) -> str:
+    return member.partition(cs.CHAR_PAREN_OPEN)[0].rpartition(cs.SEPARATOR_DOT)[0]
+
+
+def _statement(site: ImportSite) -> _Span:
+    # The statement's own span, not its lines: `import x; helper(1)` puts a
+    # call on the import's line that the import does not cover.
+    return site.path, (site.line, site.col), (site.end_line, site.end_col)
+
+
+def _inside(occurrence: Occurrence, spans: list[_Span]) -> bool:
+    position = (occurrence.line, occurrence.col)
+    return any(
+        path == occurrence.path and start <= position < end
+        for path, start, end in spans
+    )
+
+
+def _refusal_message(
+    qn: str,
+    old_name: str,
+    ambiguous: list[RenameSite],
+    unplanned: list[RenameSite],
+    unknown: int,
+    option: str,
+) -> str:
+    # `option` is how the caller spells the opt-in: a CLI flag is not an MCP
+    # parameter (issue #2886).
+    if not unplanned:
+        return cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous), option=option)
+    message = cs.RENAME_UNPLANNED.format(
+        qn=qn,
+        count=len(unplanned),
+        name=old_name,
+        locations=_locations(unplanned),
+        option=option,
+    )
+    if unknown:
+        message += cs.RENAME_UNPLANNED_RECEIVER_UNKNOWN.format(
+            count=unknown, option=option
+        )
+    if ambiguous:
+        message += cs.RENAME_UNPLANNED_ALSO_GUESSED.format(count=len(ambiguous))
+    return message
+
+
+def _locations(sites: list[RenameSite]) -> str:
+    locations = list(dict.fromkeys(f"{s.path}:{s.line}" for s in sites))
+    shown = cs.SEPARATOR_COMMA_SPACE.join(locations[: cs.RENAME_UNPLANNED_SHOWN])
+    if len(locations) > cs.RENAME_UNPLANNED_SHOWN:
+        shown = cs.RENAME_UNPLANNED_MORE.format(
+            shown=shown, more=len(locations) - cs.RENAME_UNPLANNED_SHOWN
+        )
+    return shown
 
 
 def rename(

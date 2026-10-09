@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from pathspec import PathSpec
 
@@ -460,12 +460,6 @@ def python_stub_has_implementation(
     the disk and the walk's own skip predicate, not the parse registry, so the
     answer does not depend on which file was walked first.
     """
-    if path.suffix != cs.EXT_PYI:
-        return False
-    if path.name == cs.INIT_PYI:
-        candidates = (path.with_name(cs.INIT_PY),)
-    else:
-        candidates = (path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY)
     return any(
         candidate.is_file()
         and not should_skip_path(
@@ -475,8 +469,34 @@ def python_stub_has_implementation(
             unignore_paths=unignore_paths,
             is_file=True,
         )
-        for candidate in candidates
+        for candidate in python_stub_implementations(path)
     )
+
+
+def declaration_implementations[P: PurePath](path: P) -> list[P]:
+    """The files that may implement the module a declaration file declares,
+    by path alone, as the indexer pairs them: a `.pyi` stub's (see
+    `python_stub_implementations`), and for a TypeScript declaration
+    (`x.d.ts`, `x.d.mts`, `x.d.cts`) every same-stem implementation module
+    (`x.ts`, `x.js`, ...), as `has_implementation_sibling` asks. Nothing for
+    any other file.
+    """
+    if declaration_extension(path.name) is None:
+        return python_stub_implementations(path)
+    stem = module_stem(path.name)
+    return [path.with_name(f"{stem}{ext}") for ext in _IMPLEMENTATION_EXTS]
+
+
+def python_stub_implementations[P: PurePath](path: P) -> list[P]:
+    """The files that may implement the module a `.pyi` stub declares, by
+    path alone: `x.py` or the package `x/__init__.py` for `x.pyi`, and the
+    `__init__.py` beside it for `__init__.pyi`. Nothing for any other file.
+    """
+    if path.suffix != cs.EXT_PYI:
+        return []
+    if path.name == cs.INIT_PYI:
+        return [path.with_name(cs.INIT_PY)]
+    return [path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY]
 
 
 def base_module_qn(rel_path: Path, project_name: str) -> str:

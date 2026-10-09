@@ -1748,7 +1748,7 @@ def rename_command(
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
-            for site in sites_for(refused.ambiguous):
+            for site in sites_for([*refused.ambiguous, *refused.unplanned]):
                 typer.echo(f"  {site}", err=True)
             for entry in refused.unlocatable:
                 typer.echo(f"  {entry}", err=True)
@@ -1756,6 +1756,7 @@ def rename_command(
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+    payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
     payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
