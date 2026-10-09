@@ -47,6 +47,7 @@ from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
 )
+from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
 from .parsers.document_tier import DocumentTier
@@ -3287,6 +3288,19 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        # Restore a C# extension method's index entry for unchanged files, or
+        # a re-parsed `b.Describe()` finds no extension and gets no edge
+        # (issue #3275).
+        if isinstance(receiver := row.get(cs.KEY_EXTENSION_RECEIVER), str) and receiver:
+            namespace = row.get(cs.KEY_EXTENSION_NAMESPACE)
+            arity = row.get(cs.KEY_EXTENSION_RECEIVER_ARITY)
+            csharp_utils.add_extension_method(
+                self.factory.definition_processor.csharp_extension_methods,
+                qn,
+                receiver,
+                namespace if isinstance(namespace, str) else "",
+                arity if isinstance(arity, int) else 0,
+            )
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).

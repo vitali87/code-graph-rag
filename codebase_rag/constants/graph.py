@@ -718,6 +718,14 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# A C# extension method's index entry (`static string Describe(this Box b)`):
+# the receiver type a `b.Describe()` call binds against, the declaring
+# namespace, and the receiver's written generic arity (`this Builder<T>` ->
+# 1). Only a parse of the declaring file indexes it, so an incremental run
+# reads it back from here for the callers it re-parses (issue #3275).
+KEY_EXTENSION_RECEIVER = "extension_receiver"
+KEY_EXTENSION_NAMESPACE = "extension_namespace"
+KEY_EXTENSION_RECEIVER_ARITY = "extension_receiver_arity"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -1021,7 +1029,10 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.extension_receiver AS extension_receiver, "
+    "n.extension_namespace AS extension_namespace, "
+    "n.extension_receiver_arity AS extension_receiver_arity"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
