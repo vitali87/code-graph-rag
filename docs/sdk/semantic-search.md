@@ -106,6 +106,8 @@ embedding = embed_code("def authenticate(user, password): ...")
 print(f"Embedding dimension: {len(embedding)}")
 ```
 
+![The embed_code snippet run on CPU, loading UniXcoder and printing a 768-dimensional embedding](../assets/demos/semantic-search-embed.gif)
+
 ### Search by Description
 
 In the interactive CLI, you can search semantically:
@@ -115,6 +117,10 @@ In the interactive CLI, you can search semantically:
 - "database connection setup"
 
 The system returns potential matches with similarity scores.
+
+![The three queries above sent to the MCP semantic_search tool for pallets/itsdangerous, each returning three matches with similarity scores](../assets/demos/semantic-search-query.gif)
+
+*Recorded through the MCP `semantic_search` tool (UniXcoder and Qdrant, no LLM) after indexing pallets/itsdangerous with embeddings.*
 
 ## How It Works
 

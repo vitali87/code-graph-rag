@@ -86,12 +86,15 @@ def rename_expectation(
     )
 
 
-def change_signature_expectation(unmapped: Iterable[str]) -> Expectation:
+def change_signature_expectation(
+    unmapped: Iterable[str], heuristic_allowed: bool = False
+) -> Expectation:
     return Expectation(
         operation=cs.CONTRACT_OP_CHANGE_SIGNATURE,
         unmapped=tuple(sorted(set(unmapped))),
         # A parameter added with a default changes no caller count.
         caller_count_unchanged=True,
+        heuristic_allowed=heuristic_allowed,
     )
 
 
@@ -111,6 +114,15 @@ def _site_key(site: Mapping[str, object]) -> str:
     return f"{site.get(cs.KEY_PATH)}:{site.get(cs.KEY_LINE)}"
 
 
+def _call_key(site: Mapping[str, object]) -> str:
+    """A call's identity for the signature checks.
+
+    Two calls can share a line (`helper(1) + helper(2)`), and rewriting or
+    listing one must not cover the other, so the column is part of the key.
+    """
+    return f"{_site_key(site)}:{site.get(cs.KEY_COL)}"
+
+
 def _carried_by_ancestor(
     pair: tuple[str, str], expected: Iterable[tuple[str, str]]
 ) -> bool:
@@ -128,6 +140,40 @@ def _carried_by_ancestor(
         if old.startswith(prefix) and new == expected_new + old[len(expected_old) :]:
             return True
     return False
+
+
+def _anonymous_row(segment: str) -> str | None:
+    """The row of an `anonymous_<row>_<col>` segment, else None."""
+    if not segment.startswith(cs.PREFIX_ANONYMOUS):
+        return None
+    row, sep, col = segment.removeprefix(cs.PREFIX_ANONYMOUS).partition(
+        cs.CHAR_UNDERSCORE
+    )
+    return row if sep and row.isdigit() and col.isdigit() else None
+
+
+def _renumbered(pair: tuple[str, str], expected: tuple[tuple[str, str], ...]) -> bool:
+    """Is this rename only an inline function's position renumbering?
+
+    An inline arrow or closure is named `anonymous_<row>_<col>` from where it
+    starts, so renaming a token earlier on its line shifts its column and
+    the delta pairs the two names as a rename (issue #2924). It is the same
+    definition when every segment that differs is such a name on the same
+    row, under a parent that is itself unchanged, renumbered, or renamed as
+    expected.
+    """
+    old, new = pair
+    if old == new or pair in expected or _carried_by_ancestor(pair, expected):
+        return True
+    old_parent, _, old_leaf = old.rpartition(cs.SEPARATOR_DOT)
+    new_parent, _, new_leaf = new.rpartition(cs.SEPARATOR_DOT)
+    if not (old_parent and new_parent):
+        return False
+    if old_leaf != new_leaf:
+        row = _anonymous_row(old_leaf)
+        if row is None or row != _anonymous_row(new_leaf):
+            return False
+    return _renumbered((old_parent, new_parent), expected)
 
 
 def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str]:
@@ -154,6 +200,7 @@ def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str
         pair
         for pair in renamed - set(expectation.renames)
         if not _carried_by_ancestor(pair, expectation.renames)
+        and not _renumbered(pair, expectation.renames)
     )
     if expectation.no_unexpected_rename and unexpected_renames:
         failures.append(
@@ -200,7 +247,7 @@ def _changed_site_fault(
     loops plus these three verdicts put that function one point over the
     threshold. The decision is per site and reads better named anyway.
     """
-    key = _site_key(site)
+    key = _call_key(site)
     verdict = site["verdict"]
     if verdict == cs.DELTA_ARITY_OK or key in unmapped:
         return None
@@ -232,7 +279,7 @@ def _check_sites_mapped(
             if fault := _changed_site_fault(site, unmapped, rewritten):
                 bad.append(fault)
     for site in delta["arity_findings"]:
-        key = _site_key(site)
+        key = _call_key(site)
         if key not in unmapped:
             bad.append(f"{key} ({site['verdict']})")
     if bad:
@@ -303,7 +350,9 @@ def verify(
     """Pass or fail the delta against the expectation, with reasons.
 
     `rewritten` lists the sites the operation rewrote as `(path:line,
-    resolution)`; `parse_failures` the files the transaction found not to
+    resolution)`, or `(path:line:col, resolution)` for a signature change,
+    whose per-site checks key on the column; `parse_failures` the files the
+    transaction found not to
     parse (the transaction refuses those itself, so a caller normally
     passes none, but the contract states the rule in one place).
     """
