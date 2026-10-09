@@ -2252,7 +2252,50 @@ class GraphUpdater:
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
         try:
-            self._join_after_pass_2(force)
+            # Before the partial join on an incremental run: rebuild the type
+            # locations for unchanged .cs files so a partial part living in one
+            # still joins its group (issue #1229). Pass-2 entries for re-parsed
+            # files are already present and take precedence. A cacheless full build
+            # (force=False but _is_full_build) already re-parsed every file, so the
+            # project-wide query would be wasted work -- skip it.
+            if not force and not self._is_full_build:
+                self._rehydrate_csharp_type_locations()
+                # Same posture for the col-keyed indexes (issue #1240): the Go
+                # IMPLEMENTS and semantic-call joins below resolve against
+                # locations Pass 2 filled only for re-parsed files.
+                self._rehydrate_go_type_locations()
+                self._rehydrate_function_locations()
+
+            # Partial groups join AFTER Pass 2: the Roslyn declaration
+            # locations resolve against the Class qns Pass 2 just registered.
+            self._join_csharp_partials()
+
+            # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
+            # resolve against the go_type_locations index Pass 2 just registered.
+            self._join_go_implements()
+
+            # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
+            # calls against the function_locations Pass 2 just filled) and needs
+            # the parsed-file list, which Pass 2 produced (issue #1183).
+            self._run_python_frontend()
+
+            # Same posture for Java (issue #1181): the facts resolve against the
+            # method name-token locations Pass 2 registered.
+            self._run_java_frontend()
+
+            # Before known_module_paths is built from the map: the seed pass only
+            # ever adds, so a reused updater carries qns whose Module another
+            # writer has since deleted.
+            #
+            # A forced run prunes too. It re-parses every file but does NOT clear
+            # the map, so on a reused updater a qn whose Module and file are both
+            # gone survives a full rebuild -- measured, and the reason this is not
+            # gated on `not force`. Nothing this run parsed can be dropped
+            # (`_parsed_files` exempts it) and an unreadable or empty read is
+            # already a no-op, so the first full build of an empty graph is
+            # unaffected.
+            self._prune_stale_seeded_module_qns()
+
             known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
@@ -4273,54 +4316,6 @@ class GraphUpdater:
             rel,
             (target_label, target_key, target_qn),
         )
-
-    def _join_after_pass_2(self, force: bool) -> None:
-        """The joins and frontends that resolve against what Pass 2 just
-        registered, ahead of the deferred definition stages."""
-
-        # Before the partial join on an incremental run: rebuild the type
-        # locations for unchanged .cs files so a partial part living in one
-        # still joins its group (issue #1229). Pass-2 entries for re-parsed
-        # files are already present and take precedence. A cacheless full build
-        # (force=False but _is_full_build) already re-parsed every file, so the
-        # project-wide query would be wasted work -- skip it.
-        if not force and not self._is_full_build:
-            self._rehydrate_csharp_type_locations()
-            # Same posture for the col-keyed indexes (issue #1240): the Go
-            # IMPLEMENTS and semantic-call joins below resolve against
-            # locations Pass 2 filled only for re-parsed files.
-            self._rehydrate_go_type_locations()
-            self._rehydrate_function_locations()
-
-        # Partial groups join AFTER Pass 2: the Roslyn declaration
-        # locations resolve against the Class qns Pass 2 just registered.
-        self._join_csharp_partials()
-
-        # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
-        # resolve against the go_type_locations index Pass 2 just registered.
-        self._join_go_implements()
-
-        # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
-        # calls against the function_locations Pass 2 just filled) and needs
-        # the parsed-file list, which Pass 2 produced (issue #1183).
-        self._run_python_frontend()
-
-        # Same posture for Java (issue #1181): the facts resolve against the
-        # method name-token locations Pass 2 registered.
-        self._run_java_frontend()
-
-        # Before known_module_paths is built from the map: the seed pass only
-        # ever adds, so a reused updater carries qns whose Module another
-        # writer has since deleted.
-        #
-        # A forced run prunes too. It re-parses every file but does NOT clear
-        # the map, so on a reused updater a qn whose Module and file are both
-        # gone survives a full rebuild -- measured, and the reason this is not
-        # gated on `not force`. Nothing this run parsed can be dropped
-        # (`_parsed_files` exempts it) and an unreadable or empty read is
-        # already a no-op, so the first full build of an empty graph is
-        # unaffected.
-        self._prune_stale_seeded_module_qns()
 
     def _restore_pending_inbound_edges(self) -> None:
         captured, self._pending_inbound_edges = self._pending_inbound_edges, []
