@@ -1199,13 +1199,17 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 # is not prefix-scoped, so an unresolved or external target name can reach
 # this lookup, and a shared graph holding several projects would otherwise
 # let a same-named definition from another project decide the arity verdict.
+# `decorators` too: a caller a renamed symbol left dangling is looked up
+# here, and a Rust `#[test]` fn is a test by its attribute alone (bot review
+# on PR #2913).
 CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
 WHERE n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
-{_DELTA_DEFINITION_FIELDS}"""
+{_DELTA_DEFINITION_FIELDS},
+       n.decorators AS decorators"""
 CYPHER_DELTA_SITES = """MATCH (a)-[r:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
