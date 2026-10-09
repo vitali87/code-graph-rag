@@ -67,10 +67,15 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # `unresolved_references` (issue #1568) degrades the same way as
     # `unresolved_specifiers`: absent reads as "nothing waited", and the next
     # parse of the module rewrites the list.
+    # `go_package` (issue #3272) is the Go package clause, read back only by
+    # an incremental run's rehydration; absent reads as "not rehydrated",
+    # which is how every run behaved before #3272, and the next parse of the
+    # file rewrites it.
     "Module": frozenset(
         {
             "absolute_path",
             "end_line",
+            "go_package",
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",
@@ -101,10 +106,15 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # it, so a scoped re-ingest against an IMPORTED graph may again bind a
     # bare call to a function expression in an unchanged file until that file
     # is next parsed; exporting it needs protoc, which #1490 carries.
+    # `first_return_type` and `chain_return_type` (issue #3272) are a Go
+    # function's result type names, read back the same way and degrading the
+    # same way as `go_package` on Module.
     "Function": frozenset(
         {
             "absolute_path",
             "anchor_hash",
+            "chain_return_type",
+            "first_return_type",
             "is_body_scoped_name",
             "is_macro",
             "modifiers",
@@ -119,6 +129,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "absolute_path",
             "anchor_hash",
+            "chain_return_type",
             "is_exported",
             "is_property",
             "modifiers",
