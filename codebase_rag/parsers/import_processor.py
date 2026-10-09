@@ -30,7 +30,7 @@ from ..types_defs import (
     PropertyDict,
     StemSiblingModules,
 )
-from ..utils.json_io import loads_json
+from ..utils.json_io import loads_json, strip_jsonc
 from ..utils.path_utils import (
     base_module_qn,
     declaration_extension,
@@ -364,11 +364,6 @@ def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
     return c + "\n" if c == ";" else c
 
 
-_JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
-_JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
-
-
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
     # (local, imported) name pairs bound by an object destructuring pattern:
     # `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
@@ -435,26 +430,28 @@ def _is_js_star_reexport(site: PropertyDict | None) -> bool:
 
 
 def _load_jsonc(path: Path) -> dict | None:
-    # tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first,
-    # then fall back to stripping comments/trailing commas. The naive strip can
-    # mangle `//` inside string values, so it is only a fallback; on any failure
-    # return None (aliases simply stay unresolved).
+    # tsconfig.json is JSONC (comments, trailing commas, a BOM), read the way
+    # TypeScript reads it. A config that still is not JSON loses its `paths`
+    # and `baseUrl`, so every alias import turns external: say which file.
     try:
-        text = path.read_text(encoding=cs.ENCODING_UTF8)
-    except OSError:
+        stat = path.stat()
+        text = path.read_text(encoding=cs.ENCODING_UTF8_SIG)
+    except (OSError, UnicodeDecodeError):
         return None
-    for candidate in (text, None):
-        source = candidate
-        if source is None:
-            source = _JSONC_BLOCK_COMMENT_RE.sub("", text)
-            source = _JSONC_LINE_COMMENT_RE.sub("", source)
-            source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
+    for source in (text, strip_jsonc(text)):
         try:
             parsed = loads_json(source)
         except ValueError:
             continue
         return parsed if isinstance(parsed, dict) else None
+    _warn_unparseable_tsconfig(path, stat.st_mtime_ns)
     return None
+
+
+@lru_cache(maxsize=256)
+def _warn_unparseable_tsconfig(path: Path, _mtime_ns: int) -> None:
+    # Once per file version: each config is read for `paths` and `baseUrl`.
+    logger.warning(ls.TSCONFIG_UNPARSEABLE, path=path)
 
 
 def _child_dirs(path: Path) -> list[Path]:

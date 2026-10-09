@@ -1342,3 +1342,7 @@ JAVA_FRONTEND_UNAVAILABLE = (
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
 )
+TSCONFIG_UNPARSEABLE = (
+    "Could not parse {path} as JSONC; its `paths` and `baseUrl` are ignored, "
+    "so its alias imports resolve as packages"
+)
