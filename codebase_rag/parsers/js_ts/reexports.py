@@ -118,7 +118,17 @@ class _ReexportWalk:
             target
             for key, source in self._imports.get(barrel, {}).items()
             if key.startswith(cs.IMPORTED_NAME_WILDCARD)
+            and not self._private_to(source, name)
             and (target := self.follow(f"{source}{cs.SEPARATOR_DOT}{name}", seen))
             in self._registry
         }
         return reached.pop() if len(reached) == 1 else None
+
+    def _private_to(self, source: str, name: str) -> bool:
+        # A definition of `name` in the source module that it does not
+        # export: `export *` does not pass it on, so it neither binds nor
+        # makes an exported twin in another source ambiguous.
+        if f"{source}{cs.SEPARATOR_DOT}{name}" not in self._registry:
+            return False
+        module = self._barrel(source)
+        return module is not None and name not in self._exports.get(module, {})

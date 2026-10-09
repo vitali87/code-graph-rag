@@ -305,7 +305,9 @@ def test_the_barrel_maps_record_what_each_export_names(tmp_path: Path) -> None:
     assert exports["maps.src.lib.math.mul"] == {
         "default": ("maps.src.lib.math.mul.mul", True)
     }
+    # An exported declaration is recorded too (PR #2965).
     assert exports["maps.src.text.pad"] == {
+        "pad": ("maps.src.text.pad.pad", True),
         "strip": ("maps.src.text.pad.trim", True),
         "default": ("maps.src.text.pad.upper", True),
     }

@@ -4263,7 +4263,30 @@ class CallResolver:
                 ls.CALL_IMPORT_STATIC, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
+        if result := self._try_resolve_js_namespace_member(
+            target, method_name, language
+        ):
+            return result
         return self._try_resolve_package_member(class_qn, method_name)
+
+    def _try_resolve_js_namespace_member(
+        self, module_qn: str, member: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # `import * as ns from "./lib/index.js"; ns.f()` names the barrel,
+        # where nothing is registered: `f` is what its `export *` or
+        # `export { g as f }` passes on, possibly through further barrels.
+        # Named imports already followed them (#2464); a namespace member
+        # did not, and bound nothing (issue #2933).
+        if language not in cs.JS_TS_LANGUAGES:
+            return None
+        followed = self.import_processor.follow_js_reexports(
+            f"{module_qn}{cs.SEPARATOR_DOT}{member}",
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
+        )
+        if followed not in self.function_registry:
+            return None
+        return self.function_registry[followed], followed
 
     def _try_resolve_lua_module_member(
         self,
