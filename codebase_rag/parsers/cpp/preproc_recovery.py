@@ -16,6 +16,7 @@ import re
 from tree_sitter import Node, Parser, Tree
 
 from ... import constants as cs
+from ..sql_recovery import parse_sql
 from .trailing_annotation import retry_without_trailing_annotations
 
 _DIRECTIVE = re.compile(cs.CPP_PREPROC_CONDITIONAL_PATTERN)
@@ -222,6 +223,10 @@ def _retry_without_csharp_directives(
 def parse_with_preproc_recovery(
     parser: Parser, source_bytes: bytes, language: cs.SupportedLanguage
 ) -> Tree:
+    if language == cs.SupportedLanguage.SQL:
+        # One statement the grammar mis-lexes or cannot parse must not erase
+        # the well-formed CREATE FUNCTIONs after it (issue #3180).
+        return parse_sql(parser, source_bytes)
     tree = parser.parse(source_bytes)
     if language == cs.SupportedLanguage.CSHARP:
         # A C# conditional directive interleaved with declaration syntax

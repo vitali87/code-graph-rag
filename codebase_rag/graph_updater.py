@@ -4011,11 +4011,16 @@ class GraphUpdater:
         language = get_language_for_extension(PurePosixPath(key).suffix)
         parser = self.parsers.get(language) if language is not None else None
         query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
-        if parser is None or query is None:
+        if parser is None or query is None or language is None:
             return set()
         try:
-            tree = parser.parse(
-                grammar_bytes(file_bytes, language, self.repo_path / key)
+            # The same recovery the definition pass parses with, or an added
+            # SQL file offers only the routines a mis-lexed `$1,$2` left in
+            # its plain parse (issue #3180).
+            tree = parse_with_preproc_recovery(
+                parser,
+                grammar_bytes(file_bytes, language, self.repo_path / key),
+                language,
             )
             captures = sorted_captures(QueryCursor(query), tree.root_node)
         except Exception:
