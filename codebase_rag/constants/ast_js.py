@@ -55,6 +55,8 @@ JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 # The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
 # spell it as an anonymous token, not Java's named `asterisk` node.
 TS_JS_STAR = "*"
+# The callee node of a dynamic `import("./x")`.
+TS_JS_DYNAMIC_IMPORT = "import"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
