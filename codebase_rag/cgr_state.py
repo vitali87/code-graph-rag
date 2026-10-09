@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import fcntl
 import json
+import os
+import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,11 @@ from typing import TypedDict
 from loguru import logger
 
 from .config import settings
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 STATE_FILENAME = "state.json"
 
@@ -61,11 +67,19 @@ def _locked(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.parent / f"{path.name}.lock"
     with lock_path.open("a") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        if sys.platform == "win32":
+            os.lseek(lock_file.fileno(), 0, os.SEEK_SET)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_RLCK, 1)
+        else:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
+            if sys.platform == "win32":
+                os.lseek(lock_file.fileno(), 0, os.SEEK_SET)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def record_sync(project_name: str, home: Path | None = None) -> None:
