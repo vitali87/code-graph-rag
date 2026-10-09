@@ -424,14 +424,14 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
                 yield local, name
 
 
-def _is_js_star_reexport(site: PropertyDict | None) -> bool:
-    # `export * from` records `*` as its imported name and binds no alias,
-    # where `import * as ns` binds one.
-    return (
-        site is not None
-        and site.get(cs.KEY_IMPORTED_NAME) == cs.IMPORTED_NAME_WILDCARD
-        and cs.KEY_ALIAS not in site
-    )
+def _names_js_module(site: PropertyDict | None) -> bool:
+    # `export * from` and `import * as ns` record `*` as their imported name,
+    # and `const m = require("./m")` records none: each names the module
+    # itself, never a name inside it (issues #2464, #2934).
+    if site is None:
+        return False
+    imported = site.get(cs.KEY_IMPORTED_NAME)
+    return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
 
 
 def _load_jsonc(path: Path) -> dict | None:
@@ -2180,10 +2180,13 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _is_js_star_reexport(entry.site):
+        if entry.language in cs.JS_TS_LANGUAGES and _names_js_module(entry.site):
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
-            # of the `math` barrel: the barrel itself (issue #2464).
+            # of the `math` barrel: the barrel itself (issue #2464). A
+            # namespace import or whole-module `require` beside a directory's
+            # `index.ts` (or a same-named `utils.ts`) was read the same way
+            # and landed on that module instead (issue #2934).
             module_path = (
                 self._verify_internal_import_target(
                     entry.full_name,
