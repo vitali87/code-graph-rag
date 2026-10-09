@@ -58,6 +58,33 @@ QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
+# Reserved words a new name may not take, by the definition's language
+# (issue #3225); a language not listed is held to the identifier rule only.
+_RESERVED_WORDS: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.PYTHON: cs.PY_RESERVED_WORDS,
+    cs.SupportedLanguage.JS: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.TS: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.TSX: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.JAVA: cs.JAVA_RESERVED_WORDS,
+    cs.SupportedLanguage.GO: cs.GO_RESERVED_WORDS,
+    cs.SupportedLanguage.RUST: cs.RUST_RESERVED_WORDS,
+    cs.SupportedLanguage.C: cs.C_RESERVED_WORDS,
+    cs.SupportedLanguage.CPP: cs.CPP_RESERVED_WORDS,
+    cs.SupportedLanguage.CSHARP: cs.CSHARP_RESERVED_KEYWORDS,
+    cs.SupportedLanguage.LUA: cs.LUA_RESERVED_WORDS,
+}
+# Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
+_DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.SCALA,
+        cs.SupportedLanguage.DART,
+    }
+)
+
 
 _STRUCTURAL = "structural"
 _SITELESS = "siteless"
@@ -811,8 +838,8 @@ class Renamer:
         self, qn: str, new_name: str, allow_heuristic: bool = False
     ) -> RenameReport:
         """Collect everything a rename touches; refuse on ambiguity."""
-        if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
-            raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
+        if (refusal := self._identifier_refusal(qn, new_name)) is not None:
+            raise RenameRefused(refusal, [], [])
         members = hierarchy(self.fetch_all, self.project, qn)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
@@ -890,6 +917,30 @@ class Renamer:
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
+
+    def _identifier_refusal(self, qn: str, new_name: str) -> str | None:
+        """Why `new_name` cannot name the definition, or None.
+
+        Held to the definition's language: Unicode identifiers (`Größe`,
+        `数据`) are valid nearly everywhere and `$` is valid in JS/TS, Java,
+        Scala and Dart, yet an ASCII-only first character refused both while
+        `aünï` passed; and a reserved word passed this check only to fail
+        the post-rewrite parse, if that parse failed at all (issue #3225).
+        """
+        path = graph_query.definition(self.fetch_all, self.project, qn, None)["path"]
+        language = get_language_for_extension(Path(path).suffix) if path else None
+        spelled = (
+            new_name.replace("$", "_")
+            if language in _DOLLAR_IDENTIFIER_LANGUAGES
+            else new_name
+        )
+        if not spelled.isidentifier():
+            return cs.RENAME_BAD_NAME.format(name=new_name)
+        if language is not None and new_name in _RESERVED_WORDS.get(
+            language, frozenset()
+        ):
+            return cs.RENAME_RESERVED_WORD.format(name=new_name, language=language)
+        return None
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
