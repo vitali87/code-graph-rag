@@ -258,6 +258,13 @@ Within a function body, taint moves and disappears by these rules:
 - **Copy.** `b = a` copies `a`'s taint (and its origin resource) to `b`.
 - **Rebind to a new source.** `x = os.getenv("B")` after `x = os.getenv("A")`
   makes `x` carry `ENV::B`; the discarded `ENV::A` no longer flows from `x`.
+- **Unpack and walrus.** In Python, every name an assignment binds takes the
+  taint of what it is bound to. `user, pw = getenv("U"), getenv("P")` pairs
+  by position, so `pw` carries `ENV::P` and not `ENV::U`. `first, *rest = ...`
+  gives `rest` the union of the leftover elements. Unpacking a value that is
+  not a literal sequence (`a, b = pair`) gives every name the whole value's
+  taint. Every target of `a = b = value` is bound, and a walrus
+  (`if (tok := getenv("K")):`) binds `tok` for the code the condition guards.
 - **Transform.** A value built from a tainted one is still tainted, with the
   union of its operands' origins. In Python this covers a builtin or library
   call (`float(raw)`, `json.dumps(cfg)`), a method on the value

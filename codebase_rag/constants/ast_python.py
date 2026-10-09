@@ -62,6 +62,12 @@ TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+# `*xs` inside a value (`a, b = *xs, 1`): the elements it supplies are
+# unknown, so an unpacking assignment cannot pair targets with them.
+TS_PY_LIST_SPLAT = "list_splat"
+# The literal sequence values an unpacking assignment pairs its targets with
+# by position (`a, b = x, y`, `(a, b) = (x, y)`, `[a, b] = [x, y]`).
+PY_UNPACKING_VALUE_TYPES = frozenset({"expression_list", "tuple", "list"})
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
