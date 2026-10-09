@@ -3759,6 +3759,16 @@ class CallProcessor:
             )
         return None
 
+    def _macro_token_call_name(self, ident: Node) -> str | None:
+        # Attribute arguments share the token_tree shape (`skip(self)` in
+        # `#[instrument(skip(self))]`) but name no function; binding them
+        # by bare name invented module-level CALLS (issue #2541).
+        if rs_utils.in_attribute_arguments(ident):
+            return None
+        if not _macro_turbofish_reaches_args(ident):
+            return None
+        return self._macro_call_name(ident)
+
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
@@ -3770,14 +3780,7 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
-            # Attribute arguments share the token_tree shape (`skip(self)` in
-            # `#[instrument(skip(self))]`) but name no function; binding them
-            # by bare name invented module-level CALLS (issue #2541).
-            if rs_utils.in_attribute_arguments(call_node):
-                return None
-            if not _macro_turbofish_reaches_args(call_node):
-                return None
-            return self._macro_call_name(call_node)
+            return self._macro_token_call_name(call_node)
         # A SQL `invocation` names its routine through an unnamed
         # `object_reference` child (no `function` or `name` field), so every
         # SQL call site fell through nameless and was dropped (issue #2449).
