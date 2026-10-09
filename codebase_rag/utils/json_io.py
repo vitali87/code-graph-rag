@@ -44,21 +44,14 @@ def strip_jsonc(text: str) -> str:
     while i < n:
         c = text[i]
         if c == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            out.append(text[i : j + 1])
+            j = _string_end(text, i)
+            out.append(text[i:j])
             comma = None
-            i = j + 1
+            i = j
             continue
-        if text.startswith("//", i):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-            continue
-        if text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            i = n if j < 0 else j + 2
-            out.append(" ")
+        if (comment := _comment_at(text, i)) is not None:
+            i, filler = comment
+            out.append(filler)
             continue
         if c in "}]" and comma is not None:
             out[comma] = ""
@@ -69,3 +62,25 @@ def strip_jsonc(text: str) -> str:
         out.append(c)
         i += 1
     return "".join(out)
+
+
+def _string_end(text: str, i: int) -> int:
+    # Index just past the string literal opening at `text[i]` (the end of the
+    # text when it is unterminated); an escaped quote does not close it.
+    j, n = i + 1, len(text)
+    while j < n and text[j] != '"':
+        j += 2 if text[j] == "\\" else 1
+    return j + 1
+
+
+def _comment_at(text: str, i: int) -> tuple[int, str] | None:
+    # (index past, replacement) of a comment starting at `text[i]`, or None.
+    # A line comment keeps its newline; a block comment becomes one space so
+    # it still separates the tokens around it.
+    if text.startswith("//", i):
+        j = text.find("\n", i)
+        return (len(text) if j < 0 else j), ""
+    if text.startswith("/*", i):
+        j = text.find("*/", i + 2)
+        return (len(text) if j < 0 else j + 2), " "
+    return None
