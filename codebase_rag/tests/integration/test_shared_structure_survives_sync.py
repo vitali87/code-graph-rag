@@ -71,7 +71,8 @@ def test_two_names_on_one_checkout_survive_another_sync(
     _index(ing, shop, "shopsvc")
     _index(ing, shop, "shop-svc")
     before = (_structure(ing, "shopsvc"), _structure(ing, "shop-svc"))
-    assert before[0] > 0 and before == (before[0], before[0]), before
+    assert before[0] > 0, before
+    assert before[1] == before[0], before
 
     # Every sync, of any project, starts with the migration.
     ing.ensure_constraints()
