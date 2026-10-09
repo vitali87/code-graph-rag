@@ -6334,6 +6334,10 @@ class CallProcessor:
                 call_name.startswith(cs.PY_SELF_PREFIX)
                 or call_name.startswith(cs.PY_CLS_PREFIX)
             )
+            # A typed `self` (a static method's `self: Other`) names its own
+            # type, not the enclosing class (Greptile, PR #2908).
+            and call_name.partition(cs.SEPARATOR_DOT)[0]
+            not in (ctx.local_var_types or {})
         ):
             # self.M()/cls.M() statically targets the enclosing class's own or
             # inherited M and dynamically dispatches to every concrete subclass
