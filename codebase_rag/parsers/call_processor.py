@@ -1629,45 +1629,163 @@ class _JsFileBindingCollector:
                     self._add(member_name, fn_node, sibling)
 
 
-def _operator_dunder_target(node: Node) -> tuple[Node | None, str] | None:
-    """(receiver, dunder) that a Python operator node dispatches to, if any.
+# One implied dunder call: the steps are tried in order and the first that
+# resolves on its receiver's type is the call, as Python's own dispatch falls
+# back from `a.__add__(b)` to `b.__radd__(a)`.
+type _DunderDispatch = list[tuple[Node | None, str]]
+
+
+def _reflected(dunder: str) -> str:
+    """`__add__` -> `__radd__`: the method the RIGHT operand supplies."""
+    return dunder.replace(cs.PY_DUNDER_MARK, cs.PY_REFLECTED_DUNDER_PREFIX, 1)
+
+
+def _inplace(dunder: str) -> str:
+    """`__add__` -> `__iadd__`: what `+=` tries before `__add__`."""
+    return dunder.replace(cs.PY_DUNDER_MARK, cs.PY_INPLACE_DUNDER_PREFIX, 1)
+
+
+def _is_async(node: Node) -> bool:
+    return any(child.type == cs.TS_PY_ASYNC for child in node.children)
+
+
+def _operator_dunder_dispatches(node: Node) -> list[_DunderDispatch]:
+    """The dunder calls a Python operator or protocol node implies.
 
     `x[k]` is `__getitem__` (or `__setitem__` as an assignment target),
-    `k in x` is `x.__contains__`, and `len(x)` is `x.__len__`.
+    `k in x` is `x.__contains__` and `len(x)` is `x.__len__`. Arithmetic,
+    comparison, unary and augmented operators, calling an object, `for` over
+    it and `with` on it dispatch to their dunders too (issue #2852).
     """
     match node.type:
         case cs.TS_PY_SUBSCRIPT:
-            parent = node.parent
-            left = (
-                parent.child_by_field_name(cs.TS_FIELD_LEFT)
-                if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
-                else None
-            )
-            is_write = left is not None and left.id == node.id
-            return (
+            return _subscript_dispatches(node)
+        case cs.TS_PY_COMPARISON_OPERATOR:
+            return _comparison_dispatches(node)
+        case cs.TS_PY_CALL:
+            return _call_dispatches(node)
+        case cs.TS_PY_BINARY_OPERATOR:
+            return _binary_dispatches(node)
+        case cs.TS_PY_AUGMENTED_ASSIGNMENT:
+            return _augmented_dispatches(node)
+        case cs.TS_PY_UNARY_OPERATOR:
+            return _unary_dispatches(node)
+        case cs.TS_PY_FOR_STATEMENT | cs.TS_PY_FOR_IN_CLAUSE:
+            dunder = cs.PY_DUNDER_AITER if _is_async(node) else cs.PY_DUNDER_ITER
+            return [[(node.child_by_field_name(cs.TS_FIELD_RIGHT), dunder)]]
+        case cs.TS_PY_WITH_STATEMENT:
+            return _with_dispatches(node)
+    return []
+
+
+def _subscript_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `x[k] = v` is `__setitem__`; every other `x[k]` is `__getitem__`.
+    parent = node.parent
+    left = (
+        parent.child_by_field_name(cs.TS_FIELD_LEFT)
+        if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
+        else None
+    )
+    is_write = left is not None and left.id == node.id
+    return [
+        [
+            (
                 node.child_by_field_name(cs.FIELD_VALUE),
                 cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
             )
-        case cs.TS_PY_COMPARISON_OPERATOR:
-            operators = node.child_by_field_name(cs.TS_FIELD_OPERATORS)
-            if (
-                operators is not None
-                and (op_text := safe_decode_text(operators))
-                and cs.PY_OP_IN in op_text.split()
-                and node.named_children
-            ):
-                return node.named_children[-1], cs.PY_DUNDER_CONTAINS
-        case cs.TS_PY_CALL:
-            func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
-            if (
-                func is not None
-                and safe_decode_text(func) == cs.PY_BUILTIN_LEN
-                and args is not None
-                and len(args.named_children) == 1
-            ):
-                return args.named_children[0], cs.PY_DUNDER_LEN
-    return None
+        ]
+    ]
+
+
+def _binary_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
+        safe_decode_text(operator) or "" if operator is not None else ""
+    )
+    if dunder is None:
+        return []
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(left, dunder), (right, _reflected(dunder))]]
+
+
+def _augmented_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    text = safe_decode_text(operator) if operator is not None else None
+    dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
+        (text or "").removesuffix(cs.PY_AUGMENTED_OPERATOR_SUFFIX)
+    )
+    if dunder is None:
+        return []
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(left, _inplace(dunder)), (left, dunder), (right, _reflected(dunder))]]
+
+
+def _unary_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    dunder = cs.PY_UNARY_OPERATOR_DUNDERS.get(
+        safe_decode_text(operator) or "" if operator is not None else ""
+    )
+    if dunder is None:
+        return []
+    return [[(node.child_by_field_name(cs.TS_FIELD_ARGUMENT), dunder)]]
+
+
+def _comparison_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `a < b < c` is `a < b and b < c`: each adjacent pair is one comparison.
+    operators = node.children_by_field_name(cs.TS_FIELD_OPERATORS)
+    operator_ids = {op.id for op in operators}
+    operands = [c for c in node.named_children if c.id not in operator_ids]
+    if len(operands) != len(operators) + 1:
+        return []
+    dispatches: list[_DunderDispatch] = []
+    for left, operator, right in zip(operands, operators, operands[1:]):
+        text = safe_decode_text(operator) or ""
+        if cs.PY_OP_IN in text.split():
+            dispatches.append([(right, cs.PY_DUNDER_CONTAINS)])
+        elif pair := cs.PY_COMPARISON_DUNDERS.get(text):
+            dispatches.append([(left, pair[0]), (right, pair[1])])
+    return dispatches
+
+
+def _call_dispatches(node: Node) -> list[_DunderDispatch]:
+    func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None:
+        return []
+    args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if safe_decode_text(func) == cs.PY_BUILTIN_LEN:
+        if args is not None and len(args.named_children) == 1:
+            return [[(args.named_children[0], cs.PY_DUNDER_LEN)]]
+        return []
+    # Calling an object whose type is a class calls that class's __call__; the
+    # receiver must be a typed variable, so a class or function name, whose
+    # call constructs or runs it, never resolves here.
+    return [[(func, cs.PY_DUNDER_CALL)]]
+
+
+def _with_dispatches(node: Node) -> list[_DunderDispatch]:
+    is_async = _is_async(node)
+    enter = cs.PY_DUNDER_AENTER if is_async else cs.PY_DUNDER_ENTER
+    exit_ = cs.PY_DUNDER_AEXIT if is_async else cs.PY_DUNDER_EXIT
+    dispatches: list[_DunderDispatch] = []
+    for clause in node.named_children:
+        if clause.type != cs.TS_PY_WITH_CLAUSE:
+            continue
+        for item in clause.named_children:
+            if item.type != cs.TS_PY_WITH_ITEM:
+                continue
+            manager = _with_item_manager(item)
+            dispatches.extend([[(manager, enter)], [(manager, exit_)]])
+    return dispatches
+
+
+def _with_item_manager(item: Node) -> Node | None:
+    # `with open(p) as f`: the manager is the `as` pattern's expression.
+    manager = item.child_by_field_name(cs.FIELD_VALUE)
+    if manager is not None and manager.type == cs.TS_PY_AS_PATTERN:
+        return manager.named_children[0] if manager.named_children else None
+    return manager
 
 
 def _truthiness_operands(node: Node) -> list[Node | None]:
@@ -6808,10 +6926,12 @@ class CallProcessor:
             node = self._site_node = stack.pop()
             if node.type in boundary:
                 continue
-            if (dunder := _operator_dunder_target(node)) is not None:
-                self._emit_operator_dunder(
-                    dunder[0], dunder[1], caller_spec, module_qn, local_var_types
-                )
+            for dispatch in _operator_dunder_dispatches(node):
+                for operand, dunder in dispatch:
+                    if self._emit_operator_dunder(
+                        operand, dunder, caller_spec, module_qn, local_var_types
+                    ):
+                        break
             for operand in _truthiness_operands(node):
                 self._emit_truthiness(operand, caller_spec, module_qn, local_var_types)
             stack.extend(node.children)
