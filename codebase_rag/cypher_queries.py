@@ -191,23 +191,74 @@ CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
     "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
 )
 
-CYPHER_DELETE_PROJECT = """
-MATCH (p:Project {name: $project_name})
-OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
-DETACH DELETE p, container, defined
+_CONTAINMENT_RELS = (
+    "CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION"
+)
+_CONTAINMENT_REL_LIST = (
+    "['CONTAINS_PACKAGE', 'CONTAINS_FOLDER', 'CONTAINS_FILE', "
+    "'CONTAINS_MODULE', 'CONTAINS_SECTION']"
+)
+_DEFINITION_RELS = (
+    "DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
+)
+
+
+def _belongs_to_p(var: str) -> str:
+    # A qualified name is `p`'s when it is `p` or sits under `p.`, but not
+    # under a longer registered name such as `p.v2` (issue #1985): the rule
+    # CYPHER_DELETE_MODULE applies. `nested` is bound to those longer names.
+    return (
+        f"({var}.qualified_name = p.name "
+        f"OR {var}.qualified_name STARTS WITH (p.name + '.')) "
+        f"AND NOT any(q IN nested WHERE {var}.qualified_name = q "
+        f"OR {var}.qualified_name STARTS WITH (q + '.'))"
+    )
+
+
+def _belongs_to_named(var: str) -> str:
+    # _belongs_to_p for a project given by `$project_name`/`$project_prefix`
+    # rather than a bound Project node.
+    return (
+        f"({var}.qualified_name = $project_name "
+        f"OR {var}.qualified_name STARTS WITH $project_prefix) "
+        f"AND NOT any(q IN nested WHERE {var}.qualified_name = q "
+        f"OR {var}.qualified_name STARTS WITH (q + '.'))"
+    )
+
+
+def _claimable_by_p(var: str) -> str:
+    # Folder and File carry no qualified name: they are keyed by
+    # absolute_path, so every project indexed from one directory MERGEs onto
+    # the same nodes (issue #2665). They may sit on p's path; a qualified
+    # node may only when it is p's own.
+    return f"({var}.qualified_name IS NULL OR ({_belongs_to_p(var)}))"
+
+
+# The nodes project `p` claims: those a containment path from `p` reaches
+# without passing through another project's Package or Module, plus what
+# they define. Walking every containment path instead let two projects over
+# one directory reach each other's packages through their shared `src`
+# Folder, so each deleted and counted the other (issue #2665). Binds `p`,
+# `nested` and the per-project list `owned`.
+_CYPHER_PROJECT_CLAIMS = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
+WITH p, collect(longer.name) AS nested
+OPTIONAL MATCH claim = (p)-[:{_CONTAINMENT_RELS}*]->(container)
+WHERE all(x IN tail(nodes(claim)) WHERE {_claimable_by_p("x")})
+OPTIONAL MATCH (container)-[:{_DEFINITION_RELS}*]->(defined)
+WITH p, nested, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
 
 # Retires a project whose checkout was just re-indexed under another name
 # (issue #2412). Both projects index the same files, so they share every
-# Folder and File node (keyed on absolute path), and the walk above would
-# cross those into the new project's modules. Only containers carrying the
-# old project's qualified name go, with what they define; the shared Folder
-# and File nodes stay with the project that still contains them. A
-# repository-root `__init__.py` makes the root Package and Module's qn the
-# bare project name, so the prefix test alone would miss them (review of PR
-# 2497); the trailing dot of the prefix still keeps a project whose name only
-# starts with this one (`acme.webapp` beside `acme.web`).
+# Folder and File node (keyed on absolute path), and a walk over every
+# containment path would cross those into the new project's modules. Only
+# containers carrying the old project's qualified name go, with what they
+# define; the shared Folder and File nodes stay with the project that still
+# contains them. A repository-root `__init__.py` makes the root Package and
+# Module's qn the bare project name, so the prefix test alone would miss them
+# (review of PR 2497); the trailing dot of the prefix still keeps a project
+# whose name only starts with this one (`acme.webapp` beside `acme.web`).
 CYPHER_RETIRE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
@@ -217,6 +268,60 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
+# Deletes what `p` claims, except a Folder or File another project claims
+# too: that one only loses `p`'s edges. The named nodes go first, so the
+# check that follows walks up from each Folder/File over what is left; no
+# large list is ever a grouping key, which cost seconds per thousand nodes.
+CYPHER_DELETE_PROJECT = f"""
+MATCH (p:Project {{name: $project_name}})
+{_CYPHER_PROJECT_CLAIMS}
+WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
+[c IN owned WHERE NOT (c:Folder OR c:File)] AS named
+FOREACH (n IN named | DETACH DELETE n)
+WITH shareable
+UNWIND shareable AS c
+OPTIONAL MATCH elsewhere = (c)<-[:{_CONTAINMENT_RELS}*]-(q:Project)
+WHERE q.name <> $project_name
+AND all(x IN nodes(elsewhere) WHERE x.qualified_name IS NULL
+OR x.qualified_name = q.name OR x.qualified_name STARTS WITH (q.name + '.'))
+WITH c, count(q) AS other_claims
+WHERE other_claims = 0
+DETACH DELETE c
+"""
+
+# Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
+# containment path from it reached, such as a tree the #897 repair cut off
+# from its Project, go too rather than outliving it as orphans (issue
+# #2665). Modules always carry the project prefix, the fact
+# CYPHER_DELETE_MODULE relies on. Glosses are keyed by qualified name as
+# well, but are neither label and hang off nothing this walks, so they
+# survive the rebuild they are meant to survive (issue #1828).
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
+WITH nested, collect(pkg) AS packages
+OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
+WITH packages, collect(mod) AS modules
+WITH packages + modules AS units
+UNWIND units AS u
+OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
+WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
+FOREACH (n IN gone | DETACH DELETE n)
+"""
+
+
+# Two projects indexed from ONE directory share Folder/File nodes by design
+# of the absolute_path key, and delete/stats walk them per project (issue
+# #2665). That is not the #897 damage, which merged projects rooted in
+# DIFFERENT directories: a shared node counts as damage unless every project
+# holding it records the same root_path.
+_LEGACY_SHARED = (
+    "WITH n, count(DISTINCT p) AS owners, "
+    "collect(DISTINCT p.root_path) AS roots, "
+    "count(DISTINCT CASE WHEN p.root_path IS NULL THEN p END) AS rootless "
+    "WHERE owners > 1 AND (size(roots) > 1 OR rootless > 0) "
+)
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a
 # single-hop signature: the topmost merged node has containment parents in
@@ -227,7 +332,10 @@ CYPHER_ANY_SHARED_STRUCTURE = (
     "WHERE (n:Folder OR n:File) "
     "WITH n, count(parent) AS parents "
     "WHERE parents > 1 "
-    "RETURN 1 AS damaged LIMIT 1"
+    "MATCH (p:Project)"
+    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
+    + _LEGACY_SHARED
+    + "RETURN 1 AS damaged LIMIT 1"
 )
 
 CYPHER_ANY_KEYLESS_STRUCTURE = (
@@ -243,9 +351,8 @@ CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
     "MATCH (p:Project)"
     "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
     "WHERE (n:Folder OR n:File) "
-    "WITH n, count(DISTINCT p) AS owners "
-    "WHERE owners > 1 "
-    "DETACH DELETE n RETURN count(n) AS purged"
+    + _LEGACY_SHARED
+    + "DETACH DELETE n RETURN count(n) AS purged"
 )
 
 # Rows written before absolute_path existed can never match the current
@@ -528,47 +635,64 @@ RETURN type(r) AS type, count(*) AS count
 ORDER BY count DESC
 """
 
-# What a project owns is what deleting it removes: its containment tree and
-# everything the containers define (the same walk as CYPHER_DELETE_PROJECT).
-# That covers File and Folder nodes, which have no qualified name to match a
-# prefix against, and leaves out shared nodes (ExternalPackage, Resource)
-# another project may hold too. Relationships count when they START at an
-# owned node (issue #2391).
-_CYPHER_STATS_OWNED_NODES = """
+# What a project owns is what it claims (_CYPHER_PROJECT_CLAIMS): its
+# containment tree and everything the containers define. That covers File
+# and Folder nodes, which have no qualified name to match a prefix against,
+# and leaves out shared nodes (ExternalPackage, Resource) another project may
+# hold too. A Folder/File shared with a project indexed from the same
+# directory counts for each of them, so a project's counts do not change
+# when a second name is indexed over its checkout (issue #2665).
+# Relationships count when they START at an owned node (issue #2391), except
+# a containment edge from a shared Folder/File into the other project's tree.
+_CYPHER_STATS_OWNED_NODES = (
+    """
 MATCH (p:Project) WHERE p.name IN $project_names
-OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
-WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
-UNWIND owned AS n
-WITH DISTINCT n
 """
+    + _CYPHER_PROJECT_CLAIMS
+    + """UNWIND owned AS n
+"""
+)
+_CYPHER_STATS_EDGE_IS_PS = (
+    f"NOT (type(r) IN {_CONTAINMENT_REL_LIST} "
+    f"AND m.qualified_name IS NOT NULL AND NOT ({_belongs_to_p('m')}))"
+)
 CYPHER_STATS_PROJECT_NODE_COUNTS = (
     _CYPHER_STATS_OWNED_NODES
-    + """RETURN labels(n) AS labels, count(*) AS count
+    + """WITH DISTINCT n
+RETURN labels(n) AS labels, count(*) AS count
 ORDER BY count DESC
 """
 )
 CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS = (
     _CYPHER_STATS_OWNED_NODES
-    + """MATCH (n)-[r]->()
+    + """WITH DISTINCT p, nested, n
+MATCH (n)-[r]->(m)
+WHERE """
+    + _CYPHER_STATS_EDGE_IS_PS
+    + """
+WITH DISTINCT r
 RETURN type(r) AS type, count(r) AS count
 ORDER BY count DESC
 """
 )
 # One row per project, so unscoped totals over a shared graph can be
 # attributed; the same ownership walk as above, grouped by project.
-CYPHER_STATS_PER_PROJECT = """
+CYPHER_STATS_PER_PROJECT = (
+    """
 MATCH (p:Project)
-OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*]->(defined)
-WITH p, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
-UNWIND owned AS n
-WITH DISTINCT p, n
-OPTIONAL MATCH (n)-[r]->()
+"""
+    + _CYPHER_PROJECT_CLAIMS
+    + """UNWIND owned AS n
+WITH DISTINCT p, nested, n
+OPTIONAL MATCH (n)-[r]->(m)
+WHERE """
+    + _CYPHER_STATS_EDGE_IS_PS
+    + """
 WITH p, n, count(r) AS outgoing
 RETURN p.name AS project, count(n) AS nodes, sum(outgoing) AS relationships
 ORDER BY project
 """
+)
 
 
 # Dead-code fetch queries. Reachability itself runs client-side in
