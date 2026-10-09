@@ -27,7 +27,7 @@ Run `cgr language list-languages` to see every language below, its tier, and whe
 | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
 | TypeScript | Fully Supported | .ts, .mts, .cts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
-| SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
+| SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), each one a dead-code root, schema-qualified names, invocations between routines, and the DDL that runs a routine by name (trigger EXECUTE FUNCTION, aggregate SFUNC/FINALFUNC, cast WITH FUNCTION, operator FUNCTION, type INPUT/OUTPUT, HANDLER/VALIDATOR, SUPPORT). CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
 <!-- /SECTION:supported_languages -->
 
 ## Python Stubs and Source Encodings

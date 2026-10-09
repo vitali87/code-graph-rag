@@ -101,6 +101,11 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _dart_exported(node, name)
         case cs.SupportedLanguage.LUA:
             return _lua_exported(node, name)
+        case cs.SupportedLanguage.SQL:
+            # A stored routine is a database object any role with EXECUTE
+            # calls by name, from a client, C code or the database itself
+            # (issue #3181).
+            return True
         case _:
             return False
 
