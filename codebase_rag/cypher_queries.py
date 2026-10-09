@@ -1101,7 +1101,13 @@ RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
        h.qualified_name AS handler, h.path AS path,
        resolved + count(DISTINCT d) AS callers
 ORDER BY endpoint, handler"""
-# `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
+# The project's endpoint identities and their handlers: what an
+# `endpoint_callers` target is resolved against before any caller is read.
+CYPHER_GRAPH_EXPOSED_ENDPOINTS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT e.name AS endpoint, h.qualified_name AS handler
+ORDER BY endpoint, handler"""
+# `$qn` names the handler or the endpoint identity as stored (`GET /users/:id`).
 CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name STARTS WITH $project_prefix
   AND (h.qualified_name = $qn OR e.name = $qn)

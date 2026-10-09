@@ -228,8 +228,9 @@ MCP_IMPORTERS = (
     "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
-    "The handler's qualified name, or the endpoint identity as `endpoints` "
-    "lists it (`GET /users/{id}`)."
+    "The handler's qualified name, or the endpoint identity (`GET /users/{id}`) "
+    "in any path-parameter syntax (`{id}`, `:id`, `<id>`), or a concrete "
+    "request (`GET /users/42`)."
 )
 MCP_ENDPOINTS = (
     "The endpoints a project exposes (routes, RPC methods, dispatch keys), one "
@@ -241,8 +242,11 @@ MCP_ENDPOINTS = (
 )
 MCP_ENDPOINT_CALLERS = (
     "Call sites, in any indexed project, that reach one endpoint: `target` is "
-    "the handler's qualified name or the endpoint identity (`GET /users/{id}`). "
-    "Each row names the caller, its file, the URL it accesses and the direction "
+    "the handler's qualified name or the endpoint identity (`GET /users/{id}`), "
+    "whichever parameter syntax the route declares (`:id`, `<id>`); a concrete "
+    "request (`GET /users/42`) matches the routes it is served by. A target "
+    "that names no endpoint the project exposes is refused with the close "
+    "identities and handlers, so an empty list means nothing reaches it. Each row names the caller, its file, the URL it accesses and the direction "
     "(READS_FROM or WRITES_TO); an RPC or dispatch caller reaches the endpoint "
     "directly, so its `url` is the endpoint identity. Literal URLs resolve; "
     "dynamic ones do not and are absent here. " + _MCP_DETERMINISTIC_NOTE

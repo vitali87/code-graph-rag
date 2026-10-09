@@ -2874,10 +2874,19 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINT_CALLERS,
             project,
-            lambda name: graph_query.endpoint_callers(
-                self.ingestor.fetch_all, name, target
-            ),
+            lambda name: self._endpoint_callers(name, target),
         )
+
+    def _endpoint_callers(self, project_name: str, target: str) -> object:
+        # A target that names no endpoint is refused, as `callers` refuses an
+        # unknown name: `[]` means the endpoint exists and nothing reaches it
+        # (issue #3186).
+        try:
+            return graph_query.endpoint_callers(
+                self.ingestor.fetch_all, project_name, target
+            )
+        except graph_query.UnknownEndpointError as unknown:
+            return {cs.DICT_KEY_ERROR: str(unknown)}
 
     async def remote_dependencies(self, project: str | None = None) -> object:
         return await self._graph_query(

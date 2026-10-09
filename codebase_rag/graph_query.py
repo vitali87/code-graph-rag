@@ -699,36 +699,99 @@ def endpoints(fetch_all: QueryFn, project_name: str) -> list[EndpointRow]:
     return [_endpoint_row(row) for row in fetch_all(cq.CYPHER_GRAPH_ENDPOINTS, params)]
 
 
+class UnknownEndpointError(ValueError):
+    """An `endpoint_callers` target that names no endpoint the project
+    exposes; the message carries the close identities and handlers."""
+
+
 def endpoint_callers(
     fetch_all: QueryFn, project_name: str, target: str
 ) -> list[EndpointCallerRow]:
     """Call sites, in any project, that reach the endpoint `target` names:
-    the handler's qualified name or the endpoint identity (`GET /users/{id}`).
+    the handler's qualified name or the endpoint identity. An identity
+    matches in any framework's path-parameter syntax (`GET /users/{id}`,
+    `:id`, `<id>`), and a concrete request (`GET /users/42`) matches the
+    templates it would be routed to.
 
     Through a NETWORK resource that RESOLVES_TO the endpoint, or directly for
-    the RPC and dispatch kinds, which join without RESOLVES_TO.
+    the RPC and dispatch kinds, which join without RESOLVES_TO. A target that
+    names no endpoint raises `UnknownEndpointError`: an empty answer means
+    the endpoint exists and nothing reaches it (issue #3186).
     """
-    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: target}
-    rows = [
-        _endpoint_caller_row(row)
+    prefix = _prefix(project_name)
+    exposed = fetch_all(
+        cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS, {cs.KEY_PROJECT_PREFIX: prefix}
+    )
+    keys = _endpoint_keys(exposed, target)
+    if not keys:
+        raise UnknownEndpointError(_unknown_endpoint(exposed, project_name, target))
+    rows = {
+        _endpoint_caller_key(row): row
+        for key in keys
         for query in (
             cq.CYPHER_GRAPH_ENDPOINT_CALLERS,
             cq.CYPHER_GRAPH_ENDPOINT_DIRECT_CALLERS,
         )
-        for row in fetch_all(query, params)
-    ]
+        for row in map(
+            _endpoint_caller_row,
+            fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: key}),
+        )
+    }
     # Every field in the key: a caller that both reads and writes one URL is
     # two rows, and two handlers can share a caller (bot review on PR #1975).
-    return sorted(
-        rows,
-        key=lambda r: (
-            r["qualified_name"],
-            r["url"] or "",
-            r["path"] or "",
-            r["direction"] or "",
-            r["endpoint"],
-            r["handler"],
-        ),
+    return [rows[key] for key in sorted(rows)]
+
+
+def _endpoint_caller_key(row: EndpointCallerRow) -> tuple[str, ...]:
+    return (
+        row["qualified_name"],
+        row["url"] or "",
+        row["path"] or "",
+        row["direction"] or "",
+        row["endpoint"],
+        row["handler"],
+    )
+
+
+def _endpoint_keys(exposed: list[ResultRow], target: str) -> list[str]:
+    # The handler or stored identities `target` means: itself when the
+    # project exposes it as written, else the routes a `METHOD /path`
+    # request reaches, by the same rule that links a client's URL to a
+    # route. A parameter segment in the target (`{id}`) is a value like any
+    # other, so it reaches the route's parameter in whichever syntax that
+    # route declares it (`:id`, `<id>`, `<int:id>`).
+    from .parsers.endpoint_routes import METHOD_ANY
+    from .parsers.endpoints import url_matches_template
+
+    handlers = {str(row.get(cs.KEY_HANDLER)) for row in exposed}
+    identities = sorted({str(row.get(cs.KEY_ENDPOINT)) for row in exposed})
+    if target in handlers or target in identities:
+        return [target]
+    method, _, path = target.strip().partition(" ")
+    method, path = method.upper(), path.strip()
+    if not path.startswith(cs.SEPARATOR_SLASH):
+        # An RPC or dispatch identity has no path: it matches as written.
+        return []
+    served: list[str] = []
+    for identity in identities:
+        route_method, _, template = identity.partition(" ")
+        if route_method.upper() in (method, METHOD_ANY) and url_matches_template(
+            path, template.strip()
+        ):
+            served.append(identity)
+    return served
+
+
+def _unknown_endpoint(exposed: list[ResultRow], project_name: str, target: str) -> str:
+    names = sorted(
+        {str(row.get(cs.KEY_ENDPOINT)) for row in exposed}
+        | {str(row.get(cs.KEY_HANDLER)) for row in exposed}
+    )
+    close = difflib.get_close_matches(
+        target, names, n=cs.GRAPH_SUGGESTION_LIMIT, cutoff=cs.GRAPH_SUGGESTION_CUTOFF
+    )
+    return cs.MCP_UNKNOWN_ENDPOINT.format(target=target, project=project_name) + (
+        did_you_mean(close) if close else cs.MCP_UNKNOWN_ENDPOINT_HINT
     )
 
 
