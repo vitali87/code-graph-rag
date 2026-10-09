@@ -927,6 +927,64 @@ def test_an_unrecorded_chain_link_is_renamed_only_as_a_guess(
     assert calls == [(15, "exact"), (25, "chain")]
 
 
+def test_a_multi_line_chain_is_renamed_link_by_link(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Each link's row starts at its own name (issue #3166); rename still
+    # finds every link, exact, and leaves the receiver alone.
+    _write(
+        temp_repo,
+        "pkg/fluent.py",
+        FLUENT.format(annotation=": Fluent").replace(
+            "return obj.helper(1).helper(2)",
+            "return (\n        obj.helper(1)\n        .helper(2)\n    )",
+        ),
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.fluent.Fluent.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    assert (
+        "obj.assist(1)\n        .assist(2)"
+        in (temp_repo / "pkg" / "fluent.py").read_text()
+    )
+    calls = sorted(
+        (s.line, s.col, s.resolution) for s in report.sites if s.kind == "call"
+    )
+    assert calls == [(9, 12, "exact"), (10, 9, "exact")]
+
+
+def test_a_member_call_whose_argument_spells_the_name_renames_the_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The site starts at `helper` (issue #3166) and runs to the call's end;
+    # the token is still the callee's, not the `"helper"` in its arguments.
+    _write(
+        temp_repo,
+        "pkg/fluent.py",
+        FLUENT.format(annotation=": Fluent").replace(
+            "return obj.helper(1).helper(2)", 'return obj.helper("helper")'
+        ),
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.fluent.Fluent.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    assert (
+        'return obj.assist("helper")' in (temp_repo / "pkg" / "fluent.py").read_text()
+    )
+
+
 def test_a_siteless_heuristic_call_refuses_even_with_allow_heuristic(
     py_repo: tuple[Path, RecordedGraph],
 ) -> None:

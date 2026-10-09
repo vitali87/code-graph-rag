@@ -64,6 +64,7 @@ from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    call_site_start,
     cpp_parameter_names,
     enclosing_class_node,
     function_span_key,
@@ -1013,6 +1014,13 @@ def call_site_properties(node: Node) -> PropertyDict:
     the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
+    # A member call's node spans its receiver, so every hop of a chain began
+    # where the chain begins: callers showed the wrong line for a multi-line
+    # chain, and two `.put(...)` hops of one chain merged into one edge on
+    # their shared (line, col) (issue #3166). The site starts at the name.
+    row, col = call_site_start(node)
+    props[cs.KEY_LINE] = row + 1
+    props[cs.KEY_COL] = col
     args_node = _find_call_arguments_node(node)
     if args_node is not None:
         positional, keyword = _split_call_arguments(args_node)

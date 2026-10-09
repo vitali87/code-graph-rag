@@ -405,14 +405,16 @@ def test_the_namespace_reexport_call_stays_exact(
     issue_store: _StatefulIngestor,
 ) -> None:
     calls = _calls(issue_store, "barrel.src.app.main.run")
-    assert calls.get(35) == (ISSUE_ADD, EXACT), calls
+    # `math.add(...)`: the site starts at `add` (issue #3166).
+    assert calls.get(40) == (ISSUE_ADD, EXACT), calls
 
 
 @pytest.mark.parametrize(
     "col",
     [
         pytest.param(9, id="direct-named-import"),
-        pytest.param(27, id="namespace-import-member"),
+        # `u.formatPrice(...)`: the site starts at the name (issue #3166).
+        pytest.param(29, id="namespace-import-member"),
     ],
 )
 def test_direct_imports_of_the_definition_stay_exact(

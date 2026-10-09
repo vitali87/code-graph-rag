@@ -254,23 +254,37 @@ def _chain_links(
     if parser is None:
         return []
     root = parser.parse(source).root_node
+    # Each link's own site starts at its name (issue #3166); the links of
+    # its chain are the calls that start where the site's call starts.
+    starts = {call.start_point for call in calls_starting_at(root, line - 1, col)}
+    starts = starts or {(line - 1, col)}
     found: list[tuple[int, int]] = []
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            member = func.children[-1] if func is not None and func.children else None
-            if (
-                member is not None
-                and member.type in _MEMBER_NAME_TYPES
-                and member.text is not None
-                and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-            ):
-                found.append((member.start_point[0] + 1, member.start_point[1]))
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+        if (
+            node.start_point in starts
+            and (member := _called_member(node, name)) is not None
+        ):
+            found.append((member.start_point[0] + 1, member.start_point[1]))
+        if any(node.start_point[0] <= row <= node.end_point[0] for row, _ in starts):
             stack.extend(node.children)
     return sorted(found)
+
+
+def _called_member(call: Node, name: str) -> Node | None:
+    # The member name a call invokes (`name` in `obj.name(...)`), if it is
+    # `name`; None for a bare call or another member.
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    member = func.children[-1] if func is not None and func.children else None
+    if (
+        member is not None
+        and member.type in _MEMBER_NAME_TYPES
+        and member.text is not None
+        and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+    ):
+        return member
+    return None
 
 
 def _chain_link_sites(
@@ -329,8 +343,10 @@ def _last_identifier(
         # (a grammar whose call node has no `function` field, such as Java's
         # method_invocation) keeps the fallback.
         return _STALE_CALL
-    if callee is not None and callee[0] == start:
-        start, end = callee
+    if callee is not None and callee[0] <= start < callee[1]:
+        # The callee ends the token search, whether the site starts with it
+        # or at its member name (issue #3166): never inside the arguments.
+        end = callee[1]
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
     if callee is None:
         # No grammar: cut at the last opening parenthesis so the arguments

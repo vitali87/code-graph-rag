@@ -13,6 +13,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import graph_query
 from ..graph_query import QueryFn
+from ..parsers.utils import call_site_start
 
 # Resolutions that bound a site by guesswork: an operation rewrites through
 # them only when the caller accepts the risk with `allow_heuristic`.
@@ -60,13 +61,14 @@ def call_node_at(
 
 
 def calls_starting_at(root: Node, row: int, col: int) -> list[Node]:
+    # A member call's site starts at its name (issue #3166); a graph indexed
+    # before that recorded the call node's own start, so both name the call.
     calls: list[Node] = []
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if (
-            node.start_point == (row, col)
-            and node.child_by_field_name(cs.FIELD_FUNCTION) is not None
+        if node.child_by_field_name(cs.FIELD_FUNCTION) is not None and (
+            node.start_point == (row, col) or call_site_start(node) == (row, col)
         ):
             calls.append(node)
         if node.start_point[0] <= row <= node.end_point[0]:

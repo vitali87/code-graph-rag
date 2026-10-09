@@ -181,7 +181,8 @@ def test_typescript_call_and_import_sites(
     assert sites == [
         (_span(TS_B, "h(1)"), 1),
         (_span(TS_B, "h(2, 3)"), 2),
-        (_span(TS_B, "ns.helper(4)"), 1),
+        # A member call's site starts at its name (issue #3166).
+        (_span(TS_B, "helper(4)"), 1),
     ]
 
     imports = {
