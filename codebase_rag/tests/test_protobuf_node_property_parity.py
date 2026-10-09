@@ -27,15 +27,17 @@ from codec import schema_pb2 as pb
 
 # Properties that exist in NODE_SCHEMAS and deliberately have no proto field.
 #
-# This is a RECORD OF THE CURRENT STATE, not an endorsement of it. Every entry
-# was measured against the generated descriptors when this test was written;
-# none has been reviewed for whether it SHOULD be exported. #1490 carries that
-# question.
+# Every one is checkout- or call-specific, so the canonical artifact must not
+# carry it. `absolute_path` and `root_path` name where THIS checkout lives
+# (#2671): exported, two checkouts of one commit would differ. Everything
+# else the graph carries is exported (#3206): an index that dropped an
+# interface's line span, docstring or `is_exported` could neither locate it
+# nor show `diff-index` that it moved, changed or stopped being exported.
 #
-# The value of listing them is that the set is now closed: a new absence fails
-# this test and has to be argued for explicitly, rather than joining the pile
-# unnoticed. Removing an entry (by adding the proto field) is always safe;
-# adding one should be a deliberate decision with a reason.
+# The set is closed: a new absence fails this test and has to be argued for
+# explicitly, rather than joining the pile unnoticed. Removing an entry (by
+# adding the proto field) is always safe; adding one needs a reason of the
+# same kind.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Project": frozenset({"root_path"}),
     # `write_id` is the per-call nonce the write tool reads back to prove its
@@ -50,140 +52,17 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),
-    # `unresolved_specifiers` (issue #1714) is the second entry added with a
-    # known cost rather than as a record of the past. It records the literal
-    # relative specifiers an importer is waiting on, so a file created later at
-    # that path can nominate it for re-parsing. A graph round-tripped through
-    # protobuf loses them, so a scoped re-ingest against an IMPORTED graph does
-    # not re-parse those waiters and diverges from a clean index exactly as
-    # #1714 describes -- for imported graphs only.
-    #
-    # The degradation is safe by construction and self-healing: an absent
-    # property reads as "no specifiers", which yields no nomination rather than
-    # a wrong one, and the next parse of the importing module rewrites the list.
-    # Exporting it needs a proto field plus regenerated bindings, which needs
-    # protoc; neither protoc nor grpc_tools is available in this environment,
-    # and #1490 carries that question for the whole set.
-    # `unresolved_references` (issue #1568) degrades the same way as
-    # `unresolved_specifiers`: absent reads as "nothing waited", and the next
-    # parse of the module rewrites the list.
-    "Module": frozenset(
-        {
-            "absolute_path",
-            "end_line",
-            "start_line",
-            "unresolved_specifiers",
-            "unresolved_references",
-        }
-    ),
-    "Class": frozenset(
-        {"anchor_hash", "absolute_path", "modifiers", "path", "start_col"}
-    ),
+    "Module": frozenset({"absolute_path"}),
+    "Class": frozenset({"absolute_path"}),
     "Field": frozenset({"absolute_path"}),
     "EnumVariant": frozenset({"absolute_path"}),
-    # Same reason as Field: a Constant records `absolute_path` on the node
-    # but must not export it, or the canonical format differs per checkout.
     "Constant": frozenset({"absolute_path"}),
-    # `positional_params` (issue #227) is the one entry here added with a
-    # known cost rather than as a record of the past: a graph round-tripped
-    # through protobuf loses it, so arity diagnosis on an IMPORTED graph
-    # reports "cannot corroborate" instead of a verdict. That degradation is
-    # safe by construction -- an absent property reads as unknown kinds, never
-    # as zero positional parameters, so no false mismatch is produced -- but it
-    # is a real loss of capability, not a non-issue. Exporting it needs a proto
-    # field plus regenerated bindings, which needs protoc; #1490 carries that.
-    # `anchor_hash` (issue #1808) grades whether a Gloss note is stale against
-    # the definition's current text; it is recomputed on every parse and a
-    # graph round-tripped through protobuf simply grades no note until the
-    # next parse, so it stays off the wire.
-    # `is_body_scoped_name` (issue #2402) is read back only by an incremental
-    # run's registry rehydration. A graph round-tripped through protobuf loses
-    # it, so a scoped re-ingest against an IMPORTED graph may again bind a
-    # bare call to a function expression in an unchanged file until that file
-    # is next parsed; exporting it needs protoc, which #1490 carries.
-    "Function": frozenset(
-        {
-            "absolute_path",
-            "anchor_hash",
-            "is_body_scoped_name",
-            "is_macro",
-            "modifiers",
-            "name_start_col",
-            "name_start_line",
-            "path",
-            "positional_params",
-            "start_col",
-        }
-    ),
-    "Method": frozenset(
-        {
-            "absolute_path",
-            "anchor_hash",
-            "is_exported",
-            "is_property",
-            "modifiers",
-            "name_start_col",
-            "name_start_line",
-            "overrides_external",
-            "path",
-            "positional_params",
-            "start_col",
-        }
-    ),
-    "Interface": frozenset(
-        {
-            "anchor_hash",
-            "decorators",
-            "docstring",
-            "end_line",
-            "is_exported",
-            "modifiers",
-            "start_col",
-            "start_line",
-        }
-    ),
-    "Enum": frozenset(
-        {
-            "anchor_hash",
-            "decorators",
-            "docstring",
-            "end_line",
-            "is_exported",
-            "modifiers",
-            "start_col",
-            "start_line",
-        }
-    ),
-    "Type": frozenset(
-        {
-            "anchor_hash",
-            "absolute_path",
-            "decorators",
-            "docstring",
-            "end_line",
-            "is_exported",
-            "modifiers",
-            "path",
-            "start_col",
-            "start_line",
-        }
-    ),
-    "Union": frozenset(
-        {
-            "anchor_hash",
-            "absolute_path",
-            "decorators",
-            "docstring",
-            "end_line",
-            "is_exported",
-            "modifiers",
-            "path",
-            "start_col",
-            "start_line",
-        }
-    ),
-    "ModuleInterface": frozenset({"absolute_path", "module_type"}),
-    "ModuleImplementation": frozenset({"absolute_path", "module_type"}),
+    "Function": frozenset({"absolute_path"}),
+    "Method": frozenset({"absolute_path"}),
+    "Type": frozenset({"absolute_path"}),
+    "Union": frozenset({"absolute_path"}),
+    "ModuleInterface": frozenset({"absolute_path"}),
+    "ModuleImplementation": frozenset({"absolute_path"}),
 }
 
 
