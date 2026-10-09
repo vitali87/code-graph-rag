@@ -86,7 +86,8 @@ def _resource_links(data: GraphData) -> set[Link]:
     names: dict[object, str] = {}
     for node in data["nodes"]:
         labels, props = node["labels"], node["properties"]
-        assert isinstance(labels, list) and isinstance(props, dict)
+        assert isinstance(labels, list)
+        assert isinstance(props, dict)
         if cs.NodeLabel.RESOURCE.value in labels:
             names[node["node_id"]] = str(props[cs.KEY_QUALIFIED_NAME])
     return {
