@@ -813,6 +813,12 @@ CYPHER_QUERY_PROJECT_NODE_IDS = (
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
+# The ownership relations a Module's subtree hangs off, walked by the
+# re-parse delete and by the lookup of files that attach members to it.
+MODULE_SUBTREE_REL_PATTERN = (
+    "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
+)
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
@@ -846,8 +852,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
-    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c) "
+    f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -1088,6 +1093,19 @@ CYPHER_INBOUND_EDGES = (
 # like INHERITS: an implementor in the same package holds no import edge into
 # its interface's file, and without this it was neither re-parsed nor
 # restored when that file was re-indexed (issue #1565).
+# Files that attach members to these modules' subtrees: a Go method keyed
+# under its receiver type's module whatever file declares it, a C++
+# out-of-line definition hung on its header's class. The re-parse delete
+# walks the subtree and takes them, and only their own file recreates them,
+# so they must re-parse in the same run (issue #3271).
+CYPHER_FOREIGN_MEMBER_PATHS = (
+    "MATCH (m:Module) WHERE m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    f"MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*1..]->(c) "
+    "WHERE c.path IS NOT NULL AND NOT c.path IN $paths "
+    "RETURN DISTINCT c.path AS path"
+)
 CYPHER_AFFECTED_CALLER_PATHS = (
     "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
