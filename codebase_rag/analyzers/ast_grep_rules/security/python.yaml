@@ -38,6 +38,10 @@ rules:
                     - kind: parenthesized_expression
                     - kind: concatenated_string
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. Value must be a non-trivial literal (>=8
     # chars) that is not a format/message template (an f-string/.format {..}
     # placeholder or a printf %s/%d specifier). Braces and % conversions are the
@@ -50,7 +54,7 @@ rules:
     rule:
       kind: assignment
       all:
-        - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+        - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
         - has:
             field: right
             all:
