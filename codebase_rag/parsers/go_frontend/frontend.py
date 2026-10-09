@@ -206,8 +206,24 @@ def _build_tool(go: str) -> Path | None:
     )
 
 
-def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
+def _in_repo(package: object, in_repo_modules: frozenset[str]) -> bool:
+    # `example.com/liba` and its packages, never `example.com/libabc`.
+    return isinstance(package, str) and any(
+        package == module or package.startswith(f"{module}/")
+        for module in in_repo_modules
+    )
+
+
+def _parse_payload(
+    stdout: str, stderr: str = "", in_repo_modules: frozenset[str] = frozenset()
+) -> GoSemanticFacts | None:
     """Facts from one tool run, or None when the OUTPUT was unusable.
+
+    The tool analyses one module and calls everything outside it external,
+    a sibling module of the same repository included. An external site
+    whose callee package belongs to one of `in_repo_modules` is dropped, so
+    the call resolves as first-party instead of being suppressed (issue
+    #2809).
 
     None rather than empty facts for every failure path below: empty facts is
     the correct answer for a module the tool analysed and found nothing in, so
@@ -245,6 +261,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
             external_sites={
                 (site["file"], int(site["line"]), int(site["col"]), site["name"])
                 for site in payload.get("externals", [])
+                if not _in_repo(site.get("pkg"), in_repo_modules)
             },
             implements=[
                 GoImplements(
@@ -316,7 +333,9 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
     )
 
 
-def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
+def _run_tool_once(
+    binary: Path, module_root: Path, in_repo_modules: frozenset[str] = frozenset()
+) -> GoSemanticFacts | None:
     """Facts for one module anchor, or None when the tool run FAILED.
 
     None rather than empty facts, because they are different facts and the
@@ -349,7 +368,7 @@ def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
             ls.GO_FRONTEND_RUN_FAILED.format(error=f"exit {proc.returncode}")
         )
         return None
-    return _parse_payload(proc.stdout, proc.stderr)
+    return _parse_payload(proc.stdout, proc.stderr, in_repo_modules)
 
 
 def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
@@ -365,9 +384,12 @@ def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
         return _empty_facts()
     merged = _empty_facts()
     degraded: list[str] = []
+    in_repo_modules = frozenset(
+        module for module, _, _ in discover_go_module_paths(repo_path)
+    )
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
-        raw = _run_tool_once(binary, anchor)
+        raw = _run_tool_once(binary, anchor, in_repo_modules)
         if raw is None:
             # This module drops to the heuristics, and the others keep their
             # compiler facts -- one wedged build must not blind a ten-module
