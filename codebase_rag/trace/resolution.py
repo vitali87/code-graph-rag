@@ -306,12 +306,13 @@ class FrameResolver:
         by_name = _named_by(candidates, parts)
         # Prefer a name match whose span contains the runtime line; among name
         # matches without span data, take the first by qualified name so
-        # resolution stays deterministic. Only when no candidate matches by
-        # name does the line span alone decide.
-        chosen = (
-            self._innermost_span_containing_line(by_name, frame.line)
-            or (min(by_name, key=lambda n: n.qualified_name) if by_name else None)
-            or self._innermost_span_containing_line(candidates, frame.line)
+        # resolution stays deterministic. The line never decides alone: every
+        # definition the index holds answers to its co_qualname (synthetic
+        # bodies were turned away above), so a name the file lacks is a trace
+        # recorded against other code, and binding it by line wrote a dynamic
+        # edge to whatever function now sits there (issue #2843).
+        chosen = self._innermost_span_containing_line(by_name, frame.line) or (
+            min(by_name, key=lambda n: n.qualified_name) if by_name else None
         )
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
