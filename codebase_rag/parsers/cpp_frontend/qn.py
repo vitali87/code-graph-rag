@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -101,15 +102,31 @@ class CppQnResolver:
         self._module_qn = build_module_qn_map(
             self.repo_path, project_name, exclude_paths, unignore_paths
         )
+        # The `directory` of the compile command being parsed: libclang
+        # reports a file under the name it was reached by, which for a
+        # relative entry (`bear -- make`) is relative to that directory, not
+        # to cgr's cwd (issue #2943).
+        self.working_dir: str | None = None
 
-    def rel_path(self, absolute_file: str) -> str | None:
+    def absolute_name(self, file_name: str) -> str:
+        """A libclang file name as an absolute path, without touching disk."""
+        if self.working_dir is None or os.path.isabs(file_name):
+            return file_name
+        return os.path.normpath(os.path.join(self.working_dir, file_name))
+
+    def rel_path(self, file_name: str) -> str | None:
         try:
-            return Path(absolute_file).resolve().relative_to(self.repo_path).as_posix()
+            return (
+                Path(self.absolute_name(file_name))
+                .resolve()
+                .relative_to(self.repo_path)
+                .as_posix()
+            )
         except ValueError:
             return None
 
-    def module_qn(self, absolute_file: str) -> str | None:
-        rel = self.rel_path(absolute_file)
+    def module_qn(self, file_name: str) -> str | None:
+        rel = self.rel_path(file_name)
         if rel is None:
             return None
         return self._module_qn.get(rel)

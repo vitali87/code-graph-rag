@@ -60,6 +60,10 @@ CPP_FRONTEND_NO_COMPDB = (
     "bear -- make)"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
+CPP_FRONTEND_TU_LOAD_FAILED = (
+    "C/C++ libclang frontend could not parse {file} (compile directory "
+    "{directory}); its macros, includes and aliases are skipped"
+)
 CPP_FRONTEND_HYBRID_PENDING = (
     "C/C++ hybrid frontend queued {count} macro use(s) for span attribution"
 )
