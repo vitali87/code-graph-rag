@@ -312,7 +312,13 @@ def _strip_quotes(text: str) -> str:
 class AstGrepTier:
     """Structural extractor for languages without a tree-sitter LanguageSpec."""
 
-    __slots__ = ("_ingestor", "_repo_path", "_project_name", "_configs")
+    __slots__ = (
+        "_ingestor",
+        "_repo_path",
+        "_project_name",
+        "_configs",
+        "module_qn_to_file_path",
+    )
 
     def __init__(
         self, ingestor: IngestorProtocol, repo_path: Path, project_name: str
@@ -320,6 +326,10 @@ class AstGrepTier:
         self._ingestor = ingestor
         self._repo_path = repo_path
         self._project_name = project_name
+        # Every Module this tier emitted, as the definition processor keeps
+        # its own: the findings pass visits only the modules it is handed, so
+        # without this the Ruby rule packs never ran (issue #2781).
+        self.module_qn_to_file_path: dict[str, Path] = {}
         try:
             import ast_grep_py  # noqa: F401
 
@@ -356,6 +366,7 @@ class AstGrepTier:
             return
 
         module_qn = self._emit_module(file_path, structural_elements)
+        self.module_qn_to_file_path[module_qn] = file_path
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 
