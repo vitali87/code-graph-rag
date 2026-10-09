@@ -57,6 +57,7 @@ def test_conditional_root_delete_fires_when_the_root_matches(
     assert fired is True
     query, params = calls["fetch"]  # type: ignore[misc]
     assert query == cq.CYPHER_DELETE_PROJECT_IF_ROOT
+    assert "$expected_root" in query
     assert params == {cs.KEY_PROJECT_NAME: "proj__1", cs.KEY_EXPECTED_ROOT: "/repo"}
     assert calls["pruned_resources"] is True
     assert calls["execute"] != []
