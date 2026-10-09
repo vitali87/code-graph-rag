@@ -25,7 +25,11 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import (
+    CypherQueryGenerator,
+    create_rag_orchestrator,
+    run_to_text_answer,
+)
 from codebase_rag.services.provenance import head_commit
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -2600,8 +2604,15 @@ class MCPToolsRegistry:
                     )
                 ) is not None:
                     return {cs.DICT_KEY_ERROR: refusal}
-                response = await self.rag_agent.run(question, message_history=[])
-            return {"output": str(response.output)}
+                # No operator to ask: an edit or a non-read-only command is
+                # denied, and the model answers without it.
+                answer = await run_to_text_answer(
+                    self.rag_agent,
+                    question,
+                    approve=False,
+                    denial=cs.MCP_ASK_AGENT_APPROVAL_DENIED,
+                )
+            return {"output": answer}
         except Exception as e:
             logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
