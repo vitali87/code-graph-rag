@@ -3032,7 +3032,7 @@ def _prune_projects(
     project's `root_path` at its new location while the prompt is open, so
     the graph's CURRENT root is re-read in the delete path and the purge
     fires only when it still matches the path that was checked (Greptile
-    P1 on this PR). A purge that cannot be proven complete -- the project
+    P1 on PR #3221). A purge that cannot be proven complete -- the project
     still listed, or a non-zero residual count from the same traversal the
     delete ran -- is a failure, never a success (#2479).
     """

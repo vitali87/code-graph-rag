@@ -223,7 +223,7 @@ class TestPruneDeletion:
         # While the prompt was open a sync moved the project's root_path to
         # its new live location: the delete path must re-read the graph's
         # current root and only purge the project it still names (Greptile
-        # P1 on this PR).
+        # P1 on PR #3221).
         moved = tmp_path / "moved"
         moved.mkdir()
         ingestor = _ingestor(mock_memgraph_connect)
