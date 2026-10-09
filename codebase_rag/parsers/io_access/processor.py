@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -28,6 +28,12 @@ from .constants import (
     ResourceKind,
 )
 from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
+from .env_bindings import (
+    EnvAliases,
+    destructured_pattern,
+    env_mapping_kind,
+    object_pattern_reads,
+)
 from .extract import (
     binding_targets_values,
     call_name,
@@ -336,6 +342,10 @@ class IOAccessProcessor:
         # when a long-lived processor (realtime updater) re-parses ANY file
         # of the package: a re-parsed file gets a new root id.
         self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
+        # Per-caller: resolves a name standing for an env mapping (`const env =
+        # process.env`), so `env.KEY` reads KEY (issue #2753). Reset for each
+        # caller by _emit_direct_sinks; the processor walks one caller at a time.
+        self._env_aliases: EnvAliases | None = None
 
     def process_io_for_caller(
         self,
@@ -585,6 +595,18 @@ class IOAccessProcessor:
         params = self._param_names(caller_node, descriptor)
         if descriptor.enclosing_scope_shadows:
             params |= self._enclosing_scope_names(caller_node, descriptor)
+
+        def head_is_live(head: str) -> bool:
+            return head not in params and head_is_genuine_module(
+                import_map.get(head), head
+            )
+
+        self._env_aliases = EnvAliases(
+            caller_node, descriptor, member_reads, head_is_live
+        )
+        self._emit_param_env_reads(
+            caller_node, caller_spec, member_reads, descriptor, head_is_live
+        )
         self._walk_scope(
             statements,
             frozenset(params),
@@ -1056,6 +1078,44 @@ class IOAccessProcessor:
             )
         self._emit(caller_spec, sink.direction, sink.kind, identity)
 
+    def _emit_param_env_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+        head_is_live: Callable[[str], bool],
+    ) -> None:
+        # `function f({ PORT } = process.env)`: the default sits in the
+        # parameter list, which the body walk never visits (issue #2753).
+        params = caller_node.child_by_field_name(descriptor.params_field)
+        if params is None or not member_reads:
+            return
+        for param in params.named_children:
+            for slot in param.named_children:
+                self._emit_env_destructure(
+                    slot, caller_spec, member_reads, head_is_live
+                )
+
+    def _emit_env_destructure(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        head_is_live: Callable[[str], bool],
+    ) -> bool:
+        # `const { PORT, DB: url } = process.env` reads each property it names
+        # (issue #2753). True when `node` is such a destructured env mapping.
+        pattern = destructured_pattern(node)
+        if pattern is None:
+            return False
+        kind = env_mapping_kind(node, member_reads, head_is_live)
+        if kind is None:
+            return False
+        for _local, key in object_pattern_reads(pattern):
+            self._emit(caller_spec, IODirection.READ, kind, key)
+        return True
+
     def _emit_member_read(
         self,
         node: Node,
@@ -1069,22 +1129,44 @@ class IOAccessProcessor:
         # (subscript) read env var X. Match on the object prefix; skip when the prefix
         # head (`process`) is shadowed by a local binding or a non-global import,
         # mirroring the call-sink shadow rules.
+
+        def head_is_live(head: str) -> bool:
+            return head not in in_scope and head_is_genuine_module(
+                import_map.get(head), head
+            )
+
+        if self._emit_env_destructure(node, caller_spec, member_reads, head_is_live):
+            return
         obj = node.child_by_field_name(descriptor.object_field)
         if obj is None or obj.text is None:
             return
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        if (
+            self._env_aliases is not None
+            and (alias_kind := self._env_aliases.kind_of(obj)) is not None
+        ):
+            # `env.KEY` where `const env = process.env` (issue #2753).
+            self._emit_member_access(node, caller_spec, alias_kind, descriptor)
+            return
         for prefix, kind in member_reads:
             if obj_text != prefix:
                 continue
-            head = prefix.partition(cs.SEPARATOR_DOT)[0]
-            if head in in_scope or not head_is_genuine_module(
-                import_map.get(head), head
-            ):
-                return
-            identity = self._member_identity(node, descriptor)
-            for direction in self._member_directions(node, descriptor):
-                self._emit(caller_spec, direction, kind, identity)
+            if head_is_live(prefix.partition(cs.SEPARATOR_DOT)[0]):
+                self._emit_member_access(node, caller_spec, kind, descriptor)
             return
+
+    def _emit_member_access(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        kind: ResourceKind,
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # One access of the member's key, in each direction its position
+        # gives (_member_directions): a read, a write, or both for `+=`.
+        identity = self._member_identity(node, descriptor)
+        for direction in self._member_directions(node, descriptor):
+            self._emit(caller_spec, direction, kind, identity)
 
     @staticmethod
     def _member_directions(
