@@ -113,6 +113,8 @@ logger.remove()
 # entry per pass, and the import pass logs at WARNING rather than ERROR.
 _PASS_FAILURE_PREFIXES = (
     "Failed to process calls in ",
+    # A caller's local types, contained to that caller (issue #3173).
+    "Failed to infer local types in ",
     "Failed to parse or ingest ",
     "Failed to parse imports in ",
     "Error parsing ",
