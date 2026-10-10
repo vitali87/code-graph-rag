@@ -33,6 +33,7 @@ from codebase_rag.constants import (
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.utils.path_utils import (
     derive_project_name,
     is_eligible_rel_file,
@@ -477,6 +478,19 @@ def start_watcher(
         )
 
 
+def _initial_scan(updater: GraphUpdater) -> None:
+    """Build the context for real-time updates with a full scan.
+
+    A watcher started while a sync of the checkout is running waits for it
+    and then scans the graph it finished, as its later reingests do, rather
+    than refusing to start (issue #2441).
+    """
+    logger.info(logs.INITIAL_SCAN)
+    with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
+        updater.run()
+    logger.success(logs.INITIAL_SCAN_DONE)
+
+
 def _run_watcher_loop(
     ingestor,
     repo_path_obj,
@@ -498,11 +512,7 @@ def _run_watcher_loop(
         project_name=project_name or derive_project_name(repo_path_obj),
         project_named=project_name is not None,
     )
-
-    # Initial full scan builds the context for real-time updates
-    logger.info(logs.INITIAL_SCAN)
-    updater.run()
-    logger.success(logs.INITIAL_SCAN_DONE)
+    _initial_scan(updater)
 
     event_handler = CodeChangeEventHandler(
         updater,

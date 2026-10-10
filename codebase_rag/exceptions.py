@@ -190,6 +190,24 @@ class RepoPathError(ValueError):
     """
 
 
+# Sync lock (issue #2441)
+SYNC_IN_PROGRESS = (
+    "Another sync of {repo} is running ({holder}). Two syncs of one checkout at "
+    "once leave the graph incomplete; wait for it to finish, then run this again."
+)
+SYNC_HOLDER = "pid {pid}, project '{project}'"
+SYNC_HOLDER_UNKNOWN = "holder unknown"
+SYNC_LOCK_IS_LINK = (
+    "The sync lock {path} is a symbolic link. A sync never writes through one, "
+    "since it can point outside the checkout; remove it, then run this again."
+)
+SYNC_LOCK_UNAVAILABLE = (
+    "Cannot open the sync lock {path} ({error}). Without it this sync cannot "
+    "tell whether another one is running, so it did not start; make the file "
+    "readable and writable for this user, then run this again."
+)
+
+
 # Deriving from Exception would let every `except Exception` handler between
 # the embeddings pass and the top level swallow a Ctrl+C (python:S5709
 # accepted).

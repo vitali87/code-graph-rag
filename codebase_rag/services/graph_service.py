@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import importlib
 import threading
+import time
 import types
 from collections import defaultdict
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 import click
@@ -38,6 +40,8 @@ from ..constants import (
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
+    MG_TRANSIENT_RETRY_ATTEMPTS,
+    MG_TRANSIENT_RETRY_BASE_DELAY_S,
     NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
@@ -145,8 +149,10 @@ def _created_count(results: Sequence[ResultRow]) -> int:
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception types are bound once here.
+# TransientError first appears in 1.6.0, hence the `pymgclient>=1.6.0` floor.
 _MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
 _MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
+_MgclientTransientError: type[Exception] = mgclient.TransientError  # ty: ignore[unresolved-attribute]
 
 
 def is_query_rejection(error: BaseException) -> bool:
@@ -179,6 +185,31 @@ def _missing_endpoints(row: ResultRow) -> str:
         )
         if row.get(key) is True
     )
+
+
+def _retry_transient[T](execute: Callable[[], T]) -> T:
+    """Run `execute`, again after a doubling wait while Memgraph reports a
+    transient conflict (issue #2441).
+
+    The connection autocommits, so a statement rejected with TransientError
+    changed nothing, and the error text itself asks for a retry once the
+    conflicting transaction is finished. Every other error is raised at once.
+    """
+    for attempt in range(1, MG_TRANSIENT_RETRY_ATTEMPTS):
+        try:
+            return execute()
+        except _MgclientTransientError as exc:
+            delay = MG_TRANSIENT_RETRY_BASE_DELAY_S * 2 ** (attempt - 1)
+            logger.warning(
+                ls.MG_TRANSIENT_RETRY.format(
+                    delay=delay,
+                    attempt=attempt,
+                    attempts=MG_TRANSIENT_RETRY_ATTEMPTS,
+                    error=exc,
+                )
+            )
+            time.sleep(delay)
+    return execute()
 
 
 def _log_failed_relationships(
@@ -383,7 +414,7 @@ class MemgraphIngestor:
         params = params or {}
         with self._get_cursor() as cursor:
             try:
-                cursor.execute(query, params)
+                _retry_transient(partial(cursor.execute, query, params))
                 return self._cursor_to_results(cursor)
             except Exception as e:
                 if (
@@ -463,7 +494,13 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = conn.cursor()
-            cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
+            _retry_transient(
+                partial(
+                    cursor.execute,
+                    wrap_with_unwind(query),
+                    BatchWrapper(batch=params_list),
+                )
+            )
         except Exception as e:
             if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                 logger.error(ls.MG_BATCH_ERROR.format(error=e))
@@ -492,7 +529,13 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = conn.cursor()
-            cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
+            _retry_transient(
+                partial(
+                    cursor.execute,
+                    wrap_with_unwind(query),
+                    BatchWrapper(batch=params_list),
+                )
+            )
             return self._cursor_to_results(cursor)
         except Exception as e:
             logger.error(ls.MG_BATCH_ERROR.format(error=e))

@@ -27,6 +27,7 @@ from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
 from codebase_rag.services.provenance import head_commit
+from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.tools.code_retrieval import (
@@ -1453,10 +1454,19 @@ class MCPToolsRegistry:
         logger.info(start_log.format(path=self.project_root))
         try:
             async with self._ingestor_lock:
-                return await _run_in_thread(sync_fn)
+                return await _run_in_thread(self._under_sync_lock, sync_fn)
         except Exception as e:
             logger.error(error_log.format(error=e))
             return error_message.format(error=e)
+
+    def _under_sync_lock(self, sync_fn: Callable[[], str]) -> str:
+        # Taken before the `:IncompleteRun` marker and the project delete, so
+        # a sync refused because another writer holds the checkout changes
+        # nothing, not even the marker (issue #2441). `GraphUpdater.run`
+        # re-enters it on this thread.
+        root = Path(self.project_root)
+        with repo_sync_lock(root, derive_project_name(root)):
+            return sync_fn()
 
     async def index_repository(self) -> str:
         return await self._run_ingest(
