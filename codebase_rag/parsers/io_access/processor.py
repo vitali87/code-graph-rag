@@ -47,8 +47,16 @@ from .extract import (
     rust_unwrap_result,
     scope_seed_nodes,
     string_literal,
+    target_arg_node,
 )
-from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
+from .models import (
+    PYTHON_URL_GRAMMAR,
+    ArgHandleSink,
+    HandleBinding,
+    HandleConstructor,
+    IOSink,
+    UrlGrammar,
+)
 from .registry import (
     IO_ARG_HANDLE_SINKS,
     IO_CALL_HANDLE_WRAPPERS,
@@ -68,6 +76,7 @@ from .registry import (
     IO_TYPE_HANDLE_CONSTRUCTORS,
     LIBC_STD_STREAMS,
 )
+from .url_folding import module_url_constants, url_target
 
 _DIRECTION_REL = {
     IODirection.READ: cs.RelationshipType.READS_FROM,
@@ -336,6 +345,11 @@ class IOAccessProcessor:
         # when a long-lived processor (realtime updater) re-parses ANY file
         # of the package: a re-parsed file gets a new root id.
         self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
+        # The module-level string constants of the module last asked about
+        # (issue #2521). Callers arrive module by module, so one entry is
+        # enough; holding the root keeps its tree alive, so a re-parsed
+        # module can never be mistaken for it by a reused node id.
+        self._url_constants: tuple[Node, dict[str, str]] | None = None
 
     def process_io_for_caller(
         self,
@@ -1272,17 +1286,25 @@ class IOAccessProcessor:
         )
         if sink is None:
             return
-        identity = literal_target(
+        identity = self._network_identity(
             node,
-            sink.target_arg,
-            sink.target_kw,
-            string_type=descriptor.string_type,
-            content_type=descriptor.string_content_type,
+            sink,
+            descriptor.url_grammar,
             keyword_arg_type=descriptor.keyword_arg_type,
             wrapper_type=descriptor.argument_wrapper_type,
-            template_type=descriptor.template_string_type,
-            substitution_type=descriptor.template_substitution_type,
         )
+        if identity is None:
+            identity = literal_target(
+                node,
+                sink.target_arg,
+                sink.target_kw,
+                string_type=descriptor.string_type,
+                content_type=descriptor.string_content_type,
+                keyword_arg_type=descriptor.keyword_arg_type,
+                wrapper_type=descriptor.argument_wrapper_type,
+                template_type=descriptor.template_string_type,
+                substitution_type=descriptor.template_substitution_type,
+            )
         if (
             identity == DYNAMIC_TARGET
             and descriptor.format_call_names
@@ -2075,8 +2097,55 @@ class IOAccessProcessor:
         )
         mode_literal = None if mode == DYNAMIC_TARGET else mode
         direction = sink.effective_direction(mode_literal)
-        identity = literal_target(node, sink.target_arg, sink.target_kw)
+        identity = self._network_identity(
+            node,
+            sink,
+            PYTHON_URL_GRAMMAR,
+            keyword_arg_type=cs.TS_PY_KEYWORD_ARGUMENT,
+            wrapper_type=None,
+        )
+        if identity is None:
+            identity = literal_target(node, sink.target_arg, sink.target_kw)
         self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _network_identity(
+        self,
+        call_node: Node,
+        sink: IOSink,
+        grammar: UrlGrammar | None,
+        *,
+        keyword_arg_type: str | None,
+        wrapper_type: str | None,
+    ) -> str | None:
+        # A request URL built from a module constant or a `+` still names
+        # the endpoint it calls (issue #2521). Only NETWORK targets fold:
+        # they are what endpoint linking reads, and every other resource
+        # kind keeps the identity shape its consumers already match on.
+        if grammar is None or sink.kind is not ResourceKind.NETWORK:
+            return None
+        target = target_arg_node(
+            call_node,
+            sink.target_arg,
+            sink.target_kw,
+            keyword_arg_type=keyword_arg_type,
+            wrapper_type=wrapper_type,
+        )
+        if target is None:
+            return None
+        return url_target(target, grammar, self._module_url_constants(target, grammar))
+
+    def _module_url_constants(
+        self, node: Node, grammar: UrlGrammar
+    ) -> Mapping[str, str]:
+        root = node
+        while root.parent is not None:
+            root = root.parent
+        cached = self._url_constants
+        if cached is not None and cached[0].id == root.id:
+            return cached[1]
+        constants = module_url_constants(root, grammar)
+        self._url_constants = (root, constants)
+        return constants
 
     def _emit_py_env_subscript(
         self,

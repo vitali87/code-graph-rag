@@ -1197,6 +1197,10 @@ GO_TYPE_LOCATIONS_REHYDRATED = (
 FUNCTION_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} function location(s) from the persisted graph"
 )
+ROUTE_HANDLER_STARTS_UNREADABLE = (
+    "Could not read inline route handler positions from the graph; those "
+    "routes are exposed by their registering function or module this run."
+)
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild re-parses "
     "every caller, so source-derived edges are re-resolved, and Gloss notes "

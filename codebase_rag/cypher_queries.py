@@ -84,6 +84,13 @@ CYPHER_LIST_PROJECTS = (
 CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
+# What the project's last sync captured (issue #2521), with the root the
+# re-index hint names.
+CYPHER_PROJECT_CAPTURE = (
+    "MATCH (p:Project {name: $project_name}) "
+    "RETURN p.captured_relationships AS captured_relationships, "
+    "p.root_path AS root_path"
+)
 
 # The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
 # registry only ever covered the process that ran the failed update: a crash or

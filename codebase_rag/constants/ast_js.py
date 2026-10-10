@@ -362,6 +362,9 @@ FIELD_KEY = "key"
 JS_REQUIRE_KEYWORD = "require"
 JS_EXPORTS_KEYWORD = "exports"
 JS_MODULE_KEYWORD = "module"
+# A `lexical_declaration`'s `kind`: only a `const` binding can never be
+# reassigned, which is what lets a request URL fold its value (issue #2521).
+JS_CONST_KEYWORD = "const"
 
 # JS/TS export type descriptions
 JS_EXPORT_TYPE_COMMONJS = "CommonJS Export"

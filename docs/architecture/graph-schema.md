@@ -13,7 +13,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 <!-- SECTION:node_schemas -->
 | Label | Properties |
 |-----|----------|
-| Project | `{name: string, root_path: string?}` |
+| Project | `{name: string, root_path: string?, captured_relationships: list[string]?}` |
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
@@ -42,6 +42,8 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
+
+`Project.captured_relationships` lists the relationship types the project's last sync captured (the resolved capture selection, as the index manifest records it). The `endpoints`, `endpoint_callers` and `remote_dependencies` tools read it: on a project synced without the `io` group they explain that and how to re-index, instead of answering `[]`. A graph synced before the property existed has none, and those tools answer as before.
 
 `Resource` is a synthetic node standing for an external I/O target (a file, environment variable, network endpoint, database, standard stream, socket). Its `qualified_name` has the form `resource::<KIND>::<identity>`, where `identity` is a static string literal when one is available and `<dynamic>` otherwise, and `kind` is one of `FILE`, `NETWORK`, `DATABASE`, `STDIN`, `STDOUT`, `STDERR`, `ENV`, `SOCKET`. Resource nodes are captured only when the `io` capture group is enabled (see below).
 

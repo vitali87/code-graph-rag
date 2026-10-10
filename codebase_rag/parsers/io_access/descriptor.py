@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ... import constants as cs
+from .models import JS_TS_URL_GRAMMAR, UrlGrammar
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,9 @@ class LanguageDescriptor:
     object_url_client_calls: bool = False
     object_literal_type: str | None = None
     pair_type: str | None = None
+    # How a request URL built from module constants and `+` folds into a
+    # linkable identity (issue #2521). None where the fold is not wired.
+    url_grammar: UrlGrammar | None = None
     # Container nodes that wrap a binding's targets and values when they are NOT
     # direct `left`/`right` or `name`/`value` fields on the binding node. Lua's
     # `assignment_statement` holds its LHS names under a `variable_list` (each a
@@ -220,6 +224,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
     object_url_client_calls=True,
     object_literal_type=cs.TS_OBJECT,
     pair_type=cs.TS_PAIR,
+    url_grammar=JS_TS_URL_GRAMMAR,
     keyword_arg_type=None,
     nested_scope_types=frozenset(
         {

@@ -102,6 +102,12 @@ class RemoteDependencyRow(TypedDict):
     handler_project: str | None
 
 
+class CaptureGap(TypedDict):
+    groups: list[str]
+    relationships: list[str]
+    root_path: str | None
+
+
 class CallSiteRow(TypedDict):
     label: str
     qualified_name: str
@@ -688,6 +694,35 @@ def _endpoint_caller_row(row: ResultRow) -> EndpointCallerRow:
         direction=_opt_str(row.get(cs.KEY_DIRECTION)),
         endpoint=str(row.get(cs.KEY_ENDPOINT) or ""),
         handler=str(row.get(cs.KEY_HANDLER) or ""),
+    )
+
+
+def capture_gap(
+    fetch_all: QueryFn,
+    project_name: str,
+    required: frozenset[cs.RelationshipType],
+) -> CaptureGap | None:
+    """What the project's last sync left out of `required`, or None.
+
+    None when every required relationship was captured, and also for a
+    graph synced before the capture was recorded: an unknown selection is
+    not evidence that a group was off, so it stays silent (issue #2521).
+    """
+    rows = fetch_all(cq.CYPHER_PROJECT_CAPTURE, {cs.KEY_PROJECT_NAME: project_name})
+    recorded = rows[0].get(cs.KEY_CAPTURED_RELATIONSHIPS) if rows else None
+    if not isinstance(recorded, list):
+        return None
+    missing = {rel for rel in required if rel.value not in recorded}
+    if not missing:
+        return None
+    return CaptureGap(
+        groups=sorted(
+            group.value
+            for group, rels in cs.CAPTURE_GROUP_RELS.items()
+            if rels & missing
+        ),
+        relationships=sorted(rel.value for rel in missing),
+        root_path=_opt_str(rows[0].get(cs.KEY_ROOT_PATH)),
     )
 
 
