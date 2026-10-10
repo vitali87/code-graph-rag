@@ -115,6 +115,9 @@ _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
     cs.RelationshipType.DEFINES_CONSTANT.value,
+    cs.RelationshipType.IMPLEMENTS_PATTERN.value,
+    cs.RelationshipType.HAS_SMELL.value,
+    cs.RelationshipType.HAS_VULNERABILITY.value,
 }
 # What CYPHER_RETIRE_PROJECT walks: the project's containers, then what the
 # ones carrying its prefix define.
@@ -1448,6 +1451,16 @@ class _StatefulIngestor:
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
                         cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
+                        cs.KEY_MODIFIERS: [_text(m) for m in raw_modifiers]
+                        if isinstance(
+                            raw_modifiers := props.get(cs.KEY_MODIFIERS), list
+                        )
+                        else None,
+                        cs.KEY_DECORATORS: [_text(d) for d in raw_decorators]
+                        if isinstance(
+                            raw_decorators := props.get(cs.KEY_DECORATORS), list
+                        )
+                        else None,
                         cs.KEY_RETURN_TYPE: _text(props[cs.KEY_RETURN_TYPE])
                         if cs.KEY_RETURN_TYPE in props
                         else None,
