@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.csharp import graph_facts
@@ -295,7 +296,7 @@ def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
 
 def _edit_only(root: Path, rel: str, text: str) -> None:
     # Rewrite one file so the next run re-parses it and nothing else.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     path = root / rel
     path.write_text(text, encoding="utf-8")
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
@@ -347,7 +348,7 @@ class TestAnIncrementalRunRanksOverloadsAsAFreshIndexDoes:
         # predates this ranking.)
         root, store = indexed
         fresh = _run_calls(store)
-        cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+        cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
         use = root / "Use.cs"
         use.write_text(
             INCREMENTAL_USE_CS.replace(
