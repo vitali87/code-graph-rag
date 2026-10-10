@@ -120,6 +120,24 @@ TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"
 TS_PY_EXCEPT_CLAUSE = "except_clause"
 TS_PY_FINALLY_CLAUSE = "finally_clause"
+# A module's declared API (issue #2855): `__all__` and the list methods
+# that add to it.
+PY_DUNDER_ALL = "__all__"
+PY_DUNDER_ALL_MUTATORS = frozenset({"append", "extend"})
+# Module-level statements whose bodies still run at import, where an
+# `__all__` update counts.
+PY_MODULE_LEVEL_BLOCKS = frozenset(
+    {
+        TS_PY_IF_STATEMENT,
+        TS_PY_ELIF_CLAUSE,
+        TS_PY_ELSE_CLAUSE,
+        TS_PY_TRY_STATEMENT,
+        TS_PY_EXCEPT_CLAUSE,
+        TS_PY_FINALLY_CLAUSE,
+        TS_PY_WITH_STATEMENT,
+        TS_PY_BLOCK,
+    }
+)
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
