@@ -192,8 +192,10 @@ _MCP_DETERMINISTIC_NOTE = (
 MCP_RESOLVE = (
     "Resolve a name or a location to qualified names in the graph. `target` is "
     "a qualified name, a bare name like `helper` or `Store.get`, or "
-    "`path:line` (repo-relative path, 1-based line) for the definitions "
-    "spanning that line, innermost first. Exact matches come first, then "
+    "`path:line` (the file's path relative to the repository root or absolute "
+    "inside it, a 1-based line, optionally `:col`) for the definitions "
+    "spanning that line, innermost first; a file the project does not hold is "
+    "refused with an error. Exact matches come first, then "
     "dotted-suffix matches, then same-name matches. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_DEFINITION = (
@@ -217,11 +219,17 @@ MCP_CALLEES = (
 )
 MCP_IMPLEMENTORS = (
     "Types that inherit from or implement a class, interface or trait "
-    "(INHERITS / IMPLEMENTS edges). " + _MCP_DETERMINISTIC_NOTE
+    "(INHERITS / IMPLEMENTS edges). Direct subtypes only by default; `depth` "
+    "> 1 also follows their own subtypes (every class implementing an "
+    "interface through an abstract base), each row then carrying its `depth` "
+    "and the type it was reached `through`. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_OVERRIDES = (
     "Methods overriding a method, and the method it overrides (OVERRIDES "
-    "edges in both directions). " + _MCP_DETERMINISTIC_NOTE
+    "edges in both directions). Direct only by default; `depth` > 1 follows "
+    "each direction on its own (the overriders' overriders, and what the "
+    "overridden method overrides in turn), each row then carrying its "
+    "`depth` and the method it was reached `through`. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
@@ -264,7 +272,9 @@ MCP_TESTS_REACHING = (
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_TARGET = (
-    "A qualified name, a bare name (`helper`, `Store.get`), or `path:line`."
+    "A qualified name, a bare name (`helper`, `Store.get`), or `path:line` "
+    "(the path relative to the repository root, or absolute inside it; a "
+    "trailing `:col` is ignored)."
 )
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
 MCP_ANNOTATE = (

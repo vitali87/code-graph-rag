@@ -129,6 +129,14 @@ TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
 TS_PY_UNARY_OPERATOR = "unary_operator"
 TS_PY_CONCATENATED_STRING = "concatenated_string"
+# Read positions the binding scan of `python_name_binding_sites` recognises.
+TS_PY_SLICE = "slice"
+TS_PY_ASSERT_STATEMENT = "assert_statement"
+TS_PY_RAISE_STATEMENT = "raise_statement"
+TS_PY_YIELD = "yield"
+TS_PY_WITH_ITEM = "with_item"
+TS_PY_IF_CLAUSE = "if_clause"
+TS_PY_TYPE = "type"
 TS_PY_AWAIT = "await"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
@@ -183,8 +191,11 @@ PY_TAINT_CLEARING_CALLS = frozenset(
         "secrets.compare_digest",
     }
 )
-# Methods matched by name on any receiver, since the walk has no receiver
-# type: str predicates and position/count lookups return a bool or an int.
+# str predicates and position/count lookups return a bool or an int, so on a
+# receiver known to be a string they clear both the receiver's and the
+# arguments' taint. On any other object (`client.find(secret)`) the method is
+# that object's own, and its result may carry the object's data or the
+# argument, so nothing clears.
 PY_TAINT_CLEARING_METHODS = frozenset(
     {
         "startswith",
@@ -206,6 +217,51 @@ PY_TAINT_CLEARING_METHODS = frozenset(
         "rfind",
         "index",
         "rindex",
+    }
+)
+# The annotation that makes a parameter or local a string.
+PY_TYPE_STR = "str"
+PY_BUILTINS_MODULE = "builtins"
+# Builtins whose result is always a string, so a name bound to one is a
+# string receiver for the lookups above, as long as nothing the call can see
+# rebinds the name (keyed by import-normalised name).
+PY_STR_RESULT_CALLS = frozenset(
+    {
+        "str",
+        "repr",
+        "input",
+        "builtins.str",
+        "builtins.repr",
+        "builtins.input",
+    }
+)
+# `os.getenv(key, default)` / `os.environ.get(key, default)`: the default is
+# returned when the variable is unset.
+PY_ENV_DEFAULT_KEYWORD = "default"
+# str (and bytes) methods that return a str or bytes when their receiver is
+# one: `t.strip().lower()` on a string is still a string.
+PY_STR_RESULT_METHODS = frozenset(
+    {
+        "strip",
+        "lstrip",
+        "rstrip",
+        "lower",
+        "upper",
+        "casefold",
+        "title",
+        "capitalize",
+        "swapcase",
+        "replace",
+        "removeprefix",
+        "removesuffix",
+        "format",
+        "join",
+        "zfill",
+        "center",
+        "ljust",
+        "rjust",
+        "encode",
+        "decode",
     }
 )
 
@@ -329,9 +385,12 @@ PY_CLASS_REPOSITORY = "Repository"
 PY_MODELS_BASE_PATH = ".models.base."
 PY_METHOD_CREATE = "create"
 
-PY_SCORE_EXACT_MATCH = 100
-PY_SCORE_SUFFIX_MATCH = 90
-PY_SCORE_CONTAINS_BASE = 80
+# The bound receiver is the enclosing class, never what its name resembles:
+# `"self".endswith("f")` typed every `self` as an imported `F` (issue #2608).
+PY_RECEIVER_PARAM_NAMES: frozenset[str] = frozenset({PY_KEYWORD_SELF, PY_KEYWORD_CLS})
+# Shortest class name an untyped parameter's own name may type: `a` or `f` is
+# an ordinary variable far more often than an `A` or `F` (issue #2608).
+PY_PARAM_NAME_MIN_CLASS_LEN = 3
 
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
