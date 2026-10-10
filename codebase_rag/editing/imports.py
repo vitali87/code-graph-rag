@@ -278,7 +278,7 @@ _JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 # a site the index binds, so only the two plain shapes are matched.
 _JS_DESTRUCTURE = re.compile(r"\s*(?:const|let|var)\s*\{(?P<names>[^}]*)\}")
 _JS_DESTRUCTURE_ENTRY = re.compile(
-    r"(?P<lead>\s*)(?P<key>[\w$]+)(?P<rest>\s*(?::\s*(?P<local>[\w$]+))?\s*)"
+    r"(?P<lead>\s*)(?P<key>[\w$]+)(?P<rest>(?:\s*:\s*(?P<local>[\w$]+))?\s*)"
 )
 
 
