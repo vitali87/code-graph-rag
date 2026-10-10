@@ -135,6 +135,11 @@ class DefinitionProcessor(
         # parses only the changed files (issue #2403). Kept apart and rebuilt
         # on every rehydration so a pair the graph no longer holds leaves.
         self.rehydrated_interface_implementers: dict[str, set[str]] = {}
+        # {Rust impl target qn: module of the file whose `impl Trait for T`
+        # recorded its pair}. A primitive or foreign target (`u64`) has no
+        # class node, so `class_owner_module` never names that file, and the
+        # pair outlived the impl on a reused updater (#2403 review).
+        self.rust_impl_owner_module: dict[str, str] = {}
         # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # member call `field_.method()` in a (possibly out-of-line, cross-file)
         # method resolves via the field's declared type. Populated at class
@@ -393,6 +398,7 @@ class DefinitionProcessor(
         # In place: the call resolver holds both maps by reference.
         self.interface_implementers.clear()
         self.rehydrated_interface_implementers.clear()
+        self.rust_impl_owner_module.clear()
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
         # A notebook always carries its extension (`proj.analysis.ipynb`). No

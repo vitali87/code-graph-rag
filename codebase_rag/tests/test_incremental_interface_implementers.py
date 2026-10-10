@@ -510,6 +510,28 @@ JAVA_UPPER_UNBOUND = JAVA_UPPER.replace(" implements Strategy", "")
 FRESH_REINGEST = "fresh-reingest"
 REUSED_REINGEST = "reused-reingest"
 REUSED_RUN = "reused-run"
+FRESH_RUN = "fresh-run"
+MODES = [FRESH_REINGEST, REUSED_REINGEST, REUSED_RUN, FRESH_RUN]
+
+# The implementer is a primitive named through the trait's full path, so no
+# node, no IMPLEMENTS edge and no import tie its file to the trait's: only
+# its method's OVERRIDES edge records the pair.
+RUST_QUALIFIED_PRIMITIVE: dict[str, str] = {
+    "Cargo.toml": RUST_CARGO,
+    "src/lib.rs": "pub mod strategy;\npub mod other;\npub mod prim;\npub mod caller;\n",
+    "src/strategy.rs": RUST_STRATEGY,
+    "src/other.rs": (
+        "pub trait Other {\n    fn translate(&self, name: &str) -> String;\n}\n"
+    ),
+    "src/prim.rs": (
+        "impl crate::strategy::Strategy for u64 {\n"
+        "    fn translate(&self, name: &str) -> String {\n"
+        "        name.to_string()\n    }\n}\n"
+    ),
+    "src/caller.rs": RUST["src/caller.rs"],
+}
+RUST_CALLER_QN = f"{PROJECT}.src.caller.run"
+RUST_PRIMITIVE_QN = f"{PROJECT}.src.prim.u64.translate"
 
 
 def _resync(
@@ -529,11 +551,13 @@ def _resync(
         updater.run(force=False)
     elif mode == REUSED_REINGEST:
         updater.reingest(sorted(edits))
+    elif mode == FRESH_RUN:
+        _updater(store, root).run(force=False)
     else:
         _updater(store, root).reingest(sorted(edits))
 
 
-@pytest.mark.parametrize("mode", [FRESH_REINGEST, REUSED_REINGEST, REUSED_RUN])
+@pytest.mark.parametrize("mode", MODES)
 def test_a_sync_retires_an_implementer_the_edit_removed(
     temp_repo: Path, mode: str
 ) -> None:
@@ -560,7 +584,7 @@ def test_a_sync_retires_an_implementer_the_edit_removed(
     assert _snapshot(store) == _snapshot(clean_store)
 
 
-@pytest.mark.parametrize("mode", [FRESH_REINGEST, REUSED_REINGEST, REUSED_RUN])
+@pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize(
     ("files", "edited"),
     [
@@ -573,6 +597,9 @@ def test_a_sync_retires_an_implementer_the_edit_removed(
         (RUST_PRIMITIVE, "src/lexical/errors.rs"),
         (RUST_EMPTY_PRIMITIVE_IMPL, "src/caller.rs"),
         (RUST_EMPTY_PRIMITIVE_IMPL, "src/strategy.rs"),
+        (RUST_QUALIFIED_PRIMITIVE, "src/strategy.rs"),
+        (RUST_QUALIFIED_PRIMITIVE, "src/prim.rs"),
+        (RUST_QUALIFIED_PRIMITIVE, "src/caller.rs"),
     ],
     ids=[
         "java-caller",
@@ -584,6 +611,9 @@ def test_a_sync_retires_an_implementer_the_edit_removed(
         "rust-primitive-impl",
         "rust-caller-of-a-trait-with-an-untraceable-second-impl",
         "rust-trait-with-an-untraceable-second-impl",
+        "rust-trait-of-an-unimported-primitive-impl",
+        "rust-unimported-primitive-impl",
+        "rust-caller-of-an-unimported-primitive-impl",
     ],
 )
 def test_a_sync_keeps_the_pairs_a_clean_index_holds(
@@ -603,3 +633,79 @@ def test_a_sync_keeps_the_pairs_a_clean_index_holds(
 
     assert _calls(store) == clean_calls
     assert _snapshot(store) == clean
+
+
+def test_the_unimported_primitive_impl_is_the_sole_implementer(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    _write(root, RUST_QUALIFIED_PRIMITIVE)
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    assert {edge[1] for edge in _calls_from(_calls(store), RUST_CALLER_QN)} == {
+        f"{PROJECT}.src.strategy.Strategy.translate",
+        RUST_PRIMITIVE_QN,
+    }
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_sync_retires_a_primitive_impl_moved_to_another_trait(
+    temp_repo: Path, mode: str
+) -> None:
+    # `u64` has no node, so no class record names the file its pair came
+    # from; the pair must still go with the impl that recorded it.
+    root = temp_repo / PROJECT
+    _write(root, RUST_QUALIFIED_PRIMITIVE)
+    store = _StatefulIngestor()
+    updater = _index(store, root, force=True)
+    moved = RUST_QUALIFIED_PRIMITIVE["src/prim.rs"].replace(
+        "crate::strategy::Strategy", "crate::other::Other"
+    )
+
+    _resync(store, root, updater, {"src/prim.rs": moved}, mode)
+
+    clean_store = _StatefulIngestor()
+    _index(clean_store, root, force=True)
+    clean_calls = _calls(clean_store)
+    assert {edge[1] for edge in _calls_from(clean_calls, RUST_CALLER_QN)} == {
+        f"{PROJECT}.src.strategy.Strategy.translate"
+    }
+    assert _calls_from(_calls(store), RUST_CALLER_QN) == _calls_from(
+        clean_calls, RUST_CALLER_QN
+    )
+    assert _calls(store) == clean_calls
+    assert _snapshot(store) == _snapshot(clean_store)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_sync_forgets_an_untraceable_impl_the_edit_removed(
+    temp_repo: Path, mode: str
+) -> None:
+    # `impl Strategy for u64 {}` defines no method, so nothing but its own
+    # record ties the pair to the file; once it goes, `Upper` is the sole
+    # implementer and a clean index gains the companion edge. The caller is
+    # touched too: no edge makes it a dependent of the impl's file.
+    root = temp_repo / PROJECT
+    _write(root, RUST_EMPTY_PRIMITIVE_IMPL)
+    store = _StatefulIngestor()
+    updater = _index(store, root, force=True)
+    upper_qn = f"{PROJECT}.src.upper.Upper.translate"
+    assert upper_qn not in {
+        edge[1] for edge in _calls_from(_calls(store), RUST_CALLER_QN)
+    }, "fixture must count two implementers before the edit"
+
+    edits = {
+        "src/upper.rs": RUST["src/upper.rs"],
+        "src/caller.rs": RUST["src/caller.rs"] + "// touched\n",
+    }
+    _resync(store, root, updater, edits, mode)
+
+    clean_store = _StatefulIngestor()
+    _index(clean_store, root, force=True)
+    clean_calls = _calls(clean_store)
+    assert upper_qn in {edge[1] for edge in _calls_from(clean_calls, RUST_CALLER_QN)}
+    assert _calls_from(_calls(store), RUST_CALLER_QN) == _calls_from(
+        clean_calls, RUST_CALLER_QN
+    )
+    assert _calls(store) == clean_calls
+    assert _snapshot(store) == _snapshot(clean_store)

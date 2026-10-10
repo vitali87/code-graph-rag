@@ -1253,11 +1253,51 @@ def _drop_implementers(
     # method as the sole implementer's (#2403 review). The re-parse records
     # the pairs the class still has. In place: the call resolver holds the
     # map by reference.
+    if not removed:
+        return
     for interface_qn in list(implementers_by_interface):
         implementers = implementers_by_interface[interface_qn]
         implementers -= removed
         if not implementers:
             del implementers_by_interface[interface_qn]
+
+
+def _pop_owned(owner_module: dict[str, str], module_qns: Collection[str]) -> set[str]:
+    """Remove and return the qns `owner_module` attributes to `module_qns`."""
+    owned = {qn for qn, module_qn in owner_module.items() if module_qn in module_qns}
+    for qn in owned:
+        del owner_module[qn]
+    return owned
+
+
+def _carried_pair_rows(
+    captured: Iterable[ResultRow],
+) -> tuple[list[ResultRow], list[ResultRow]]:
+    """Captured inbound IMPLEMENTS and Rust OVERRIDES edges, as read-back rows."""
+    # Spelled as CYPHER_ALL_IMPLEMENTS and CYPHER_ALL_RUST_OVERRIDES return
+    # them, so the read-back treats an edge it will restore like one it read.
+    implements: list[ResultRow] = []
+    overrides: list[ResultRow] = []
+    for row in captured:
+        rel = row.get(cs.KEY_REL)
+        source, target = row.get(cs.KEY_CALLER_QN), row.get(cs.KEY_TARGET_QN)
+        if rel == cs.RelationshipType.IMPLEMENTS.value:
+            implements.append({cs.KEY_CHILD_QN: source, cs.KEY_BASE_QN: target})
+        elif rel == cs.RelationshipType.OVERRIDES.value and _is_rust_method_edge(row):
+            overrides.append({cs.KEY_FROM_QN: source, cs.KEY_TO_QN: target})
+    return implements, overrides
+
+
+def _is_rust_method_edge(row: ResultRow) -> bool:
+    """A captured edge between two Methods out of a Rust file."""
+    method = cs.NodeLabel.METHOD.value
+    path = row.get(cs.KEY_CALLER_PATH)
+    return (
+        row.get(cs.KEY_CALLER_LABEL) == method
+        and row.get(cs.KEY_TARGET_LABEL) == method
+        and isinstance(path, str)
+        and path.endswith(cs.EXT_RS)
+    )
 
 
 def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> None:
@@ -3287,7 +3327,9 @@ class GraphUpdater:
         self._requeue_parameter_types(project_params)
         self._requeue_field_types(project_params)
 
-    def _rehydrate_interface_implementers(self, project_params: PropertyParams) -> None:
+    def _rehydrate_interface_implementers(
+        self, project_params: PropertyParams, carried: Iterable[ResultRow] = ()
+    ) -> None:
         # Parsing records implementer -> interface pairs only for the files it
         # reads. A call typed to an interface with ONE implementer also reaches
         # that implementer's method, so a run that re-parsed only the caller
@@ -3316,6 +3358,9 @@ class GraphUpdater:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
+        carried_implements, carried_overrides = _carried_pair_rows(carried)
+        implements += self._owned_rows(carried_implements, cs.KEY_CHILD_QN)
+        rust_overrides += self._owned_rows(carried_overrides, cs.KEY_FROM_QN)
         pairs = [
             (child, base)
             for row in implements
@@ -5225,14 +5270,15 @@ class GraphUpdater:
             for qn, path in processor.rehydrated_definition_paths.items()
             if path == relative_posix
         }
-        if not stale:
-            return
+        # A Rust impl target with no class node is attributed by its own
+        # record; it keys no class map, so it only leaves the pairs.
+        impl_targets = _pop_owned(processor.rust_impl_owner_module, module_qn_prefixes)
+        _drop_implementers(processor.interface_implementers, stale | impl_targets)
         # Mutated in place: TypeInference and the lazily built per-language
         # engines share these same dict objects by reference, so rebinding
         # any of them would leave those readers on the pre-prune state.
         for qn in stale:
             _drop_class_keyed_entry(processor, owner_module, qn)
-        _drop_implementers(processor.interface_implementers, stale)
 
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
@@ -7826,8 +7872,22 @@ class GraphUpdater:
         # (C/C++ macros and includes, containment, forward declarations,
         # inheritance, Rust inline-mod arbitration): the deleted subtrees
         # held those relationships too. The registry is already live or was
-        # hydrated above, so no graph read-back here.
+        # hydrated above, so no registry read-back here.
         known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        # A fresh updater read the implementer pairs back BEFORE the delete,
+        # so a class the edit stopped implementing still counted as the sole
+        # implementer and the re-parsed caller kept its edge (#2403 review).
+        # Read back again now that the re-parse registered the traits, as
+        # run() does. The inbound edges are not restored yet, and an
+        # unchanged impl of a re-parsed trait that no edge makes a dependent
+        # (`impl crate::Trait for u64`) is recorded only by its OVERRIDES
+        # edge, so the captured ones count as read. The parsed pairs stay:
+        # the re-parse records the deleted files' pairs, and the unchanged
+        # files' include impls the graph cannot show.
+        self._rehydrate_interface_implementers(
+            {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            carried=captured,
+        )
         # The re-parsed files' own CALLS edges went with their Module
         # subtrees; a moved use must not serve last pass's cached answer.
         self.factory.call_processor.reset_resolution_caches()
@@ -8126,15 +8186,6 @@ class GraphUpdater:
             )
         )
         self._reingest_delete(reparse, gone, hashes)
-        # A fresh updater read the implementer pairs back BEFORE that delete,
-        # so a class the edit stopped implementing still counted as the sole
-        # implementer and the re-parsed caller kept its edge (#2403 review).
-        # Read back again now, as run() does after its own delete. The parsed
-        # pairs stay: the re-parse records the deleted files' pairs, and the
-        # unchanged files' include impls the graph cannot show.
-        self._rehydrate_interface_implementers(
-            {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
-        )
         self._resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
         self._log_unparsable_manifests()

@@ -347,6 +347,7 @@ class ClassIngestMixin:
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     rehydrated_interface_implementers: dict[str, set[str]]
+    rust_impl_owner_module: dict[str, str]
     rehydrated_definition_paths: dict[str, str]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
@@ -1796,6 +1797,9 @@ class ClassIngestMixin:
         impl_method_qns: list[str] = []
         trait_unrepresentable = False
         if trait_name := rs_utils.extract_impl_trait(class_node):
+            # The file, not `owner_module_qn`: the prune matches the modules a
+            # removed file recorded, and an inline `mod` is not one of them.
+            self.rust_impl_owner_module[class_qn] = module_qn
             trait_unrepresentable = not self._defer_rust_impl_trait(
                 class_node, trait_name, class_qn, owner_module_qn, impl_method_qns
             )
