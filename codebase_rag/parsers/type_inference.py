@@ -479,9 +479,13 @@ class TypeInferenceEngine:
         around it (issue #3200). `r = Range()` in `outer` types `r.reset()`
         in `outer.inner` too, unless `inner` or a function between them binds
         `r` itself. Innermost scope first, so the nearest binding decides."""
+        scope = _enclosing_function(caller_node, language)
+        if scope is None:
+            # A top-level function or a method: nothing to capture, and its
+            # own names need not be listed.
+            return {}
         hidden = set(self._own_scope_names(caller_node, language))
         captured: dict[str, str] = {}
-        scope = _enclosing_function(caller_node, language)
         while scope is not None:
             # Both builders type only what `scope` itself binds, so every
             # entry is the enclosing scope's own variable (or `self.<attr>`).
