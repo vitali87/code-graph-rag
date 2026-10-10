@@ -463,8 +463,10 @@ HELP_LANGUAGE_LIST_VERBOSE = (
 
 HELP_PROJECT_NAME = (
     "Project name to store in the graph. Defaults to the directory name plus a "
-    "hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never "
-    "share one; cgr status lists the names already stored. A chosen name has no "
+    "hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on one "
+    "machine never share one; machines that sync into one graph should each pass "
+    "their own name, since the same path hashes alike on every machine. cgr "
+    "status lists the names already stored. A chosen name has no "
     "hash: syncing a repository under a name another repository already indexes "
     "needs --yes and replaces that project."
 )
