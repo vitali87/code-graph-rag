@@ -124,7 +124,8 @@ async def test_read_file_answers_a_window_inside_the_file(
     # Negative: every window that overlaps the file reads as before.
     result = await _registry(temp_repo).read_file("web/a.ts", **arguments)
 
-    assert isinstance(result, str) and not isinstance(result, te.ToolFailure)
+    assert isinstance(result, str)
+    assert not isinstance(result, te.ToolFailure)
     assert result.startswith(header), result
 
 
@@ -144,7 +145,8 @@ async def test_an_empty_file_reads_from_its_start(temp_repo: Path) -> None:
 async def test_resolve_refuses_a_line_no_file_can_have(temp_repo: Path) -> None:
     result = await _registry(temp_repo).resolve("web/a.ts:99999999999999999999")
 
-    assert isinstance(result, dict) and _reports_failure(result), result
+    assert isinstance(result, dict), result
+    assert _reports_failure(result), result
     assert result[cs.DICT_KEY_ERROR] == (
         "Line 99999999999999999999 of web/a.ts is out of range."
     )
@@ -190,7 +192,8 @@ async def test_a_matcherless_pattern_is_one_line(
 
     text = str(result)
     assert cause in text, text
-    assert "Stack backtrace" not in text and "\n" not in text.strip(), text
+    assert "Stack backtrace" not in text, text
+    assert "\n" not in text.strip(), text
 
 
 async def test_a_valid_pattern_still_matches(temp_repo: Path) -> None:
@@ -214,8 +217,10 @@ async def test_definition_of_an_unknown_name_is_refused_like_callers(
     definition = await registry.definition("no.such.symbol")
     callers = await registry.callers("no.such.symbol")
 
-    assert isinstance(definition, dict) and isinstance(callers, dict)
-    assert _reports_failure(definition) and _reports_failure(callers)
+    assert isinstance(definition, dict)
+    assert isinstance(callers, dict)
+    assert _reports_failure(definition)
+    assert _reports_failure(callers)
     assert definition[cs.DICT_KEY_ERROR] == callers[cs.DICT_KEY_ERROR]
     # The row stays for a client that reads `found`.
     assert definition["found"] is False
@@ -228,7 +233,8 @@ async def test_a_known_definition_is_answered(temp_repo: Path) -> None:
 
     result = await registry.definition(f"{project}.web.a.f")
 
-    assert isinstance(result, dict) and not _reports_failure(result), result
+    assert isinstance(result, dict), result
+    assert not _reports_failure(result), result
     assert result["found"] is True
 
 
