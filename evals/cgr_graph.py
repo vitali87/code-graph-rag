@@ -1339,6 +1339,7 @@ class _StatefulIngestor:
                     row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
+                        cs.KEY_NAME: _text(props.get(cs.KEY_NAME)),
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_IS_BODY_SCOPED_NAME: bool(

@@ -3267,6 +3267,11 @@ class GraphUpdater:
         except ValueError:
             return False
         self.function_registry[qn] = node_type
+        # Parsing indexes a definition under its name as well as its qn's
+        # last segment, which for `ILog.Info(string)` is not `Info`; without
+        # it a re-parsed caller's name lookup misses the method (#3261).
+        if isinstance(name := row.get(cs.KEY_NAME), str) and name:
+            self.function_registry.index_name(qn, name)
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
@@ -4769,6 +4774,10 @@ class GraphUpdater:
             new_qn_set = qn_set - qns_to_remove
             if len(new_qn_set) < original_count:
                 self.simple_name_lookup[simple_name] = new_qn_set
+                # Deleting `ILog.Info(string)` invalidated `Info(string)`, not
+                # `Info`: a lookup cached for the name would keep answering
+                # with the removed definition on a reused updater.
+                self.function_registry.invalidate_name(simple_name)
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
         # The file no longer owns any module qn: a replacement with the same

@@ -1017,6 +1017,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "OR n:Enum OR n:Type OR n:Union) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.name AS name, "
     "n.is_property AS is_property, n.is_macro AS is_macro, "
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
