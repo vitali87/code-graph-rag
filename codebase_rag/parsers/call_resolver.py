@@ -19,6 +19,9 @@ from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .parameter_nodes import c_family_parameter_list
+from .php import class_names as php_class_names
+from .php.class_names import ClassPath as PhpClassPath
+from .php.class_names import ascii_fold as _php_fold
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -64,6 +67,15 @@ _RS_OWNER_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.UNION, NodeType.INTERFACE}
 )
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+
+
+class _PhpCasedIndex(NamedTuple):
+    """PHP definitions declared with capitals, by ASCII-folded name."""
+
+    # (owner qn, folded method name) -> method qn
+    methods: dict[tuple[str, str], str]
+    # folded class name -> class qns
+    classes: dict[str, list[str]]
 
 
 class _CallSite(NamedTuple):
@@ -174,22 +186,6 @@ def _split_csharp_qualified_path(path: str) -> list[str]:
 
 PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
-# PHP folds A-Z only when comparing namespace and function names, so
-# `use function app\text\FORMAT` binds to `App\Text\format`.
-#
-# NOT `str.casefold()`, which folds the full Unicode range: PHP treats
-# identifiers differing outside ASCII as DISTINCT, so Unicode folding would
-# match names the language does not, trading a missed binding for a wrong one.
-# `str.lower()` has the same problem (Turkish dotless i, Kelvin sign).
-_PHP_ASCII_FOLD = str.maketrans(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
-)
-
-
-def _php_fold(name: str) -> str:
-    """ASCII-lowercase `name` for PHP-style case-insensitive comparison."""
-    return name.translate(_PHP_ASCII_FOLD)
-
 
 def _module_level_assignments(root_node: Node) -> Iterator[Node]:
     """Every `assignment` that is a top-level expression statement of the module.
@@ -254,6 +250,7 @@ def _binds_identifier(target: Node, name: str) -> bool:
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
+        "python_name_typed_params",
         "python_shadowed_imports",
         "python_local_names",
         "function_registry",
@@ -281,6 +278,8 @@ class CallResolver:
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
+        "_php_class_namespaces",
+        "_php_cased_index",
     )
 
     def __init__(
@@ -300,6 +299,9 @@ class CallResolver:
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
         self._py_rel_to_module: dict[str, str] = {}
+        # caller qn -> untyped parameters typed only by their name (#2608);
+        # filled alongside python_shadowed_imports.
+        self.python_name_typed_params: dict[str, frozenset[str]] = {}
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
@@ -352,6 +354,10 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
+        # {PHP module qn: {class qn: folded namespace it is declared in}},
+        # read off each file's declarations on first use (issue #2466).
+        self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
+        self._php_cased_index: _PhpCasedIndex | None = None
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -555,6 +561,9 @@ class CallResolver:
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
+        # A re-parsed PHP file may have moved a class between namespaces.
+        self._php_class_namespaces.clear()
+        self._php_cased_index = None
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the
@@ -584,7 +593,7 @@ class CallResolver:
         names a TYPE and the simple-name fallback must not offer a method or
         function that merely shares the name."""
         self.last_resolution = cs.EdgeResolution.EXACT
-        return self._reject_class_via_value_receiver(
+        result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
                     call_name,
@@ -602,6 +611,19 @@ class CallResolver:
             class_context,
             local_var_types,
             language,
+        )
+        if result is not None and self._receiver_typed_by_name(call_name, caller_qn):
+            # The receiver's class is only what its parameter's name spells
+            # (`payload` -> `Payload`): a guess, never an exact binding (#2608).
+            self.last_resolution = cs.EdgeResolution.HEURISTIC
+        return result
+
+    def _receiver_typed_by_name(self, call_name: str, caller_qn: str | None) -> bool:
+        if not caller_qn or cs.SEPARATOR_DOT not in call_name:
+            return False
+        guessed = self.python_name_typed_params.get(caller_qn)
+        return guessed is not None and (
+            call_name.split(cs.SEPARATOR_DOT, 1)[0] in guessed
         )
 
     def _is_python_local_name(self, call: _CallSite) -> bool:
@@ -1193,19 +1215,56 @@ class CallResolver:
     def protocol_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # A call resolved to a Protocol stub method (P.M) never runs the stub: the
         # runtime receiver is some conformer, so the sound call graph emits an edge
-        # to M on every non-Protocol class that defines it. Gating on the resolved
-        # target being a Protocol method keeps this from firing on ordinary calls.
+        # to M on every class that implements P. Gating on the resolved target
+        # being a Protocol method keeps this from firing on ordinary calls.
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or class_qn not in self._protocol_classes():
             return set()
         protocols = self._protocol_classes()
+        # The receiver is a class that implements the Protocol: one defining
+        # every method it declares, or its XxxProtocol -> Xxx implementer. A
+        # class that merely shares this method's name (an LRU cache's `get`
+        # beside a client Protocol's `get`/`set`) is not one (issue #2931).
+        conformers = set(self._protocol_structural_implementers(class_qn))
+        if named_impl := self._protocol_impl_map().get(class_qn):
+            conformers.add(named_impl)
+        methods = {
+            resolved[1]
+            for conformer in conformers
+            if (resolved := self._try_resolve_method(conformer, method_name))
+        }
+        # The definers of a same-named method, read from the registry, which
+        # an incremental run holds whole: the class hierarchy those scans
+        # walk holds only the re-parsed files' classes then (issue #532).
+        required = self._protocol_method_names(class_qn)
+        definers = {
+            definer: qn
+            for qn in self.function_registry.find_ending_with(method_name)
+            if (parts := qn.rpartition(cs.SEPARATOR_DOT))[1]
+            and parts[2] == method_name
+            and (definer := parts[0]) not in protocols
+        }
+        # The XxxProtocol -> Xxx convention, held to the uniqueness
+        # `_protocol_impl_map` asks of it.
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        named = [
+            definer
+            for definer in definers
+            if simple != cs.PY_PROTOCOL
+            and simple.endswith(cs.PY_PROTOCOL)
+            and definer.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            == simple.removesuffix(cs.PY_PROTOCOL)
+        ]
+        for definer, qn in definers.items():
+            if (len(named) == 1 and definer == named[0]) or all(
+                self._try_resolve_method(definer, m) for m in required
+            ):
+                methods.add(qn)
         targets: set[tuple[str, str]] = set()
-        # Conformers are found by method name, so the same reachability bound
-        # the simple-name fallback uses applies: nothing written in a language
-        # the Protocol's own cannot call into conforms to it (issue #945).
-        for qn in self._nameable_candidates(
-            self.function_registry.find_ending_with(method_name), class_qn
-        ):
+        # The same reachability bound the simple-name fallback uses applies:
+        # nothing written in a language the Protocol's own cannot call into
+        # conforms to it (issue #945).
+        for qn in self._nameable_candidates(sorted(methods), class_qn):
             definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if dot and name == method_name and definer not in protocols:
                 targets.add((self.function_registry[qn], qn))
@@ -1734,7 +1793,9 @@ class CallResolver:
         if self._is_super_call(call_name):
             return True, self._resolve_super_call(call_name, call.class_context)
 
-        if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
+        if cs.SEPARATOR_DOT in call_name and self._is_method_chain(
+            call_name, call.language
+        ):
             # A chained call resolves via return-type inference only; it does NOT
             # fall through to the trie fallback, because a hop returning a container
             # (`Kids() []Command`) or an unknown type must drop the edge rather than
@@ -2810,7 +2871,9 @@ class CallResolver:
 
         return self._try_resolve_wildcard_imports(call_name, import_map)
 
-    def _php_target_for_namespace_import(self, imported_path: str) -> str | None:
+    def _php_target_for_namespace_import(
+        self, imported_path: str, kind: NodeType | None = None
+    ) -> str | None:
         """Map a PHP `use function A\\B\\c` target onto the qn that registers it.
 
         CGR qualifies PHP by file path, so the import target `App.Text.format`
@@ -2864,7 +2927,11 @@ class CallResolver:
         ]
         found: list[str] = []
         for module_qn, exact_qn in matches:
-            if exact_qn in self.function_registry:
+            # `kind` keeps PHP's separate symbol tables apart: a class and a
+            # function may share a name in one namespace (issue #2466).
+            if exact_qn in self.function_registry and (
+                kind is None or self.function_registry[exact_qn] == kind
+            ):
                 found.append(exact_qn)
                 continue
             # The symbol's casing may differ from the registration too, so a
@@ -2884,13 +2951,14 @@ class CallResolver:
             wanted_symbol = _php_fold(symbol)
             found.extend(
                 qn
-                for qn, _ in self.function_registry.find_with_prefix(prefix)
+                for qn, qn_kind in self.function_registry.find_with_prefix(prefix)
+                if (kind is None or qn_kind == kind)
                 # `find_with_prefix` walks whole dot-separated parts, so the
                 # remainder always starts with the separator for a real
                 # descendant. Requiring it re-establishes the boundary the
                 # trailing dot used to provide, and rejects a sibling module
                 # whose name merely starts with this one (`proj.textutil`).
-                if (remainder := qn[len(prefix) :]).startswith(cs.SEPARATOR_DOT)
+                and (remainder := qn[len(prefix) :]).startswith(cs.SEPARATOR_DOT)
                 # Direct children only: a nested `module.Class.method` is not
                 # the free function this import names.
                 and cs.SEPARATOR_DOT not in remainder[1:]
@@ -2924,6 +2992,162 @@ class CallResolver:
         # path, reached through the alias rather than the target.
         folded = _php_fold(call_name)
         return any(_php_fold(name) == folded for name in imported)
+
+    def resolve_php_class_path(
+        self, path: PhpClassPath, module_qn: str
+    ) -> tuple[str, str] | None:
+        """The class a fully qualified PHP class path names (issue #2466).
+
+        A class is a candidate only where PHP declares it in the namespace the
+        path spells. A file with one statement-form namespace records it per
+        module, which also matches a class written in another case; a class
+        in a braced block is registered under that block (`mod.Vendor.Box`)
+        and the file records nothing, so its declaration says where it lives.
+        A namespaced path binds exactly or not at all. A global path binds
+        the caller's own class exactly and another file's by name only.
+        """
+        *namespace, symbol = path
+        if namespace and (
+            class_qn := self._php_target_for_namespace_import(
+                cs.SEPARATOR_DOT.join(path), kind=NodeType.CLASS
+            )
+        ):
+            return self.function_registry[class_qn], class_qn
+        wanted = tuple(_php_fold(part) for part in namespace)
+        candidates = [
+            qn
+            for qn in self._php_class_candidates(symbol)
+            if self._php_declared_namespace(qn) == wanted
+        ]
+        if namespace:
+            # Several files declaring one namespaced class is a conditional
+            # declaration this site cannot choose between.
+            if len(candidates) != 1:
+                return None
+            return self.function_registry[candidates[0]], candidates[0]
+        if own := next(
+            (qn for qn in candidates if self._parent_qn(qn) == module_qn), None
+        ):
+            return self.function_registry[own], own
+        if not candidates:
+            return None
+        best = self._best_trie_candidate(candidates, module_qn)
+        self.last_resolution = cs.EdgeResolution.HEURISTIC
+        return self.function_registry[best], best
+
+    def _php_class_candidates(self, symbol: str) -> list[str]:
+        # Every class whose name PHP would match to `symbol`, which compares
+        # class names ASCII case-insensitively: as written, declared in lower
+        # case, or declared with capitals (`new box()` builds `Box`). Each is
+        # named as declared, which is what the edge must target.
+        folded = _php_fold(symbol)
+        found = dict.fromkeys(
+            [
+                *self.function_registry.find_ending_with(symbol),
+                *self.function_registry.find_ending_with(folded),
+                *self._php_cased_definitions().classes.get(folded, ()),
+            ]
+        )
+        return [qn for qn in found if self.function_registry[qn] == NodeType.CLASS]
+
+    def _php_declared_namespace(self, class_qn: str) -> PhpClassPath | None:
+        # The ASCII-folded namespace PHP declares `class_qn` in; None when its
+        # file is not PHP or its declaration cannot be read this run, which
+        # never passes for the global namespace.
+        if self._module_language(class_qn) != cs.SupportedLanguage.PHP:
+            return None
+        module_qn = self._php_module_of(class_qn)
+        if module_qn is None:
+            return None
+        declared = self._php_class_namespaces.get(module_qn)
+        if declared is None:
+            root = self._cached_module_root(module_qn)
+            declared = (
+                {
+                    qn: tuple(_php_fold(part) for part in namespace)
+                    for qn, namespace in php_class_names.declared_class_namespaces(
+                        root, module_qn
+                    ).items()
+                }
+                if root is not None
+                else {}
+            )
+            self._php_class_namespaces[module_qn] = declared
+        return declared.get(class_qn)
+
+    def _php_module_of(self, qualified_name: str) -> str | None:
+        modules = self.type_inference.module_qn_to_file_path
+        probe = qualified_name
+        while cs.SEPARATOR_DOT in probe:
+            probe = self._parent_qn(probe)
+            if probe in modules:
+                return probe
+        return None
+
+    def resolve_php_method_on_class_path(
+        self, path: PhpClassPath, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """`method_name` on the class `path` names, declared or inherited."""
+        if (owner := self.resolve_php_class_path(path, module_qn)) is None:
+            return None
+        return self._php_method(owner[1], method_name)
+
+    def php_constructor(self, class_qn: str) -> tuple[str, str] | None:
+        """The `__construct` a `new` of `class_qn` runs: the class's own, else
+        the nearest one it inherits, which PHP runs in its place."""
+        return self._php_method(class_qn, cs.PHP_METHOD_CONSTRUCT)
+
+    def _php_method(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
+        # PHP method names are ASCII case-insensitive, so a child's
+        # `__CONSTRUCT` overrides its parent's `__construct`: each class is
+        # searched in any casing before its ancestors are, and the edge names
+        # the method as declared.
+        wanted = _php_fold(method_name)
+        queue = deque([class_qn])
+        seen = {class_qn}
+        while queue:
+            owner = self._follow_reexports(queue.popleft())
+            if (
+                method_qn := self._php_declared_method(owner, method_name, wanted)
+            ) is not None:
+                return self.function_registry[method_qn], method_qn
+            for parent in self.class_inheritance.get(owner, []):
+                if parent not in seen:
+                    seen.add(parent)
+                    queue.append(parent)
+        return None
+
+    def _php_declared_method(
+        self, owner_qn: str, method_name: str, folded: str
+    ) -> str | None:
+        for spelling in (method_name, folded):
+            method_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{spelling}"
+            if self.function_registry.get(method_qn) == NodeType.METHOD:
+                return method_qn
+        return self._php_cased_definitions().methods.get((owner_qn, folded))
+
+    def _php_cased_definitions(self) -> _PhpCasedIndex:
+        # PHP classes and methods declared with an upper-case letter, by
+        # folded name. A lookup by the written or the folded spelling misses
+        # them (`box` for `Box`, `__construct` for `__CONSTRUCT`), and the
+        # registry's prefix walk cannot list a method like `__CONSTRUCT`,
+        # since the trie skips every `__`-prefixed key as one of its markers.
+        if self._php_cased_index is None:
+            index = _PhpCasedIndex({}, {})
+            for qn, kind in self.function_registry.items():
+                if kind not in (NodeType.CLASS, NodeType.METHOD):
+                    continue
+                owner_qn, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+                if (folded := _php_fold(leaf)) == leaf or (
+                    self._module_language(owner_qn) != cs.SupportedLanguage.PHP
+                ):
+                    continue
+                if kind == NodeType.METHOD:
+                    index.methods.setdefault((owner_qn, folded), qn)
+                else:
+                    index.classes.setdefault(folded, []).append(qn)
+            self._php_cased_index = index
+        return self._php_cased_index
 
     def _php_import_key(self, call_name: str, import_map: dict[str, str]) -> str | None:
         """The import-map key matching `call_name` under PHP case folding.
@@ -4575,17 +4799,41 @@ class CallResolver:
         # Protocol/implementer names don't follow the XxxProtocol convention.
         if protocol_qn in self._struct_impl_cache:
             return self._struct_impl_cache[protocol_qn]
-        sep = cs.SEPARATOR_DOT
-        protocol_methods = {
-            qn.rsplit(sep, 1)[-1]
-            for qn, node_type in self.function_registry.find_with_prefix(protocol_qn)
-            if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == protocol_qn
-        }
+        protocol_methods = self._protocol_method_names(protocol_qn)
         result: set[str] = set()
         if protocol_methods:
             result = self._classes_defining_all(protocol_methods)
         self._struct_impl_cache[protocol_qn] = result
         return result
+
+    def _protocol_method_names(self, protocol_qn: str) -> set[str]:
+        """The names of the methods a Protocol and its Protocol bases declare.
+
+        An inherited method is required as much as an own one, and the
+        `@overload` stubs of one method are one name, though the registry
+        keeps each under its own `@<line>` marker.
+        """
+        sep = cs.SEPARATOR_DOT
+        protocols = self._protocol_classes()
+        names: set[str] = set()
+        pending = [protocol_qn]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            names.update(
+                qn_markers.strip_dup_marker(qn.rsplit(sep, 1)[-1])
+                for qn, node_type in self.function_registry.find_with_prefix(current)
+                if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == current
+            )
+            pending.extend(
+                base
+                for base in self.class_inheritance.get(current, ())
+                if base in protocols
+            )
+        return names
 
     def _classes_defining_all(self, protocol_methods: set[str]) -> set[str]:
         result: set[str] = set()
@@ -5386,10 +5634,17 @@ class CallResolver:
             )
         return ret
 
-    def _is_method_chain(self, call_name: str) -> bool:
+    def _is_method_chain(
+        self, call_name: str, language: cs.SupportedLanguage | None = None
+    ) -> bool:
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
             return False
         parts = call_name.split(cs.SEPARATOR_DOT)
+        # Rust: split between hops only. The `.` in a float argument cut
+        # `Circle::new(2.0).area` into `Circle::new(2` and `0)`, so no hop held
+        # both parens and `area` fell to a by-name guess (issue #2698).
+        if language == cs.SupportedLanguage.RUST:
+            parts = _split_receiver_chain(call_name) or parts
         method_calls = sum(
             cs.CHAR_PAREN_OPEN in part and cs.CHAR_PAREN_CLOSE in part for part in parts
         )
