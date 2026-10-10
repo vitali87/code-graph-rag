@@ -160,22 +160,6 @@ class FunctionRegistryTrie:
         # whichever files this run happened to re-parse.
         bucket[1:] = sorted(bucket[1:], key=_variant_position)
 
-    def index_declared_name(self, qualified_name: QualifiedName, name: str) -> None:
-        """List a definition read back from the graph under its declared name.
-
-        Parsing indexes every definition by the name it was written with as
-        well as by its last qn segment. The two differ for a `@line` variant
-        (`Limb@6` is written `Limb`) and a signatured method (`m(String)` is
-        written `m`), so an incremental run that only inserted the qn left a
-        bare-name lookup short of a clean index's candidates: a unique match
-        where the clean index saw two, and a result that depended on which
-        files were re-parsed (issue #2403).
-        """
-        if self._simple_name_lookup is None or not name:
-            return
-        self._simple_name_lookup[name].add(qualified_name)
-        self._invalidate_ending_with_cache(name)
-
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
         return self._duplicates.get(qualified_name, [qualified_name])
 
@@ -200,6 +184,31 @@ class FunctionRegistryTrie:
 
         current[cs.TRIE_TYPE_KEY] = func_type
         current[cs.TRIE_QN_KEY] = qualified_name
+
+    def index_name(self, qualified_name: QualifiedName, name: str) -> None:
+        """Make `qualified_name` findable by `name` too.
+
+        `insert` indexes a qn's last segment, which for a signature-suffixed
+        qn (`ILog.Info(string)`) or a duplicate's variant (`sep@7`) is not
+        the definition's name. Parsing indexes the name as well; a definition
+        read back from the graph comes through here (issues #3261, #2403). An
+        empty name indexes nothing.
+        """
+        if not name:
+            return
+        if self._simple_name_lookup is not None:
+            self._simple_name_lookup[name].add(qualified_name)
+        self._invalidate_ending_with_cache(name)
+
+    def invalidate_name(self, name: str) -> None:
+        """Drop a `find_ending_with` answer cached for `name`.
+
+        For a caller that removes qns from the simple-name index itself:
+        `__delitem__` invalidates only a qn's last segment, never the name
+        `index_name` or a parser added it under (`Info` for
+        `ILog.Info(string)`).
+        """
+        self._invalidate_ending_with_cache(name)
 
     def get(
         self, qualified_name: QualifiedName, default: NodeType | None = None

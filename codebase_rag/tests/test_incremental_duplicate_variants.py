@@ -291,20 +291,20 @@ def test_a_type_named_twice_stays_ambiguous_after_a_sync(temp_repo: Path) -> Non
     ]
 
 
-class TestIndexDeclaredName:
+class TestIndexName:
     def test_a_variant_is_found_by_the_name_it_was_written_with(self) -> None:
         registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
         registry["p.Limb"] = NodeType.TYPE
         registry["p.Limb@6"] = NodeType.TYPE
         # Warm the cache first: the index change must invalidate it.
         assert registry.find_ending_with("Limb") == ["p.Limb"]
-        registry.index_declared_name("p.Limb@6", "Limb")
+        registry.index_name("p.Limb@6", "Limb")
         assert registry.find_ending_with("Limb") == ["p.Limb", "p.Limb@6"]
 
     def test_a_signatured_method_is_found_by_its_bare_name(self) -> None:
         registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
         registry["p.C.m(String)"] = NodeType.METHOD
-        registry.index_declared_name("p.C.m(String)", "m")
+        registry.index_name("p.C.m(String)", "m")
         assert registry.find_ending_with("m") == ["p.C.m(String)"]
         assert registry.find_ending_with("m(String)") == ["p.C.m(String)"]
 
@@ -312,7 +312,7 @@ class TestIndexDeclaredName:
         lookup: defaultdict[str, set[str]] = defaultdict(set)
         registry = FunctionRegistryTrie(simple_name_lookup=lookup)
         registry["p.f"] = NodeType.FUNCTION
-        registry.index_declared_name("p.f", "")
+        registry.index_name("p.f", "")
         assert "" not in lookup
 
 
