@@ -210,6 +210,10 @@ POLYGLOT_SOURCES: dict[str, str] = {
         "CREATE FUNCTION usp_poly_run() RETURNS int\n"
         "AS $$ SELECT usp_poly_helper(1); $$ LANGUAGE sql;\n"
     ),
+    "metrics.jl": (
+        "function helper(x)\n    return x + 1\nend\n\n"
+        "function run()\n    return helper(1)\nend\n"
+    ),
     # the cross-language collision trio: same basename, three languages.
     "shapes.rs": _RS_SHAPES,
     "shapes.cpp": _CPP_SHAPES,

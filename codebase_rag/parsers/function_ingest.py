@@ -1410,9 +1410,13 @@ class FunctionIngestMixin:
             self._mark_js_ts_name_scope(
                 func_node, resolution.qualified_name, func_props
             )
-        is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
+        is_macro = func_node.type in (
+            cs.TS_RS_MACRO_DEFINITION,
+            cs.TS_JULIA_MACRO_DEFINITION,
+        )
         if is_macro:
-            # Rust macros live in a separate namespace from functions; Pass-3 gates
+            # Rust and Julia macros live in a separate namespace from
+            # functions (Julia's `@name` vs `name`); Pass-3 gates
             # macro-invocation vs fn-call binding on macro_qns, and the persisted
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).
