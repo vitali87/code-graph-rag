@@ -131,7 +131,7 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
-    default_project_name,
+    normalize_project_name,
     project_roots_from_rows,
     python_stub_has_implementation,
     should_keep_dir,
@@ -1271,9 +1271,7 @@ class GraphUpdater:
             if project_named is None
             else project_named
         )
-        self.project_name = (
-            project_name and project_name.strip()
-        ) or default_project_name(repo_path)
+        self.project_name = normalize_project_name(project_name, repo_path)
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
@@ -2148,6 +2146,16 @@ class GraphUpdater:
         # report, so a stale True describes a run that did real work as
         # already in sync (#1620).
         self.skipped_because_in_sync = False
+        # Read before the write below replaces it: the root the graph's
+        # project was last indexed from decides whether this repo's cache
+        # still describes it (#2411).
+        previous_root = (
+            self._stored_project_root()
+            if not force
+            and self._single_file is None
+            and (self.state_dir / cs.HASH_CACHE_FILENAME).is_file()
+            else None
+        )
         self._embeddings_interrupted = False
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
@@ -2168,7 +2176,7 @@ class GraphUpdater:
         self._exposes_cleanup_skipped = False
         self._prune_settled = False
         if not force and self._single_file is None:
-            self._drop_cache_if_graph_lost()
+            self._drop_cache_if_graph_lost(previous_root)
             self._reparse_all_if_parser_changed()
 
         # Discovery must precede the in-sync check: a build that appeared
@@ -5062,6 +5070,22 @@ class GraphUpdater:
             dirname, dir_prefix, self.exclude_paths, self.unignore_paths
         )
 
+    def _stored_project_root(self) -> str | None:
+        """The root the graph's project of this name was last indexed from.
+
+        A graph that cannot answer raises instead of reading as "no root":
+        the cache would then be trusted for another repository's code, and
+        the Project write that follows replaces the root that shows it
+        (review of PR 2499). A write-only sink holds no project to own.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return None
+        rows = self._graph_rows(
+            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: self.project_name}
+        )
+        root = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+        return root if isinstance(root, str) and root else None
+
     def _retire_legacy_dotted_project(self) -> None:
         """Remove the project this checkout was indexed under before #2412.
 
@@ -5178,7 +5202,7 @@ class GraphUpdater:
 
         return delete_project_embeddings(legacy, node_ids)
 
-    def _drop_cache_if_graph_lost(self) -> None:
+    def _drop_cache_if_graph_lost(self, previous_root: str | None = None) -> None:
         """Discard the hash cache when the graph no longer holds this project.
 
         The cache lives inside the repo, but the database is shared: cleaning
@@ -5186,9 +5210,25 @@ class GraphUpdater:
         fresh Memgraph instance voids the cache without touching it, and an
         incremental sync that trusts it would skip every file and leave the
         project silently empty.
+
+        The same holds when another repository was synced under this name
+        since: the project has modules, but they are that repository's, and
+        a cache trusted here would report the other code as in sync (#2411).
+        A project with no recorded root proves nothing either way.
         """
         cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            return
+        if (
+            previous_root is not None
+            and Path(previous_root).resolve() != self.repo_path.resolve()
+        ):
+            logger.warning(
+                ls.HASH_CACHE_OTHER_ROOT.format(
+                    project=self.project_name, root=previous_root
+                )
+            )
+            self._discard_hash_cache(cache_path)
             return
         fetch_all = getattr(self.ingestor, "fetch_all", None)
         if fetch_all is None:
@@ -5219,6 +5259,9 @@ class GraphUpdater:
             logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
         else:
             logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
+        self._discard_hash_cache(cache_path)
+
+    def _discard_hash_cache(self, cache_path: Path) -> None:
         # Discarding is best-effort by intent: `missing_ok=True` already says a
         # cache that is not there is fine, and a cache that cannot be REMOVED
         # is the same situation one step later. Every other filesystem writer

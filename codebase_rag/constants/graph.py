@@ -23,6 +23,7 @@ KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
+KEY_ROOT_PATHS = "root_paths"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
 # A JS/TS function that is an object literal's property value, reached only

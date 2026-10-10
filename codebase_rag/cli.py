@@ -8,12 +8,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import click
 import typer
@@ -82,6 +83,7 @@ from .types_defs import (
 )
 from .utils.path_utils import (
     derive_project_name,
+    normalize_project_name,
     project_name_error,
     project_roots_from_rows,
     resolve_repo_path,
@@ -287,6 +289,7 @@ def _pre_chat_sync(
     exclude: list[str] | None,
     capture: list[str] | None,
     no_embeddings: bool,
+    assume_yes: bool = False,
 ) -> tuple[Callable[[], None], str]:
     # The sync to run before the chat opens: every workspace repo when a
     # workspace is active, else just the target repo.
@@ -308,6 +311,7 @@ def _pre_chat_sync(
         exclude,
         capture=capture,
         skip_embeddings=no_embeddings or None,
+        assume_yes=assume_yes,
     )
     return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
         name=workspace_config.name, count=len(workspace_config.repos)
@@ -522,6 +526,7 @@ def _sync_workspace(
     exclude: list[str] | None,
     capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
+    assume_yes: bool = False,
 ) -> None:
     total = len(config.repos)
     if total == 0:
@@ -557,6 +562,7 @@ def _sync_workspace(
             interactive_setup=False,
             capture=capture,
             skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
         )
 
 
@@ -681,22 +687,150 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
+class _OwnerCheck(NamedTuple):
+    refusal: str | None
+    created: bool = False
+    # The roots the sync's marker write must still find on the Project, this
+    # repository's first; None when there is nothing to hold it to (no
+    # recorded root, or --yes taking the project over).
+    owned_roots: list[str] | None = None
+
+
+def _project_owner_refusal(
+    ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
+) -> _OwnerCheck:
+    """Why a sync must not replace what another repository indexed (#2411),
+    and what its claim holds.
+
+    A derived name carries a hash of its path, so only a chosen one can
+    collide; the sync would delete the other repository's modules as stale
+    and leave that repository's hash cache describing code no longer there.
+    Refused rather than asked: the chat's own sync runs behind a status bar.
+
+    The check claims the name for this repository in the same statement
+    that reads its owner. A separate read let two syncs of a name nobody
+    held both see no owner and both go ahead, and the later one replaced
+    the first one's graph (review of PR 2499).
+    """
+    if not repo.is_dir():
+        return _OwnerCheck(None)
+    root = str(repo.resolve())
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_CLAIM_PROJECT_ROOT,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_ROOT_PATH: root},
+        )
+    except Exception as exc:
+        logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
+        if assume_yes:
+            return _OwnerCheck(None)
+        return _OwnerCheck(
+            cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+                project_name=project_name, error=exc
+            )
+        )
+    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+    if not isinstance(owner, str) or not owner:
+        return _OwnerCheck(None)
+    if Path(owner).resolve() == repo.resolve():
+        # --yes would replace whoever holds it by then, so nothing to hold.
+        held = None if assume_yes else list(dict.fromkeys((root, owner)))
+        return _OwnerCheck(None, rows[0].get(cs.KEY_CREATED) is True, held)
+    if assume_yes:
+        logger.warning(
+            ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
+        )
+        return _OwnerCheck(None)
+    return _OwnerCheck(
+        cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(project_name=project_name, root=owner)
+    )
+
+
+def _exit_if_project_owned_elsewhere(
+    batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
+) -> _OwnerCheck:
+    """Stop before the sync when `_project_owner_refusal` refuses it (#2411).
+
+    A `--clean` rebuild is not checked: it wipes every project in the graph,
+    and `_confirm_destructive_clean` already asks before it does.
+    """
+    if clean:
+        return _OwnerCheck(None)
+    # On its own connection: exiting inside the sync's would report the
+    # refusal as a failed session.
+    with connect_memgraph(batch_size) as ingestor:
+        check = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
+    if check.refusal is not None:
+        _exit_with_error(check.refusal)
+    return check
+
+
+def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> None:
+    params: dict[str, PropertyValue] = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_ROOT_PATH: str(repo.resolve()),
+    }
+    # Best effort: the sync's own failure is what is being reported.
+    try:
+        with connect_memgraph(batch_size) as ingestor:
+            ingestor.execute_write(cq.CYPHER_RELEASE_PROJECT_CLAIM, params)
+    except Exception as exc:
+        logger.warning(
+            ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
+        )
+
+
+@contextmanager
+def _project_claim(
+    batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
+) -> Iterator[list[str] | None]:
+    """Hold this sync's claim on its project name while the sync runs (#2411).
+
+    Yields the roots `_mark_sync_incomplete` must still find on the Project.
+    A claim the sync created is given back when the sync fails before its
+    incomplete-run marker or any code is written; the release query checks
+    that, so a failure further in keeps it (review of PR 2499).
+    """
+    check = _exit_if_project_owned_elsewhere(
+        batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+    )
+    try:
+        yield check.owned_roots
+    except BaseException:
+        if check.created:
+            _release_project_claim(batch_size, project_name, repo)
+        raise
+
+
 def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
     return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
 
 
-def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
+def _mark_sync_incomplete(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    owned_roots: list[str] | None = None,
+) -> None:
     """Put the `:IncompleteRun` marker down before the sync writes (#2219).
 
     The same marker the MCP mutating paths write (#1679), so a later MCP
     process refuses to hydrate from a graph an interrupted CLI sync left
     partial. Failing to write it aborts the sync: nothing has changed yet,
     and proceeding would make exactly that partial graph look complete.
+
+    With `owned_roots`, the marker goes down only while the Project still
+    has one of them, checked in the same statement: the claim the ownership
+    check saw may have been released and taken since (review of PR 2499).
     """
     params = _sync_marker_params(project_name)
     params[cs.KEY_WRITING] = True
     try:
-        ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+        if owned_roots is None:
+            ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+            return
+        params[cs.KEY_ROOT_PATH] = owned_roots[0]
+        params[cs.KEY_ROOT_PATHS] = owned_roots
+        marked = ingestor.fetch_all(cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE, params)
     except Exception as exc:
         app_context.console.print(
             style(
@@ -705,6 +839,23 @@ def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None
             )
         )
         raise typer.Exit(1) from exc
+    if not marked:
+        _exit_with_error(_claim_lost_refusal(ingestor, project_name))
+
+
+def _claim_lost_refusal(ingestor: MemgraphIngestor, project_name: str) -> str:
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
+        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+            project_name=project_name, error=exc
+        )
+    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
+        project_name=project_name, root=owner
+    )
 
 
 def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
@@ -767,6 +918,9 @@ def _run_graph_sync(
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
 
+    # Once, as the updater would: the ownership check, the marker and the
+    # write below must all name the same project.
+    project_name = normalize_project_name(project_name, repo)
     if clean:
         _import_vector_store()
 
@@ -780,7 +934,12 @@ def _run_graph_sync(
         unignore_paths = cgrignore.unignore or None
 
     elapsed = time.monotonic()
-    with connect_memgraph(batch_size) as ingestor:
+    with (
+        _project_claim(
+            batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+        ) as owned_roots,
+        connect_memgraph(batch_size) as ingestor,
+    ):
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
@@ -792,7 +951,7 @@ def _run_graph_sync(
 
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
-        _mark_sync_incomplete(ingestor, project_name)
+        _mark_sync_incomplete(ingestor, project_name, owned_roots)
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()
@@ -867,6 +1026,13 @@ def _delete_hash_cache(repo_path: Path) -> None:
     (repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).unlink(missing_ok=True)
     (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
     (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
+
+
+def _start_project_name(project_name: str | None, repo: Path) -> str:
+    # Stripped as `normalize_project_name` strips it, so the ownership check
+    # asks about the name the sync writes (review of PR 2499). A blank name
+    # falls back to the derived one, which carries a hash of the path.
+    return (project_name and project_name.strip()) or derive_project_name(repo)
 
 
 def _storable_project_name(value: str | None) -> str | None:
@@ -1035,7 +1201,7 @@ def start(
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
-    resolved_project_name = project_name or derive_project_name(resolved_repo)
+    resolved_project_name = _start_project_name(project_name, resolved_repo)
 
     if output and not update_graph:
         _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
@@ -1091,11 +1257,13 @@ def start(
                 interactive_setup=interactive_setup,
                 capture=capture,
                 skip_embeddings=no_embeddings or None,
+                assume_yes=yes,
             ),
             effective_batch_size,
             exclude,
             capture,
             no_embeddings,
+            assume_yes=yes,
         )
 
     active_projects = _start_active_projects(

@@ -76,6 +76,17 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
+    "Error: project '{project_name}' already indexes {root}. Choose another "
+    "--project-name, or pass --yes to replace it with this repository."
+)
+# An owner that cannot be read is not an absent one: syncing anyway would
+# replace the root that shows whose project it is (review of PR 2499).
+CLI_ERR_PROJECT_OWNER_UNREADABLE = (
+    "Error: could not read which repository project '{project_name}' indexes "
+    "({error}); nothing was changed. Retry once the graph answers, or pass "
+    "--yes to sync this repository into it regardless."
+)
 CLI_ERR_WORKSPACE_PROJECT_NAME = (
     "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
     "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
