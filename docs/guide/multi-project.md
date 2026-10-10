@@ -151,4 +151,7 @@ cgr delete-project --name user-service__a1b2c3d4
 
 ![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)
 
-Deleting a project also removes its embeddings from the vector store.
+Deleting a project also removes its embeddings from the vector store and
+its notes (glosses written with the MCP `annotate` tool), the same as the
+MCP `delete_project` tool, so indexing the checkout again starts with no
+notes.

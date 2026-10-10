@@ -53,6 +53,7 @@ from .editor_links import (
 )
 from .graph_cli import cli as graph_cli
 from .parser_loader import load_parsers
+from .services.gloss_cleanup import prune_orphaned_glosses
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
@@ -2932,6 +2933,21 @@ def delete_project(
             )
             _cleanup_project_embeddings(ingestor, project_name)
             ingestor.delete_project(project_name)
+            # A Gloss is out of the delete's reach by design, which is what
+            # lets it survive an index's delete-then-rebuild, so the
+            # deliberate delete sweeps the project's notes, as MCP
+            # `delete_project` does. Without it the next index re-attached
+            # them by name (issue #3231). The sweep never raises: the delete
+            # is done, and a retry would stop at "project not found".
+            if not prune_orphaned_glosses(ingestor, project_name):
+                app_context.console.print(
+                    style(
+                        cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(
+                            project_name=project_name
+                        ),
+                        cs.Color.YELLOW,
+                    )
+                )
     except typer.Exit:
         raise
     except Exception as e:

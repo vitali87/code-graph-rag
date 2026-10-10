@@ -145,3 +145,60 @@ def test_delete_project_shows_success_message(
     assert result.exit_code == 0, result.output
     stripped = _strip_ansi(result.output)
     assert cs.CLI_MSG_PROJECT_DELETED.format(project_name="platform") in stripped
+
+
+# A project's glosses outlive the delete's traversal by design, so the
+# deliberate delete sweeps them, as MCP `delete_project` does (issue #3231).
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_sweeps_the_projects_glosses_after_the_delete(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    from codebase_rag.services.gloss_cleanup import CYPHER_DELETE_ORPHANED_GLOSSES
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.execute_write.assert_called_once_with(
+        CYPHER_DELETE_ORPHANED_GLOSSES,
+        {cs.KEY_PROJECT_NAME: "platform", cs.KEY_PROJECT_PREFIX: "platform."},
+    )
+    # Before the delete every note is still attached, so a sweep then would
+    # find nothing to remove.
+    names = [name for name, _args, _kwargs in ingestor.mock_calls]
+    assert names.index("delete_project") < names.index("execute_write")
+    warning = cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name="platform")
+    assert warning not in " ".join(_strip_ansi(result.output).split())
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_a_failed_gloss_sweep_warns_and_keeps_the_completed_delete(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # The delete cannot be undone, so a failed sweep is reported, not
+    # turned into a failed delete.
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.execute_write.side_effect = RuntimeError("connection reset")
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    output = " ".join(_strip_ansi(result.output).split())
+    assert cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name="platform") in output
+    assert "Project 'platform' deleted successfully." in output
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_a_missing_project_sweeps_nothing(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # Negative: no delete, no sweep.
+    result = runner.invoke(app, ["delete-project", "--name", "ghost"])
+
+    assert result.exit_code == 1
+    _get_ingestor(mock_memgraph_connect).execute_write.assert_not_called()
