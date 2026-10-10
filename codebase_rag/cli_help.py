@@ -122,8 +122,14 @@ CMD_GRAPH_RESOLVE = "Resolve a name, dotted suffix, or path:line to qualified na
 CMD_GRAPH_DEFINITION = "File, span, docstring and source of one definition."
 CMD_GRAPH_CALLERS = "Call sites that invoke a qualified name, one row per site."
 CMD_GRAPH_CALLEES = "Call sites inside a qualified name, one row per site."
-CMD_GRAPH_IMPLEMENTORS = "Types that inherit from or implement a type."
-CMD_GRAPH_OVERRIDES = "Methods overriding a method, and the method it overrides."
+CMD_GRAPH_IMPLEMENTORS = (
+    "Types that inherit from or implement a type. "
+    "Direct subtypes only, unless --depth is above 1."
+)
+CMD_GRAPH_OVERRIDES = (
+    "Methods overriding a method, and the method it overrides. "
+    "Direct overrides only, unless --depth is above 1."
+)
 CMD_GRAPH_IMPORTERS = (
     "Modules importing a module, with each import statement's location."
 )
