@@ -39,7 +39,7 @@ from .. import graph_query
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
-from ..types_defs import PropertyParams, ResultRow
+from ..types_defs import PropertyParams, ResultRow, ResultValue
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
@@ -185,6 +185,52 @@ def _name_token(
                 lines[number - 1][: match.start()].encode(cs.ENCODING_UTF8)
             )
     return None
+
+
+def _str_list(value: ResultValue | None) -> list[str]:
+    return (
+        [item for item in value if isinstance(item, str)]
+        if isinstance(value, list)
+        else []
+    )
+
+
+def _go_interface_methods(
+    source: bytes, name: str, start_line: int, end_line: int
+) -> set[str]:
+    """The method names `type <name> interface { ... }` declares in its span.
+
+    An embedded interface (`fmt.Stringer`) contributes nothing here: an
+    in-project one is checked on its own, and an outside one is not the
+    project's to keep consistent.
+    """
+    parsers, _queries = load_parsers()
+    parser = parsers.get(cs.SupportedLanguage.GO)
+    if parser is None:
+        return set()
+    stack: list[Node] = [parser.parse(source).root_node]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.named_children)
+        # In the interface's own span, the node naming it with a type is
+        # its `type_spec`.
+        type_node = node.child_by_field_name(cs.FIELD_TYPE)
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if (
+            type_node is None
+            or name_node is None
+            or name_node.text != name.encode(cs.ENCODING_UTF8)
+            or not start_line <= node.start_point[0] + 1 <= end_line
+        ):
+            continue
+        return {
+            method_name.text.decode(cs.ENCODING_UTF8, errors="replace")
+            # A method element names itself; an embedded type has no name.
+            for element in type_node.named_children
+            if (method_name := element.child_by_field_name(cs.FIELD_NAME)) is not None
+            and method_name.text is not None
+        }
+    return set()
 
 
 def _callee_span(
@@ -825,6 +871,7 @@ class Renamer:
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
         assert old_name is not None
+        self._refuse_go_interface_methods(qn, members, old_name)
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
         sites = [
             s
@@ -890,6 +937,95 @@ class Renamer:
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
+
+    def _refuse_go_interface_methods(
+        self, qn: str, members: list[str], old_name: str
+    ) -> None:
+        """Refuse a Go method that helps its type satisfy a project interface.
+
+        Go interfaces are satisfied implicitly and their methods are not
+        graph nodes, so the override hierarchy never reaches them: renaming
+        `Box.Size` alone leaves `Sizer.Size`, the other implementations and
+        every call through the interface behind, and `Box` stops
+        implementing `Sizer` (issue #3253). A type satisfies an interface
+        when go/types proved it (`IMPLEMENTS`) or when it defines every
+        method the interface declares, by name.
+        """
+        params = {cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}"}
+        interfaces: list[ResultRow] | None = None
+        sources: dict[str, bytes] = {}
+        owners: list[str] = []
+        broken: list[str] = []
+        for member in members:
+            if not self._is_go_definition(member):
+                continue
+            for receiver in self.fetch_all(
+                cq.CYPHER_RENAME_GO_RECEIVER, {**params, cs.KEY_QN: member}
+            ):
+                if interfaces is None:
+                    interfaces = self.fetch_all(cq.CYPHER_RENAME_GO_INTERFACES, params)
+                for owner, iface in self._go_interfaces_needing(
+                    receiver, interfaces, sources, old_name
+                ):
+                    owners.append(owner)
+                    broken.append(iface)
+        if broken:
+            raise RenameRefused(
+                cs.RENAME_GO_INTERFACE_METHOD.format(
+                    qn=qn,
+                    owner=", ".join(sorted(set(owners))),
+                    interfaces=", ".join(sorted(set(broken))),
+                    name=old_name,
+                ),
+                [],
+                [],
+            )
+
+    def _is_go_definition(self, qn: str) -> bool:
+        path = graph_query.definition(self.fetch_all, self.project, qn, None)["path"]
+        return bool(path) and (
+            get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
+        )
+
+    def _go_interfaces_needing(
+        self,
+        receiver: ResultRow,
+        interfaces: list[ResultRow],
+        sources: dict[str, bytes],
+        name: str,
+    ) -> list[tuple[str, str]]:
+        # (receiver, "Iface (path:line)") for each interface declaring `name`
+        # that the receiver satisfies: proven by go/types, or by method names.
+        methods = set(_str_list(receiver.get(cs.KEY_METHODS)))
+        proven = set(_str_list(receiver.get(cs.KEY_INTERFACES)))
+        owner = str(receiver.get(cs.KEY_QUALIFIED_NAME) or "")
+        needing: list[tuple[str, str]] = []
+        for row in interfaces:
+            declared = self._go_declared_methods(row, sources)
+            iface = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+            if name in declared and (iface in proven or declared <= methods):
+                site = f"{row.get(cs.KEY_PATH)}:{row.get(cs.KEY_START_LINE)}"
+                needing.append((owner, f"{iface} ({site})"))
+        return needing
+
+    def _go_declared_methods(
+        self, row: ResultRow, sources: dict[str, bytes]
+    ) -> set[str]:
+        path = row.get(cs.KEY_PATH)
+        start, end = row.get(cs.KEY_START_LINE), row.get(cs.KEY_END_LINE)
+        if (
+            not isinstance(path, str)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+        ):
+            return set()
+        if path not in sources:
+            try:
+                sources[path] = (self.repo_root / path).read_bytes()
+            except OSError:
+                sources[path] = b""
+        name = str(row.get(cs.KEY_QUALIFIED_NAME) or "").rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return _go_interface_methods(sources[path], name, start, end)
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining

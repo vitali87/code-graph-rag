@@ -771,6 +771,14 @@ RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
 )
+# Go satisfies interfaces implicitly and keeps their methods off the graph, so
+# a rename cannot reach the rest of the method set (issue #3253).
+RENAME_GO_INTERFACE_METHOD = (
+    "Cannot rename {qn}: {owner} implements {interfaces}, which declare(s) "
+    "{name}; renaming this method alone stops {owner} implementing it and the "
+    "package no longer builds. Rename the whole method set together (the "
+    "interface's method and every implementation), e.g. with `gopls rename`"
+)
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 RENAME_CONTRACT_FAILED = "Rename rolled back, postcondition failed: {reasons}"

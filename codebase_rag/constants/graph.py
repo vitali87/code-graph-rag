@@ -33,6 +33,9 @@ KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
+# A Go receiver type's method names and proven interfaces (issue #3253).
+KEY_METHODS = "methods"
+KEY_INTERFACES = "interfaces"
 # Column of the definition's own start token, and of its NAME token where the
 # two differ (Go keys semantic call targets at the name identifier while span
 # keys sit at the `func` keyword). Persisted so incremental runs can rehydrate

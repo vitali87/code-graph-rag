@@ -72,6 +72,16 @@ pointing at the old name. `--allow-heuristic` does NOT bypass this, because
 the problem is a missing location rather than an uncertain one. A class that
 is only instantiated or called renames normally.
 
+A Go method that helps its type satisfy an in-project interface refuses
+unconditionally too. Go interfaces are satisfied implicitly, and their methods
+are not graph nodes, so the override hierarchy never reaches them: renaming
+`Box.Size` alone would leave `Sizer.Size`, the other implementations and the
+calls through `Sizer` behind, and `Box` would no longer implement `Sizer`. A
+type counts as satisfying an interface when go/types proved it (`IMPLEMENTS`)
+or when it defines every method the interface declares, by name. The refusal
+names each interface and where it is declared; rename the whole method set
+together (for example with `gopls rename`) (issue #3253).
+
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's
 name token cannot be found at the recorded position (a stale graph).
