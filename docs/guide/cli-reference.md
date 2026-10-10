@@ -81,7 +81,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--no-confirm` | Skip edit confirmation prompts. |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
-| `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the names already stored. |
+| `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never share one; cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
 | `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants, constants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
