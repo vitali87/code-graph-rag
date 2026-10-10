@@ -593,6 +593,7 @@ def test_a_re_export_cycle_binds_nothing_and_terminates() -> None:
         sites=(),
         imports={},
         module_paths={},
+        eager_imports={},
         bindings=(binding("a", "b"), binding("b", "a")),
     )
 

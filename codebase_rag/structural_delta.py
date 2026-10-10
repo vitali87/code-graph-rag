@@ -108,6 +108,10 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    # The imports that run when the importing module is imported. Only these
+    # can make an import cycle: a function-local or TYPE_CHECKING import is
+    # how a cycle is avoided (issue #2685).
+    eager_imports: dict[str, frozenset[str]]
     bindings: tuple[ImportBinding, ...] = ()
 
 
@@ -400,7 +404,26 @@ def snapshot(
             definition = _definition(row)
             if definition.qualified_name:
                 callees[definition.qualified_name] = definition
+    imports, eager_imports, module_paths = _module_imports(fetch_all, params)
+    return Snapshot(
+        paths=frozenset(path_list),
+        definitions=definitions,
+        callees=callees,
+        sites=sites,
+        imports=imports,
+        module_paths=module_paths,
+        eager_imports=eager_imports,
+        bindings=_named_import_bindings(fetch_all, params),
+    )
+
+
+def _module_imports(
+    fetch_all: QueryFn, params: PropertyDict
+) -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]], dict[str, str]]:
+    """The module import graph, its import-time subgraph, and each importing
+    module's path. Every module either graph names is a node of it."""
     imports: dict[str, set[str]] = {}
+    eager: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
         source = _text(row.get(cs.KEY_FROM_QN))
@@ -409,15 +432,14 @@ def snapshot(
             continue
         imports.setdefault(source, set()).add(target)
         imports.setdefault(target, set())
+        if row.get(cs.KEY_IMPORT_SCOPE) is None:
+            eager.setdefault(source, set()).add(target)
+            eager.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
-    return Snapshot(
-        paths=frozenset(path_list),
-        definitions=definitions,
-        callees=callees,
-        sites=sites,
-        imports={qn: frozenset(targets) for qn, targets in imports.items()},
-        module_paths=module_paths,
-        bindings=_named_import_bindings(fetch_all, params),
+    return (
+        {qn: frozenset(targets) for qn, targets in imports.items()},
+        {qn: frozenset(targets) for qn, targets in eager.items()},
+        module_paths,
     )
 
 
@@ -1802,7 +1824,7 @@ def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
-    fresh = _cycles(after.imports) - _cycles(before.imports)
+    fresh = _cycles(after.eager_imports) - _cycles(before.eager_imports)
     return sorted(sorted(component) for component in fresh if component & touched)
 
 
