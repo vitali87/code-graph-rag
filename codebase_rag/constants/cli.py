@@ -67,6 +67,9 @@ CLI_ERR_SYNC_HOME_OR_ROOT = (
     "state would be written there. Pass --repo-path <repository>, or --yes "
     "to index it anyway."
 )
+CLI_ERR_INVALID_SETTING = "Error: {problem}"
+# click's own exit status for a bad parameter value.
+CLI_EXIT_USAGE_ERROR = 2
 # `-o` checks, made before a graph is read or indexed (issue #2410).
 CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
 CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
@@ -100,6 +103,17 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
+    "Error: project '{project_name}' already indexes {root}. Choose another "
+    "--project-name, or pass --yes to replace it with this repository."
+)
+# An owner that cannot be read is not an absent one: syncing anyway would
+# replace the root that shows whose project it is (review of PR 2499).
+CLI_ERR_PROJECT_OWNER_UNREADABLE = (
+    "Error: could not read which repository project '{project_name}' indexes "
+    "({error}); nothing was changed. Retry once the graph answers, or pass "
+    "--yes to sync this repository into it regardless."
+)
 CLI_ERR_WORKSPACE_PROJECT_NAME = (
     "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
     "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
@@ -783,6 +797,11 @@ RENAME_AMBIGUOUS = (
 )
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
+RENAME_RESOLUTION_CLASS_VIA_PARAM = (
+    "constructed through parameter {param}; where the class is passed is "
+    "not recorded against it"
+)
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"

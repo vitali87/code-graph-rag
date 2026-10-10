@@ -58,12 +58,14 @@ from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    callable_parameter_invocations,
     cpp_parameter_names,
     enclosing_class_node,
     function_span_key,
@@ -102,16 +104,31 @@ class _FactoryCall(NamedTuple):
     keyword: tuple[tuple[str, str], ...]
 
 
+class _PassedCallback(NamedTuple):
+    # A callback one call site hands to a callable parameter, resolved there.
+    # Its edge is written in finalize at the receiver's own invocations of the
+    # parameter, whose file the walk may not have reached yet (issue #2459).
+    source_spec: tuple[str, str, str]
+    param_name: str
+    rel_type: str
+    target_spec: tuple[str, str, str]
+    resolution: str
+
+
 class _FileCallableFlow:
     # One file's callable-flow records. Kept per file because the processor
     # outlives a pass: a re-walk must replace only that file's records, while
     # a file the pass leaves alone still seeds slots finalize resolves.
-    __slots__ = ("args", "returned_callables", "factory_calls")
+    __slots__ = ("args", "returned_callables", "factory_calls", "invocations", "passed")
 
     def __init__(self) -> None:
         self.args: list[_CallableFlowArg] = []
         self.returned_callables: dict[str, set[str]] = {}
         self.factory_calls: list[_FactoryCall] = []
+        # (function, parameter) -> the edge site of each place this file's
+        # function invokes that parameter: where a callback it receives runs.
+        self.invocations: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
+        self.passed: list[_PassedCallback] = []
 
 
 class _RefEmitScope(NamedTuple):
@@ -140,6 +157,14 @@ class _GoPackageFunctionLookup(NamedTuple):
     # order. No packages means a call owned here that types nothing.
     name: str
     packages: tuple[tuple[str, bool], ...]
+
+
+class _PhpClassCallee(NamedTuple):
+    # What a PHP call whose class the site shows binds to. `decided` False
+    # leaves the call to the name-based resolver; True means `callee` is the
+    # answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
 
 
 @dataclass(slots=True)
@@ -174,6 +199,7 @@ class _CallScanContext:
     alias_map: dict[str, str] | None = None
     factory_aliases: dict[str, str] | None = None
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
+    php_scope_classes: php_class_names.ScopeCache | None = None
     cpp_indirection: dict[str, int] | None = None
 
 
@@ -3682,25 +3708,54 @@ class CallProcessor:
         return self._resolver.cpp_operand_class_qn(name, var_types, ctx.module_qn)
 
     def _macro_call_name(self, ident: Node) -> str | None:
-        # Reconstruct a `<recv>.method` chain from a macro token stream by walking
-        # the method identifier's preceding siblings over `("." <ident|self>)*`.
-        # `server . run` -> "server.run"; `self . shutdown . recv` ->
-        # "self.shutdown.recv". A method with no preceding `.` stays bare.
+        # Rebuild the callee a macro token stream spells, walking the method
+        # identifier's preceding siblings, into the name the same call gets
+        # outside a macro: `server . run` -> "server.run", `Config :: load` ->
+        # "Config::load", `Circle :: new ( 2.0 ) . area` ->
+        # "Circle::new(2.0).area". Stopping at `::` dropped `Type::assoc()` and
+        # anything chained on it, since a bare method name never binds (issue
+        # #2698). A method with no preceding `.` or `::` stays bare.
         if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
             return None
         parts = [method]
         cur = ident.prev_sibling
-        while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
-            if (recv := cur.prev_sibling) is None or (
-                recv.type not in cs.RS_MACRO_RECEIVER_TYPES
-            ):
+        while cur is not None and cur.type in cs.RS_MACRO_CHAIN_SEPARATORS:
+            if (receiver := self._macro_receiver(cur)) is None:
                 break
-            if not recv.text:
-                break
-            parts.append(recv.text.decode(cs.ENCODING_UTF8))
-            cur = recv.prev_sibling
+            text, head = receiver
+            parts += [cur.type, text]
+            cur = head.prev_sibling
         parts.reverse()
-        return cs.SEPARATOR_DOT.join(parts)
+        return "".join(parts)
+
+    @staticmethod
+    def _macro_receiver(sep: Node) -> tuple[str, Node] | None:
+        # The receiver token(s) just before a `.` / `::` in a macro token
+        # stream, as (text, first token): a path segment (`Config`, `Self`,
+        # `crate`, `super`) before `::`; before `.`, an identifier or `self`,
+        # or a call result `new ( 2.0 )` (callee plus its argument group).
+        if (recv := sep.prev_sibling) is None or not recv.text:
+            return None
+        if sep.type == cs.TS_RS_TOKEN_SCOPE:
+            if recv.type not in cs.RS_MACRO_PATH_SEGMENT_TYPES:
+                return None
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if recv.type in cs.RS_MACRO_RECEIVER_TYPES:
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if (
+            recv.type == cs.TS_RS_TOKEN_TREE
+            and recv.child_count > 0
+            and recv.children[0].type == cs.CHAR_PAREN_OPEN
+            and (callee := recv.prev_sibling) is not None
+            and callee.type == cs.TS_IDENTIFIER
+            and callee.text
+        ):
+            return (
+                callee.text.decode(cs.ENCODING_UTF8)
+                + recv.text.decode(cs.ENCODING_UTF8),
+                callee,
+            )
+        return None
 
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
@@ -3986,6 +4041,16 @@ class CallProcessor:
                     return decode_node_text(type_node.text).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
+            case cs.TS_PHP_OBJECT_CREATION_EXPRESSION if (
+                language == cs.SupportedLanguage.PHP
+            ):
+                # PHP `new Box(...)` writes the class as an unfielded child, so
+                # no case above named it and construction emitted nothing
+                # (issue #2466). The class's own simple name, after `use`
+                # aliases, is what a file added later would define; the
+                # resolver reads the full namespace path off the node.
+                if path := php_class_names.new_expression_class_path(call_node):
+                    return path[-1]
         return None
 
     def _operator_call_name(
@@ -4401,6 +4466,7 @@ class CallProcessor:
             # flow cb into the returned closure regardless of source language.
             self._flow_param_names[caller_qn] = ordered_params
             caller_params = frozenset(ordered_params)
+            self._record_param_invocations(caller_node, caller_qn, language)
             self._collect_returned_callables(
                 caller_node,
                 caller_qn,
@@ -5063,6 +5129,13 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
+        if (
+            ctx.language == cs.SupportedLanguage.PHP
+            and (
+                php := self._resolve_php_class_callee(ctx, call_node, call_name)
+            ).decided
+        ):
+            return php.callee
         callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
@@ -5530,6 +5603,45 @@ class CallProcessor:
                     return current.parent is None
             current = current.parent
         return None
+
+    def _resolve_php_class_callee(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> _PhpClassCallee:
+        # `new C(...)` is always decided here; a member call only when its
+        # receiver's class is known, so a miss keeps the name-only fallback.
+        if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
+            return _PhpClassCallee(True, self._resolve_php_new_callee(ctx, call_node))
+        if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
+            typed := self._resolve_php_typed_member(ctx, call_node, call_name)
+        ):
+            return _PhpClassCallee(True, typed)
+        return _PhpClassCallee(False, None)
+
+    def _resolve_php_new_callee(
+        self, ctx: _CallScanContext, call_node: Node
+    ) -> tuple[str, str] | None:
+        # `new C(...)` names a class through PHP's namespace and `use` rules
+        # alone; the generic resolver would judge a `use`d namespace path
+        # external, or rebind the bare name to a function (issue #2466).
+        path = php_class_names.new_expression_class_path(call_node)
+        if not path:
+            return None
+        return self._resolver.resolve_php_class_path(path, ctx.module_qn)
+
+    def _resolve_php_typed_member(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> tuple[str, str] | None:
+        # A receiver the site shows was built by `new C` has class C, so the
+        # method binds on C (or what C inherits) rather than by bare name. A
+        # miss here leaves the name-only fallback exactly as it was.
+        if ctx.php_scope_classes is None:
+            ctx.php_scope_classes = {}
+        path = php_class_names.receiver_class_path(call_node, ctx.php_scope_classes)
+        if not path:
+            return None
+        return self._resolver.resolve_php_method_on_class_path(
+            path, call_name, ctx.module_qn
+        )
 
     def _resolve_java_callee(
         self, ctx: _CallScanContext, call_node: Node
@@ -6329,7 +6441,6 @@ class CallProcessor:
                 ctx.local_var_types,
                 ctx.class_context,
                 ctx.resolve_func,
-                ctx.ensure_rel,
                 ctx.caller_qn,
             )
 
@@ -6450,6 +6561,10 @@ class CallProcessor:
             # label is a hash-randomized StrEnum, so sort for determinism.
             self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
+        if ctx.language == cs.SupportedLanguage.PHP:
+            # A PHP `new X(...)` runs `__construct`, X's own or, when X
+            # declares none, the one it inherits (issue #2466).
+            return self._resolver.php_constructor(callee_qn)
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
         # edge there so an explicitly-declared constructor is reachable.
@@ -9067,7 +9182,6 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         resolve_func,
-        ensure_rel,
         caller_qn: str | None = None,
     ) -> None:
         if not (params := self._resolver.function_registry.callable_params(callee_qn)):
@@ -9086,9 +9200,45 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                     resolve_func,
-                    ensure_rel,
+                    self._passed_callback_recorder(param_name),
                     caller_qn,
                 )
+
+    def _passed_callback_recorder(self, param_name: str) -> Callable[..., None]:
+        # Stands in for ensure_rel: the edge's source is the callee, which runs
+        # the callback where it invokes `param_name`, so the edge waits for
+        # finalize and that site instead of taking the argument's, a position
+        # in this file rather than the callee's (issue #2459). The verdict is
+        # the one the callback resolution set for this edge (#1543 review).
+        passed = self._flow_bucket.passed
+
+        def record(
+            source_spec: tuple[str, str, str],
+            rel_type: str,
+            target_spec: tuple[str, str, str],
+        ) -> None:
+            passed.append(
+                _PassedCallback(
+                    source_spec, param_name, rel_type, target_spec, self._resolution
+                )
+            )
+
+        return record
+
+    def _record_param_invocations(
+        self, caller_node: Node, caller_qn: str, language: cs.SupportedLanguage
+    ) -> None:
+        # Only a function the registry marked as invoking a parameter is ever
+        # the source of a callable-parameter edge, so no other body is scanned
+        # a second time.
+        if not self._resolver.function_registry.callable_params(caller_qn):
+            return
+        invocations = callable_parameter_invocations(caller_node, language)
+        for param_name, nodes in invocations.items():
+            self._flow_bucket.invocations[(caller_qn, param_name)] = tuple(
+                {**node_site_properties(node), cs.KEY_VIA_PARAM: param_name}
+                for node in nodes
+            )
 
     @_preserves_verdict
     def _collect_callable_flow(
@@ -9154,16 +9304,68 @@ class CallProcessor:
         # parameter-taint the same way (issue #1142).
         self._flow_processor.finalize()
 
+    @_site_scoped
     def finalize_callable_param_flow(self) -> None:
         # Resolve the recorded call-site argument bindings to a fixpoint and emit a
         # CALLS edge from every function that invokes a callable parameter to each
         # concrete function that can reach it (directly or via pass-through params).
+        # No walk is running, so an edge with no recorded site carries none rather
+        # than the last node a walk left behind (Go's 1:0-7, issue #2459).
+        self._site_node = None
         returned_callables = self._merged_returned_callables()
         seeds, edges = self._callable_flow_slots()
         self._emit_returned_closure_calls(returned_callables)
         self._emit_factory_closure_calls(returned_callables, seeds)
         bindings = self._propagate_flow_bindings(seeds, edges)
-        self._emit_callable_param_calls(bindings)
+        invocations = self._merged_param_invocations()
+        self._emit_callable_param_calls(bindings, invocations)
+        self._emit_passed_callbacks(invocations)
+
+    def _merged_param_invocations(
+        self,
+    ) -> dict[tuple[str, str], tuple[PropertyDict, ...]]:
+        merged: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
+        for flow in self._callable_flow.values():
+            merged.update(flow.invocations)
+        return merged
+
+    @staticmethod
+    def _param_invocation_sites(
+        invocations: dict[tuple[str, str], tuple[PropertyDict, ...]],
+        func_qn: str,
+        param_name: str,
+    ) -> tuple[PropertyDict, ...]:
+        # A receiver whose walk recorded no invocation still invokes the
+        # parameter (the registry says so): keep the edge, without a site and
+        # so without `via_param`, since a site-less row merges on its endpoints
+        # alone and would stamp it on a direct call joining the same pair.
+        return invocations.get((func_qn, param_name)) or ({},)
+
+    def _emit_passed_callbacks(
+        self, invocations: dict[tuple[str, str], tuple[PropertyDict, ...]]
+    ) -> None:
+        # After the propagated bindings, so where both reach one site the
+        # direct argument's own verdict is the one that stays (#1543 review).
+        registry = self._resolver.function_registry
+        file_flows = self._callable_flow.values()
+        for passed in (p for flow in file_flows for p in flow.passed):
+            source_qn = passed.source_spec[2]
+            # A record outlives the walk that made it, and either end may have
+            # been deleted by a later pass that did not re-walk this file.
+            invoked = registry.callable_params(source_qn)
+            if (
+                not invoked
+                or passed.param_name not in invoked
+                or passed.target_spec[2] not in registry
+            ):
+                continue
+            self._resolution = passed.resolution
+            for site in self._param_invocation_sites(
+                invocations, source_qn, passed.param_name
+            ):
+                self._emit_rel(
+                    passed.source_spec, passed.rel_type, passed.target_spec, site
+                )
 
     def _merged_returned_callables(self) -> dict[str, set[str]]:
         returned_callables: dict[str, set[str]] = defaultdict(set)
@@ -9292,7 +9494,9 @@ class CallProcessor:
         return bindings
 
     def _emit_callable_param_calls(
-        self, bindings: dict[tuple[str, str], set[str]]
+        self,
+        bindings: dict[tuple[str, str], set[str]],
+        invocations: dict[tuple[str, str], tuple[PropertyDict, ...]],
     ) -> None:
         registry = self._resolver.function_registry
         for func_qn, invoked in (
@@ -9303,13 +9507,16 @@ class CallProcessor:
             source_spec = (func_type, cs.KEY_QUALIFIED_NAME, func_qn)
             for param_name in invoked:
                 self._emit_bound_target_calls(
-                    source_spec, bindings.get((func_qn, param_name), ())
+                    source_spec,
+                    bindings.get((func_qn, param_name), ()),
+                    self._param_invocation_sites(invocations, func_qn, param_name),
                 )
 
     def _emit_bound_target_calls(
         self,
         source_spec: tuple[str, str, str],
         target_qns: set[str] | tuple[()],
+        sites: tuple[PropertyDict, ...],
     ) -> None:
         registry = self._resolver.function_registry
         for target_qn in target_qns:
@@ -9317,11 +9524,13 @@ class CallProcessor:
             if target_type is None:
                 continue
             for variant in registry.variants(target_qn):
-                self._emit_rel(
-                    source_spec,
-                    cs.RelationshipType.CALLS,
-                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+                for site in sites:
+                    self._emit_rel(
+                        source_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                        site,
+                    )
 
     def _ingest_callable_field_calls(
         self,

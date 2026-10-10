@@ -35,7 +35,7 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
-from ..enum_variants import emit_declared_variants
+from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
@@ -559,14 +559,12 @@ class ClassIngestMixin:
 
         if combined_captures is not None:
             class_nodes = list(combined_captures.get(cs.CAPTURE_CLASS, []))
-            module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
         else:
             if not (query := lang_queries[cs.QUERY_CLASSES]):
                 return
             cursor = QueryCursor(query)
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
-            module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
         if language == cs.SupportedLanguage.CPP:
             class_nodes.extend(self._find_cpp_exported_classes(root_node))
@@ -591,7 +589,32 @@ class ClassIngestMixin:
                 func_node_starts=func_node_starts,
             )
 
-        self._process_inline_modules(module_nodes, module_qn, lang_config)
+    def _ingest_inline_modules(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None = None,
+    ) -> None:
+        # Runs before the file's function and class passes: an item inside a
+        # bodied `mod` buffers its DEFINES from that mod's Module node, and
+        # when a batch flush fell between the item and the node (buffered
+        # last) the edge's MATCH found no source and the row was dropped,
+        # leaving the item outside every deletion walk (issue #3000).
+        lang_queries = queries[language]
+        if combined_captures is not None:
+            module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
+        else:
+            if not (query := lang_queries[cs.QUERY_CLASSES]):
+                return
+            module_nodes = sorted_captures(QueryCursor(query), root_node).get(
+                cs.ONEOF_MODULE, []
+            )
+        if module_nodes:
+            self._process_inline_modules(
+                module_nodes, module_qn, lang_queries[cs.QUERY_CONFIG]
+            )
 
     def _reserve_python_class_qns(
         self,
@@ -1384,17 +1407,6 @@ class ClassIngestMixin:
             language,
             class_props,
         )
-        if node_type == NodeType.ENUM:
-            # The variants ride with their enum the way fields ride with
-            # their owner (issue #1807).
-            emit_declared_variants(
-                self.ingestor,
-                cs.NodeLabel.ENUM,
-                class_qn,
-                member_node,
-                language,
-                class_props,
-            )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
@@ -1424,6 +1436,22 @@ class ClassIngestMixin:
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
         )
+        # The variants ride with their enum the way fields ride with their
+        # owner (issue #1807). After the relationships, because a Python enum
+        # is a Class that only its resolved bases identify (issue #2583).
+        if node_type == NodeType.ENUM or (
+            language == cs.SupportedLanguage.PYTHON
+            and is_python_enum(self.class_inheritance.get(class_qn, ()))
+        ):
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel(node_type.value),
+                class_qn,
+                member_node,
+                language,
+                class_props,
+                self.import_processor.import_mapping.get(module_qn),
+            )
         if language == cs.SupportedLanguage.DART and (
             type_args := pe.extract_dart_extends_type_args(
                 member_node, module_qn, partial(self._resolve_to_qn, language=language)

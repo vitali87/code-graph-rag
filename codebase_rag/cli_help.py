@@ -433,7 +433,8 @@ HELP_OUTPUT_GRAPH = (
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
 HELP_EXPORT_PROJECT_NAME = (
     "Export only this project: what it owns, the relationships that start "
-    "there and the nodes they reach. Repeatable; without it the whole shared "
+    "there, the nodes they reach, and the links between the resources it "
+    "holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared "
     "graph is exported."
 )
 HELP_EXPORT_WORKSPACE = "Export only the projects defined in workspace NAME."
@@ -458,8 +459,10 @@ HELP_LANGUAGE_LIST_VERBOSE = (
 
 HELP_PROJECT_NAME = (
     "Project name to store in the graph. Defaults to the directory name plus a "
-    "hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the "
-    "names already stored."
+    "hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never "
+    "share one; cgr status lists the names already stored. A chosen name has no "
+    "hash: syncing a repository under a name another repository already indexes "
+    "needs --yes and replaces that project."
 )
 HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
