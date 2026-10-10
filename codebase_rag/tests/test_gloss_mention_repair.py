@@ -75,9 +75,9 @@ def test_a_mention_whose_edge_was_dropped_is_rebound_by_name() -> None:
     ((query, params),) = store.writes
     assert query == cq.CYPHER_GLOSS_SET_MENTIONS
     assert params is not None
-    assert params[cs.KEY_ATTACH_QNS] == [RUN]
     # Kept by name: no hash to re-validate.
-    assert params[cs.KEY_ATTACH_HASHES] == [""]
+    assert params[cs.KEY_ATTACH_QNS] == [RUN]
+    assert params[cs.KEY_ATTACH_KEYS] == []
     assert params[cs.KEY_MENTIONS_LOST] is None
 
 
@@ -90,8 +90,11 @@ def test_a_moved_mention_is_bound_only_while_it_carries_the_hash() -> None:
     ((_query, params),) = store.writes
     assert params is not None
     assert params[cs.KEY_MENTION_QNS] == [moved]
-    assert params[cs.KEY_ATTACH_QNS] == [moved]
-    assert params[cs.KEY_ATTACH_HASHES] == [RUN_HASH]
+    assert params[cs.KEY_ATTACH_QNS] == []
+    assert params[cs.KEY_ATTACH_KEYS] == [
+        f"{moved}{cs.GLOSS_MENTION_KEY_SEPARATOR}{RUN_HASH}"
+    ]
+    assert params[cs.KEY_KEY_SEPARATOR] == cs.GLOSS_MENTION_KEY_SEPARATOR
     assert params[cs.KEY_PROJECT_PREFIX] == f"{P}."
     assert report.moved == ["gloss:n"] and report.lost == []
 
@@ -105,7 +108,7 @@ def test_a_mention_with_no_home_is_recorded_lost() -> None:
     assert params is not None
     assert params[cs.KEY_MENTION_QNS] == [RUN]
     assert params[cs.KEY_MENTIONS_LOST] == [RUN]
-    assert params[cs.KEY_ATTACH_QNS] == []
+    assert params[cs.KEY_ATTACH_QNS] == [] and params[cs.KEY_ATTACH_KEYS] == []
     assert report.lost == ["gloss:n"]
 
 
@@ -121,11 +124,14 @@ def test_a_mention_edited_in_place_renews_its_recorded_hash() -> None:
     assert params is not None
     assert params[cs.KEY_MENTION_HASHES] == [edited]
     assert params[cs.KEY_ATTACH_QNS] == [RUN]
-    assert params[cs.KEY_ATTACH_HASHES] == [""]
+    assert params[cs.KEY_ATTACH_KEYS] == []
     assert report.moved == [] and report.lost == []
 
 
 def test_the_set_statement_re_validates_a_moved_binding() -> None:
     q = cq.CYPHER_GLOSS_SET_MENTIONS
-    assert "$attach_hashes[i] = '' OR m.anchor_hash = $attach_hashes[i]" in q
+    assert "(m.qualified_name + $key_separator + m.anchor_hash) IN $attach_keys" in q
     assert "m.qualified_name STARTS WITH $project_prefix" in q
+    # Targets are matched before any edge goes, and only stale edges go.
+    assert q.index("collect(DISTINCT m) AS targets") < q.index("DELETE edge")
+    assert "WHERE NOT t IN targets" in q

@@ -992,22 +992,28 @@ CYPHER_DEFINITIONS_BY_QNS = f"""UNWIND $qns AS qn
 MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
 RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # The note's mentions as the repair placed them, and its MENTIONS edges
-# rebuilt to match. A mention followed to a new name is bound only while that
-# name still carries the hash the pass read (`attach_hashes`, an empty string
-# where a name is kept as it is), so a definition replaced between the read
-# and this write is not bound on the strength of its name.
+# rebuilt to match. A mention kept on its name is bound by `attach_qns`; one
+# followed to a new name by `attach_keys`, its name and the hash the pass
+# read joined by `key_separator`, so a definition replaced between the read
+# and this write is not bound on the strength of its name. The targets are
+# matched BEFORE any edge is deleted, and only an edge to a node that is no
+# longer a target is deleted: with the definition indexes in place, Memgraph
+# 3 lost the edge when one statement deleted it and then merged it again.
 CYPHER_GLOSS_SET_MENTIONS = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.mention_qns = $mention_qns, g.mention_hashes = $mention_hashes,
     g.mention_quotes = $mention_quotes, g.mentions_lost = $mentions_lost
 WITH g
-OPTIONAL MATCH (g)-[old:{_MENTIONS}]->()
-WITH g, collect(old) AS old_edges
-FOREACH (edge IN old_edges | DELETE edge)
-WITH g
-UNWIND range(0, size($attach_qns) - 1) AS i
-MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $attach_qns[i]}})
+OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
 WHERE m.qualified_name STARTS WITH $project_prefix
-  AND ($attach_hashes[i] = '' OR m.anchor_hash = $attach_hashes[i])
+  AND (m.qualified_name IN $attach_qns
+       OR (m.qualified_name + $key_separator + m.anchor_hash) IN $attach_keys)
+WITH g, collect(DISTINCT m) AS targets
+OPTIONAL MATCH (g)-[old:{_MENTIONS}]->(t)
+WHERE NOT t IN targets
+WITH g, targets, collect(old) AS stale_edges
+FOREACH (edge IN stale_edges | DELETE edge)
+WITH g, targets
+UNWIND targets AS m
 MERGE (g)-[:{_MENTIONS}]->(m)"""
 # Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
 # `target_hash` when it was written; after a sync the two are compared and the

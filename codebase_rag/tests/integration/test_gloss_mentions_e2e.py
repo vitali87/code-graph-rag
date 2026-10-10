@@ -34,6 +34,10 @@ class _Repo:
         self.root = root
         for rel, text in {"a.py": A, "b.py": B}.items():
             (root / rel).write_text(text, encoding="utf-8")
+        # The indexes `cgr start` creates: they change how Memgraph plans the
+        # mention statement, and a plan that deleted and re-merged the same
+        # edge in one statement lost it.
+        ingestor.ensure_constraints()
         parsers, queries = load_parsers()
         self.updater = GraphUpdater(
             ingestor=ingestor,

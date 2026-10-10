@@ -1277,7 +1277,11 @@ KEY_MENTION_QUOTES = "mention_quotes"
 KEY_MENTIONS_LOST = "mentions_lost"
 KEY_ATTACHED = "attached"
 KEY_ATTACH_QNS = "attach_qns"
-KEY_ATTACH_HASHES = "attach_hashes"
+KEY_ATTACH_KEYS = "attach_keys"
+KEY_KEY_SEPARATOR = "key_separator"
+# Joins a followed mention's new name to the hash it was followed by, in one
+# string the write compares as a whole; a qualified name never holds it.
+GLOSS_MENTION_KEY_SEPARATOR = "\x1f"
 KEY_ANCHOR_HASH = "anchor_hash"
 # Written by the repair tiers (issue #1808, stage four). `moved_from` is the
 # name a MOVED gloss was written against, kept so the move stays visible;

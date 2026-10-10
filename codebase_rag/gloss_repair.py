@@ -540,7 +540,7 @@ class _Placed(NamedTuple):
     anchor_hash: str
     quote: str
     lost: bool
-    # The hash the write re-validates the binding by; "" binds by name.
+    # The hash the write re-validates a followed binding by; "" binds by name.
     expect_hash: str = ""
     moved: bool = False
 
@@ -727,8 +727,13 @@ def _write_mentions(
             cs.KEY_MENTION_HASHES: lists[1],
             cs.KEY_MENTION_QUOTES: lists[2],
             cs.KEY_MENTIONS_LOST: lists[3] or None,
-            cs.KEY_ATTACH_QNS: [p.qualified_name for p in bound],
-            cs.KEY_ATTACH_HASHES: [p.expect_hash for p in bound],
+            cs.KEY_ATTACH_QNS: [p.qualified_name for p in bound if not p.expect_hash],
+            cs.KEY_ATTACH_KEYS: [
+                f"{p.qualified_name}{cs.GLOSS_MENTION_KEY_SEPARATOR}{p.expect_hash}"
+                for p in bound
+                if p.expect_hash
+            ],
+            cs.KEY_KEY_SEPARATOR: cs.GLOSS_MENTION_KEY_SEPARATOR,
             cs.KEY_PROJECT_PREFIX: prefix,
         },
     )
