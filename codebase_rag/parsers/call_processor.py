@@ -252,6 +252,16 @@ class _TsTypeScope(NamedTuple):
 _NO_TS_SCOPE = _TsTypeScope({}, 0)
 
 
+def _ts_type_reference_name(node: Node) -> str | None:
+    # `Box`, or the `Array` of `Array<Box>`.
+    name_node = (
+        node.child_by_field_name(cs.FIELD_NAME)
+        if node.type == cs.TS_GENERIC_TYPE
+        else node
+    )
+    return safe_decode_text(name_node) if name_node is not None else None
+
+
 class _ReceiverDeclaration(NamedTuple):
     """What a JS/TS call site declares its receiver to be (issue #2609).
 
@@ -5185,19 +5195,7 @@ class CallProcessor:
         if receiver.type == cs.TS_IDENTIFIER:
             return self._js_identifier_declaration(ctx, receiver)
         if receiver.type == cs.TS_SUBSCRIPT_EXPRESSION:
-            # `xs[0]` is an element of what `xs` is declared as.
-            obj = receiver.child_by_field_name(cs.FIELD_OBJECT)
-            annotation = (
-                self._js_identifier_annotation(ctx, obj)
-                if obj is not None and obj.type == cs.TS_IDENTIFIER
-                else None
-            )
-            inner = next(iter(annotation.named_children), None) if annotation else None
-            return (
-                self._ts_element_declaration(inner, ctx.module_qn, _NO_TS_SCOPE)
-                if inner is not None
-                else None
-            )
+            return self._js_subscript_declaration(ctx, receiver)
         if receiver.type == cs.TS_MEMBER_EXPRESSION:
             return self._js_this_field_declaration(ctx, receiver)
         return None
@@ -5228,6 +5226,21 @@ class CallProcessor:
             kind, value, name, ctx.module_qn, depth=0
         )
         return _ReceiverDeclaration(class_qn, foreign=False) if class_qn else None
+
+    def _js_subscript_declaration(
+        self, ctx: _CallScanContext, receiver: Node
+    ) -> _ReceiverDeclaration | None:
+        # `xs[0]` is an element of what `xs` is declared as.
+        obj = receiver.child_by_field_name(cs.FIELD_OBJECT)
+        if obj is None or obj.type != cs.TS_IDENTIFIER:
+            return None
+        annotation = self._js_identifier_annotation(ctx, obj)
+        inner = next(iter(annotation.named_children), None) if annotation else None
+        return (
+            self._ts_element_declaration(inner, ctx.module_qn, _NO_TS_SCOPE)
+            if inner is not None
+            else None
+        )
 
     def _js_identifier_annotation(
         self, ctx: _CallScanContext, ident: Node
@@ -5498,17 +5511,7 @@ class CallProcessor:
         if node_type == cs.TS_UNION_TYPE:
             return self._ts_union_declaration(node, module_qn, scope)
         if node_type == cs.TS_TYPE_IDENTIFIER:
-            name = safe_decode_text(node)
-            if name is not None and name in scope.bindings:
-                arg = scope.bindings[name]
-                return self._ts_type_declaration(
-                    arg.node, arg.module_qn, arg.scope._replace(depth=scope.depth + 1)
-                )
-            return (
-                self._ts_type_name_declaration(name, node, module_qn, None, scope)
-                if name
-                else None
-            )
+            return self._ts_type_identifier_declaration(node, module_qn, scope)
         if node_type == cs.TS_GENERIC_TYPE:
             return self._ts_generic_declaration(node, module_qn, scope)
         if node_type == cs.TS_NESTED_TYPE_IDENTIFIER:
@@ -5517,6 +5520,20 @@ class CallProcessor:
                 self._ts_type_name_declaration(name, node, module_qn) if name else None
             )
         return None
+
+    def _ts_type_identifier_declaration(
+        self, node: Node, module_qn: str, scope: _TsTypeScope
+    ) -> _ReceiverDeclaration | None:
+        name = safe_decode_text(node)
+        if not name:
+            return None
+        if name in scope.bindings:
+            # A type parameter of an alias being read: what it was bound to.
+            arg = scope.bindings[name]
+            return self._ts_type_declaration(
+                arg.node, arg.module_qn, arg.scope._replace(depth=scope.depth + 1)
+            )
+        return self._ts_type_name_declaration(name, node, module_qn, None, scope)
 
     def _ts_element_declaration(
         self, node: Node, module_qn: str, scope: _TsTypeScope
@@ -5540,12 +5557,7 @@ class CallProcessor:
             )
         if node_type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_GENERIC_TYPE):
             return None
-        name_node = (
-            node.child_by_field_name(cs.FIELD_NAME)
-            if node_type == cs.TS_GENERIC_TYPE
-            else node
-        )
-        name = safe_decode_text(name_node) if name_node is not None else None
+        name = _ts_type_reference_name(node)
         if not name:
             return None
         arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)

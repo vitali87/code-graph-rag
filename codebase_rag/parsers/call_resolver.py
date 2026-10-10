@@ -251,6 +251,22 @@ def _binds_identifier(target: Node, name: str) -> bool:
     return False
 
 
+def _ts_single_named_type(value: Node | None) -> Node | None:
+    # The one type a TS alias value names, through parentheses and
+    # `| null`/`| undefined`; None for a wider union.
+    while value is not None and value.type in (
+        cs.TS_PARENTHESIZED_TYPE,
+        cs.TS_UNION_TYPE,
+    ):
+        members = [
+            child
+            for child in value.named_children
+            if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        value = members[0] if len(members) == 1 else None
+    return value
+
+
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
@@ -2387,17 +2403,9 @@ class CallResolver:
         target = None
         module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)
         alias = self.ts_type_alias(module_qn, name) if module_qn else None
-        value = alias.child_by_field_name(cs.FIELD_VALUE) if alias else None
-        while value is not None and value.type in (
-            cs.TS_PARENTHESIZED_TYPE,
-            cs.TS_UNION_TYPE,
-        ):
-            members = [
-                child
-                for child in value.named_children
-                if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
-            ]
-            value = members[0] if len(members) == 1 else None
+        value = _ts_single_named_type(
+            alias.child_by_field_name(cs.FIELD_VALUE) if alias else None
+        )
         if value is not None and value.type == cs.TS_TYPE_IDENTIFIER:
             named = safe_decode_text(value) or ""
             import_map = self.import_processor.import_mapping.get(module_qn) or {}
