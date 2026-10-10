@@ -61,6 +61,9 @@ class _FakeTTY(io.StringIO):
 def _render(
     monkeypatch: pytest.MonkeyPatch, file: io.StringIO, width: int = 200
 ) -> str:
+    # The fake TTY models a VT-capable terminal; pin the environment so Rich
+    # does not inherit the CI runner's ``TERM=dumb`` setting.
+    monkeypatch.setenv("TERM", "xterm-256color")
     console = terminal_aware_console(file=file)
     console.width = width
     # A VT-capable terminal, as Windows Terminal is detected: Rich never

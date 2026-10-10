@@ -2461,6 +2461,10 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+            has_python_property_reads = (
+                language == cs.SupportedLanguage.PYTHON
+                and bool(self._resolver.function_registry.property_names())
+            )
             if (
                 not all_call_nodes
                 and language
@@ -2470,6 +2474,7 @@ class CallProcessor:
                     cs.SupportedLanguage.DART,
                 )
                 and language not in _JS_TS_LANGUAGES
+                and not has_python_property_reads
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
@@ -9587,7 +9592,6 @@ class CallProcessor:
         attr_type = cs.TS_PY_ATTRIBUTE
         function_types = lang_config.function_node_types
         class_types = lang_config.class_node_types
-        seen: set[str] = set()
 
         stack = list(caller_node.children)
         while stack:
@@ -9606,7 +9610,6 @@ class CallProcessor:
                         module_qn,
                         local_var_types,
                         class_context,
-                        seen,
                     )
             stack.extend(node.children)
 
@@ -9619,11 +9622,12 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
-        seen: set[str],
     ) -> None:
         # One property-named attribute access: a CALLS edge to the getter it
         # invokes, unless the attribute is itself a call's function.
         registry = self._resolver.function_registry
+        if self._python_attribute_is_write_target(node):
+            return
         parent = node.parent
         is_call_target = (
             parent is not None
@@ -9635,28 +9639,70 @@ class CallProcessor:
             # permanently False.
             and parent.child_by_field_name(cs.TS_FIELD_FUNCTION) == node
         )
-        if not is_call_target and (
-            callee_info := self._resolver.resolve_function_call(
+        if is_call_target:
+            return
+
+        receiver, _, property_name = attr_text.rpartition(cs.SEPARATOR_DOT)
+        if receiver in cs.SELF_RECEIVER_KEYWORDS and class_context:
+            callee_info = self._resolver._try_resolve_method(
+                class_context, property_name
+            )
+            if callee_info is None or not registry.is_property(callee_info[1]):
+                return
+            self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        else:
+            callee_info = self._resolver.resolve_function_call(
                 attr_text,
                 module_qn,
                 local_var_types,
                 class_context,
                 caller_qn,
             )
-        ):
-            callee_qn = callee_info[1]
-            if (
-                registry.is_property(callee_qn)
-                and callee_qn != caller_qn
-                and callee_qn not in seen
-            ):
-                seen.add(callee_qn)
-                for target_qn in registry.variants(callee_qn):
-                    self._emit_rel(
-                        caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
-                    )
+
+        if callee_info is None:
+            return
+        callee_qn = callee_info[1]
+        if registry.is_property(callee_qn) and callee_qn != caller_qn:
+            targets = registry.variants(callee_qn)
+            self._resolution = (
+                cs.EdgeResolution.OVERLOAD
+                if len(targets) > 1
+                else self._resolver.last_resolution
+            )
+            for target_qn in targets:
+                self._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    @staticmethod
+    def _python_attribute_is_write_target(node: Node) -> bool:
+        current = node.parent
+        while current is not None:
+            if current.type == cs.TS_PY_ASSIGNMENT:
+                left = current.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is None or not (
+                    left.start_byte <= node.start_byte
+                    and node.end_byte <= left.end_byte
+                ):
+                    return False
+                return True
+            if current.type in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
+                receiver = current.child_by_field_name(
+                    cs.TS_FIELD_OBJECT
+                ) or current.child_by_field_name(cs.FIELD_VALUE)
+                if receiver is not None and (
+                    receiver.start_byte <= node.start_byte
+                    and node.end_byte <= receiver.end_byte
+                ):
+                    # A property used as the receiver of another assignment
+                    # target is read to obtain the object being mutated.
+                    return False
+            if current.type in _PY_SCOPE_BOUNDARY_TYPES:
+                return False
+            current = current.parent
+        return False
 
     @_site_scoped
     def _ingest_dart_getter_reads(
