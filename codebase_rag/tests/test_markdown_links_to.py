@@ -23,6 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_audit as ga
 from codebase_rag import logs as ls
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.document_tier import DocumentTier, parse_front_matter
@@ -555,7 +556,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         _index(store, repo)
         guide = repo / "docs" / "guide.md"
         guide.write_text(GUIDE + "\nMore text.\n", encoding="utf-8")
-        _touch(guide, repo / cs.HASH_CACHE_FILENAME)
+        _touch(guide, state_file(repo, cs.HASH_CACHE_FILENAME))
 
         self._sync(store, repo)
 
@@ -572,7 +573,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         _index(store, repo)
         guide = repo / "docs" / "guide.md"
         guide.write_text(GUIDE.replace("## Setup", "## Install"), encoding="utf-8")
-        _touch(guide, repo / cs.HASH_CACHE_FILENAME)
+        _touch(guide, state_file(repo, cs.HASH_CACHE_FILENAME))
 
         self._sync(store, repo)
 
@@ -590,7 +591,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         _index(store, repo)
         guide = repo / "docs" / "guide.md"
         guide.write_text(GUIDE + "\nMore text.\n", encoding="utf-8")
-        _touch(guide, repo / cs.HASH_CACHE_FILENAME)
+        _touch(guide, state_file(repo, cs.HASH_CACHE_FILENAME))
 
         self._sync(store, repo)
 
@@ -604,7 +605,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         store = _StatefulIngestor()
         _index(store, repo)
         (repo / "pkg" / "core.py").unlink()
-        _touch(repo / "pkg", repo / cs.HASH_CACHE_FILENAME)
+        _touch(repo / "pkg", state_file(repo, cs.HASH_CACHE_FILENAME))
 
         self._sync(store, repo)
 
@@ -618,7 +619,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         _index(store, repo)
         nope = repo / "docs" / "nope.md"
         nope.write_text("# Nope\n", encoding="utf-8")
-        _touch(nope, repo / cs.HASH_CACHE_FILENAME)
+        _touch(nope, state_file(repo, cs.HASH_CACHE_FILENAME))
 
         self._sync(store, repo)
 
@@ -636,7 +637,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         _index(store, repo)
         core = repo / "pkg" / "core.py"
         core.write_text(CORE + "\n\ndef other():\n    return 2\n", encoding="utf-8")
-        _touch(core, repo / cs.HASH_CACHE_FILENAME)
+        _touch(core, state_file(repo, cs.HASH_CACHE_FILENAME))
         parsed: list[str] = []
         original = DocumentTier.process_file
 
