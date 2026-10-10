@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os
+import reprlib
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TypedDict, Unpack
+from typing import Any, TypedDict, Unpack
 
-from dotenv import load_dotenv
+from dotenv.main import DotEnv
 from loguru import logger
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationError, field_validator
+from pydantic.fields import FieldInfo
+from pydantic_core import ErrorDetails
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -18,11 +23,48 @@ from . import logs
 from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
+# Taken before `.env` is merged into the environment, so a refused value can be
+# traced to the shell that exported it or to the file (#2474).
+_INHERITED_ENV = frozenset(os.environ)
+
+
+def merge_dotenv(path: Path) -> dict[str, str]:
+    """Merge `path` into `os.environ` as `load_dotenv(path)` does, without raising.
+
+    `os.environ` raises ValueError for a value the operating system will not
+    hold, such as one longer than the 32,767 characters Windows takes in a
+    variable or one with a NUL byte. `load_dotenv` let it escape the import of
+    this module, so every command failed, `--version` too (#2474). Such a
+    variable is left unset and the rest of the file is still loaded.
+
+    Returns the message for each variable left unset, keyed by its name. The
+    message names the variable and the reason, not the value.
+    """
+    switch = os.environ.get(cs.ENV_PYTHON_DOTENV_DISABLED, "").casefold()
+    if switch in cs.PYTHON_DOTENV_DISABLED_VALUES:
+        return {}
+    # `override=False`, as in `load_dotenv`: a variable already set keeps its
+    # value, and a reference to it in the file reads that value too.
+    values = DotEnv(path, encoding=cs.ENCODING_UTF8, override=False).dict()
+    refused: dict[str, str] = {}
+    for name, value in values.items():
+        if value is None or name in os.environ:
+            continue
+        try:
+            os.environ[name] = value
+        except ValueError as error:
+            problem = ex.SETTING_NOT_SETTABLE.format(error=error)
+            refused[name] = ex.SETTING_INVALID.format(
+                name=name, origin=cs.SETTING_ORIGIN_DOTENV, problem=problem
+            )
+    return refused
+
+
 # Load only the configuration file in the invocation directory.  The default
 # python-dotenv discovery walks parent directories, which can silently import
 # credentials from an unrelated workspace (and makes tests depend on the
 # caller's directory layout).
-load_dotenv(dotenv_path=Path.cwd() / ".env")
+_DOTENV_REFUSED = merge_dotenv(Path.cwd() / ".env")
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -195,11 +237,22 @@ class AppConfig(BaseSettings):
     # project's own `CRATES_API_TOKEN`). Refusing them made every command fail
     # at start-up and echoed the secret in the validation error, so undeclared
     # keys are ignored rather than forbidden.
+    #
+    # A blank value means "not set": `MEMGRAPH_HOST=` copied from
+    # `.env.example` used to connect to the empty host name rather than fall
+    # back to `localhost` (#2474).
+    #
+    # List settings are decoded by `_decode_json_list`, not by the source:
+    # pydantic-settings raises on a value that is not JSON while it reads the
+    # environment, before validation and without saying which field, so one
+    # such value cost every other setting too (#2474).
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        env_ignore_empty=True,
+        enable_decoding=False,
     )
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
@@ -221,7 +274,9 @@ class AppConfig(BaseSettings):
     NEO4J_PASSWORD: str | None = None
     NEO4J_DATABASE: str = "neo4j"
     LAB_PORT: int = 3000
-    MEMGRAPH_BATCH_SIZE: int = 1000
+    # The floor `--batch-size` has, so the variable is refused at start-up as
+    # the flag is, not with a traceback from the first command that reads it.
+    MEMGRAPH_BATCH_SIZE: int = Field(default=1000, ge=1)
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
@@ -431,6 +486,32 @@ class AppConfig(BaseSettings):
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
     QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)
 
+    @field_validator(
+        "SHELL_COMMAND_ALLOWLIST",
+        "SHELL_READ_ONLY_COMMANDS",
+        "SHELL_SAFE_GIT_SUBCOMMANDS",
+        "SHELL_NONINTERACTIVE_READ_COMMANDS",
+        mode="before",
+    )
+    @classmethod
+    def _decode_json_list(cls, value: str | Collection[str]) -> Collection[str]:
+        # A value from the environment or `.env` is JSON text; one passed in
+        # code is already a collection.
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError(ex.SETTING_NOT_JSON_LIST.format(value=value)) from error
+        except RecursionError as error:
+            # Arrays nested past the decoder's limit raise this rather than a
+            # decode error; it is not a ValueError, so pydantic let it escape
+            # the settings import and `--version` failed with it (Greptile,
+            # PR #2556). The value runs to thousands of brackets: shortened.
+            raise ValueError(
+                ex.SETTING_JSON_LIST_TOO_DEEP.format(value=reprlib.repr(value))
+            ) from error
+
     @field_validator("GRAPH_BACKEND")
     @classmethod
     def _known_backend(cls, value: str) -> str:
@@ -567,7 +648,63 @@ class AppConfig(BaseSettings):
         return resolved
 
 
-settings = AppConfig()
+def _variable_name(name: str, field: FieldInfo) -> str:
+    alias = field.validation_alias
+    return alias if isinstance(alias, str) else name
+
+
+def _describe_refusal(error: ErrorDetails, inherited_env: Collection[str]) -> str:
+    name = str(error["loc"][0])
+    exported = name.upper() in {key.upper() for key in inherited_env}
+    origin = cs.SETTING_ORIGIN_ENVIRONMENT if exported else cs.SETTING_ORIGIN_DOTENV
+    template = ex.SETTING_PROBLEMS.get(error["type"], ex.SETTING_PROBLEM_OTHER)
+    problem = template.format(
+        input=error["input"], msg=error["msg"], **error.get("ctx", {})
+    )
+    return ex.SETTING_INVALID.format(name=name, origin=origin, problem=problem)
+
+
+def _defaults_for(variables: Collection[str]) -> dict[str, Any]:
+    # Init values outrank every source, so a default passed for a variable
+    # replaces only its value. A variable is keyed by its alias where its field
+    # has one, and matched without case, as the sources match it.
+    wanted = {variable.upper() for variable in variables}
+    return {
+        variable: field.get_default(call_default_factory=True)
+        for name, field in AppConfig.model_fields.items()
+        if (variable := _variable_name(name, field)).upper() in wanted
+    }
+
+
+def load_settings(
+    inherited_env: Collection[str], unset: Mapping[str, str] | None = None
+) -> tuple[AppConfig, tuple[str, ...]]:
+    """The settings, and one message per variable whose value was refused.
+
+    Every `cgr` invocation imports this module before it parses its arguments,
+    so raising here failed `--version` and `--help` too (#2474). A refused
+    variable falls back to its default instead, the rest of the configuration
+    is kept, and the CLI refuses to run a command while any message stands.
+    `AppConfig()` itself still raises for a caller that builds its own.
+
+    `inherited_env` names the variables the process was started with, which
+    tells a value exported in the shell from one read out of `.env`.
+
+    `unset` holds the message for each `.env` variable the environment
+    refused, as `merge_dotenv` returns them. pydantic-settings reads `.env`
+    itself, so such a variable is refused here too, with that message alone.
+    """
+    held_back = unset or {}
+    try:
+        return AppConfig(**_defaults_for(held_back)), tuple(held_back.values())
+    except ValidationError as error:
+        refusals = error.errors(include_url=False)
+    refused = {*held_back, *(str(refusal["loc"][0]) for refusal in refusals)}
+    messages = tuple(_describe_refusal(r, inherited_env) for r in refusals)
+    return AppConfig(**_defaults_for(refused)), (*held_back.values(), *messages)
+
+
+settings, settings_errors = load_settings(_INHERITED_ENV, _DOTENV_REFUSED)
 
 CGRIGNORE_FILENAME = ".cgrignore"
 GITIGNORE_FILENAME = ".gitignore"
