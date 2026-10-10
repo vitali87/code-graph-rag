@@ -39,9 +39,44 @@ have their `Module`, `Class` and `Method` nodes removed from the graph, and
 newly included ones are indexed.
 
 The set each index was built under is recorded in `.cgr-exclusion-state.json`
-in the repository root, alongside the hash cache. An index built before that
-file existed has no recorded set, so the first run after upgrading re-runs once
-to establish it and logs why.
+alongside the hash cache, in the checkout's state directory (see
+[cgr's own state](#cgrs-own-state)). An index built before that file existed
+has no recorded set, so the first run after upgrading re-runs once to
+establish it and logs why.
+
+## cgr's own state
+
+A sync keeps what it needs to stay incremental (the hash cache, directory
+mtimes, the exclusion stamp, the parser fingerprint and pending-work markers),
+and `cgr rename` / `cgr edits` keep their undo history and lock, in one
+directory per checkout under `CGR_HOME` (default `~/.cgr`):
+
+```
+~/.cgr/state/<directory-name>__<path-hash>/
+```
+
+The name is the checkout's default project name, derived from its absolute
+path, so two clones of one repository never share state, and a checkout
+indexed under several `--project-name`s shares one. Nothing is written into
+the repository, so `git status` stays clean after a sync and a read-only
+checkout can still be synced incrementally. Point `CGR_HOME` at another
+directory to keep the state elsewhere, for example on a CI cache volume.
+
+Versions before this change wrote these files, all named `.cgr-*`, into the
+repository root. The next sync moves any that are still there into the state
+directory, keeping the hash cache and its timestamp, so it stays incremental
+and reports "already in sync" when nothing changed. A file the state
+directory already holds is never replaced by the older copy in the tree. If
+they were committed, `git status` then shows them as deleted; commit the
+deletion, and remove any `.cgr-*` lines added to `.gitignore` for them if you
+like. `cgr check` never counts these files as edits; a source file that only
+starts with `.cgr-` is checked like any other.
+
+The one exception is the edit lock, `.cgr-edit-lock`: an older cgr still
+running (an MCP server started before the upgrade, say) keeps taking it at
+the repository root, so it is left there, and edits take it as well as their
+own lock for as long as it exists. Delete it once no older cgr runs against
+the checkout.
 
 ![cgr stats on pallets/flask, then a .cgrignore excluding tests and examples, a cgr start --update-graph sync, and cgr stats showing the smaller graph](../assets/demos/ignore-patterns.gif)
 
@@ -98,3 +133,51 @@ directory-level intent the default is protecting.
 ## Scope
 
 Only the **repository root's** `.cgrignore` and `.gitignore` are read. Ignore files in subdirectories are not, and that includes a Git submodule's own `.gitignore` -- its files are indexed as part of the parent project unless the parent excludes them. See [Git Submodules](git-submodules.md).
+
+## Symbolic Links
+
+Indexing never follows a symbolic link, whether it names a file or a
+directory and wherever it points:
+
+| Link in the repository | What indexing does |
+|---|---|
+| `pkg/linked.py -> ../../outside/private.py` (target outside the repository) | Skipped. The target is never read, so nothing from outside `--repo-path` reaches the shared graph or a `cgr export`. |
+| `pkg/linkdir -> ../../outside/lib` (directory outside the repository) | Skipped, and nothing under it is walked. |
+| `pkg/alias.py -> core.py` (target inside the repository) | Skipped. `pkg/core.py` is indexed once, under its own path, so there is no second module duplicating its definitions. |
+| `app/vendored -> ../pkg` (directory inside the repository) | Skipped. `pkg/` is indexed under its own path, and `app/vendored` gets no `Package` or `Folder` node. |
+
+A dangling link is skipped the same way. The same rule applies to the
+incremental sync, the real-time watcher, the interactive setup's list of
+directories to keep, contract discovery, and the structural search and replace
+tools. A link that an ignore rule already excludes is excluded as before. When
+an indexed file is replaced by a link, the watcher removes the file's nodes and
+does not index the link.
+
+Each skipped link is logged at DEBUG with its target (run with
+`LOGURU_LEVEL=DEBUG` to see them), and every sync logs one INFO line counting
+them:
+
+```text
+Skipping symlink pkg/linked.py: its target /home/me/outside/private.py is outside the repository and is never read
+Skipping symlink pkg/alias.py: its target pkg/core.py is in the repository and is indexed only under its own path
+Skipped 4 symlink(s): links are not followed, ...
+```
+
+The repository root itself may be a link, or sit under one: only the entries
+inside it are judged. A file named explicitly (a single-file sync, or the MCP
+`reingest` tool) is resolved instead: naming `pkg/alias.py` re-indexes
+`pkg/core.py`, and a link out of the repository is refused.
+
+A graph built before this rule loses the links' modules, and the `Package`
+nodes of linked directories, on its next sync. A link to a plain directory was
+merged into its target's `Folder` node, so that `Folder` keeps one extra
+containing folder until the project is rebuilt (`cgr delete-project`, then
+sync again). The `Package` of a link out of the repository whose target sits
+at the link's own relative path under another root (`pkg -> ../other/pkg`)
+stays as well: it is shaped like the node another checkout indexed under the
+same project name holds for its own directory, and the sync cannot tell the
+two apart.
+
+Shared sources that a repository reaches through a link are not indexed. Index
+them as a project of their own (see [Multi-Project](../guide/multi-project.md)),
+or replace the link with a copy or a [Git submodule](git-submodules.md).

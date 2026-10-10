@@ -67,6 +67,11 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # `unresolved_references` (issue #1568) degrades the same way as
     # `unresolved_specifiers`: absent reads as "nothing waited", and the next
     # parse of the module rewrites the list.
+    # `broken_links` (issue #2458) also degrades that way: absent reads as
+    # "no broken links", so an imported graph nominates no waiting document
+    # when the missing file appears, and the next parse rewrites the list.
+    # Exporting it needs the proto field and regenerated bindings, the same
+    # protoc gap #1490 tracks for the rest of this set.
     "Module": frozenset(
         {
             "absolute_path",
@@ -74,6 +79,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",
+            "broken_links",
         }
     ),
     # `decorated_start_line` (issue #2428) degrades like `positional_params`:
@@ -129,11 +135,19 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `extension_receiver`, `extension_namespace` and
+    # `extension_receiver_arity` (issue #3275) are a C# extension method's
+    # index entry, read back only by an incremental run's rehydration;
+    # absent reads as "not an extension", as every run did before #3275,
+    # until the declaring file is next parsed.
     "Method": frozenset(
         {
             "absolute_path",
             "anchor_hash",
             "decorated_start_line",
+            "extension_namespace",
+            "extension_receiver",
+            "extension_receiver_arity",
             "is_exported",
             "is_property",
             "modifiers",

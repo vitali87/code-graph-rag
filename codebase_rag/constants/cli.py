@@ -43,6 +43,9 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
+CLI_ERR_INVALID_SETTING = "Error: {problem}"
+# click's own exit status for a bad parameter value.
+CLI_EXIT_USAGE_ERROR = 2
 # `-o` checks, made before a graph is read or indexed (issue #2410).
 CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
 CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
@@ -76,6 +79,17 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
+    "Error: project '{project_name}' already indexes {root}. Choose another "
+    "--project-name, or pass --yes to replace it with this repository."
+)
+# An owner that cannot be read is not an absent one: syncing anyway would
+# replace the root that shows whose project it is (review of PR 2499).
+CLI_ERR_PROJECT_OWNER_UNREADABLE = (
+    "Error: could not read which repository project '{project_name}' indexes "
+    "({error}); nothing was changed. Retry once the graph answers, or pass "
+    "--yes to sync this repository into it regardless."
+)
 CLI_ERR_WORKSPACE_PROJECT_NAME = (
     "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
     "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
@@ -668,6 +682,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+# Appended to a chat write tool's result by its re-ingest (issue #2916).
+MSG_CHAT_GRAPH_UPDATED = (
+    " The knowledge graph now reflects this change: re-ingested {files} "
+    "file(s) and {dependents} dependent file(s)."
+)
+MSG_CHAT_GRAPH_NOT_UPDATED = (
+    " The knowledge graph was NOT updated ({error}): graph queries still "
+    "describe the code before this change until `cgr start --update-graph` runs."
+)
 # Span-preserving patchers (issue #1529).
 PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
 PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"
@@ -750,6 +773,11 @@ RENAME_AMBIGUOUS = (
 )
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
+RENAME_RESOLUTION_CLASS_VIA_PARAM = (
+    "constructed through parameter {param}; where the class is passed is "
+    "not recorded against it"
+)
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
@@ -933,6 +961,10 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 DICT_KEY_ERROR = "error"
+# The fields a JSON tool result reports completed work in: an applied rename or
+# a deleted project that also carries an error did its work (issue #2802).
+DICT_KEY_APPLIED = "applied"
+DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
