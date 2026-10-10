@@ -181,6 +181,19 @@ class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
 
 
+# Connecting to the graph (issue #2443). One line each, naming the fix.
+GRAPH_UNREACHABLE = (
+    "Error: cannot reach Memgraph at {address} ({error}). Start the stack with "
+    "`cgr daemon up`, or set MEMGRAPH_HOST/MEMGRAPH_PORT. `cgr doctor` checks "
+    "the setup."
+)
+GRAPH_CREDENTIALS_REFUSED = (
+    "Error: Memgraph at {address} refused the credentials ({error}). Set "
+    "MEMGRAPH_USERNAME/MEMGRAPH_PASSWORD to the ones the stack was started "
+    "with. `cgr doctor` checks the setup."
+)
+
+
 class RepoPathError(ValueError):
     """The repository root the MCP server was pointed at is missing or no directory.
 
