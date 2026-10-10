@@ -1444,6 +1444,7 @@ class ClassIngestMixin:
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
             module_qn=module_qn,
+            container_label=cs.NodeLabel(node_type.value),
         )
 
     def _defer_forward_declaration(
@@ -1941,6 +1942,7 @@ class ClassIngestMixin:
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
         module_qn: str | None = None,
+        container_label: cs.NodeLabel = cs.NodeLabel.CLASS,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         if body_node is None and class_node.type == cs.TS_DART_MIXIN_DECLARATION:
@@ -1975,7 +1977,9 @@ class ClassIngestMixin:
             ingested_qn = ingest_method(
                 method_node,
                 class_qn,
-                cs.NodeLabel.CLASS,
+                # The declared label, not just Class: a TS interface sharing
+                # its name with a value keeps its members (issue #2520).
+                container_label,
                 self.ingestor,
                 self.function_registry,
                 self.simple_name_lookup,

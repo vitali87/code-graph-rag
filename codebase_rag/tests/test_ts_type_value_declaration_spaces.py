@@ -8,16 +8,21 @@
 # value now each keep the natural qualified name under their own label.
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import utils as parser_utils
+from codebase_rag.parsers.class_ingest import mixin as class_mixin
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.types_defs import NodeType
@@ -660,3 +665,130 @@ class TestRegistryDeclarationSpaces:
 
         assert registry.get("m.input") is None
         assert registry.type_kind("m.input") is None
+
+
+INTERFACE_MEMBER_TS = """export interface Opts { open(): void }
+"""
+
+JAVA_INTERFACE_WITH_DEFAULT_METHOD = """package demo;
+
+public interface Greeter {
+    default String hi() {
+        return "hi";
+    }
+}
+"""
+
+
+def _first_of_type(node: Node, node_type: str) -> Node | None:
+    if node.type == node_type:
+        return node
+    for child in node.children:
+        if (found := _first_of_type(child, node_type)) is not None:
+            return found
+    return None
+
+
+class TestMethodContainerOnATwin:
+    # DEFINES_METHOD matches its parent by label and qualified name. Where an
+    # interface shares its name with a value (issue #2520) the registry entry
+    # is the value's, so the label the member's owner was declared with has to
+    # pick the parent: an interface member stays on the Interface node.
+
+    @staticmethod
+    def _registry(value_kind: NodeType, qn: str) -> FunctionRegistryTrie:
+        registry = FunctionRegistryTrie()
+        registry[qn] = value_kind
+        registry[registry.register_unique_qn(qn, 1, kind=NodeType.INTERFACE)] = (
+            NodeType.INTERFACE
+        )
+        return registry
+
+    @staticmethod
+    def _defines_method_parents(
+        registry: FunctionRegistryTrie, container_qn: str, label: cs.NodeLabel
+    ) -> list[tuple[Any, ...]]:
+        parsers, _queries = load_parsers()
+        tree = parsers[cs.SupportedLanguage.TS].parse(INTERFACE_MEMBER_TS.encode())
+        member = _first_of_type(tree.root_node, cs.TS_METHOD_SIGNATURE)
+        assert member is not None
+        ingestor = MagicMock()
+        parser_utils.ingest_method(
+            member,
+            container_qn,
+            label,
+            ingestor,
+            registry,
+            defaultdict(set),
+            lambda _node, _lang: None,
+            cs.SupportedLanguage.TS,
+        )
+        return [
+            c.args[0]
+            for c in ingestor.ensure_relationship_batch.call_args_list
+            if c.args[1] == cs.RelationshipType.DEFINES_METHOD
+        ]
+
+    @pytest.mark.parametrize(
+        "value_kind", [NodeType.FUNCTION, NodeType.CLASS], ids=["function", "class"]
+    )
+    def test_an_interface_member_stays_on_the_interface(
+        self, value_kind: NodeType
+    ) -> None:
+        registry = self._registry(value_kind, "m.Opts")
+
+        parents = self._defines_method_parents(
+            registry, "m.Opts", cs.NodeLabel.INTERFACE
+        )
+
+        assert parents == [(cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, "m.Opts")]
+
+    def test_the_value_side_keeps_its_own_members(self) -> None:
+        # `class Box` merged with `interface Box`: the class's members stay on
+        # the Class node.
+        registry = self._registry(NodeType.CLASS, "m.Box")
+
+        parents = self._defines_method_parents(registry, "m.Box", cs.NodeLabel.CLASS)
+
+        assert parents == [(cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, "m.Box")]
+
+    def test_without_a_twin_the_registry_still_names_the_parent(self) -> None:
+        # A caller that only knows "some type" passes Class; the registered
+        # label still wins when no twin shares the name.
+        registry = FunctionRegistryTrie()
+        registry["m.Opts"] = NodeType.INTERFACE
+
+        parents = self._defines_method_parents(registry, "m.Opts", cs.NodeLabel.CLASS)
+
+        assert parents == [(cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, "m.Opts")]
+
+
+def test_the_class_pass_hands_members_their_owners_declared_label(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The twin rule above can only work if the class pass says which kind of
+    # declaration owns the members, rather than calling every owner a Class.
+    # A Java interface's default method stands in for the owner: TS interface
+    # members do not reach this pass as methods yet (issue #2524).
+    seen: dict[str, cs.NodeLabel] = {}
+    real_ingest_method = class_mixin.ingest_method
+
+    def recording_ingest_method(
+        method_node: Node,
+        container_qn: str,
+        container_type: cs.NodeLabel,
+        *args,
+        **kwargs,
+    ) -> str | None:
+        seen[container_qn] = container_type
+        return real_ingest_method(
+            method_node, container_qn, container_type, *args, **kwargs
+        )
+
+    monkeypatch.setattr(class_mixin, "ingest_method", recording_ingest_method)
+    (temp_repo / "Greeter.java").write_text(JAVA_INTERFACE_WITH_DEFAULT_METHOD)
+    run_updater(temp_repo, mock_ingestor)
+
+    greeter = [qn for qn in seen if qn.endswith(".Greeter")]
+    assert len(greeter) == 1, seen
+    assert seen[greeter[0]] == cs.NodeLabel.INTERFACE
