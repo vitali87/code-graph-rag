@@ -217,6 +217,18 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     return tool.function
 
 
+def _parse_error_lead(
+    delta: sd.StructuralDelta, bases: dict[str, bytes | None] | None
+) -> str:
+    # The lead naming the files a write left unparsable (issue #3232).
+    # Without the bases nothing was parsed, so there is nothing to lead.
+    if bases is None or not delta["parse_errors"]:
+        return ""
+    return cs.MCP_PARSE_ERROR_LEAD.format(
+        errors="; ".join(error["message"] for error in delta["parse_errors"])
+    )
+
+
 class MCPToolsRegistry:
     # Class-level default so the read guard cannot raise AttributeError on a
     # registry built through `__new__`. Tests construct it that way in a
@@ -2586,15 +2598,7 @@ class MCPToolsRegistry:
             if (stuck := self._require_marker_cleared(marked_here)) is not None:
                 logger.warning(lg.MCP_DELTA_FAILED.format(error=stuck))
                 return "", "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
-        lead = (
-            cs.MCP_PARSE_ERROR_LEAD.format(
-                errors="; ".join(error["message"] for error in delta["parse_errors"])
-            )
-            # Without the bases nothing was parsed, so there is nothing to lead.
-            if bases is not None and delta["parse_errors"]
-            else ""
-        )
-        return lead, (
+        return _parse_error_lead(delta, bases), (
             "\n\n"
             + cs.MCP_DELTA_HEADER
             + "\n"
