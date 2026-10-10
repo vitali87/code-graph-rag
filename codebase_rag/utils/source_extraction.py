@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from loguru import logger
@@ -8,6 +8,44 @@ from loguru import logger
 from .. import logs as ls
 from ..constants import ENCODING_UTF8, PY_EXTENSIONS
 from .source_encoding import decode_python_source
+
+
+def read_source_lines(file_path: Path, encoding: str = ENCODING_UTF8) -> list[str]:
+    """The file's lines as the indexer read them, line endings kept."""
+    raw_bytes = file_path.read_bytes()
+    # The indexer parsed a Python source in the encoding it declares, and
+    # the lines it recorded are lines of that text (issue #2445).
+    declared = (
+        decode_python_source(raw_bytes, file_path)
+        if file_path.suffix in PY_EXTENSIONS
+        else None
+    )
+    text = raw_bytes.decode(encoding) if declared is None else declared
+    return text.splitlines(keepends=True)
+
+
+def slice_source_lines(
+    lines: Sequence[str], start_line: int, end_line: int, file_path: Path
+) -> str | None:
+    """Lines `start_line`..`end_line` (1-based) of an already-read file."""
+    if not lines:
+        return None
+
+    if start_line > len(lines) or end_line > len(lines):
+        logger.warning(
+            ls.SOURCE_RANGE_EXCEEDS.format(
+                start=start_line,
+                end=end_line,
+                length=len(lines),
+                path=file_path,
+            )
+        )
+        end_line = min(end_line, len(lines))
+        if start_line > len(lines):
+            return None
+
+    extracted_lines = lines[start_line - 1 : end_line]
+    return "".join(extracted_lines).strip()
 
 
 def extract_source_lines(
@@ -22,36 +60,9 @@ def extract_source_lines(
         return None
 
     try:
-        raw_bytes = file_path.read_bytes()
-        # The indexer parsed a Python source in the encoding it declares, and
-        # the lines it recorded are lines of that text (issue #2445).
-        declared = (
-            decode_python_source(raw_bytes, file_path)
-            if file_path.suffix in PY_EXTENSIONS
-            else None
+        return slice_source_lines(
+            read_source_lines(file_path, encoding), start_line, end_line, file_path
         )
-        text = raw_bytes.decode(encoding) if declared is None else declared
-        lines = text.splitlines(keepends=True)
-
-        if not lines:
-            return None
-
-        if start_line > len(lines) or end_line > len(lines):
-            logger.warning(
-                ls.SOURCE_RANGE_EXCEEDS.format(
-                    start=start_line,
-                    end=end_line,
-                    length=len(lines),
-                    path=file_path,
-                )
-            )
-            end_line = min(end_line, len(lines))
-            if start_line > len(lines):
-                return None
-
-        extracted_lines = lines[start_line - 1 : end_line]
-        return "".join(extracted_lines).strip()
-
     except Exception as e:
         logger.warning(ls.SOURCE_EXTRACT_FAILED.format(path=file_path, error=e))
         return None

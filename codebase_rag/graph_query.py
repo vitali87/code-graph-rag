@@ -625,6 +625,18 @@ class ReachIndex:
             frontier = next_frontier
         return depth_of, through_of
 
+    def span(self, qualified_name: str) -> tuple[int, int]:
+        """The recorded (start, end) lines of a node, 0 where unknown."""
+        entry = self._by_qn.get(qualified_name)
+        if entry is None:
+            return 0, 0
+        props = entry[1]
+        start, end = props.get(cs.KEY_START_LINE), props.get(cs.KEY_END_LINE)
+        return (
+            start if isinstance(start, int) else 0,
+            end if isinstance(end, int) else 0,
+        )
+
     def tests_reaching(self, qualified_name: str) -> list[TestReachRow]:
         depth_of, through_of = self._walk(qualified_name)
         out: list[TestReachRow] = []

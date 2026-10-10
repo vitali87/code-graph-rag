@@ -46,11 +46,22 @@ Candidates are ordered by graph distance, then trace hotness
 (`dynamic_call_count` on the caller's edge, from `cgr trace ingest`), then
 embedding similarity for a free-text task, then name. Tokens are counted
 with the same encoder the query tools use, and pieces are taken in order
-while they fit: the total never exceeds `budget_tokens`. The target is
-special: when it alone exceeds the budget it is trimmed line by line to
-fit and the slice is marked `truncated`; a budget too small for even its
-first line names it in `omitted` instead. Every piece that did not fit is
-listed in `omitted` with the reason it would have been included.
+while they fit: the total never exceeds `budget_tokens`. A piece is
+charged for what it prints, its source and the fields beside it (name,
+file, span, reason), so a slice of one-line call sites cannot print many
+times its budget in metadata (issue #3243). The target is special: when it
+alone exceeds the budget it is trimmed to the most leading lines that fit
+and the slice is marked `truncated`; a budget too small for even its first
+line names it in `omitted` instead. `omitted_count` counts every
+candidate that did not fit, and `omitted` names the best-ranked ten of
+them with the reason each would have been included; beside the pieces,
+the printed slice adds only those fields.
+
+A central symbol has thousands of callers and tests, nearly all of which a
+budget leaves out. Their sources are read only for a candidate whose
+fields still fit, each file the slice quotes is decoded once, and a test's
+span comes from the reach index already built, never from a graph query
+per test.
 
 ## Output
 
@@ -59,14 +70,15 @@ listed in `omitted` with the reason it would have been included.
   "target": "myproj.pkg.util.helper",
   "resolved": "myproj.pkg.util.helper",
   "budget_tokens": 4000,
-  "used_tokens": 312,
+  "used_tokens": 398,
   "pieces": [
     {"qualified_name": "myproj.pkg.util.helper", "file": "pkg/util.py", "span": [8, 13],
-     "why_included": "target", "source": "def helper(items: list[int]) -> Total:\n    ...", "tokens": 61},
+     "why_included": "target", "source": "def helper(items: list[int]) -> Total:\n    ...", "tokens": 104},
     {"qualified_name": "myproj.pkg.app.run", "file": "pkg/app.py", "span": [5, 5],
-     "why_included": "direct caller: the call line", "source": "return helper([1, 2]).value", "tokens": 9}
+     "why_included": "direct caller: the call line", "source": "return helper([1, 2]).value", "tokens": 52}
   ],
   "omitted": [],
+  "omitted_count": 0,
   "truncated": false
 }
 ```
