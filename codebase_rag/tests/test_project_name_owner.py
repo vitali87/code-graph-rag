@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import (
     _exit_if_project_owned_elsewhere,
     _pre_chat_sync,
@@ -197,7 +198,8 @@ def test_a_write_only_sink_still_syncs_with_a_cache(tmp_path: Path) -> None:
             project_named=True,
         ).run()
 
-    assert (org_a / cs.HASH_CACHE_FILENAME).is_file()
+    # The cache lives in the checkout's state directory, not the repo (#2557).
+    assert state_file(org_a, cs.HASH_CACHE_FILENAME).is_file()
 
 
 @pytest.fixture
