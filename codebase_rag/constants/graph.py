@@ -1084,7 +1084,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "
-    "n.positional_params AS positional_params, n.modifiers AS modifiers, "
+    "n.positional_params AS positional_params, "
     "n.type_parameters AS type_parameters, "
     "n.type_constraints AS type_constraints, "
     "n.implicit_conversion AS implicit_conversion, "
