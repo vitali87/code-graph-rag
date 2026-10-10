@@ -7,6 +7,7 @@ from types import MappingProxyType
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import PropertyDict
 from ..utils import safe_decode_text
 
 
@@ -347,9 +348,46 @@ def index_extension_method(
     # lives on an unrelated static class (not in recv's hierarchy). Shared by the
     # class-member pass and the `#if`-truncation recovery so both stay in sync.
     # No-op for a non-extension method (no `this` receiver).
+    if (facts := extension_method_facts(method_node)) is not None:
+        add_extension_method(store, ingested_qn, *facts)
+
+
+def add_extension_method(
+    store: dict[str, list[tuple[str, str, str, int]]],
+    ingested_qn: str,
+    receiver_type: str,
+    ext_namespace: str,
+    receiver_arity: int,
+) -> None:
+    # Strip the parameter signature BEFORE taking the leaf: a qualified param
+    # type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
+    # on `Widget)` instead of the method name `Poke` and never match.
+    leaf = ingested_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    store.setdefault(leaf, []).append(
+        (ingested_qn, receiver_type, ext_namespace, receiver_arity)
+    )
+
+
+def extension_method_props(method_node: Node) -> PropertyDict:
+    # The index entry's facts, on the Method node: an incremental run that
+    # does not re-parse the declaring file reads them back (issue #3275).
+    if (facts := extension_method_facts(method_node)) is None:
+        return {}
+    receiver_type, ext_namespace, receiver_arity = facts
+    props: PropertyDict = {cs.KEY_EXTENSION_RECEIVER: receiver_type}
+    if ext_namespace:
+        props[cs.KEY_EXTENSION_NAMESPACE] = ext_namespace
+    if receiver_arity:
+        props[cs.KEY_EXTENSION_RECEIVER_ARITY] = receiver_arity
+    return props
+
+
+def extension_method_facts(method_node: Node) -> tuple[str, str, int] | None:
+    # (receiver type, declaring namespace, receiver generic arity) of an
+    # extension method, or None for any other method.
     receiver_type = extension_receiver_type(method_node)
     if not receiver_type:
-        return
+        return None
     # The receiver's WRITTEN generic arity (`this Builder<TResult>` -> 1),
     # so a call receiver of known arity never binds an extension declared
     # for the other twin.
@@ -364,10 +402,6 @@ def index_extension_method(
             raw = safe_decode_text(type_node) if type_node is not None else None
             if raw:
                 receiver_arity = generic_arity_of_type_text(raw)
-    # Strip the parameter signature BEFORE taking the leaf: a qualified param
-    # type (`Poke(N2.Widget)`) contains dots, so an rsplit-then-strip would key
-    # on `Widget)` instead of the method name `Poke` and never match.
-    leaf = ingested_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
     # The extension's declaring namespace (its class's namespace-qualified name
     # minus the class leaf) so an unqualified `this Widget` can resolve to
     # `<namespace>.Widget` against a qualified call receiver. Empty for a
@@ -375,9 +409,7 @@ def index_extension_method(
     # longer carries a namespace the directory spells (issue #1629).
     namespaces, enclosing_types = _enclosing_scopes(method_node)
     ext_namespace = cs.SEPARATOR_DOT.join([*namespaces, *enclosing_types[:-1]])
-    store.setdefault(leaf, []).append(
-        (ingested_qn, receiver_type, ext_namespace, receiver_arity)
-    )
+    return receiver_type, ext_namespace, receiver_arity
 
 
 def _property_field(member: Node) -> tuple[str, str] | None:

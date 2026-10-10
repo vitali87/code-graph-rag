@@ -1359,6 +1359,17 @@ class _StatefulIngestor:
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
+                        cs.KEY_EXTENSION_RECEIVER: _text(
+                            props.get(cs.KEY_EXTENSION_RECEIVER)
+                        ),
+                        cs.KEY_EXTENSION_NAMESPACE: _text(
+                            props.get(cs.KEY_EXTENSION_NAMESPACE)
+                        ),
+                        cs.KEY_EXTENSION_RECEIVER_ARITY: arity
+                        if isinstance(
+                            arity := props.get(cs.KEY_EXTENSION_RECEIVER_ARITY), int
+                        )
+                        else None,
                         cs.KEY_IS_OBJECT_MEMBER: bool(
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),

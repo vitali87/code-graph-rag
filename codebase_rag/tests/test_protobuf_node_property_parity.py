@@ -115,10 +115,18 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `extension_receiver`, `extension_namespace` and
+    # `extension_receiver_arity` (issue #3275) are a C# extension method's
+    # index entry, read back only by an incremental run's rehydration;
+    # absent reads as "not an extension", as every run did before #3275,
+    # until the declaring file is next parsed.
     "Method": frozenset(
         {
             "absolute_path",
             "anchor_hash",
+            "extension_namespace",
+            "extension_receiver",
+            "extension_receiver_arity",
             "is_exported",
             "is_property",
             "modifiers",
