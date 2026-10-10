@@ -196,6 +196,8 @@ class JsTypeInferenceEngine:
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
         declarator_count = 0
+        # Seeded first so a declarator that rebinds the name wins.
+        self._seed_interface_parameters(caller_node, local_var_types, module_qn)
 
         declarator_nodes = self._get_declarators_via_query(caller_node, language)
         if declarator_nodes is not None:
@@ -223,6 +225,41 @@ class JsTypeInferenceEngine:
             declarator_count=declarator_count,
         )
         return local_var_types
+
+    def _seed_interface_parameters(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # `use(r: Repo)` calling `r.find()` (issue #2524): the receiver's only
+        # type is its annotation, and without it the call fell to the name-only
+        # member gate, which cannot choose between the interface method and its
+        # implementations. Only a first-party INTERFACE is seeded: any other
+        # annotation keeps the untyped fallback it had, since a typed receiver
+        # the resolver cannot place is treated as external and dropped.
+        for name, type_name in ut.annotated_parameter_types(caller_node):
+            if interface_qn := self._first_party_interface_qn(type_name, module_qn):
+                local_var_types[name] = interface_qn
+
+    def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
+        # An import names the symbol or its module, so both spellings are tried
+        # before a same-file declaration.
+        imported = self.import_processor.import_mapping.get(module_qn, {}).get(
+            type_name
+        )
+        candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"]
+        if imported:
+            candidates = [
+                imported,
+                f"{imported}{cs.SEPARATOR_DOT}{type_name}",
+                *candidates,
+            ]
+        return next(
+            (
+                qn
+                for qn in candidates
+                if self.function_registry.get(qn) == NodeType.INTERFACE
+            ),
+            None,
+        )
 
     def _record_declarator(
         self,

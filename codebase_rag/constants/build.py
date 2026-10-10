@@ -45,6 +45,11 @@ PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
 PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ARG_COPY_METADATA = "--copy-metadata"
 PYINSTALLER_ENTRY_POINT = "main.py"
+# The one argument that makes the entry point run a single Memgraph probe
+# instead of the CLI. On Windows each probe runs in a child process (issue
+# #2356), and a frozen build's executable is cgr itself, with no interpreter
+# behind it to run `python -m` on.
+MGCLIENT_PROBE_CHILD_ARG = "--mgclient-probe-child"
 
 # `readline` is excluded for its licence, not its size. On Linux the
 # interpreter's module links GNU Readline (GPL-3.0-or-later), and PyInstaller

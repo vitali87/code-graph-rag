@@ -21,6 +21,7 @@ from loguru import logger
 from codebase_rag import constants as rag_cs
 from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
@@ -184,9 +185,16 @@ def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLa
     # The updater's own eligibility walk, not a raw rglob: a file the run
     # would ignore anyway (node_modules, exclusions, hidden dirs) must not
     # gate the test on its language's grammar.
+    # The probe is the harness's, not the run's: what the walk logs (each
+    # skipped symlink and their summary, issue #2451) belongs to the run.
+    logger.disable(GraphUpdater.__module__)
+    try:
+        files = updater._collect_eligible_files()
+    finally:
+        logger.enable(GraphUpdater.__module__)
     return frozenset(
         language
-        for path, _rel_path in updater._collect_eligible_files()
+        for path, _rel_path in files
         if (language := get_language_for_extension(path.suffix)) is not None
         and language in unavailable
     )
@@ -633,7 +641,7 @@ def force_mtime_after_cache(repo: Path, source: Path) -> None:
     needs the rewrite re-hashed (issue #1640); the margin such a test gets
     otherwise is whatever the preceding run happened to cost.
     """
-    cache_mtime = (repo / rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(repo, rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
     # Read back and advance until the STORED stamp is strictly later: a
     # filesystem with coarse mtime resolution can round the requested value
     # onto the cache's own tick, which is the collision this exists to
@@ -937,3 +945,16 @@ def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -
         f"filter returned nothing proves little: {reason} (#1859). Add the "
         "missing values, or the test passes whatever the code does."
     )
+
+
+@pytest.fixture
+def mgclient_in_this_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the Memgraph probes in this process, where a patched mgclient is.
+
+    On Windows each probe runs mgclient in a child process (issue #2356),
+    which a patch of `mgclient.connect` made here never reaches. Everywhere
+    else the probes already run here, so this changes nothing there.
+    """
+    from codebase_rag.stack import health
+
+    monkeypatch.setattr(health, "_mgclient_own_c_runtime", lambda: None)
