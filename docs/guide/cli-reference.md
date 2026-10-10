@@ -77,7 +77,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--batch-size` | Override Memgraph flush batch size |
 | `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
 | `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
-| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there and the nodes they reach. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
+| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there, the nodes they reach and the links between the resources it holds. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
 
 ### `cgr export`
 
@@ -91,7 +91,7 @@ cgr export -o OUTPUT [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `-o`, `--output` | File to write. Checked before the graph is read: a directory, or a path that cannot be written, is a one-line error. |
-| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, and the nodes they reach. Repeatable. |
+| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (`RESOLVES_TO`, `FLOWS_TO`). Repeatable. |
 | `--workspace` | Export only the projects of workspace NAME. |
 
 A name that is not indexed is an error that lists the projects that are. A
