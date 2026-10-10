@@ -290,6 +290,18 @@ def _shadowed_by_longer_owner(
     )
 
 
+# What C# overload ranking reads of an unchanged definition (PR 2814 review),
+# returned by CYPHER_ALL_DEFINITION_QNS beside the extension-method entry.
+_CSHARP_RANKING_KEYS = (
+    cs.KEY_POSITIONAL_PARAMS,
+    cs.KEY_MODIFIERS,
+    cs.KEY_TYPE_PARAMETERS,
+    cs.KEY_TYPE_CONSTRAINTS,
+    cs.KEY_IMPLICIT_CONVERSION,
+    cs.KEY_GENERIC_BASES,
+)
+
+
 def _int(value: PropertyValue) -> int | None:
     # start_line / end_line are always integral; narrow the general
     # PropertyValue (whose list[str] member clashes with ResultValue) to the
@@ -1462,6 +1474,8 @@ class _StatefulIngestor:
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
                     }
+                    for key in _CSHARP_RANKING_KEYS:
+                        row[key] = _result(props.get(key))
                     defs.append(row)
                 return defs
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:

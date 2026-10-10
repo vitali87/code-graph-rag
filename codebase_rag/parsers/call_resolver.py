@@ -1538,21 +1538,34 @@ class CallResolver:
         declared = self._csharp_declared_type_parameters(
             f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
         )
+        # A type parameter the member declares itself is not the interface's,
+        # so the spelling's argument never reaches it.
+        found = [
+            (node_type, qn)
+            for qn, node_type, written, member in self._explicit_members(impl_qn)
+            if csharp_utils.names_interface(written, path, arity)
+            and spells_member(
+                member,
+                method_name,
+                unshadowed(written_bindings(written, shape), declared),
+            )
+        ]
+        # Two closings of one generic interface (`IRun<int>`, `IRun<string>`)
+        # each implement the member, and which body runs depends on the
+        # receiver's type arguments, which this lookup is not given: neither
+        # is guessed (PR 2814 review). A `#if` twin is the same body.
+        bodies = {qn_markers.strip_dup_marker(qn) for _, qn in found}
+        return found[0] if len(bodies) == 1 else None
+
+    def _explicit_members(self, impl_qn: str) -> Iterator[tuple[str, str, str, str]]:
+        # (qn, label, interface as written, member) for each explicit
+        # interface implementation declared directly on `impl_qn`.
         prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
         for qn, node_type in self.function_registry.find_with_prefix(impl_qn):
             if not qn.startswith(prefix):
                 continue
-            explicit = csharp_utils.split_explicit_member(qn[len(prefix) :])
-            if explicit is None or not csharp_utils.names_interface(
-                explicit[0], path, arity
-            ):
-                continue
-            # A type parameter the member declares itself is not the
-            # interface's, so the spelling's argument never reaches it.
-            bindings = unshadowed(written_bindings(explicit[0], shape), declared)
-            if spells_member(explicit[1], method_name, bindings):
-                return node_type, qn
-        return None
+            if explicit := csharp_utils.split_explicit_member(qn[len(prefix) :]):
+                yield qn, node_type, explicit[0], explicit[1]
 
     def _csharp_declared_type_parameters(self, method_qn: str) -> tuple[str, ...]:
         # `M<T, U>` -> ("T", "U"): the type parameters a C# method declares.

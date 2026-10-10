@@ -47,6 +47,7 @@ from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
 )
+from .parsers.csharp import graph_facts as csharp_graph_facts
 from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
@@ -1213,6 +1214,22 @@ def _added_and_modified_entries(
     return added_entries, modified_entries
 
 
+def _restore_csharp_method_facts(
+    processor: DefinitionProcessor, qn: str, row: ResultRow
+) -> None:
+    # An unchanged C# method's call shape, generic-ness and implicit
+    # conversion, as `_record_ingested_method` records them at a parse.
+    if (shape := csharp_graph_facts.method_call_shape(row)) is not None:
+        processor.csharp_call_shapes[qn] = shape
+        if shape.type_parameters:
+            processor.csharp_generic_methods.add(qn)
+    if (conversion := csharp_graph_facts.method_conversion(row)) is not None:
+        class_qn = qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
+        processor.csharp_implicit_conversions.setdefault(class_qn, []).append(
+            conversion
+        )
+
+
 def _drop_class_keyed_entry(
     processor: DefinitionProcessor, owner_module: dict[str, str], qn: str
 ) -> None:
@@ -1220,6 +1237,10 @@ def _drop_class_keyed_entry(
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
     processor.csharp_generic_shapes.pop(qn, None)
+    processor.csharp_implicit_conversions.pop(qn, None)
+    # Parsed classes leave the arity map through #1769's sweep; a class an
+    # incremental run rehydrated has no owner record there.
+    processor.csharp_class_generic_arity.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -3376,6 +3397,8 @@ class GraphUpdater:
             NodeType.METHOD,
         ) and path.endswith(cs.EXT_CS):
             self._rehydrate_csharp_declared_form(qn, path, row)
+        if path.endswith(cs.EXT_CS):
+            self._rehydrate_csharp_ranking_facts(node_type, qn, row)
         # Persisted annotations of UNCHANGED definitions rejoin the
         # type-edge queue (issue #1527): a changed file can add the
         # first resolvable type an old annotation names, and MERGE
@@ -3394,6 +3417,23 @@ class GraphUpdater:
             self._rehydrated_cpp_spans.setdefault(path, []).append(
                 CppDefinitionSpan(start, end, node_type.value, qn)
             )
+
+    def _rehydrate_csharp_ranking_facts(
+        self, node_type: NodeType, qn: str, row: ResultRow
+    ) -> None:
+        """Restore what C# overload ranking reads of an unchanged definition.
+
+        Only a parse fills these tables, so an edited caller ranked the
+        overloads of an unchanged file without them and bound other
+        overloads than a fresh index did (PR 2814 review).
+        """
+        processor = self.factory.definition_processor
+        if node_type == NodeType.METHOD:
+            _restore_csharp_method_facts(processor, qn, row)
+        elif (shape := csharp_graph_facts.type_shape(row)) is not None:
+            processor.csharp_generic_shapes[qn] = shape
+            if shape.parameters:
+                processor.csharp_class_generic_arity[qn] = len(shape.parameters)
 
     def _rehydrate_csharp_declared_form(
         self, qn: str, path: str, row: ResultRow

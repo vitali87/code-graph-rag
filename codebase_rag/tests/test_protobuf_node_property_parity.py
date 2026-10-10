@@ -82,8 +82,21 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "broken_links",
         }
     ),
+    # `type_parameters` and `generic_bases` on a C# type, and
+    # `type_parameters`, `type_constraints` and `implicit_conversion` on a C#
+    # method (PR 2814 review), are what overload ranking reads, read back only
+    # by an incremental run's rehydration; absent reads as a non-generic
+    # declaration, as every run did before them, until the file is next parsed.
     "Class": frozenset(
-        {"anchor_hash", "absolute_path", "modifiers", "path", "start_col"}
+        {
+            "anchor_hash",
+            "absolute_path",
+            "generic_bases",
+            "modifiers",
+            "path",
+            "start_col",
+            "type_parameters",
+        }
     ),
     "Field": frozenset({"absolute_path"}),
     "EnumVariant": frozenset({"absolute_path"}),
@@ -133,6 +146,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "extension_namespace",
             "extension_receiver",
             "extension_receiver_arity",
+            "implicit_conversion",
             "is_exported",
             "is_property",
             "modifiers",
@@ -142,6 +156,8 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "path",
             "positional_params",
             "start_col",
+            "type_constraints",
+            "type_parameters",
         }
     ),
     "Interface": frozenset(
@@ -150,10 +166,12 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "decorators",
             "docstring",
             "end_line",
+            "generic_bases",
             "is_exported",
             "modifiers",
             "start_col",
             "start_line",
+            "type_parameters",
         }
     ),
     "Enum": frozenset(

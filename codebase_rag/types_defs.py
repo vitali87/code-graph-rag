@@ -458,6 +458,9 @@ class CSharpCallShape(NamedTuple):
     variadic: bool
     is_static: bool
     type_parameters: tuple[str, ...] = ()
+    # (type parameter, type it is constrained to), one per type written in
+    # a `where` clause: `where T : Person` -> (("T", "Person"),).
+    constraints: tuple[tuple[str, str], ...] = ()
 
 
 class JavaStaticImport(NamedTuple):
@@ -1212,7 +1215,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, type_parameters: list[string]?, generic_bases: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1220,11 +1223,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, type_parameters: list[string]?, type_constraints: list[string]?, implicit_conversion: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, type_parameters: list[string]?, generic_bases: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,

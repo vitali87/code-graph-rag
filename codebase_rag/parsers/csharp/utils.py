@@ -322,6 +322,39 @@ def _generic_base(node: Node) -> CSharpGenericBase | None:
     return CSharpGenericBase(name, arguments) if arguments else None
 
 
+def type_parameter_constraints(declaration: Node) -> tuple[tuple[str, str], ...]:
+    """(type parameter, type) for each type a declaration's `where` clauses
+    write: `where T : Shape, IThing, new()` -> (("T", "Shape"), ("T",
+    "IThing")). `new()`, `class`, `struct` and the like name no type."""
+    constraints: list[tuple[str, str]] = []
+    for clause in declaration.children:
+        if clause.type != cs.TS_CSHARP_TYPE_PARAMETER_CONSTRAINTS_CLAUSE:
+            continue
+        target = next(
+            (c for c in clause.named_children if c.type == cs.TS_CSHARP_IDENTIFIER),
+            None,
+        )
+        name = safe_decode_text(target) if target is not None else None
+        if name:
+            constraints.extend((name, bound) for bound in _constraint_types(clause))
+    return tuple(constraints)
+
+
+def _constraint_types(clause: Node) -> list[str]:
+    # The types one `where` clause constrains its parameter to.
+    types: list[str] = []
+    for constraint in clause.named_children:
+        if constraint.type != cs.TS_CSHARP_TYPE_PARAMETER_CONSTRAINT:
+            continue
+        inner = next(iter(constraint.named_children), None)
+        if inner is None or inner.type == cs.TS_CSHARP_CONSTRUCTOR_CONSTRAINT:
+            continue
+        text = safe_decode_text(inner)
+        if text and text not in cs.CSHARP_KEYWORD_CONSTRAINTS:
+            types.append(signature_type_name(text))
+    return types
+
+
 def type_parameter_names(parameter_list: Node | None) -> tuple[str, ...]:
     """The names a `type_parameter_list` declares: `<[A] T, out U>` ->
     ("T", "U"); () for no list."""
@@ -638,6 +671,28 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
         elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
             fields.update(_declared_fields(member))
     return fields
+
+
+def implicit_conversion(method_node: Node) -> tuple[str, str] | None:
+    """(source, target) as written for `implicit operator Target(Source s)`;
+    None for any other member, an `explicit` operator included."""
+    if method_node.type != cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION or not any(
+        child.type == cs.TS_CSHARP_IMPLICIT_KEYWORD for child in method_node.children
+    ):
+        return None
+    target = safe_decode_text(method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE))
+    params = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    source = next(
+        (
+            safe_decode_text(c.child_by_field_name(cs.FIELD_TYPE))
+            for c in (params.named_children if params is not None else ())
+            if c.type == cs.TS_CSHARP_PARAMETER
+        ),
+        None,
+    )
+    if not (target and source):
+        return None
+    return signature_type_name(source), signature_type_name(target)
 
 
 def _operator_name(method_node: Node) -> str | None:

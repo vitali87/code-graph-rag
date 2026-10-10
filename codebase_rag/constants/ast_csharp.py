@@ -57,6 +57,7 @@ TS_CSHARP_DESTRUCTOR_DECLARATION = "destructor_declaration"
 TS_CSHARP_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
 TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
+TS_CSHARP_IMPLICIT_KEYWORD = "implicit"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
 
 # The scopes a local function can be declared in (and be call-visible from):
@@ -115,6 +116,14 @@ TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
 TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
 TS_CSHARP_FIELD_TYPE_PARAMETERS = "type_parameters"
 TS_CSHARP_TYPE_PARAMETER_LIST = "type_parameter_list"
+# `where T : Shape, new()`: one clause per constrained type parameter.
+TS_CSHARP_TYPE_PARAMETER_CONSTRAINTS_CLAUSE = "type_parameter_constraints_clause"
+TS_CSHARP_TYPE_PARAMETER_CONSTRAINT = "type_parameter_constraint"
+TS_CSHARP_CONSTRUCTOR_CONSTRAINT = "constructor_constraint"
+# Constraints that name no type: `notnull` and `unmanaged` parse as names.
+CSHARP_KEYWORD_CONSTRAINTS = frozenset(
+    {"class", "struct", "notnull", "unmanaged", "default"}
+)
 # The `base` receiver keyword parses as a bare "base" node in this
 # grammar version (not "base_expression").
 TS_CSHARP_BASE_EXPRESSION = "base"

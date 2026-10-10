@@ -18,7 +18,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
-from .csharp.utils import type_parameter_names
+from .csharp.utils import type_parameter_constraints, type_parameter_names
 from .utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -472,6 +472,7 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
         type_parameters=type_parameter_names(
             func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
         ),
+        constraints=type_parameter_constraints(func_node),
     )
 
 

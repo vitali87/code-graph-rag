@@ -745,6 +745,15 @@ KEY_PARAM_TYPES = "param_types"
 KEY_EXTENSION_RECEIVER = "extension_receiver"
 KEY_EXTENSION_NAMESPACE = "extension_namespace"
 KEY_EXTENSION_RECEIVER_ARITY = "extension_receiver_arity"
+# What C# overload ranking reads of a declaration (issue #2619), stored for
+# the same reason (PR 2814 review): a generic type's or method's own
+# `type_parameters` (KEY_TYPE_PARAMETERS), a method's `where` clauses as
+# "T:Person" entries, the generic bases a type passes type arguments to
+# (`Base<Circle>`), and an `implicit operator`'s [source, target] types.
+KEY_TYPE_CONSTRAINTS = "type_constraints"
+KEY_GENERIC_BASES = "generic_bases"
+KEY_IMPLICIT_CONVERSION = "implicit_conversion"
+CSHARP_CONSTRAINT_SEPARATOR = ":"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -1066,7 +1075,12 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
-    "n.extension_receiver_arity AS extension_receiver_arity"
+    "n.extension_receiver_arity AS extension_receiver_arity, "
+    "n.positional_params AS positional_params, n.modifiers AS modifiers, "
+    "n.type_parameters AS type_parameters, "
+    "n.type_constraints AS type_constraints, "
+    "n.implicit_conversion AS implicit_conversion, "
+    "n.generic_bases AS generic_bases"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

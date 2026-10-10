@@ -200,6 +200,10 @@ class DefinitionProcessor(
         # ranks `Validator<T>.Validate(T)` as taking a Person (issue #2619).
         # Only types that take or pass a type argument are recorded.
         self.csharp_generic_shapes: dict[str, CSharpGenericShape] = {}
+        # {class qn: (source, target) of each `implicit operator` it declares,
+        # as written}, so `M(new Source())` can bind `M(Target)` through
+        # `implicit operator Target(Source s)` (PR 2814 review).
+        self.csharp_implicit_conversions: dict[str, list[tuple[str, str]]] = {}
         # {class qn: namespace-qualified name (`N1.Outer.Widget`)} for every
         # C# type, read from the declaration at ingest: the qn leaves out a
         # namespace the module's directory already spells (issue #1629), so

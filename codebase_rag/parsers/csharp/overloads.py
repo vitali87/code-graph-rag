@@ -211,6 +211,22 @@ def _same_type_fit(
     return Fit.EXACT
 
 
+def _type_path(type_text: str) -> list[str]:
+    # `global::A.Widget<T>` -> ["A", "Widget"]: the segments a type's
+    # spelling qualifies its name with, alias and arguments dropped.
+    path = strip_generic_arguments(type_text).rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    return path.split(cs.SEPARATOR_DOT)
+
+
+def _qualified_apart(argument_name: str, parameter: str) -> bool:
+    """Whether two spellings of one simple name name two types: `A.Widget`
+    and `B.Widget` each qualify it, and neither path ends the other. A bare
+    `Widget` may be either, so it never tells them apart (PR 2814 review)."""
+    given, wanted = _type_path(argument_name), _type_path(parameter)
+    shorter, longer = sorted((given, wanted), key=len)
+    return longer[-len(shorter) :] != shorter
+
+
 def fit(
     parameter: str,
     argument: ArgumentType | None,
@@ -233,7 +249,11 @@ def fit(
     wanted_name = _simple_name(parameter)
     wanted_arity = generic_arity_of_type_text(parameter)
     given_name = _simple_name(argument.name)
-    if wanted_name == given_name and wanted_arity == argument.arity:
+    if (
+        wanted_name == given_name
+        and wanted_arity == argument.arity
+        and not _qualified_apart(argument.name, parameter)
+    ):
         return _same_type_fit(parameter, argument, open_names)
     # The written path, not the bare name, so a qualified parameter type
     # resolves to the type it names.

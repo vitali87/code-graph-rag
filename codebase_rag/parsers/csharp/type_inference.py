@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -79,6 +79,13 @@ def _arity(leaf: str) -> int:
         elif ch == cs.CHAR_COMMA and depth == 0:
             count += 1
     return count
+
+
+def _given[T](value: T | None, empty: Callable[[], T]) -> T:
+    # The caller's container, shared by reference and filled after
+    # construction; a fresh one only when none was given (`or` would swap an
+    # empty shared one for a new one and lose the later writes).
+    return value if value is not None else empty()
 
 
 def _param_types(leaf: str) -> list[str]:
@@ -252,6 +259,8 @@ class CSharpTypeInferenceEngine:
         "csharp_namespaced_qns",
         "csharp_method_return_types",
         "csharp_generic_shapes",
+        "csharp_implicit_conversions",
+        "csharp_class_owner_module",
         "method_return_types",
         "function_locations",
         "_rel_to_module",
@@ -286,6 +295,8 @@ class CSharpTypeInferenceEngine:
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         csharp_generic_shapes: dict[str, CSharpGenericShape] | None = None,
+        csharp_implicit_conversions: dict[str, list[tuple[str, str]]] | None = None,
+        csharp_class_owner_module: dict[str, str] | None = None,
     ):
         # Memo for `resolve_csharp_method_call` (issue #1800). A chained
         # invocation types its receiver by resolving it, and THREE branches do
@@ -364,9 +375,13 @@ class CSharpTypeInferenceEngine:
         )
         # Shared reference (as above): {class qn: its type parameters and the
         # arguments it passes its generic bases}, populated during ingestion.
-        self.csharp_generic_shapes = (
-            csharp_generic_shapes if csharp_generic_shapes is not None else {}
-        )
+        self.csharp_generic_shapes = _given(csharp_generic_shapes, dict)
+        # Shared reference (as above): {class qn: (source, target) of each
+        # `implicit operator` it declares, as written}.
+        self.csharp_implicit_conversions = _given(csharp_implicit_conversions, dict)
+        # Shared reference (as above): {class qn: its declaring module qn},
+        # the scope a conversion operator's written types resolve in.
+        self.csharp_class_owner_module = _given(csharp_class_owner_module, dict)
         self._rel_to_module: dict[str, str] = {}
 
     # --- variable/field/parameter type map -------------------------------
@@ -1969,35 +1984,101 @@ class CSharpTypeInferenceEngine:
                     call.node, call.local_var_types, call.module_qn, call.caller_qn
                 )
             scored = [
-                (qn, self._overload_fits(qn, arguments, bindings, open_names, relation))
+                (
+                    qn,
+                    self._overload_fits(
+                        qn,
+                        parameters,
+                        arguments,
+                        (bindings, open_names),
+                        relation,
+                        call.module_qn,
+                    ),
+                )
                 for qn in qns
+                for parameters in self._call_parameter_forms(qn, len(arguments))
             ]
-            if best := best_candidates(scored):
+            # A method scored in both its forms is one candidate.
+            if best := list(dict.fromkeys(best_candidates(scored))):
                 return best
         return []
 
     def _overload_fits(
         self,
         method_qn: str,
+        parameters: list[str],
         arguments: list[ArgumentType | None],
-        bindings: Mapping[str, str],
-        open_names: frozenset[str],
+        receiver: tuple[Mapping[str, str], frozenset[str]],
         relation: Relation,
+        module_qn: str,
     ) -> list[Fit | None]:
-        # How each argument binds its parameter of `method_qn`. A type
-        # parameter the method declares itself shadows its class's of the
-        # same name (`Handler<T>.Handle<T>(T)`), so the binding the receiver
-        # gives the class's never reaches it; inference leaves it open.
+        # How each argument binds its parameter of `method_qn`, given the
+        # type arguments the receiver binds and the parameters it leaves
+        # open. A type parameter the method declares itself shadows its
+        # class's of the same name (`Handler<T>.Handle<T>(T)`), so the
+        # binding the receiver gives the class's never reaches it; inference
+        # leaves it open, unless the argument breaks its `where` clause.
+        bindings, open_names = receiver
         own = self._method_type_parameters(method_qn)
         visible = unshadowed(bindings, own)
+        bounds = self._constraint_bounds(method_qn)
         return [
-            fit(substitute(parameter, visible), argument, open_names | own, relation)
-            for parameter, argument in zip(
-                self._call_parameters(method_qn, len(arguments)),
-                arguments,
-                strict=True,
+            None
+            if self._breaks_constraint(bounds.get(parameter, ()), argument, module_qn)
+            else fit(
+                substitute(parameter, visible), argument, open_names | own, relation
             )
+            for parameter, argument in zip(parameters, arguments, strict=True)
         ]
+
+    def _constraint_bounds(self, method_qn: str) -> dict[str, list[str]]:
+        # Each constrained type parameter of `method_qn`, with its types.
+        shape = self.csharp_call_shapes.get(method_qn)
+        bounds: dict[str, list[str]] = {}
+        for name, bound in shape.constraints if shape is not None else ():
+            bounds.setdefault(name, []).append(bound)
+        return bounds
+
+    def _breaks_constraint(
+        self, bounds: Sequence[str], argument: ArgumentType | None, module_qn: str
+    ) -> bool:
+        # Inferred from an argument that does not derive from a class its
+        # `where` clause names, a type parameter fails its constraint, and
+        # C# drops the generic overload (`M<T>(T) where T : Person` takes no
+        # Circle; PR 2814 review). A user-defined conversion never satisfies
+        # a constraint, and an interface or external bound cannot be judged.
+        if not bounds or argument is None or argument.name is None:
+            return False
+        return any(
+            self._derives_from(
+                argument.name,
+                argument.arity,
+                strip_generic_arguments(bound),
+                generic_arity_of_type_text(bound),
+                module_qn,
+            )
+            is False
+            for bound in bounds
+        )
+
+    def _call_parameter_forms(self, method_qn: str, arg_count: int) -> list[list[str]]:
+        # The parameters the arguments bind, in each form C# may call the
+        # method in. One argument for a `params T[]` tail is the array itself
+        # (normal form) or a single `T` (expanded form): `M(1)` binds
+        # `M(params int[])` as an int, better than boxing it to `M(object)`
+        # (PR 2814 review), where `M(arr)` passes the array.
+        types = _param_types(method_qn)
+        expandable = bool(types) and self._is_variadic(method_qn, types)
+        if not expandable or arg_count != len(types):
+            return [self._call_parameters(method_qn, arg_count)]
+        expanded = [*types[:-1], types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)]
+        return [types, expanded]
+
+    def _is_variadic(self, method_qn: str, types: list[str]) -> bool:
+        shape = self.csharp_call_shapes.get(method_qn)
+        if shape is not None:
+            return shape.variadic
+        return bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
 
     def _call_parameters(self, method_qn: str, arg_count: int) -> list[str]:
         # The parameter each of `arg_count` arguments binds, one per argument,
@@ -2006,13 +2087,7 @@ class CSharpTypeInferenceEngine:
         # leaves defaulted parameters out binds the leading ones. A position
         # no parameter takes (an overload that cannot apply) is unknown.
         types = _param_types(method_qn)
-        shape = self.csharp_call_shapes.get(method_qn)
-        variadic = (
-            shape.variadic
-            if shape is not None
-            else bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
-        )
-        if variadic and arg_count != len(types):
+        if self._is_variadic(method_qn, types) and arg_count != len(types):
             element = types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)
             types = types[:-1] + [element] * max(arg_count - len(types) + 1, 0)
         return (types + [""] * arg_count)[:arg_count]
@@ -2238,11 +2313,50 @@ class CSharpTypeInferenceEngine:
         param_arity: int,
         module_qn: str,
     ) -> bool | None:
-        # Known only between first-party types whose conversion the class
-        # hierarchy settles: an argument class converts to a parameter
-        # class it derives from, and to no other class. An interface on
-        # either side is implemented outside `class_inheritance`, so it
-        # stays unknown, as does anything external.
+        # Known only between first-party classes: an argument class converts
+        # to a parameter class it derives from, or that a declared `implicit
+        # operator` reaches (PR 2814 review), and to no other class. An
+        # interface on either side is implemented outside
+        # `class_inheritance`, so it stays unknown, as does anything external.
+        classes = self._first_party_classes(
+            arg_name, arg_arity, param_name, param_arity, module_qn
+        )
+        if classes is None:
+            return None
+        arg_qn, param_qn = classes
+        return param_qn in self._class_ancestry(arg_qn) or self._converts_implicitly(
+            arg_qn, param_qn, module_qn
+        )
+
+    def _derives_from(
+        self,
+        arg_name: str,
+        arg_arity: int,
+        param_name: str,
+        param_arity: int,
+        module_qn: str,
+    ) -> bool | None:
+        # `_converts_to` without user-defined conversions, which a `where`
+        # constraint does not admit.
+        classes = self._first_party_classes(
+            arg_name, arg_arity, param_name, param_arity, module_qn
+        )
+        if classes is None:
+            return None
+        arg_qn, param_qn = classes
+        return param_qn in self._class_ancestry(arg_qn)
+
+    def _first_party_classes(
+        self,
+        arg_name: str,
+        arg_arity: int,
+        param_name: str,
+        param_arity: int,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        # (argument class qn, parameter class qn) when the hierarchy can
+        # settle their conversion: the parameter a class, the argument a
+        # class or enum, both first-party.
         param_qn = self._type_name_to_qn(param_name, module_qn, param_arity)
         arg_qn = self._type_name_to_qn(arg_name, module_qn, arg_arity)
         if param_qn is None or arg_qn is None:
@@ -2251,7 +2365,32 @@ class CSharpTypeInferenceEngine:
             self.function_registry.get(arg_qn) not in (NodeType.CLASS, NodeType.ENUM)
         ):
             return None
-        return param_qn in self._class_ancestry(arg_qn)
+        return arg_qn, param_qn
+
+    def _converts_implicitly(self, arg_qn: str, param_qn: str, module_qn: str) -> bool:
+        # A user-defined implicit conversion is declared on its source or its
+        # target type, or a base of either. It applies when the argument
+        # derives from its source and its target derives from the parameter.
+        sources = self._class_ancestry(arg_qn)
+        for declaring in sources | self._class_ancestry(param_qn):
+            for source, target in self.csharp_implicit_conversions.get(declaring, ()):
+                scope = self.csharp_class_owner_module.get(declaring, module_qn)
+                source_qn = self._written_type_qn(source, scope)
+                target_qn = self._written_type_qn(target, scope)
+                if (
+                    source_qn in sources
+                    and target_qn is not None
+                    and param_qn in self._class_ancestry(target_qn)
+                ):
+                    return True
+        return False
+
+    def _written_type_qn(self, written: str, module_qn: str) -> str | None:
+        return self._type_name_to_qn(
+            strip_generic_arguments(written),
+            module_qn,
+            generic_arity_of_type_text(written),
+        )
 
     def _class_ancestry(self, class_qn: str) -> set[str]:
         seen: set[str] = set()

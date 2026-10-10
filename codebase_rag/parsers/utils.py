@@ -1602,9 +1602,11 @@ def ingest_method(
     method_props.update(type_facts_props(type_facts))
     if language == cs.SupportedLanguage.CSHARP:
         # Local import: the C# helpers import this module.
+        from .csharp import graph_facts as csharp_graph_facts
         from .csharp import utils as csharp_utils
 
         method_props.update(csharp_utils.extension_method_props(method_node))
+        method_props.update(csharp_graph_facts.method_props(method_node))
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,

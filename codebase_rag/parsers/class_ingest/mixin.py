@@ -33,6 +33,7 @@ from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
+from ..csharp import graph_facts as csharp_graph_facts
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
@@ -334,6 +335,7 @@ class ClassIngestMixin:
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
     csharp_generic_shapes: dict[str, CSharpGenericShape]
+    csharp_implicit_conversions: dict[str, list[tuple[str, str]]]
     csharp_class_namespaced: dict[str, str]
     csharp_namespaced_qns: dict[str, set[str]]
     csharp_method_return_types: dict[str, tuple[str, int]]
@@ -1358,6 +1360,7 @@ class ClassIngestMixin:
         class_props.update(anchor_hash_props(class_node, decorators))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
+            class_props.update(csharp_graph_facts.type_props(class_node))
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -2072,6 +2075,10 @@ class ClassIngestMixin:
         module_qn = scope.module_qn
         if language == cs.SupportedLanguage.CSHARP:
             self.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
+            if conversion := csharp_utils.implicit_conversion(method_node):
+                self.csharp_implicit_conversions.setdefault(scope.class_qn, []).append(
+                    conversion
+                )
             if (
                 method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
                 is not None
