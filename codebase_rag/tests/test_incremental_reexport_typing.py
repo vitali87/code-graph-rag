@@ -611,11 +611,13 @@ RS_TWO_TRAIT_RUN_KEY = "proj.src.shapes.S.run"
 RS_TWO_TRAIT_CALLER = "proj.src.app.chained"
 
 
-def _rust_row(qn: str, annotation: str) -> dict[str, PropertyValue]:
+def _rust_row(
+    qn: str, annotation: str, path: str = "src/shapes.rs"
+) -> dict[str, PropertyValue]:
     return {
         cs.KEY_QUALIFIED_NAME: qn,
         cs.KEY_LABEL: cs.NodeLabel.METHOD.value,
-        cs.KEY_PATH: "src/shapes.rs",
+        cs.KEY_PATH: path,
         cs.KEY_RETURN_TYPE: annotation,
     }
 
@@ -684,3 +686,100 @@ class TestRustDuplicateMethodReturnTypes:
             [_rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta")]
         )
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Parsed"
+
+
+_RS_SHAPES_THREE = (
+    "pub struct Alpha;\nimpl Alpha {\n    pub fn go(&self) -> u32 {\n        1\n    }\n}\n\n"
+    "pub struct Beta;\nimpl Beta {\n    pub fn go(&self) -> u32 {\n        2\n    }\n}\n\n"
+    "pub struct Gamma;\nimpl Gamma {\n    pub fn go(&self) -> u32 {\n        3\n    }\n}\n\n"
+    "pub trait First {\n    fn run(&self) -> Alpha;\n}\n\n"
+    "pub trait Second {\n    fn run(&self) -> Beta;\n}\n\n"
+    "pub trait Third {\n    fn run(&self) -> Gamma;\n}\n"
+)
+# `a::b` is declared twice behind a cfg: inline in `a/mod.rs` and as the file
+# `a/b.rs`, so both files register `S.run` under `proj.src.a.b`. A clean build
+# walks `a/b.rs` first (natural qn, then `@12`) and `a/mod.rs` last (`@6`), so
+# the inline `Third` impl's `Gamma` stands though its marker line is lower.
+RS_TWINS_IN_TWO_FILES: dict[str, str] = {
+    "Cargo.toml": (
+        '[package]\nname = "proj"\nversion = "0.1.0"\n\n[features]\ninline = []\n'
+    ),
+    "src/lib.rs": "pub mod shapes;\npub mod a;\npub mod app;\n",
+    "src/shapes.rs": _RS_SHAPES_THREE,
+    "src/a/mod.rs": (
+        '#[cfg(feature = "inline")]\n'
+        "pub mod b {\n"
+        "    use crate::shapes::{Gamma, Third};\n"
+        "    pub struct S;\n"
+        "    impl Third for S {\n"
+        "        fn run(&self) -> Gamma {\n            Gamma\n        }\n    }\n"
+        "}\n\n"
+        '#[cfg(not(feature = "inline"))]\n'
+        "pub mod b;\n"
+    ),
+    "src/a/b.rs": (
+        "use crate::shapes::{Alpha, Beta, First, Second};\n\n"
+        "pub struct S;\n\n"
+        "impl First for S {\n    fn run(&self) -> Alpha {\n        Alpha\n    }\n}\n\n"
+        "impl Second for S {\n    fn run(&self) -> Beta {\n        Beta\n    }\n}\n"
+    ),
+    "src/app.rs": (
+        "use crate::a::b::S;\nuse crate::shapes::{First, Second, Third};\n\n"
+        "pub fn chained(s: S) -> u32 {\n    s.run().go()\n}\n"
+    ),
+}
+RS_TWINS_KEY = "proj.src.a.b.S.run"
+
+
+class TestRustTwinsAcrossFiles:
+    # The consumer edited, or either file holding a twin: whichever files the
+    # sync re-parses, the type matches the clean index's.
+    @pytest.mark.parametrize("edited", ["src/app.rs", "src/a/b.rs", "src/a/mod.rs"])
+    def test_the_last_file_walked_types_the_receiver_as_on_a_clean_index(
+        self, tmp_path: Path, edited: str
+    ) -> None:
+        synced = _sync_after_edit(
+            tmp_path, RS_TWINS_IN_TWO_FILES, edited, _UNRELATED_RS_FN, "rust"
+        )
+        clean = synced.clean_updater.factory.definition_processor.method_return_types
+        clean_calls = _calls_from(synced.clean, RS_TWO_TRAIT_CALLER)
+        assert clean.get(RS_TWINS_KEY) == "Gamma", (
+            "fixture must let the file walked last stand over a higher marker"
+        )
+        assert clean_calls.get("proj.src.shapes.Gamma.go") == _EXACT
+        incremental = synced.updater.factory.definition_processor.method_return_types
+        calls = _calls_from(synced.store, RS_TWO_TRAIT_CALLER)
+
+        assert incremental.get(RS_TWINS_KEY) == "Gamma"
+        assert calls.get("proj.src.shapes.Gamma.go") == _EXACT
+        assert "proj.src.shapes.Beta.go" not in calls
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["in-order", "reversed"])
+    def test_the_file_walked_last_wins_over_a_higher_marker(
+        self, tmp_path: Path, reverse: bool
+    ) -> None:
+        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        rows = [
+            _rust_row(RS_TWINS_KEY, "Alpha", "src/a/b.rs"),
+            _rust_row(f"{RS_TWINS_KEY}@12", "Beta", "src/a/b.rs"),
+            _rust_row(f"{RS_TWINS_KEY}@6", "Gamma", "src/a/mod.rs"),
+        ]
+        updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
+        return_types = updater.factory.definition_processor.method_return_types
+        assert return_types.get(RS_TWINS_KEY) == "Gamma"
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["in-order", "reversed"])
+    def test_a_subdirectory_is_walked_after_its_parents_files(
+        self, tmp_path: Path, reverse: bool
+    ) -> None:
+        # `src/z.rs` before `src/y/b.rs`, though the full path sorts after it:
+        # the walk yields a directory's own files before descending.
+        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        rows = [
+            _rust_row(f"{RS_TWINS_KEY}@3", "Beta", "src/y/b.rs"),
+            _rust_row(RS_TWINS_KEY, "Alpha", "src/z.rs"),
+            _rust_row(f"{RS_TWINS_KEY}@40", "Gamma", "src/z.rs"),
+        ]
+        updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
+        return_types = updater.factory.definition_processor.method_return_types
+        assert return_types.get(RS_TWINS_KEY) == "Beta"

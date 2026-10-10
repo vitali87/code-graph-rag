@@ -959,16 +959,28 @@ def _natural_qn(qualified_name: str) -> str:
     return qn_markers.natural_qn(qualified_name)
 
 
-def _registration_order(row: ResultRow) -> tuple[int, int]:
+def _walk_position(rel_path: str) -> tuple[tuple[str, ...], str]:
+    """Where `walk_eligible_files` yields a file, which is the order a clean
+    build parses in: a directory's files by name, then its subdirectories'."""
+    path = PurePosixPath(rel_path)
+    return path.parent.parts, path.name
+
+
+def _registration_order(
+    row: ResultRow,
+) -> tuple[tuple[tuple[str, ...], str], tuple[int, int]]:
     """Where a definition row's qn fell among its same-named twins.
 
-    Registration gives the first twin the natural qn and each later one an
-    `@line` (then `@line_col`) marker in document order, so the natural qn
-    sorts first and the variants follow by position.
+    A clean build registers files in walk order, and within a file the first
+    twin it meets takes the natural qn and each later one an `@line` (then
+    `@line_col`) marker in document order. The marker alone cannot order
+    twins from two files: an inline `mod b` and the file `b.rs` both declare
+    into `a.b` (#2805 review).
     """
     qn = row.get(cs.KEY_QUALIFIED_NAME)
+    path = row.get(cs.KEY_PATH)
     position = qn_markers.marker_position(qn) if isinstance(qn, str) else None
-    return position or (0, -1)
+    return _walk_position(path if isinstance(path, str) else ""), position or (0, -1)
 
 
 _GLOSS_RELS = frozenset(
@@ -7866,7 +7878,7 @@ class GraphUpdater:
         reparse = dict(
             sorted(
                 {**present, **survivors, **affected}.items(),
-                key=lambda item: (Path(item[0]).parent.parts, Path(item[0]).name),
+                key=lambda item: _walk_position(item[0]),
             )
         )
         self._reingest_delete(reparse, gone, hashes)
