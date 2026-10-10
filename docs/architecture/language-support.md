@@ -104,6 +104,13 @@ required: `--clean` on its own deletes the graph and returns without
 rebuilding. Note that it clears **every** project in a shared graph, so
 re-index the others afterwards.
 
+Without the `ast-grep` extra these files are still indexed, but only as
+`File` nodes. A sync that meets any of them ends with one warning giving the
+number of files per language and the install command; a repository with none
+of them gets no warning. Whether the extra is installed is part of the parser
+fingerprint, so the first sync after installing it re-parses those files
+without `--clean`.
+
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
 | Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
@@ -111,7 +118,7 @@ re-index the others afterwards.
 | Swift | .swift | functions, initializers, protocol requirements, extension members | classes, structs, enums, protocols | import |
 | Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
 | Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
-| Solidity | .sol | functions, constructors, modifiers | contracts, interfaces, libraries | import |
+| Solidity | .sol | functions, constructors, modifiers, `receive`/`fallback` | contracts, interfaces, libraries | import |
 | Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
 | Nix | .nix | lambda bindings | - | import |
 
@@ -138,13 +145,31 @@ a child, so a parent's span contains its subsections.
 
 | Format | Extensions | Nodes | Edges |
 |---|---|---|---|
-| Markdown | .md, .markdown | Section (per heading) | CONTAINS_SECTION |
+| Markdown | .md, .markdown | Section (per heading) | CONTAINS_SECTION, LINKS_TO |
 
 Nesting follows heading **levels**, not the grammar's own `section` nodes:
 ATX headings (`## Heading`) nest in the parse tree, but setext headings
 (text underlined with `===` or `---`) are flat siblings, and only level
 arithmetic treats both alike. A skipped level nests naturally — an `h3`
 directly under an `h1` becomes that `h1`'s child.
+
+Relative links become `LINKS_TO` edges, one per link: from the innermost
+section the link sits in (or from the document's `Module` above its first
+heading) to the heading its anchor names (`guide.md#setup`, or `#usage` in
+the same document, matched the way GitHub renders heading anchors), or else
+to the linked file. Each edge records where the link is (`line`, `col`,
+`end_line`, `end_col`), its `text`, and its fragment as `anchor`. External
+URLs, links that leave the repository and links to directories produce no
+edge. A link whose path names nothing in the repository produces no edge
+either; the document's `Module` lists it in `broken_links` instead, and the
+sync logs how many there are. The
+[graph schema](graph-schema.md#document-links) has the full rules.
+
+YAML front matter becomes the document `Module`'s `front_matter` list of
+`key=value` entries. A list value is one entry with its items
+comma-joined: `tags: [a, b]`, or `- a` / `- b` lines beneath `tags:`, is
+stored as `tags=a,b`. Nested maps, and lists whose items are themselves
+structures, are skipped.
 
 Documents have no functions, classes, or calls, so they get neither of the
 code tiers above and are absent from call-graph analyses such as dead-code

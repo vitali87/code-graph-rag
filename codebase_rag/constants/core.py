@@ -46,6 +46,7 @@ ARG_DRY_RUN = "dry_run"
 
 SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
+SEPARATOR_BACKSLASH = "\\"
 # Splits "provider:model" both in user-supplied settings and in the model
 # names pydantic-ai enumerates.
 MODEL_STRING_SEPARATOR = ":"
@@ -125,6 +126,13 @@ WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
 ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
+# Where a refused setting came from, as its error message names it.
+SETTING_ORIGIN_ENVIRONMENT = "the environment"
+SETTING_ORIGIN_DOTENV = "./.env"
+# python-dotenv's switch for not loading `.env`, and the values that turn it on,
+# honoured as `load_dotenv` honours them.
+ENV_PYTHON_DOTENV_DISABLED = "PYTHON_DOTENV_DISABLED"
+PYTHON_DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
 LOGURU_DEFAULT_HANDLER_ID = 0
 
 # Debounce settings for realtime watcher

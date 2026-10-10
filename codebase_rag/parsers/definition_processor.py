@@ -461,6 +461,7 @@ class DefinitionProcessor(
             self.project_name,
             self.csharp_class_generic_arity,
         )
+        resolver.join_partial_groups(self.csharp_partial_groups)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -577,6 +578,13 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
+            self._ingest_inline_modules(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
             self._ingest_all_functions(
                 root_node,
                 module_qn,

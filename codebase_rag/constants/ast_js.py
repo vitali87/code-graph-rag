@@ -59,6 +59,12 @@ TS_JS_STAR = "*"
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
 TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
+# A JSX element with children, its closing tag, and the fields that hold the
+# two tags' names: a rename rewrites the closing tag with the opening one,
+# which is the only one the graph records (issue #2811).
+TS_JSX_ELEMENT = "jsx_element"
+TS_JSX_CLOSING_ELEMENT = "jsx_closing_element"
+FIELD_JSX_CLOSE_TAG = "close_tag"
 # The `{...}` wrapper around an expression in a JSX attribute value or child
 # (`onClick={handleLogout}`, `onClick={() => x()}`); its inner expression can
 # hand a function to the element as a prop.
@@ -114,6 +120,28 @@ TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 
 TS_PROPERTY_IDENTIFIER = "property_identifier"
+# A TypeScript enum's members (issue #2583): the body holds each bare member
+# as a `property_identifier` child and each `Name = value` member as an
+# `enum_assignment` with `name` and `value` fields.
+TS_JS_ENUM_BODY = "enum_body"
+TS_JS_ENUM_ASSIGNMENT = "enum_assignment"
+# A quoted member's name is the string the runtime reads, so its escapes are
+# decoded: `\uXXXX`, `\u{X}` and `\xXX` name a code point, a backslash before
+# a line terminator continues the line, these letters stand for control
+# characters, and any other escaped character is itself.
+JS_HEX_ESCAPE_PREFIXES = frozenset({"u", "x"})
+JS_LINE_CONTINUATIONS = frozenset({"\n", "\r\n", "\r", "\u2028", "\u2029"})
+JS_CHAR_ESCAPES: dict[str, str] = {
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+    "0": "\0",
+}
+# Escapes name UTF-16 code units, so a surrogate pair joins into one character.
+JS_STRING_ENCODING = "utf-16"
 # `[expr]` as an object-literal / class-member key.
 TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
 # The `(a, b = 1, ...rest)` parameter list of a function.
