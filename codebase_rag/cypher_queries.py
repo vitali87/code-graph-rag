@@ -838,6 +838,8 @@ SET g.kind = $kind, g.status = $status, g.body = $body,
     g.anchor_quote = $anchor_quote, g.anchor_prefix = $anchor_prefix,
     g.anchor_suffix = $anchor_suffix,
     g.write_id = $write_id, g.mention_qns = $mention_qns,
+    g.mention_hashes = $mention_hashes, g.mention_quotes = $mention_quotes,
+    g.mentions_lost = null,
     g.project = $project_name, g.moved_from = null, g.candidate_qns = null
 WITH g, t, mentioned
 OPTIONAL MATCH (g)-[old:{_ANNOTATES}]->(prev)
@@ -970,10 +972,42 @@ SET g.anchor_state = CASE WHEN origin = t.qualified_name
 MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
-CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
-WHERE g.mention_qns IS NOT NULL
-UNWIND g.mention_qns AS mention_qn
-MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
+# A note's mentions are placed after its subject (issue #3230), by
+# `gloss_repair.repair_mentions`: the attached notes that mention anything,
+# with each mention's recorded anchors and the edges it has now; the
+# definitions currently under the mentioned names; and one statement per note
+# whose mentions changed. A mention is never bound by its name alone once
+# that name holds other code and the recorded code is found elsewhere, and
+# one that cannot be placed is listed in `mentions_lost` rather than dropped.
+CYPHER_GLOSS_MENTION_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
+WITH DISTINCT g
+WHERE g.mention_qns IS NOT NULL AND size(g.mention_qns) > 0
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN g.qualified_name AS qualified_name, g.project AS project,
+       g.target_qn AS target_qn, g.mention_qns AS mention_qns,
+       g.mention_hashes AS mention_hashes, g.mention_quotes AS mention_quotes,
+       g.mentions_lost AS mentions_lost,
+       collect(m.qualified_name) AS attached"""
+CYPHER_DEFINITIONS_BY_QNS = f"""UNWIND $qns AS qn
+MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
+# The note's mentions as the repair placed them, and its MENTIONS edges
+# rebuilt to match. A mention followed to a new name is bound only while that
+# name still carries the hash the pass read (`attach_hashes`, an empty string
+# where a name is kept as it is), so a definition replaced between the read
+# and this write is not bound on the strength of its name.
+CYPHER_GLOSS_SET_MENTIONS = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+SET g.mention_qns = $mention_qns, g.mention_hashes = $mention_hashes,
+    g.mention_quotes = $mention_quotes, g.mentions_lost = $mentions_lost
+WITH g
+OPTIONAL MATCH (g)-[old:{_MENTIONS}]->()
+WITH g, collect(old) AS old_edges
+FOREACH (edge IN old_edges | DELETE edge)
+WITH g
+UNWIND range(0, size($attach_qns) - 1) AS i
+MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $attach_qns[i]}})
+WHERE m.qualified_name STARTS WITH $project_prefix
+  AND ($attach_hashes[i] = '' OR m.anchor_hash = $attach_hashes[i])
 MERGE (g)-[:{_MENTIONS}]->(m)"""
 # Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
 # `target_hash` when it was written; after a sync the two are compared and the
@@ -999,7 +1033,8 @@ _GLOSS_ROW = (
     "g.commit_sha AS commit_sha, g.target_qn AS target_qn, "
     "g.target_hash AS target_hash, g.anchor_state AS anchor_state, "
     "g.moved_from AS moved_from, g.candidate_qns AS candidate_qns, "
-    "g.write_id AS write_id, collect(m.qualified_name) AS mentions"
+    "g.write_id AS write_id, g.mentions_lost AS mentions_lost, "
+    "collect(m.qualified_name) AS mentions"
 )
 CYPHER_GLOSS_READ = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)

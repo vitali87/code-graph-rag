@@ -1145,7 +1145,9 @@ _GLOSS_NODE_PROPS = (
     "target_qn: string, target_hash: string?, anchor_quote: string?, "
     "anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, "
     "moved_from: string?, candidate_qns: list[string]?, project: string?, "
-    "write_id: string?, mention_qns: list[string]?}"
+    "write_id: string?, mention_qns: list[string]?, "
+    "mention_hashes: list[string]?, mention_quotes: list[string]?, "
+    "mentions_lost: list[string]?}"
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (

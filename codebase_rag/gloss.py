@@ -69,6 +69,9 @@ class GlossRow(TypedDict):
     moved_from: str | None
     candidate_qns: list[str]
     mentions: list[str]
+    # Mentions whose definition the repair could not place after a rename,
+    # move or delete: still named, with no MENTIONS edge (issue #3230).
+    mentions_lost: list[str]
 
 
 class GlossRefusal(TypedDict, total=False):
@@ -332,6 +335,7 @@ def _gloss_row(row: ResultRow) -> GlossRow:
         moved_from=_opt_str(row.get(cs.KEY_MOVED_FROM)),
         candidate_qns=_str_list(row.get(cs.KEY_CANDIDATE_QNS)),
         mentions=mentions,
+        mentions_lost=_str_list(row.get(cs.KEY_MENTIONS_LOST)),
     )
 
 
@@ -406,6 +410,13 @@ def write_gloss(
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
     facts = _target_facts(fetch_all, project_name, target_qn, read_source)
+    # Each mention records the anchors the subject does, in `mention_qns`
+    # order, so the repair can follow a renamed or moved mention instead of
+    # dropping it or handing it to a newcomer with the old name (#3230).
+    mention_qns = sorted({m["qualified_name"] for m in mentioned})
+    mention_facts = [
+        _target_facts(fetch_all, project_name, qn, read_source) for qn in mention_qns
+    ]
     # A None here unsets the property (Cypher SET with null), so a gloss on a
     # target without a fingerprint, or written outside a checkout, simply
     # lacks that property rather than carrying a placeholder.
@@ -413,7 +424,11 @@ def write_gloss(
         cs.KEY_QN: key,
         cs.KEY_PROJECT_PREFIX: _prefix(project_name),
         cs.KEY_TARGET_QN: target_qn,
-        cs.KEY_MENTION_QNS: sorted({m["qualified_name"] for m in mentioned}),
+        cs.KEY_MENTION_QNS: mention_qns,
+        cs.KEY_MENTION_HASHES: [f.target_hash or "" for f in mention_facts],
+        cs.KEY_MENTION_QUOTES: [
+            f.anchor.quote if f.anchor else "" for f in mention_facts
+        ],
         cs.KEY_KIND: kind,
         cs.KEY_STATUS: cs.GLOSS_STATUS_ACCEPTED,
         cs.KEY_BODY: text,
