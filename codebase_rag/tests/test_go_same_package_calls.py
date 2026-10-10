@@ -1001,3 +1001,167 @@ def test_a_sub_packages_same_named_type_is_not_the_constructors(
     assert cs.EdgeResolution.EXACT not in calls.get(
         (caller, "proj.gotest.aaa.mux.Mux.Get"), set()
     )
+
+
+# --- #2616 review: a directory can hold two packages, `web` and the external
+# test package `web_test`, so the return-type index keys a function by its
+# file's `package` clause as well as its directory. An internal test file
+# (`package web` in a `_test.go`) is `web` itself and keeps sharing. ---
+
+_WEB_ROUTER = (
+    "package web\n"
+    "\n"
+    "type Mux struct{ routes []string }\n"
+    "\n"
+    "func NewRouter() *Mux { return &Mux{} }\n"
+    "\n"
+    "func (m *Mux) Get(p string) { m.routes = append(m.routes, p) }\n"
+    "\n"
+    "func Serve() {\n"
+    "\tr := NewRouter()\n"
+    '\tr.Get("/serve")\n'
+    "}\n"
+)
+_WEB_APP = 'package web\n\nfunc Build() {\n\tr := NewRouter()\n\tr.Get("/a")\n}\n'
+# `package web_test` declares its own `NewRouter`, returning its own type.
+_WEB_EXT_TEST = (
+    "package web_test\n"
+    "\n"
+    "type fakeMux struct{}\n"
+    "\n"
+    "func (f *fakeMux) Get(p string) {}\n"
+    "\n"
+    "func NewRouter() *fakeMux { return &fakeMux{} }\n"
+)
+_WEB_INTERNAL_TEST = (
+    "package web\n"
+    "\n"
+    'import "testing"\n'
+    "\n"
+    "func TestRouter(t *testing.T) {\n"
+    "\tr := NewRouter()\n"
+    '\tr.Get("/t")\n'
+    "\th := newTestRouter()\n"
+    '\th.Get("/h")\n'
+    "\t_ = t\n"
+    "}\n"
+)
+_WEB_INTERNAL_HELPER = (
+    "package web\n\nfunc newTestRouter() *Mux { return &Mux{routes: nil} }\n"
+)
+_WEB_EXT_CALLER = (
+    "package web_test\n"
+    "\n"
+    "import (\n"
+    '\t"testing"\n'
+    "\n"
+    '\t"example.com/proj/web"\n'
+    ")\n"
+    "\n"
+    "func TestOwn(t *testing.T) {\n"
+    "\tr := NewRouter()\n"
+    '\tr.Get("/own")\n'
+    "\t_ = t\n"
+    "}\n"
+    "\n"
+    "func TestImported(t *testing.T) {\n"
+    "\tr := web.NewRouter()\n"
+    '\tr.Get("/imported")\n'
+    "\t_ = t\n"
+    "}\n"
+)
+
+
+def _two_package_repo(temp_repo: Path) -> dict[tuple[str, str], set[str]]:
+    return _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "web/router.go": _WEB_ROUTER,
+            "web/app.go": _WEB_APP,
+            "web/router_ext_test.go": _WEB_EXT_TEST,
+            "web/router_test.go": _WEB_INTERNAL_TEST,
+            "web/helpers_test.go": _WEB_INTERNAL_HELPER,
+            "web/caller_ext_test.go": _WEB_EXT_CALLER,
+        },
+    )
+
+
+def test_an_external_test_packages_constructor_leaves_production_typed(
+    temp_repo: Path,
+) -> None:
+    # `web_test`'s `NewRouter` returns `*fakeMux`, but it is another
+    # package's function: production `r := NewRouter()` is still `web`'s
+    # `*Mux`, so `r.Get` is `Mux.Get`, from a sibling file and from the
+    # constructor's own file alike.
+    calls = _two_package_repo(temp_repo)
+
+    assert calls[("proj.web.app.Build", "proj.web.router.Mux.Get")] == _EXACT
+    assert calls[("proj.web.router.Serve", "proj.web.router.Mux.Get")] == _EXACT
+
+
+def test_a_qualified_constructor_ignores_the_external_test_packages_namesake(
+    temp_repo: Path,
+) -> None:
+    # `web.NewRouter()` names the imported `web`, never `web_test`, whose
+    # `NewRouter` sits in the same directory.
+    calls = _two_package_repo(temp_repo)
+
+    edge = ("proj.web.caller_ext_test.TestImported", "proj.web.router.Mux.Get")
+    assert calls[edge] == _EXACT
+
+
+def test_an_internal_test_file_still_shares_the_packages_return_types(
+    temp_repo: Path,
+) -> None:
+    # Negative: `package web` in `router_test.go` IS `web`. It types `r` from
+    # production's `NewRouter` and `h` from `newTestRouter` in another of the
+    # package's test files, `web_test`'s namesake beside them; both `Get`
+    # calls land on the one `Mux.Get` edge, so it is exact only if both are.
+    calls = _two_package_repo(temp_repo)
+
+    caller = "proj.web.router_test.TestRouter"
+    assert calls[(caller, "proj.web.router.Mux.Get")] == _EXACT
+    assert calls[(caller, "proj.web.helpers_test.newTestRouter")] == _EXACT
+    assert (caller, "proj.web.router_ext_test.fakeMux.Get") not in calls
+
+
+def test_an_external_test_package_binds_its_own_constructors_type(
+    temp_repo: Path,
+) -> None:
+    # Negative: a bare `NewRouter()` in `web_test` is its own, declared in
+    # another of its files, so `r.Get` is `fakeMux.Get`, never `Mux.Get`.
+    calls = _two_package_repo(temp_repo)
+
+    caller = "proj.web.caller_ext_test.TestOwn"
+    assert calls[(caller, "proj.web.router_ext_test.NewRouter")] == _EXACT
+    assert calls[(caller, "proj.web.router_ext_test.fakeMux.Get")] == _EXACT
+    assert cs.EdgeResolution.EXACT not in calls.get(
+        (caller, "proj.web.router.Mux.Get"), set()
+    )
+
+
+def test_a_qualified_constructor_ignores_the_external_test_packages_type(
+    temp_repo: Path,
+) -> None:
+    # `web_test` declares its own `Mux` in the same directory: the `*Mux`
+    # that `web.NewRouter()` returns is still `web`'s, never that one.
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "web/router.go": _WEB_ROUTER,
+            "web/mux_ext_test.go": (
+                "package web_test\n\ntype Mux struct{}\n\nfunc (m *Mux) Get(p string) {}\n"
+            ),
+            "web/caller_ext_test.go": _WEB_EXT_CALLER.replace(
+                "\tr := NewRouter()\n", "\tr := web.NewRouter()\n"
+            ),
+        },
+    )
+
+    caller = "proj.web.caller_ext_test.TestImported"
+    assert calls[(caller, "proj.web.router.Mux.Get")] == _EXACT
+    assert cs.EdgeResolution.EXACT not in calls.get(
+        (caller, "proj.web.mux_ext_test.Mux.Get"), set()
+    )

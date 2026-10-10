@@ -33,6 +33,22 @@ def package_level_definitions(
     ]
 
 
+def shares_package_clause(requester: str | None, other: str | None) -> bool:
+    """Whether a file under `package other` is in the package of a file under
+    `package requester` in the same directory. A directory can hold two
+    packages, `p` and the external test package `p_test`; an internal test
+    file (`package p` in a `_test.go`) is `p` itself. An unrecorded clause
+    (None) rules nothing out."""
+    return requester is None or other is None or other == requester
+
+
+def importable_clause(clause: str | None) -> bool:
+    """Whether a file under `package clause` belongs to the package an import
+    of its directory names: never the external test package `p_test`, which
+    only `go test` builds beside `p` and nothing can import."""
+    return clause is None or not clause.endswith(cs.GO_TEST_FILE_SUFFIX)
+
+
 # Statements whose `left` (or a type switch's `alias`) list declares names:
 # `a, b := ...`, `for k, v := range m`, `case v := <-ch`, `switch t := x.(type)`.
 _GO_BINDING_LIST_FIELDS = {

@@ -168,6 +168,7 @@ class ProcessorFactory:
                 class_field_element_types=self.definition_processor.class_field_element_types,
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
+                go_package_names=self.definition_processor.go_package_names,
                 go_call_sites=self.definition_processor.go_call_sites,
                 python_call_sites=self.definition_processor.python_call_sites,
                 python_external_sites=self.definition_processor.python_external_sites,

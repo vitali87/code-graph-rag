@@ -56,6 +56,7 @@ class TypeInferenceEngine:
         "class_field_element_types",
         "method_return_types",
         "go_function_return_types",
+        "go_package_names",
         "go_call_sites",
         "go_external_sites",
         "java_call_sites",
@@ -110,6 +111,7 @@ class TypeInferenceEngine:
         class_field_element_types: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
+        go_package_names: dict[str, str] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         go_external_sites: set[CallSiteKey] | None = None,
         java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
@@ -167,6 +169,11 @@ class TypeInferenceEngine:
         # Shared reference (as with class_field_types): Go free-fn qn ->
         # FIRST return type, read only by the single-segment binding path.
         self.go_function_return_types = _shared(go_function_return_types, dict)
+        # Shared reference (as with class_field_types): each Go file module's
+        # `package` clause, recorded as the file is parsed. A directory can
+        # hold two packages, `p` and the external test package `p_test`, so
+        # the free-function index keys by both (#2616 review).
+        self.go_package_names = _shared(go_package_names, dict)
         # Shared references (as with csharp_call_sites): the go/types call-site
         # facts and external sites, populated after construction and read by the
         # Go resolver's semantic path (issue #1179).
@@ -178,7 +185,9 @@ class TypeInferenceEngine:
         # external proofs (issue #1183), populated after construction.
         self.python_call_sites = _shared(python_call_sites, dict)
         self.python_external_sites = _shared(python_external_sites, set)
-        self._go_free_fn_index: dict[tuple[str, str], set[str]] = {}
+        # (directory package, name) -> {file's `package` clause, None when
+        # unrecorded: the return types its functions of that name declare}.
+        self._go_free_fn_index: dict[tuple[str, str], dict[str | None, set[str]]] = {}
         self._go_free_fn_index_size = -1
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
@@ -723,7 +732,12 @@ class TypeInferenceEngine:
             return hit
         if cs.SEPARATOR_DOT not in module_qn:
             return None
-        return self._go_package_fn_return_type(self._go_file_package(module_qn), name)
+        clause = self.go_package_names.get(module_qn)
+        return self._go_package_fn_return_type(
+            self._go_file_package(module_qn),
+            name,
+            lambda other: go_utils.shares_package_clause(clause, other),
+        )
 
     def _go_file_package(self, module_qn: str) -> str:
         # The package of Go file module `module_qn`, spelled the way the import
@@ -741,21 +755,36 @@ class TypeInferenceEngine:
             return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
         return cs.SEPARATOR_DOT.join((self.project_name, *parts))
 
-    def _go_package_fn_return_type(self, package_qn: str, name: str) -> str | None:
+    def _go_package_fn_return_type(
+        self, package_qn: str, name: str, admits: Callable[[str | None], bool]
+    ) -> str | None:
         # The one return type the package's functions named `name` declare, or
         # None when they disagree: build-tag variants (`router_linux.go`,
         # `router_windows.go`) each declare it, and neither variant's type is
-        # the call's in every build (#2616 review).
+        # the call's in every build. The directory alone is not the package:
+        # `p_test`'s `NewRouter` beside `p`'s is another package's function,
+        # no variant of it, so the index keeps each file's `package` clause
+        # and `admits` picks the clauses of the asking package (#2616 review).
         if len(self.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
             for qn, return_type in self.go_function_return_types.items():
                 module_qn, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
                 if package := self._go_file_package(module_qn):
-                    self._go_free_fn_index.setdefault((package, fn_name), set()).add(
-                        return_type
+                    by_clause = self._go_free_fn_index.setdefault(
+                        (package, fn_name), {}
                     )
+                    by_clause.setdefault(
+                        self.go_package_names.get(module_qn), set()
+                    ).add(return_type)
             self._go_free_fn_index_size = len(self.go_function_return_types)
-        returns = self._go_free_fn_index.get((package_qn, name), set())
+        returns = {
+            return_type
+            for clause, types in self._go_free_fn_index.get(
+                (package_qn, name), {}
+            ).items()
+            if admits(clause)
+            for return_type in types
+        }
         return next(iter(returns)) if len(returns) == 1 else None
 
     def _go_package_call_return_type(
@@ -772,20 +801,30 @@ class TypeInferenceEngine:
         )
         if not package_qn:
             return None
-        return_type = self._go_package_fn_return_type(package_qn, name)
+        return_type = self._go_package_fn_return_type(
+            package_qn, name, go_utils.importable_clause
+        )
         if not return_type or cs.SEPARATOR_DOT in return_type:
             return None
-        # A type of the package is one whose file sits in its directory, the
-        # same test `_go_package_fn_return_type` keys its functions by.
+        # A type of the package is one whose file sits in its directory under
+        # a clause an import can name, the same test its functions pass.
         declared = go_utils.package_level_definitions(
             self.function_registry,
             return_type,
             go_utils.TYPE_DECLARATION_TYPES,
-            lambda qn: (
-                self._go_file_package(qn.rpartition(cs.SEPARATOR_DOT)[0]) == package_qn
+            lambda qn: self._go_imported_file(
+                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
             ),
         )
         return declared[0] if len(declared) == 1 else None
+
+    def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
+        # Whether Go file `module_qn` is a file of the package an import
+        # binding `package_qn` names: in its directory, and not under the
+        # external test package `p_test` that `go test` builds beside it.
+        return self._go_file_package(module_qn) == package_qn and (
+            go_utils.importable_clause(self.go_package_names.get(module_qn))
+        )
 
     def _enrich_rust_call_locals(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
