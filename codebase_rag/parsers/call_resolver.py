@@ -16,6 +16,7 @@ from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, Nod
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .csharp import utils as csharp_utils
+from .csharp.overloads import spells_member, unshadowed, written_bindings
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -1456,7 +1457,9 @@ class CallResolver:
         # A C# implementer that implements the member EXPLICITLY registers it
         # as `IValidator#Validate(Ctx)` (issue #2619), and that body is the one
         # an interface-typed call runs. Its spelling must name this interface,
-        # so `A.IRun.Go` and `B.IRun.Go` on one class stay apart.
+        # so `A.IRun.Go` and `B.IRun.Go` on one class stay apart, and spells a
+        # generic one's type parameters as its arguments: `IValidator<Person>
+        # #Validate(Person)` is `IValidator<T>`'s `Validate(T)`.
         if self._module_language(impl_qn) != cs.SupportedLanguage.CSHARP:
             return None
         inference = self.type_inference
@@ -1464,18 +1467,30 @@ class CallResolver:
             interface_qn
         ) or qn_markers.natural_qn(interface_qn)
         arity = inference.csharp_class_generic_arity.get(interface_qn, 0)
+        shape = inference.csharp_generic_shapes.get(interface_qn)
+        declared = self._csharp_declared_type_parameters(
+            f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
+        )
         prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
         for qn, node_type in self.function_registry.find_with_prefix(impl_qn):
             if not qn.startswith(prefix):
                 continue
             explicit = csharp_utils.split_explicit_member(qn[len(prefix) :])
-            if (
-                explicit is not None
-                and explicit[1] == method_name
-                and csharp_utils.names_interface(explicit[0], path, arity)
+            if explicit is None or not csharp_utils.names_interface(
+                explicit[0], path, arity
             ):
+                continue
+            # A type parameter the member declares itself is not the
+            # interface's, so the spelling's argument never reaches it.
+            bindings = unshadowed(written_bindings(explicit[0], shape), declared)
+            if spells_member(explicit[1], method_name, bindings):
                 return node_type, qn
         return None
+
+    def _csharp_declared_type_parameters(self, method_qn: str) -> tuple[str, ...]:
+        # `M<T, U>` -> ("T", "U"): the type parameters a C# method declares.
+        shape = self.type_inference.csharp_call_shapes.get(method_qn)
+        return shape.type_parameters if shape is not None else ()
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None

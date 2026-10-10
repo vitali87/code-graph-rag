@@ -24,6 +24,7 @@ from ...utils import qn_markers
 from .utils import (
     generic_arity_of_type_text,
     leaf_type_segment,
+    signature_type_name,
     split_type_ref,
     strip_generic_arguments,
 )
@@ -122,6 +123,32 @@ def bindings_for_base(
         )
         if not mentioned_names(argument) & unbound
     }
+
+
+def written_bindings(written: str, shape: CSharpGenericShape | None) -> dict[str, str]:
+    """What an explicit implementation's spelling of its interface binds:
+    `IMap<Ctx<Person>, int>` for `IMap<K, V>` is K := Ctx<Person> and
+    V := int. Nothing for a non-generic interface, or for a spelling whose
+    argument count is not the interface's."""
+    parameters = shape.parameters if shape is not None else ()
+    arguments = type_arguments(written)
+    if not parameters or len(arguments) != len(parameters):
+        return {}
+    return {
+        parameter: signature_type_name(argument)
+        for parameter, argument in zip(parameters, arguments, strict=True)
+    }
+
+
+def spells_member(
+    member: str, interface_member: str, bindings: Mapping[str, str]
+) -> bool:
+    """Whether `member` (`Validate(Person)`) is `interface_member`
+    (`Validate(T)`) once `bindings` (T := Person) are substituted into the
+    interface member's parameters. Erasing the arguments cannot pair the
+    two up beside a `Validate(string)`, nor can counting them (issue #2619)."""
+    name, paren, params = interface_member.partition(cs.CHAR_PAREN_OPEN)
+    return member == f"{name}{paren}{substitute(params, bindings)}"
 
 
 def type_arguments(type_text: str) -> tuple[str, ...]:

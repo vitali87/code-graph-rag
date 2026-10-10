@@ -646,6 +646,127 @@ namespace C {
         }
 
 
+# An explicit implementation spells its interface's type parameters as the
+# arguments it was written with: `IValidator<Person>.Validate(Person)` is
+# `IValidator<T>.Validate(T)`. Each interface has a second overload of the
+# same arity, so neither erasing the arguments nor counting them can pair
+# the members up; only binding `T := Person` can (CodeRabbit, PR 2814).
+GENERIC_EXPLICIT_CS = """\
+namespace G;
+public class Person { }
+public class Ctx<T> { }
+public interface IValidator<T> {
+    int Validate(T instance);
+    int Validate(string name);
+}
+public interface IMap<K, V> { void Put(K key, V value); void Put(string key, V value); }
+public class PersonValidator : IValidator<Person> {
+    int IValidator<Person>.Validate(Person p) => 1;
+    int IValidator<Person>.Validate(string name) => 2;
+}
+public class Index : IMap<Ctx<Person>, int> {
+    void IMap<Ctx<Person>, int>.Put(Ctx<Person> key, int value) { }
+    void IMap<Ctx<Person>, int>.Put(string key, int value) { }
+}
+public class Use {
+    public int ByPerson(IValidator<Person> v) { return v.Validate(new Person()); }
+    public int ByName(IValidator<Person> v) { return v.Validate("x"); }
+    public void Store(IMap<Ctx<Person>, int> m) { m.Put(new Ctx<Person>(), 1); }
+}
+"""
+
+GEN = f"{PROJECT}.G.G"
+GEN_VALIDATE_T = f"{GEN}.IValidator.Validate(T)"
+GEN_VALIDATE_STRING = f"{GEN}.IValidator.Validate(string)"
+GEN_EXPLICIT_PERSON = f"{GEN}.PersonValidator.IValidator<Person>#Validate(Person)"
+GEN_EXPLICIT_STRING = f"{GEN}.PersonValidator.IValidator<Person>#Validate(string)"
+GEN_PUT_KV = f"{GEN}.IMap.Put(K, V)"
+GEN_PUT_STRING_V = f"{GEN}.IMap.Put(string, V)"
+GEN_EXPLICIT_PUT_CTX = f"{GEN}.Index.IMap<Ctx<Person>, int>#Put(Ctx<Person>, int)"
+GEN_EXPLICIT_PUT_STRING = f"{GEN}.Index.IMap<Ctx<Person>, int>#Put(string, int)"
+
+
+@pytest.fixture
+def generic_explicit_graph(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
+    _index(temp_repo, mock_ingestor, {"G.cs": GENERIC_EXPLICIT_CS})
+    return mock_ingestor
+
+
+class TestAGenericInterfacesExplicitMembersBindItsTypeArguments:
+    def test_each_explicit_member_overrides_the_overload_it_substitutes_to(
+        self, generic_explicit_graph: MagicMock
+    ) -> None:
+        overrides = _overrides(generic_explicit_graph)
+        assert {
+            (GEN_EXPLICIT_PERSON, GEN_VALIDATE_T),
+            (GEN_EXPLICIT_STRING, GEN_VALIDATE_STRING),
+            (GEN_EXPLICIT_PUT_CTX, GEN_PUT_KV),
+            (GEN_EXPLICIT_PUT_STRING, GEN_PUT_STRING_V),
+        } <= overrides, overrides
+
+    def test_no_explicit_member_overrides_the_other_overload(
+        self, generic_explicit_graph: MagicMock
+    ) -> None:
+        # Negative: a binding pairs each member with its own overload only.
+        overrides = _overrides(generic_explicit_graph)
+        assert (GEN_EXPLICIT_PERSON, GEN_VALIDATE_STRING) not in overrides
+        assert (GEN_EXPLICIT_STRING, GEN_VALIDATE_T) not in overrides
+        assert (GEN_EXPLICIT_PUT_CTX, GEN_PUT_STRING_V) not in overrides
+        assert (GEN_EXPLICIT_PUT_STRING, GEN_PUT_KV) not in overrides
+
+    def test_an_interface_call_runs_the_explicit_body_its_arguments_spell(
+        self, generic_explicit_graph: MagicMock
+    ) -> None:
+        by_person = _calls_from(
+            generic_explicit_graph, f"{GEN}.Use.ByPerson(IValidator<Person>)"
+        )
+        assert set(by_person) == {GEN_VALIDATE_T, GEN_EXPLICIT_PERSON}, by_person
+        store = _calls_from(
+            generic_explicit_graph, f"{GEN}.Use.Store(IMap<Ctx<Person>, int>)"
+        )
+        assert set(store) == {GEN_PUT_KV, GEN_EXPLICIT_PUT_CTX}, store
+
+    def test_a_call_of_the_concrete_overload_still_runs_its_own_body(
+        self, generic_explicit_graph: MagicMock
+    ) -> None:
+        # Negative: `Validate(string)` needs no binding and gains no other body.
+        by_name = _calls_from(
+            generic_explicit_graph, f"{GEN}.Use.ByName(IValidator<Person>)"
+        )
+        assert set(by_name) == {GEN_VALIDATE_STRING, GEN_EXPLICIT_STRING}, by_name
+
+    def test_a_member_that_declares_its_own_t_takes_no_binding_of_the_interfaces(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `To<T>(T)` redeclares `T`, so `IConv<Person>` closes the
+        # interface's `T`, not the member's; its explicit body still spells
+        # `To(T)` and must still be the one the call runs.
+        _index(
+            temp_repo,
+            mock_ingestor,
+            {
+                "S.cs": """\
+namespace S;
+public class Person { }
+public interface IConv<T> { int To<T>(T x); int To(string s); }
+public class Conv : IConv<Person> {
+    int IConv<Person>.To<T>(T x) => 0;
+    int IConv<Person>.To(string s) => 1;
+}
+public class Use { public int A(IConv<Person> c) { return c.To(new Person()); } }
+"""
+            },
+        )
+        base = f"{PROJECT}.S.S"
+        assert set(_calls_from(mock_ingestor, f"{base}.Use.A(IConv<Person>)")) == {
+            f"{base}.IConv.To(T)",
+            f"{base}.Conv.IConv<Person>#To(T)",
+        }
+        assert (f"{base}.Conv.IConv<Person>#To(T)", f"{base}.IConv.To(T)") in (
+            _overrides(mock_ingestor)
+        )
+
+
 class TestOverridesReachTheirBaseMember:
     def test_an_override_spelling_qualified_types_still_overrides(
         self, temp_repo: Path, mock_ingestor: MagicMock

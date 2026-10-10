@@ -12,7 +12,12 @@ from ... import logs
 from ...types_defs import CSharpCallShape, CSharpGenericShape, NodeType
 from ...utils import qn_markers
 from ..csharp import utils as csharp_utils
-from ..csharp.overloads import bindings_for_base, substitute, unshadowed
+from ..csharp.overloads import (
+    bindings_for_base,
+    substitute,
+    unshadowed,
+    written_bindings,
+)
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -48,6 +53,8 @@ def process_all_method_overrides(
             csharp_class_generic_arity,
             csharp_class_namespaced,
             ingestor,
+            csharp_generic_shapes,
+            csharp_call_shapes,
         ):
             continue
         class_qn, method_name = _override_class_and_leaf(method_qn, csharp_methods)
@@ -96,6 +103,8 @@ def _emit_csharp_explicit_override(
     generic_arity: Mapping[str, int] | None,
     namespaced: Mapping[str, str] | None,
     ingestor: IngestorProtocol,
+    generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
+    call_shapes: Mapping[str, CSharpCallShape] | None = None,
 ) -> bool:
     """Link a C# explicit interface implementation, if `method_qn` is one."""
     if not csharp_methods or method_qn not in csharp_methods:
@@ -113,6 +122,8 @@ def _emit_csharp_explicit_override(
         generic_arity or {},
         namespaced or {},
         ingestor,
+        generic_shapes or {},
+        call_shapes or {},
     )
     return True
 
@@ -350,12 +361,17 @@ def _emit_explicit_impl_override(
     generic_arity: Mapping[str, int],
     namespaced: Mapping[str, str],
     ingestor: IngestorProtocol,
+    generic_shapes: Mapping[str, CSharpGenericShape],
+    call_shapes: Mapping[str, CSharpCallShape],
 ) -> None:
     """Link `IValidator#Validate(Ctx)` to `IValidator.Validate(Ctx)`.
 
     The interface is the nearest one the class implements that the
     implementation's spelling names, every written namespace segment and
-    the generic arity included (issue #2619).
+    the generic arity included (issue #2619). The spelling's type arguments
+    bind a generic interface's parameters, so `IValidator<Person>
+    #Validate(Person)` links to `Validate(T)` even beside a `Validate(string)`
+    that erasure and arity cannot tell it from.
     """
     _, interface, member = explicit
     for ancestor in ancestors:
@@ -367,7 +383,12 @@ def _emit_explicit_impl_override(
         ):
             continue
         parent_method_qn = _parent_method_qn(
-            ancestor, member, function_registry, erase_generics=True
+            ancestor,
+            member,
+            function_registry,
+            erase_generics=True,
+            bindings=written_bindings(interface, generic_shapes.get(ancestor)),
+            call_shapes=call_shapes,
         )
         if parent_method_qn is None:
             continue
