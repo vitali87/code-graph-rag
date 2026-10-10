@@ -227,6 +227,18 @@ def _qualified_apart(argument_name: str, parameter: str) -> bool:
     return longer[-len(shorter) :] != shorter
 
 
+def same_type(given: str, wanted: str) -> bool:
+    """Whether two written types name one type: `Target<int>` twice, or
+    `Lib.Person` and `Person`; never `Target<int>` and `Target<string>`, nor
+    `A.Widget` and `B.Widget`."""
+    if _simple_name(given) != _simple_name(wanted) or _qualified_apart(given, wanted):
+        return False
+    given_arguments, wanted_arguments = type_arguments(given), type_arguments(wanted)
+    return len(given_arguments) == len(wanted_arguments) and all(
+        same_type(g, w) for g, w in zip(given_arguments, wanted_arguments, strict=True)
+    )
+
+
 def fit(
     parameter: str,
     argument: ArgumentType | None,
@@ -256,11 +268,14 @@ def fit(
     ):
         return _same_type_fit(parameter, argument, open_names)
     # The written path, not the bare name, so a qualified parameter type
-    # resolves to the type it names.
+    # resolves to the type it names; with its type arguments while they are
+    # closed, so a conversion to `Target<int>` is not one to `Target<string>`.
     related = relation(
         argument.name,
         argument.arity,
-        strip_generic_arguments(parameter),
+        parameter
+        if not mentioned_names(parameter) & set(open_names)
+        else strip_generic_arguments(parameter),
         wanted_arity,
     )
     if related is None:

@@ -32,6 +32,7 @@ from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_module_qn_from_graph,
     csharp_namespaced_from_graph,
     csharp_partial_key_from_graph,
     get_language_for_extension,
@@ -1241,6 +1242,8 @@ def _drop_class_keyed_entry(
     # Parsed classes leave the arity map through #1769's sweep; a class an
     # incremental run rehydrated has no owner record there.
     processor.csharp_class_generic_arity.pop(qn, None)
+    # Popped only now: #1769's sweep, which runs first, reads it.
+    processor.csharp_class_owner_module.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -3339,11 +3342,36 @@ class GraphUpdater:
         except ValueError:
             return False
         self.function_registry[qn] = node_type
+        self._rehydrate_name_index(qn, row)
+        self._rehydrate_registry_marks(qn, row)
+        self._rehydrate_extension_method(qn, row)
+        # Record the defining file so _is_cpp_defined can language-check
+        # rehydrated candidates (deferred C++ INHERITS resolution runs
+        # after this and must reach bases in UNCHANGED headers).
+        if isinstance(path := row.get(cs.KEY_PATH), str):
+            self._rehydrate_definition_path(node_type, qn, path, row)
+        return True
+
+    def _rehydrate_name_index(self, qn: str, row: ResultRow) -> None:
         # Parsing indexes a definition under its name as well as its qn's
         # last segment, which for `ILog.Info(string)` is not `Info`; without
-        # it a re-parsed caller's name lookup misses the method (#3261).
-        if isinstance(name := row.get(cs.KEY_NAME), str) and name:
-            self.function_registry.index_name(qn, name)
+        # it a re-parsed caller's name lookup misses the method (#3261). A C#
+        # explicit interface implementation is left out, as a parse leaves it
+        # out (issue #2619): only its interface's receiver reaches it, and its
+        # qn (`Runner.IRun#Go(int)`) says it is one (CodeRabbit, PR 2814).
+        name = row.get(cs.KEY_NAME)
+        if not isinstance(name, str) or not name:
+            return
+        path = row.get(cs.KEY_PATH)
+        if (
+            isinstance(path, str)
+            and path.endswith(cs.EXT_CS)
+            and csharp_utils.is_explicit_member_qn(qn)
+        ):
+            return
+        self.function_registry.index_name(qn, name)
+
+    def _rehydrate_registry_marks(self, qn: str, row: ResultRow) -> None:
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
@@ -3364,6 +3392,8 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+
+    def _rehydrate_extension_method(self, qn: str, row: ResultRow) -> None:
         # Restore a C# extension method's index entry for unchanged files, or
         # a re-parsed `b.Describe()` finds no extension and gets no edge
         # (issue #3275).
@@ -3377,12 +3407,6 @@ class GraphUpdater:
                 namespace if isinstance(namespace, str) else "",
                 arity if isinstance(arity, int) else 0,
             )
-        # Record the defining file so _is_cpp_defined can language-check
-        # rehydrated candidates (deferred C++ INHERITS resolution runs
-        # after this and must reach bases in UNCHANGED headers).
-        if isinstance(path := row.get(cs.KEY_PATH), str):
-            self._rehydrate_definition_path(node_type, qn, path, row)
-        return True
 
     def _rehydrate_definition_path(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
@@ -3398,7 +3422,7 @@ class GraphUpdater:
         ) and path.endswith(cs.EXT_CS):
             self._rehydrate_csharp_declared_form(qn, path, row)
         if path.endswith(cs.EXT_CS):
-            self._rehydrate_csharp_ranking_facts(node_type, qn, row)
+            self._rehydrate_csharp_ranking_facts(node_type, qn, path, row)
         # Persisted annotations of UNCHANGED definitions rejoin the
         # type-edge queue (issue #1527): a changed file can add the
         # first resolvable type an old annotation names, and MERGE
@@ -3419,7 +3443,7 @@ class GraphUpdater:
             )
 
     def _rehydrate_csharp_ranking_facts(
-        self, node_type: NodeType, qn: str, row: ResultRow
+        self, node_type: NodeType, qn: str, path: str, row: ResultRow
     ) -> None:
         """Restore what C# overload ranking reads of an unchanged definition.
 
@@ -3430,7 +3454,11 @@ class GraphUpdater:
         processor = self.factory.definition_processor
         if node_type == NodeType.METHOD:
             _restore_csharp_method_facts(processor, qn, row)
-        elif (shape := csharp_graph_facts.type_shape(row)) is not None:
+            return
+        # The file a type's member and operator types resolve in.
+        if module := csharp_module_qn_from_graph(qn, path, self.project_name):
+            processor.csharp_class_owner_module[qn] = module
+        if (shape := csharp_graph_facts.type_shape(row)) is not None:
             processor.csharp_generic_shapes[qn] = shape
             if shape.parameters:
                 processor.csharp_class_generic_arity[qn] = len(shape.parameters)

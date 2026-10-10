@@ -31,7 +31,9 @@ from .overloads import (
     best_candidates,
     bindings_for_base,
     fit,
+    mentioned_names,
     plain_type_name,
+    same_type,
     substitute,
     type_arguments,
     unshadowed,
@@ -2022,14 +2024,22 @@ class CSharpTypeInferenceEngine:
         own = self._method_type_parameters(method_qn)
         visible = unshadowed(bindings, own)
         bounds = self._constraint_bounds(method_qn)
+        scopes = (module_qn, self._member_module(method_qn, module_qn))
         return [
             None
-            if self._breaks_constraint(bounds.get(parameter, ()), argument, module_qn)
+            if self._breaks_constraint(bounds.get(parameter, ()), argument, scopes)
             else fit(
                 substitute(parameter, visible), argument, open_names | own, relation
             )
             for parameter, argument in zip(parameters, arguments, strict=True)
         ]
+
+    def _member_module(self, member_qn: str, fallback: str) -> str:
+        # The module whose file declares a member: its type's.
+        type_qn = member_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(
+            cs.SEPARATOR_DOT
+        )[0]
+        return self._declaring_module(type_qn, fallback)
 
     def _constraint_bounds(self, method_qn: str) -> dict[str, list[str]]:
         # Each constrained type parameter of `method_qn`, with its types.
@@ -2040,22 +2050,25 @@ class CSharpTypeInferenceEngine:
         return bounds
 
     def _breaks_constraint(
-        self, bounds: Sequence[str], argument: ArgumentType | None, module_qn: str
+        self,
+        bounds: Sequence[str],
+        argument: ArgumentType | None,
+        scopes: tuple[str, str],
     ) -> bool:
         # Inferred from an argument that does not derive from a class its
         # `where` clause names, a type parameter fails its constraint, and
         # C# drops the generic overload (`M<T>(T) where T : Person` takes no
         # Circle; PR 2814 review). A user-defined conversion never satisfies
         # a constraint, and an interface or external bound cannot be judged.
+        # The argument resolves in the caller's file, the bound in the
+        # method's (`scopes`), so another file's `Person` is never the bound.
         if not bounds or argument is None or argument.name is None:
             return False
+        caller_module, method_module = scopes
         return any(
             self._derives_from(
-                argument.name,
-                argument.arity,
-                strip_generic_arguments(bound),
-                generic_arity_of_type_text(bound),
-                module_qn,
+                (argument.name, argument.arity, caller_module),
+                (bound, generic_arity_of_type_text(bound), method_module),
             )
             is False
             for bound in bounds
@@ -2318,47 +2331,42 @@ class CSharpTypeInferenceEngine:
         # operator` reaches (PR 2814 review), and to no other class. An
         # interface on either side is implemented outside
         # `class_inheritance`, so it stays unknown, as does anything external.
+        # `param_name` keeps its type arguments when they are closed.
         classes = self._first_party_classes(
-            arg_name, arg_arity, param_name, param_arity, module_qn
+            (arg_name, arg_arity, module_qn), (param_name, param_arity, module_qn)
         )
         if classes is None:
             return None
         arg_qn, param_qn = classes
-        return param_qn in self._class_ancestry(arg_qn) or self._converts_implicitly(
-            arg_qn, param_qn, module_qn
-        )
+        if param_qn in self._class_ancestry(arg_qn):
+            return True
+        return self._converts_implicitly(arg_qn, param_qn, param_name, module_qn)
 
     def _derives_from(
-        self,
-        arg_name: str,
-        arg_arity: int,
-        param_name: str,
-        param_arity: int,
-        module_qn: str,
+        self, argument: tuple[str, int, str], parameter: tuple[str, int, str]
     ) -> bool | None:
         # `_converts_to` without user-defined conversions, which a `where`
-        # constraint does not admit.
-        classes = self._first_party_classes(
-            arg_name, arg_arity, param_name, param_arity, module_qn
-        )
+        # constraint does not admit. Each side is (written name, arity,
+        # module it resolves in).
+        classes = self._first_party_classes(argument, parameter)
         if classes is None:
             return None
         arg_qn, param_qn = classes
         return param_qn in self._class_ancestry(arg_qn)
 
     def _first_party_classes(
-        self,
-        arg_name: str,
-        arg_arity: int,
-        param_name: str,
-        param_arity: int,
-        module_qn: str,
+        self, argument: tuple[str, int, str], parameter: tuple[str, int, str]
     ) -> tuple[str, str] | None:
         # (argument class qn, parameter class qn) when the hierarchy can
         # settle their conversion: the parameter a class, the argument a
-        # class or enum, both first-party.
-        param_qn = self._type_name_to_qn(param_name, module_qn, param_arity)
-        arg_qn = self._type_name_to_qn(arg_name, module_qn, arg_arity)
+        # class or enum, both first-party. Each side is resolved in its own
+        # file's scope.
+        arg_name, arg_arity, arg_module = argument
+        param_name, param_arity, param_module = parameter
+        param_qn = self._type_name_to_qn(
+            strip_generic_arguments(param_name), param_module, param_arity
+        )
+        arg_qn = self._type_name_to_qn(arg_name, arg_module, arg_arity)
         if param_qn is None or arg_qn is None:
             return None
         if self.function_registry.get(param_qn) != NodeType.CLASS or (
@@ -2367,23 +2375,57 @@ class CSharpTypeInferenceEngine:
             return None
         return arg_qn, param_qn
 
-    def _converts_implicitly(self, arg_qn: str, param_qn: str, module_qn: str) -> bool:
+    def _converts_implicitly(
+        self, arg_qn: str, param_qn: str, param_name: str, module_qn: str
+    ) -> bool | None:
         # A user-defined implicit conversion is declared on its source or its
         # target type, or a base of either. It applies when the argument
-        # derives from its source and its target derives from the parameter.
+        # derives from its source and its target, closed as the parameter
+        # is (`Target<int>` is no `Target<string>`), derives from the
+        # parameter. Its written types resolve in its declaring file.
         sources = self._class_ancestry(arg_qn)
+        verdict: bool | None = False
         for declaring in sources | self._class_ancestry(param_qn):
+            scope = self._declaring_module(declaring, module_qn)
             for source, target in self.csharp_implicit_conversions.get(declaring, ()):
-                scope = self.csharp_class_owner_module.get(declaring, module_qn)
-                source_qn = self._written_type_qn(source, scope)
                 target_qn = self._written_type_qn(target, scope)
                 if (
-                    source_qn in sources
-                    and target_qn is not None
-                    and param_qn in self._class_ancestry(target_qn)
+                    self._written_type_qn(source, scope) not in sources
+                    or target_qn is None
+                    or param_qn not in self._class_ancestry(target_qn)
                 ):
+                    continue
+                closing = self._same_closing(target, param_name, declaring)
+                if closing:
                     return True
-        return False
+                if closing is None:
+                    verdict = None
+        return verdict
+
+    def _same_closing(
+        self, target: str, param_name: str, declaring: str
+    ) -> bool | None:
+        # Whether an operator's written target is closed as the parameter:
+        # True when the parameter spells no type arguments (it is not
+        # generic, or still open), None when the target's arguments name the
+        # declaring type's own parameters, which only its use closes.
+        wanted = type_arguments(param_name)
+        if not wanted:
+            return True
+        given = type_arguments(target)
+        shape = self.csharp_generic_shapes.get(declaring)
+        if shape is not None and any(
+            mentioned_names(argument) & set(shape.parameters) for argument in given
+        ):
+            return None
+        return len(given) == len(wanted) and all(
+            same_type(g, w) for g, w in zip(given, wanted, strict=True)
+        )
+
+    def _declaring_module(self, type_qn: str, fallback: str) -> str:
+        # The module whose file declares `type_qn`, the scope its written
+        # types resolve in; `fallback` when it was never recorded.
+        return self.csharp_class_owner_module.get(type_qn, fallback)
 
     def _written_type_qn(self, written: str, module_qn: str) -> str | None:
         return self._type_name_to_qn(

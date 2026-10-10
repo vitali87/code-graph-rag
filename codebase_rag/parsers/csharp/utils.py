@@ -388,6 +388,14 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     return CSharpGenericShape(tuple(parameters), tuple(bases))
 
 
+def is_explicit_member_qn(qn: str) -> bool:
+    """Whether a C# method qn names an explicit interface implementation:
+    its last segment, cut before the parameter list, spells the interface
+    with `#` (`Runner.IRun#Go(int)`), which no C# identifier holds."""
+    head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+    return cs.CSHARP_EXPLICIT_IMPL_SEPARATOR in head.rpartition(cs.SEPARATOR_DOT)[2]
+
+
 def split_explicit_member(leaf: str) -> tuple[str, str] | None:
     """(`IValidator`, `Validate(Ctx)`) for the leaf `IValidator#Validate(Ctx)`.
 

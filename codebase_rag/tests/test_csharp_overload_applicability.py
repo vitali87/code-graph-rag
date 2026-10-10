@@ -280,15 +280,25 @@ public class Use {
 """
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     parsers, queries = load_parsers()
-    GraphUpdater(
+    updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
         parsers=parsers,
         queries=queries,
         project_name="proj",
-    ).run(force=force)
+    )
+    updater.run(force=force)
+    return updater
+
+
+def _edit_only(root: Path, rel: str, text: str) -> None:
+    # Rewrite one file so the next run re-parses it and nothing else.
+    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / rel
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
 
 
 def _run_calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
@@ -404,3 +414,202 @@ def test_what_a_node_stores_rebuilds_what_the_parse_recorded(
         qn for qn, shape in processor.csharp_call_shapes.items() if shape.constraints
     }
     assert constrained == {f"{PROJECT}.Rt.Rt.Derived.S(T, W)"}, constrained
+
+
+EXPLICIT_LIB_CS = """\
+namespace App;
+public interface IRun { int Go(int x); }
+public class Runner : IRun {
+    int IRun.Go(int x) => x;
+    public int Stop(int x) => x;
+}
+"""
+
+EXPLICIT_USE_CS = """\
+namespace App;
+public class Use { public int Run(IRun r) { return r.Go(1); } }
+"""
+
+
+class TestARehydratedExplicitMemberStaysOutOfBareNameLookup:
+    # CodeRabbit review of PR 2814: a parse keeps `int IRun.Go(int)` out of
+    # the bare-name index, since only an `IRun` receiver reaches it, but a
+    # rehydrated definition was indexed under its stored name `Go`.
+    def test_an_edited_caller_finds_by_name_what_a_fresh_index_does(
+        self, temp_repo: Path
+    ) -> None:
+        pytest.importorskip("tree_sitter_c_sharp")
+        root = temp_repo / "proj"
+        root.mkdir()
+        (root / "Lib.cs").write_text(EXPLICIT_LIB_CS, encoding="utf-8")
+        (root / "Use.cs").write_text(EXPLICIT_USE_CS, encoding="utf-8")
+        store = _StatefulIngestor()
+        fresh = _index(store, root, force=True).function_registry
+        fresh_go = set(fresh.find_ending_with("Go"))
+        fresh_stop = set(fresh.find_ending_with("Stop"))
+        explicit = "proj.Lib.App.Runner.IRun#Go(int)"
+        assert explicit in fresh
+        assert explicit not in fresh_go, fresh_go
+
+        _edit_only(
+            root,
+            "Use.cs",
+            EXPLICIT_USE_CS.replace("public class", "// edit\npublic class"),
+        )
+        rehydrated = _index(store, root, force=False).function_registry
+
+        assert explicit in rehydrated
+        assert set(rehydrated.find_ending_with("Go")) == fresh_go
+        # Negative: an ordinary method is still found by its bare name.
+        assert set(rehydrated.find_ending_with("Stop")) == fresh_stop
+        assert fresh_stop == {"proj.Lib.App.Runner.Stop(int)"}
+
+
+def _two_file_calls(
+    temp_repo: Path, lib: str, use: str
+) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]]]:
+    # (fresh, after a caller-only edit) CALLS out of `Use`.
+    pytest.importorskip("tree_sitter_c_sharp")
+    root = temp_repo / "proj"
+    root.mkdir()
+    (root / "Lib.cs").write_text(lib, encoding="utf-8")
+    (root / "Use.cs").write_text(use, encoding="utf-8")
+    store = _StatefulIngestor()
+
+    def calls() -> set[tuple[str, str, str]]:
+        # (caller, callee class, callee method) by leaf: `Demo`, `M(Target)`.
+        found: set[tuple[str, str, str]] = set()
+        for edge in store.edge_props:
+            caller, callee = str(edge[1]), str(edge[4])
+            if edge[2] == cs.RelationshipType.CALLS.value and ".Use." in caller:
+                head, paren, params = callee.partition("(")
+                owner, method = head.rsplit(".", 2)[-2:]
+                found.add(
+                    (caller.rsplit(".Use.", 1)[1], owner, method + paren + params)
+                )
+        return found
+
+    _index(store, root, force=True)
+    fresh = calls()
+    _edit_only(
+        root, "Use.cs", use.replace("public class Use", "// edit\npublic class Use")
+    )
+    _index(store, root, force=False)
+    return fresh, calls()
+
+
+CONSTRAINT_SCOPE_LIB_CS = """\
+namespace L;
+public class Base { }
+public class Person : Base { }
+public class Student : Person { }
+public class Picker {
+    public void M<T>(T x) where T : Person { }
+    public void M(Base b) { }
+}
+"""
+
+CONSTRAINT_SCOPE_USE_CS = """\
+using L;
+namespace U;
+public class Person { }
+public class Use {
+    public void Valid() { new Picker().M(new Student()); }
+    public void Broken() { new Picker().M(new Base()); }
+}
+"""
+
+
+class TestAConstraintResolvesWhereTheMethodIsDeclared:
+    # Greptile review of PR 2814: `where T : Person` names the declaring
+    # file's Person, not the caller's unrelated one.
+    def test_the_declaring_files_bound_accepts_its_subclass(
+        self, temp_repo: Path
+    ) -> None:
+        fresh, edited = _two_file_calls(
+            temp_repo, CONSTRAINT_SCOPE_LIB_CS, CONSTRAINT_SCOPE_USE_CS
+        )
+        assert {c for c in fresh if c[0] == "Valid"} == {("Valid", "Picker", "M(T)")}
+        assert edited == fresh
+
+    def test_an_argument_that_breaks_it_still_loses_the_generic(
+        self, temp_repo: Path
+    ) -> None:
+        # Negative: a Base is no L.Person, so `M(Base)` takes it.
+        fresh, edited = _two_file_calls(
+            temp_repo, CONSTRAINT_SCOPE_LIB_CS, CONSTRAINT_SCOPE_USE_CS
+        )
+        assert {c for c in fresh if c[0] == "Broken"} == {
+            ("Broken", "Picker", "M(Base)")
+        }
+        assert edited == fresh
+
+
+CLOSED_CONVERSION_CS = """\
+namespace G;
+public class Target<X> { }
+public class Source { public static implicit operator Target<int>(Source s) => null; }
+public class Strings { public void M(Target<string> t) { } public void M(object o) { } }
+public class Ints { public void M(Target<int> t) { } public void M(object o) { } }
+public class Use {
+    public void Wrong() { new Strings().M(new Source()); }
+    public void Right() { new Ints().M(new Source()); }
+}
+"""
+
+
+class TestAConversionKeepsItsTargetsTypeArguments:
+    # Greptile review of PR 2814: `Target<int>` is not `Target<string>`.
+    def test_a_conversion_to_another_closing_does_not_apply(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(CLOSED_CONVERSION_CS, temp_repo, mock_ingestor)
+        assert calls["Wrong"] == {"G.Strings.M(object)"}, calls
+
+    def test_a_conversion_to_the_same_closing_still_applies(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: the operator's own closing is the parameter's.
+        calls = _calls(CLOSED_CONVERSION_CS, temp_repo, mock_ingestor)
+        assert calls["Right"] == {"G.Ints.M(Target<int>)"}, calls
+
+
+CONVERSION_SCOPE_LIB_CS = """\
+namespace A;
+public class Target { }
+public class Plain { }
+public class Source { public static implicit operator Target(Source s) => new Target(); }
+public class Demo { public void M(A.Target t) { } public void M(object o) { } }
+"""
+
+CONVERSION_SCOPE_USE_CS = """\
+using A;
+namespace B;
+public class Target { }
+public class Use {
+    public void Run() { new Demo().M(new Source()); }
+    public void None() { new Demo().M(new Plain()); }
+}
+"""
+
+
+class TestAConversionResolvesWhereItsOperatorIsDeclared:
+    # Greptile review of PR 2814: `implicit operator Target(Source)` in `A`
+    # names A.Target, whatever `Target` the caller's file declares, on a
+    # fresh index and after an edit to the caller alone.
+    def test_the_operators_target_is_its_own_files(self, temp_repo: Path) -> None:
+        fresh, edited = _two_file_calls(
+            temp_repo, CONVERSION_SCOPE_LIB_CS, CONVERSION_SCOPE_USE_CS
+        )
+        assert {c for c in fresh if c[0] == "Run"} == {("Run", "Demo", "M(A.Target)")}
+        assert edited == fresh
+
+    def test_a_class_without_an_operator_still_takes_object(
+        self, temp_repo: Path
+    ) -> None:
+        # Negative: nothing converts a Plain to a Target.
+        fresh, edited = _two_file_calls(
+            temp_repo, CONVERSION_SCOPE_LIB_CS, CONVERSION_SCOPE_USE_CS
+        )
+        assert {c for c in fresh if c[0] == "None"} == {("None", "Demo", "M(object)")}
+        assert edited == fresh

@@ -193,7 +193,9 @@ class DefinitionProcessor(
         # `proj/Core.cs` with `namespace Util` yields
         # `proj.Core.Util.Helper`, which sits under the SIBLING module
         # `proj.Core.Util`. No prefix rule on the qn can recover the
-        # declarer, so the prune reads this map (#1769).
+        # declarer, so the prune reads this map (#1769), and overload ranking
+        # resolves a member's `where` bounds and an `implicit operator`'s
+        # types in it (PR 2814 review). Every C# type has an entry.
         self.csharp_class_owner_module: dict[str, str] = {}
         # {class qn: its type parameters and the arguments it passes to each
         # generic base}, so a call on `PersonValidator : Inline<Person>`

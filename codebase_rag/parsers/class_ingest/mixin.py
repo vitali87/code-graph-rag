@@ -1651,6 +1651,11 @@ class ClassIngestMixin:
             _csharp_record_parameter_types(member_node, field_types)
         if field_types:
             self.class_field_types[class_qn] = field_types
+        # The declaring module, recorded because the class qn cannot yield
+        # it: a namespace pushes the qn under a sibling module's qn (#1769
+        # review). Every type's, since its members' written types resolve
+        # in that file (PR 2814 review).
+        self.csharp_class_owner_module[class_qn] = module_qn
         # Declared type-parameter count: `Builder<TResult>` -> 1;
         # unrecorded means 0, so only generics are stored. A class
         # node's type_parameter_list carries NO field name (unlike a
@@ -1658,10 +1663,6 @@ class ClassIngestMixin:
         for child in member_node.children:
             if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
                 self.csharp_class_generic_arity[class_qn] = len(child.named_children)
-                # The declaring module, recorded because the class qn
-                # cannot yield it: a namespace pushes the qn under a
-                # sibling module's qn (#1769 review).
-                self.csharp_class_owner_module[class_qn] = module_qn
                 break
         # A `partial` type is split across files into N path-distinct
         # nodes; group the parts into one shared list so a typed receiver
