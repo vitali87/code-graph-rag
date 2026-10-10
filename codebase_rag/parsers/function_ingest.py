@@ -287,6 +287,7 @@ class FunctionIngestMixin:
     csharp_generic_methods: set[str]
     csharp_call_shapes: dict[str, CSharpCallShape]
     csharp_method_return_types: dict[str, tuple[str, int]]
+    python_overload_stubs: dict[str, frozenset[int]]
 
     @abstractmethod
     def _get_docstring(
@@ -357,6 +358,10 @@ class FunctionIngestMixin:
                 )
             case cs.SupportedLanguage.GO:
                 return self._defer_go_receiver_method(func_node, module_qn)
+            case cs.SupportedLanguage.PYTHON:
+                return func_node.start_byte in self.python_overload_stubs.get(
+                    module_qn, frozenset()
+                )
             case _:
                 return False
 

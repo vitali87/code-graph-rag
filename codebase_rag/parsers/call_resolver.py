@@ -1064,8 +1064,8 @@ class CallResolver:
     def _dup_variant_scope_candidate(
         self, scope: str, call_name: str, language: cs.SupportedLanguage | None
     ) -> tuple[str, str] | None:
-        # A duplicate-variant caller (click's real `command` registers as
-        # `command@168` behind its @t.overload stubs) owns nested defs the
+        # A duplicate-variant caller (a def rebinding a name an earlier def
+        # already holds registers as `command@168`) owns nested defs the
         # def pass registers under the NATURAL qn (`command.decorator`);
         # probe the variant-stripped scope too, or the call falls to the
         # module trie and mis-binds to a sibling's same-named nested.

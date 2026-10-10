@@ -364,6 +364,7 @@ class ClassIngestMixin:
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
     pending_field_types: list[PendingFieldType]
+    python_overload_stubs: dict[str, frozenset[int]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -1994,9 +1995,18 @@ class ClassIngestMixin:
             self._method_override_context(class_qn, language)
         )
         scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
+        overload_stubs = (
+            self.python_overload_stubs.get(module_qn, frozenset())
+            if module_qn is not None
+            else frozenset()
+        )
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
+                continue
+            # The implementation after an `@overload` stub owns the method's
+            # name; the stub is no method of its own (issue #2590).
+            if method_node.start_byte in overload_stubs:
                 continue
 
             method_qualified_name = _signatured_method_qn(
