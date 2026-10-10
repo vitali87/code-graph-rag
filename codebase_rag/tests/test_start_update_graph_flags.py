@@ -114,9 +114,11 @@ def test_project_name_help_states_the_stored_default(tmp_path: Path) -> None:
 
 def test_project_name_help_limits_uniqueness_to_one_machine() -> None:
     # The hash covers the absolute path only, so the same path on two
-    # machines feeding one graph derives the same name (CodeRabbit, PR 3342).
-    assert "checkouts never share one" not in ch.HELP_PROJECT_NAME
-    assert "on one machine never share one" in ch.HELP_PROJECT_NAME
+    # machines feeding one graph derives the same name (CodeRabbit, PR 3342),
+    # and its 8 hex digits can collide on one machine too (CodeRabbit, PR 3343).
+    assert "never share one" not in ch.HELP_PROJECT_NAME
+    assert "on one machine" in ch.HELP_PROJECT_NAME
+    assert "collision" in ch.HELP_PROJECT_NAME
     assert "one graph" in ch.HELP_PROJECT_NAME
 
 
