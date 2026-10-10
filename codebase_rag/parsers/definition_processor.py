@@ -576,6 +576,13 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
+            self._ingest_inline_modules(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
             self._ingest_all_functions(
                 root_node,
                 module_qn,

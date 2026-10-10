@@ -100,7 +100,8 @@ projects cannot be listed, it stops unless `--yes` is given.
 
 `-o` writes only this repository's project, scoped the way
 `cgr export --project-name` scopes it: what the project owns, the
-relationships that start there and the nodes they reach.
+relationships that start there, the nodes they reach and the links between
+the resources it holds.
 
 ### `cgr export`
 
@@ -115,7 +116,7 @@ cgr export -o OUTPUT [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--output`, `-o` | Write the exported graph to PATH. [required] |
-| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there and the nodes they reach. Repeatable; without it the whole shared graph is exported. |
+| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared graph is exported. |
 | `--workspace` | Export only the projects defined in workspace NAME. |
 <!-- /SECTION:cli_options_export -->
 
