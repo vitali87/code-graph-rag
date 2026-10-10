@@ -39,7 +39,9 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
         package_dir = Path(directory)
         manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
         try:
-            manifest_data = loads_json(manifest.read_text(encoding=cs.ENCODING_UTF8))
+            manifest_data = loads_json(
+                manifest.read_text(encoding=cs.ENCODING_UTF8_SIG)
+            )
         except (OSError, ValueError):
             continue
         if not isinstance(manifest_data, dict):
@@ -111,7 +113,7 @@ def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
     try:
         data = loads_json(
             (package_dir / cs.DEP_FILE_PACKAGE_JSON).read_text(
-                encoding=cs.ENCODING_UTF8
+                encoding=cs.ENCODING_UTF8_SIG
             )
         )
     except (OSError, ValueError):

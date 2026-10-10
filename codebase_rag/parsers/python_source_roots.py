@@ -17,7 +17,9 @@ def _dotted(rel_dir: Path) -> str:
 def _setuptools_package_dir(pyproject: Path) -> dict[str, object]:
     """The `[tool.setuptools.package-dir]` table, or empty when absent or malformed."""
     try:
-        section: object = tomllib.loads(pyproject.read_text(encoding=cs.ENCODING_UTF8))
+        section: object = tomllib.loads(
+            pyproject.read_text(encoding=cs.ENCODING_UTF8_SIG)
+        )
     except (OSError, tomllib.TOMLDecodeError):
         return {}
     for key in (
