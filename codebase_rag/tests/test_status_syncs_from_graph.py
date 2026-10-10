@@ -128,7 +128,23 @@ class _Memgraph(_StatefulIngestor):
                 return []
             owner = self.owners.get(run, {})
             return [{key: owner.get(key) for key in _OWNER_KEYS}]
+        if params and query == cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
+            # A sync holding its project's claim (#2411) marks through it:
+            # the marker goes down only while that claim still holds.
+            claimed = super().fetch_all(query, params)
+            if claimed:
+                self._mark(params)
+            return claimed
         return super().fetch_all(query, params)
+
+    def _release_project_claim(self, params: PropertyDict) -> None:
+        # Unlike the base store this one keeps markers, and the release
+        # query keeps a claim whose sync has put one down.
+        if any(
+            project == params.get(cs.KEY_PROJECT_NAME) for project, _ in self.markers
+        ):
+            return
+        super()._release_project_claim(params)
 
     @staticmethod
     def _run(params: PropertyDict) -> tuple[str, str]:
