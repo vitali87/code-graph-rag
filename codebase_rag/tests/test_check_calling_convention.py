@@ -143,7 +143,8 @@ def test_the_issue_repro_is_changed_and_breaks_its_callers(temp_repo: Path) -> N
     ]
     total = _change(delta, "total")
     assert total["changes"] == [cs.DELTA_CONVENTION_BECAME_ACCESSOR]
-    assert total["before"] == [] and total["after"] == ["@property"]
+    assert total["before"] == []
+    assert total["after"] == ["@property"]
     # One site per call, though the graph drew it before and after the edit.
     assert len(total["sites"]) == 1
     assert _verdicts(delta, "total") == {"subtotal": cs.DELTA_CONVENTION_CALLS_ACCESSOR}
@@ -318,7 +319,8 @@ def test_self_rebinds_where_cls_does_not() -> None:
     plain = _method("tax", "cart.py", ("x",))
     static = plain._replace(decorators=("@staticmethod",))
     old, new = _convention(static), _convention(plain)
-    assert old is not None and new is not None
+    assert old is not None
+    assert new is not None
     site = _call("cart.py", 1, 0, plain)
 
     verdicts = [
@@ -461,7 +463,8 @@ def test_a_site_bound_by_name_alone_is_no_finding() -> None:
     accessor = method._replace(decorators=("@property",))
     site = _call("shop.py", 5, 11, method)
     old, new = _convention(method), _convention(accessor)
-    assert old is not None and new is not None
+    assert old is not None
+    assert new is not None
     called = _SiteForm(called=True, receiver=cs.DELTA_RECEIVER_INSTANCE)
 
     exact = _convention_verdict(site, method, accessor, old, new, called)
@@ -670,7 +673,8 @@ def test_typescript_get_and_static_flips_break_their_callers(
     }
     assert has_findings(delta)
     errors = _tsc(temp_repo)
-    assert "TS6234" in errors and "TS2339" in errors, errors
+    assert "TS6234" in errors, errors
+    assert "TS2339" in errors, errors
 
 
 @needs_tsc
@@ -709,7 +713,8 @@ def test_typescript_private_breaks_only_callers_outside_the_class(
         "reveal": cs.DELTA_CONVENTION_INACCESSIBLE,
     }
     errors = _tsc(temp_repo)
-    assert "TS2341" in errors and errors.count("error TS") == 1, errors
+    assert "TS2341" in errors, errors
+    assert errors.count("error TS") == 1, errors
 
 
 def test_a_class_call_the_change_makes_valid_is_no_finding(temp_repo: Path) -> None:
@@ -831,7 +836,8 @@ def test_java_static_removed_and_private_break_their_callers(
     }
     assert has_findings(delta)
     errors = _javac(temp_repo)
-    assert "non-static method tax(int)" in errors and "has private access" in errors
+    assert "non-static method tax(int)" in errors
+    assert "has private access" in errors
 
 
 @needs_javac
