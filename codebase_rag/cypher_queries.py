@@ -84,6 +84,49 @@ CYPHER_LIST_PROJECTS = (
 CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
+# A sync's claim on a project name (issue #2411): one statement, so two syncs
+# of the same unowned name cannot both read "no owner" before either writes.
+# The first claim records its root; every later one, this repository's own
+# included, gets back the root already stored and compares it with its own.
+# `created` says this claim made the Project, so only it may release it.
+CYPHER_CLAIM_PROJECT_ROOT = (
+    "OPTIONAL MATCH (held:Project {name: $project_name}) "
+    "WITH count(held) AS holders "
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "RETURN p.root_path AS root_path, holders = 0 AS created"
+)
+# The marker write of a sync that holds a claim (review of PR 2499). Another
+# sync of this repository may have created the claim, failed and released it
+# since this sync's check, and a different repository claimed the name. So
+# the marker goes down only while the Project's root is still one the check
+# accepted, read in this same statement; a Project released meanwhile is
+# claimed again here. Setting the name to itself writes the Project, so a
+# release at the same moment conflicts with this write instead of deleting
+# the node out from under the marker.
+CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE = (
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "WITH p WHERE p.root_path IN $root_paths "
+    "SET p.name = p.name "
+    "MERGE (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "SET m.run_incomplete = true, "
+    "m.writing = coalesce(m.writing, false) OR $writing "
+    "RETURN p.root_path AS root_path"
+)
+# Gives back a claim whose first sync failed before writing anything (review
+# of PR 2499): a bare Project would refuse every other repository the name.
+# Kept once the sync has put down its incomplete-run marker or any node hangs
+# off the Project, since a partial graph is then this repository's to finish.
+CYPHER_RELEASE_PROJECT_CLAIM = (
+    "MATCH (p:Project {name: $project_name, root_path: $root_path}) "
+    "OPTIONAL MATCH (p)--(linked) "
+    "WITH p, count(linked) AS links "
+    "OPTIONAL MATCH (m:IncompleteRun {project: $project_name}) "
+    "WITH p, links, count(m) AS markers "
+    "WHERE links = 0 AND markers = 0 "
+    "DELETE p"
+)
 
 # The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
 # registry only ever covered the process that ran the failed update: a crash or
@@ -780,6 +823,16 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.name AS name, n.namespace AS namespace"""
+# Which of $paths the project holds (issue #2611), asked only once a
+# location matched no definition, or when `x:a:b` could name two files: `[]`
+# for a file the graph never saw read as "no definition spans that line".
+# Held means a Module of this project at the path (a source file or a
+# document). File and Folder nodes are keyed by absolute path, so projects
+# indexed from one root share them, and a containment walk from one Project
+# reaches files only another project indexed (bot review).
+CYPHER_GRAPH_LOCATION_FILES = f"""MATCH (m:{NodeLabel.MODULE.value})
+WHERE m.qualified_name STARTS WITH $project_prefix AND m.path IN $paths
+RETURN m.path AS path, m.qualified_name AS qualified_name"""
 # Every definition registered under one natural name: the name itself and
 # its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
 # tell a property's getter, setter and deleter apart (issue #1808).
@@ -1155,6 +1208,22 @@ CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
        type(r) AS rel_type"""
+# One hop of the `depth` walks (issue #2624): the neighbours of a whole
+# frontier at once, each row naming the frontier node it hangs off as
+# `through`. OVERRIDES is read one direction per query so a walk that went
+# up to the overridden method never turns back down into its siblings.
+CYPHER_GRAPH_IMPLEMENTORS_OF = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
+WHERE base.qualified_name IN $qns AND impl.qualified_name STARTS WITH $project_prefix
+RETURN base.qualified_name AS through, labels(impl)[0] AS label,
+       impl.qualified_name AS qualified_name, impl.path AS path, type(r) AS rel_type"""
+CYPHER_GRAPH_OVERRIDERS_OF = """MATCH (a)-[r:OVERRIDES]->(b)
+WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
+RETURN b.qualified_name AS through, labels(a)[0] AS label,
+       a.qualified_name AS qualified_name, a.path AS path, type(r) AS rel_type"""
+CYPHER_GRAPH_OVERRIDDEN_BY = """MATCH (a)-[r:OVERRIDES]->(b)
+WHERE a.qualified_name IN $qns AND b.qualified_name STARTS WITH $project_prefix
+RETURN a.qualified_name AS through, labels(b)[0] AS label,
+       b.qualified_name AS qualified_name, b.path AS path, type(r) AS rel_type"""
 # Whether the graph holds a node by this name at all (issue #2461): the edge
 # walks above answer [] both for a definition nothing reaches and for a name
 # the graph never saw, and only the second is a mistake. Every label keyed by
@@ -1319,9 +1388,14 @@ CYPHER_CONTEXT_TYPES = """MATCH (n)-[r:RETURNS|ACCEPTS]->(t)
 WHERE n.qualified_name = $qn AND t.qualified_name STARTS WITH $project_prefix
 RETURN DISTINCT type(r) AS rel_type, t.qualified_name AS qualified_name, t.path AS path,
        t.start_line AS start_line, t.end_line AS end_line"""
-CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (doc:Module)-[:LINKS_TO]->(f:File {absolute_path: $absolute_path})
-MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
+# A link starts at the innermost Section holding it, or at the document's
+# Module above its first heading (issue #2458), so the document is found
+# through any depth of its sections; one row per document however many links.
+CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (f:File {absolute_path: $absolute_path})<-[:LINKS_TO]-(link_source)
+MATCH (doc:Module)-[:CONTAINS_SECTION*0..]->(link_source)
 WHERE doc.qualified_name STARTS WITH $project_prefix
+WITH DISTINCT doc
+MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
 RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
        s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
@@ -1456,4 +1530,13 @@ CYPHER_GRAPH_REFERENCES = """MATCH (src)-[r:REFERENCES|INSTANTIATES]->(target)
 WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
 RETURN labels(src)[0] AS label, src.qualified_name AS qualified_name,
        src.path AS path, type(r) AS rel_type, r.line AS line, r.col AS col,
-       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution"""
+       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution,
+       r.via_param AS via_param"""
+# The CALLS sites where a function runs `$qn` after receiving it as an
+# argument (issue #2459). Each spells the parameter, not `$qn`'s name, so a
+# rename must leave it alone even where the two are spelled alike.
+CYPHER_GRAPH_CALLBACK_SITES = """MATCH (src)-[r:CALLS]->(target)
+WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
+  AND r.via_param IS NOT NULL
+RETURN src.qualified_name AS qualified_name, r.line AS line, r.col AS col,
+       r.via_param AS via_param"""

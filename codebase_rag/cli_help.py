@@ -122,8 +122,14 @@ CMD_GRAPH_RESOLVE = "Resolve a name, dotted suffix, or path:line to qualified na
 CMD_GRAPH_DEFINITION = "File, span, docstring and source of one definition."
 CMD_GRAPH_CALLERS = "Call sites that invoke a qualified name, one row per site."
 CMD_GRAPH_CALLEES = "Call sites inside a qualified name, one row per site."
-CMD_GRAPH_IMPLEMENTORS = "Types that inherit from or implement a type."
-CMD_GRAPH_OVERRIDES = "Methods overriding a method, and the method it overrides."
+CMD_GRAPH_IMPLEMENTORS = (
+    "Types that inherit from or implement a type. "
+    "Direct subtypes only, unless --depth is above 1."
+)
+CMD_GRAPH_OVERRIDES = (
+    "Methods overriding a method, and the method it overrides. "
+    "Direct overrides only, unless --depth is above 1."
+)
 CMD_GRAPH_IMPORTERS = (
     "Modules importing a module, with each import statement's location."
 )
@@ -459,8 +465,10 @@ HELP_LANGUAGE_LIST_VERBOSE = (
 
 HELP_PROJECT_NAME = (
     "Project name to store in the graph. Defaults to the directory name plus a "
-    "hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the "
-    "names already stored."
+    "hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never "
+    "share one; cgr status lists the names already stored. A chosen name has no "
+    "hash: syncing a repository under a name another repository already indexes "
+    "needs --yes and replaces that project."
 )
 HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
