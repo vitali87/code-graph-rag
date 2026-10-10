@@ -5589,7 +5589,8 @@ class CallResolver:
         # The receiver is the enclosing class, so walk its MRO to the first
         # class whose body binds the name. A real def there leaves the call to
         # the usual resolution. A value (`run = None`) found first hides
-        # whatever a base binds, so the call reaches nothing of the base's.
+        # whatever a base binds, so the call reaches nothing of the base's,
+        # nor the same-named function a later name-based stage would find.
         receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
         if (
             receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
@@ -5611,7 +5612,7 @@ class CallResolver:
                 return hidden, None
             if self.function_registry.binds_non_method(owner, member):
                 hidden = True
-        return False, None
+        return hidden, None
 
     def member_alias_fanout(self, callee_qn: str, member: str) -> list[str]:
         """Every method a call written as `.member` may run, given `callee_qn`.

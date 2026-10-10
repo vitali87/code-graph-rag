@@ -1280,3 +1280,91 @@ class TestReceiverRebindingIsPositional:
         assert f"{OTHER}.run" in calls, calls
         assert f"{HOST}._own" not in calls, calls
         assert SUBHOST_RUN not in calls, calls
+
+
+# ---------------------------------------------------------------------------
+# A value the class binds ends the lookup even when no base binds the name
+# ---------------------------------------------------------------------------
+
+# `execute = None` is the member `self.execute` reads, so the call reaches no
+# method at all; the module-level `execute` the bare name would find is not
+# what the attribute lookup returns.
+_VALUE_OVER_MODULE_FUNCTION = (
+    "def execute():\n    return 0\n\nclass Base:\n    pass\n\n"
+)
+MODULE_EXECUTE = f"{MODULE}.execute"
+
+
+class TestValueBindingEndsTheLookup:
+    @pytest.mark.parametrize("bases", ["", "(Base)"])
+    def test_self_call_through_a_value_reaches_no_module_function(
+        self, temp_repo: Path, mock_ingestor: MagicMock, bases: str
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _VALUE_OVER_MODULE_FUNCTION + f"class Sub{bases}:\n"
+            "    execute = None\n"
+            "    def use(self):\n"
+            "        return self.execute()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.use")
+
+        assert MODULE_EXECUTE not in calls, calls
+
+    def test_inherited_value_reaches_no_module_function(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _VALUE_OVER_MODULE_FUNCTION + "class Mid(Base):\n"
+            "    execute = None\n"
+            "\n"
+            "class Sub(Mid):\n"
+            "    def use(self):\n"
+            "        return self.execute()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.use")
+
+        assert MODULE_EXECUTE not in calls, calls
+
+    # Negative: without the value binding the module function stays a plain
+    # call's target, and a base's def still answers `self.execute()`.
+
+    def test_bare_call_still_reaches_the_module_function(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _VALUE_OVER_MODULE_FUNCTION + "class Sub(Base):\n"
+            "    execute = None\n"
+            "    def use(self):\n"
+            "        return execute()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.use")
+
+        assert MODULE_EXECUTE in calls, calls
+
+    def test_base_def_below_no_value_still_resolves(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _VALUE_OVER_MODULE_FUNCTION + "class Mid(Base):\n"
+            "    def execute(self):\n"
+            "        return 1\n"
+            "\n"
+            "class Sub(Mid):\n"
+            "    def use(self):\n"
+            "        return self.execute()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.use")
+
+        assert f"{MODULE}.Mid.execute" in calls, calls
