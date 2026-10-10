@@ -6,6 +6,7 @@ import sys
 import uuid
 from collections.abc import Callable, Collection
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
@@ -73,6 +74,13 @@ from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
+
+if TYPE_CHECKING:
+    from codebase_rag.crash_correlation import (
+        FrameResolutionRate,
+        RootCauseReport,
+        TracebackReport,
+    )
 
 
 def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
@@ -215,6 +223,45 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     # this registry calls directly is built without one, which this states
     # once instead of at each call site.
     return tool.function
+
+
+def _resolution_section(resolution: "FrameResolutionRate") -> dict:
+    # `rate` is a property, so `_asdict()` omits it; mapped explicitly
+    # because the ratio is the number the caller acts on (issue #227).
+    return {
+        "total": resolution.total,
+        "resolved": resolution.resolved,
+        "rate": resolution.rate,
+    }
+
+
+def _explained_section(report: "TracebackReport") -> dict:
+    """One exception of an explained traceback: the one that propagated, or
+    a member of an ExceptionGroup, with members of its own (issue #3235)."""
+    return {
+        "exception_type": report.exception_type,
+        "exception_message": report.exception_message,
+        "frames": [frame._asdict() for frame in report.frames],
+        "resolution": _resolution_section(report.resolution),
+        "note": report.note,
+        "members": [_explained_section(member) for member in report.members],
+        "omitted_members": report.omitted_members,
+    }
+
+
+def _ranked_section(report: "RootCauseReport") -> dict:
+    """One exception's ranking, as `_explained_section` lays it out."""
+    return {
+        "exception_type": report.exception_type,
+        "exception_message": report.exception_message,
+        "failing": report.failing,
+        "anchor_is_crash_site": report.anchor_is_crash_site,
+        "candidates": [candidate._asdict() for candidate in report.candidates],
+        "resolution": _resolution_section(report.resolution),
+        "note": report.note,
+        "members": [_ranked_section(member) for member in report.members],
+        "omitted_members": report.omitted_members,
+    }
 
 
 class MCPToolsRegistry:
@@ -1167,19 +1214,9 @@ class MCPToolsRegistry:
                 path_prefix_map,
             )
         return {
-            "exception_type": report.exception_type,
-            "exception_message": report.exception_message,
-            "frames": [frame._asdict() for frame in report.frames],
+            **_explained_section(report),
             "flow_gaps": list(report.flow_gaps),
-            # `rate` is a property, so `_asdict()` omits it; mapped explicitly
-            # because the ratio is the number the caller acts on (issue #227).
-            "resolution": {
-                "total": report.resolution.total,
-                "resolved": report.resolution.resolved,
-                "rate": report.resolution.rate,
-            },
             "inferred_checkout_root": report.inferred_root,
-            "note": report.note,
         }
 
     async def rank_root_causes(
@@ -1204,20 +1241,10 @@ class MCPToolsRegistry:
                 path_prefix_map,
             )
         return {
-            "exception_type": report.exception_type,
-            "exception_message": report.exception_message,
-            "failing": report.failing,
-            "anchor_is_crash_site": report.anchor_is_crash_site,
-            "candidates": [candidate._asdict() for candidate in report.candidates],
+            **_ranked_section(report),
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),
-            "resolution": {
-                "total": report.resolution.total,
-                "resolved": report.resolution.resolved,
-                "rate": report.resolution.rate,
-            },
             "inferred_checkout_root": report.inferred_root,
-            "note": report.note,
         }
 
     async def list_projects(self) -> ListProjectsResult:

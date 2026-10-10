@@ -60,10 +60,18 @@ _TB_GROUP_HEADER = "Exception Group Traceback (most recent call last):"
 # ``ValueError: boom`` or a bare ``KeyboardInterrupt``; the leading class of
 # characters admits Unicode identifiers, which Python allows in class names.
 _TB_EXCEPTION = re.compile(r"^(?P<type>[^\W\d][\w.]*)(?::\s?(?P<message>.*))?$")
-# ExceptionGroup rendering draws a box: ``  + Exception Group Traceback ...``,
-# ``  |   File ...``, ``  +-+------- 1 -------``. Stripping the margin turns
-# each sub-exception back into a plain traceback section.
-_TB_GROUP_MARGIN = re.compile(r"^\s*(?:\+-)?[+|]\s?")
+# ExceptionGroup rendering draws a box: ``  + Exception Group Traceback ...``
+# opens the group, ``  | `` prefixes each of its lines, and ``  +-+---- 1 ----``
+# and ``    +---- 2 ----`` open its members one margin deeper. Each nesting
+# level sits two columns further right (issue #3235).
+_TB_BOX_MEMBER = re.compile(r"^(?P<indent> *)(?P<first>\+-)?\+-+ (?P<title>\S+) -+$")
+_TB_BOX_LINE = re.compile(r"^(?P<indent> *)[+|](?: (?P<text>.*))?$")
+_TB_BOX_STEP = 2
+# CPython lists at most `max_group_width` members and nests at most
+# `max_group_depth` groups, and says what it left out.
+_TB_ELIDED_TITLE = "..."
+_TB_MORE_MEMBERS = re.compile(r"^and (?P<count>\d+) more exceptions?$")
+_TB_DEPTH_ELIDED = re.compile(r"^\.\.\. \(max_group_depth is \d+\)$")
 
 _REASON_ON_STACK = "on the crashing stack, {depth} frame(s) above the failure"
 _REASON_CALLER = "can reach the failing frame through CALLS, depth {depth}"
@@ -82,6 +90,25 @@ class ParsedTraceback(NamedTuple):
     frames: tuple[FramePoint, ...]
     exception_type: str
     exception_message: str
+    # An ExceptionGroup's sub-exceptions in printed order, each parsed the
+    # same way, nested groups included; empty for any other exception. The
+    # group's own `frames` are the stack that raised it (issue #3235).
+    members: tuple[ParsedTraceback, ...] = ()
+    # Sub-exceptions the rendering itself left out, past its width or depth
+    # limit.
+    omitted_members: int = 0
+
+
+class _TracebackLine(NamedTuple):
+    """One line of traceback text with its group box taken off.
+
+    `level` is how many groups' member boxes enclose it; a member separator
+    has no text, its title, and the level of the member it opens.
+    """
+
+    level: int
+    text: str
+    member_title: str | None = None
 
 
 class FrameContext(NamedTuple):
@@ -140,8 +167,13 @@ class TracebackReport(NamedTuple):
     # The other checkout's root the frames were matched under, when it was
     # inferred from their paths rather than given or local (issue #2587).
     inferred_root: str | None = None
-    # Why nothing resolved, when nothing did.
+    # Why nothing resolved, when nothing did, and what an ExceptionGroup's
+    # report holds.
     note: str | None = None
+    # An ExceptionGroup's sub-exceptions, each explained on its own; the
+    # group's `frames` are the stack that raised it (issue #3235).
+    members: tuple[TracebackReport, ...] = ()
+    omitted_members: int = 0
 
 
 class ArityError(NamedTuple):
@@ -345,6 +377,10 @@ class RootCauseReport(NamedTuple):
     resolution: FrameResolutionRate = FrameResolutionRate(total=0, resolved=0)
     inferred_root: str | None = None
     note: str | None = None
+    # An ExceptionGroup's sub-exceptions, each ranked against its own
+    # failing frame; the group's own ranking anchors where it was raised.
+    members: tuple[RootCauseReport, ...] = ()
+    omitted_members: int = 0
 
 
 def parse_python_traceback(text: str) -> ParsedTraceback:
@@ -352,22 +388,75 @@ def parse_python_traceback(text: str) -> ParsedTraceback:
 
     Chained tracebacks (``During handling ...``/``direct cause``) contain
     several sections; the last one is the failure that propagated, so its
-    frames and its trailing exception line are the ones returned. An
-    ``ExceptionGroup`` rendering is normalised by stripping its box margin,
-    after which the same rule picks the last sub-exception's traceback --
-    the deepest real cause, not the group wrapper.
+    frames and its trailing exception line are the ones returned. When that
+    failure is an ``ExceptionGroup``, its frames are the stack that raised
+    the group, and each sub-exception printed inside the group's box is
+    parsed the same way into `members`.
     """
-    lines = [
-        _TB_GROUP_MARGIN.sub("", line) for line in text.splitlines() if line.strip()
+    return _parse_section(_traceback_lines(text), 0)
+
+
+def _traceback_lines(text: str) -> list[_TracebackLine]:
+    """The non-blank lines of `text`, each with its group margin removed.
+
+    A margin is read only where the text draws a group's box, by a member
+    separator or a boxed traceback header: elsewhere a quoted source line
+    such as ``| flag`` is code, not a margin.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    # The margin column of each box the text opens: a separator's group sits
+    # one step left of its members, and a boxed header at its own margin.
+    margins = [
+        _member_column(match) - _TB_BOX_STEP
+        for line in lines
+        if (match := _TB_BOX_MEMBER.match(line))
+    ] + [
+        len(match["indent"])
+        for line in lines
+        if (match := _TB_BOX_LINE.match(line))
+        and (match["text"] or "").strip() in (_TB_HEADER, _TB_GROUP_HEADER)
     ]
-    last_header = -1
-    for index, line in enumerate(lines):
-        if line.strip() in (_TB_HEADER, _TB_GROUP_HEADER):
-            last_header = index
+    if not margins:
+        return [_TracebackLine(0, line) for line in lines]
+    base = min(margins)
+
+    def level(column: int) -> int:
+        return (column - base) // _TB_BOX_STEP
+
+    parsed: list[_TracebackLine] = []
+    for line in lines:
+        if match := _TB_BOX_MEMBER.match(line):
+            parsed.append(
+                _TracebackLine(level(_member_column(match)), "", match["title"])
+            )
+        elif match := _TB_BOX_LINE.match(line):
+            parsed.append(
+                _TracebackLine(level(len(match["indent"])), match["text"] or "")
+            )
+        else:
+            parsed.append(_TracebackLine(0, line))
+    return parsed
+
+
+def _member_column(separator: re.Match[str]) -> int:
+    """The margin column of the members a separator opens: ``+-+----``
+    starts at the group's margin, ``+----`` at the members'."""
+    indent = len(separator["indent"])
+    return indent + _TB_BOX_STEP if separator["first"] else indent
+
+
+def _parse_section(lines: list[_TracebackLine], level: int) -> ParsedTraceback:
+    """The propagated exception of `lines`, whose own text sits at `level`."""
+    headers = [
+        index
+        for index, line in enumerate(lines)
+        if line.level == level and line.text.strip() in (_TB_HEADER, _TB_GROUP_HEADER)
+    ]
+    tail = lines[headers[-1] + 1 :] if headers else lines
     frames: list[FramePoint] = []
     exception_type = ""
     exception_message = ""
-    for line in lines[last_header + 1 :]:
+    for line in (line.text for line in tail if line.level == level):
         if match := _TB_FRAME.match(line):
             frames.append(
                 FramePoint(
@@ -382,7 +471,40 @@ def parse_python_traceback(text: str) -> ParsedTraceback:
             exception_type = match.group("type")
             exception_message = match.group("message") or ""
             break
-    return ParsedTraceback(tuple(frames), exception_type, exception_message)
+    members, omitted = _parse_members(tail, level + 1)
+    return ParsedTraceback(
+        tuple(frames), exception_type, exception_message, members, omitted
+    )
+
+
+def _parse_members(
+    lines: list[_TracebackLine], level: int
+) -> tuple[tuple[ParsedTraceback, ...], int]:
+    """The group members printed in `lines` at `level`, and how many the
+    rendering left out."""
+    # A member runs to the next separator at its level; what follows the
+    # group's box sits at a lower level, which a member's own text excludes.
+    blocks: list[tuple[str, list[_TracebackLine]]] = []
+    for line in lines:
+        if line.level == level and line.member_title is not None:
+            blocks.append((line.member_title, []))
+        elif blocks:
+            blocks[-1][1].append(line)
+    members: list[ParsedTraceback] = []
+    omitted = 0
+    for title, block in blocks:
+        own = [line.text for line in block if line.level == level]
+        if title == _TB_ELIDED_TITLE:
+            omitted += sum(
+                int(match["count"])
+                for text in own
+                if (match := _TB_MORE_MEMBERS.match(text))
+            )
+        elif len(own) == 1 and _TB_DEPTH_ELIDED.match(own[0]):
+            omitted += 1
+        else:
+            members.append(_parse_section(block, level))
+    return tuple(members), omitted
 
 
 def _anchored(frame: FramePoint, repo_root: Path) -> FramePoint:
@@ -461,6 +583,8 @@ class _ResolvedStack(NamedTuple):
     # Each frame with (resolved qn, label, unresolved reason).
     frames: list[tuple[FramePoint, str | None, str | None, str | None]]
     inferred_root: str | None
+    # The members of an ExceptionGroup, in the parsed order.
+    members: tuple[_ResolvedStack, ...] = ()
 
 
 def _rebase_for(
@@ -487,25 +611,45 @@ def _rebase_for(
     ), inferred
 
 
+def _every_frame(parsed: ParsedTraceback) -> list[FramePoint]:
+    return [
+        *parsed.frames,
+        *(frame for member in parsed.members for frame in _every_frame(member)),
+    ]
+
+
 def _resolve_stack(
     parsed: ParsedTraceback,
     graph: _CrashGraph,
     repo_root: Path,
     path_prefix_map: Mapping[str, str] | None = None,
 ) -> _ResolvedStack:
+    """Each frame's graph node, for the stack and every group member's.
+
+    One checkout root serves the whole traceback, inferred from every frame
+    it prints: a member's stack is often too short to infer one alone.
+    """
     resolver = FrameResolver(repo_root, graph.nodes)
-    anchored = [_anchored(frame, repo_root) for frame in parsed.frames]
+    anchored = [_anchored(frame, repo_root) for frame in _every_frame(parsed)]
     rebase, inferred_root = _rebase_for(anchored, resolver, repo_root, path_prefix_map)
-    resolved: list[tuple[FramePoint, str | None, str | None, str | None]] = []
-    for frame, anchored_frame in zip(parsed.frames, anchored, strict=True):
-        stats = ResolutionStats()
-        match = resolver.resolve(rebase.apply(anchored_frame), stats)
-        if match is not None:
-            resolved.append((frame, match.qualified_name, match.label, None))
-        else:
-            reason = next(iter(stats.unresolved), None)
-            resolved.append((frame, None, None, reason))
-    return _ResolvedStack(frames=resolved, inferred_root=inferred_root)
+
+    def resolve(section: ParsedTraceback) -> _ResolvedStack:
+        resolved: list[tuple[FramePoint, str | None, str | None, str | None]] = []
+        for frame in section.frames:
+            stats = ResolutionStats()
+            match = resolver.resolve(rebase.apply(_anchored(frame, repo_root)), stats)
+            if match is not None:
+                resolved.append((frame, match.qualified_name, match.label, None))
+            else:
+                reason = next(iter(stats.unresolved), None)
+                resolved.append((frame, None, None, reason))
+        return _ResolvedStack(
+            frames=resolved,
+            inferred_root=inferred_root,
+            members=tuple(resolve(member) for member in section.members),
+        )
+
+    return resolve(parsed)
 
 
 def _resolution_rate(stack: _ResolvedStack) -> FrameResolutionRate:
@@ -539,6 +683,28 @@ def _nothing_resolved_note(stack: _ResolvedStack, repo_root: Path) -> str | None
         root=repo_root.resolve().as_posix(),
         param=cs.MCPParamName.PATH_PREFIX_MAP,
     )
+
+
+def _group_note(parsed: ParsedTraceback) -> str | None:
+    """What an ExceptionGroup's report holds, or None for any other one."""
+    if not parsed.members and not parsed.omitted_members:
+        return None
+    listed = len(parsed.members)
+    note = cs.TRACEBACK_NOTE_EXCEPTION_GROUP.format(
+        type=parsed.exception_type,
+        listed=listed,
+        plural="" if listed == 1 else "s",
+    )
+    if parsed.omitted_members:
+        note += cs.TRACEBACK_NOTE_MEMBERS_OMITTED.format(omitted=parsed.omitted_members)
+    return note
+
+
+def _section_note(
+    parsed: ParsedTraceback, stack: _ResolvedStack, repo_root: Path
+) -> str | None:
+    notes = (_nothing_resolved_note(stack, repo_root), _group_note(parsed))
+    return " ".join(note for note in notes if note) or None
 
 
 def _resolve_callee(
@@ -611,6 +777,15 @@ def explain_traceback(
     parsed = parse_python_traceback(traceback_text)
     graph = _CrashGraph(fetch_all, project_name)
     stack = _resolve_stack(parsed, graph, repo_root, path_prefix_map)
+    return _explain_section(parsed, stack, graph, repo_root)
+
+
+def _explain_section(
+    parsed: ParsedTraceback,
+    stack: _ResolvedStack,
+    graph: _CrashGraph,
+    repo_root: Path,
+) -> TracebackReport:
     contexts = [
         FrameContext(
             path=frame.path,
@@ -653,7 +828,12 @@ def explain_traceback(
             ),
         ),
         inferred_root=stack.inferred_root,
-        note=_nothing_resolved_note(stack, repo_root),
+        note=_section_note(parsed, stack, repo_root),
+        members=tuple(
+            _explain_section(member, member_stack, graph, repo_root)
+            for member, member_stack in zip(parsed.members, stack.members, strict=True)
+        ),
+        omitted_members=parsed.omitted_members,
     )
 
 
@@ -703,6 +883,22 @@ def rank_root_causes(
     parsed = parse_python_traceback(traceback_text)
     graph = _CrashGraph(fetch_all, project_name)
     resolved_stack = _resolve_stack(parsed, graph, repo_root, path_prefix_map)
+    return _rank_section(parsed, resolved_stack, graph, repo_root)
+
+
+def _rank_section(
+    parsed: ParsedTraceback,
+    resolved_stack: _ResolvedStack,
+    graph: _CrashGraph,
+    repo_root: Path,
+) -> RootCauseReport:
+    members = tuple(
+        _rank_section(member, member_stack, graph, repo_root)
+        for member, member_stack in zip(
+            parsed.members, resolved_stack.members, strict=True
+        )
+    )
+    note = _section_note(parsed, resolved_stack, repo_root)
     stack = resolved_stack.frames
     stack_qns = [qn for _frame, qn, _label, _reason in stack if qn]
     failing = stack_qns[-1] if stack_qns else None
@@ -719,7 +915,9 @@ def rank_root_causes(
             flow_gaps=graph.flow_gaps,
             resolution=resolution,
             inferred_root=resolved_stack.inferred_root,
-            note=_nothing_resolved_note(resolved_stack, repo_root),
+            note=note,
+            members=members,
+            omitted_members=parsed.omitted_members,
         )
 
     reached = _reverse_reachable(graph, failing)
@@ -762,4 +960,7 @@ def rank_root_causes(
         flow_gaps=graph.flow_gaps,
         resolution=resolution,
         inferred_root=resolved_stack.inferred_root,
+        note=note,
+        members=members,
+        omitted_members=parsed.omitted_members,
     )
