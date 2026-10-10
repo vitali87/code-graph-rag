@@ -247,6 +247,14 @@ def _binds_identifier(target: Node, name: str) -> bool:
     return False
 
 
+def _file_language(suffix: str) -> cs.SupportedLanguage | None:
+    # `.ipynb` maps to no grammar, but the only notebooks that become modules
+    # are Python ones, whose cells are parsed as Python (issue #2480).
+    if suffix == cs.EXT_IPYNB:
+        return cs.SupportedLanguage.PYTHON
+    return get_language_for_extension(suffix)
+
+
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
@@ -2422,9 +2430,24 @@ class CallResolver:
                 for imp in imported
             )
         ]
+        # A declaration that never runs (an interface or abstract member, issue
+        # #2524) must not make its sole implementation ambiguous: the two share
+        # the name by design. It is chosen only when nothing implements it.
+        visible = [
+            qn for qn in visible if not self._is_bodiless_declaration(qn)
+        ] or visible
         if len(visible) == 1:
             return self.function_registry[visible[0]], visible[0]
         return None
+
+    def _is_bodiless_declaration(self, qn: str) -> bool:
+        # Interface ownership is read from the owner's label, which an
+        # incremental run rehydrates for unchanged files; the abstract mark
+        # exists only for members this run parsed.
+        if self.function_registry.is_abstract(qn):
+            return True
+        owner_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        return self.function_registry.get(owner_qn) == NodeType.INTERFACE
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # True when the dotted call's object segment is imported from a target
@@ -4039,13 +4062,13 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None
         while probe:
             if (path := modules.get(probe)) is not None:
-                language = get_language_for_extension(path.suffix)
+                language = _file_language(path.suffix)
                 break
             # An incremental run only re-parses changed files, so an
             # unchanged module is absent above; its definitions carry the
             # file path recorded on their graph nodes instead.
             if (rehydrated := self.rehydrated_definition_paths.get(probe)) is not None:
-                language = get_language_for_extension(PurePath(rehydrated).suffix)
+                language = _file_language(PurePath(rehydrated).suffix)
                 break
             if cs.SEPARATOR_DOT not in probe:
                 break

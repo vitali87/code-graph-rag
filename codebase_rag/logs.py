@@ -184,6 +184,13 @@ DEF_NO_PARSER = "No parser available for {language}"
 DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
+# A notebook with no Python cells to parse keeps its File node (issue #2480).
+NOTEBOOK_NOT_PYTHON = (
+    "{path}: the notebook's kernel language is {language!r}, not Python; its "
+    "cells are not indexed"
+)
+NOTEBOOK_UNREADABLE = "{path}: {reason}; its cells are not indexed"
+NOTEBOOK_INDEXED = "Indexed {cells} code cells of notebook {path}"
 
 # Semantic/embedding logs
 SEMANTIC_NOT_AVAILABLE = (
@@ -1403,3 +1410,15 @@ JAVA_FRONTEND_UNAVAILABLE = (
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
 )
+
+# Checkout state kept under CGR_HOME (issue #2427)
+CHECKOUT_STATE_DIR_UNAVAILABLE = (
+    "Cannot create the sync state directory {path} ({error}); this checkout's "
+    "incremental state is not kept, so every sync re-parses it. Point CGR_HOME "
+    "at a writable directory to keep it."
+)
+CHECKOUT_STATE_ADOPTED = (
+    "Moved cgr's state for {repo} out of the working tree into {path}: {names}"
+)
+CHECKOUT_STATE_ADOPT_FAILED = "Could not move {legacy} to {target}: {error}"
+CHECKOUT_STATE_LEGACY_LEFT = "Could not remove {legacy} from the working tree: {error}"
