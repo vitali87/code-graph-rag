@@ -375,6 +375,92 @@ def test_a_workspace_update_graph_answer_in_text_is_all_of_stdout(
     assert "Syncing workspace 'shop'" in result.stderr
 
 
+_NOT_A_GIT_REPO = "--repo-path is not a Git repository"
+
+
+def _words(text: str) -> str:
+    return " ".join(click.unstyle(text).split())
+
+
+def test_a_json_answer_from_outside_git_is_all_of_stdout(
+    sync: MagicMock, ask: MagicMock, shop: tuple[Path, Path, Path]
+) -> None:
+    # CodeRabbit review of PR 2507: `--repo-path`, defaulting to the current
+    # directory, warned that it was no Git repository on stdout, ahead of
+    # the JSON payload, before the sync's own stderr routing began.
+    _, _, elsewhere = shop
+
+    result = runner.invoke(
+        app,
+        _start(
+            elsewhere,
+            *("--workspace", "shop", "--update-graph"),
+            *("-a", "where is main?", "--output-format", "json"),
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"query": "where is main?", "response": _ANSWER}
+    # The warning is still shown, on stderr.
+    assert _NOT_A_GIT_REPO in _words(result.stderr)
+    ask.assert_called_once()
+
+
+def test_what_the_query_prints_on_the_console_stays_off_stdout(
+    sync: MagicMock, ask: MagicMock, git_cwd: Path
+) -> None:
+    # The query tool prints its result tables on the app console while the
+    # answer is formed: with `-a` that is stderr too, so stdout stays JSON.
+    answer = ask.side_effect
+
+    def answer_after_a_table(*args: object, **kwargs: object) -> None:
+        app_context.console.print("| name | path |")
+        answer(*args, **kwargs)
+
+    ask.side_effect = answer_after_a_table
+
+    result = runner.invoke(
+        app,
+        _start(
+            git_cwd,
+            *("--workspace", "shop", "--update-graph"),
+            *("-a", "where is main?", "--output-format", "json"),
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"query": "where is main?", "response": _ANSWER}
+    assert "| name | path |" in result.stderr
+
+
+def test_the_chat_still_warns_on_stdout_outside_git(
+    sync: MagicMock, session: MagicMock, shop: tuple[Path, Path, Path]
+) -> None:
+    # Negative: without `-a` there is no answer to keep stdout for.
+    _, _, elsewhere = shop
+
+    result = runner.invoke(app, _start(elsewhere, "--workspace", "shop"))
+
+    assert result.exit_code == 0, result.output
+    assert _NOT_A_GIT_REPO in _words(result.stdout)
+    session.assert_called_once()
+
+
+def test_an_answer_hands_the_console_back_when_it_is_done(
+    sync: MagicMock, ask: MagicMock, git_cwd: Path
+) -> None:
+    # Negative: the stderr console lasts as long as the command, not longer.
+    console = app_context.console
+
+    result = runner.invoke(
+        app,
+        _start(git_cwd, "--workspace", "shop", "--update-graph", "-a", "q"),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert app_context.console is console
+
+
 def test_an_interactive_workspace_update_graph_still_shows_its_progress(
     sync: MagicMock, session: MagicMock, git_cwd: Path
 ) -> None:

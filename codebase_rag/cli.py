@@ -386,8 +386,8 @@ def _start_update_graph(
     name, the set the chat's own sync uses, and the assistant then opens
     scoped to the workspace (#2418). `--repo-path`, defaulting to the current
     directory, is not one of them. With `-a` that sync is deferred: the
-    single query runs it, keeping stdout for the answer (see
-    `_run_single_query`).
+    single query runs it, reporting on stderr so that stdout holds only the
+    answer (see `_keep_stdout_for_the_answer`).
     """
     if workspace_config is not None:
         # The same check the chat's own workspace sync makes (#2412).
@@ -496,6 +496,16 @@ def _console_on_stderr() -> Iterator[None]:
         app_context.console = console
 
 
+def _keep_stdout_for_the_answer(ctx: typer.Context, ask_agent: str | None) -> None:
+    # `-a` prints its answer, and only that, on stdout, which `main_single_query`
+    # keeps clean of its logs for a script to read: the command's warnings,
+    # its sync's progress (Greptile review of PR 2507) and the query's result
+    # tables go to stderr, from the first check until the command ends
+    # (CodeRabbit review of PR 2507).
+    if ask_agent:
+        ctx.with_resource(_console_on_stderr())
+
+
 def _run_single_query(
     target_repo_path: str,
     batch_size: int,
@@ -505,11 +515,7 @@ def _run_single_query(
     sync_task: Callable[[], None] | None,
 ) -> None:
     if sync_task is not None:
-        # stdout carries only the answer, which `main_single_query` prints
-        # after routing its logs to stderr: the sync reports there too
-        # (Greptile review of PR 2507).
-        with _console_on_stderr():
-            sync_task()
+        sync_task()
     main_single_query(
         target_repo_path,
         batch_size,
@@ -1042,6 +1048,7 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
     rich_help_panel=ch.PANEL_USE,
 )
 def start(
+    ctx: typer.Context,
     repo_path: str | None = typer.Option(
         None, "--repo-path", help=ch.HELP_REPO_PATH_RETRIEVAL
     ),
@@ -1152,6 +1159,7 @@ def start(
         help=ch.HELP_WORKSPACE,
     ),
 ) -> None:
+    _keep_stdout_for_the_answer(ctx, ask_agent)
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
