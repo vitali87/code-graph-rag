@@ -1763,6 +1763,96 @@ def rename_command(
 
 
 @app.command(
+    name=ch.CLICommandName.CHANGE_SIGNATURE,
+    help=ch.CMD_CHANGE_SIGNATURE,
+    short_help=ch.CMD_CHANGE_SIGNATURE,
+    epilog=ch.EXAMPLES_CHANGE_SIGNATURE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def change_signature_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_CHANGE_SIGNATURE_QN),
+    new_params: list[str] = typer.Argument(..., help=ch.HELP_CHANGE_SIGNATURE_PARAMS),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    mapping: list[str] | None = typer.Option(
+        None, "--map", help=ch.HELP_CHANGE_SIGNATURE_MAP
+    ),
+    allow_heuristic: bool = typer.Option(
+        False, "--allow-heuristic", help=ch.HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help=ch.HELP_CHANGE_SIGNATURE_DRY_RUN
+    ),
+) -> None:
+    from .editing.signature import change_signature
+    from .editing.signature_spec import (
+        SignatureRefused,
+        parse_mapping,
+        sites_for,
+        unmapped_for,
+    )
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    try:
+        parsed = parse_mapping(mapping or [])
+    except SignatureRefused as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(code=1) from refused
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this
+        # one. The MCP handler refuses the same mismatch.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.SIGNATURE_CLI_WRONG_ROOT.format(
+                    project=name, root=repo_path.resolve()
+                ),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = change_signature(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                new_params,
+                parsed,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except SignatureRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    payload = dict(report._asdict())
+    payload[cs.KEY_SITES] = sites_for(report.sites)
+    payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
+    payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.HELP,
     help=ch.CMD_HELP,
     short_help=ch.CMD_HELP,
